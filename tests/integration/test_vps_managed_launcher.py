@@ -48,9 +48,10 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
         "from planner.core.config import load_config;"
         "config=load_config(os.environ['PLAN_CONFIG_PATH']);"
         "keys=('PLAN_EXECUTOR_MODE','PLAN_EXECUTOR_VPS_SOCKET','PLAN_EXECUTOR_ID',"
-        "'PLAN_APNS_UNSUPPORTED','PATH');"
+        "'PLAN_APNS_UNSUPPORTED','PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS','PATH');"
         "print(json.dumps({'env':{key:os.environ[key] for key in keys if key in os.environ},"
         "'executor_id':config.executor_id,"
+        "'refuse_unidentified_agent_calls':config.refuse_unidentified_agent_calls,"
         "'apns':None if config.apns is None else {"
         "'key_path':config.apns.key_path,'key_id':config.apns.key_id,"
         "'team_id':config.apns.team_id,'bundle_ids':config.apns.bundle_ids},"
@@ -113,6 +114,7 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
         "PLAN_APNS_TEAM_ID": "synthetic-team",
         "PLAN_APNS_BUNDLE_IDS": "com.example.panels,com.example.panels.test",
         "PLAN_APNS_UNSUPPORTED": "must-not-pass",
+        "PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS": "1",
     }
 
     def launch() -> subprocess.CompletedProcess[str]:
@@ -130,6 +132,8 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
     payload = json.loads(local.stdout)
     assert payload["argv"] == ["-m", "planner", "serve"]
     assert payload["executor_id"] is None
+    assert payload["refuse_unidentified_agent_calls"] is True
+    assert "PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS" not in payload["env"]
     assert payload["apns"] == {
         "key_path": environment["PLAN_APNS_KEY_PATH"],
         "key_id": "synthetic-key",
