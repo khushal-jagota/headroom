@@ -5,16 +5,38 @@ import {resolve,join} from 'node:path';
 import {afterAll,afterEach} from 'vitest';
 import {createDatabase,type Database,type ReadSql,type TransactionSql} from '../core/database/index.ts';
 import {load_worker_runtime_definitions} from '../worker_types/configuration.ts';
+import {seed_packaged_skills} from '../skills/data.ts';
+import {seed_shipped_worker_types,seed_chief_settings} from '../worker_types/shipped.ts';
 import {OWNER,type Principal} from '../core/contracts.ts';
 import * as data from '../tickets/data/index.ts';
 import type {Ticket,TicketEdit} from '../tickets/contracts.ts';
 const repository=resolve(import.meta.dirname,'../..');
 const root=mkdtempSync(join(tmpdir(),'panels-ticket-rules-'));
 const seed=join(root,'seed.sqlite');
-execFileSync(join(repository,'.venv/bin/python'),['-c',`import sys
-from planner.core.db import connect,create_schema
-c=connect(sys.argv[1]);create_schema(c);c.close()
-`,seed],{cwd:repository,env:{...process.env,PYTHONPATH:join(repository,'src'),PLAN_DB_PATH:seed},stdio:'pipe'});
+// Follow the existing database fixture's Python-stdlib boundary. Read the fresh
+// schema's literal declarations without importing Planner or Alembic. This proves
+// rule writers on the current schema, but does not exercise migration/bootstrap.
+execFileSync('python3',['-c',`import ast, pathlib, sqlite3, sys
+source = pathlib.Path(sys.argv[2]) / 'src/planner/core/migrations/versions/current_schema.py'
+statements = []
+for node in ast.parse(source.read_text()).body:
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == 'BASELINE_STATEMENTS':
+        statements.extend(ast.literal_eval(node.value))
+    elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) and node.target.id == 'BASELINE_STATEMENTS':
+        if not isinstance(node.op, ast.Add):
+            raise RuntimeError('unexpected schema declaration')
+        statements.extend(ast.literal_eval(node.value))
+if not statements:
+    raise RuntimeError('fresh schema declarations not found')
+with sqlite3.connect(sys.argv[1]) as connection:
+    for statement in statements:
+        connection.execute(statement)
+    connection.execute('INSERT INTO attention_history_metadata VALUES (1,0)')
+    connection.executemany('INSERT INTO projects (id,name,created_at,updated_at) VALUES (?,?,0,0)', [('project_other','Other'),('project_vylo','Vylo')])
+`,seed,repository],{cwd:repository,stdio:'pipe'});
+const seedDatabase=createDatabase(seed);
+try {seedDatabase.write(tx=>{seed_packaged_skills(tx);seed_shipped_worker_types(tx);seed_chief_settings(tx);});}
+finally {seedDatabase.close();}
 afterAll(()=>rmSync(root,{recursive:true,force:true}));
 const databases:Database[]=[];
 afterEach(()=>{for(const db of databases.splice(0))db.close();});

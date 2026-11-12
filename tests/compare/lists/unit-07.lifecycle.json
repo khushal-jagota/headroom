@@ -60,6 +60,15 @@
       }
     },
     {
+      "area": "evidence",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22blocked%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+      "status": 200,
+      "capture": {
+        "blocked_window": "content.windows.0"
+      }
+    },
+    {
       "area": "tickets",
       "method": "GET",
       "path": "/api/tickets?id=${blocked}&detail=full",
@@ -118,6 +127,24 @@
       "headers": {
         "X-Plan-Actor": "worker",
         "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "evidence",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+      "status": 200,
+      "capture": {
+        "owner_approval_window": "content.windows.0"
+      }
+    },
+    {
+      "area": "evidence",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22review%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+      "status": 200,
+      "capture": {
+        "review_window": "content.windows.0"
       }
     },
     {
@@ -257,6 +284,15 @@
       }
     },
     {
+      "area": "evidence",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22done%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+      "status": 200,
+      "capture": {
+        "done_window": "content.windows.0"
+      }
+    },
+    {
       "area": "tickets",
       "method": "GET",
       "path": "/api/tickets/${ticket}/copy-text",
@@ -313,6 +349,15 @@
       }
     },
     {
+      "area": "evidence",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22status_awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+      "status": 200,
+      "capture": {
+        "agent_approval_window": "content.windows.0"
+      }
+    },
+    {
       "area": "tickets",
       "method": "GET",
       "path": "/api/review",
@@ -324,6 +369,15 @@
       "path": "/api/tickets/${parked}/backlog",
       "status": 200,
       "json": {}
+    },
+    {
+      "area": "evidence",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22backlog%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+      "status": 200,
+      "capture": {
+        "backlog_window": "content.windows.0"
+      }
     },
     {
       "area": "tickets",
@@ -389,6 +443,15 @@
       },
       "capture": {
         "assigned": "id"
+      }
+    },
+    {
+      "area": "evidence",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22assigned%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+      "status": 200,
+      "capture": {
+        "assigned_window": "content.windows.0"
       }
     },
     {
@@ -481,5 +544,14 @@
     "/api/resource-versions?keys=%5B%22%2Fapi%2Ftickets%2F${ticket}%2Fworkspace%22%2C%20%22%2Fapi%2Ftickets%2F${ticket}%2Fworkspace%2Ffields%2Fbrief%22%2C%20%22%2Fapi%2Funknown%22%5D",
     "/api/resource-body?key=/api/tickets/${ticket}/workspace/fields/what_changes"
   ],
-  "candidate": "typescript"
+  "candidate": "typescript",
+  "report_captures": [
+    "blocked_window",
+    "owner_approval_window",
+    "review_window",
+    "done_window",
+    "agent_approval_window",
+    "backlog_window",
+    "assigned_window"
+  ]
 }
