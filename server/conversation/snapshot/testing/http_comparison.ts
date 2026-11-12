@@ -12,6 +12,7 @@ import type { BackendSnapshot, BackendHttpRuntime } from '../contracts.ts';
 import type { CodexSignIn, CodexSignInService } from '../provider_contracts.ts';
 import { UnknownSignInSession } from '../provider_contracts.ts';
 import { createBackendRoutes } from '../routes.ts';
+import { ConversationHttpWriteScope } from '../../http/writes.ts';
 import { RecordingBackendProbeEnvironment } from '../recording_environment.ts';
 import { ticketModelCatalogControl } from './ticket_models.ts';
 interface Spec {
@@ -107,7 +108,9 @@ export async function run(spec: Spec) {
       ]),
     ) as Partial<Record<ConversationBackendKey, { refresh(): Promise<BackendUsageResult> }>>,
   );
+  const writes = new ConversationHttpWriteScope();
   const runtime: BackendHttpRuntime = {
+    settled: () => writes.drain(),
     database,
     backend_snapshots: snapshots,
     backend_state: new BackendStateStore(database),
@@ -122,7 +125,13 @@ export async function run(spec: Spec) {
     database,
     clock: new TestClock(spec.now),
     areas: [
-      { prefix: '/api/conversation', routes: createBackendRoutes(runtime) },
+      {
+        prefix: '/api/conversation',
+        routes: createBackendRoutes(runtime, {
+          available: true,
+          writes,
+        }),
+      },
       ticketModelCatalogControl(runtime),
     ],
   });
@@ -146,6 +155,8 @@ export async function run(spec: Spec) {
     );
     return { answers, tables, commands: environment.commands, sign_in_calls: calls };
   } finally {
+    writes.seal();
+    await writes.drain();
     await app.close();
     database.close();
   }

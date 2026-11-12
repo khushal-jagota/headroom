@@ -13,7 +13,9 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
+import { resolve_path_sync } from '../../core/path_resolution.ts';
+import { expand_path } from '../../environments/paths.ts';
 import { randomUUID } from 'node:crypto';
 import { CAPTURE_VERSION } from './contracts.ts';
 import type { CaptureManifest, CapturedTurn } from './contracts.ts';
@@ -103,7 +105,7 @@ export function manifest_from_dict(value: unknown): CaptureManifest {
   };
 }
 export function manifest_root(db_path: string): string {
-  return join(dirname(resolve(db_path)), 'deploy-interruptions');
+  return join(dirname(resolve_path_sync(expand_path(db_path))), 'deploy-interruptions');
 }
 export function write_manifest(db_path: string, manifest: CaptureManifest): string {
   const payload = Buffer.from(JSON.stringify(manifest));

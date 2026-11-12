@@ -20,6 +20,7 @@ import { BackendUsageService } from '../backend_usage/service.ts';
 import { BackendStateStore, create_durable_codex_login_rejection } from '../backend_state.ts';
 import { SubprocessBackendProbeEnvironment, backend_io_is_test } from './environment.ts';
 import { RecordingBackendProbeEnvironment } from './recording_environment.ts';
+import { observe_shutdown } from '../shutdown.ts';
 export interface BackendProviders {
   readonly codex: CodexModelCatalogSource | null;
   readonly claude: ClaudeModelCatalogSource | null;
@@ -44,18 +45,38 @@ export function create_backend_runtime(options: {
       ? new RecordingBackendProbeEnvironment()
       : new SubprocessBackendProbeEnvironment(require_children(options.one_shot_children)));
   const rejection = create_durable_codex_login_rejection(database, now);
+  let resolve_resource_join!: () => void, reject_resource_join!: (error: unknown) => void;
+  const resource_join = new Promise<void>((resolve, reject) => {
+    resolve_resource_join = resolve;
+    reject_resource_join = reject;
+  });
+  let shutdown_result: Promise<void> | undefined;
   return {
-    async shutdown() {
-      const results = await Promise.allSettled([
-        Promise.resolve().then(() => environment.shutdown?.()),
-        Promise.resolve().then(() => providers.codex_sign_in?.shutdown()),
-      ]);
-      const failures = results.filter((result) => result.status === 'rejected');
-      if (failures.length)
-        throw new AggregateError(
-          failures.map((failure) => failure.reason),
-          'Backend shutdown failed',
-        );
+    shutdown(options = {}) {
+      if (shutdown_result === undefined) {
+        // Publish the raw join before either cleanup can reenter shutdown.
+        shutdown_result = resource_join;
+        void Promise.allSettled([
+          Promise.resolve().then(() => environment.shutdown?.()),
+          Promise.resolve().then(() => providers.codex_sign_in?.shutdown()),
+        ]).then((results) => {
+          const failures = results.filter((result) => result.status === 'rejected');
+          if (failures.length)
+            reject_resource_join(new AggregateError(
+              failures.map((failure) => failure.reason),
+              'Backend shutdown failed',
+            ));
+          else resolve_resource_join();
+        });
+      }
+      return observe_shutdown(
+        shutdown_result,
+        options,
+        'Backend resources remain unfinished at the shutdown deadline.',
+      );
+    },
+    settled() {
+      return resource_join;
     },
     database,
     backend_snapshots: new BackendSnapshotService({

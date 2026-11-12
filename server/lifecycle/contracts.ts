@@ -82,8 +82,8 @@ export class ServerLifecycleError extends Error {
 }
 export class ShutdownDeadlineExceeded extends ServerLifecycleError {
   readonly pending: readonly string[];
-  constructor(pending: readonly string[]) {
-    super(`Shutdown deadline expired; ownership retained: ${pending.join(', ')}`);
+  constructor(pending: readonly string[], message?: string) {
+    super(message ?? `Shutdown deadline expired; ownership retained: ${pending.join(', ')}`);
     this.name = 'ShutdownDeadlineExceeded';
     this.pending = pending;
   }

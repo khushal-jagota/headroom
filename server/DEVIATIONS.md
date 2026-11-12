@@ -267,10 +267,11 @@ November 12, 2026:
   default composition selects ambient provider homes and can fetch LiteLLM rates.
   Explicit source directories and recording fetchers remain injectable. Tests do
   not read owner transcripts or contact the public rates source.
-- TypeScript summary and rate-refresh requests receive HTTP 503 after the shared
-  conversation write admission seals during shutdown. This retains ownership of
-  previously admitted work through its drain. Python has no equivalent shared
-  write-admission gate on these routes.
+- TypeScript summary, rate-refresh, backend, and voice requests receive HTTP 503
+  after the shared conversation write admission seals during shutdown. This retains
+  ownership of previously admitted work through its drain. The Manager extended
+  this seal to backend and voice requests in the whole-unit review. Python has no
+  equivalent shared write-admission gate on these routes.
 
 ## Recorded usage timezone data and nonstandard JSON
 

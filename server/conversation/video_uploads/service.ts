@@ -1,11 +1,12 @@
 /** Durable bounded intake, atomic adoption, and conservative recovery. */
 import { randomUUID } from 'node:crypto';
-import { observe_shutdown } from '../../lifecycle/deadline.ts';
 import { mkdirSync, renameSync, statSync, statfsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Database, ReadSql } from '../../core/database/contracts.ts';
+import type { StopOptions } from '../../lifecycle/contracts.ts';
+import { observe_shutdown } from '../shutdown.ts';
 import type { KeptMessageFile } from '../message_files.ts';
 import { MEDIA_TYPE_SUFFIX } from '../record/message_files.ts';
 import { destination_from_json, destination_to_json, VideoUploadError } from './contracts.ts';
@@ -246,12 +247,17 @@ export class VideoUploadService {
     this.sealed = true;
   }
 
-  async drain(options: { deadline: number }): Promise<void> {
+  drain(options: StopOptions): Promise<void> {
     this.seal();
-    await observe_shutdown(this.settled(), options, 'Video transfers');
+    return observe_shutdown(
+      this.settled(),
+      options,
+      'Video transfers remain unfinished at the shutdown deadline.',
+    );
   }
+
   async settled(): Promise<void> {
-    while (this.transfers.size) await Promise.allSettled([...this.transfers]);
+    while (this.transfers.size !== 0) await Promise.allSettled([...this.transfers]);
   }
 
   private async receive_transfer(

@@ -8,6 +8,7 @@ import { Deferred } from '../../conversation/runtime/state.ts';
 import { VideoUploadService } from '../../conversation/video_uploads/service.ts';
 import { SqliteProcessConversationSystem } from '../../conversation/system.ts';
 import { ConversationMessageFiles } from '../../conversation/record/message_files.ts';
+import { observe_shutdown } from '../../conversation/shutdown.ts';
 import {
   create_backend_runtime,
   unavailable_backend_providers,
@@ -143,15 +144,25 @@ export async function stop_host_proof(spec: { root: string }): Promise<void> {
           now: () => value.clock.now(),
           providers: unavailable_backend_providers(),
         });
+        let actual = Promise.resolve();
         return {
           ...runtime,
-          shutdown: async () => {
+          shutdown: (options) => {
+            actual = failed_backend.promise.then(() => {
+              const observed = runtime.shutdown?.(options);
+              void observed?.catch(() => {});
+              return runtime.settled();
+            });
             reentered = failed.close({ deadline: performance.now() / 1000 + 100 });
             void reentered.catch(() => {});
             put('backend-fenced', true);
-            await failed_backend.promise;
-            await runtime.shutdown?.();
+            return observe_shutdown(
+              actual,
+              options ?? {},
+              'Backend resources remain unfinished at the shutdown deadline.',
+            );
           },
+          settled: () => actual,
         };
       },
       testAreas(value) {

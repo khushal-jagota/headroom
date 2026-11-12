@@ -2,7 +2,6 @@
 import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
 import { UsageReadError, UsageServiceStopped } from './contracts.ts';
-import { observe_shutdown } from '../../lifecycle/deadline.ts';
 import type {
   RecordedUsageService,
   TranscriptDirectories,
@@ -13,6 +12,8 @@ import type {
   UsageSummaryInput,
 } from './contracts.ts';
 import type { UsageWorkerRequest, UsageWorkerResponse } from './workerProtocol.ts';
+import type { StopOptions } from '../../lifecycle/contracts.ts';
+import { observe_shutdown } from '../shutdown.ts';
 
 /** File-backed workers inherit runtime switches, never the parent's eval entry. */
 function workerExecArgv(): string[] {
@@ -39,8 +40,9 @@ export class UsageService implements RecordedUsageService {
   private worker: Worker | undefined;
   private sequence = 0;
   private closed = false;
-  private stopping: Promise<void> | undefined;
-  private resourceJoin: Promise<unknown> | undefined;
+  private stopCleanup: Promise<void> | undefined;
+  private resourceJoin: Promise<void> | undefined;
+  private workerExit: Promise<void> | undefined;
   private readonly operations = new Set<Promise<unknown>>();
   private readonly pending = new Map<
     number,
@@ -78,6 +80,7 @@ export class UsageService implements RecordedUsageService {
       },
     });
     this.worker = worker;
+    this.workerExit = new Promise<void>((resolve) => worker.once('exit', () => resolve()));
     worker.on('message', (message: UsageWorkerResponse) => this.receive(worker, message));
     worker.on('error', (error) => {
       if (this.worker === worker) this.fail(error);
@@ -188,36 +191,58 @@ export class UsageService implements RecordedUsageService {
   refreshRates(): Promise<UsagePricing> {
     return this.request({ kind: 'refresh', id: ++this.sequence });
   }
-  async finish_operations(): Promise<void> {
+  private async finish_current_operations(): Promise<void> {
     while (this.operations.size !== 0) await Promise.allSettled([...this.operations]);
     if (this.closed) await this.resourceJoin;
   }
-  stop(options: { readonly deadline: number }): Promise<void> {
-    if (this.stopping) return this.stopping;
+  finish_operations(options: Partial<StopOptions> = {}): Promise<void> {
+    return observe_shutdown(
+      this.finish_current_operations(),
+      options,
+      'Usage operations remain unfinished at the shutdown deadline.',
+    );
+  }
+  async settled(): Promise<void> {
+    this.worker?.ref();
+    await this.finish_current_operations();
+    while (this.callbackOperations.size !== 0)
+      await Promise.allSettled([...this.callbackOperations]);
+    await (this.resourceJoin ?? this.workerExit);
+  }
+  stop(options: StopOptions): Promise<void> {
+    if (this.stopCleanup !== undefined) return this.stopCleanup;
     this.closed = true;
     const worker = this.worker;
-    // Publish the observer and actual join before termination/callbacks can reenter.
+    // Publish both lifetimes before abort callbacks can synchronously request stop.
     let resolve!: () => void, reject!: (error: unknown) => void;
     this.resourceJoin = new Promise<void>((yes, no) => {
       resolve = yes;
       reject = no;
     });
-    this.stopping = observe_shutdown(this.resourceJoin, options, 'recorded usage');
-    this.fail(new UsageServiceStopped());
+    this.stopCleanup = observe_shutdown(
+      this.resourceJoin,
+      options,
+      'Usage resources did not stop before the shutdown deadline.',
+    );
+    const failures: unknown[] = [];
+    try {
+      this.fail(new UsageServiceStopped());
+    } catch (error) {
+      failures.push(error);
+    }
+    // Request cancellation is not worker exit or asynchronous callback cleanup.
     Promise.allSettled([
       Promise.resolve().then(() => worker?.terminate()),
-      Promise.allSettled([...this.callbackOperations]),
+      this.workerExit,
+      ...this.callbackOperations,
+      ...this.operations,
     ]).then((results) => {
-      const failures = results.filter((result) => result.status === 'rejected');
+      const termination = results[0];
+      if (termination?.status === 'rejected') failures.push(termination.reason);
       if (failures.length)
-        reject(
-          new AggregateError(
-            failures.map((failure) => failure.reason),
-            'Usage resources did not close cleanly',
-          ),
-        );
+        reject(new AggregateError(failures, 'Usage resources did not close cleanly'));
       else resolve();
     });
-    return this.stopping;
+    return this.stopCleanup;
   }
 }
