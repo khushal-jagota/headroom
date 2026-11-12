@@ -67,17 +67,33 @@ export type SaveAttempt = <T>(
   work: () => T,
   mutations: readonly RuntimeMutation[],
 ) => T;
+export interface TrackedSaveRetry {
+  set_detail(detail: string): void;
+  close(): void;
+}
+/** Structural slice of the stalls unit's registry. The owner injects its clock. */
+export interface SaveWaitRegistry {
+  track(
+    kind: 'vps_save_retrying',
+    wait_key: string,
+    options: { detail: string; conversation_id?: string | null },
+  ): TrackedSaveRetry;
+}
 export interface ConversationCoreOptions {
   readonly store: ConversationRecordStore;
+  readonly wait_registry?: SaveWaitRegistry;
   readonly backend_child_factories: Readonly<Record<ConversationBackendKey, BackendChildFactory>>;
   readonly message_files: ConversationMessageFiles;
   readonly publish_event?: (event: StoredConversationEvent) => void;
   readonly publish_frame?: (conversation_id: string, frame: ConversationLiveTailFrame) => void;
+  readonly publish_status_changed?: (conversation_id: string) => void;
   readonly emit_change?: () => void;
   readonly save_attempt?: SaveAttempt;
   readonly require_runtime_ownership?: () => void;
   readonly unix_time_now?: () => number;
   readonly monotonic_now?: () => number;
+  readonly idle_child_stop_after_seconds?: number;
+  readonly idle_child_sweep_interval_seconds?: number;
   readonly model_is_enabled?: (backend: ConversationBackendKey, model: string) => boolean;
   readonly on_held_model_change?: (
     conversation_id: string,
@@ -98,6 +114,11 @@ export interface DeliveryServices {
     work: () => T,
     mutations?: readonly RuntimeMutation[],
   ): Promise<T>;
+  native_operation<T>(operation: () => Promise<T>): Promise<T>;
+  discard_child(
+    state: import('./state.ts').ConversationState,
+    child: import('../backends/contracts.ts').BackendChild,
+  ): Promise<boolean>;
   note_written(
     state: import('./state.ts').ConversationState,
     rows: readonly StoredConversationEvent[],
