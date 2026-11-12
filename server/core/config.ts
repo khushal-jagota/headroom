@@ -44,7 +44,11 @@ export function pythonRepr(value: unknown): string {
     return `'${value.replaceAll('\\', '\\\\').replaceAll("'", "\\'").replaceAll('\n', '\\n').replaceAll('\r', '\\r')}'`;
   return String(value);
 }
-export function parseConfigBoolean(value: unknown, key: string, source = String(value).trim()): boolean {
+export function parseConfigBoolean(
+  value: unknown,
+  key: string,
+  source = String(value).trim(),
+): boolean {
   if (typeof value === 'boolean') return value;
   const text = source.toLowerCase();
   if (['1', 'true', 'yes', 'on'].includes(text)) return true;
