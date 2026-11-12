@@ -26,6 +26,10 @@ import { production_backend_providers } from '../conversation/snapshot/productio
 import { CredentialRequestOperations } from '../credentials/requests/service.ts';
 import { createCredentialRequestRoutes } from '../credentials/requests/routes.ts';
 import { run_automatic_recovery } from '../conversation/deploy_interruptions/coordinator.ts';
+import { VideoUploadService } from '../conversation/video_uploads/service.ts';
+import { createVideoUploadRoutes } from '../conversation/video_uploads/routes.ts';
+import { createVoiceRoutes } from '../conversation/voice_transcription/routes.ts';
+import { CLEANUP_INTERVAL_SECONDS } from '../conversation/video_uploads/configuration.ts';
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 import type { EnvironmentRuntime } from '../environments/contracts.ts';
 
@@ -89,6 +93,9 @@ export interface StartedServer {
   close(): Promise<void>;
 }
 export async function startServer(options: ServerOptions = {}): Promise<StartedServer> {
+  const media_lifetime = new AbortController();
+  let video_cleanup_timer: ReturnType<typeof setInterval> | undefined;
+  let video_cleanup_work: Promise<unknown> | undefined;
   const config = loadConfig();
   config.db_path = assert_test_database_path(config.db_path);
   const ownership = acquireRuntimeOwnership(config.db_path);
@@ -103,6 +110,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   let core: SqliteProcessConversationSystem | undefined;
   let backendServices: BackendHttpRuntime | undefined;
   let credential_requests: CredentialRequestOperations | null = null;
+  let video_uploads: VideoUploadService | undefined;
   let app: FastifyInstance | undefined;
   let ownership_current = true;
   let signalRevoked = false;
@@ -125,6 +133,10 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   const close = (): Promise<void> => {
     if (closing) return closing;
     conversationWrites.seal();
+    video_uploads?.seal();
+    // Stop new connections without destroying active request bodies.
+    app?.server.close(() => {});
+    clearInterval(video_cleanup_timer);
     revokeSignal();
     areas.closeSubscriptions();
     const deadline = performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
@@ -139,7 +151,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     closing = (async () => {
       // Fence every producer before awaiting either drain. Ownership also covers
       // environment setup that was already pending when shutdown began.
-      await Promise.all([
+      const producers = Promise.all([
         attempt(() => background?.close({ deadline })),
         attempt(() => environments?.close({ deadline })),
         attempt(() => environmentsStarting?.catch(() => {})),
@@ -149,6 +161,11 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
             : backendServices?.codex_sign_in?.shutdown(),
         ),
       ]);
+      // On deadline failure retain the database and ownership beneath active transfers.
+      await video_uploads?.drain({ deadline });
+      media_lifetime.abort(new Error('Media processing stopped at shutdown'));
+      await attempt(() => video_cleanup_work);
+      await producers;
       await attempt(() => conversationWrites.drain());
       await attempt(() => credential_requests?.finish_operations());
       // Loop cancellation shares one deadline. Core and record settlement have
@@ -209,6 +226,17 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         key_path: config.credential_key_path,
         now: () => clock.nowUnix(),
       });
+    video_uploads = new VideoUploadService(database, config.db_path, {
+      signal: media_lifetime.signal,
+    });
+    const uploads = video_uploads;
+    const conversation_http = core
+      ? {
+          core,
+          record: context.record,
+          writes: conversationWrites,
+        }
+      : null;
     backendServices =
       options.createBackendServices?.(context) ??
       create_backend_runtime({
@@ -270,17 +298,22 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       areas: [
         ...areas.areas,
         { prefix: '/api', routes: createCredentialRequestRoutes(credential_requests) },
+        {
+          prefix: '/api/conversation/video-uploads',
+          routes: createVideoUploadRoutes(video_uploads, conversation_http, media_lifetime.signal),
+        },
+        {
+          prefix: '/api/conversation',
+          routes: createVoiceRoutes({ signal: media_lifetime.signal }),
+        },
         ...(environments?.areas ?? []),
+
         { prefix: '/api/conversation', routes: createBackendRoutes(backendServices) },
         ...(core
           ? [
               {
                 prefix: '/api/conversation',
-                routes: createConversationRoutes({
-                  core,
-                  record: context.record,
-                  writes: conversationWrites,
-                }),
+                routes: createConversationRoutes(conversation_http!),
               },
             ]
           : []),
@@ -296,6 +329,22 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     }
     if (core) {
       const current = core;
+      uploads.recover_and_cleanup();
+      video_cleanup_timer = setInterval(() => {
+        if (closing !== undefined || video_cleanup_work !== undefined) return;
+        video_cleanup_work = current.workspace_admission.operation(async (admitted) => {
+          if (admitted) uploads.recover_and_cleanup();
+        });
+        void video_cleanup_work
+          .catch((error) => {
+            clearInterval(video_cleanup_timer);
+            console.error('Video upload cleanup failed', error);
+          })
+          .finally(() => {
+            video_cleanup_work = undefined;
+          });
+      }, CLEANUP_INTERVAL_SECONDS * 1000);
+      video_cleanup_timer.unref();
       // Retain the flight before recovery can synchronously request shutdown.
       recovery = Promise.resolve().then(() =>
         current.workspace_admission.operation(async (admitted) => {
@@ -304,6 +353,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
           await run_automatic_recovery(current, database!);
         }),
       );
+
       void recovery.catch((error) => console.error('Conversation startup recovery failed', error));
     }
     // Publish the owned flight before setup can synchronously request shutdown.
