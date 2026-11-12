@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from planner.environments.cli import environment
@@ -11,7 +12,7 @@ from planner.skill_sources import (
 )
 
 
-def test_account_skill_ownership(tmp_path: Path) -> None:
+def test_account_skill_ownership(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     first = tmp_path / "first" / "data"
     second = tmp_path / "second" / "data"
     for root in (first, second):
@@ -87,3 +88,23 @@ def test_account_skill_ownership(tmp_path: Path) -> None:
     warning = provision_account_skills(first, (unowned,))
     assert warning is not None and "unowned entry" in warning
     assert marker.read_text() == "user-owned"
+
+    looping_home = tmp_path / "looping-home"
+    looping_home.mkdir()
+    loop = looping_home / "skills"
+    loop.symlink_to("skills", target_is_directory=True)
+    original_resolve = Path.resolve
+
+    def python312_resolve(path: Path, strict: bool = False) -> Path:
+        # Python 3.12 raises for non-strict symlink loops. Python 3.13 does not.
+        if path == loop:
+            raise RuntimeError(f"Symlink loop from {path}")
+        return original_resolve(path, strict=strict)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "resolve", python312_resolve)
+        warning = account_skill_provisioning_conflict(first, (looping_home,))
+        assert warning is not None and str(loop) in warning
+        warning = provision_account_skills(first, (looping_home,))
+        assert warning is not None and "one instance per OS account" in warning
+    assert loop.readlink() == Path("skills")

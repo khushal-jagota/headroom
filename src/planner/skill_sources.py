@@ -76,6 +76,23 @@ def account_skill_provisioning_conflict(
     skill_names: tuple[str, ...] | None = None,
 ) -> str | None:
     """Read account ownership before any provider write, including setup previews."""
+    try:
+        return _account_skill_provisioning_conflict(
+            configured_database_parent, native_homes, skill_names=skill_names
+        )
+    except (OSError, RuntimeError) as error:
+        return _account_skill_conflict(
+            Path(getattr(error, "filename", None) or str(configured_database_parent)),
+            f"unreadable ownership ({error})",
+        )
+
+
+def _account_skill_provisioning_conflict(
+    configured_database_parent: Path | str,
+    native_homes: tuple[Path, ...],
+    *,
+    skill_names: tuple[str, ...] | None,
+) -> str | None:
     source = managed_skills_home(configured_database_parent).resolve()
     if skill_names is None:
         skill_names = tuple(path.name for path in source.iterdir() if path.is_dir())
@@ -104,12 +121,12 @@ def provision_account_skills(
     configured_database_parent: Path | str,
     native_homes: tuple[Path, ...] | None = None,
 ) -> str | None:
-    """Add missing native links, without replacing or deleting any account entry."""
+    """Reconcile owned native links without replacing foreign account entries."""
     try:
         return _provision_account_skills(configured_database_parent, native_homes)
-    except OSError as error:
+    except (OSError, RuntimeError) as error:
         return _account_skill_conflict(
-            Path(error.filename or str(configured_database_parent)),
+            Path(getattr(error, "filename", None) or str(configured_database_parent)),
             f"an unreadable or conflicting account entry ({error})",
         )
 
