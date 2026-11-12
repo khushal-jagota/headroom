@@ -1220,7 +1220,7 @@ def test_cancel_withdraws_only_its_exact_held_initial_turn(
             placed = await world.endpoint.mailbox.put_child_command(cancel)
             # Retry remains idempotent even though the mailbox records an inferred turn.
             assert await world.endpoint.mailbox.put_child_command(cancel) == placed
-            commands = []
+            commands: list[MailboxCommand] = []
             after = 0
             for _ in range(3):
                 reply = await world.poll(after)
