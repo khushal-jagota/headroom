@@ -1002,6 +1002,8 @@ def test_shared_observer_isolates_callback_failures_and_limits_record_error_logs
 
     def bad_index(context: InspectionContext | None, pair: object) -> None:
         calls[0] += 1
+        if calls[0] == 2:
+            raise ValueError("different record failure")
         raise IndexError("invalid record index")
 
     def bad_depth(context: InspectionContext | None, pair: object) -> None:
@@ -1030,11 +1032,13 @@ def test_shared_observer_isolates_callback_failures_and_limits_record_error_logs
     assert calls == [3, 3, 3]
     assert not thread.is_alive()
     errors = [record for record in caplog.records if record.name == observation.__name__]
-    assert len(errors) == 2
+    assert len(errors) == 3
     assert str(paths[0]) in errors[0].getMessage()
     assert str(paths[1]) in errors[1].getMessage()
+    assert str(paths[0]) in errors[2].getMessage()
     assert errors[0].exc_info is not None and errors[0].exc_info[0] is IndexError
     assert errors[1].exc_info is not None and errors[1].exc_info[0] is RecursionError
+    assert errors[2].exc_info is not None and errors[2].exc_info[0] is ValueError
 
 
 def test_register_restarts_a_retained_dead_observer_thread(
@@ -1218,3 +1222,64 @@ def test_concurrent_stops_leave_the_default_executor_free(
         assert all(result.complete for result in results)
 
     asyncio.run(run())
+
+
+def test_shared_observer_retries_an_unexpected_inventory_error_on_the_same_thread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An unexpected inventory failure cannot abandon existing Worker registrations."""
+    import logging
+    import threading
+
+    from planner.worker_supervision import observation
+    from planner.worker_supervision.contracts import InspectionContext, ProcessObservation
+
+    monkeypatch.setattr(config, "OBSERVATION_SECONDS", 0.01)
+    native = _Primitives({})
+    context = InspectionContext(native, LocalHostBootIdentity("host", "boot"))
+    observer = observation.SharedProcessObserver(lambda deadline: context)
+    path = _record(tmp_path)
+    supervisor = object.__new__(WorkerSupervisor)
+    supervisor.path = path
+    supervisor._lock = threading.Lock()
+    supervisor._end = threading.Event()
+    failed_callbacks = 0
+    finished = threading.Event()
+    callback_threads = []
+    snapshots = 0
+
+    def snapshot(deadline: float) -> dict[int, WorkerProcess]:
+        nonlocal snapshots
+        snapshots += 1
+        if snapshots == 1:
+            raise IndexError("unexpected process inventory shape")
+        return native.table
+
+    def callback(context: InspectionContext | None, pair: ProcessObservation | None) -> None:
+        nonlocal failed_callbacks
+        supervisor._observe_periodic(context, pair)
+        if pair is None:
+            failed_callbacks += 1
+            assert records.read(path)["observation_error"] == "A process observation failed"
+            return
+        assert "observation_error" not in records.read(path)
+        callback_threads.append(threading.current_thread())
+        observer.unregister(path)
+        finished.set()
+
+    monkeypatch.setattr(native, "snapshot", snapshot)
+    with caplog.at_level(logging.ERROR, logger=observation.__name__):
+        observer.register(path, callback)
+        thread = observer._thread
+        assert thread is not None
+        try:
+            assert finished.wait(1)
+        finally:
+            observer.unregister(path)
+            thread.join(1)
+    assert not thread.is_alive()
+    assert snapshots == 3 and failed_callbacks == 1
+    assert callback_threads == [thread]
+    errors = [record for record in caplog.records if record.name == observation.__name__]
+    assert len(errors) == 1 and "shared pass" in errors[0].getMessage()
+    assert errors[0].exc_info is not None and errors[0].exc_info[0] is IndexError

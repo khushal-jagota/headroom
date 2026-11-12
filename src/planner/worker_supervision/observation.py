@@ -70,41 +70,72 @@ class SharedProcessObserver:
 
     def _run(self) -> None:
         context: InspectionContext | None = None
-        next_error_log: dict[Path, float] = {}
-        due = time.monotonic() + config.OBSERVATION_SECONDS
+        next_error_log: dict[tuple[Path | None, type[Exception]], float] = {}
+        due: float | None = None
         while True:
-            with self._condition:
-                if not self._callbacks:
-                    # Registration and thread retirement share this lock, so a
-                    # concurrent registration either keeps this thread or starts one.
-                    self._thread = None
-                    return
-                remaining = due - time.monotonic()
-                if remaining > 0:
-                    self._condition.wait(remaining)
-                    continue
-                callbacks = tuple(self._callbacks.items())
-                next_error_log = {
-                    path: due for path, due in next_error_log.items() if path in self._callbacks
-                }
-            observation = None
-            deadline = time.monotonic() + config.INSPECTION_SECONDS
             try:
-                if context is None:
-                    context = self._context_factory(deadline)
-                observation = capture_observation(context, deadline)
-            except (OSError, ValueError, TypeError, KeyError, TimeoutError):
-                pass
-            for path, callback in callbacks:
+                with self._condition:
+                    if not self._callbacks:
+                        # Registration and thread retirement share this lock, so a
+                        # concurrent registration keeps this thread or starts one.
+                        self._thread = None
+                        return
+                    if due is None:
+                        due = time.monotonic() + config.OBSERVATION_SECONDS
+                    remaining = due - time.monotonic()
+                    if remaining > 0:
+                        self._condition.wait(remaining)
+                        continue
+                    callbacks = tuple(self._callbacks.items())
+                    next_error_log = {
+                        key: next_due
+                        for key, next_due in next_error_log.items()
+                        if key[0] is None or key[0] in self._callbacks
+                    }
+                deadline = time.monotonic() + config.INSPECTION_SECONDS
+                observation = None
                 try:
-                    callback(context, observation)
+                    if context is None:
+                        context = self._context_factory(deadline)
+                    observation = capture_observation(context, deadline)
+                except Exception as error:
+                    _log_observation_error(None, error, next_error_log)
+                for path, callback in callbacks:
+                    try:
+                        callback(context, observation)
+                    except Exception as error:
+                        # One malformed record cannot skip other Workers in this pass.
+                        _log_observation_error(path, error, next_error_log)
+                due = time.monotonic() + config.OBSERVATION_SECONDS
+            except Exception as error:
+                _log_observation_error(None, error, next_error_log)
+                try:
+                    with self._condition:
+                        # A partial unregister must not turn a repeated inventory
+                        # failure into a busy loop. The last unregister still exits promptly.
+                        self._condition.wait_for(
+                            lambda: not self._callbacks, timeout=config.OBSERVATION_SECONDS
+                        )
+                    due = 0
                 except Exception:
-                    # One malformed record cannot end observation of every Worker.
-                    now = time.monotonic()
-                    if now >= next_error_log.get(path, now):
-                        logger.exception("Worker process observation failed for %s", path)
-                        next_error_log[path] = now + config.OBSERVATION_ERROR_LOG_SECONDS
-            due = time.monotonic() + config.OBSERVATION_SECONDS
+                    # Error reporting and retry bookkeeping cannot end observation.
+                    pass
+
+
+def _log_observation_error(
+    path: Path | None,
+    error: Exception,
+    next_error_log: dict[tuple[Path | None, type[Exception]], float],
+) -> None:
+    try:
+        now = time.monotonic()
+        key = (path, type(error))
+        if now >= next_error_log.get(key, now):
+            next_error_log[key] = now + config.OBSERVATION_ERROR_LOG_SECONDS
+            logger.exception("Worker process observation failed for %s", path or "shared pass")
+    except Exception:
+        # A broken logging handler must not stop the shared observer either.
+        pass
 
 
 FreshObservationKey = tuple[type[WorkerProcessPrimitives], LocalHostBootIdentity]
