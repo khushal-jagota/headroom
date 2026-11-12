@@ -57,7 +57,7 @@ The shared helper opens its path directly and can follow a substituted parent or
 It cannot supply a retained-parent, no-follow lock creation unchanged, so the executor reuses the native mechanism through its platform boundary.
 The exposed executor lock modes are nonblocking exclusive acquisition and unlock. No blocking acquisition mode exists.
 
-A regular-file flush calls plain libc `fsync`, then strict Darwin `fcntl(F_FULLFSYNC)`.
+A regular-file flush calls plain libc `fsync`, then strict Darwin `fcntl(F_FULLFSYNC)` with an explicit variadic `int` zero.
 Failure of the second call propagates. The code does not substitute libuv's full-flush fallback policy.
 Post-rename publication calls plain directory `fsync`, as Python does.
 Directory creation retains Python's stricter parent-flush sequence.
