@@ -36,7 +36,9 @@ export PANELS_PORT=8767
 ```
 
 The source and record remain separate. Configuration is at `$PANELS_ROOT/data/config.yaml`.
-The database, skills, and settings live under `data/`. Workspaces live under `workspaces/`.
+The database, skills, and settings live under `data/`.
+Local Ticket worktrees live under `data/files/tickets/<ticket-id>/worktree`.
+The configured workspace root is `workspaces/`.
 Private sockets and the port-scoped lease live under `/var/tmp/panels-<uid>/`, with mode 0700.
 These short runtime paths do not depend on the length of the state path.
 
@@ -48,8 +50,11 @@ It retains explicitly configured `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and `PLAN_HE
 Without those variables, it uses `~/.codex`, `~/.claude`, and `~/.hermes`.
 If you use custom provider folders, export their existing paths before the setup command.
 
-The source home uses its own workspaces and projects its skills there.
-It does not provision account-wide skill links in these shared provider homes.
+The source home currently projects managed skills under `$PANELS_ROOT/workspaces/.agents/skills`.
+Local Ticket Workers start under `$PANELS_ROOT/data/files/tickets/` and do not receive that projection.
+A Worker can read another instance's account skills, or find no Panels skills at all.
+The install is not yet a usable Worker home until its own skill authority reaches the actual Worker context.
+Source startup does not provision account-wide skill links in the shared provider homes.
 For a coexistence check, use the canonical provider home and compare the live executor's setup and skills before and after.
 Do not copy `auth.json` or change login, provider configuration, or global skill links for that check.
 
