@@ -100,6 +100,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   let publication: SignalPublicationCoordinator | undefined;
   let core: SqliteProcessConversationSystem | undefined;
   let backendServices: BackendHttpRuntime | undefined;
+  let video_uploads: VideoUploadService | undefined;
   let app: FastifyInstance | undefined;
   let ownership_current = true;
   let signalRevoked = false;
@@ -122,7 +123,9 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   const close = (): Promise<void> => {
     if (closing) return closing;
     conversationWrites.seal();
-    media_lifetime.abort(new Error('Media processing stopped at shutdown'));
+    video_uploads?.seal();
+    // Stop new connections without destroying active request bodies.
+    app?.server.close(() => {});
     clearInterval(video_cleanup_timer);
     revokeSignal();
     areas.closeSubscriptions();
@@ -136,6 +139,9 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       }
     };
     closing = (async () => {
+      // On deadline failure retain the database and ownership beneath active transfers.
+      await video_uploads?.drain({ deadline });
+      media_lifetime.abort(new Error('Media processing stopped at shutdown'));
       await attempt(() => video_cleanup_work);
       await attempt(() =>
         backendServices?.shutdown
@@ -194,9 +200,10 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       revoke_signal: revokeSignal,
     };
     core = options.createConversationCore?.(context);
-    const video_uploads = new VideoUploadService(database, config.db_path, {
+    video_uploads = new VideoUploadService(database, config.db_path, {
       signal: media_lifetime.signal,
     });
+    const uploads = video_uploads;
     const conversation_http = core
       ? {
           core,
@@ -286,11 +293,11 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     }
     if (core) {
       const current = core;
-      video_uploads.recover_and_cleanup();
+      uploads.recover_and_cleanup();
       video_cleanup_timer = setInterval(() => {
         if (closing !== undefined || video_cleanup_work !== undefined) return;
         video_cleanup_work = current.workspace_admission.operation(async (admitted) => {
-          if (admitted) video_uploads.recover_and_cleanup();
+          if (admitted) uploads.recover_and_cleanup();
         });
         void video_cleanup_work
           .catch((error) => {

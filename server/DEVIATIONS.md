@@ -2,35 +2,6 @@
 
 This file records intentional differences that the migration Manager accepted. No new difference enters this file without that acceptance. Close an entry when Python adopts the same behavior.
 
-## Video chunk writes outside the write door
-
-The migration Manager accepted this difference for Unit 19. Python writes each chunk
-inside its write transaction. TypeScript checks capacity and state, writes the chunk
-outside the write door, then commits the progress count in a short transaction.
-Neither hashing, media probing, nor file copying occurs under that door.
-
-The direct upload sequence compares Python and TS answers, rows, and exact file bytes
-after every operation. It includes identical repeated chunks, an interrupted stream,
-and a retry with the same bytes. Repeated bytes append on both sides. A failed or
-interrupted transfer does not become resumable. The proof is
-`tests/compare/direct/test_unit_19_uploads.py`, with its export-only companion under
-`conversation/video_uploads/testing/`. The real HTTP list also transfers a playable
-MP4, probes it, and sends it through Ticket and Chief doors.
-
-During a TS write, another reader can see the previous progress count, and another
-writer can cancel the upload. Python serializes other writers until its chunk commit.
-TS checks the state again before its progress commit. A cancellation follows the same
-failure cleanup path and cannot restore a ready upload.
-
-A crash between the TS file write and progress commit can leave temporary bytes ahead
-of the stored count. Python can also leave bytes ahead if its transaction rolls back
-after the kernel receives a write. Its buffered output can leave bytes behind a
-committed count until a buffer flush. Both flush the complete file before probing.
-At the next start, both retain a nonexpired `transferring` row, refuse a fresh transfer,
-and retain the quota reservation. Neither resumes it or declares it ready. At expiry,
-cleanup removes the temporary file and marks the row cancelled. The detailed ordering
-analysis is in [the upload README](conversation/video_uploads/README.md).
-
 ## Backend discovery in test mode
 
 The migration Manager accepted this safer rule during Unit 19's backend review.

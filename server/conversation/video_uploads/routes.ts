@@ -111,14 +111,15 @@ export function createVideoUploadRoutes(
       bytes.put<{ Params: { upload_id: string } }>('/:upload_id/bytes', async (request) =>
         upload_answer(async () => {
           checked_status(request.params.upload_id);
-          const stream = request.body as Readable;
+          const stream = request.body as Readable | undefined;
+          const empty = async function* (): AsyncGenerator<Uint8Array> {};
           const abort = () => {
-            stream.destroy();
+            stream?.destroy();
           };
           signal?.addEventListener('abort', abort, { once: true });
           if (signal?.aborted) abort();
           try {
-            return await service.transfer(request.params.upload_id, stream);
+            return await service.transfer(request.params.upload_id, stream ?? empty());
           } finally {
             signal?.removeEventListener('abort', abort);
           }

@@ -1,4 +1,5 @@
 export const VOICE_TRANSCRIPTION_TIMEOUT_SECONDS = 60;
+export const VOICE_HTTP_WRITE_CHUNK_BYTES = 64 * 1024;
 export const SILENCE_TRIM_TIMEOUT_SECONDS = 30;
 export const FFMPEG_PATH = '/usr/bin/ffmpeg';
 export const EFFECTIVELY_SILENT_BYTES = 1024;

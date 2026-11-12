@@ -39,6 +39,7 @@ LIMITS = {
     "free_space_floor_bytes": 100,
     "upload_ttl_seconds": 10,
     "transfer_chunk_bytes": 4,
+    "progress_record_bytes": 8,
 }
 DESTINATION = UploadDestination(kind="chief", id="chief", expected_conversation_id=None)
 
@@ -64,8 +65,16 @@ def operations() -> list[dict[str, Any]]:
         {"op": "reserve", "name": "filename", "filename": "../clip.mp4", "byte_count": 4},
         {"op": "free", "name": "low-space", "value": 105},
         {"op": "reserve", "name": "low-space", "filename": "clip.mp4", "byte_count": 8},
+        {"op": "reserve", "name": "disk-filled", "filename": "clip.mp4", "byte_count": 4},
+        {
+            "op": "transfer",
+            "name": "disk-filled",
+            "chunks": ["6162", "6364"],
+            "free_after_chunk": 101,
+        },
         {"op": "free", "name": "restore-space", "value": 1000},
         {"op": "reserve", "name": "cancelled", "filename": "clip.mp4", "byte_count": 4},
+        {"op": "transfer", "name": "cancelled", "chunks": []},
         {"op": "cancel", "name": "cancelled"},
         {"op": "transfer", "name": "cancelled", "chunks": ["61626364"]},
         {"op": "reserve", "name": "pinned", "filename": "clip.mp4", "byte_count": 4},
@@ -86,7 +95,14 @@ async def python_answers(path: Path, steps: list[dict[str, Any]]) -> dict[str, A
     references: dict[str, str] = {}
     names: dict[str, str] = {}
     probe_calls: list[dict[str, Any]] = []
+    progress_calls: list[dict[str, Any]] = []
+    chunk_observations: list[dict[str, Any]] = []
     service = source.VideoUploadService(path)
+    original_record_progress = service._record_progress
+
+    def record_progress(upload_id: str, received: int) -> None:
+        progress_calls.append({"upload": names[upload_id], "received_bytes": received})
+        original_record_progress(upload_id, received)
 
     def require_probe() -> None:
         nonlocal requires
@@ -143,6 +159,7 @@ async def python_answers(path: Path, steps: list[dict[str, Any]]) -> dict[str, A
     with (
         patch.object(source, "require_probe", require_probe),
         patch.object(source, "probe_video", probe),
+        patch.object(service, "_record_progress", record_progress),
         patch("planner.conversation.video_uploads.service.time.time", lambda: now),
         patch(
             "planner.conversation.video_uploads.service.shutil.disk_usage",
@@ -155,6 +172,7 @@ async def python_answers(path: Path, steps: list[dict[str, Any]]) -> dict[str, A
             FREE_SPACE_FLOOR_BYTES=100,
             UPLOAD_TTL_SECONDS=10,
             TRANSFER_CHUNK_BYTES=4,
+            PROGRESS_RECORD_BYTES=8,
         ),
     ):
         for step in steps:
@@ -176,8 +194,19 @@ async def python_answers(path: Path, steps: list[dict[str, Any]]) -> dict[str, A
                 elif op == "transfer":
 
                     async def chunks(step: dict[str, Any] = step) -> AsyncIterator[bytes]:
+                        nonlocal free
                         for chunk in step.get("chunks", []):
                             yield bytes.fromhex(chunk)
+                            chunk_observations.append(
+                                {
+                                    "upload": step["name"],
+                                    "received_bytes": service.status(
+                                        references[step["name"]]
+                                    ).received_bytes,
+                                }
+                            )
+                            if "free_after_chunk" in step:
+                                free = step["free_after_chunk"]
                         if step.get("interrupted"):
                             raise VideoUploadError("Synthetic interrupted stream.")
 
@@ -213,7 +242,13 @@ async def python_answers(path: Path, steps: list[dict[str, Any]]) -> dict[str, A
                         **snapshot(),
                     }
                 )
-    return {"answers": answers, "probe_calls": probe_calls, "requires": requires}
+    return {
+        "answers": answers,
+        "probe_calls": probe_calls,
+        "progress_calls": progress_calls,
+        "chunk_observations": chunk_observations,
+        "requires": requires,
+    }
 
 
 def test_unit19_upload_intake_rows_and_bytes(
@@ -272,5 +307,33 @@ def test_unit19_upload_intake_rows_and_bytes(
         (folder / "unit19-upload-intake.json").write_text(json.dumps(report, indent=2) + "\n")
     assert expected["answers"][1]["files"]["ready"]["temporary"] == "6162636461626364"
     assert expected["answers"][5]["status"] == 409
+    assert expected["answers"][4]["rows"][1]["received_bytes"] == 0
+    assert expected["progress_calls"][:2] == [
+        {"upload": "ready", "received_bytes": 8},
+        {"upload": "ready", "received_bytes": 8},
+    ]
+    assert expected["chunk_observations"][:2] == [
+        {"upload": "ready", "received_bytes": 0},
+        {"upload": "ready", "received_bytes": 8},
+    ]
+    disk_filled = next(
+        answer
+        for answer in expected["answers"]
+        if answer["name"] == "disk-filled" and answer["op"] == "transfer"
+    )
+    assert disk_filled["status"] == 507
+    assert disk_filled["answer"] == {"detail": "Video upload stopped: disk space is low."}
+    assert (
+        next(row for row in disk_filled["rows"] if row["upload_id"] == "disk-filled")["error"]
+        == disk_filled["answer"]["detail"]
+    )
+    empty_body = next(
+        answer
+        for answer in expected["answers"]
+        if answer["name"] == "cancelled" and answer["op"] == "transfer" and answer["status"] == 400
+    )
+    assert empty_body["answer"] == {
+        "detail": "Video transfer was interrupted. Retry the attachment."
+    }
     assert expected["answers"][-1]["answer"]["state"] == "admitted"
     assert actual == expected

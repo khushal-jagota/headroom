@@ -18,40 +18,51 @@ Transfer accepts an async iterable of byte arrays. Each incoming array is divide
 into the configured chunks. A fresh transfer requires `reserved`, starts at zero,
 and creates its temporary file exclusively. It does not resume a partial transfer.
 An interrupted or oversized transfer fails, removes the temporary file, and keeps
-the received-byte count for the chunks already committed. A second transfer call
+the received-byte count from its last committed progress checkpoint. A second transfer call
 for that upload receives the same unavailable error as Python.
 
-## File-write order
+## Progress policy
 
-The Manager accepted one deviation from Python's chunk writer. Python checks
-state and capacity, writes through a buffered file object, and commits progress
-inside one write transaction. TS reads state and capacity, awaits the file write
-outside the write door, then checks state again and commits progress in a short
-transaction. It flushes the complete file before probing. Hashing, media probing,
-and file copying never occur under the write door.
+Python staging PR 756 moves chunk writes outside its write transaction. TS now
+matches that policy. Each chunk checks the physical disk floor, then writes with
+no transaction open. Progress is recorded after each 8 MiB threshold and
+unconditionally at EOF, before the final flush. Each progress transaction checks
+state, updates the received count, then checks outstanding disk reservations.
+Cancellation and reservation checks occur at those same checkpoints on both sides.
+The capacity query reads filesystem metadata only. Transfer byte writes, hashing,
+media probes, and copies stay outside the write door. The existing `adopt` and
+`finish` paths still rename files and write the media-type sidecar inside their
+transactions, as Python does. Those short operations are not transfer writes.
 
-An ordinary sequence of chunks yields the same final file bytes, progress rows,
-and route answer. Repeating an identical byte chunk appends those bytes again on
-both sides. It is not a chunk identity or deduplication protocol. If that exceeds
-the reservation, both sides fail the transfer.
+The direct sequence uses an eight-byte threshold and four-byte chunks to prove
+threshold and EOF checkpoints without a large fixture. It compares the progress
+calls, rows, answers, and final bytes against Python commit `2f2410343` or newer.
+Repeating identical chunk bytes appends them on both sides. It is not a chunk
+identity or deduplication protocol. An interrupted transfer cannot resume.
 
-During a TS write, another request can read the previous progress or cancel the
-upload. Python's write transaction serializes that request until its chunk commit.
-TS checks the state after the file write. A concurrent cancellation prevents the
-progress commit. The transfer then follows Python's failure path, removes the
-temporary file, and records `failed`. It does not resurrect a ready upload.
-
-A crash after a TS file write and before its progress transaction can leave file
-bytes ahead of `received_bytes`. Python can also leave bytes ahead when its file
-write reaches the kernel before an uncommitted transaction rolls back. Python's
-buffered writes can additionally leave bytes behind a committed count until its
-buffer flushes. Neither implementation claims the temporary bytes are durable
-until the final file flush. In both cases, startup finds a `transferring` row and
-temporary file. Recovery does not resume or mark that row ready. A fresh transfer
-is refused. At its expiry, cleanup removes the file and marks the row `cancelled`.
-Before expiry, its outstanding reservation remains part of capacity accounting.
+TS writes through a FileHandle, while Python writes through a buffered file
+object. Temporary bytes can therefore become visible on disk at different times.
+Those files are not served through a public route before readiness. Neither side
+promises durability before the final flush. A crash before a checkpoint can leave
+bytes ahead of the stored count. Python buffering can also leave bytes behind a
+committed count until it flushes. Both retain a nonexpired transferring row at
+startup, refuse a new transfer for that row, retain its quota, then remove and
+cancel it at expiry. This is not a remaining progress-policy deviation.
 
 Recovery preserves uncertain admissions. If an admitted row's recorded target
 contains its accepted prompt identity, recovery marks it linked. Expiry cleanup
 never removes admitted or linked files. The parent Ticket records the direct
-comparison and accepted deviation in its final evidence and `server/DEVIATIONS.md`.
+comparison and exact Python baseline in its final evidence.
+
+## Shutdown and disconnect
+
+Python's ordinary graceful shutdown waits for an active PUT without a timeout.
+The transfer stays active until it completes or the client disconnects. TS seals
+new intake and waits for tracked transfers before record or database closure.
+The shared shutdown deadline bounds that wait. If it expires, teardown stops and
+retains the database and runtime ownership beneath the active transfer. It does
+not abort that transfer or invent a shutdown error in its row.
+
+A client disconnect removes the temporary file and records `Upload interrupted.`,
+with the last committed progress checkpoint, as Python does. The focused app test
+proves the retained state at a drain deadline and the later disconnect cleanup.

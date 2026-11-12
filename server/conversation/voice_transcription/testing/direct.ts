@@ -2,6 +2,8 @@
 import { transcribe_conversation_audio } from '../service.ts';
 import { VoiceTranscriptionTransportError } from '../contracts.ts';
 import { silence_trim_result, without_whisper_hallucination } from '../logic.ts';
+import { voice_multipart } from '../multipart.ts';
+import { decode_voice_content, parse_voice_json } from '../response.ts';
 interface VoiceCase {
   readonly name: string;
   readonly api_key: string | null;
@@ -22,9 +24,21 @@ interface Spec {
   readonly phrases: readonly string[];
   readonly transcriptions: readonly VoiceCase[];
   readonly trim_results: readonly TrimCase[];
+  readonly encoded_responses: readonly {
+    name: string;
+    body_hex: string;
+    content_encoding: string;
+  }[];
 }
 export async function compare_voice(spec: Spec): Promise<unknown> {
   const audio = Buffer.from(spec.audio_hex, 'hex');
+  const multipart = voice_multipart(
+    {
+      data: { model: 'recorded-whisper', response_format: 'json' },
+      file: { filename: 'audio.ogg', contents: audio, media_type: 'audio/ogg' },
+    },
+    'panels-voice-proof',
+  );
   const transcriptions = [];
   for (const scenario of spec.transcriptions) {
     const calls: unknown[] = [];
@@ -75,6 +89,24 @@ export async function compare_voice(spec: Spec): Promise<unknown> {
     transcriptions.push({ name: scenario.name, answer, calls });
   }
   return {
+    encoded_responses: spec.encoded_responses.map((scenario) => {
+      let answer: unknown;
+      try {
+        const content = decode_voice_content(
+          Buffer.from(scenario.body_hex, 'hex'),
+          scenario.content_encoding,
+        );
+        answer = { json: parse_voice_json(content) };
+      } catch (error) {
+        answer = { error: error instanceof SyntaxError ? 'not-json' : 'transport' };
+      }
+      return { name: scenario.name, answer };
+    }),
+    multipart: {
+      content_type: multipart.content_type,
+      content_length: multipart.content_length,
+      body_hex: Buffer.concat(multipart.parts.map((part) => Buffer.from(part))).toString('hex'),
+    },
     phrases: spec.phrases.map(without_whisper_hallucination),
     transcriptions,
     trim_results: spec.trim_results.map((scenario) => {

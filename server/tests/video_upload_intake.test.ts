@@ -12,12 +12,16 @@ import { createVoiceRoutes } from '../conversation/voice_transcription/routes.ts
 import { fixture, fixture_path } from './ticket_fixture.ts';
 
 // Reuse the ordinary app and Ticket fixture. No listener, host, or media process is needed.
-test('shutdown wakes a pending upload stream and removes its failed temporary file', async () => {
+test('shutdown waits for upload settlement and a disconnect records Python interruption text', async () => {
   const original = fixture();
   const controller = new AbortController();
   let failed!: () => void;
   const failure_committed = new Promise<void>((resolve) => {
     failed = resolve;
+  });
+  let progressed!: () => void;
+  const progress_committed = new Promise<void>((resolve) => {
+    progressed = resolve;
   });
   let scheduled = false;
   const database: Database = {
@@ -30,9 +34,9 @@ test('shutdown wakes a pending upload stream and removes its failed temporary fi
         ),
       );
       if (progress?.state === 'failed') failed();
-      if (!scheduled && progress !== undefined && progress.received_bytes >= 4) {
+      if (!scheduled && progress !== undefined && progress.received_bytes >= 8) {
         scheduled = true;
-        queueMicrotask(() => controller.abort(new Error('Synthetic media shutdown')));
+        queueMicrotask(progressed);
       }
       return result;
     },
@@ -51,12 +55,13 @@ test('shutdown wakes a pending upload stream and removes its failed temporary fi
       video_budget_bytes: 32,
       free_space_floor_bytes: 0,
       transfer_chunk_bytes: 4,
+      progress_record_bytes: 8,
     },
   });
   const reserved = service.reserve({
     destination: { kind: 'chief', id: 'chief', expected_conversation_id: null },
     filename: 'synthetic.mp4',
-    byte_count: 8,
+    byte_count: 12,
   });
   const config = loadConfig(undefined, {
     PLAN_TEST_MODE: '1',
@@ -89,7 +94,7 @@ test('shutdown wakes a pending upload stream and removes its failed temporary fi
     read() {
       if (!sent) {
         sent = true;
-        this.push(Buffer.from('part'));
+        this.push(Buffer.from('partpart'));
       }
       // The source intentionally waits forever for its next chunk and never sends EOF.
     },
@@ -125,23 +130,43 @@ test('shutdown wakes a pending upload stream and removes its failed temporary fi
         sql.get<{ count: number }>('SELECT count(*) AS count FROM conversations'),
       )?.count,
     ).toBe(0);
-    const response = app.inject({
-      method: 'PUT',
-      url: `/api/conversation/video-uploads/${reserved.upload_id}/bytes`,
-      headers: { 'content-type': 'application/octet-stream', 'transfer-encoding': 'chunked' },
-      payload: stream,
+    const response = app
+      .inject({
+        method: 'PUT',
+        url: `/api/conversation/video-uploads/${reserved.upload_id}/bytes`,
+        headers: { 'content-type': 'application/octet-stream', 'transfer-encoding': 'chunked' },
+        payload: stream,
+      })
+      .then(
+        (value) => ({ response: value }),
+        (error: unknown) => ({ error }),
+      );
+    await progress_committed;
+    await expect(service.drain({ deadline: performance.now() / 1000 + 0.01 })).rejects.toThrow(
+      'Video transfers did not settle before the shutdown deadline',
+    );
+    expect(service.status(reserved.upload_id)).toMatchObject({
+      state: 'transferring',
+      received_bytes: 8,
+      error: null,
     });
-    // Destroying the incoming request also closes its transport. No answer is owed at shutdown.
-    await expect(response).rejects.toThrow('response destroyed before completion');
+    expect(existsSync(join(service.root, reserved.upload_id))).toBe(true);
+    // Graceful shutdown retains the transfer. Client disconnect performs cleanup.
+    stream.destroy(new Error('aborted'));
+    const disconnected = await response;
+    expect('error' in disconnected && disconnected.error).toBeInstanceOf(Error);
     await failure_committed;
+    await service.drain({ deadline: performance.now() / 1000 + 1 });
     expect(service.status(reserved.upload_id)).toMatchObject({
       state: 'failed',
-      received_bytes: 4,
+      received_bytes: 8,
+      error: 'Upload interrupted.',
     });
     expect(existsSync(join(service.root, reserved.upload_id))).toBe(false);
   } finally {
     stream.destroy();
     controller.abort();
+    await service.drain({ deadline: performance.now() / 1000 + 1 });
     await app.close();
   }
 });

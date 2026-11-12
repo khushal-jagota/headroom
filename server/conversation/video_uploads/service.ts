@@ -75,6 +75,8 @@ function remove_if_present(path: string): void {
   }
 }
 export class VideoUploadService {
+  private sealed = false;
+  private readonly transfers = new Set<Promise<VideoUploadStatus>>();
   readonly database: Database;
   readonly db_path: string;
   readonly root: string;
@@ -172,6 +174,7 @@ export class VideoUploadService {
   }
 
   reserve(request: ReserveVideoUpload): VideoUploadStatus {
+    if (this.sealed) throw new VideoUploadError('Video uploads are shutting down.', 503);
     this.require_probe();
     validate_filename(request.filename);
     if (request.byte_count > this.limits.max_video_bytes)
@@ -228,9 +231,46 @@ export class VideoUploadService {
   }
 
   async transfer(upload_id: string, chunks: AsyncIterable<Uint8Array>): Promise<VideoUploadStatus> {
+    if (this.sealed) throw new VideoUploadError('Video uploads are shutting down.', 503);
+    const operation = this.receive_transfer(upload_id, chunks);
+    this.transfers.add(operation);
+    void operation.then(
+      () => this.transfers.delete(operation),
+      () => this.transfers.delete(operation),
+    );
+    return await operation;
+  }
+
+  seal(): void {
+    this.sealed = true;
+  }
+
+  async drain(options: { deadline: number }): Promise<void> {
+    this.seal();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.allSettled([...this.transfers]),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('Video transfers did not settle before the shutdown deadline')),
+            Math.max(0, (options.deadline - performance.now() / 1000) * 1000),
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async receive_transfer(
+    upload_id: string,
+    chunks: AsyncIterable<Uint8Array>,
+  ): Promise<VideoUploadStatus> {
     this.signal?.throwIfAborted();
     const [declared, filename] = this.begin_transfer(upload_id);
     let received = 0;
+    let recorded = 0;
     let output: FileHandle | undefined;
     try {
       output = await open(this.temporary(upload_id), 'wx');
@@ -245,9 +285,14 @@ export class VideoUploadService {
             const chunk = incoming.subarray(offset, offset + this.limits.transfer_chunk_bytes);
             if (received + chunk.length > declared)
               throw new VideoUploadError('Transfer exceeds its reserved size.', 413);
-            received = await this.store_chunk(upload_id, output, chunk, received);
+            received = await this.store_chunk(output, chunk, received);
+            if (received - recorded >= this.limits.progress_record_bytes) {
+              this.record_progress(upload_id, received);
+              recorded = received;
+            }
           }
         }
+        this.record_progress(upload_id, received);
         await output.sync();
         this.signal?.throwIfAborted();
       } finally {
@@ -263,8 +308,17 @@ export class VideoUploadService {
       return this.mark_ready(upload_id, media_type);
     } catch (error) {
       // File writes and failures occur outside the write door. Commit only facts.
-      this.mark_failed(upload_id, this.signal?.aborted ? this.signal.reason : error);
+      const disconnected =
+        error instanceof Error &&
+        (error.message === 'aborted' ||
+          ('code' in error &&
+            ['ECONNRESET', 'ERR_STREAM_PREMATURE_CLOSE', 'ABORT_ERR'].includes(
+              String(error.code),
+            )));
+      const interrupted = this.signal?.aborted || disconnected;
+      this.mark_failed(upload_id, interrupted ? new Error('Upload interrupted.') : error);
       this.signal?.throwIfAborted();
+      if (disconnected) throw new Error('Upload interrupted.');
       if (error instanceof Error && 'code' in error)
         throw new VideoUploadError('Video could not be stored. Retry the attachment.', 507);
       throw error;
@@ -287,18 +341,12 @@ export class VideoUploadService {
   }
 
   private async store_chunk(
-    upload_id: string,
     output: FileHandle,
     chunk: Uint8Array,
     received: number,
   ): Promise<number> {
     this.signal?.throwIfAborted();
     const free_bytes = this.disk_free_bytes();
-    this.database.read((sql) => {
-      if (this.row(sql, upload_id).state !== 'transferring')
-        throw new VideoUploadError('The video upload was cancelled or expired.', 409);
-      this.disk_capacity(sql, free_bytes);
-    });
     if (free_bytes - chunk.length < this.limits.free_space_floor_bytes)
       throw new VideoUploadError('Video upload stopped: disk space is low.', 507);
     let written = 0;
@@ -308,7 +356,11 @@ export class VideoUploadService {
       written += result.bytesWritten;
       this.signal?.throwIfAborted();
     }
-    received += chunk.length;
+    return received + chunk.length;
+  }
+
+  private record_progress(upload_id: string, received: number): void {
+    this.signal?.throwIfAborted();
     this.database.write((tx) => {
       if (this.row(tx, upload_id).state !== 'transferring')
         throw new VideoUploadError('The video upload was cancelled or expired.', 409);
@@ -316,8 +368,8 @@ export class VideoUploadService {
         received,
         upload_id,
       ]);
+      this.disk_capacity(tx, this.disk_free_bytes());
     });
-    return received;
   }
 
   private mark_ready(upload_id: string, media_type: string): VideoUploadStatus {

@@ -2,6 +2,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createDatabase } from '../../../core/database/index.ts';
+import type { Database, SqlValue, TransactionSql } from '../../../core/database/contracts.ts';
 import { VideoUploadService } from '../service.ts';
 import { VideoUploadError } from '../contracts.ts';
 import type { ReserveVideoUpload, VideoUploadStatus } from '../contracts.ts';
@@ -13,6 +14,7 @@ interface Operation {
   byte_count?: number;
   chunks?: readonly string[];
   interrupted?: boolean;
+  free_after_chunk?: number;
   value?: number;
 }
 interface Row extends Record<string, unknown> {
@@ -35,7 +37,31 @@ export async function run(spec: Spec): Promise<unknown> {
   const references = new Map<string, string>();
   const names = new Map<string, string>();
   const probe_calls: unknown[] = [];
-  const service = new VideoUploadService(database, spec.db_path, {
+  const progress_calls: unknown[] = [];
+  const chunk_observations: unknown[] = [];
+  const recording_database: Database = {
+    read: database.read.bind(database),
+    close: database.close.bind(database),
+    write: (work, options) =>
+      database.write((tx) => {
+        const recording: TransactionSql = {
+          get: tx.get.bind(tx),
+          all: tx.all.bind(tx),
+          run: (query, parameters) => {
+            if (query.includes('SET received_bytes=')) {
+              const values = parameters as readonly SqlValue[];
+              progress_calls.push({
+                upload: names.get(String(values[1])),
+                received_bytes: values[0],
+              });
+            }
+            return tx.run(query, parameters);
+          },
+        };
+        return work(recording);
+      }, options),
+  };
+  const service = new VideoUploadService(recording_database, spec.db_path, {
     now: () => now,
     limits: spec.limits,
     disk_free_bytes: () => free,
@@ -107,7 +133,14 @@ export async function run(spec: Spec): Promise<unknown> {
           answer = { ...result, upload_id: operation.name };
         } else if (operation.op === 'transfer') {
           const chunks = async function* () {
-            for (const chunk of operation.chunks ?? []) yield Buffer.from(chunk, 'hex');
+            for (const chunk of operation.chunks ?? []) {
+              yield Buffer.from(chunk, 'hex');
+              chunk_observations.push({
+                upload: operation.name,
+                received_bytes: service.status(id).received_bytes,
+              });
+              if (operation.free_after_chunk !== undefined) free = operation.free_after_chunk;
+            }
             if (operation.interrupted) throw new VideoUploadError('Synthetic interrupted stream.');
           };
           const result = await service.transfer(id, chunks());
@@ -144,7 +177,7 @@ export async function run(spec: Spec): Promise<unknown> {
         });
       }
     }
-    return { answers, probe_calls, requires };
+    return { answers, probe_calls, progress_calls, chunk_observations, requires };
   } finally {
     database.close();
   }

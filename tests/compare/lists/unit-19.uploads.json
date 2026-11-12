@@ -312,6 +312,37 @@
     {
       "area": "video-upload",
       "method": "POST",
+      "path": "/api/conversation/video-uploads",
+      "status": 200,
+      "json": {
+        "destination": {
+          "kind": "chief",
+          "id": "chief",
+          "expected_conversation_id": "unit19-chief-video"
+        },
+        "filename": "empty.mp4",
+        "byte_count": 4
+      },
+      "capture": {
+        "empty_upload": "upload_id"
+      }
+    },
+    {
+      "area": "video-upload",
+      "method": "PUT",
+      "path": "/api/conversation/video-uploads/${empty_upload}/bytes",
+      "status": 400,
+      "body_base64": ""
+    },
+    {
+      "area": "video-upload",
+      "method": "GET",
+      "path": "/api/conversation/video-uploads/${empty_upload}",
+      "status": 200
+    },
+    {
+      "area": "video-upload",
+      "method": "POST",
       "path": "/api/conversation/voice-transcriptions",
       "status": 503,
       "json": {

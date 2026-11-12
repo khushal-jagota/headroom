@@ -8,15 +8,18 @@ export-only TS companion. It starts no listener, ffmpeg, or provider connection.
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
 import subprocess
 import time
+import zlib
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import httpx
 import pytest
+from httpx._multipart import MultipartStream
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
 from planner.conversation import voice_transcription as voice
@@ -25,6 +28,8 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def _spec() -> dict[str, Any]:
+    encoded = '{"text":"encoded voice"}'
+    raw_deflate = zlib.compressobj(wbits=-zlib.MAX_WBITS)
     ordinary = {
         "api_key": "synthetic-key",
         "trim_hex": b"trimmed synthetic audio".hex(),
@@ -33,6 +38,25 @@ def _spec() -> dict[str, Any]:
         "response_text": json.dumps({"text": "  Keep these words.  "}),
     }
     return {
+        "encoded_responses": [
+            {
+                "name": "gzip-utf16-bom",
+                "content_encoding": "gzip",
+                "body_hex": gzip.compress(encoded.encode("utf-16")).hex(),
+            },
+            {
+                "name": "raw-deflate-utf32",
+                "content_encoding": "deflate",
+                "body_hex": (
+                    raw_deflate.compress(encoded.encode("utf-32-be")) + raw_deflate.flush()
+                ).hex(),
+            },
+            {
+                "name": "malformed-utf8",
+                "content_encoding": "identity",
+                "body_hex": b'{"text":"\xff"}'.hex(),
+            },
+        ],
         "audio_hex": b"original synthetic audio".hex(),
         "phrases": [
             "  Thank you for watching!  ",
@@ -160,13 +184,41 @@ async def _trim(scenario: dict[str, Any], audio: bytes) -> dict[str, Any]:
 
 async def _python(spec: dict[str, Any]) -> dict[str, Any]:
     audio = bytes.fromhex(spec["audio_hex"])
+    multipart = MultipartStream(
+        data={"model": "recorded-whisper", "response_format": "json"},
+        files={"file": ("audio.ogg", audio, "audio/ogg")},
+        boundary=b"panels-voice-proof",
+    )
     return {
+        "encoded_responses": [
+            _encoded_response(scenario) for scenario in spec["encoded_responses"]
+        ],
+        "multipart": {
+            "content_type": multipart.content_type,
+            "content_length": multipart.get_content_length(),
+            "body_hex": b"".join(multipart).hex(),
+        },
         "phrases": [voice.without_whisper_hallucination(text) for text in spec["phrases"]],
         "transcriptions": [
             await _transcription(scenario, audio) for scenario in spec["transcriptions"]
         ],
         "trim_results": [await _trim(scenario, audio) for scenario in spec["trim_results"]],
     }
+
+
+def _encoded_response(scenario: dict[str, Any]) -> dict[str, Any]:
+    try:
+        response = httpx.Response(
+            200,
+            content=bytes.fromhex(scenario["body_hex"]),
+            headers={"Content-Encoding": scenario["content_encoding"]},
+        )
+        answer: dict[str, Any] = {"json": response.json()}
+    except httpx.DecodingError:
+        answer = {"error": "transport"}
+    except ValueError:
+        answer = {"error": "not-json"}
+    return {"name": scenario["name"], "answer": answer}
 
 
 def test_unit19_voice_policy(tmp_path: Path, request: pytest.FixtureRequest) -> None:

@@ -1,23 +1,16 @@
 /** Only these production adapters can start ffmpeg or contact the provider. */
 import { spawn } from 'node:child_process';
 import type { VoiceTranscriptionAdapters } from './contracts.ts';
-import { VoiceTranscriptionTransportError } from './contracts.ts';
 import { FFMPEG_PATH, SILENCE_TRIM_FILTER, SILENCE_TRIM_TIMEOUT_SECONDS } from './configuration.ts';
 import { silence_trim_result } from './logic.ts';
-function require_production_io(): void {
-  if (
-    process.env.PLAN_TEST_MODE === '1' ||
-    process.env.VITEST === 'true' ||
-    process.env.PYTEST_CURRENT_TEST !== undefined
-  )
-    throw new Error('Production voice I/O is unavailable in tests. Inject recording adapters.');
-}
+import { require_production_voice_io } from './io.ts';
+import { post_voice_http } from './http.ts';
 export async function trim_surrounding_silence(
   audio: Uint8Array,
   options: { signal?: AbortSignal } = {},
 ): Promise<readonly [Uint8Array, boolean]> {
   options.signal?.throwIfAborted();
-  require_production_io();
+  require_production_voice_io();
   const child = spawn(
     FFMPEG_PATH,
     [
@@ -117,35 +110,5 @@ export async function trim_surrounding_silence(
 }
 export const production_voice_transcription_adapters: VoiceTranscriptionAdapters = {
   trim_surrounding_silence,
-  async http_post(request) {
-    request.signal?.throwIfAborted();
-    require_production_io();
-    const form = new FormData();
-    form.append(
-      'file',
-      new Blob([Uint8Array.from(request.file.contents)], {
-        type: request.file.media_type,
-      }),
-      request.file.filename,
-    );
-    for (const [key, value] of Object.entries(request.data)) form.append(key, value);
-    let response: Response;
-    let body: string;
-    try {
-      const timeout = AbortSignal.timeout(request.timeout_seconds * 1000);
-      const signal = request.signal ? AbortSignal.any([request.signal, timeout]) : timeout;
-      response = await fetch(request.url, {
-        method: 'POST',
-        headers: request.headers,
-        body: form,
-        redirect: 'manual',
-        signal,
-      });
-      body = await response.text();
-    } catch (error) {
-      request.signal?.throwIfAborted();
-      throw new VoiceTranscriptionTransportError('voice request failed', { cause: error });
-    }
-    return { status_code: response.status, json: () => JSON.parse(body) as unknown };
-  },
+  http_post: post_voice_http,
 };
