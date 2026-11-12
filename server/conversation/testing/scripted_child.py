@@ -69,7 +69,7 @@ def _content(content: MessageContent) -> list[dict[str, Any]]:
     return [{"piece": "text", "text": stored["text"]}]
 
 
-def _decode_event(frame: dict[str, Any]) -> backend.BackendEventValue:
+def decode_scripted_event(frame: dict[str, Any]) -> backend.BackendEventValue:
     values = dict(frame["values"])
     match frame["kind"]:
         case "AgentMessageDelta":
@@ -153,6 +153,7 @@ class ScriptedChild(backend.BackendChild):
         self.reject_next_prompt = False
         self.delivered_text: list[str] = []
         self.answers: dict[str, tuple[UserInputAnswer, ...]] = {}
+        self.last_observation: dict[str, Any] | None = None
         self._observed_deliveries = 0
         self._spawn_task: asyncio.Task[asyncio.subprocess.Process] | None = None
         self._reader_task: asyncio.Task[None] | None = None
@@ -200,7 +201,9 @@ class ScriptedChild(backend.BackendChild):
         if "event" in frame:
             token = None if frame["turn"] is None else backend.TurnToken(**frame["turn"])
             # The report can await a receipt. The reply reader must remain independent.
-            task = asyncio.create_task(self.sink.report(token, _decode_event(frame["event"])))
+            task = asyncio.create_task(
+                self.sink.report(token, decode_scripted_event(frame["event"]))
+            )
             self._reports.add(task)
             task.add_done_callback(self._report_finished)
             return
@@ -271,6 +274,7 @@ class ScriptedChild(backend.BackendChild):
 
     async def inspect(self) -> dict[str, Any]:
         snapshot = cast(dict[str, Any], await self._request("inspect"))
+        self.last_observation = snapshot
         self.token = None if snapshot["token"] is None else backend.TurnToken(**snapshot["token"])
         texts: list[str] = snapshot["delivered_text"]
         self.delivered_text.extend(texts[self._observed_deliveries :])

@@ -12,27 +12,22 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict, fields, is_dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import uvicorn
 from fastapi import FastAPI
-from tests.e2e.conversation_signals_server import NoInstalledBackends, ScriptedChild
+from server.conversation.testing.record_inspection import record_rows
+from server.conversation.testing.scripted_child import decode_scripted_event
+from server.conversation.testing.scripted_registry import ScriptedBackendRegistry
+from tests.e2e.conversation_signals_server import NoInstalledBackends
 from tests.e2e.ticket_model_controls import TicketModelSnapshots
 from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
 from planner.conversation import contracts
-from planner.conversation.backends import contracts as backend
-from planner.conversation.backends.contracts import BackendEventSink
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.events import (
-    ConversationTurnEnding,
-    PermissionAskOption,
-    PlanEntry,
-    PlanEntryStatus,
-    ToolCallStatus,
-)
 from planner.conversation.message_content import (
     MessageFile,
     MessageImage,
@@ -82,7 +77,11 @@ class RecordingAPNs:
         self.intents = intents
 
     def send(
-        self, delivery: PendingAPNsDelivery, *, server_url: str, now: int,
+        self,
+        delivery: PendingAPNsDelivery,
+        *,
+        server_url: str,
+        now: int,
     ) -> APNsResult:
         self.intents.append({"transport": "apns", "intent": asdict(delivery.intent)})
         return APNsResult(delivered=True)
@@ -204,7 +203,8 @@ def _in_memory_routes(app: FastAPI, system: InMemoryConversationSystem) -> None:
         return {"complete": True}
 
 
-def _scripted_routes(app: FastAPI, children: dict[str, ScriptedChild]) -> None:
+def _scripted_routes(app: FastAPI, registry: ScriptedBackendRegistry, db_path: str) -> None:
+    children = registry.current
     """Drive the existing scripted child through the real Python core for shared seeds."""
 
     async def settled() -> None:
@@ -241,62 +241,84 @@ def _scripted_routes(app: FastAPI, children: dict[str, ScriptedChild]) -> None:
 
     @app.post("/api/test/signals/{conversation_id}/backend-news")
     async def backend_news(conversation_id: str, body: dict[str, Any]) -> dict[str, int]:
-        # ScriptedChild has no controls for these backend facts. Keep them on the
-        # backend seam: the real core decides which durable rows and views to write.
         child = children[conversation_id]
         assert child.token is not None
+        aliases = {
+            "tool_call_started": "ToolCallStarted",
+            "tool_call_finished": "ToolCallFinished",
+            "plan_updated": "PlanUpdated",
+            "token_usage": "TokenUsageReported",
+            "context_compacted": "ContextCompacted",
+            "command_reply": "CommandReplyReported",
+            "user_input_failed": "UserInputFailed",
+            "turn_ended": "TurnEnded",
+            "permission_asked": "PermissionAskRaised",
+        }
         for scripted in body["events"]:
-            values = dict(scripted)
-            kind = values.pop("kind")
-            news: backend.BackendEventValue
-            if kind == "tool_call_started":
-                news = backend.ToolCallStarted(**values)
-            elif kind == "tool_call_finished":
-                values["tool_call_status"] = ToolCallStatus(values["tool_call_status"])
-                news = backend.ToolCallFinished(**values)
-            elif kind == "plan_updated":
-                news = backend.PlanUpdated(entries=tuple(
-                    PlanEntry(text=entry["text"], status=PlanEntryStatus(entry["status"]))
-                    for entry in values["entries"]
-                ))
-            elif kind == "token_usage":
-                news = backend.TokenUsageReported(**values)
-            elif kind == "context_compacted":
-                news = backend.ContextCompacted()
-            elif kind == "command_reply":
-                news = backend.CommandReplyReported(**values)
-            elif kind == "user_input_failed":
-                news = backend.UserInputFailed(**values)
-            elif kind == "turn_ended":
-                values["ending"] = ConversationTurnEnding(values["ending"])
-                news = backend.TurnEnded(**values)
-            elif kind == "permission_asked":
-                news = backend.PermissionAskRaised(ask=backend.BackendPermissionAsk(
-                    ask_id=values["ask_id"], title=values["title"],
-                    detail=values.get("detail"),
-                    options=tuple(PermissionAskOption(**option) for option in values["options"]),
-                ))
-            else:
-                raise ValueError(f"unsupported scripted backend news: {kind}")
-            await child.sink.report(child.token, news)
+            fields = dict(scripted)
+            kind = fields.pop("kind")
+            values = fields.get("values", fields)
+            if kind == "permission_asked":
+                values = {"ask": values}
+            news = decode_scripted_event({"kind": aliases.get(kind, kind), "values": values})
+            await child.emit(news, turn=child.token)
+        await child.flush_events()
         await settled()
         return {"reported": len(body["events"])}
+
+    @app.post("/api/test/signals/{conversation_id}/configure")
+    async def configure(conversation_id: str, body: dict[str, Any]) -> dict[str, bool]:
+        await registry.configure(conversation_id, body["command"], body["behavior"])
+        return {"configured": True}
+
+    @app.get("/api/test/signals/{conversation_id}/inspect")
+    async def inspect(conversation_id: str) -> dict[str, Any]:
+        await settled()
+        children = await registry.inspect(conversation_id)
+        system = app.state.conversation.system
+        runtime = {
+            "running": await system.is_running(conversation_id),
+            "held_prompts": _in_memory_snapshot(await system.held_prompts(conversation_id)),
+            "pending_permission_ask_ids": sorted(
+                await system.pending_permission_ask_ids(conversation_id)
+            ),
+            "pending_user_input_request_ids": sorted(
+                await system.pending_user_input_request_ids(conversation_id)
+            ),
+        }
+        return {
+            **record_rows(db_path, conversation_id),
+            "runtime": runtime,
+            "backend": {"children": children},
+        }
+
+    @app.post("/api/test/conversation-steering")
+    async def steering(body: dict[str, list[str]]) -> dict[str, bool]:
+        keys = frozenset(contracts.ConversationBackendKey(key) for key in body["backend_keys"])
+        patch.object(contracts, "BACKEND_KEYS_SUPPORTING_STEER", keys).start()
+        return {"configured": True}
 
 
 def build_app(config: Config) -> FastAPI:
     assert config.test_mode, "The comparison host requires test mode"
     clock = build_clock(config)
-    children: dict[str, ScriptedChild] = {}
+    registry = ScriptedBackendRegistry()
+    from planner.conversation.storage import ConversationStore
+    from planner.conversation.system import SqliteProcessConversationSystem
 
-    def make_child(
-        *, resolved_start: Any, event_sink: BackendEventSink, message_files: Any,
-    ) -> ScriptedChild:
-        child = ScriptedChild(event_sink)
-        children[resolved_start.conversation_id] = child
-        return child
+    # Constructor seams receive the shared clock before reconciliation or autonomous work.
+    patch(
+        "planner.conversation.runtime_composition.ConversationStore",
+        partial(ConversationStore, integer_now=clock.now_unix),
+    ).start()
+    patch(
+        "planner.conversation.runtime_composition.SqliteProcessConversationSystem",
+        partial(SqliteProcessConversationSystem, unix_time_now=clock.now_unix),
+    ).start()
 
     patch(
-        "planner.conversation.snapshot.SubprocessBackendProbeEnvironment", NoInstalledBackends,
+        "planner.conversation.snapshot.SubprocessBackendProbeEnvironment",
+        NoInstalledBackends,
     ).start()
     in_memory = (
         InMemoryConversationSystem()
@@ -307,23 +329,28 @@ def build_app(config: Config) -> FastAPI:
         config,
         clock,
         lambda: connect(config.db_path),
-        backend_child_factories_for_test={key: make_child for key in ConversationBackendKey},
+        backend_child_factories_for_test={
+            key: registry.make_child for key in ConversationBackendKey
+        },
         conversation_system_for_test=in_memory,
     )
     if in_memory is not None:
         _in_memory_routes(app, in_memory)
     else:
-        _scripted_routes(app, children)
+        _scripted_routes(app, registry, config.db_path)
     original_lifespan = app.router.lifespan_context
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-        async with original_lifespan(application):
-            snapshots = TicketModelSnapshots()
-            snapshots.model = "gpt-6.1-sol"
-            snapshots.models = ("gpt-6.1-sol",)
-            object.__setattr__(app.state.conversation, "backend_snapshots", snapshots)
-            yield
+        try:
+            async with original_lifespan(application):
+                snapshots = TicketModelSnapshots()
+                snapshots.model = "gpt-6.1-sol"
+                snapshots.models = ("gpt-6.1-sol",)
+                object.__setattr__(app.state.conversation, "backend_snapshots", snapshots)
+                yield
+        finally:
+            await registry.close()
 
     app.router.lifespan_context = lifespan
     readiness: AwaitedReadinessLoop | None = None
@@ -337,7 +364,9 @@ def build_app(config: Config) -> FastAPI:
         apns_adapter=RecordingAPNs(notification_intents),
     )
     sources = SourceScheduleLoop(
-        config.db_path, clock, participants=build_participants(config, clock),
+        config.db_path,
+        clock,
+        participants=build_participants(config, clock),
     )
     pass_lock = asyncio.Lock()
 
@@ -347,7 +376,8 @@ def build_app(config: Config) -> FastAPI:
         async with pass_lock:
             if readiness is None:
                 readiness = AwaitedReadinessLoop(
-                    config.db_path, clock,
+                    config.db_path,
+                    clock,
                     conversation_system=app.state.conversation_system,
                     asyncio_loop=asyncio.get_running_loop(),
                 )
@@ -362,7 +392,8 @@ def build_app(config: Config) -> FastAPI:
         async with pass_lock:
             if wakes is None:
                 wakes = AwaitedManagerWakeLoop(
-                    config.db_path, clock,
+                    config.db_path,
+                    clock,
                     conversation_system=app.state.conversation_system,
                     asyncio_loop=asyncio.get_running_loop(),
                 )
