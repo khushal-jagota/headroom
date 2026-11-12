@@ -191,7 +191,9 @@ this helper's current contract.
 `conversation/backends/codex_app_server/` supplies the small consumed wire contracts,
 JSONL client, saved-login reader, inherited child environment, and bounded process-group
 ownership. `adapter.ts` exports `create_codex_backend_child_factory` for the real core.
-The model/sign-in/usage provider bindings remain the next part of this port.
+`providers.ts` supplies the fixed model, saved-login, sign-in, and usage bindings.
+Production snapshot composition receives its database and clock from `core/start.ts`.
+The sign-in service and snapshot reads share the durable login-rejection state.
 
 The client checks the selected CLI version before it starts the app-server. Unknown
 notifications and item kinds remain unconsumed. A malformed consumed notification warns
@@ -245,3 +247,11 @@ numeric ask IDs, delayed JSONL fragments inside a UTF-8 character, and stdin EOF
 The adapter bounds ask withdrawal before child shutdown, then always invokes client cleanup.
 The existing Python withdrawal wait is unbounded. This safety difference requires the
 Manager's acceptance with the Part 2 review before merge.
+
+The provider proof compares paginated and partial model catalogs, login generations and
+rejections, correlated sign-in completion and cancellation races, deadlines, shutdown,
+and usage responses against fresh Python results. Usage returns the original JSON result
+text and joins its child before completion. Sign-in preserves microseconds in its public
+timestamps. Tests keep production probes unavailable in test context, including a context
+change after provider construction. These scripted checks do not establish real login or
+provider entitlement.
