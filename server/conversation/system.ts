@@ -1097,15 +1097,14 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       : AnswerFate.refused;
   }
   async pending_permission_ask_ids(conversation_id: string): Promise<ReadonlySet<string>> {
-    return new Set(
-      this.conversation_state(conversation_id)?.running_turn?.pending_permission_ask_ids ?? [],
-    );
+    const state = this.conversation_state(conversation_id);
+    this.options.require_signal_current?.();
+    return new Set(state?.running_turn?.pending_permission_ask_ids ?? []);
   }
   async pending_user_input_request_ids(conversation_id: string): Promise<ReadonlySet<string>> {
-    return new Set(
-      this.conversation_state(conversation_id)?.running_turn?.pending_user_input_questions.keys() ??
-        [],
-    );
+    const state = this.conversation_state(conversation_id);
+    this.options.require_signal_current?.();
+    return new Set(state?.running_turn?.pending_user_input_questions.keys() ?? []);
   }
   async run_if_idle(conversation_id: string, operation: () => void): Promise<boolean> {
     const state = this.conversation_state(conversation_id);
@@ -1168,21 +1167,21 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   }
   async is_running(conversation_id: string): Promise<boolean> {
     this.require_runtime_ownership();
-    return this.conversations.get(conversation_id)?.running_turn != null;
+    const state = this.conversations.get(conversation_id);
+    this.options.require_signal_current?.();
+    return state?.running_turn != null;
   }
   async has_pending_permission_ask(conversation_id: string): Promise<boolean> {
     this.require_runtime_ownership();
-    return (
-      (this.conversations.get(conversation_id)?.running_turn?.pending_permission_ask_ids.size ??
-        0) > 0
-    );
+    const state = this.conversations.get(conversation_id);
+    this.options.require_signal_current?.();
+    return (state?.running_turn?.pending_permission_ask_ids.size ?? 0) > 0;
   }
   async has_pending_user_input(conversation_id: string): Promise<boolean> {
     this.require_runtime_ownership();
-    return (
-      (this.conversations.get(conversation_id)?.running_turn?.pending_user_input_questions.size ??
-        0) > 0
-    );
+    const state = this.conversations.get(conversation_id);
+    this.options.require_signal_current?.();
+    return (state?.running_turn?.pending_user_input_questions.size ?? 0) > 0;
   }
   async record_message_to_owner(
     conversation_id: string,
@@ -1268,6 +1267,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     }
   }
   async shutdown(): Promise<void> {
+    this.options.on_shutdown?.();
     if (this.shutdown_task) return this.shutdown_task;
     const states = [...this.conversations.values()];
     const pumps = states.flatMap((state) =>

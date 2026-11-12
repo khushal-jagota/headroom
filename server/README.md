@@ -84,7 +84,7 @@ Without this switch, the host composes `SqliteProcessConversationSystem` with th
 
 The comparison host uses `conversation/testing/scripted_process.ts` behind both Python and TypeScript backend adapters. The five existing controls beneath `/api/test/signals/:conversation_id` retain their meanings. Configuration and inspection controls expose process behavior and actual backend observations. They do not write event rows directly.
 
-The four `unit-15.*` lists compare all 21 conformance scenarios through start, state, send, interrupt, kill, and permission-answer routes. They compare the conversation row, ordered events, lifecycle facts, all five view tables, runtime state, and process observations. Status publication still uses the idle source at this checkpoint. The complete route inventory, live-stream proof, browser tests, and earlier-unit reruns follow in later packages.
+The four core `unit-15.*` lists compare all 21 conformance scenarios through start, state, send, interrupt, kill, and permission-answer routes. They compare the conversation row, ordered events, lifecycle facts, all five view tables, runtime state, and process observations. The complete route inventory, conversation stream proof, browser tests, and earlier-unit reruns follow in later packages.
 
 ## In-memory conversation instrument
 
@@ -93,19 +93,22 @@ The four `unit-15.*` lists compare all 21 conformance scenarios through start, s
 Backend adapters implement `conversation/backends/contracts.ts`. Their 19 event classes and 11 exception classes follow the current Python source.
 Message content remains an ordered array of typed pieces. Runtime callers use `text_message_content` or the piece classes.
 
-Until the real core exists, navigation can use `idle_publication(publish)` from `conversation/publication/idle.ts` as the first commit step.
-It calls `publish(tx, conversation_id, attention)` for every stored conversation on that same transaction.
-Each attention value has all four marks false. Navigation owns its storage, installation metadata, and registration in `commitSteps`.
-The stand-in does not alter the fake's actual busy state and does not implement the real publication coordinator.
+The shared lifecycle supplies the real `SignalPublicationCoordinator` as `services.signalAuthority`.
+Each server creates one record runtime and reconciles once under its existing ownership handle.
+The core reuses that store and tail. Publication binds its live-turn reader before initialization and navigation attachment.
+The source transaction runs publication, its navigation participant, artifact links, and navigation finalization before commit.
+The core's save-attempt scope rolls runtime field mutations and producer dirty marks back with the record.
+Only committed rows reach the tail. The five status readers also check the current Signal authority.
 
-`IdlePublicationAuthority` in `conversation/publication/authority.ts` supplies runtime permits for the idle source.
-Its constructor requires explicit `scope`, `runtime_epoch`, `installation_id`, and `delivery_session_id` values. Create it after readiness and runtime ownership are established. Its source permit keeps the Python fields and a numeric generation.
-The navigation adapter returns the generated `CurrentAuthority` wire shape with decimal-string generations.
-Call `invalidate('shutdown')` before shutdown and ownership release. Invalidation fences reads synchronously before it notifies subscribers.
-Subscriptions are one-shot and can unsubscribe. One failed subscriber does not prevent the others from receiving invalidation.
-A replacement installation creates a new instance. A persisted row never grants this runtime authority.
+The `createConversationCore(context)` factory receives the shared publication coordinator.
+Core adapters pass `context.publication.save_attempt`, a `current_read` callback, and `context.revoke_signal` through the corresponding core options.
+Without a core factory, the server supplies record reads and real publication from durable facts, with no local turn or substitute provider.
+An explicitly selected in-memory instrument remains separate. The idle authority helpers remain for their isolated tests.
 
-The shared lifecycle also supplies `services.signalAuthority`, an idle publication authority, after it owns the runtime and opens the database. All areas share that instance. Shutdown invalidates its permits and notifies its watchers before the application closes or runtime ownership ends. Unit 15 replaces the idle source with the real coordinator.
+Shutdown revokes publication and closes tail subscriptions before the worker loops and background services drain.
+The core then fences native callbacks, closes its children, and drains retained writes.
+Record cleanup and HTTP closure precede navigation detachment, database closure, and lease release.
+The test registry's HTTP cleanup therefore follows core cleanup.
 
 To compare the in-memory instrument against TypeScript, run:
 
@@ -115,4 +118,6 @@ scripts/dev pytest tests/compare/test_compare.py --compare-list tests/compare/li
 
 Lists for units 7 through 10 select both in-memory systems with `"conversation_system": "in_memory"`. Omit that setting when unit 15 supplies the real core. The comparison fixture passes the selection to both processes explicitly, rather than through ambient `PLAN_*` variables. The runner's default candidate remains Python for its reference calibration and existing CI job; `--compare-right-module tests.compare.ts_launcher` selects the TS comparison.
 
-The shared `startServer` lifecycle accepts `createSignalAuthority(database)` for the real coordinator or an isolated test source. Its default factory, `createIdlePublicationAuthority`, reuses the persisted source scope and creates fresh runtime, installation, and delivery identities. The lifecycle invokes the factory only after runtime ownership and database access are ready. Factories return the structural public authority interface, so replacement coordinators do not inherit the idle class.
+The optional `beforePublication(database)` hook performs test-host projection bootstrap after record reconciliation and before producer initialization.
+It does not replace the producer authority. `testAreas` receives the shared core, record, publication, clock, and database.
+`startServer` returns its listener address and an idempotent close operation for isolated lifecycle tests.

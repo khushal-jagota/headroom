@@ -1,0 +1,11 @@
+{
+  "ignore": {
+    "attention_history_metadata.started_at": "Schema initialization reads real wall time before the synthetic host clock is installed."
+  },
+  "response_ignore": {},
+  "tokens": {
+    "resource_source_versions.revision": "Trigger counters count SQL updates, so compare change rather than magnitude."
+  },
+  "response_tokens": {},
+  "derived_tables": {}
+}

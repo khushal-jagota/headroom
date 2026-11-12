@@ -1,0 +1,507 @@
+{
+  "source_roots": [
+    "src/planner/conversation/publication/",
+    "src/planner/conversation/system.py",
+    "src/planner/conversation/logic/",
+    "src/planner/navigation/"
+  ],
+  "publication_boundaries": [
+    "working",
+    "permission awaiting",
+    "concurrent input awaiting",
+    "permission applied with input pending",
+    "turn end expires asks",
+    "background working after turn",
+    "same view wakes for background start and end",
+    "background idle retention and stop",
+    "failed turn"
+  ],
+  "external_proofs": [
+    {
+      "source_test": "test_a_live_background_task_keeps_the_child_and_shows_working_after_the_turn",
+      "coverage": "same view wakes at start/end; status working after turn; 31-minute sweep retains; task end clears status and resets idle clock; next31-minute sweep stops child"
+    }
+  ],
+  "requests": [
+    {
+      "area": "real-publication",
+      "method": "POST",
+      "path": "/api/chief/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Publication work"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "publication-work"
+      },
+      "capture": {
+        "publication_cid": "conversation_id"
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/test/signals/${publication_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "publication_working": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D",
+      "status": 200,
+      "capture": {
+        "navigation_working": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "POST",
+      "path": "/api/test/signals/${publication_cid}/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "permission_asked",
+            "ask_id": "publication-permission",
+            "title": "Read source?",
+            "detail": "Synthetic permission detail",
+            "options": [
+              {
+                "option_id": "allow-once",
+                "label": "Allow once",
+                "option_kind": "allow_once"
+              },
+              {
+                "option_id": "deny",
+                "label": "Deny",
+                "option_kind": "reject_once"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/test/signals/${publication_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "publication_permission_pending": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/test/signals/${publication_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "publication_permission_id": "runtime.pending_permission_ask_ids.0"
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "POST",
+      "path": "/api/test/signals/${publication_cid}/questions",
+      "status": 200
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/test/signals/${publication_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "publication_both_asks": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D",
+      "status": 200,
+      "capture": {
+        "navigation_awaiting_both": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "POST",
+      "path": "/api/conversation/conversations/${publication_cid}/permission-answers",
+      "status": 200,
+      "json": {
+        "ask_id": "${publication_permission_id}",
+        "option_id": "allow-once"
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/test/signals/${publication_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "publication_input_still_pending": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D",
+      "status": 200,
+      "capture": {
+        "navigation_input_still_pending": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "POST",
+      "path": "/api/test/signals/${publication_cid}/finish",
+      "status": 200
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/test/signals/${publication_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "publication_asks_expired": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D",
+      "status": 200,
+      "capture": {
+        "navigation_asks_expired": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "POST",
+      "path": "/api/chief/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Run the suite"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "publication-background"
+      },
+      "capture": {
+        "publication_cid": "conversation_id"
+      }
+    },
+    {
+      "area": "test_a_live_background_task_keeps_the_child_and_shows_working_after_the_turn",
+      "kind": "stream",
+      "method": "GET",
+      "path": "/api/conversation/conversations/${publication_cid}/view/tail?lens=full",
+      "status": 200,
+      "frames": 2,
+      "deadline_seconds": 10,
+      "after_open": [
+        {
+          "method": "POST",
+          "path": "/api/test/signals/${publication_cid}/backend-news",
+          "status": 200,
+          "json": {
+            "turn": null,
+            "events": [
+              {
+                "kind": "BackgroundTaskStarted",
+                "values": {
+                  "task_id": "task-1",
+                  "task_description": "Run the test suite"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "capture": {
+        "background_start_same_view_stream": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/test/signals/${publication_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "background_started": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "POST",
+      "path": "/api/test/signals/${publication_cid}/finish",
+      "status": 200
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/test/signals/${publication_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "background_after_turn": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D",
+      "status": 200,
+      "capture": {
+        "navigation_background_working": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:31:00"
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "POST",
+      "path": "/api/test/signals/${publication_cid}/sweep-idle-children",
+      "status": 200
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/test/signals/${publication_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "background_kept_after_31_minutes": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D",
+      "status": 200,
+      "capture": {
+        "navigation_background_kept": ""
+      }
+    },
+    {
+      "area": "test_a_live_background_task_keeps_the_child_and_shows_working_after_the_turn",
+      "kind": "stream",
+      "method": "GET",
+      "path": "/api/conversation/conversations/${publication_cid}/view/tail?lens=full",
+      "status": 200,
+      "frames": 2,
+      "deadline_seconds": 10,
+      "after_open": [
+        {
+          "method": "POST",
+          "path": "/api/test/signals/${publication_cid}/backend-news",
+          "status": 200,
+          "json": {
+            "turn": null,
+            "events": [
+              {
+                "kind": "BackgroundTaskEnded",
+                "values": {
+                  "task_id": "task-1",
+                  "task_status": "completed"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "capture": {
+        "background_end_same_view_stream": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/test/signals/${publication_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "background_completed": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D",
+      "status": 200,
+      "capture": {
+        "navigation_background_not_working": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "POST",
+      "path": "/api/test/signals/${publication_cid}/sweep-idle-children",
+      "status": 200
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/test/signals/${publication_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "background_end_resets_idle_clock": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T13:02:00"
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "POST",
+      "path": "/api/test/signals/${publication_cid}/sweep-idle-children",
+      "status": 200
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/test/signals/${publication_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "background_stopped_after_next_31_minutes": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D",
+      "status": 200,
+      "capture": {
+        "navigation_background_idle": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "POST",
+      "path": "/api/chief/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Fail this bounded turn"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "publication-failure"
+      },
+      "capture": {
+        "publication_cid": "conversation_id"
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "POST",
+      "path": "/api/test/signals/${publication_cid}/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "turn_ended",
+            "ending": "failed",
+            "error_summary": "Synthetic publication failure.",
+            "standard_error_tail": null
+          }
+        ]
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/test/signals/${publication_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "publication_failed": ""
+      }
+    },
+    {
+      "area": "real-publication",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D",
+      "status": 200,
+      "capture": {
+        "navigation_failed": ""
+      }
+    }
+  ],
+  "probes": [
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D",
+    "/api/conversation/conversations/${publication_cid}/view?lens=full"
+  ],
+  "report_captures": [
+    "publication_working",
+    "navigation_working",
+    "publication_permission_pending",
+    "publication_both_asks",
+    "navigation_awaiting_both",
+    "publication_input_still_pending",
+    "navigation_input_still_pending",
+    "publication_asks_expired",
+    "navigation_asks_expired",
+    "background_start_same_view_stream",
+    "background_started",
+    "background_after_turn",
+    "navigation_background_working",
+    "background_kept_after_31_minutes",
+    "navigation_background_kept",
+    "background_end_same_view_stream",
+    "background_completed",
+    "navigation_background_not_working",
+    "background_end_resets_idle_clock",
+    "background_stopped_after_next_31_minutes",
+    "navigation_background_idle",
+    "publication_failed",
+    "navigation_failed"
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/chief/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Establish the retained Chief conversation for publication comparison."
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "publication-seed"
+      },
+      "capture": {
+        "publication_cid": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/signals/${publication_cid}/finish",
+      "status": 200
+    }
+  ],
+  "publication_fixture": "One completed real Chief turn is seeded through HTTP before cloning. Compared ordinary Chief sends reuse the same retained conversation ID on both hosts."
+}

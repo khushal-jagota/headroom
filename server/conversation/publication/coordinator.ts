@@ -90,10 +90,12 @@ export class SignalPublicationCoordinator implements SignalPublicationSource {
   }
 
   signal_availability(): SignalAvailability {
-    try {
-      this.require_authority();
-    } catch {
-      /* Availability reports lost ownership instead of granting a permit. */
+    if (this.reason !== 'authority_lost') {
+      try {
+        this.require_authority();
+      } catch {
+        /* Availability reports lost ownership instead of granting a permit. */
+      }
     }
     return { generation: this.generation, state: this.state, reason: this.reason };
   }

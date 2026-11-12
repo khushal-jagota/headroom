@@ -343,5 +343,9 @@ test('failed install, detach, and reattach fence permits without resetting produ
   expect(() => current.capture_permit()).toThrow('attachment is not active');
   f.producer.validate(f.producer.capture());
   f.revoke();
+  const unavailable = f.producer.signal_availability();
+  expect(unavailable).toMatchObject({ state: 'unavailable', reason: 'authority_lost' });
+  expect(f.producer.signal_availability()).toEqual(unavailable);
   expect(() => replacement.capture_permit()).toThrow('lease closed');
+  expect(f.producer.signal_availability().generation).toBe(unavailable.generation + 1);
 });

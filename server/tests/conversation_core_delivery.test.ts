@@ -30,7 +30,14 @@ import type { ConversationCoreOptions } from '../conversation/runtime/contracts.
 // Inventory #8: the provider reports news while its prompt receipt is still withheld.
 // The real scripted process and real record together prove the provider/core/store boundary.
 test('backend news waits for the accepted prompt receipt and prose stays transient', async () => {
+  let revoked = false;
+  const signalFailure = new Error('Signal is not current');
   const f = setup({
+    core: {
+      require_signal_current() {
+        if (revoked) throw signalFailure;
+      },
+    },
     behavior: {
       barrier: 'receipt',
       events: [
@@ -72,6 +79,24 @@ test('backend news waits for the accepted prompt receipt and prose stays transie
     (await child.inspect()).calls.filter((call) => call.command === 'write_prompt'),
   ).toHaveLength(1);
   expect(await f.core.is_running('core')).toBe(false);
+  // The existing live-state proof also fences absent IDs after Signal revocation.
+  // The three Boolean readers must not read/adopt a stored conversation.
+  const read = vi.spyOn(f.store, 'read_conversation');
+  read.mockClear();
+  for (const id of ['core', 'unknown']) {
+    expect(await f.core.is_running(id)).toBe(false);
+    expect(await f.core.has_pending_permission_ask(id)).toBe(false);
+    expect(await f.core.has_pending_user_input(id)).toBe(false);
+  }
+  expect(read).not.toHaveBeenCalled();
+  revoked = true;
+  for (const id of ['core', 'unknown']) {
+    await expect(f.core.is_running(id)).rejects.toBe(signalFailure);
+    await expect(f.core.has_pending_permission_ask(id)).rejects.toBe(signalFailure);
+    await expect(f.core.has_pending_user_input(id)).rejects.toBe(signalFailure);
+    await expect(f.core.pending_permission_ask_ids(id)).rejects.toBe(signalFailure);
+    await expect(f.core.pending_user_input_request_ids(id)).rejects.toBe(signalFailure);
+  }
   await f.core.shutdown();
 });
 

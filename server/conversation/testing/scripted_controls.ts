@@ -106,10 +106,18 @@ export function scriptedConversationControls(
           await registry.child(identity(request)).reject_next_prompt();
           return { ok: true };
         });
-        app.post<{ Body: { kind: Principal['kind']; id: string; label: string; text?: string } }>(
-          '/signals/:conversation_id/message',
-          async (request) => {
-            const body = request.body;
+        app.post<{
+          Body: {
+            kind: Principal['kind'];
+            id: string;
+            label: string;
+            text?: string;
+            sender_message_id?: string | null;
+            sent_at_unix_milliseconds?: number | null;
+          };
+        }>('/signals/:conversation_id/message', async (request, reply) => {
+          const body = request.body;
+          try {
             await core.record_message_to_owner(
               identity(request),
               text_message_content(body.text ?? 'Explicit message to owner'),
@@ -117,38 +125,64 @@ export function scriptedConversationControls(
                 sender_label: body.label,
                 sender: { kind: body.kind, id: body.id },
                 recipient: OWNER,
+                sender_message_id: body.sender_message_id,
+                sent_at_unix_milliseconds: body.sent_at_unix_milliseconds,
               },
             );
-            await settle();
-            return { ok: true };
-          },
-        );
-        app.post<{ Body: { events: Record<string, unknown>[] } }>(
+          } catch (error) {
+            if (
+              !(error instanceof Error) ||
+              error.message !== 'sender_message_id already names a different message'
+            ) {
+              throw error;
+            }
+            return reply.code(422).send({ detail: error.message });
+          }
+          await settle();
+          return { ok: true };
+        });
+        app.post<{ Body: { events: Record<string, unknown>[]; turn?: null } }>(
           '/signals/:conversation_id/backend-news',
-          async (request) => {
+          async (request, reply) => {
             const child = registry.child(identity(request));
             const snapshot = await child.inspect();
-            if (snapshot.token === null)
+            const session = 'turn' in request.body;
+            if (session && request.body.turn !== null) {
+              return reply.code(422).send({ detail: 'scripted session turn must be null' });
+            }
+            if (!session && snapshot.token === null)
               throw new Error('A scripted turn must exist before backend news');
             for (const scripted of request.body.events) {
-              await child.emit(decode_scripted_event(backend_news(scripted)), snapshot.token);
+              await child.emit(
+                decode_scripted_event(backend_news(scripted)),
+                session ? null : snapshot.token,
+              );
             }
             await child.flush_events();
             await settle();
             return { reported: request.body.events.length };
           },
         );
-        app.post<{ Body: { command: string; behavior: ScriptedBehavior } }>(
-          '/signals/:conversation_id/configure',
-          async (request) => {
-            await registry.configure(
-              identity(request),
-              request.body.command,
-              request.body.behavior,
-            );
-            return { configured: true };
-          },
-        );
+        app.post('/signals/:conversation_id/sweep-idle-children', async () => {
+          await core.sweep_idle_children();
+          await settle();
+          return { ok: true };
+        });
+        app.post<{
+          Body: { command: string; behavior: ScriptedBehavior; target?: 'current' | 'next' };
+        }>('/signals/:conversation_id/configure', async (request, reply) => {
+          const target = request.body.target === undefined ? 'current' : request.body.target;
+          if (target !== 'current' && target !== 'next') {
+            return reply.code(422).send({ detail: 'invalid scripted child target' });
+          }
+          await registry.configure(
+            identity(request),
+            request.body.command,
+            request.body.behavior,
+            target,
+          );
+          return { configured: true };
+        });
         app.get('/signals/:conversation_id/inspect', async (request) => {
           const id = identity(request);
           await settle();
