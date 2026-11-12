@@ -19,6 +19,8 @@ import {
 } from '../runtime/worker_step_readiness_loop.ts';
 import { prepare_background_loops } from '../core/loops.ts';
 import Fastify from 'fastify';
+import { dirname } from 'node:path';
+import { configure_conversation_start } from '../runtime/conversation_start.ts';
 import { readinessTestRoutes } from '../runtime/testing.ts';
 import { loadConfig } from '../core/config.ts';
 import { TestClock } from '../core/clock.ts';
@@ -27,6 +29,10 @@ import { ChangeSignal } from '../core/changes/index.ts';
 afterEach(() => vi.restoreAllMocks());
 function setup() {
   const db = fixture();
+  configure_conversation_start(db, {
+    db_path: fixture_path(db),
+    workspace_root: dirname(fixture_path(db)),
+  });
   const system = new InMemoryConversationSystem();
   const options = {
     connect_database: () => db,
