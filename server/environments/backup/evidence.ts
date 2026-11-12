@@ -44,7 +44,7 @@ export async function sha256_file(path: string): Promise<string> {
 }
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
-async function relative_manifest(root: string): Promise<Record<string, string>> {
+export async function relative_manifest(root: string): Promise<Record<string, string>> {
   const manifest: Record<string, string> = {};
   async function walk(directory: string, prefix = ''): Promise<void> {
     for (const name of await readdir(directory)) {
@@ -58,7 +58,7 @@ async function relative_manifest(root: string): Promise<Record<string, string>> 
   await walk(root);
   return manifest;
 }
-async function managed_files_valid(directory: string, recorded: unknown): Promise<boolean> {
+export async function managed_files_valid(directory: string, recorded: unknown): Promise<boolean> {
   if (
     !object(recorded) ||
     !Array.isArray(recorded.roots) ||

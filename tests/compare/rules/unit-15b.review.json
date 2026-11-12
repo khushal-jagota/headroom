@@ -1,0 +1,16 @@
+{
+  "ignore": {
+    "attention_history_metadata.started_at": "Schema initialization reads real wall time before the synthetic host clock is installed."
+  },
+  "response_ignore": {},
+  "tokens": {
+    "resource_source_versions.revision": "Trigger counters count SQL updates, so compare change rather than magnitude.",
+    "navigation_view_meta.ordering_generation": "Manager-approved comparator-generation metadata: Python uses ICU and TypeScript uses Intl. Compare generation changes while retaining exact semantic rows, source content hashes, and response bytes.",
+    "navigation_view_memberships.title_key": "Manager-approved representation boundary: Python stores native ICU/binary title sort bytes, while TypeScript stores canonical Intl/binary operands. This list also compares all affected full windows in en-US and de-DE, retaining exact ordered member IDs, totals, records and content hashes.",
+    "navigation_view_memberships.id_key": "Manager-approved representation boundary: Python stores native ICU/binary ID sort bytes, while TypeScript stores canonical Intl/binary operands. This list also compares the same full windows in both locales; membership identity, rank, ordered IDs, totals, records and content hashes remain exact."
+  },
+  "response_tokens": {
+    "body.ordering_generation": "Manager-approved comparator-generation label: Python honestly reports ICU and TypeScript reports Intl. Only this top-level label is tokenized; the paired en-US/de-DE full-window responses retain exact member IDs/order/counts, records, window IDs and content hashes."
+  },
+  "derived_tables": {}
+}

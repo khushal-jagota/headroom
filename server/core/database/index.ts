@@ -1,6 +1,6 @@
 import { assert_test_database_path } from '../test_paths.ts';
 import BetterSqlite3 from 'better-sqlite3';
-import { existsSync, mkdirSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type {
   CommitStep,
@@ -16,6 +16,8 @@ import type {
   AuxiliaryTransactionSql,
   StorageStats,
   CheckpointResult,
+  ApplicationSchemaSeed,
+  FreshDatabaseBootstrap,
 } from './contracts.ts';
 export type * from './contracts.ts';
 const functionScopes = new WeakMap<
@@ -35,6 +37,7 @@ export function registerReadFunction(
 
 const BUSY_TIMEOUT_MS = 5000;
 const AUXILIARY_BUSY_TIMEOUT_MS = 500;
+const maintenance = new WeakMap<Database, (mode: 'PASSIVE' | 'TRUNCATE') => CheckpointResult>();
 function integer(
   value: number,
   name: string,
@@ -238,6 +241,73 @@ export function createDatabase(
   }).database;
 }
 
+/** A private native connection owns the source until the online image copy settles. */
+export async function onlineBackup(sourcePath: string, destinationPath: string): Promise<void> {
+  sourcePath = assert_test_database_path(sourcePath);
+  destinationPath = assert_test_database_path(destinationPath);
+  const source = new BetterSqlite3(sourcePath, {
+    readonly: true,
+    fileMustExist: true,
+    timeout: BUSY_TIMEOUT_MS,
+  });
+  try {
+    // A source write between bounded steps restarts SQLite's online copy. Transfer
+    // the largest positive SQLite int in one read step instead of yielding per 100 pages.
+    // better-sqlite3 clamps negative callback results to zero, so -1 cannot request all.
+    await source.backup(destinationPath, { progress: () => 0x7fffffff });
+  } finally {
+    source.close();
+  }
+}
+
+export function verifyDatabaseIntegrity(path: string): void {
+  path = assert_test_database_path(path);
+  const connection = new BetterSqlite3(path, {
+    readonly: true,
+    fileMustExist: true,
+    timeout: BUSY_TIMEOUT_MS,
+  });
+  try {
+    if (connection.pragma('integrity_check', { simple: true }) !== 'ok')
+      throw new Error(`SQLite integrity check failed for ${path}`);
+  } finally {
+    connection.close();
+  }
+}
+
+export function checkpointDatabase(
+  database: Database,
+  mode: 'PASSIVE' | 'TRUNCATE',
+): CheckpointResult {
+  const checkpoint = maintenance.get(database);
+  if (!checkpoint) throw new TypeError('database capability is not owned by core');
+  return checkpoint(mode);
+}
+
+/** Installs trusted build-time DDL and fresh domain state through the canonical writer. */
+export function createDatabaseFromSeed(
+  path: string,
+  seed: ApplicationSchemaSeed,
+  bootstrap: FreshDatabaseBootstrap,
+): Database {
+  path = assert_test_database_path(path);
+  // Exclusive creation refuses existing files and symlinks before any SQLite settings run.
+  closeSync(openSync(path, 'wx', 0o644));
+  const database = createDatabase(path);
+  try {
+    database.write((tx) => {
+      for (const statement of seed.statements) tx.run(statement);
+      tx.run('DELETE FROM alembic_version');
+      tx.run('INSERT INTO alembic_version(version_num) VALUES (?)', [seed.alembicRevision]);
+      assertSynchronous(bootstrap(tx));
+    });
+    return database;
+  } catch (error) {
+    database.close();
+    throw error;
+  }
+}
+
 /** Both application and auxiliary stores enter the same transaction engine. */
 function createOwnedDatabase<Tx extends TransactionSql>(
   writer: BetterSqlite3.Database,
@@ -251,6 +321,7 @@ function createOwnedDatabase<Tx extends TransactionSql>(
 ) {
   const commitSteps = [...(options.commitSteps ?? [])];
   let writing = false;
+  let reading = false;
   let closed = false;
   const checkOpen = () => {
     if (closed) throw new Error('database is closed');
@@ -296,7 +367,14 @@ function createOwnedDatabase<Tx extends TransactionSql>(
     },
     read<T>(work: (sql: ReadSql) => T): T {
       checkOpen();
-      return reader.read(work);
+      if (reading)
+        throw new TypeError('nested read callbacks are not allowed; use the current read scope');
+      reading = true;
+      try {
+        return reader.read(work);
+      } finally {
+        reading = false;
+      }
     },
     close(): void {
       if (closed) return;
@@ -306,14 +384,21 @@ function createOwnedDatabase<Tx extends TransactionSql>(
       closed = true;
     },
   });
+  maintenance.set(database, (mode) => {
+    outsideTransaction();
+    if (mode !== 'PASSIVE' && mode !== 'TRUNCATE')
+      throw new TypeError('unsupported checkpoint mode');
+    return (writer.pragma(`wal_checkpoint(${mode})`) as CheckpointResult[])[0];
+  });
+  function outsideTransaction(): void {
+    checkOpen();
+    if (writing || writer.inTransaction)
+      throw new TypeError('database maintenance requires no active write transaction');
+    if (reading) throw new TypeError('database maintenance requires no active read transaction');
+  }
   return {
     database,
-    outsideTransaction(): void {
-      checkOpen();
-      if (writing || writer.inTransaction) {
-        throw new TypeError('database maintenance requires no active write transaction');
-      }
-    },
+    outsideTransaction,
   };
 }
 

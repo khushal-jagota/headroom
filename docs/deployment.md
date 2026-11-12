@@ -87,6 +87,8 @@ The deploy workflow never changes Tailscale Serve. A separate manual workflow re
 
 Development worktrees must never share dependency storage with the installed app, because a shared `node_modules` or `.venv` can write into the deployed tree and break its integrity proof. `scripts/dev` guards setup, npm, pytest, and mypy before the tool starts. No flag turns it off.
 
+Python tests also replace inherited runtime paths with private scratch storage. The shared pytest setup and Python browser runners apply this rule before application imports. They refuse remaining deployment paths and live server URLs. Each process gets separate storage, and server fixtures select their own local server. An explicit test URL prevents the CLI from falling back to the live server. Original launch evidence remains available to the existing containment checks.
+
 A refusal prints the command and one of two findings: shared deployment storage detected, or dependency safety could not be established. It names the path examined, what it resolved to, the protected deployment path, and the signal used.
 
 - **The sharing is real.** Make a fresh worktree and run `scripts/dev setup`. Do not delete dependencies through an unresolved link or mount.
@@ -104,6 +106,7 @@ Commands outside the guard, such as Ruff or a direct `.venv/bin` call, can still
 - `src/planner/environments/mac_updates.py`: the Mac target and its progress.
 - `web/src/components/UpdateActions.svelte`, `web/src/lib/updates/`: the card.
 - `scripts/dev`, `scripts/development_safety/`: the worktree guard.
+- `scripts/test_runtime/`: private runtime paths and early deployment refusal for Python tests.
 - `ops/panels-environments/`: user units and runner setup.
 
 _Last verified: 2026-11-11._

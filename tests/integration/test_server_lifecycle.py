@@ -13,7 +13,7 @@ from pathlib import Path
 import httpx
 import pytest
 from tests.support.server import PLAN_BIN, REPO_ROOT, ServerHandle
-from tests.support.server_fixtures import _first_meta_answer
+from tests.support.server_fixtures import _first_meta_answer, _scrubbed_env
 
 
 def _direct_children(parent_pid: int) -> list[int]:
@@ -65,12 +65,15 @@ def _wait_for_one_child(parent_pid: int, *, different_from: int | None = None) -
 
 
 def _isolated_server_env(handle: ServerHandle, control_socket: Path) -> dict[str, str]:
-    env = {key: value for key, value in os.environ.items() if not key.startswith("PLAN_")}
+    # The second supervisor competes for the fixture's exact lease, even though
+    # it deliberately requests a different control socket.
+    env = _scrubbed_env(handle.log_path.parent)
     env.update(
         {
             "PLAN_TEST_MODE": "1",
             "PLAN_DB_PATH": str(handle.db_path),
             "PLAN_PORT": str(handle.port),
+            "PLAN_SERVER_URL": handle.base,
             "PLAN_LOGS_DIR": str(handle.log_path.parent / "second-logs"),
             "PLAN_DISPATCHER_LOCK_PATH": str(handle.log_path.parent / "second-dispatcher.lock"),
             "PLAN_SERVER_CONTROL_SOCKET": str(control_socket),
@@ -96,7 +99,8 @@ def _run_restart(handle: ServerHandle, cwd: Path = REPO_ROOT) -> subprocess.Comp
 
 
 def _restart_env(handle: ServerHandle) -> dict[str, str]:
-    env = {key: value for key, value in os.environ.items() if not key.startswith("PLAN_")}
+    env = _scrubbed_env(handle.log_path.parent)
+    env["PLAN_SERVER_URL"] = handle.base
     env["PLAN_SERVER_CONTROL_SOCKET"] = str(handle.control_socket_path)
     return env
 

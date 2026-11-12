@@ -81,10 +81,16 @@ export function clone_numeric_json(value: unknown): unknown {
   );
 }
 /** Python json.dumps(value, ensure_ascii=False), with its ordinary spaced separators. */
-export function stringify_python_json(
-  value: unknown,
-  options: { sort_keys?: boolean; compact?: boolean; ensure_ascii?: boolean } = {},
-): string {
+type PythonJSONOptions = {
+  sort_keys?: boolean;
+  compact?: boolean;
+  ensure_ascii?: boolean;
+  indent?: 2;
+};
+export function stringify_python_json(value: unknown, options: PythonJSONOptions = {}): string {
+  return stringify_json(value, options, 0);
+}
+function stringify_json(value: unknown, options: PythonJSONOptions, depth: number): string {
   const separator = options.compact ? ',' : ', ';
   const text = (item: string): string => {
     const encoded = JSON.stringify(item);
@@ -99,8 +105,26 @@ export function stringify_python_json(
   if (typeof value === 'bigint') return String(value);
   if (typeof value === 'number')
     return Number.isInteger(value) ? String(BigInt(value)) : python_float(value);
+  const container = (open: string, close: string, parts: string[]): string => {
+    if (options.indent === undefined || parts.length === 0)
+      return open + parts.join(separator) + close;
+    const child = ' '.repeat(options.indent * (depth + 1));
+    return (
+      open +
+      '\n' +
+      child +
+      parts.join(',\n' + child) +
+      '\n' +
+      ' '.repeat(options.indent * depth) +
+      close
+    );
+  };
   if (Array.isArray(value))
-    return '[' + value.map((item) => stringify_python_json(item, options)).join(separator) + ']';
+    return container(
+      '[',
+      ']',
+      value.map((item) => stringify_json(item, options, depth + 1)),
+    );
   if (value !== null && typeof value === 'object') {
     const entries = Object.entries(value);
     if (options.sort_keys)
@@ -113,15 +137,13 @@ export function stringify_python_json(
         }
         return left.length - right.length;
       });
-    return (
-      '{' +
-      entries
-        .map(
-          ([key, item]) =>
-            text(key) + (options.compact ? ':' : ': ') + stringify_python_json(item, options),
-        )
-        .join(separator) +
-      '}'
+    return container(
+      '{',
+      '}',
+      entries.map(
+        ([key, item]) =>
+          text(key) + (options.compact ? ':' : ': ') + stringify_json(item, options, depth + 1),
+      ),
     );
   }
   const result = typeof value === 'string' ? text(value) : JSON.stringify(value);

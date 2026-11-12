@@ -7,6 +7,7 @@ import type { Area } from './core/authority/register.ts';
 import { startServer } from './core/start.ts';
 import { write_held_ticket_configuration } from './runtime/conversation_start.ts';
 import { SqliteProcessConversationSystem } from './conversation/system.ts';
+import { WAITS } from './stalls/registry.ts';
 import { ConversationMessageFiles } from './conversation/record/message_files.ts';
 import { ScriptedBackendRegistry } from './conversation/testing/scripted_registry.ts';
 import { scriptedConversationControls } from './conversation/testing/scripted_controls.ts';
@@ -56,6 +57,7 @@ await startServer({
         const { config, database, record, clock, changes } = context;
         return new SqliteProcessConversationSystem({
           store: record.store,
+          wait_registry: WAITS,
           backend_child_factories: registry.factories,
           message_files: new ConversationMessageFiles(config.db_path),
           unix_time_now: () => clock.nowUnix(),

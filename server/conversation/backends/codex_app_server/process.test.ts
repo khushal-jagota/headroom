@@ -96,7 +96,8 @@ test.skipIf(process.platform !== 'linux')(
         // A killed orphan can await reaping by PID 1. It is no longer a running process.
         return readFileSync(`/proc/${descendant}/stat`, 'utf8').split(') ')[1]!.startsWith('Z ');
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT' || code === 'ESRCH') return true;
         throw error;
       }
     };

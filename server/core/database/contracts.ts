@@ -26,6 +26,15 @@ export interface ReadAccess {
 }
 export interface Database extends WriteDoor, ReadAccess {}
 
+/** Build-time DDL only. Generated identities and domain rows never enter this artifact. */
+export interface ApplicationSchemaSeed {
+  readonly statements: readonly string[];
+  readonly alembicRevision: string;
+}
+
+/** Synchronous domain bootstrap, after DDL and its frontier in the same write scope. */
+export type FreshDatabaseBootstrap = (tx: TransactionSql) => void;
+
 /** Dedicated domain storage uses the same writer engine without app projections. */
 export interface AuxiliaryDatabaseOptions {
   schemaVersion: number;
