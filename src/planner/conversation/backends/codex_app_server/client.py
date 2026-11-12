@@ -38,7 +38,11 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ValidationError
 
-from planner.conversation.backends.codex_app_server import bindings_gen as bindings
+from planner.conversation.backends.cli_compatibility import (
+    BackendCliIncompatible,
+    ensure_cli_compatible,
+)
+from planner.conversation.backends.codex_app_server import protocol
 from planner.conversation.backends.codex_app_server.login import (
     codex_home,
     logins_hold_the_same_credential,
@@ -54,29 +58,29 @@ LOGGER = logging.getLogger("planner.conversation.backends.codex_app_server")
 # The methods this adapter acts on. A notification outside this table is one of the many
 # codex sends that Panels has no use for, and is dropped where it arrives.
 CONSUMED_SERVER_NOTIFICATIONS: dict[str, type[BaseModel]] = {
-    "turn/started": bindings.TurnStartedNotification,
-    "turn/completed": bindings.TurnCompletedNotification,
-    "item/agentMessage/delta": bindings.AgentMessageDeltaNotification,
-    "item/started": bindings.ItemStartedNotification,
-    "item/completed": bindings.ItemCompletedNotification,
-    "item/commandExecution/outputDelta": bindings.CommandExecutionOutputDeltaNotification,
-    "item/mcpToolCall/progress": bindings.McpToolCallProgressNotification,
-    "item/reasoning/textDelta": bindings.ReasoningTextDeltaNotification,
-    "item/reasoning/summaryTextDelta": bindings.ReasoningSummaryTextDeltaNotification,
-    "turn/plan/updated": bindings.TurnPlanUpdatedNotification,
-    "thread/tokenUsage/updated": bindings.ThreadTokenUsageUpdatedNotification,
-    "error": bindings.ErrorNotification,
-    "skills/changed": bindings.SkillsChangedNotification,
-    "app/list/updated": bindings.AppListUpdatedNotification,
+    "turn/started": protocol.TurnStartedNotification,
+    "turn/completed": protocol.TurnCompletedNotification,
+    "item/agentMessage/delta": protocol.AgentMessageDeltaNotification,
+    "item/started": protocol.ItemStartedNotification,
+    "item/completed": protocol.ItemCompletedNotification,
+    "item/commandExecution/outputDelta": protocol.CommandExecutionOutputDeltaNotification,
+    "item/mcpToolCall/progress": protocol.McpToolCallProgressNotification,
+    "item/reasoning/textDelta": protocol.ReasoningTextDeltaNotification,
+    "item/reasoning/summaryTextDelta": protocol.ReasoningSummaryTextDeltaNotification,
+    "turn/plan/updated": protocol.TurnPlanUpdatedNotification,
+    "thread/tokenUsage/updated": protocol.ThreadTokenUsageUpdatedNotification,
+    "error": protocol.ErrorNotification,
+    "skills/changed": protocol.SkillsChangedNotification,
+    "app/list/updated": protocol.AppListUpdatedNotification,
 }
 
 # The requests codex makes of us that we answer. Anything else it asks is refused with
 # method-not-found rather than left hanging, because a server request nobody answers is a
 # codex that waits forever.
 HANDLED_SERVER_REQUESTS: dict[str, type[BaseModel]] = {
-    "item/commandExecution/requestApproval": bindings.CommandExecutionRequestApprovalParams,
-    "item/fileChange/requestApproval": bindings.FileChangeRequestApprovalParams,
-    "item/tool/requestUserInput": bindings.ToolRequestUserInputParams,
+    "item/commandExecution/requestApproval": protocol.CommandExecutionRequestApprovalParams,
+    "item/fileChange/requestApproval": protocol.FileChangeRequestApprovalParams,
+    "item/tool/requestUserInput": protocol.ToolRequestUserInputParams,
 }
 
 METHOD_NOT_FOUND_ERROR_CODE = -32601
@@ -169,8 +173,7 @@ class CodexAppServerClient:
         self._handler = handler
         self._description = description
         # Which notifications this client decodes. The turn adapter's table is the
-        # default; the sign-in client passes its own, because its models come from a
-        # separately pinned bundle and must not become shapes the turn adapter believes.
+        # default; the sign-in client passes only the notification it consumes.
         self._consumed_notifications: Mapping[str, type[BaseModel]] = (
             CONSUMED_SERVER_NOTIFICATIONS
             if consumed_notifications is None
@@ -207,6 +210,9 @@ class CodexAppServerClient:
         """Spawn the child and begin reading it. Raises ``CodexChildWouldNotStart``."""
         environment = with_tool_shell_kill_priority(dict(environment))
         try:
+            await ensure_cli_compatible(
+                "codex", argv[0], environment=environment, working_directory=working_directory
+            )
             if worker_ticket_id:
                 environment = {**environment, "PLAN_TICKET_ID": worker_ticket_id}
                 self._worker_scratch = WorkerScratch(environment)
@@ -232,7 +238,7 @@ class CodexAppServerClient:
                 self._worker_unit = None
             if self._worker_scratch is not None:
                 self._worker_scratch.close()
-            if isinstance(would_not_spawn, (OSError, WorkerUnitError)):
+            if isinstance(would_not_spawn, (OSError, WorkerUnitError, BackendCliIncompatible)):
                 raise CodexChildWouldNotStart(str(would_not_spawn)) from would_not_spawn
             raise
         self._process = process

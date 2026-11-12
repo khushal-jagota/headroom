@@ -11,9 +11,48 @@ from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
 from planner.conversation import worker_scratch
+from planner.conversation.backends import claude_model_catalog
 from planner.conversation.backends.claude_agent_sdk import _ClaudeCleanupTransport
+from planner.conversation.backends.cli_compatibility import BackendCliIncompatible
 from planner.conversation.tool_shell_kill_priority import TOOL_SHELL_STARTUP
 from planner.conversation.worker_unit import WorkerUnit
+
+
+@pytest.fixture(autouse=True)
+def scripted_cli_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "planner.conversation.backends.claude_agent_sdk.ensure_cli_compatible", AsyncMock()
+    )
+
+
+@pytest.mark.parametrize("entrypoint", ["conversation", "catalog"])
+def test_incompatible_cli_refuses_before_native_launch(
+    monkeypatch: pytest.MonkeyPatch, entrypoint: str,
+) -> None:
+    refused = AsyncMock(side_effect=BackendCliIncompatible("Update Claude to at least 2.1.219"))
+    native = AsyncMock()
+    unit = AsyncMock()
+    monkeypatch.setattr(WorkerUnit, "create", unit)
+    if entrypoint == "conversation":
+        monkeypatch.setattr(
+            "planner.conversation.backends.claude_agent_sdk.ensure_cli_compatible", refused
+        )
+        monkeypatch.setattr(SubprocessCLITransport, "connect", native)
+        transport = _ClaudeCleanupTransport(
+            "", ClaudeAgentOptions(cli_path="/selected/claude", env={"PLAN_TICKET_ID": "ticket"})
+        )
+        with pytest.raises(BackendCliIncompatible):
+            asyncio.run(transport.connect())
+    else:
+        monkeypatch.setattr(claude_model_catalog, "ensure_cli_compatible", refused)
+        monkeypatch.setattr(claude_model_catalog, "ClaudeSDKClient", native)
+        with pytest.raises(
+            claude_model_catalog.ClaudeModelCatalogUnavailable, match="Update Claude"
+        ):
+            asyncio.run(claude_model_catalog.probe_claude_model_catalog("/selected/claude"))
+    assert refused.call_args.args == ("claude", "/selected/claude")
+    native.assert_not_called()
+    unit.assert_not_awaited()
 
 
 def test_worker_launch_preserves_sdk_arguments_and_keeps_unit_across_messages(

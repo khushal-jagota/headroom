@@ -16,9 +16,11 @@ lives in ``tests/support/conversation_claude_agent_sdk_bench.py``.
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
@@ -52,18 +54,55 @@ from planner.conversation.backends.claude_agent_sdk import (
     _ClaudeProtocolTransport,
     _ObservedClaudeSdkClient,
 )
+from planner.conversation.backends.cli_compatibility import BackendCliIncompatible
 from planner.conversation.backends.contracts import (
     BackendSpawnFailed,
     BackendStreamEnded,
     BackgroundTaskEnded,
     BackgroundTaskStarted,
     NeedsRebind,
+    PromptWriteFailed,
     SessionLoadFailed,
     TurnToken,
 )
 from planner.conversation.contracts import ConversationRoleMaterials, PromptDeliveryMode
 from planner.conversation.events import ConversationTurnEnding
 from planner.conversation.message_content import text_message_content
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"cancelled": [], "still_queued": [], "future_field": True},
+        {},
+        {"still_queued": []},
+        {"cancelled": [], "still_queued": "unknown"},
+        {"cancelled": [None], "still_queued": []},
+    ],
+)
+def test_raw_stop_receipt_requires_explicit_queue_evidence(
+    monkeypatch: pytest.MonkeyPatch, payload: dict[str, object],
+) -> None:
+    """An old or malformed response cannot masquerade as a confirmed empty queue."""
+    async def exercise() -> None:
+        transport = _ClaudeProtocolTransport(AsyncMock())
+
+        async def reply(data: str) -> None:
+            request = json.loads(data)
+            assert request["request"] == {"subtype": "interrupt", "cancel_queued": True}
+            transport._observe({
+                "type": "control_response",
+                "response": {"request_id": request["request_id"], "response": payload},
+            })
+
+        monkeypatch.setattr(transport, "write", reply)
+        if "future_field" in payload:
+            assert await transport.interrupt_and_cancel_queued() == (frozenset(), frozenset())
+        else:
+            with pytest.raises(PromptWriteFailed, match="confirm queued command cancellation"):
+                await transport.interrupt_and_cancel_queued()
+
+    _run(exercise)
 
 
 def test_a_resume_that_answers_under_another_session_is_refused(tmp_path: Path) -> None:
@@ -458,6 +497,8 @@ def test_claudes_own_command_reply_is_reported_only_when_nothing_else_says_it(
     ("failure", "cursor", "expected_error"),
     [
         (CLINotFoundError("Claude executable is absent"), SESSION_ID, BackendSpawnFailed),
+        (BackendCliIncompatible("Update Claude to at least 2.1.219"),
+         SESSION_ID, BackendSpawnFailed),
         (RuntimeError("Not logged in. Run /login."), None, BackendSpawnFailed),
         (RuntimeError("Requested session is unavailable"), SESSION_ID, SessionLoadFailed),
     ],
@@ -531,6 +572,9 @@ def test_prequery_connect_failure_cannot_skip_retained_transport_exit_proof(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The actual SDK drops a pre-query transport without closing its live process."""
+    monkeypatch.setattr(
+        "planner.conversation.backends.claude_agent_sdk.ensure_cli_compatible", AsyncMock()
+    )
     async def exercise() -> None:
         options = ClaudeAgentOptions()
         transport = _ClaudeCleanupTransport("", options)
