@@ -47,6 +47,7 @@ export async function exercise(spec: {
     unix_time_now: () => now,
     monotonic_now: () => now,
   });
+  areas.startRecordReplay(core.workspace_admission);
   try {
     await core.start_conversation(
       new ConversationStartRequest({

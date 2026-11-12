@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
-import type { AreaServices } from '../core/authority/register.ts';
+import type { AreaServices, PreparedAreaRoutes } from '../core/authority/register.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { HttpError } from '../core/http/errors.ts';
 import { PreviewError, base_path, type PreviewRecord } from './contracts.ts';
@@ -12,7 +12,10 @@ const result = (record: PreviewRecord | null) =>
   record === null
     ? { preview: null }
     : { ...record, base_path: base_path(record), url: record.public_origin + base_path(record) };
-export const routes: FastifyPluginAsync<AreaServices> = async (app, services) => {
+export function createPreviewRoutes(): PreparedAreaRoutes {
+  let begin: (() => Promise<void>) | undefined;
+  let starting: Promise<void> | undefined;
+  const routes: FastifyPluginAsync<AreaServices> = async (app, services) => {
   const lifetime = install_request_lifetime(app);
   const service = new PreviewService(
     services.database,
@@ -37,12 +40,14 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
         checking = false;
       }
     });
-  app.addHook('onReady', async () => {
+  begin = async () => {
+    if (closing || lifetime.sealed) throw new Error('Preview runtime is shut down');
     await service.start();
+    if (closing || lifetime.sealed) throw new Error('Preview runtime is shut down');
     unsubscribe = services.changes?.subscribe(() => void recheck());
     timer = setInterval(() => void recheck(), LIFECYCLE_SECONDS * 1000);
     timer.unref();
-  });
+  };
   app.addHook('onClose', async () => {
     await closing;
   });
@@ -143,4 +148,14 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     }
   };
   app.server.on('upgrade', upgrade);
-};
+  };
+  return {
+    routes,
+    start() {
+      if (starting) return starting;
+      if (!begin) throw new Error('Preview routes are not registered');
+      starting = Promise.resolve().then(() => begin!());
+      return starting;
+    },
+  };
+}

@@ -17,6 +17,9 @@ import {
 } from '../conversation/backends/contracts.ts';
 import { PermissionAskOption, UserInputAnswer } from '../conversation/events.ts';
 import type { CurrentViewSnapshot } from '../../web/src/lib/navigation/contracts.ts';
+import { ConversationViewRebuilder } from '../conversation/views/data/rebuild.ts';
+import { VideoUploadService } from '../conversation/video_uploads/service.ts';
+import { CLEANUP_INTERVAL_SECONDS } from '../conversation/video_uploads/configuration.ts';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -120,7 +123,33 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
   const registry = new ScriptedBackendRegistry();
   const wakePoll = vi.spyOn(ManagerWakeLoop.prototype, 'poll_once');
   const wakeStop = vi.spyOn(ManagerWakeLoop.prototype, 'stop');
+  const intervals = vi.spyOn(globalThis, 'setInterval');
+  const clear_interval = vi.spyOn(globalThis, 'clearInterval');
+  const video_cleanup = vi.spyOn(VideoUploadService.prototype, 'recover_and_cleanup');
   let context!: TestCompositionContext;
+  // Existing actual-core host also proves replay admission without counting it as busy.
+  f.database.write((tx) => {
+    for (const id of ['replay-first', 'replay-second']) {
+      tx.run(`INSERT INTO conversations
+        (conversation_id,backend_key,model,workspace_folder,access,created_at,latest_sequence)
+        VALUES(?,'codex','fixture','/synthetic','full',0,1)`, [id]);
+      tx.run(`INSERT INTO conversation_events VALUES(?,1,'command_reply','{"reply_text":"Replay fixture"}',0)`, [id]);
+    }
+  });
+  let ready = false;
+  let replay_checks = 0;
+  const rebuild_start = ConversationViewRebuilder.prototype.start;
+  vi.spyOn(ConversationViewRebuilder.prototype, 'start').mockImplementation(function(this: ConversationViewRebuilder, database, admission_closed) {
+    expect(ready).toBe(true);
+    expect(context.core).toBeDefined();
+    context.publication.current_read();
+    expect(context.core!.workspace_admission.active).toBe(false);
+    rebuild_start.call(this, database, () => {
+      replay_checks++;
+      if (replay_checks === 2) context.core!.workspace_admission.seal();
+      return admission_closed!();
+    });
+  });
   const server = await startServer({
     // The explicit area loop shares this core, clock, and lease through shutdown.
     areaLoops: { managerWakes: true },
@@ -142,7 +171,9 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     },
     testAreas(value) {
       context = value;
-      return [];
+      return [{ prefix: '', routes: async (app) => {
+        app.addHook('onReady', async () => { ready = true; });
+      } }];
     },
   });
   const post = (text: string) =>
@@ -156,6 +187,26 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
       }),
     });
   try {
+    await vi.waitFor(() => expect(replay_checks).toBe(2));
+    expect(f.database.read((sql) => sql.get('SELECT through_sequence FROM conversation_view_state WHERE conversation_id=?', ['replay-first']))).toEqual({ through_sequence: 1 });
+    expect(f.database.read((sql) => sql.get('SELECT 1 FROM conversation_view_state WHERE conversation_id=?', ['replay-second']))).toBeUndefined();
+    context.core!.workspace_admission.reopen();
+    const cleanup_timer = intervals.mock.calls.map((args, index) => ({ args, timer: intervals.mock.results[index].value }))
+      .filter(({ args }) => args[1] === CLEANUP_INTERVAL_SECONDS * 1000);
+    expect(cleanup_timer).toHaveLength(1);
+    const tick_cleanup = cleanup_timer[0].args[0] as () => void;
+    const cleanup_calls = video_cleanup.mock.calls.length;
+    const cleanup_error = new Error('Synthetic transient cleanup failure');
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    video_cleanup.mockImplementationOnce(() => { throw cleanup_error; });
+    tick_cleanup();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(errors).toHaveBeenCalledWith('Video upload cleanup failed', cleanup_error);
+    expect(clear_interval).not.toHaveBeenCalledWith(cleanup_timer[0].timer);
+    tick_cleanup();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(video_cleanup).toHaveBeenCalledTimes(cleanup_calls + 2);
+    errors.mockRestore();
     await vi.waitFor(() => expect(wakePoll).toHaveBeenCalled());
     await expect(wakePoll.mock.results[0].value).resolves.toEqual([]);
     const sent = await post('work');

@@ -49,6 +49,7 @@ export async function run(spec: Spec): Promise<unknown> {
     unix_time_now: () => now,
     monotonic_now: () => now,
   });
+  areas.startRecordReplay(core.workspace_admission);
   const identity = spec.case === 'replaced' ? 'old' : 'c';
   const checkpoints: Record<string, unknown>[] = [];
   const tables = [

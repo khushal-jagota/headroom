@@ -25,7 +25,7 @@ const view = encodeURIComponent(
 const snapshotPath = `/api/navigation/view/snapshot?view=${view}`;
 const streamPath = `/api/navigation/view/events?view=${view}`;
 
-function setup() {
+async function setup() {
   let producer: SignalPublicationCoordinator | undefined;
   let navigation: ReturnType<typeof createSignalNavigationRuntime> | undefined;
   let attached = false;
@@ -71,6 +71,8 @@ function setup() {
       signalAuthority: producer,
     },
   );
+  await app.ready();
+  await navigation.start();
   return {
     app,
     producer,
@@ -85,7 +87,7 @@ function setup() {
 // send hook. Reuse the original Fastify proof with the real producer, attachment,
 // navigation installer, view rebuild, and routes. No separate server host runs.
 test('navigation_snapshot_admission', async () => {
-  const f = setup();
+  const f = await setup();
   try {
     const current = await f.app.inject(snapshotPath);
     expect(current.statusCode).toBe(200);
@@ -129,7 +131,7 @@ async function initialFrame(
 // Reuse the same application on one ephemeral listener. No browser or new host.
 test('actual producer revocation closes an open HTTP stream and reattachment admits a fresh snapshot', async () => {
   const started = performance.now();
-  const f = setup();
+  const f = await setup();
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
     const listening = performance.now();
