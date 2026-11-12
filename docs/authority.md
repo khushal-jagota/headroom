@@ -20,6 +20,8 @@ The Hermes gateway (`hermes-gateway.service`) is a known owner-level caller outs
 
 A known gap remains: a local process can send a forged `tailscale-user-login` header directly to loopback. Trusted ingress then treats it as the owner. This rule does not close that gap.
 
+Uvicorn also trusts `X-Forwarded-For` from `127.0.0.1` by default. A local process can forge a nonloopback address there and skip this check. This deliberate forgery stays out of scope.
+
 Deliberate forgery through hidden descriptors outside the agent cgroups is also outside this rule. The scan cannot inspect descriptors that the kernel hides from it.
 
 Manager requests use the `manager` actor and `X-Plan-Manager-ID`. Old Sprint Item actors and identity headers do not establish authority.
