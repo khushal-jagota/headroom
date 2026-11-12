@@ -103,6 +103,34 @@
     {
       "area": "previews",
       "method": "POST",
+      "path": "/api/previews/register",
+      "status": 422,
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      },
+      "json": []
+    },
+    {
+      "area": "previews",
+      "method": "POST",
+      "path": "/api/previews/register",
+      "status": 422,
+      "json": []
+    },
+    {
+      "area": "previews",
+      "method": "POST",
+      "path": "/api/previews/register",
+      "status": 422,
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "previews",
+      "method": "POST",
       "path": "/api/previews/prepare",
       "status": 503,
       "headers": {

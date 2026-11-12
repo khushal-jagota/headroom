@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices } from '../core/authority/register.ts';
 import { PlannerError } from '../core/contracts.ts';
+import { HttpError } from '../core/http/errors.ts';
 import { PreviewError, base_path, type PreviewRecord } from './contracts.ts';
 import { LIFECYCLE_SECONDS } from './config.ts';
 import { PreviewService } from './service.ts';
@@ -70,16 +71,22 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     result(await service.prepare(ticket(request))),
   );
   app.post('/api/previews/register', async (request) => {
-    const ticket_id = ticket(request);
     const body = request.body;
-    if (
-      body === null ||
-      typeof body !== 'object' ||
-      Array.isArray(body) ||
-      Object.keys(body).length !== 1 ||
-      !('port' in body) ||
-      !Number.isInteger(body.port)
-    )
+    if (body === undefined || body === null)
+      throw new HttpError(422, [
+        { type: 'missing', loc: ['body'], msg: 'Field required', input: null },
+      ]);
+    if (typeof body !== 'object' || Array.isArray(body))
+      throw new HttpError(422, [
+        {
+          type: 'dict_type',
+          loc: ['body'],
+          msg: 'Input should be a valid dictionary',
+          input: body,
+        },
+      ]);
+    const ticket_id = ticket(request);
+    if (Object.keys(body).length !== 1 || !('port' in body) || !Number.isInteger(body.port))
       throw new PlannerError('validation', 'register requires one integer port');
     return result(await service.register(ticket_id, body.port as number));
   });

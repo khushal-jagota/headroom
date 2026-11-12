@@ -11,9 +11,7 @@
     "body.content.windows.*.backward_overlap": "Opaque cursor/binding digest includes backend-specific collation operands or epoch. Ordered members and record contents are compared without normalization.",
     "body.content.windows.*.request.anchor": "Opaque cursor/binding digest includes backend-specific collation operands or epoch. Ordered members and record contents are compared without normalization.",
     "body.content_version": "Navigation content digest covers opaque installation continuity, so compare changes.",
-    "body.view_id": "Opaque cursor/binding digest includes backend-specific collation operands or epoch. Ordered members and record contents are compared without normalization.",
-    "body.record_sha256": "Ticket record digest includes its stored JSON representation, so compare changes.",
-    "body.body.record_sha256": "The resource body includes the opaque Ticket digest. Compare its changes, as for direct workspace reads."
+    "body.view_id": "Opaque cursor/binding digest includes backend-specific collation operands or epoch. Ordered members and record contents are compared without normalization."
   },
   "derived_tables": {
     "navigation_meta": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
