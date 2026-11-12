@@ -14,9 +14,9 @@ struct AppShell: View {
     @State private var morePath: [AppRoute] = []
 
     var body: some View {
-        // Keep routes mounted. Each stack hides the containing UIKit tab controller
-        // from accessibility while the separate connection cover remains available.
-        tabs
+        // Keep the tab graph mounted inside an owned UIKit view. Hide that exact
+        // view while the separate connection cover remains visible and accessible.
+        MountedTabContent(content: tabs, isCovered: store.serverUnreachable)
         .allowsHitTesting(!store.serverUnreachable)
         .overlay {
             if store.serverUnreachable {
@@ -98,20 +98,17 @@ struct AppShell: View {
                 })
                     .navigationDestination(for: AppRoute.self) { detail($0) }
             }
-                .background(TabAccessibilityIsolation(isHidden: store.serverUnreachable))
                 .tabItem { Label("Review", systemImage: "checkmark.circle") }
                 .badge(reviewBadge).tag(AppTab.review)
             NavigationStack(path: $workspacePath) {
                 WorkspaceView()
                     .navigationDestination(for: AppRoute.self) { detail($0) }
             }
-                .background(TabAccessibilityIsolation(isHidden: store.serverUnreachable))
                 .tabItem { Label("Workspace", systemImage: "rectangle.3.group") }.tag(AppTab.workspace)
             NavigationStack(path: $morePath) {
                 MoreView()
                     .navigationDestination(for: AppRoute.self) { detail($0) }
             }
-                .background(TabAccessibilityIsolation(isHidden: store.serverUnreachable))
                 .tabItem { Label { Text("More") } icon: { Image(uiImage: moreTabImage) } }.tag(AppTab.more)
         }
     }
@@ -157,57 +154,55 @@ struct AppShell: View {
     }
 }
 
-/// SwiftUI accessibility traits do not hide the UIKit navigation and tab descendants.
-/// A stack-local probe changes only its containing tab controller, without replacing views.
-private struct TabAccessibilityIsolation: UIViewControllerRepresentable {
-    let isHidden: Bool
+/// Own the content boundary rather than infer a UIKit ancestor from SwiftUI.
+/// Hiding the child view retains its controller, SwiftUI graph, and route state.
+private struct MountedTabContent<Content: View>: UIViewControllerRepresentable {
+    let content: Content
+    let isCovered: Bool
 
-    func makeUIViewController(context: Context) -> Controller { Controller(isHidden: isHidden) }
+    func makeUIViewController(context: Context) -> Controller {
+        Controller(root: Root(content: content, environment: context.environment), isCovered: isCovered)
+    }
 
     func updateUIViewController(_ controller: Controller, context: Context) {
-        controller.contentIsHidden = isHidden
-        controller.applyIsolation()
+        controller.isCovered = isCovered
+        controller.host.rootView = Root(content: content, environment: context.environment)
+        controller.host.view.isHidden = isCovered
+    }
+
+    struct Root: View {
+        let content: Content
+        let environment: EnvironmentValues
+        var body: some View { content.environment(\.self, environment) }
     }
 
     final class Controller: UIViewController {
-        var contentIsHidden: Bool
+        let host: UIHostingController<Root>
+        var isCovered: Bool
 
-        init(isHidden: Bool) {
-            contentIsHidden = isHidden
+        init(root: Root, isCovered: Bool) {
+            host = UIHostingController(rootView: root)
+            self.isCovered = isCovered
             super.init(nibName: nil, bundle: nil)
         }
 
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
         override func loadView() {
-            let probe = AttachmentView()
-            probe.isUserInteractionEnabled = false
-            probe.onAttachment = { [weak self] in self?.applyIsolation() }
-            view = probe
-        }
-
-        override func didMove(toParent parent: UIViewController?) {
-            super.didMove(toParent: parent)
-            applyIsolation()
-        }
-
-        override func viewDidAppear(_ animated: Bool) {
-            super.viewDidAppear(animated)
-            applyIsolation()
-        }
-
-        func applyIsolation() {
-            // Do not fall back to a hosting root: that also contains the cover.
-            guard let tabBarController else { return }
-            tabBarController.view.accessibilityElementsHidden = contentIsHidden
-        }
-    }
-
-    private final class AttachmentView: UIView {
-        var onAttachment: (() -> Void)?
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            if window != nil { onAttachment?() }
+            view = UIView()
+            view.backgroundColor = .clear
+            addChild(host)
+            host.view.backgroundColor = .clear
+            host.view.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(host.view)
+            NSLayoutConstraint.activate([
+                host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                host.view.topAnchor.constraint(equalTo: view.topAnchor),
+                host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            ])
+            host.view.isHidden = isCovered
+            host.didMove(toParent: self)
         }
     }
 }
