@@ -22,6 +22,9 @@ from planner.worker_supervision import config, records
 from planner.worker_supervision.contracts import (
     CleanupResult,
     CleanupUncertainty,
+    InspectionContext,
+    ReconciliationRecord,
+    ReconciliationResult,
     WorkerCleanupError,
     WorkerProcess,
 )
@@ -29,6 +32,8 @@ from planner.worker_supervision.contracts import (
 __all__ = [
     "CleanupResult",
     "CleanupUncertainty",
+    "ReconciliationRecord",
+    "ReconciliationResult",
     "cleanup_uncertainties",
     "WorkerCleanupError",
     "WorkerSupervisor",
@@ -36,6 +41,11 @@ __all__ = [
     "reconcile",
     "stop_record",
 ]
+
+
+def _inspection_context(deadline: float) -> InspectionContext:
+    primitives = get_platform_adapter().worker_processes()
+    return InspectionContext(primitives, primitives.host_boot(deadline))
 
 
 def _process(raw: Any) -> WorkerProcess:
@@ -101,11 +111,16 @@ def _validate_pending_shape(record: dict[str, Any]) -> None:
     raise ValueError("Worker record lacks valid pre-execution launch evidence")
 
 
-def _observe_unlocked(path: Path, deadline: float) -> dict[str, Any]:
+def _observe_unlocked(
+    path: Path,
+    deadline: float,
+    *,
+    context: InspectionContext | None = None,
+) -> dict[str, Any]:
     record = records.read(path)
     _validate_pending_shape(record)
-    primitives = get_platform_adapter().worker_processes()
-    host = primitives.host_boot(deadline)
+    context = _inspection_context(deadline) if context is None else context
+    primitives, host = context.primitives, context.host
     if host.host != record.get("host"):
         raise ValueError("Worker process record belongs to another machine")
     if host.boot != record.get("boot"):
@@ -127,6 +142,16 @@ def _observe_unlocked(path: Path, deadline: float) -> dict[str, Any]:
             # Otherwise an unattributed survivor prevents cleanup proof, but its
             # session number alone never authorizes a signal.
             if leader is None or leader.birth == root["birth"]:
+                if primitives.owns_isolated_session_members:
+                    for process in stable.values():
+                        if (
+                            process.session == root["session"]
+                            and not process.zombie
+                            and (process.pid, process.birth) not in known
+                        ):
+                            discovered.append(process)
+                            known.add((process.pid, process.birth))
+                    record["processes"] = [asdict(process) for process in discovered]
                 session_members = [
                     asdict(process)
                     for process in second.values()
@@ -140,9 +165,14 @@ def _observe_unlocked(path: Path, deadline: float) -> dict[str, Any]:
     return record
 
 
-def _observe(path: Path, deadline: float) -> dict[str, Any]:
+def _observe(
+    path: Path,
+    deadline: float,
+    *,
+    context: InspectionContext | None = None,
+) -> dict[str, Any]:
     with records.locked(path, deadline):
-        return _observe_unlocked(path, deadline)
+        return _observe_unlocked(path, deadline, context=context)
 
 
 def inspect_record(
@@ -151,12 +181,18 @@ def inspect_record(
     identity: LocalChildIdentity | None = None,
     revoke_pending: bool = False,
     deadline: float | None = None,
+    context: InspectionContext | None = None,
 ) -> CleanupResult:
     deadline = time.monotonic() + config.INSPECTION_SECONDS if deadline is None else deadline
     try:
         with records.locked(path, deadline):
+            context = _inspection_context(deadline) if context is None else context
             return _inspect_record(
-                path, identity=identity, deadline=deadline, revoke_pending=revoke_pending
+                path,
+                identity=identity,
+                deadline=deadline,
+                revoke_pending=revoke_pending,
+                context=context,
             )
     except (OSError, ValueError, TimeoutError) as error:
         return CleanupResult(False, f"Worker cleanup evidence unavailable: {error}")
@@ -167,11 +203,13 @@ def stop_record(
     *,
     identity: LocalChildIdentity | None = None,
     deadline: float | None = None,
+    context: InspectionContext | None = None,
 ) -> CleanupResult:
     deadline = time.monotonic() + config.STOP_SECONDS if deadline is None else deadline
     try:
         with records.locked(path, deadline):
-            return _stop_record(path, identity=identity, deadline=deadline)
+            context = _inspection_context(deadline) if context is None else context
+            return _stop_record(path, identity=identity, deadline=deadline, context=context)
     except (OSError, ValueError, TimeoutError) as error:
         return CleanupResult(False, f"Worker cleanup not proven: {error}")
 
@@ -194,9 +232,11 @@ def _inspect_record(
     identity: LocalChildIdentity | None = None,
     deadline: float,
     revoke_pending: bool = False,
+    context: InspectionContext | None = None,
 ) -> CleanupResult:
     try:
-        record = _observe_unlocked(path, deadline)
+        context = _inspection_context(deadline) if context is None else context
+        record = _observe_unlocked(path, deadline, context=context)
         if identity is not None:
             root = record.get("root")
             if root is None or (root["pid"], root["birth"], record["boot"]) != (
@@ -207,7 +247,7 @@ def _inspect_record(
                 return CleanupResult(False, "Worker custody does not match its process record")
         if record.get("state") == "complete":
             return CleanupResult(True, str(record.get("reason", "Recorded processes ended")))
-        primitives = get_platform_adapter().worker_processes()
+        primitives = context.primitives
         if record.get("root") is None:
             owner = record.get("owner")
             if (
@@ -222,7 +262,7 @@ def _inspect_record(
             return CleanupResult(False, "Recorded Worker processes remain")
         # The root can exit after its previous snapshot and leave a late tool.
         # Inspect the isolated session again after exact root/child absence.
-        record = _observe_unlocked(path, deadline)
+        record = _observe_unlocked(path, deadline, context=context)
         if any(not primitives.is_absent(_process(raw), deadline) for raw in record["processes"]):
             return CleanupResult(False, "Recorded Worker processes remain")
         if record.get("unattributed_session_members"):
@@ -239,10 +279,12 @@ def _stop_record(
     *,
     identity: LocalChildIdentity | None = None,
     deadline: float | None = None,
+    context: InspectionContext | None = None,
 ) -> CleanupResult:
     deadline = time.monotonic() + config.STOP_SECONDS if deadline is None else deadline
     try:
-        record = _observe_unlocked(path, deadline)
+        context = _inspection_context(deadline) if context is None else context
+        record = _observe_unlocked(path, deadline, context=context)
         if identity is not None:
             root = record.get("root")
             if root is None or (root["pid"], root["birth"], record["boot"]) != (
@@ -255,10 +297,10 @@ def _stop_record(
             return CleanupResult(True, str(record["reason"]))
         if record.get("root") is None:
             return _revoke_pending(path, record)
-        primitives = get_platform_adapter().worker_processes()
+        primitives = context.primitives
         term_deadline = min(deadline, time.monotonic() + config.TERM_SECONDS)
         for signum, phase_deadline in ((signal.SIGTERM, term_deadline), (signal.SIGKILL, deadline)):
-            record = _observe_unlocked(path, deadline)
+            record = _observe_unlocked(path, deadline, context=context)
             remaining = [
                 _process(raw)
                 for raw in record["processes"]
@@ -269,7 +311,9 @@ def _stop_record(
                 # naturally while its native transport finishes teardown.
                 primitives.signal(process, signum, deadline)
             while time.monotonic() < phase_deadline:
-                result = _inspect_record(path, identity=identity, deadline=deadline)
+                result = _inspect_record(
+                    path, identity=identity, deadline=deadline, context=context
+                )
                 if result.complete:
                     return result
                 time.sleep(min(0.05, max(0, phase_deadline - time.monotonic())))
@@ -285,11 +329,16 @@ def _stop_record(
 
 
 def cleanup_uncertainties(
-    root: Path, *, revoke_pending: bool = False
+    root: Path,
+    *,
+    revoke_pending: bool = False,
+    ticket_id: str | None = None,
+    healthy_sources: frozenset[tuple[str, str]] = frozenset(),
 ) -> tuple[CleanupUncertainty, ...]:
-    """Fresh observation clears each Ticket independently; it never stops a process."""
-    deadline = time.monotonic() + config.STOP_SECONDS
+    """Inspect eligible records independently, with one host identity per batch."""
     uncertain: list[CleanupUncertainty] = []
+    context: InspectionContext | None = None
+    context_error: str | None = None
     if not root.exists():
         return ()
     for path in sorted(root.glob("*.json")):
@@ -297,6 +346,11 @@ def cleanup_uncertainties(
             record = records.read(path)
         except (OSError, ValueError) as error:
             uncertain.append(CleanupUncertainty(None, None, path, str(error)))
+            continue
+        if ticket_id is not None and record.get("ticket_id") != ticket_id:
+            continue
+        source = (record.get("source_incarnation"), record.get("source_child_id"))
+        if isinstance(source[0], str) and isinstance(source[1], str) and source in healthy_sources:
             continue
         if record.get("state") == "complete":
             try:
@@ -311,7 +365,21 @@ def cleanup_uncertainties(
                     )
                 )
             continue
-        result = inspect_record(path, revoke_pending=revoke_pending, deadline=deadline)
+        if context is None and context_error is None:
+            try:
+                context = _inspection_context(time.monotonic() + config.INSPECTION_SECONDS)
+            except (OSError, ValueError) as error:
+                context_error = f"Worker host evidence unavailable: {error}"
+        result = (
+            CleanupResult(False, context_error)
+            if context_error is not None
+            else inspect_record(
+                path,
+                revoke_pending=revoke_pending,
+                deadline=time.monotonic() + config.INSPECTION_SECONDS,
+                context=context,
+            )
+        )
         if not result.complete:
             uncertain.append(
                 CleanupUncertainty(
@@ -324,43 +392,75 @@ def cleanup_uncertainties(
     return tuple(uncertain)
 
 
-def reconcile(root: Path, ticket_id: str | None = None) -> CleanupResult:
-    """Reconcile durable old custody before another Worker starts."""
-    deadline = time.monotonic() + config.STOP_SECONDS
+def reconcile(root: Path, ticket_id: str | None = None) -> ReconciliationResult:
+    """Attempt every recorded source; one uncertain Ticket never skips the next."""
+    outcomes: list[ReconciliationRecord] = []
+    context: InspectionContext | None = None
+    context_error: str | None = None
     if not root.exists():
-        return CleanupResult(True, "No recorded Worker launches")
+        return ReconciliationResult(True, "No recorded Worker launches")
     for path in sorted(root.glob("*.json")):
         try:
             record = records.read(path)
         except (OSError, ValueError) as error:
-            return CleanupResult(False, f"Worker launch record is unreadable: {error}")
-        if ticket_id is not None and record["ticket_id"] != ticket_id:
+            outcomes.append(
+                ReconciliationRecord(
+                    path,
+                    None,
+                    None,
+                    CleanupResult(False, f"Worker record is unreadable: {error}"),
+                )
+            )
             continue
-        if record.get("state") == "complete":
-            try:
-                _validate_pending_shape(record)
-            except (ValueError, TypeError, KeyError) as error:
-                return CleanupResult(False, str(error))
+        if ticket_id is not None and record.get("ticket_id") != ticket_id:
             continue
         try:
-            primitives = get_platform_adapter().worker_processes()
-            host = primitives.host_boot(deadline)
-            if host.host != record.get("host"):
-                return CleanupResult(False, "Prior Worker custody belongs to another machine")
-            if host.boot != record.get("boot"):
-                result = stop_record(path, deadline=deadline)
-                if not result.complete:
-                    return result
-                continue
-            table = primitives.snapshot(deadline)
-            if record.get("owner") and _alive(_process(record["owner"]), table):
-                return CleanupResult(False, "A live Worker supervisor still owns this record")
-        except (OSError, ValueError, TimeoutError) as error:
-            return CleanupResult(False, f"Worker supervisor identity is unknown: {error}")
-        result = stop_record(path, deadline=deadline)
-        if not result.complete:
-            return result
-    return CleanupResult(True, "All recorded Worker launches reconciled")
+            if record.get("state") == "complete":
+                _validate_pending_shape(record)
+                result = CleanupResult(True, str(record.get("reason", "Recorded cleanup complete")))
+            else:
+                if context is None and context_error is None:
+                    try:
+                        context = _inspection_context(time.monotonic() + config.INSPECTION_SECONDS)
+                    except (OSError, ValueError) as error:
+                        context_error = f"Worker host evidence unavailable: {error}"
+                deadline = time.monotonic() + config.STOP_SECONDS
+                if context_error is not None:
+                    result = CleanupResult(False, context_error)
+                else:
+                    assert context is not None
+                    if context.host.host != record.get("host"):
+                        result = CleanupResult(
+                            False, "Prior Worker custody belongs to another machine"
+                        )
+                    elif (
+                        context.host.boot == record.get("boot")
+                        and record.get("owner")
+                        and not context.primitives.is_absent(_process(record["owner"]), deadline)
+                    ):
+                        result = inspect_record(path, deadline=deadline, context=context)
+                    else:
+                        result = stop_record(path, deadline=deadline, context=context)
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            result = CleanupResult(False, f"Worker cleanup evidence unavailable: {error}")
+        outcomes.append(
+            ReconciliationRecord(
+                path,
+                record.get("ticket_id"),
+                record.get("conversation_id"),
+                result,
+            )
+        )
+    remaining = sum(not item.result.complete for item in outcomes)
+    return ReconciliationResult(
+        remaining == 0,
+        (
+            f"{remaining} Worker launch records remain unproven"
+            if remaining
+            else "All recorded Worker launches reconciled"
+        ),
+        records=tuple(outcomes),
+    )
 
 
 class WorkerSupervisor:
@@ -383,6 +483,7 @@ class WorkerSupervisor:
         info = root.lstat()
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
             raise WorkerCleanupError("Worker process record root must be private and owned")
+        context = _inspection_context(time.monotonic() + config.INSPECTION_SECONDS)
         for prior in root.glob("*.json"):
             try:
                 previous = records.read(prior)
@@ -398,23 +499,22 @@ class WorkerSupervisor:
                 except (ValueError, TypeError, KeyError) as error:
                     raise WorkerCleanupError(str(error)) from error
                 continue
-            inspection = inspect_record(prior)
+            inspection = inspect_record(prior, context=context)
             if inspection.complete:
                 continue
-            primitives = get_platform_adapter().worker_processes()
+            primitives, host = context.primitives, context.host
             deadline = time.monotonic() + config.INSPECTION_SECONDS
-            host = primitives.host_boot(deadline)
             if host.host != previous.get("host"):
                 raise WorkerCleanupError("Prior Worker custody belongs to another machine")
             if host.boot != previous.get("boot"):
-                result = stop_record(prior)
+                result = stop_record(prior, context=context)
                 if not result.complete:
                     raise WorkerCleanupError(result.reason)
                 continue
             table = primitives.snapshot(deadline)
             if previous.get("owner") and _alive(_process(previous["owner"]), table):
                 raise WorkerCleanupError("Ticket already has retained Worker process custody")
-            result = stop_record(prior)
+            result = stop_record(prior, context=context)
             if not result.complete:
                 raise WorkerCleanupError(result.reason)
         self.root = root
@@ -423,9 +523,8 @@ class WorkerSupervisor:
         self._lock = threading.Lock()
         self._end = threading.Event()
         self._observer: threading.Thread | None = None
-        primitives = get_platform_adapter().worker_processes()
+        primitives, host = context.primitives, context.host
         deadline = time.monotonic() + config.INSPECTION_SECONDS
-        host = primitives.host_boot(deadline)
         owner = primitives.snapshot(deadline).get(os.getpid())
         if owner is None:
             raise WorkerCleanupError("Worker supervisor identity is unavailable")
@@ -596,12 +695,14 @@ class WorkerSupervisor:
         deadline = time.monotonic() + config.STOP_SECONDS
         diagnostics: list[str] = []
 
-        def capture() -> None:
+        def capture() -> InspectionContext:
+            context = _inspection_context(deadline)
             with self._lock:
-                _observe(self.path, deadline)
+                _observe(self.path, deadline, context=context)
+            return context
 
         try:
-            await asyncio.to_thread(capture)
+            context = await asyncio.to_thread(capture)
         except (OSError, ValueError, TypeError, KeyError, WorkerCleanupError) as error:
             diagnostics.append(f"Process observation failed: {error}")
 
@@ -642,7 +743,7 @@ class WorkerSupervisor:
 
         def cleanup() -> CleanupResult:
             with self._lock:
-                return stop_record(self.path, deadline=deadline)
+                return stop_record(self.path, deadline=deadline, context=context)
 
         result = await asyncio.to_thread(cleanup)
         if diagnostics:

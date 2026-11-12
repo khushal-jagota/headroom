@@ -51,6 +51,8 @@ class _BSDInfo(ctypes.Structure):
 
 
 class DarwinWorkerProcesses:
+    owns_isolated_session_members = False
+
     def host_boot(self, deadline: float) -> LocalHostBootIdentity:
         def output(command: list[str]) -> str:
             remaining = deadline - time.monotonic()
@@ -129,9 +131,9 @@ class DarwinWorkerProcesses:
         length = library.proc_pidinfo(process.pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info))
         if length != ctypes.sizeof(info):
             return ctypes.get_errno() == errno.ESRCH
-        # A replacement incarnation receives neither a signal nor a positive
-        # cleanup receipt on this platform. A later absent PID can prove cleanup.
-        return f"{info.start_sec}:{info.start_usec}" == process.birth and info.status == 5
+        # A different birth proves that the old incarnation ended. Signals still
+        # require an immediate match and never target this replacement process.
+        return f"{info.start_sec}:{info.start_usec}" != process.birth or info.status == 5
 
     def prepare_launch(self) -> None:
         if os.getsid(0) != os.getpid() or os.getpgrp() != os.getpid():

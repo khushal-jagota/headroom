@@ -165,7 +165,14 @@ def test_journal_records_once_and_its_cursor_follows_a_restored_mailbox(
     assert journal.poll_cursor() == 2
     assert journal.unreported(32) == (finished,)
     journal.mark_reported(["p1"])
-    # Shrinking deletes nothing: an unfinished row keeps its command for running.
+    journal.finish(
+        "s1", CommandResult("s1", CommandOutcome(
+            "s1", child, CommandDisposition.succeeded, {},
+        )), outputs_owed=False,
+    )
+    journal.mark_reported(["s1"])
+    # Traffic shrinks, while a finished stop retains its exact cleanup receipt.
+    # The unfinished prompt still keeps its command for running.
     journal.shrink_to_tombstones()
     assert set(rows(tmp_path / "spool")) == {"p1", "p2", "s1"}
     assert command_sizes(tmp_path / "spool") == {
@@ -316,7 +323,9 @@ def test_a_restored_command_matching_a_tombstone_is_re_answered_and_never_run_tw
             acknowledge_pending(outbox)  # R1 and R2 of the refused prompt arrived.
             journal.mark_reported(r.command_id for r in journal.unreported(32))
             journal.shrink_to_tombstones()
-            assert set(command_sizes(outbox.root).values()) == {0}
+            sizes = command_sizes(outbox.root)
+            assert sizes[start.command_id] == size_of(start)
+            assert sizes[delivered.command_id] == sizes[refused.command_id] == 0
             results = {
                 command.command_id: journal.result_of(command.command_id)
                 for command in (start, delivered, refused)

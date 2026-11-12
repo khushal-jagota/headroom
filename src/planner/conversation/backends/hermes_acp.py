@@ -876,7 +876,10 @@ class HermesAcpBackendChild:
                 cwd=str(resolved_start.workspace_folder), mcp_servers=[]
             )
         except Exception as would_not_create:
-            raise SessionLoadFailed(str(would_not_create)) from would_not_create
+            detail = str(would_not_create)
+            if isinstance(would_not_create, RequestError) and would_not_create.data is not None:
+                detail += f": {would_not_create.data}"
+            raise SessionLoadFailed(detail) from would_not_create
         self._session_id = response.session_id
         self._session_configuration_options = tuple(response.config_options or ())
         self._session_model = _current_model_from_metadata(response.field_meta)

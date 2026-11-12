@@ -124,6 +124,7 @@ def _modern_sources(paths: ExecutorPaths) -> set[ChildReference]:
 
 def snapshot_cleanup(
     paths: ExecutorPaths, *, current_incarnation: str, revoke_pending: bool = False,
+    ticket_id: str | None = None,
     healthy_sources: frozenset[ChildReference] = frozenset(),
     preparing_sources: frozenset[ChildReference] = frozenset(),
 ) -> ExecutorCleanupSnapshot:
@@ -131,6 +132,8 @@ def snapshot_cleanup(
     notices: list[str] = []
     try:
         sources = _sources(paths)
+        if ticket_id is not None:
+            sources = {source: owner for source, owner in sources.items() if owner == ticket_id}
     except (OSError, ValueError, sqlite3.DatabaseError) as error:
         sources = {}
         notices.append(f"Worker source evidence is unavailable: {error}")
@@ -144,16 +147,12 @@ def snapshot_cleanup(
         if (source := _record_source(path)) is not None
     }
     for uncertain in cleanup_uncertainties(
-        paths.run / "worker-processes", revoke_pending=revoke_pending,
+        paths.run / "worker-processes", ticket_id=ticket_id, revoke_pending=revoke_pending,
+        healthy_sources=frozenset(
+            (source.executor_incarnation, source.child_id)
+            for source in healthy_sources | preparing_sources
+        ),
     ):
-        source = _record_source(uncertain.record_path)
-        if (uncertain.reason == "Recorded Worker processes remain" and source in healthy_sources):
-            continue
-        if (source in preparing_sources and uncertain.reason in {
-            "Recorded Worker processes remain",
-            "Worker launch is still pending with its live owner",
-        }):
-            continue
         if uncertain.ticket_id is not None and uncertain.conversation_id is not None:
             key = (uncertain.ticket_id, uncertain.conversation_id)
             found[key] = WorkerCleanupUncertainty(*key, uncertain.reason)
@@ -167,17 +166,15 @@ def snapshot_cleanup(
                 found[key] = WorkerCleanupUncertainty(*key, uncertain.reason)
                 notices.append(uncertain.reason)
         else:
+            # Do not attribute an unreadable file to unrelated Tickets. Each
+            # modern source still needs its own positive record or stop receipt.
             notices.append(uncertain.reason)
-            for source, ticket_id in sources.items():
-                if source in modern:
-                    key = (ticket_id, source.conversation_id)
-                    found[key] = WorkerCleanupUncertainty(*key, uncertain.reason)
     legacy_attempted = False
     try:
         receipt = read_record(paths.run / RECEIPT)
         legacy_attempted = (receipt is not None and receipt.get("version") == 1
                             and receipt.get("attempted") is True)
-        notice = legacy_notice(paths.run)
+        notice = legacy_notice(paths.run) if ticket_id is None else None
         if notice is not None:
             notices.append(notice)
         modern = _modern_sources(paths)

@@ -160,7 +160,13 @@ class MacService:
             await asyncio.to_thread(migrate_once, self.paths.run)
         except (OSError, ValueError) as error:
             logging.getLogger(__name__).warning("Legacy cleanup compatibility pass: %s", error)
-        await asyncio.to_thread(reconcile, self.paths.run / "worker-processes")
+        reconciliation = await asyncio.to_thread(reconcile, self.paths.run / "worker-processes")
+        for owned in reconciliation.records:
+            if not owned.result.complete:
+                logging.getLogger(__name__).warning(
+                    "Worker cleanup remains unproven ticket=%s conversation=%s record=%s: %s",
+                    owned.ticket_id, owned.conversation_id, owned.record_path, owned.result.reason,
+                )
         await self.runner.refresh_worker_cleanup(revoke_pending=True)
 
     async def run(self) -> None:

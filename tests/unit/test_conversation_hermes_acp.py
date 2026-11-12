@@ -762,3 +762,27 @@ def test_owned_hermes_callback_kills_a_child_that_ignores_term(
             await child._processes.aclose()
 
     _run(exercise)
+
+
+def test_session_creation_failure_exposes_acp_provider_detail(tmp_path: Path) -> None:
+    """An actionable provider error must survive the backend's exception boundary."""
+    from unittest.mock import AsyncMock, Mock
+
+    from acp.exceptions import RequestError
+
+    from planner.conversation.backends.contracts import SessionLoadFailed
+
+    async def exercise() -> None:
+        resolved = _resolved_start(tmp_path)
+        child = HermesAcpBackendChild(
+            launch=AcpChildLaunch(("hermes",)), resolved_start=resolved,
+            event_sink=_RecordingSink(), message_files=ConversationMessageFiles(tmp_path),
+        )
+        connection = Mock()
+        connection.new_session = AsyncMock(side_effect=RequestError.internal_error(
+            {"details": "No LLM provider configured"},
+        ))
+        with pytest.raises(SessionLoadFailed, match="No LLM provider configured"):
+            await child._create_session(connection, resolved)
+
+    _run(exercise)

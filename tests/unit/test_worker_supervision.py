@@ -131,6 +131,8 @@ def _record(tmp_path: Path) -> Path:
 
 
 class _Primitives:
+    owns_isolated_session_members = False
+
     def __init__(self, table: dict[int, WorkerProcess]) -> None:
         self.table = table
         self.signals: list[tuple[int, int]] = []
@@ -262,10 +264,15 @@ def test_native_stop_cancellation_cannot_extend_deadline(
 
         from planner.worker_supervision.contracts import CleanupResult
 
-        monkeypatch.setattr("planner.worker_supervision._observe", lambda path, deadline: {})
+        monkeypatch.setattr(
+            "planner.worker_supervision._observe", lambda path, deadline, **kwargs: {}
+        )
+        monkeypatch.setattr(
+            "planner.worker_supervision.get_platform_adapter", lambda: _Adapter(_Primitives({}))
+        )
         monkeypatch.setattr(
             "planner.worker_supervision.stop_record",
-            lambda path, *, deadline: CleanupResult(True, "The OS refused spawn"),
+            lambda path, *, deadline, **kwargs: CleanupResult(True, "The OS refused spawn"),
         )
 
         async def reserved_budget_expired(
@@ -520,7 +527,7 @@ def test_async_receipt_and_observation_failure_leave_the_event_loop_free(
         entered.clear()
         release.clear()
 
-        def failed_observation(path: Path, deadline: float) -> None:
+        def failed_observation(path: Path, deadline: float, **kwargs: object) -> None:
             raise OSError("temporary process inspection error")
 
         monkeypatch.setattr("planner.worker_supervision._observe", failed_observation)
@@ -587,7 +594,7 @@ def test_mac_signal_requires_immediate_microsecond_birth_match(
     assert signals == [(42, signal.SIGTERM)]
     birth[1] = 21
     assert not native.signal(target, signal.SIGKILL, time.monotonic() + 1)
-    assert not native.is_absent(target, time.monotonic() + 1)
+    assert native.is_absent(target, time.monotonic() + 1)
     readable[0] = False
     assert not native.signal(target, signal.SIGKILL, time.monotonic() + 1)
     assert [sig for _, sig in signals if sig] == [signal.SIGTERM]
@@ -631,3 +638,135 @@ def test_mac_host_command_failures_remain_structured_cleanup_results(
                     tmp_path,
                 )
             )
+
+
+def test_reconciliation_finishes_later_ticket_after_first_ticket_stays_uncertain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from planner.worker_supervision import reconcile
+
+    first = _record(tmp_path)
+    second = tmp_path / ("b" * 32 + ".json")
+    later = records.read(first)
+    later.update(
+        ticket_id="later",
+        root=asdict(WorkerProcess(30, "later", 1, 30, 30)),
+        processes=[asdict(WorkerProcess(30, "later", 1, 30, 30))],
+    )
+    records.write(second, later)
+    native = _Primitives(
+        {20: WorkerProcess(20, "old", 10, 20, 20), 30: WorkerProcess(30, "later", 1, 30, 30)}
+    )
+    hosts: list[float] = []
+    clock = [100.0]
+
+    def host(deadline: float) -> LocalHostBootIdentity:
+        hosts.append(deadline)
+        return LocalHostBootIdentity("host", "boot")
+
+    def signal_one(process: WorkerProcess, signum: int, deadline: float) -> bool:
+        if process.pid == 30:
+            native.table.pop(30, None)
+            return True
+        return False
+
+    timer = SimpleNamespace(
+        monotonic=lambda: clock[0], sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+    monkeypatch.setattr("planner.worker_supervision.time", timer)
+    monkeypatch.setattr("planner.worker_supervision.records.time", timer)
+    monkeypatch.setattr("planner.worker_supervision.get_platform_adapter", lambda: _Adapter(native))
+    monkeypatch.setattr(native, "host_boot", host)
+    monkeypatch.setattr(native, "signal", signal_one)
+    monkeypatch.setattr(config, "STOP_SECONDS", 0.06)
+    monkeypatch.setattr(config, "TERM_SECONDS", 0.02)
+    result = reconcile(tmp_path)
+    assert not result.complete
+    assert [record.result.complete for record in result.records] == [False, True]
+    assert records.read(second)["state"] == "complete"
+    assert len(hosts) == 1
+
+
+def test_batch_filters_healthy_sources_and_gives_each_record_a_fresh_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from planner.worker_supervision import cleanup_uncertainties
+
+    first = _record(tmp_path)
+    active = records.read(first)
+    active.update(ticket_id="healthy", source_incarnation="inc", source_child_id="child")
+    records.write(first, active)
+    second = tmp_path / ("b" * 32 + ".json")
+    later = records.read(first)
+    later.update(
+        ticket_id="other",
+        source_child_id="other",
+        root=asdict(WorkerProcess(30, "later", 1, 30, 30)),
+        processes=[asdict(WorkerProcess(30, "later", 1, 30, 30))],
+    )
+    records.write(second, later)
+    native = _Primitives({20: WorkerProcess(20, "old", 10, 20, 20)})
+    hosts: list[float] = []
+    clock = [100.0]
+    original_snapshot = native.snapshot
+    exhausted = False
+
+    def host(deadline: float) -> LocalHostBootIdentity:
+        hosts.append(deadline)
+        return LocalHostBootIdentity("host", "boot")
+
+    def slow_first(deadline: float) -> dict[int, WorkerProcess]:
+        nonlocal exhausted
+        if not exhausted:
+            exhausted = True
+            clock[0] = deadline + 0.1
+            raise TimeoutError("first record spent its inspection budget")
+        assert clock[0] < deadline
+        return original_snapshot(deadline)
+
+    timer = SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda seconds: None)
+    monkeypatch.setattr("planner.worker_supervision.time", timer)
+    monkeypatch.setattr("planner.worker_supervision.records.time", timer)
+    monkeypatch.setattr("planner.worker_supervision.get_platform_adapter", lambda: _Adapter(native))
+    monkeypatch.setattr(native, "host_boot", host)
+    monkeypatch.setattr(native, "snapshot", slow_first)
+    assert (
+        cleanup_uncertainties(
+            tmp_path, ticket_id="healthy", healthy_sources=frozenset({("inc", "child")})
+        )
+        == ()
+    )
+    assert hosts == []
+    uncertain = cleanup_uncertainties(tmp_path)
+    assert [item.ticket_id for item in uncertain] == ["healthy"]
+    assert len(hosts) == 1
+    assert records.read(second)["state"] == "complete"
+
+
+def test_linux_claims_late_isolated_session_member_and_signals_exact_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = _record(tmp_path)
+    native = _Primitives({30: WorkerProcess(30, "late", 1, 30, 20)})
+    native.owns_isolated_session_members = True
+
+    def signal_member(process: WorkerProcess, signum: int, deadline: float) -> bool:
+        native.signals.append((process.pid, signum))
+        native.table.pop(process.pid, None)
+        return True
+
+    monkeypatch.setattr("planner.worker_supervision.get_platform_adapter", lambda: _Adapter(native))
+    monkeypatch.setattr(native, "signal", signal_member)
+    result = stop_record(path)
+    assert result.complete
+    assert native.signals == [(30, signal.SIGTERM)]
+    assert any(
+        item["pid"] == 30 and item["birth"] == "late" for item in records.read(path)["processes"]
+    )

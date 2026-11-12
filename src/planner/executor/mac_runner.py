@@ -13,6 +13,7 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 from uuid import uuid4
+from weakref import WeakValueDictionary
 
 from planner.conversation.backends.contracts import (
     BackendChild,
@@ -321,6 +322,7 @@ class MacRunner:
         self.message_files = message_files
         self._children: dict[str, RunningChild] = {}
         self._workspace_lock = asyncio.Lock()
+        self._ticket_start_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         self._withdrawn_commands: set[str] = set()
         self._commands: dict[str, _CommandRecord] = {}
         self.cleanup_uncertainties: tuple[WorkerCleanupUncertainty, ...] = ()
@@ -345,12 +347,14 @@ class MacRunner:
     def admission_stopped(self, stopped: bool) -> None:
         self._admission_stopped = stopped
 
-    async def refresh_worker_cleanup(self, *, revoke_pending: bool = False) -> None:
+    async def refresh_worker_cleanup(
+        self, *, ticket_id: str | None = None, revoke_pending: bool = False,
+    ) -> None:
         from planner.executor.cleanup_reconciliation import snapshot_cleanup
 
         snapshot = await asyncio.to_thread(
             snapshot_cleanup, self.paths, current_incarnation=self.incarnation,
-            revoke_pending=revoke_pending,
+            ticket_id=ticket_id, revoke_pending=revoke_pending,
             healthy_sources=frozenset(
                 child.reference for child in self._children.values()
                 if child.reference.child_id in self._started_children
@@ -364,8 +368,14 @@ class MacRunner:
                 and record.command.child.child_id not in self._retiring_children
             ),
         )
-        self.cleanup_uncertainties = snapshot.uncertainties
-        self.legacy_cleanup_notice = snapshot.notice
+        self.cleanup_uncertainties = (
+            snapshot.uncertainties if ticket_id is None else (
+                *(item for item in self.cleanup_uncertainties if item.ticket_id != ticket_id),
+                *snapshot.uncertainties,
+            )
+        )
+        if ticket_id is None:
+            self.legacy_cleanup_notice = snapshot.notice
 
     def authenticate(self, child_id: str | None, capability: str | None) -> RunningChild:
         child = self._children.get(child_id or "")
@@ -645,6 +655,23 @@ class MacRunner:
             await asyncio.wait(tuple(tasks))
 
     async def _start_run(self, command: ChildCommand, args: StartRun) -> JsonObject:
+        materials = args.resolved_start.role_materials
+        ticket_id = None if materials is None else dict(
+            materials.identity_environment_variables
+        ).get("PLAN_TICKET_ID")
+        if not ticket_id:
+            raise BackendSpawnFailed("Mac runs require a Ticket identity")
+        lock = self._ticket_start_locks.get(ticket_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._ticket_start_locks[ticket_id] = lock
+        async with lock:
+            # Serialize only this Ticket before any slow native inspection. The
+            # physical workspace mutex stays available to every other Ticket.
+            await self.refresh_worker_cleanup(ticket_id=ticket_id)
+            return await self._start_run_admitted(command, args)
+
+    async def _start_run_admitted(self, command: ChildCommand, args: StartRun) -> JsonObject:
         if command.child.child_id in self._children:
             raise BackendSpawnFailed("child identity already has a native start")
         if self.admission_stopped:
@@ -673,7 +700,6 @@ class MacRunner:
             raise BackendSpawnFailed(f"Canonical skill bootstrap failed: {error}") from error
         async with self._workspace_lock:
             self._check_start_admission(command, ticket_id)
-            await self.refresh_worker_cleanup()
             if any(item.ticket_id == ticket_id for item in self.cleanup_uncertainties):
                 raise BackendSpawnFailed("Previous Worker cleanup is not proven for this Ticket")
             resolved = await run_on_worker_thread(
@@ -1061,9 +1087,13 @@ class MacRunner:
             recheck_args = command.arguments
             snapshot = await asyncio.to_thread(
                 snapshot_cleanup, self.paths, current_incarnation=self.incarnation,
+                ticket_id=recheck_args.ticket_id,
             )
-            self.cleanup_uncertainties = snapshot.uncertainties
-            self.legacy_cleanup_notice = snapshot.notice
+            self.cleanup_uncertainties = (
+                *(item for item in self.cleanup_uncertainties
+                  if item.ticket_id != recheck_args.ticket_id),
+                *snapshot.uncertainties,
+            )
             if snapshot.sources.get(recheck_args.source) != recheck_args.ticket_id:
                 return _outcome(command, CommandDisposition.uncertain, {
                     "complete": False, "reason": "Exact Worker cleanup source is unavailable",

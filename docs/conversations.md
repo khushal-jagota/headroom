@@ -89,7 +89,7 @@ A restart of the Mac's executor process interrupts its turns the same way: once 
 
 ## Worker processes
 
-One subsystem supervises Claude, Codex, and Hermes Workers on the home and on executors. It lowers process priority, records exact ownership, bounds shutdown, and reconciles records after restart. Cleanup proves that identified processes ended. An unobserved detached tool can survive. Unknown cleanup retains custody and blocks replacement or folder removal. On macOS, the owned transport stops the ordinary root. Signals to recorded survivors require an immediate PID and microsecond birth check. A small check-to-signal race remains. Unknown cleanup retains its fence.
+One subsystem supervises Claude, Codex, and Hermes Workers on the home and on executors. It lowers process priority, records exact ownership, bounds shutdown, and reconciles records after restart. Cleanup proves that identified processes ended. An unobserved detached tool can survive. A process that changes user before observation is also outside this proof. Unknown cleanup retains custody and blocks replacement or folder removal. On macOS, the owned transport stops the ordinary root. Signals to recorded survivors require an immediate PID and microsecond birth check. A small check-to-signal race remains. Unknown cleanup retains its fence.
 
 Workers on Linux share the home's resource domain. They do not inherit its protected OOM score: each Worker raises its own score before the backend starts. Tools inherit the Worker score. Separate Worker units, aggregate CPU weight, and the tool-first OOM hook no longer apply. The [operator inputs](../ops/panels-environments/README.md#worker-processes) describe the inherited service properties.
 
