@@ -1,3 +1,4 @@
+import { assert_test_database_path } from '../test_paths.ts';
 import BetterSqlite3 from 'better-sqlite3';
 import type {
   CommitStep,
@@ -128,6 +129,7 @@ function scope<T>(
 
 /** A worker thread can open this capability without a writable connection. */
 export function createReadAccess(path: string): ReadAccess {
+  path = assert_test_database_path(path);
   const connection = new BetterSqlite3(path, {
     readonly: true,
     fileMustExist: true,
@@ -178,6 +180,7 @@ export function createDatabase(
     onChange?: () => void;
   } = {},
 ): Database {
+  path = assert_test_database_path(path);
   const writer = new BetterSqlite3(path, { fileMustExist: true, timeout: BUSY_TIMEOUT_MS });
   let reader: ReadAccess;
   try {

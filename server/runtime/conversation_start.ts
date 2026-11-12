@@ -1,3 +1,4 @@
+import { assert_test_database_path } from '../core/test_paths.ts';
 /** Route-owned start/send/reset phases. No SQL capability survives an await. */
 import { observe_conversation_operation, ConversationStartAborted } from './abort.ts';
 import { randomUUID } from 'node:crypto';
@@ -96,15 +97,11 @@ export function configure_conversation_start(database: Database, context: Worksp
 }
 function context(database: Database, overrides: Partial<WorkspaceContext> = {}): WorkspaceContext {
   const registered = contexts.get(database);
-  const db_path = overrides.db_path ?? registered?.db_path ?? process.env.PLAN_DB_PATH;
+  const db_path = overrides.db_path ?? registered?.db_path;
   if (!db_path) throw new Error('conversation workspace database is not registered');
   return {
-    db_path: resolve(db_path),
-    workspace_root:
-      overrides.workspace_root ??
-      registered?.workspace_root ??
-      process.env.PLAN_WORKSPACE_ROOT ??
-      null,
+    db_path: resolve(assert_test_database_path(db_path)),
+    workspace_root: overrides.workspace_root ?? registered?.workspace_root ?? null,
   };
 }
 export function default_host_workspace(): string {
@@ -252,6 +249,7 @@ export function agent_resolve_from_sql(
   overrides: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
   options: WorkspaceContext,
 ): ConversationStartValues {
+  const db_path = assert_test_database_path(options.db_path);
   const launch = read_chief_settings(sql).launch_defaults;
   const values = resolve_agent_conversation_start({
     chief_launch_defaults: {
@@ -260,7 +258,7 @@ export function agent_resolve_from_sql(
       reasoning_effort: launch.employee_launch_reasoning_effort,
     },
     overrides,
-    workspace_folder: join(dirname(resolve(options.db_path)), 'files', 'chief'),
+    workspace_folder: join(dirname(resolve(db_path)), 'files', 'chief'),
     shared_workspace_folder: options.workspace_root ?? default_host_workspace(),
   });
   require_enabled_model(sql, values.backend_key, values.model);
