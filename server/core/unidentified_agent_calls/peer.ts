@@ -3,6 +3,7 @@ import { opendir, readFile, readlink, stat } from 'node:fs/promises';
 import { endianness } from 'node:os';
 import { join } from 'node:path';
 import { getSystemErrorMap } from 'node:util';
+import { testModeFromEnvironment } from '../config.ts';
 import { InvalidPeerEvidence } from './contracts.ts';
 import type { Endpoint, PeerLookupContext, PeerLookupResult, ProcReader } from './contracts.ts';
 import { address_bytes, agent_cgroup, integer, proc_address, splitlines, words } from './logic.ts';
@@ -66,7 +67,7 @@ export async function resolve_loopback_peer(
     context === undefined &&
     (process.env.VITEST === 'true' ||
       process.env.PYTEST_CURRENT_TEST !== undefined ||
-      ['1', 'true', 'yes', 'on'].includes((process.env.PLAN_TEST_MODE ?? '').trim().toLowerCase()))
+      testModeFromEnvironment())
   )
     return { is_owner: false, skipped_unreadable_processes: 0 };
   context ??= default_context();
