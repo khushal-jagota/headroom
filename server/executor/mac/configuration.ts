@@ -1,6 +1,7 @@
 /** Mac-owned runtime settings. Protocol types remain with the shared wire owner. */
 import { isIP } from 'node:net';
-import { isAbsolute, join, relative } from 'node:path';
+import fs from 'node:fs';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { resolve_path_sync } from '../../core/path_resolution.ts';
 import { strip } from '../../core/whitespace.ts';
@@ -126,6 +127,15 @@ export class ExecutorPaths {
 function value_error(message: string): never {
   throw Object.assign(new Error(message), { name: 'ValueError' });
 }
+function inode(path: string): readonly [bigint, bigint] | null {
+  try {
+    const status = fs.statSync(path, { bigint: true });
+    return [status.dev, status.ino];
+  } catch (error) {
+    if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return null;
+    throw error;
+  }
+}
 export function executor_paths(environment: NodeJS.ProcessEnv = process.env): ExecutorPaths {
   const home = environment.HOME ?? homedir();
   if (!home || !isAbsolute(home)) value_error('executor HOME must be an absolute path');
@@ -141,6 +151,17 @@ export function executor_paths(environment: NodeJS.ProcessEnv = process.env): Ex
     (within_python !== '..' && !within_python.startsWith('../') && !isAbsolute(within_python))
   )
     value_error('TypeScript executor root must be separate from the Python executor root');
+  const legacy_inode = inode(legacy);
+  if (legacy_inode !== null) {
+    // Native case-insensitive aliases need not change spelling during symlink resolution.
+    // Missing tails still descend from an existing parent, so inspect every ancestor.
+    for (let path = resolved; ; path = dirname(path)) {
+      const actual = inode(path);
+      if (actual !== null && actual[0] === legacy_inode[0] && actual[1] === legacy_inode[1])
+        value_error('TypeScript executor root must be separate from the Python executor root');
+      if (path === dirname(path)) break;
+    }
+  }
   return new ExecutorPaths(resolved);
 }
 
