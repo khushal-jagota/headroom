@@ -1,7 +1,14 @@
 /** This owned thread serializes file operations and retains directory capabilities. */
-import { closeSync } from 'node:fs';
+import { closeSync, constants, fstatSync, readdirSync } from 'node:fs';
 import { parentPort } from 'node:worker_threads';
 import * as files from './file_worker_operations.ts';
+import { file_error } from './file_metadata.ts';
+import {
+  flock_descriptor,
+  open_relative,
+  sync_directory_descriptor,
+  unlink_relative,
+} from './platform.ts';
 import type {
   FileOperationResults,
   FileWorkerError,
@@ -10,6 +17,7 @@ import type {
 } from './file_worker_contracts.ts';
 const port = parentPort!;
 const directories = new Map<number, number>();
+const locks = new Set<number>();
 let sequence = 0;
 function descriptor(handle: number): number {
   const value = directories.get(handle);
@@ -20,6 +28,41 @@ function execute(
   message: Exclude<FileWorkerRequest, { operation: 'stop' }>,
 ): FileOperationResults[keyof FileOperationResults] {
   switch (message.operation) {
+    case 'hold_process_lock': {
+      const [handle, name] = message.arguments;
+      const fd = open_relative(
+        descriptor(handle),
+        name,
+        constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        0o666,
+      );
+      try {
+        if (!fstatSync(fd).isFile()) throw file_error('outbox lock is not regular file');
+        if (!flock_descriptor(fd, 'try-exclusive'))
+          throw Object.assign(new Error('outbox is already owned'), {
+            code: 'EAGAIN',
+            name: 'BlockingIOError',
+          });
+        locks.add(fd);
+      } catch (error) {
+        closeSync(fd);
+        throw error;
+      }
+      return;
+    }
+    case 'capture_file': {
+      const [source, handle, checked_ns] = message.arguments;
+      return files.capture_file(source, descriptor(handle), checked_ns);
+    }
+    case 'sweep_directory': {
+      const [handle, path, retained] = message.arguments;
+      const names = readdirSync(path);
+      if (!names.length) return;
+      const keep = new Set(retained);
+      for (const name of names) if (!keep.has(name)) unlink_relative(descriptor(handle), name);
+      sync_directory_descriptor(descriptor(handle));
+      return;
+    }
     case 'file_digest':
       return files.file_digest(...message.arguments);
     case 'verified_version':
@@ -69,6 +112,14 @@ function close_handles(): unknown {
   let failure: unknown;
   for (const [handle, fd] of directories) {
     directories.delete(handle);
+    try {
+      closeSync(fd);
+    } catch (error) {
+      failure ??= error;
+    }
+  }
+  for (const fd of locks) {
+    locks.delete(fd);
     try {
       closeSync(fd);
     } catch (error) {

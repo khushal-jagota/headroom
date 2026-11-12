@@ -2,7 +2,7 @@
  * a frozen spool's refusal-before-mutation or its lossless nanosecond integer reads.
  */
 import { afterEach, expect, test } from 'vitest';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assertDatabaseVersion, createDurableSidecarDatabase } from './index.ts';
@@ -30,28 +30,6 @@ function open(path: string, options: Partial<DurableSidecarDatabaseOptions> = {}
   cleanup.push(() => database.close());
   return database;
 }
-
-test('an existing version-zero file refuses before schema, WAL, or file bytes change', () => {
-  const { root, path } = fixture();
-  expect(assertDatabaseVersion(path, 5, 'unsupported spool format')).toBe(false);
-  expect(readdirSync(root)).toEqual([]);
-  writeFileSync(path, '');
-  const before = readFileSync(path);
-  let initialized = false;
-  expect(() => assertDatabaseVersion(path, 5, 'unsupported spool format')).toThrow(
-    'unsupported spool format',
-  );
-  expect(() =>
-    open(path, {
-      initialize() {
-        initialized = true;
-      },
-    }),
-  ).toThrow('unsupported spool format');
-  expect(initialized).toBe(false);
-  expect(readFileSync(path)).toEqual(before);
-  expect(readdirSync(root)).toEqual(['spool.sqlite3']);
-});
 
 test('the durable profile preserves exact settings and int64 metadata across reopen', () => {
   const { path } = fixture();

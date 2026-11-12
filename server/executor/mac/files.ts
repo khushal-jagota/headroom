@@ -100,6 +100,15 @@ export class FilesService {
   fsync_directory(path: string) {
     return this.request('fsync_directory', [path]);
   }
+  async hold_process_lock(handle: DirectoryHandle, name: string): Promise<void> {
+    await this.request('hold_process_lock', [this.directory(handle), name]);
+  }
+  async capture_file(source: string, blobs: DirectoryHandle, checked_ns: bigint) {
+    return this.request('capture_file', [source, this.directory(blobs), checked_ns]);
+  }
+  async sweep_directory(handle: DirectoryHandle, path: string, keep: readonly string[]) {
+    return this.request('sweep_directory', [this.directory(handle), path, keep]);
+  }
   async open_directory(path: string, options: { create?: boolean } = {}): Promise<DirectoryHandle> {
     const handle = Object.freeze({ id: await this.request('open_directory', [path, options]) });
     this.directories.add(handle);

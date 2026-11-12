@@ -3,7 +3,16 @@ import type { FileVersion } from './file_metadata.ts';
 export interface DirectoryHandle {
   readonly id: number;
 }
+/** Local immutable-blob result, without wire scope, owner, or manifest fields. */
+export interface CapturedBlob {
+  sha256: string;
+  byte_count: bigint;
+  modified_ns: bigint;
+}
 export interface FileOperationArguments {
+  hold_process_lock: [directory: number, name: string];
+  capture_file: [source: string, blobs: number, checked_ns: bigint];
+  sweep_directory: [directory: number, path: string, keep: readonly string[]];
   file_digest: [path: string];
   verified_version: [path: string, sha256: string, byte_count: number];
   copy_verified: [source: string, target: string, sha256: string, byte_count: number];
@@ -27,6 +36,9 @@ export interface FileOperationArguments {
   ];
 }
 export interface FileOperationResults {
+  hold_process_lock: void;
+  capture_file: CapturedBlob | null;
+  sweep_directory: void;
   file_digest: readonly [string, number];
   verified_version: FileVersion | null;
   copy_verified: void;
