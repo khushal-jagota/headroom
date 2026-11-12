@@ -1,3 +1,4 @@
+import { python_string_repr as shared_string_repr } from '../../core/python_repr.ts';
 import { WorkerUnitError } from './contracts.ts';
 
 export function properties(text: string): Record<string, string> {
@@ -9,21 +10,7 @@ export function properties(text: string): Record<string, string> {
   return result;
 }
 
-function python_string_repr(value: string): string {
-  const quote = value.includes("'") && !value.includes('"') ? '"' : "'";
-  let result = quote;
-  for (const character of value) {
-    const point = character.codePointAt(0)!;
-    if (character === quote || character === '\\') result += `\\${character}`;
-    else if (character === '\n') result += '\\n';
-    else if (character === '\r') result += '\\r';
-    else if (character === '\t') result += '\\t';
-    else if (point < 32 || (point >= 127 && point < 160)) {
-      result += `\\x${point.toString(16).padStart(2, '0')}`;
-    } else result += character;
-  }
-  return result + quote;
-}
+const python_string_repr = shared_string_repr;
 
 /** Quote EnvironmentFile values without shell or systemd variable expansion. */
 export function environment_file(environment: Readonly<Record<string, string>>): string {
