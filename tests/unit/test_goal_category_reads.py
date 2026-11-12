@@ -185,8 +185,10 @@ def test_live_time_budget_uses_latest_submitted_date_including_explicit_gap(
         if point["date"] == "2026-10-28"
     )
     assert category_gap["status"] == formula_gap["status"] == "missing_input"
-    assert category_gap["missing_inputs"] == formula_gap["missing_inputs"] == (
-        {"measure_id": planned.id, "date": "2026-10-28"},
+    assert (
+        category_gap["missing_inputs"]
+        == formula_gap["missing_inputs"]
+        == ({"measure_id": planned.id, "date": "2026-10-28"},)
     )
     assert category_gap["coverage_status"] == "unknown"
     assert formula_gap["coverage_status"] == "not_applicable"
@@ -398,3 +400,40 @@ def test_named_input_recursion_recovery_keeps_the_union_demand_limit(
     assert str(failure.value) == (
         "goal projection exceeds 3 demanded measure/date pairs; request a narrower date range"
     )
+
+
+def test_addressed_goal_edit_keeps_other_goal_stamps_and_shared_reading_dependencies(
+    tmp_db: Connection,
+) -> None:
+    """Gap: old global detail stamps refetched both Goals after one document edit."""
+    first, second = create(tmp_db), create(tmp_db)
+    clock = FakeClock(datetime(2026, 10, 27, 10, 30, tzinfo=UTC))
+    req = Request({"type": "http", "app": SimpleNamespace(state=SimpleNamespace(clock=clock))})
+    provider = GoalResources()
+    keys = [
+        "/api/goals",
+        f"/api/goals/{first.id}",
+        f"/api/goals/{second.id}",
+        f"/api/goals/{first.id}/readings",
+        f"/api/goals/{second.id}/readings",
+    ]
+
+    def stamps() -> list[str]:
+        result = [provider.capture(tmp_db, req, key) for key in keys]
+        assert all(item is not None for item in result)
+        return [item.revision for item in result if item is not None]
+
+    before = stamps()
+    tmp_db.execute("UPDATE goals SET title='Changed',revision=revision+1 WHERE id=?", (first.id,))
+    after = stamps()
+    assert after[0] != before[0] and after[1] != before[1] and after[3] != before[3]
+    assert after[2] == before[2] and after[4] == before[4]
+    # No automatic rows exist for these binary fixtures. Install the shared counter explicitly.
+    tmp_db.execute(
+        "INSERT INTO resource_source_versions(source_kind,source_id,revision) "
+        "VALUES('automatic-measures','all',1) "
+        "ON CONFLICT(source_kind,source_id) DO UPDATE SET revision=revision+1"
+    )
+    measured = stamps()
+    assert measured[:3] == after[:3]
+    assert measured[3] != after[3] and measured[4] != after[4]

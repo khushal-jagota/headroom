@@ -10,7 +10,7 @@ struct GoalView: View {
             if let session {
                 GoalDetailContent(session: session, openConversationID: openConversationID)
             } else { ScreenLoadingView(title: "goal") }
-        }.task(id: store.baseURL) { session = PageSession.session(id: goalID, api: store.client) }
+        }.task(id: store.baseURL) { session = PageSession.session(id: goalID, api: store.client, resources: store.resources) }
     }
 }
 private struct GoalDetailContent: View {
@@ -37,8 +37,7 @@ private struct GoalDetailContent: View {
             .modifier(GoalHolderConversation(session: session, openConversationID: openConversationID))
             .screenLoadState("goal", hasContent: session.goal != nil, error: session.readError, showsRefreshError: false) { await session.refresh() }
             .panelsRefreshable { await session.refresh() }
-            .task(id: "\(store.revision):\(scenePhase == .active)") { if scenePhase == .active { await session.refresh() } }
-            .modifier(GoalBoundaryRefresh(at: session.nextRefreshAt) { await session.refresh() })
+            .task(id: "\(store.baseURL):\(scenePhase == .active)") { if scenePhase == .active { await session.follow() } }
             .environment(\.pageTicketHolder, session.goal?.holder)
             .modifier(PageArtifactNavigation(holder: session.goal?.holder))
             .accessibilityIdentifier("goal-screen")
@@ -50,7 +49,8 @@ struct GoalDocumentContent: View {
     let session: PageSession
     var showsTitle = true
     @Environment(AppStore.self) private var store
-    @State private var projects: [GoalJSON] = []
+    @State private var projectsHandle: ResourceHandle<GoalJSON>?
+    private var projects: [GoalJSON] { projectsHandle?.value?["projects"].array ?? [] }
     var body: some View {
         VStack(alignment: .leading, spacing: 28) {
                 if let goal = session.goal {
@@ -69,8 +69,8 @@ struct GoalDocumentContent: View {
                             .font(.footnote)
                     }
                 }
-        }.task(id: "\(store.baseURL):\(store.revision)") { await session.refresh(); await loadProjects() }
-            .modifier(GoalBoundaryRefresh(at: session.nextRefreshAt) { await session.refresh() })
+        }.task(id: store.baseURL) { await session.follow() }
+            .task(id: store.baseURL) { await loadProjects() }
     }
     private func header(_ goal: GoalRecord) -> some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -101,7 +101,9 @@ struct GoalDocumentContent: View {
         } label: { Text(goal.active ? "Active" : "Inactive") }.accessibilityLabel("State")
     }
     private func loadProjects() async {
-        if let response = try? await store.client.goalProjects() { projects = response["projects"].array }
+        let handle = store.resources.handle(GoalResources.projects); projectsHandle = handle
+        handle.acquire(); defer { handle.release() }; await handle.refresh()
+        do { try await Task.sleep(for: .seconds(365 * 24 * 60 * 60)) } catch { }
     }
 }
 
@@ -109,26 +111,27 @@ private struct GoalHolderConversation: ViewModifier {
     let session: PageSession
     var openConversationID: String?
     @Environment(AppStore.self) private var store
-    @State private var conversationID: String?
-    @State private var resolvedHolder: GoalHolder?
-    @State private var error: String?
+    @State private var conversationHandle: ResourceHandle<GoalJSON>?
+    private var conversationID: String? {
+        guard let holder = session.goal?.holder else { return nil }
+        let value = conversationHandle?.value
+        return holder.kind == .chief ? value?["conversation_id"].string : value?["manager"]["conversation_id"].string
+    }
     func body(content: Content) -> some View {
         Group {
             if let holder = session.goal?.holder {
-                content.conversationNavigation(owner: holder.conversationOwner, conversationID: resolvedHolder == holder ? conversationID : nil,
+                content.conversationNavigation(owner: holder.conversationOwner, conversationID: conversationID,
                     title: session.goal?.title ?? "Goal", openConversationID: openConversationID,
-                    refreshError: error ?? session.readError, retry: { await session.refresh(); await load() })
+                    refreshError: conversationHandle?.error ?? session.readError, retry: { await session.refresh(); await conversationHandle?.refresh() })
                     .id(holder)
             } else { content }
-        }.task(id: "\(store.baseURL):\(String(describing: session.goal?.holder)):\(store.revision)") { await load() }
+        }.task(id: "\(store.baseURL):\(String(describing: session.goal?.holder))") { await load() }
     }
     private func load() async {
         guard let holder = session.goal?.holder else { return }
-        let api = store.client
-        do {
-            let current = try await api.currentConversation(holder.conversationOwner)
-            guard !Task.isCancelled, api.baseURL == store.baseURL, session.goal?.holder == holder else { return }
-            conversationID = current; resolvedHolder = holder; error = nil
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        let handle = store.resources.handle(GoalResources.holderConversation(holder))
+        conversationHandle = handle; handle.acquire(); defer { handle.release() }
+        await handle.refresh()
+        do { try await Task.sleep(for: .seconds(365 * 24 * 60 * 60)) } catch { }
     }
 }

@@ -12,11 +12,16 @@ struct AppShell: View {
     @State private var morePath: [AppRoute] = []
 
     var body: some View {
-        Group {
+        tabs
+        // Keep route edit owners mounted beneath the connection reminder.
+        .allowsHitTesting(!store.serverUnreachable)
+        .accessibilityHidden(store.serverUnreachable)
+        .overlay {
             if store.serverUnreachable {
                 ServerUnreachableView { await store.refresh() }
-            } else {
-                tabs
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(PanelsTheme.surface)
+                    .ignoresSafeArea()
             }
         }
         .task {

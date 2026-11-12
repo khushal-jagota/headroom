@@ -327,3 +327,161 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
     }
     override func stopLoading() { stopped.withLock { $0 = true } }
 }
+
+/// These cases exercise shared admission, not a second HTTP host. The controlled
+/// transport deliberately completes a canceled read to prove the generation fence.
+@MainActor final class ResourceOwnerTests: XCTestCase {
+    private func owner(_ fixture: OwnerTransport) -> ResourceOwner {
+        ResourceOwner(api: APIClient(baseURL: URL(string: "https://owner.invalid")!), transport: ResourceTransport(
+            versions: { _, keys in await fixture.probe(keys) },
+            read: { api, key, _ in try await fixture.read(api.baseURL.absoluteString, key) }))
+    }
+    private func until(_ condition: @escaping () async -> Bool) async throws {
+        for _ in 0..<200 {
+            if await condition() { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTFail("Controlled transport did not reach its boundary")
+    }
+    func testSharedDemandRejectsStaleBodyAndDoesNotReadInactiveKeys() async throws {
+        let transport = OwnerTransport(); await transport.holdFirst()
+        let owner = owner(transport)
+        let one = owner.handle(ResourceRegistration<String>(key: "/api/example"))
+        let two = owner.handle(ResourceRegistration<String>(key: "/api/example"))
+        let inactive = owner.handle(ResourceRegistration<String>(key: "/api/inactive"))
+        one.acquire(); two.acquire()
+        defer { one.release(); two.release(); owner.stop() }
+        try await until { await transport.count == 1 }
+        XCTAssertTrue(one.entry === two.entry, "Two screens share the same accepted entry")
+        await transport.setRevision("2")
+        await owner.reconcile()
+        XCTAssertEqual(two.value, "2")
+        await transport.finishFirst()
+        try await Task.sleep(for: .milliseconds(10))
+        XCTAssertEqual(one.value, "2", "A canceled V1 body cannot replace the V2 body")
+        let keys = await transport.readKeys
+        XCTAssertEqual(keys, ["/api/example", "/api/example"])
+        XCTAssertNil(inactive.value)
+        one.release(); two.release()
+        let before = await transport.count
+        await owner.reconcile()
+        let after = await transport.count
+        XCTAssertEqual(before, after, "A global wake does not fetch an inactive body")
+    }
+    func testTwoActiveGoalDocumentsRefreshOnlyTheChangedGoalAndList() async throws {
+        let transport = OwnerTransport()
+        let shared = self.owner(transport)
+        let handles = ["/api/goals", "/api/goals/A", "/api/goals/B"].map { shared.handle(ResourceRegistration<String>(key: $0)) }
+        handles.forEach { $0.acquire() }; defer { handles.forEach { $0.release() }; shared.stop() }
+        for handle in handles { await handle.refresh() }
+        await transport.clearReads()
+        await transport.setRevision("2", keys: ["/api/goals", "/api/goals/A"])
+        await shared.reconcile()
+        let keys = await transport.readKeys
+        XCTAssertEqual(Set(keys), ["/api/goals", "/api/goals/A"])
+        XCTAssertEqual(handles[2].value, "1")
+    }
+    func testBurstCoalescesReconciliationAndBoundsProbeBatchesAndReads() async throws {
+        let transport = OwnerTransport(); await transport.delayReads()
+        let owner = self.owner(transport)
+        let handles = (0..<65).map { owner.handle(ResourceRegistration<String>(key: "/api/resource/\($0)")) }
+        handles.forEach { $0.acquire() }
+        defer { handles.forEach { $0.release() }; owner.stop() }
+        let first = Task { await owner.reconcile() }
+        try await until { await transport.probeBatches.count == 2 }
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<10 { group.addTask { await owner.reconcile() } }
+        }
+        await first.value
+        let batches = await transport.probeBatches, concurrency = await transport.maxConcurrent
+        XCTAssertEqual(batches.count, 4, "A burst retains one active and one pending reconciliation")
+        XCTAssertTrue(batches.allSatisfy { $0.count <= 64 })
+        XCTAssertLessThanOrEqual(concurrency, 3)
+        XCTAssertTrue(handles.allSatisfy { $0.value == "1" })
+    }
+    func testDeadlineResumesAfterDemandReleaseAndReacquisition() async throws {
+        let transport = OwnerTransport()
+        let shared = self.owner(transport)
+        let deadline = Date().timeIntervalSince1970 + 0.15
+        let handle = shared.handle(ResourceRegistration<String>(key: "/api/deadline", nextRefreshAt: { _ in deadline }))
+        handle.acquire(); await handle.refresh(); handle.release()
+        handle.acquire(); await handle.refresh()
+        let count = await transport.count
+        try await until { await transport.count > count }
+        handle.release(); shared.stop()
+    }
+    func testServerRoundTripRejectsOldCallbackAndFailedRefreshRetainsContent() async throws {
+        let transport = OwnerTransport(); await transport.holdFirst()
+        let owner = owner(transport)
+        let handle = owner.handle(ResourceRegistration<String>(key: "/api/example"))
+        handle.acquire(); defer { handle.release(); owner.stop() }
+        try await until { await transport.count == 1 }
+        owner.configure(api: APIClient(baseURL: URL(string: "https://other.invalid")!))
+        owner.configure(api: APIClient(baseURL: URL(string: "https://owner.invalid")!))
+        await transport.setRevision("3"); await handle.refresh()
+        await transport.finishFirst()
+        try await Task.sleep(for: .milliseconds(10))
+        XCTAssertEqual(handle.value, "3", "A→B→A does not restore an old generation's authority")
+        await transport.failReads(); await handle.refresh()
+        XCTAssertEqual(handle.value, "3", "A failed refresh retains admitted live content")
+        XCTAssertNotNil(handle.error)
+        let invalidOwner = ResourceOwner(api: APIClient(baseURL: URL(string: "https://bad.invalid")!), transport: ResourceTransport(
+            versions: { _, _ in throw URLError(.timedOut) },
+            read: { _, _, _ in ResourceRead(data: Data("42".utf8), epoch: "e", revision: "r") }))
+        let invalid = invalidOwner.handle(ResourceRegistration<String>(key: "/api/bad"))
+        await invalid.refresh()
+        XCTAssertNil(invalid.value)
+        XCTAssertNotNil(invalid.error)
+        XCTAssertTrue(invalid.isStale, "An undecodable body cannot acquire freshness")
+    }
+    func testSharedReadDeduplicatesAndPublishesAcceptedMutation() async throws {
+        let transport = OwnerTransport(); await transport.holdFirst()
+        let owner = owner(transport)
+        let handle = owner.handle(ResourceRegistration<String>(key: "/api/example"))
+        async let first: () = handle.refresh()
+        async let second: () = handle.refresh()
+        try await until { await transport.count == 1 }
+        await transport.finishFirst(); _ = await (first, second)
+        let count = await transport.count
+        XCTAssertEqual(count, 1)
+        handle.accept("confirmed")
+        XCTAssertEqual(handle.value, "confirmed", "Accepted mutation publication is observable without a second response copy")
+        owner.stop()
+    }
+}
+private actor OwnerTransport {
+    var count = 0
+    var readKeys: [String] = []
+    private var revision = "1"
+    private var revisions: [String: String] = [:]
+    private var hold = false
+    private var delay = false
+    private var failure = false
+    private var active = 0
+    var maxConcurrent = 0
+    var probeBatches: [[String]] = []
+    private var first: CheckedContinuation<ResourceRead, Never>?
+    private var saved: ResourceRead?
+    func holdFirst() { hold = true }
+    func delayReads() { delay = true }
+    func failReads() { failure = true }
+    func setRevision(_ value: String) { revision = value }
+    func setRevision(_ value: String, keys: [String]) { for key in keys { revisions[key] = value } }
+    func clearReads() { readKeys = [] }
+    func probe(_ keys: [String]) -> ResourceVersions {
+        probeBatches.append(keys)
+        return ResourceVersions(epoch: "epoch", resources: keys.map { .init(key: $0, revision: revisions[$0] ?? revision) })
+    }
+    func read(_ server: String, _ key: String) async throws -> ResourceRead {
+        count += 1; readKeys.append(key)
+        active += 1; maxConcurrent = max(maxConcurrent, active)
+        defer { active -= 1 }
+        if failure { throw URLError(.timedOut) }
+        if delay { try? await Task.sleep(for: .milliseconds(20)) }
+        let revision = revisions[key] ?? revision
+        let result = ResourceRead(data: Data("\"\(revision)\"".utf8), epoch: "epoch", revision: revision)
+        if hold { hold = false; saved = result; return await withCheckedContinuation { first = $0 } }
+        return result
+    }
+    func finishFirst() { if let saved { first?.resume(returning: saved) }; first = nil; saved = nil }
+}

@@ -4,7 +4,7 @@ cd "$(dirname "$0")/../.."
 build=$(mktemp -d "${TMPDIR:-/tmp}/panels-offline-tests.XXXXXX")
 trap 'rm -rf "$build"' EXIT
 mkdir -p "$build/Sources/Panels" "$build/Tests/PanelsTests"
-cp ios/Panels/Core/Networking/APIClient.swift ios/Panels/Core/Networking/ResourceVersions.swift ios/Panels/Core/Networking/ChangeStream.swift ios/Panels/Core/State/AppStore.swift ios/Panels/Core/Navigation/*.swift ios/Panels/Core/Persistence/*.swift ios/Panels/Models/*.swift \
+cp ios/Panels/Core/Networking/APIClient.swift ios/Panels/Core/Networking/ResourceVersions.swift ios/Panels/Core/Networking/ResourceOwner.swift ios/Panels/Core/Networking/ChangeStream.swift ios/Panels/Core/State/AppStore.swift ios/Panels/Core/Navigation/*.swift ios/Panels/Core/Persistence/*.swift ios/Panels/Models/*.swift \
   ios/Panels/Features/Conversation/Models/*.swift ios/Panels/Features/Conversation/Networking/*.swift \
   ios/Panels/Features/Conversation/Logic/*.swift ios/Panels/Features/Conversation/State/ConversationModel.swift ios/Panels/Features/Review/ReviewAPI.swift \
   ios/Panels/Features/Review/ReviewDecision.swift ios/Panels/Features/Review/ReviewMessageDecision.swift "$build/Sources/Panels/"
@@ -19,4 +19,4 @@ import PackageDescription
 let package = Package(name: "PanelsOfflineTests", platforms: [.macOS(.v14)], products: [.library(name: "Panels", targets: ["Panels"])], targets: [.target(name: "Panels"), .testTarget(name: "PanelsTests", dependencies: ["Panels"], resources: [.copy("Fixtures")])])
 SWIFT
 node ios/scripts/goal-parity.cjs "$build/goal-parity.json"
-PANELS_GOAL_PARITY_PATH="$build/goal-parity.json" PANELS_STORE_DIRECTORY="$build/store" swift test --package-path "$build" --scratch-path "$build/.build" --jobs 4
+PANELS_GOAL_PARITY_PATH="$build/goal-parity.json" PANELS_STORE_DIRECTORY="$build/store" swift test --package-path "$build" --scratch-path "$build/.build" --jobs 4 "$@"

@@ -5,25 +5,30 @@ struct WorkspaceGoals: View {
     let holder: GoalHolder
     let goals: [GoalRecord]
     let open: (AppRoute) -> Void
+    @Environment(AppStore.self) private var store
+    @State private var sessions = PageSessionCollection()
+    private var visibleGoals: [GoalRecord] { holder.goals(in: goals).filter(\.active) }
     var body: some View {
         VStack(spacing: 0) {
-            ForEach(holder.goals(in: goals).filter(\.active)) { goal in GoalWorkspaceRow(goal: goal, open: open) }
-        }
+            ForEach(visibleGoals) { goal in
+                if let session = sessions.session(goal.id, server: store.baseURL) { GoalWorkspaceRow(goal: goal, session: session, open: open) }
+            }
+        }.task(id: "\(store.baseURL):\(visibleGoals.map(\.id))") {
+            sessions.update(visibleGoals, api: store.client, resources: store.resources)
+        }.onChange(of: sessions.unfinishedKeys) { _, _ in sessions.prune() }
     }
 }
 private struct GoalWorkspaceRow: View {
     let goal: GoalRecord
+    let session: PageSession
     let open: (AppRoute) -> Void
     @Environment(AppStore.self) private var store
-    @State private var session: PageSession?
-    private var accepted: GoalRecord { session?.goal ?? goal }
+    private var accepted: GoalRecord { session.goal ?? goal }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             link
-            if let session {
-                GoalSaveFailure(session: session)
-                if let chart = GoalPresentation.primaryChart(accepted), !chart["manual"].isNull { GoalManualFailure(editor: session.manual(chart)) }
-            }
+            GoalSaveFailure(session: session)
+            if let chart = GoalPresentation.primaryChart(accepted), !chart["manual"].isNull { GoalManualFailure(editor: session.manual(chart)) }
         }
     }
     private var link: some View {
@@ -38,10 +43,9 @@ private struct GoalWorkspaceRow: View {
                     .panelsScaledFont(size: 11).foregroundStyle(PanelsTheme.Goal.tone(GoalPresentation.deadlineTone(accepted.deadline, completed: accepted.completed, today: accepted.statusDate)))
             }.frame(maxWidth: .infinity, minHeight: 60, alignment: .leading).contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityIdentifier("workspace-goal-\(goal.id)")
-            .modifier(GoalBoundaryRefresh(at: session?.nextRefreshAt) { if let session { await session.refresh() } })
             .contextMenu {
                 Button("Open") { open(.goal(goal.id)) }
-                if let session {
+                Group {
                     if accepted.kind == "binary", GoalPresentation.primaryChecklist(accepted) == nil {
                         Button(accepted.completed ? "Mark not done" : "Mark done") { Task { await session.save(["completed": .bool(!accepted.completed)]) } }
                     }
@@ -56,15 +60,12 @@ private struct GoalWorkspaceRow: View {
                     }
                 }
             } preview: {
-                if let session { GoalPeek(session: session).frame(width: 340).environment(store) }
+                GoalPeek(session: session).frame(width: 340).environment(store)
             }
-            .task(id: "\(store.baseURL):\(store.revision)") {
-                let selected = PageSession.session(id: goal.id, api: store.client, initial: goal)
-                session = selected; await selected.refresh()
-            }
+            .task(id: store.baseURL) { await session.follow() }
     }
     private var reading: String {
-        guard let session, let chart = GoalPresentation.primaryChart(accepted), chart.kind != "binary" else { return GoalPresentation.statusText(accepted) }
+        guard let chart = GoalPresentation.primaryChart(accepted), chart.kind != "binary" else { return GoalPresentation.statusText(accepted) }
         let projection = session.readings?.charts[chart.id] ?? .null
         let data = GoalChartPresentation.data(chart, values: session.readings?.values ?? [], range: "all", projection: projection)
         return GoalChartPresentation.format(chart, GoalChartPresentation.headline(chart, data: data, projection: projection).value)
@@ -89,7 +90,10 @@ private struct GoalPeek: View {
             }
         }.padding(24).background(PanelsTheme.surface).allowsHitTesting(false)
             .task {
-                if let response = try? await store.client.goalProjects() { project = response["projects"].array.first { $0.id == session.goal?.projectId }?["name"].text ?? "" }
+                let handle = store.resources.handle(GoalResources.projects)
+                handle.acquire(); defer { handle.release() }; await handle.refresh()
+                project = handle.value?["projects"].array.first { $0.id == session.goal?.projectId }?["name"].text ?? ""
+                do { try await Task.sleep(for: .seconds(365 * 24 * 60 * 60)) } catch { }
             }
     }
 }
@@ -98,17 +102,22 @@ private struct GoalPeek: View {
 struct HolderContent: View {
     let holder: GoalHolder
     @Environment(AppStore.self) private var store
-    @State private var goals: [GoalRecord] = []
-    @State private var nextRefreshAt: Double?
-    @State private var projects: [GoalJSON] = []
+    @State private var goalsHandle: ResourceHandle<GoalsResponse>?
+    @State private var projectsHandle: ResourceHandle<GoalJSON>?
+    private var goals: [GoalRecord] { goalsHandle?.value?.goals ?? [] }
+    private var nextRefreshAt: Double? { goalsHandle?.value?.nextRefreshAt }
+    private var projects: [GoalJSON] { projectsHandle?.value?["projects"].array ?? [] }
+    @State private var sessions = PageSessionCollection()
+    private var soleSession: PageSession? { sole.flatMap { sessions.session($0.id, server: store.baseURL) } }
+    private var visibleGoals: [GoalRecord] { sole.map { [$0] } ?? held.filter(\.active) }
     @State private var error: String?
     @State private var pageSession: PageSession?
     private var held: [GoalRecord] { holder.goals(in: goals) }
     private var sole: GoalRecord? { holder.kind == .manager ? holder.soleGoal(in: goals) : nil }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            if let sole {
-                GoalDocumentContent(session: PageSession.session(id: sole.id, api: store.client, initial: sole), showsTitle: false)
+            if let sole, let soleSession {
+                GoalDocumentContent(session: soleSession, showsTitle: false)
                     .environment(\.pageTicketHolder, holder)
                 if !PageDocumentPresentation.hasTickets(sole.page["blocks"].array) { HolderTickets(holder: holder) }
             } else {
@@ -118,7 +127,9 @@ struct HolderContent: View {
                     if holder.kind == .chief { NavigationLink("All goals", value: AppRoute.goals).panelsScaledFont(size: 13) }
                 }
                 ForEach(held.filter(\.active)) { goal in
-                    ChiefGoalCard(goal: goal, project: projects.first { $0.id == goal.projectId }?["name"].string ?? "")
+                    if let session = sessions.session(goal.id, server: store.baseURL) {
+                        ChiefGoalCard(goal: goal, project: projects.first { $0.id == goal.projectId }?["name"].string ?? "", session: session)
+                    }
                 }
                 if let session = pageSession {
                     GoalPageBlocks(blocks: session.page?["blocks"].array ?? [], session: session)
@@ -129,24 +140,30 @@ struct HolderContent: View {
                 if !PageDocumentPresentation.hasTickets(pageSession?.page?["blocks"].array ?? []) { HolderTickets(holder: holder) }
             }
             if let error { LoadErrorView(message: error) { await load() } }
-        }.task(id: "\(store.baseURL):\(store.revision)") { await load() }
+        }.task(id: store.baseURL) { await follow() }
+            .task(id: "\(store.baseURL):\(visibleGoals.map(\.id))") {
+                sessions.update(visibleGoals, api: store.client, resources: store.resources)
+            }
+            .onChange(of: sessions.unfinishedKeys) { _, _ in sessions.prune() }
             .modifier(PageArtifactNavigation(holder: holder))
-            .modifier(GoalBoundaryRefresh(at: nextRefreshAt, refresh: load))
+    }
+    private func follow() async {
+        let list = store.resources.handle(GoalResources.list), projects = store.resources.handle(GoalResources.projects)
+        goalsHandle = list; projectsHandle = projects
+        let session = PageSession.holder(holder, api: store.client, resources: store.resources); pageSession = session
+        list.acquire(); projects.acquire(); session.acquire()
+        defer { list.release(); projects.release(); session.release() }
+        await load()
+        do { try await Task.sleep(for: .seconds(365 * 24 * 60 * 60)) } catch { }
     }
     private func load() async {
-        let api = store.client
-        let session = PageSession.holder(holder, api: api)
-        pageSession = session
-        async let document: () = session.refresh()
-        do {
-            async let response = api.goals()
-            async let projectResponse = api.goalProjects()
-            let (list, projects) = try await (response, projectResponse); try Task.checkCancellation()
-            guard api.baseURL == store.baseURL else { return }
-            goals = list.goals; nextRefreshAt = list.nextRefreshAt; self.projects = projects["projects"].array; error = nil
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
-        await document
+        async let list: () = goalsHandle?.refresh() ?? ()
+        async let projects: () = projectsHandle?.refresh() ?? ()
+        async let page: () = pageSession?.refresh() ?? ()
+        _ = await (list, projects, page)
+        error = goalsHandle?.error ?? projectsHandle?.error
     }
+
 }
 
 private struct PageTicketHolderKey: EnvironmentKey { static let defaultValue: GoalHolder? = nil }
@@ -159,8 +176,8 @@ extension EnvironmentValues {
 private struct ChiefGoalCard: View {
     let goal: GoalRecord
     let project: String
+    let session: PageSession
     @Environment(AppStore.self) private var store
-    @State private var session: PageSession?
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             NavigationLink(value: AppRoute.goal(goal.id)) {
@@ -169,17 +186,17 @@ private struct ChiefGoalCard: View {
                     Text(goal.title).panelsScaledFont(size: 22, weight: .semibold).foregroundStyle(PanelsTheme.strong)
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(18).background(PanelsTheme.raised)
             }.buttonStyle(.plain)
-            if let session, let accepted = session.goal {
+            if let accepted = session.goal {
                 VStack(alignment: .leading, spacing: 16) {
                     if let checklist = GoalPresentation.primaryChecklist(accepted) { GoalChecklist(block: checklist, session: session) }
                     else if let chart = GoalPresentation.primaryChart(accepted) { GoalChart(block: chart, session: session, integrated: true) }
                     GoalSaveFailure(session: session)
                 }.padding(.horizontal, 20).padding(.vertical, 24)
             }
-        }.modifier(GoalBoundaryRefresh(at: session?.nextRefreshAt) { if let session { await session.refresh() } })
+        }
             .background(PanelsTheme.surface).clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(PanelsTheme.border))
-            .task(id: "\(store.baseURL):\(store.revision)") { let selected = PageSession.session(id: goal.id, api: store.client, initial: goal); session = selected; await selected.refresh() }
+            .task(id: store.baseURL) { await session.follow() }
     }
 }
 

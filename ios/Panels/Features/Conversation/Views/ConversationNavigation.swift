@@ -82,8 +82,8 @@ private struct ConversationSurface: View {
 
     var body: some View {
         conversation
-        .task(id: "\(store.baseURL)|\(conversationID ?? "new")|\(scenePhase == .active)|\(active)") {
-            guard active, scenePhase == .active else { return }
+        .task(id: "\(store.baseURL)|\(conversationID ?? "new")|\(scenePhase == .active)|\(active)|\(store.serverUnreachable)") {
+            guard active, !store.serverUnreachable, scenePhase == .active else { return }
             model.conversationID = conversationID ?? model.conversationID
             if owner == .chief, model.conversationID == nil {
                 let saved: ConversationReference? = store.client.cached("/api/chief/conversation")
@@ -110,8 +110,8 @@ private struct ConversationSurface: View {
             // has not started yet has only its owner's start values to read.
             if model.conversationID == nil { await readConfiguration() }
         }
-        .task(id: "tail|\(store.baseURL)|\(model.conversationID ?? "")|\(model.lens)|\(scenePhase == .active)|\(active)") {
-            guard active, scenePhase == .active, let id = model.conversationID else { return }
+        .task(id: "tail|\(store.baseURL)|\(model.conversationID ?? "")|\(model.lens)|\(scenePhase == .active)|\(active)|\(store.serverUnreachable)") {
+            guard active, !store.serverUnreachable, scenePhase == .active, let id = model.conversationID else { return }
             var misses = 0
             while !Task.isCancelled {
                 model.beginTail()
@@ -146,7 +146,7 @@ private struct ConversationSurface: View {
             let before = model.outgoing
             model.syncOutbox()
             // A saved message can be held by the server; its queue lives in the configuration.
-            if active, scenePhase == .active, model.outgoing != before { Task { await readConfiguration() } }
+            if active, !store.serverUnreachable, scenePhase == .active, model.outgoing != before { Task { await readConfiguration() } }
         }
         .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel() } }
         .onDisappear { speech.cancel() }
@@ -178,7 +178,7 @@ private struct ConversationSurface: View {
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, AgentPageLayout.gutter)
             }
             if isPage {
-                ConversationThread(model: model, owner: owner, readOnly: readOnly, active: active && scenePhase == .active)
+                ConversationThread(model: model, owner: owner, readOnly: readOnly, active: active && !store.serverUnreachable && scenePhase == .active)
             }
             if readOnly {
                 Text("Historical conversation · read only").font(PanelsTheme.TypeScale.small)

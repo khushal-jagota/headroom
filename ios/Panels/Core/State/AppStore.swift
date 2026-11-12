@@ -4,6 +4,7 @@ import Observation
 @MainActor @Observable final class AppStore {
     var baseURL: URL
     private let session: URLSession
+    @ObservationIgnored lazy var resources = ResourceOwner(api: client)
     var client: APIClient { APIClient(baseURL: baseURL, session: session) }
     /// Workspace rows from the last view that carried the rail windows. A scope
     /// without them, such as Review alone, keeps the last coherent Workspace.
@@ -76,6 +77,7 @@ import Observation
 
     func configure(baseURL: URL) {
         self.baseURL = baseURL
+        resources.configure(api: client)
         UserDefaults.standard.set(baseURL.absoluteString, forKey: "panels.baseURL")
         managers = []; tickets = []; workspaceLoaded = false; workspaceHidden = [:]; chief = nil; chiefSignal = nil; review = nil; counts = nil; view = nil
         presentation = nil; recordStamps = [:]
@@ -210,10 +212,11 @@ import Observation
         runGeneration += 1
         let generation = runGeneration
         running = true
+        resources.start()
         if hasRun { connectionSession += 1 }
         hasRun = true
         defer {
-            if runGeneration == generation { running = false; viewConsumer = nil; streamRequest = nil }
+            if runGeneration == generation { resources.stop(); running = false; viewConsumer = nil; streamRequest = nil }
         }
         async let settings: () = followSettings()
         await followView()

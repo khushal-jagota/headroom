@@ -8,48 +8,73 @@ import Observation
 }
 
 
+struct GoalTextSubmission: Sendable {
+    let key: String
+    let text: String
+    let revision: Int
+}
+
 /// Hosts share accepted goal or holder-page data and unfinished commands for this server.
 /// Goal writes stay outside the message outbox: no automatic replay.
 @MainActor @Observable final class PageSession {
-    private static var sessions: [String: PageSession] = [:]
-    static func session(id: String, api: APIClient, initial: GoalRecord? = nil) -> PageSession {
-        let key = api.baseURL.absoluteString + ":" + id
-        if let current = sessions[key] {
-            current.api = api
-            if let initial, initial.revision > (current.goal?.revision ?? -1) { current.goal = initial }
-            return current
-        }
-        let created = PageSession(id: id, api: api, goal: initial)
-        sessions[key] = created; return created
+    static func session(id: String, api: APIClient, initial: GoalRecord? = nil, resources: ResourceOwner? = nil) -> PageSession {
+        PageSession(id: id, api: api, goal: initial, resources: resources)
     }
-    static func holder(_ holder: GoalHolder, api: APIClient) -> PageSession {
-        let key = api.baseURL.absoluteString + ":holder:" + holder.pagePath
-        if let current = sessions[key] { current.api = api; return current }
-        let created = PageSession(id: holder.id ?? "chief", api: api, holder: holder)
-        sessions[key] = created; return created
+    static func holder(_ holder: GoalHolder, api: APIClient, resources: ResourceOwner? = nil) -> PageSession {
+        PageSession(id: holder.id ?? "chief", api: api, holder: holder, resources: resources)
     }
     let id: String
     let holder: GoalHolder?
-    private(set) var holderPage: HolderPage?
+    var holderPage: HolderPage? { holderHandle?.value }
     var page: GoalJSON? { holder == nil ? goal?.page : holderPage?.page }
     var revision: Int { holder == nil ? goal?.revision ?? 0 : holderPage?.pageRevision ?? 0 }
     var statusDate: String? { goal?.statusDate ?? readings?.statusDate }
     var hasContent: Bool { holder == nil ? goal != nil : holderPage != nil }
-    private(set) var goal: GoalRecord?
-    private(set) var readings: GoalReadings?
+    var goal: GoalRecord? { goalHandle?.value }
+    var readings: GoalReadings? {
+        guard let value = readingsHandle.value, value.revision >= revision else { return nil }
+        return value
+    }
     private(set) var busy = false
-    var readError: String?
+    var readError: String? { goalHandle?.error ?? holderHandle?.error ?? readingsHandle.error }
     var saveError: String?
     private var pendingPatch: GoalJSON?
     private var preparePatch: (() async throws -> GoalJSON)?
     var hasPendingEdit: Bool { pendingPatch != nil || preparePatch != nil }
+    var hasUnfinishedEdits: Bool {
+        busy || hasPendingEdit || !textDrafts.isEmpty || manualEditors.values.contains { $0.draft != nil || $0.pending != nil || $0.busy }
+    }
     private var api: APIClient
-    private var reading = false
+    let resources: ResourceOwner
+    private let goalHandle: ResourceHandle<GoalRecord>?
+    private let holderHandle: ResourceHandle<HolderPage>?
+    private let readingsHandle: ResourceHandle<GoalReadings>
+    private var mounted = 0
     var preferences: [String: GoalChartPreference] = [:]
     var textDrafts: [String: GoalTextDraft] = [:]
-    var submittedTextKey: String?
+    private var textSubmission: GoalTextSubmission?
     private var manualEditors: [String: GoalManualEditor] = [:]
-    init(id: String, api: APIClient, goal: GoalRecord? = nil, holder: GoalHolder? = nil) { self.id = id; self.api = api; self.goal = goal; self.holder = holder }
+    init(id: String, api: APIClient, goal: GoalRecord? = nil, holder: GoalHolder? = nil, resources: ResourceOwner? = nil) {
+        self.id = id; self.api = api; self.holder = holder
+        let resources = resources ?? ResourceOwner(api: api); self.resources = resources
+        goalHandle = holder == nil ? resources.handle(GoalResources.goal(id)) : nil
+        holderHandle = holder.map { resources.handle(GoalResources.holder($0)) }
+        readingsHandle = resources.handle(holder.map { GoalResources.holderReadings($0) } ?? GoalResources.readings(id))
+        if let goal, goalHandle?.value == nil { goalHandle?.accept(goal) }
+    }
+    func acquire() {
+        mounted += 1
+        goalHandle?.acquire(); holderHandle?.acquire(); readingsHandle.acquire()
+    }
+    func release() {
+        guard mounted > 0 else { return }; mounted -= 1
+        goalHandle?.release(); holderHandle?.release(); readingsHandle.release()
+    }
+    func follow() async {
+        acquire(); defer { release() }
+        await refresh()
+        do { try await Task.sleep(for: .seconds(365 * 24 * 60 * 60)) } catch { }
+    }
     var baseURL: URL { api.baseURL }
     var nextRefreshAt: Double? { [goal?.nextRefreshAt, readings?.nextRefreshAt].compactMap { $0 }.min() }
     func preference(_ id: String) -> GoalChartPreference { preferences[id] ?? .init() }
@@ -57,34 +82,23 @@ import Observation
     func manual(_ block: GoalJSON) -> GoalManualEditor {
         let key = block["measure_id"].text
         if let editor = manualEditors[key] { return editor }
-        let editor = GoalManualEditor(measureID: key, cumulative: block["manual"]["model"].text == "cumulative_target", api: api)
+        let editor = GoalManualEditor(measureID: key, cumulative: block["manual"]["model"].text == "cumulative_target", api: api, onWrite: { [resources] in
+            resources.invalidate { $0.hasPrefix("/api/goals/") && $0.contains("/readings") || $0.hasSuffix("/page/readings") || $0.hasPrefix("/api/measures/") }
+        })
         manualEditors[key] = editor; return editor
     }
     func refresh() async {
-        guard !reading else { return }
-        reading = true; defer { reading = false }
-        do {
-            if let holder {
-                async let detail = api.holderPage(holder)
-                async let observations = api.holderReadings(holder)
-                let next = try await detail
-                if next.pageRevision >= revision { holderPage = next }
-                let nextReadings = try await observations
-                if nextReadings.goalId == id, nextReadings.revision >= (readings?.revision ?? -1), nextReadings.revision >= revision { readings = nextReadings }
-                readError = nil
-                return
-            }
-            async let detail = api.goal(id)
-            async let observations = api.goalReadings(id)
-            let next = try await detail
-            if next.id == id, next.revision >= (goal?.revision ?? -1) { goal = next }
-            let nextReadings = try await observations
-            if nextReadings.goalId == id, nextReadings.revision >= (readings?.revision ?? -1), nextReadings.revision >= (goal?.revision ?? 0) { readings = nextReadings }
-            readError = nil
-        } catch { if !Task.isCancelled { readError = error.localizedDescription } }
+        async let detail: () = refreshDocument()
+        async let observations: () = readingsHandle.refresh()
+        _ = await (detail, observations)
     }
-    func save(_ fields: [String: GoalJSON], revision: Int? = nil) async {
+    private func refreshDocument() async {
+        if let goalHandle { await goalHandle.refresh() }
+        else { await holderHandle?.refresh() }
+    }
+    func save(_ fields: [String: GoalJSON], revision: Int? = nil, textSubmission: GoalTextSubmission? = nil) async {
         guard holder == nil, !busy, !hasPendingEdit else { return }
+        self.textSubmission = textSubmission
         preparePatch = { [self] in
             let accepted = try await api.goal(id)
             guard accepted.id == id else { throw APIError(status: 0, message: "The accepted goal does not match this edit.") }
@@ -93,8 +107,9 @@ import Observation
         }
         await retry()
     }
-    func updateBlock(_ id: String, revision: Int? = nil, update: @escaping (GoalJSON) -> GoalJSON) async {
+    func updateBlock(_ id: String, revision: Int? = nil, textSubmission: GoalTextSubmission? = nil, update: @escaping (GoalJSON) -> GoalJSON) async {
         guard !busy, !hasPendingEdit else { return }
+        self.textSubmission = textSubmission
         preparePatch = { [self] in
             let page: GoalJSON
             let acceptedRevision: Int
@@ -117,14 +132,24 @@ import Observation
     private func submitPending() async throws {
         if pendingPatch == nil, let preparePatch { pendingPatch = try await preparePatch(); self.preparePatch = nil }
         guard let patch = pendingPatch else { return }
+        let acceptedRevision: Int
         if let holder {
             let next = try await api.saveHolderPage(holder, patch: patch)
-            if next.pageRevision >= revision { holderPage = next }
+            acceptedRevision = next.pageRevision
+            if next.pageRevision >= revision { holderHandle?.accept(next) }
         } else {
             let next = try await api.saveGoal(id, patch: patch)
-            if next.id == id, next.revision >= (goal?.revision ?? -1) { goal = next }
+            guard next.id == id else { throw APIError(status: 0, message: "The accepted goal does not match this edit.") }
+            acceptedRevision = next.revision
+            if next.revision >= (goal?.revision ?? -1) { goalHandle?.accept(next) }
         }
+        if let submission = textSubmission, let draft = textDrafts[submission.key], draft.revision == submission.revision {
+            if draft.text == submission.text { textDrafts[submission.key] = nil }
+            else { textDrafts[submission.key] = GoalTextDraft(text: draft.text, revision: acceptedRevision) }
+        }
+        textSubmission = nil
         pendingPatch = nil; saveError = nil
+        resources.invalidate([GoalResources.list.key, goalHandle?.key, holderHandle?.key, readingsHandle.key].compactMap { $0 })
         // Read failure after acceptance must never become Retry save.
         await refresh()
     }
@@ -132,7 +157,27 @@ import Observation
         guard !busy else { return }; busy = true; defer { busy = false }
         do { try await submitPending() } catch { saveError = error.localizedDescription }
     }
-    func discard() async { guard !busy else { return }; pendingPatch = nil; preparePatch = nil; saveError = nil; if let submittedTextKey { textDrafts[submittedTextKey] = nil; self.submittedTextKey = nil }; await refresh() }
+    func discard() async { guard !busy else { return }; pendingPatch = nil; preparePatch = nil; saveError = nil; if let submission = textSubmission { textDrafts[submission.key] = nil }; textSubmission = nil; await refresh() }
+}
+
+/// A mounted route retains dirty edit owners after a Goal leaves its visible membership.
+/// Accepted responses and active read demand still belong to the resource owner.
+@MainActor @Observable final class PageSessionCollection {
+    private var sessions: [String: PageSession] = [:]
+    private var selected: Set<String> = []
+    private func key(_ id: String, server: URL) -> String { LocalStore.server(server) + ":" + id }
+    func session(_ id: String, server: URL) -> PageSession? { sessions[key(id, server: server)] }
+    var unfinishedKeys: [String] { sessions.keys.filter { sessions[$0]?.hasUnfinishedEdits == true }.sorted() }
+    @discardableResult func update(_ goals: [GoalRecord], api: APIClient, resources: ResourceOwner) -> [PageSession] {
+        selected = Set(goals.map { key($0.id, server: api.baseURL) })
+        for goal in goals {
+            let identity = key(goal.id, server: api.baseURL)
+            if sessions[identity] == nil { sessions[identity] = PageSession.session(id: goal.id, api: api, initial: goal, resources: resources) }
+        }
+        prune()
+        return goals.compactMap { session($0.id, server: api.baseURL) }
+    }
+    func prune() { sessions = sessions.filter { selected.contains($0.key) || $0.value.hasUnfinishedEdits } }
 }
 
 struct GoalChartPreference: Equatable { var range = "month"; var expanded = false }
@@ -141,6 +186,7 @@ struct GoalChartPreference: Equatable { var range = "month"; var expanded = fals
     let measureID: String
     let cumulative: Bool
     private let api: APIClient
+    private let onWrite: @MainActor () -> Void
     private(set) var state: GoalManualState?
     private(set) var busy = false
     private(set) var pending: GoalManualCommand?
@@ -164,7 +210,7 @@ struct GoalChartPreference: Equatable { var range = "month"; var expanded = fals
     private var selectedDate: String?
     private var readGeneration = 0
     private(set) var history: [String: GoalJSON] = [:]
-    init(measureID: String, cumulative: Bool, api: APIClient) { self.measureID = measureID; self.cumulative = cumulative; self.api = api }
+    init(measureID: String, cumulative: Bool, api: APIClient, onWrite: @escaping @MainActor () -> Void = {}) { self.measureID = measureID; self.cumulative = cumulative; self.api = api; self.onWrite = onWrite }
     func accept(_ next: GoalManualState, date: String? = nil) {
         guard next.measureId == measureID, date == nil || next.date == date,
               next.definitionRevision >= (state?.definitionRevision ?? -1), next.writeRevision >= (state?.writeRevision ?? -1) else { return }
@@ -203,6 +249,7 @@ struct GoalChartPreference: Equatable { var range = "month"; var expanded = fals
         guard let pending else { return }
         let result = try await api.writeManual(measureID, command: pending)
         accept(result.state, date: result.receipt["date"].string)
+        onWrite()
         self.pending = nil; draft = nil; draftBasis = nil; conflicted = false; error = nil
     }
     private func failed(_ failure: Error) async {
