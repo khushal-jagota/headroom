@@ -17,6 +17,7 @@ import type {
   ResolvedConversationStart,
   NativeMessageOperation,
   NativeMessageAdmission,
+  DeploymentRecoveryReference,
 } from '../../contracts.ts';
 import {
   conversation_event_payload_from_canonical_json,
@@ -437,6 +438,38 @@ export class ConversationStore
 
   finish_writes(): Promise<void> {
     return this.#settlement.finish_writes();
+  }
+
+  bind_interruption_delivery(
+    conversation_id: string,
+    turn_number: number,
+    references: readonly DeploymentRecoveryReference[] | null = null,
+    recovery_sender_message_ids: ReadonlyMap<string, string> | null = null,
+  ): string | null {
+    return this.#write((tx) => {
+      const bind = this.#participants.bind_interruption_delivery;
+      const value =
+        bind === undefined
+          ? null
+          : synchronously(() =>
+              bind(tx, conversation_id, turn_number, references, recovery_sender_message_ids),
+            );
+      return { value, payloads: [] };
+    });
+  }
+
+  fail_recovery_claims(conversation_id: string, turn_number: number): void {
+    this.#write((tx) => {
+      const revisions = this.#claim_revisions(tx, conversation_id);
+      const fail = this.#participants.fail_recovery_claims;
+      if (fail !== undefined)
+        synchronously(() => fail(tx, conversation_id, turn_number, this.integer_now()));
+      return {
+        value: undefined,
+        payloads: [],
+        always_announce: revisions !== this.#claim_revisions(tx, conversation_id),
+      };
+    });
   }
 
   #write<T>(operation: (tx: TransactionSql) => WriteResult<T>): T {
