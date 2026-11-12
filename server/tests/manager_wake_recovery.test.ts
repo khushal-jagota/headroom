@@ -1,4 +1,5 @@
 import { ConversationStartAborted } from '../runtime/abort.ts';
+import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import { expect, test, vi } from 'vitest';
 import { fixture, fixture_path, create } from './ticket_fixture.ts';
 import { ConversationStore } from '../conversation/record/data/store.ts';
@@ -196,56 +197,70 @@ test('the wake deadline records uncertainty and detaches a hung send without a l
     },
   });
   const pass = loop.poll_once().catch((error: unknown) => error);
-  await entered;
-  expect(
-    database.read((sql) => sql.get<{ status: string }>('SELECT status FROM manager_wake_batches'))
-      ?.status,
-  ).toBe('offering');
-  const before = performance.now();
-  await loop.stop({ deadline: performance.now() / 1000 + 0.02 });
-  expect(performance.now() - before).toBeLessThan(1000);
-  expect(await pass).toBeInstanceOf(ConversationStartAborted);
-  expect(
-    database.read((sql) =>
-      sql.get('SELECT status,conversation_id,process_token FROM manager_wake_batches'),
-    ),
-  ).toEqual({
-    status: 'uncertain',
-    conversation_id: 'hung-wake',
-    process_token: loop.process_token,
-  });
-  expect(
-    database.read((sql) =>
-      sql.get<{ closed_at: number | null }>('SELECT closed_at FROM manager_wakes'),
-    )?.closed_at,
-  ).toBeNull();
-  // Detach must release the actual shared link lock while the core promise stays live.
-  let lock_timeout: ReturnType<typeof setTimeout> | undefined;
   try {
+    await entered;
     expect(
-      await Promise.race([
-        conversation_link_lock('agent:chief_of_staff').run(async () => 'lock released'),
-        new Promise<never>((_resolve, reject) => {
-          lock_timeout = setTimeout(
-            () => reject(new Error('wake retained the conversation link lock')),
-            1000,
-          );
-        }),
-      ]),
-    ).toBe('lock released');
-    expect(completed).toBe(false);
+      database.read((sql) => sql.get<{ status: string }>('SELECT status FROM manager_wake_batches'))
+        ?.status,
+    ).toBe('offering');
+    await expect(loop.stop({ deadline: performance.now() / 1000 + 0.02 })).rejects.toBeInstanceOf(
+      ShutdownDeadlineExceeded,
+    );
+    expect(await pass).toBeInstanceOf(ConversationStartAborted);
+    expect(
+      database.read((sql) =>
+        sql.get('SELECT status,conversation_id,process_token FROM manager_wake_batches'),
+      ),
+    ).toEqual({
+      status: 'uncertain',
+      conversation_id: 'hung-wake',
+      process_token: loop.process_token,
+    });
+    expect(
+      database.read((sql) =>
+        sql.get<{ closed_at: number | null }>('SELECT closed_at FROM manager_wakes'),
+      )?.closed_at,
+    ).toBeNull();
+    // Detach must release the actual shared link lock while the core promise stays live.
+    let lock_timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      expect(
+        await Promise.race([
+          conversation_link_lock('agent:chief_of_staff').run(async () => 'lock released'),
+          new Promise<never>((_resolve, reject) => {
+            lock_timeout = setTimeout(
+              () => reject(new Error('wake retained the conversation link lock')),
+              1000,
+            );
+          }),
+        ]),
+      ).toBe('lock released');
+      expect(completed).toBe(false);
+    } finally {
+      if (lock_timeout !== undefined) clearTimeout(lock_timeout);
+    }
+    const after_close = access_count;
+    let actual_done = false;
+    const actual = loop.settled().then(() => {
+      actual_done = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(actual_done).toBe(false);
+    finish(new PromptDeliveryStarted());
+    await actual;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(completed).toBe(true);
+    expect(kill).not.toHaveBeenCalled();
+    expect(access_count).toBe(after_close);
   } finally {
-    if (lock_timeout !== undefined) clearTimeout(lock_timeout);
+    finish(new PromptDeliveryStarted());
+    await loop.stop({ deadline: performance.now() / 1000 + 1 }).catch((error: unknown) => {
+      if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+    });
+    await loop.settled();
+    owned = false;
+    database.close();
   }
-  owned = false;
-  database.close();
-  const after_close = access_count;
-  finish(new PromptDeliveryStarted());
-  await provider;
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  expect(completed).toBe(true);
-  expect(kill).not.toHaveBeenCalled();
-  expect(access_count).toBe(after_close);
 });
 
 // A first Chief send uses the canonical new-agent cleanup branch. Unlike the existing
@@ -307,63 +322,79 @@ test('an aborted first Chief send keeps canonical cleanup while database ownersh
     },
   });
   const pass = loop.poll_once().catch((error: unknown) => error);
-  await entered;
-  const intended = database.read((sql) =>
-    sql.get<{ conversation_id: string }>('SELECT conversation_id FROM manager_wake_batches'),
-  )!.conversation_id;
-  expect(
-    database.read((sql) =>
-      sql.get<{ conversation_id: string }>(
-        "SELECT conversation_id FROM agents WHERE agent_key='chief_of_staff'",
-      ),
-    )?.conversation_id,
-  ).toBe(intended);
-  await loop.stop({ deadline: performance.now() / 1000 + 0.02 });
-  expect(await pass).toBeInstanceOf(ConversationStartAborted);
-  let lock_timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    await Promise.race([
-      conversation_link_lock('agent:chief_of_staff').run(async () => {}),
-      new Promise<never>((_resolve, reject) => {
-        lock_timeout = setTimeout(
-          () => reject(new Error('new-Chief cleanup retained the link lock')),
-          1000,
-        );
-      }),
-    ]);
-  } finally {
-    if (lock_timeout !== undefined) clearTimeout(lock_timeout);
-  }
-  expect(kill).toHaveBeenCalledExactlyOnceWith(intended);
-  expect(
-    database.read((sql) =>
-      sql.get<{ conversation_id: string | null }>(
-        "SELECT conversation_id FROM agents WHERE agent_key='chief_of_staff'",
+    await entered;
+    const intended = database.read((sql) =>
+      sql.get<{ conversation_id: string }>('SELECT conversation_id FROM manager_wake_batches'),
+    )!.conversation_id;
+    expect(
+      database.read((sql) =>
+        sql.get<{ conversation_id: string }>(
+          "SELECT conversation_id FROM agents WHERE agent_key='chief_of_staff'",
+        ),
+      )?.conversation_id,
+    ).toBe(intended);
+    await expect(loop.stop({ deadline: performance.now() / 1000 + 0.02 })).rejects.toBeInstanceOf(
+      ShutdownDeadlineExceeded,
+    );
+    expect(await pass).toBeInstanceOf(ConversationStartAborted);
+    let lock_timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        conversation_link_lock('agent:chief_of_staff').run(async () => {}),
+        new Promise<never>((_resolve, reject) => {
+          lock_timeout = setTimeout(
+            () => reject(new Error('new-Chief cleanup retained the link lock')),
+            1000,
+          );
+        }),
+      ]);
+    } finally {
+      if (lock_timeout !== undefined) clearTimeout(lock_timeout);
+    }
+    expect(kill).toHaveBeenCalledExactlyOnceWith(intended);
+    expect(
+      database.read((sql) =>
+        sql.get<{ conversation_id: string | null }>(
+          "SELECT conversation_id FROM agents WHERE agent_key='chief_of_staff'",
+        ),
+      )?.conversation_id,
+    ).toBeNull();
+    expect(
+      database.read((sql) =>
+        sql.get('SELECT status,conversation_id,process_token FROM manager_wake_batches'),
       ),
-    )?.conversation_id,
-  ).toBeNull();
-  expect(
-    database.read((sql) =>
-      sql.get('SELECT status,conversation_id,process_token FROM manager_wake_batches'),
-    ),
-  ).toEqual({
-    status: 'uncertain',
-    conversation_id: intended,
-    process_token: loop.process_token,
-  });
-  expect(
-    database.read((sql) =>
-      sql.get<{ closed_at: number | null }>('SELECT closed_at FROM manager_wakes'),
-    )?.closed_at,
-  ).toBeNull();
-  expect(completed).toBe(false);
-  owned = false;
-  database.close();
-  const after_release = access_count;
-  finish(new PromptDeliveryStarted());
-  await provider;
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  expect(completed).toBe(true);
-  expect(access_count).toBe(after_release);
-  expect(kill).toHaveBeenCalledTimes(1);
+    ).toEqual({
+      status: 'uncertain',
+      conversation_id: intended,
+      process_token: loop.process_token,
+    });
+    expect(
+      database.read((sql) =>
+        sql.get<{ closed_at: number | null }>('SELECT closed_at FROM manager_wakes'),
+      )?.closed_at,
+    ).toBeNull();
+    expect(completed).toBe(false);
+    const after_release = access_count;
+    let actual_done = false;
+    const actual = loop.settled().then(() => {
+      actual_done = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(actual_done).toBe(false);
+    finish(new PromptDeliveryStarted());
+    await actual;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(completed).toBe(true);
+    expect(access_count).toBe(after_release);
+    expect(kill).toHaveBeenCalledTimes(1);
+  } finally {
+    finish(new PromptDeliveryStarted());
+    await loop.stop({ deadline: performance.now() / 1000 + 1 }).catch((error: unknown) => {
+      if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+    });
+    await loop.settled();
+    owned = false;
+    database.close();
+  }
 });

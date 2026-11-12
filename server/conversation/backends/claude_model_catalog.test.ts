@@ -5,6 +5,8 @@ import { spawn } from 'node:child_process';
 import { load_claude_sdk } from './claude_sdk.ts';
 import { ensure_cli_compatible } from './cli_compatibility.ts';
 import { probe_claude_model_catalog } from './claude_model_catalog.ts';
+import { OneShotChildren } from '../../lifecycle/one_shot_children.ts';
+import { Deferred } from '../runtime/state.ts';
 
 const { query } = vi.hoisted(() => ({
   query: vi.fn<(typeof import('@anthropic-ai/claude-agent-sdk'))['query']>(),
@@ -58,15 +60,13 @@ it('does not construct an SDK query after a refused version check', async () => 
 
 it('closes the exact probe on timeout and reaps only its recorded child', async () => {
   vi.useFakeTimers();
+  const children = new OneShotChildren();
+  const initialization = new Deferred<unknown>();
   vi.mocked(ensure_cli_compatible).mockResolvedValue(undefined);
   const child = Object.assign(new EventEmitter(), {
     exitCode: null as number | null,
     signalCode: null as string | null,
-    kill: vi.fn(() => {
-      child.signalCode = 'SIGKILL';
-      queueMicrotask(() => child.emit('close', null));
-      return true;
-    }),
+    kill: vi.fn(() => true),
   });
   vi.mocked(spawn).mockReturnValue(child as never);
   const close = vi.fn();
@@ -77,15 +77,33 @@ it('closes the exact probe on timeout and reaps only its recorded child', async 
       cwd: '/synthetic/workspace',
       env: {},
     } as never);
-    return { initializationResult: () => new Promise(() => {}), close } as never;
+    return { initializationResult: () => initialization.promise, close } as never;
   });
-  const result = expect(probe_claude_model_catalog('/synthetic/selected-cli')).rejects.toThrow(
+  const probing = probe_claude_model_catalog('/synthetic/selected-cli', children);
+  let settled = false;
+  void probing
+    .finally(() => {
+      settled = true;
+    })
+    .catch(() => {});
+  const result = expect(probing).rejects.toThrow(
     'claude did not finish its startup handshake in time',
   );
   await vi.advanceTimersByTimeAsync(30_000);
-  await result;
   expect(close).toHaveBeenCalled();
   expect(child.kill).toHaveBeenCalledExactlyOnceWith('SIGKILL');
+  expect(settled).toBe(false);
+  expect(ensure_cli_compatible).toHaveBeenCalledWith('claude', '/synthetic/selected-cli', {
+    children,
+  });
+  child.signalCode = 'SIGKILL';
+  child.emit('close', null);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(settled).toBe(false);
+  initialization.resolve({ models });
+  await result;
+  children.seal();
+  await children.settled();
   expect(spawn).toHaveBeenCalledExactlyOnceWith('/synthetic/selected-cli', [], {
     cwd: '/synthetic/workspace',
     env: expect.objectContaining({

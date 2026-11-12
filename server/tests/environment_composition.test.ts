@@ -226,6 +226,7 @@ test('shutdown during environment setup retains ownership and prevents later pro
         expect(scratchFactory).not.toHaveBeenCalled();
       } finally {
         await inert.close({ deadline: performance.now() / 1000 + 1 });
+        await inert.settled();
       }
       const environment = await create_test_environment_runtime(context);
       return {

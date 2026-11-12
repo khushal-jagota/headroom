@@ -13,6 +13,7 @@ import { instant } from '../logic/experience.ts';
 import { UpdateService, staged_app_path, installed_update_root } from '../service.ts';
 import { configured_worker_runtime_definitions } from '../../../worker_types/configuration.ts';
 import { createApp } from '../../../app.ts';
+import { ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 import { loadConfig } from '../../../core/config.ts';
 import { create_update_routes } from '../routes.ts';
 import { DeploymentResources } from '../resource_versions.ts';
@@ -196,7 +197,10 @@ function harness(request: ServiceProbeRequest, hooks: Hooks = {}) {
     },
     close: async () => {
       if (!owned) return;
-      await service.stop();
+      await service.stop().catch((error: unknown) => {
+        if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+      });
+      await service.settled();
       owned = false;
       database.close();
       unregister();
@@ -338,6 +342,15 @@ export async function probe_service(request: ServiceProbeRequest) {
 }
 
 export async function probe_continuations(request: ServiceProbeRequest) {
+  const expires = async (stop: Promise<void>) => {
+    try {
+      await stop;
+    } catch (error) {
+      if (error instanceof ShutdownDeadlineExceeded) return;
+      throw error;
+    }
+    throw new Error('Held update work must reject its stop observer at the deadline');
+  };
   const result: Record<string, unknown> = {};
   result.installed_roots = await Promise.all(
     (request.installed ?? []).map((value) =>
@@ -347,28 +360,46 @@ export async function probe_continuations(request: ServiceProbeRequest) {
   // Each pending adapter outlives the same absolute shutdown deadline.
   const stage = deferred(),
     restarted_stage = deferred();
+  const stage_entered = deferred(),
+    restarted_entered = deferred();
   let stages = 0;
   const h = harness(request, {
-    stage: () => (++stages === 1 ? stage.promise : restarted_stage.promise),
+    stage: () => {
+      if (++stages === 1) {
+        stage_entered.release();
+        return stage.promise;
+      }
+      restarted_entered.release();
+      return restarted_stage.promise;
+    },
   });
   try {
     h.service.start();
     const first = h.service.prefetch(),
       second = h.service.prefetch();
-    await pause(0);
+    await stage_entered.promise;
     const started = performance.now();
-    await h.service.stop({ deadline: started / 1000 + 0.03 });
+    await expires(h.service.stop({ deadline: started / 1000 + 0.03 }));
     result.stage_stop_ms = performance.now() - started;
+    let stage_settled = false;
+    const stage_actual = h.service.settled().then(() => {
+      stage_settled = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (stage_settled) throw new Error('Actual update settlement discarded a held stage');
+    result.stage_actual_retained = true;
     h.service.start();
     const restarted = h.service.prefetch();
-    await pause(0);
+    await restarted_entered.promise;
     stage.release();
     await Promise.all([first, second]);
+    await stage_actual;
     result.old_finally_preserves_new_flight = h.service.prefetch() === restarted;
-    await h.service.stop({ deadline: performance.now() / 1000 });
-    await h.close();
+    await expires(h.service.stop({ deadline: performance.now() / 1000 }));
     restarted_stage.release();
     await restarted;
+    await h.service.settled();
+    await h.close();
     result.stage_flight = { ...h.counts, ready: h.service.ready_release(), trace: h.trace };
   } finally {
     stage.release();
@@ -376,23 +407,31 @@ export async function probe_continuations(request: ServiceProbeRequest) {
     await h.close();
   }
   const backup = deferred(),
+    backup_entered = deferred(),
     b = harness(
       { ...request, root: join(request.root, 'backup-case') },
-      { migrate: true, backup: () => backup.promise },
+      {
+        migrate: true,
+        backup: () => {
+          backup_entered.release();
+          return backup.promise;
+        },
+      },
     );
   try {
     b.service.start();
     await b.service.prefetch();
     b.service.install(b.release.manifest.app_sha, 'now', { confirm_activity: false });
     const advance = b.service.advance();
-    await pause(0);
+    await backup_entered.promise;
     const started = performance.now();
-    await b.service.stop({ deadline: started / 1000 + 0.03 });
+    await expires(b.service.stop({ deadline: started / 1000 + 0.03 }));
     result.backup_stop_ms = performance.now() - started;
     const before = readFileSync(b.attempts.path, 'utf8');
-    await b.close();
     backup.release();
     await advance;
+    await b.service.settled();
+    await b.close();
     result.backup_fence = {
       ...b.counts,
       state: b.attempts.read()?.state,
@@ -405,23 +444,30 @@ export async function probe_continuations(request: ServiceProbeRequest) {
     await b.close();
   }
   const launch = deferred(),
+    launch_entered = deferred(),
     l = harness(
       { ...request, root: join(request.root, 'launch-case') },
-      { launch: () => launch.promise },
+      {
+        launch: () => {
+          launch_entered.release();
+          return launch.promise;
+        },
+      },
     );
   try {
     l.service.start();
     await l.service.prefetch();
     l.service.install(l.release.manifest.app_sha, 'now', { confirm_activity: false });
     const advance = l.service.advance();
-    await pause(0);
+    await launch_entered.promise;
     const started = performance.now();
-    await l.service.stop({ deadline: started / 1000 + 0.03 });
+    await expires(l.service.stop({ deadline: started / 1000 + 0.03 }));
     const elapsed_ms = performance.now() - started;
     const before = readFileSync(l.attempts.path, 'utf8');
-    await l.close();
     launch.reject(new Error('late installer refusal'));
     await advance;
+    await l.service.settled();
+    await l.close();
     result.launch_fence = {
       elapsed_ms,
       launches: l.counts.launch,

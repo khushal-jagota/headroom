@@ -1,9 +1,12 @@
 /** A real scripted process group proves cleanup that recording commands cannot show. */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
 import { BackendCommands } from '../conversation/snapshot/commands.ts';
+import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
+import { ensure_cli_compatible } from '../conversation/backends/cli_compatibility.ts';
+import { create_vps_status_dependencies } from '../environments/vps_status/probes.ts';
 
 interface OwnedProcesses {
   parent: number;
@@ -76,6 +79,21 @@ test.skipIf(process.platform !== 'linux')(
   async () => {
     const root = mkdtempSync(join(tmpdir(), 'panels-backend-commands-'));
     const script = join(root, 'scripted-command.cjs');
+    const probe = join(root, 'scripted-probe');
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    const probe_source =
+      `#!${process.execPath}\n` +
+      [
+        "const fs=require('node:fs');",
+        'const marker=process.env.P21_PROBE_MARKER;',
+        "fs.writeFileSync(marker+'.tmp',JSON.stringify({parent:process.pid,descendant:process.pid}));",
+        "fs.renameSync(marker+'.tmp',marker);",
+        "process.stdout.write('2.1.219 (Claude Code)\\n');setInterval(()=>{},1000);",
+      ].join('\n');
+    writeFileSync(probe, probe_source, { mode: 0o700 });
+    writeFileSync(join(bin, 'ps'), probe_source, { mode: 0o700 });
+    const prior = { PATH: process.env.PATH, P21_PROBE_MARKER: process.env.P21_PROBE_MARKER };
     writeFileSync(
       script,
       [
@@ -95,7 +113,8 @@ test.skipIf(process.platform !== 'linux')(
     const signals = vi.spyOn(process, 'kill');
     try {
       for (const mode of ['abort', 'shutdown', 'exit'] as const) {
-        const commands = new BackendCommands();
+        const children = new OneShotChildren();
+        const commands = new BackendCommands(children);
         owners.push(commands);
         const controller = new AbortController();
         const marker = join(root, `${mode}.json`);
@@ -117,7 +136,30 @@ test.skipIf(process.platform !== 'linux')(
           controller.abort(reason);
           expect(await within(operation, 2000)).toEqual({ error: reason });
         } else if (mode === 'shutdown') {
+          // All three adapters share the SAME actual-close owner. `ps` resolves
+          // only to our private Node script, never a host metrics command.
+          const version_marker = join(root, 'version.json');
+          const status_marker = join(root, 'status.json');
+          process.env.PATH = bin + ':' + prior.PATH;
+          process.env.P21_PROBE_MARKER = status_marker;
+          const version = ensure_cli_compatible('claude', probe, {
+            children,
+            environment: { P21_PROBE_MARKER: version_marker },
+          }).then(
+            () => null,
+            (error: unknown) => error,
+          );
+          const status = create_vps_status_dependencies(children)
+            .process_lines()
+            .then(
+              () => null,
+              (error: unknown) => error,
+            );
+          owned_groups.push(await process_ids(version_marker), await process_ids(status_marker));
           await within(commands.shutdown(), 2000);
+          expect(await version).toBeInstanceOf(Error);
+          expect(await status).toBeInstanceOf(Error);
+          await children.settled();
           const settled = await operation;
           expect('error' in settled && settled.error).toBeInstanceOf(Error);
           if ('error' in settled)
@@ -140,6 +182,10 @@ test.skipIf(process.platform !== 'linux')(
       await within(Promise.allSettled(owners.map((owner) => owner.shutdown())), 3000);
       for (const owned of owned_groups) await group_stopped(owned);
       signals.mockRestore();
+      for (const [name, value] of Object.entries(prior)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
       rmSync(root, { recursive: true, force: true });
     }
   },

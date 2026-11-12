@@ -42,8 +42,54 @@ import { MetricsRuntime } from '../environments/vps_metrics/runtime.ts';
 import { UpdateService } from '../environments/updates/service.ts';
 import * as scratch from '../environments/ticket_scratch/runtime.ts';
 import { create_test_environment_runtime } from '../environments/testing/composition.ts';
+import { HttpRequestScope } from '../core/http/lifetime.ts';
 
 const next_turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+// A combined HTTP host can hide one untracked path behind another held path.
+// Independent gates prove each actual lifetime without another connected host.
+test('HTTP lifetime independently retains a handler and a pending iterator return', async () => {
+  const began = performance.now();
+  const scope = new HttpRequestScope();
+  const handler = done<void>();
+  const handled = scope.run(() => handler.promise);
+  let handler_done = false;
+  const handler_drain = scope.settled().then(() => {
+    handler_done = true;
+  });
+  await next_turn();
+  expect(handler_done).toBe(false);
+  handler.resolve();
+  await Promise.all([handled, handler_drain]);
+  const entered = done<void>(),
+    release = done<void>();
+  const source = (async function* () {
+    try {
+      yield 'owned content';
+    } finally {
+      entered.resolve();
+      await release.promise;
+    }
+  })();
+  const iterator = scope.iterator(source)[Symbol.asyncIterator]();
+  await iterator.next();
+  scope.seal();
+  const returning = iterator.return!();
+  await entered.promise;
+  let iterator_done = false;
+  const iterator_drain = scope.settled().then(() => {
+    iterator_done = true;
+  });
+  try {
+    await next_turn();
+    expect(iterator_done).toBe(false);
+    await expect(scope.run(() => 'new work')).rejects.toMatchObject({ statusCode: 503 });
+  } finally {
+    release.resolve();
+    await Promise.all([returning, iterator_drain]);
+  }
+  console.info(`HTTP lifetime unit proof: ${(performance.now() - began).toFixed(3)} ms`);
+});
 afterEach(() => vi.restoreAllMocks());
 function setup() {
   const database = fixture();
@@ -549,7 +595,12 @@ test('a notification queue commit cannot reenter its active provider send', asyn
     ).toEqual({ status: 'delivered', attempts: 1 });
   } finally {
     result.resolve({ delivered: true });
-    await services.close({ deadline: performance.now() / 1000 });
+    await Promise.resolve(services.close({ deadline: performance.now() / 1000 + 1 })).catch(
+      (error: unknown) => {
+        if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+      },
+    );
+    await services.settled();
     database.close();
   }
 });
