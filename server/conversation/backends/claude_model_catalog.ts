@@ -135,16 +135,23 @@ export async function probe_claude_model_catalog(
         throw new ClaudeModelCatalogUnavailable(
           'claude did not finish its startup handshake in time',
         );
+      const child_environment: NodeJS.ProcessEnv = {
+        ...process.env,
+        CLAUDE_CODE_ENTRYPOINT: 'sdk-ts',
+        CLAUDE_AGENT_SDK_VERSION: '0.3.316',
+      };
+      delete child_environment.CLAUDECODE;
       state.cli = query({
         prompt: prompt(),
         options: {
           pathToClaudeCodeExecutable: claude_executable,
           maxTurns: 1,
-          env: { ...process.env },
+          env: child_environment,
           spawnClaudeCodeProcess(options) {
             const started = spawn(options.command, options.args, {
               cwd: options.cwd,
-              env: options.env,
+              // The SDK adds and removes launch variables. Python's environment remains canonical.
+              env: child_environment,
               stdio: ['pipe', 'pipe', 'pipe'],
             });
             state.child = started;

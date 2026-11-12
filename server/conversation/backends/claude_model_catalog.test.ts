@@ -83,7 +83,10 @@ it('closes the exact probe on timeout and reaps only its recorded child', async 
   expect(child.kill).toHaveBeenCalledExactlyOnceWith('SIGKILL');
   expect(spawn).toHaveBeenCalledExactlyOnceWith('/synthetic/selected-cli', [], {
     cwd: '/synthetic/workspace',
-    env: {},
+    env: expect.objectContaining({
+      CLAUDE_CODE_ENTRYPOINT: 'sdk-ts',
+      CLAUDE_AGENT_SDK_VERSION: '0.3.316',
+    }),
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 });
