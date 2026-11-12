@@ -12,7 +12,7 @@ import type { BackendSnapshot, BackendHttpRuntime } from '../contracts.ts';
 import type { CodexSignIn, CodexSignInService } from '../provider_contracts.ts';
 import { UnknownSignInSession } from '../provider_contracts.ts';
 import { createBackendRoutes } from '../routes.ts';
-import { RecordingBackendProbeEnvironment } from './environment.ts';
+import { RecordingBackendProbeEnvironment } from '../recording_environment.ts';
 import { ticketModelCatalogControl } from './ticket_models.ts';
 interface Spec {
   readonly db_path: string;
@@ -53,7 +53,7 @@ export async function run(spec: Spec) {
   const calls: string[] = [];
   const pending: CodexSignIn = {
     ...spec.sign_in,
-    started_at: new Date(spec.sign_in.started_at),
+    started_at: spec.sign_in.started_at,
     deadline_at: new Date(spec.sign_in.deadline_at),
   };
   const sign_in: CodexSignInService = {

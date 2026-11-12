@@ -18,7 +18,7 @@ import { create_catalog_readers } from './catalogs/readers.ts';
 import { BackendUsageService } from '../backend_usage/service.ts';
 import { BackendStateStore, DurableCodexLoginRejection } from '../backend_state.ts';
 import { SubprocessBackendProbeEnvironment, backend_io_is_test } from './environment.ts';
-import { RecordingBackendProbeEnvironment } from './testing/environment.ts';
+import { RecordingBackendProbeEnvironment } from './recording_environment.ts';
 export interface BackendProviders {
   readonly codex: CodexModelCatalogSource | null;
   readonly claude: ClaudeModelCatalogSource | null;
@@ -36,13 +36,17 @@ export function create_backend_runtime(options: {
   readonly environment?: BackendProbeEnvironment;
 }): BackendHttpRuntime {
   const { database, providers, now } = options;
-  const environment =
+  const environment: BackendProbeEnvironment =
     options.environment ??
     (options.config.test_mode || backend_io_is_test()
       ? new RecordingBackendProbeEnvironment()
       : new SubprocessBackendProbeEnvironment());
   const rejection = new DurableCodexLoginRejection(database, now);
   return {
+    async shutdown() {
+      await environment.shutdown?.();
+      await providers.codex_sign_in?.shutdown();
+    },
     database,
     backend_snapshots: new BackendSnapshotService({
       environment,

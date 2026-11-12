@@ -8,7 +8,7 @@ import {
 } from '../provider_contracts.ts';
 import { create_backend_probe } from '../probe.ts';
 import { create_catalog_readers } from '../catalogs/readers.ts';
-import { RecordingBackendProbeEnvironment } from './environment.ts';
+import { RecordingBackendProbeEnvironment } from '../recording_environment.ts';
 import { parse_version, version_is_newer } from '../logic/versions.ts';
 
 interface Case {

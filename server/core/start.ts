@@ -127,13 +127,17 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       }
     };
     closing = (async () => {
+      await attempt(() =>
+        backendServices?.shutdown
+          ? backendServices.shutdown()
+          : backendServices?.codex_sign_in?.shutdown(),
+      );
       await attempt(() => background?.close({ deadline }));
       await attempt(() => conversationWrites.drain());
       // Loop cancellation shares one deadline. Core and record settlement have
       // no deadline contract, so retain ownership through their final writes.
       await attempt(() => core?.shutdown());
       await attempt(() => recovery);
-      await attempt(() => backendServices?.codex_sign_in?.shutdown());
       await attempt(() => areas.closeRecord());
       await attempt(() => app?.close());
       await attempt(() => areas.detachNavigation());

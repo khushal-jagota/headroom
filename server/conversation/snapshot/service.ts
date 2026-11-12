@@ -8,6 +8,7 @@ import type {
   BackendUpdateResult,
   SnapshotOptions,
 } from './contracts.ts';
+import { cancellable_environment } from './cancellation.ts';
 import { parse_version } from './logic/versions.ts';
 import {
   MACHINE_CATALOG_BACKSTOP_SECONDS,
@@ -34,7 +35,7 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
   retained(backend_key: ConversationBackendKey): BackendSnapshot | null {
     return this.kept.get(backend_key) ?? null;
   }
-  async snapshots(options: { refresh?: boolean } = {}): Promise<readonly BackendSnapshot[]> {
+  async snapshots(options: SnapshotOptions = {}): Promise<readonly BackendSnapshot[]> {
     return Promise.all(
       Object.values(ConversationBackendKey).map((key) => this.snapshot(key, options)),
     );
@@ -43,6 +44,8 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
     backend_key: ConversationBackendKey,
     options: SnapshotOptions = {},
   ): Promise<BackendSnapshot> {
+    options.signal?.throwIfAborted();
+    const environment = cancellable_environment(this.options.environment, options.signal);
     const refresh = options.refresh ?? false;
     const login_moved = this.codex_login_has_moved(backend_key);
     let stale = this.options.machine_catalog ? false : login_moved;
@@ -53,10 +56,10 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
           (this.now().getTime() - this.probed_at.get(backend_key)!.getTime()) / 1000 >=
           MACHINE_CATALOG_BACKSTOP_SECONDS;
         if (backend_key !== 'hermes') {
-          const executable = this.options.environment.executable_path(backend_key);
+          const executable = environment.executable_path(backend_key);
           let version: string | null = null;
           if (executable !== null) {
-            const outcome = await this.options.environment.run([executable, '--version'], {
+            const outcome = await environment.run([executable, '--version'], {
               timeout_seconds: VERSION_PROBE_TIMEOUT_SECONDS,
             });
             version = parse_version(outcome.standard_output + outcome.standard_error);
@@ -72,6 +75,7 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
     const lock = this.snapshot_locks.get(backend_key)!;
     const waiting = lock.locked;
     return lock.run(async () => {
+      options.signal?.throwIfAborted();
       if (waiting && !this.codex_login_has_moved(backend_key)) {
         const shared = this.kept.get(backend_key);
         if (shared) return shared;
@@ -80,12 +84,13 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
       if (kept) return kept;
       const reading_at = this.now();
       const codex_login = backend_key === 'codex' ? this.options.read_codex_login_standing() : null;
-      let probed = await this.options.probe(backend_key, this.options.environment, {
+      let probed = await this.options.probe(backend_key, environment, {
         refresh,
         discover_update_advisory: refresh && (options.discover_update_advisory ?? true),
         codex_login,
         now: reading_at,
       });
+      options.signal?.throwIfAborted();
       if (codex_login !== null) {
         const latest = this.options.read_codex_login_standing();
         if (
@@ -136,9 +141,13 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
       ) !== this.codex_card_was_probed_against
     );
   }
-  async update_backend(backend_key: ConversationBackendKey): Promise<BackendUpdateResult> {
+  async update_backend(
+    backend_key: ConversationBackendKey,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<BackendUpdateResult> {
     return this.update_locks.get(backend_key)!.run(async () => {
-      const before = await this.snapshot(backend_key, { refresh: true });
+      options.signal?.throwIfAborted();
+      const before = await this.snapshot(backend_key, { refresh: true, ...options });
       const advisory = before.update_advisory;
       const unavailable = 'There is no update Panels can run for this backend.';
       if (!before.installed)
@@ -148,13 +157,14 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
         return { outcome: 'failed', detail: advisory.detail, output_tail: '' };
       const result = await this.options.environment.run(advisory.update_command, {
         timeout_seconds: UPDATE_COMMAND_TIMEOUT_SECONDS,
+        signal: options.signal,
       });
       const output_tail = [
         ...[result.standard_output, result.standard_error].filter(Boolean).join('\n'),
       ]
         .slice(-UPDATE_OUTPUT_TAIL_MAXIMUM_CHARACTERS)
         .join('');
-      const after = await this.snapshot(backend_key, { refresh: true });
+      const after = await this.snapshot(backend_key, { refresh: true, ...options });
       if (result.exit_code !== 0)
         return {
           outcome: 'failed',

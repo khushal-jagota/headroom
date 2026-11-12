@@ -64,8 +64,9 @@ export interface CodexSignIn {
   readonly state: SignInState;
   readonly verification_url: string | null;
   readonly user_code: string | null;
-  readonly started_at: Date;
-  readonly deadline_at: Date;
+  /** Strings use Python datetime.isoformat() text to preserve source microseconds. */
+  readonly started_at: Date | string;
+  readonly deadline_at: Date | string;
   readonly detail: string | null;
   readonly account_label: string | null;
 }

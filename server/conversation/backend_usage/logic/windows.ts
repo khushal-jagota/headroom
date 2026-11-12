@@ -1,6 +1,10 @@
 import type { BackendUsageWindow, BackendUsageWindowKind } from '../contracts.ts';
 import { parse_iso_datetime } from '../../../core/clock.ts';
-import { numeric_kind, numeric_value } from '../../../core/http/numeric_json.ts';
+import {
+  numeric_kind,
+  numeric_value,
+  parse_numeric_json,
+} from '../../../core/http/numeric_json.ts';
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 export function percentage(value: unknown): number | null {
@@ -34,7 +38,13 @@ export function window_kind(minutes: unknown): BackendUsageWindowKind | null {
   return number === 300 ? 'five_hour' : number === 10080 ? 'seven_day' : null;
 }
 /** Validate the complete app-server answer before selecting understood windows. */
-export function parse_codex_windows(body: unknown): readonly BackendUsageWindow[] | null {
+export function parse_codex_windows(text: string): readonly BackendUsageWindow[] | null {
+  let body: unknown;
+  try {
+    body = parse_numeric_json(text);
+  } catch {
+    return null;
+  }
   if (!object(body) || !valid_bucket(body.rateLimits)) return null;
   const by_id = body.rateLimitsByLimitId;
   if (by_id !== undefined && by_id !== null && !object(by_id)) return null;

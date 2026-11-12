@@ -4,7 +4,6 @@ import { CodexUsageAdapter } from '../codex.ts';
 import { CodexUsageRequestRejected } from '../contracts.ts';
 import type { BackendUsageResult, BackendUsageWindow } from '../contracts.ts';
 import { parse_claude_windows, parse_codex_windows } from '../logic/windows.ts';
-import { parse_numeric_json } from '../../../core/http/numeric_json.ts';
 
 interface UsageCase {
   readonly name: string;
@@ -62,16 +61,14 @@ export async function compare_provider_usage(spec: UsageProof): Promise<unknown>
       read_codex_rate_limits: async (executable) => {
         calls.push({ executable });
         if (rejected) throw new CodexUsageRequestRejected(401, 'Synthetic login required');
-        return parse_numeric_json(spec.codex_json[0]!);
+        return spec.codex_json[0]!;
       },
     });
     codex_refreshes.push({ result: result_json(await adapter.refresh()), calls });
   }
   return {
     claude_windows: spec.claude_payloads.map((body) => windows_json(parse_claude_windows(body))),
-    codex_windows: spec.codex_json.map((raw) =>
-      windows_json(parse_codex_windows(parse_numeric_json(raw))),
-    ),
+    codex_windows: spec.codex_json.map((raw) => windows_json(parse_codex_windows(raw))),
     refreshes,
     codex_refreshes,
   };

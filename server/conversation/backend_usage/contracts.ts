@@ -34,10 +34,8 @@ export interface UsageHttpGet {
   ): Promise<UsageHttpResponse>;
 }
 export interface CodexUsageSource {
-  (
-    executable: string,
-    options: { timeout_seconds: number; signal?: AbortSignal },
-  ): Promise<unknown>;
+  /** Return the raw RPC result JSON. Do not parse and reserialize its numeric tokens. */
+  (executable: string, options: { timeout_seconds: number; signal?: AbortSignal }): Promise<string>;
 }
 /** The Codex unit owns the short-lived app-server child and its cleanup. */
 export class CodexUsageTimeout extends Error {}

@@ -2,6 +2,7 @@
 import type { ConversationBackendKey } from '../contracts.ts';
 import type { Database } from '../../core/database/contracts.ts';
 import type { BackendStateStore } from '../backend_state.ts';
+import type { BackendCommandOptions } from './commands.ts';
 import type { BackendUsageResult } from '../backend_usage/contracts.ts';
 import type { RemoteCatalogSource } from '../model_resolution/contracts.ts';
 import type { CodexSignInService } from './provider_contracts.ts';
@@ -56,21 +57,20 @@ export interface CommandOutcome {
   readonly standard_error: string;
 }
 export interface BackendProbeEnvironment {
+  shutdown?(): Promise<void>;
   executable_path(executable_name: string): string | null;
   configured_executable_path(executable_name: string): string | null;
   real_path(path: string): string;
   user_local_npm_prefix(): string;
   prefix_is_owned_and_writable(prefix: string): boolean;
-  run(
-    argv: readonly string[],
-    options: { timeout_seconds: number; environment_overrides?: Readonly<Record<string, string>> },
-  ): Promise<CommandOutcome>;
+  run(argv: readonly string[], options: BackendCommandOptions): Promise<CommandOutcome>;
   latest_released_version(
     package_name: string,
-    options: { timeout_seconds: number },
+    options: { timeout_seconds: number; signal?: AbortSignal },
   ): Promise<string | null>;
 }
 export interface SnapshotOptions {
+  readonly signal?: AbortSignal;
   readonly refresh?: boolean;
   readonly discover_update_advisory?: boolean;
 }
@@ -82,10 +82,14 @@ export interface BackendSnapshotSource {
   ): Promise<BackendSnapshot>;
 }
 export interface BackendSnapshotServiceContract extends BackendSnapshotSource {
-  snapshots(options?: { refresh?: boolean }): Promise<readonly BackendSnapshot[]>;
-  update_backend(backend_key: ConversationBackendKey): Promise<BackendUpdateResult>;
+  snapshots(options?: SnapshotOptions): Promise<readonly BackendSnapshot[]>;
+  update_backend(
+    backend_key: ConversationBackendKey,
+    options?: { signal?: AbortSignal },
+  ): Promise<BackendUpdateResult>;
 }
 export interface BackendHttpRuntime {
+  shutdown?(): Promise<void>;
   readonly database: Database;
   backend_snapshots: BackendSnapshotServiceContract;
   readonly backend_state: BackendStateStore | null;

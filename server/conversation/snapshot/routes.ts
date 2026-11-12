@@ -1,5 +1,5 @@
 /** Backend HTTP transport depends on Panels interfaces, never provider modules. */
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { AreaServices } from '../../core/authority/register.ts';
 import { requireOwner } from '../../core/authority/identity.ts';
 import { HttpError } from '../../core/http/errors.ts';
@@ -55,9 +55,29 @@ function sign_in_service(
 }
 export function createBackendRoutes(runtime: BackendHttpRuntime): FastifyPluginAsync<AreaServices> {
   return async (app, services) => {
+    const requests = new WeakMap<FastifyRequest, { signal: AbortSignal; release(): void }>();
+    app.addHook('onRequest', async (request, reply) => {
+      const controller = new AbortController();
+      const abort = () => controller.abort(new Error('Backend request cancelled'));
+      const closed = () => {
+        if (!reply.raw.writableFinished) abort();
+      };
+      request.raw.once('aborted', abort);
+      reply.raw.once('close', closed);
+      requests.set(request, {
+        signal: controller.signal,
+        release() {
+          request.raw.off('aborted', abort);
+          reply.raw.off('close', closed);
+        },
+      });
+    });
+    app.addHook('onResponse', async (request) => requests.get(request)?.release());
+    const signal_of = (request: FastifyRequest) => requests.get(request)!.signal;
     app.get('/backends', async (request) => {
       const snapshots = await runtime.backend_snapshots.snapshots({
         refresh: refresh(request.query),
+        signal: signal_of(request),
       });
       return {
         backends: snapshots.map((snapshot) => snapshot_json(snapshot, runtime.backend_state)),
@@ -80,25 +100,26 @@ export function createBackendRoutes(runtime: BackendHttpRuntime): FastifyPluginA
         throw new PlannerError('validation', 'The selected machine is unavailable', {});
       const snapshots = await Promise.all(
         Object.values(ConversationBackendKey).map((key) =>
-          source.snapshot(key, { refresh: refresh_requested }),
+          source.snapshot(key, { refresh: refresh_requested, signal: signal_of(request) }),
         ),
       );
       return {
         backends: snapshots.map((snapshot) => snapshot_json(snapshot, runtime.backend_state)),
       };
     });
-    app.post('/backends/refresh', async () => {
+    app.post('/backends/refresh', async (request) => {
       const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, signal_of(request)]);
       const usage_refresh = Promise.all(
         Object.values(ConversationBackendKey).map((key) =>
-          runtime.backend_usage.refresh(key, { signal: controller.signal }),
+          runtime.backend_usage.refresh(key, { signal }),
         ),
       );
       let snapshots;
       let refreshed;
       try {
         await Promise.resolve();
-        snapshots = await runtime.backend_snapshots.snapshots();
+        snapshots = await runtime.backend_snapshots.snapshots({ signal });
         refreshed = await usage_refresh;
       } finally {
         controller.abort();
@@ -138,7 +159,9 @@ export function createBackendRoutes(runtime: BackendHttpRuntime): FastifyPluginA
         const enabled = boolean(fields.body.enabled, ['body', 'enabled']);
         if (!model_id || model_id !== model_id.trim())
           throw new HttpError(422, 'model_id must be trimmed text');
-        const snapshot = await runtime.backend_snapshots.snapshot(key);
+        const snapshot = await runtime.backend_snapshots.snapshot(key, {
+          signal: signal_of(request),
+        });
         if (!snapshot.available_models.some((model) => model.model_id === model_id))
           throw new HttpError(404, 'model is not in the backend catalogue');
         if (runtime.backend_state === null)
@@ -150,7 +173,7 @@ export function createBackendRoutes(runtime: BackendHttpRuntime): FastifyPluginA
     app.post('/backends/:backend_key/update', async (request) => {
       const key = backend(request.params);
       requireOwner(services.identity(request));
-      return runtime.backend_snapshots.update_backend(key);
+      return runtime.backend_snapshots.update_backend(key, { signal: signal_of(request) });
     });
     app.post('/backends/:backend_key/sign-in', async (request) => {
       const service = sign_in_service(runtime, backend(request.params));

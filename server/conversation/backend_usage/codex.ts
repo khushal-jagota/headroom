@@ -34,7 +34,7 @@ export class CodexUsageAdapter implements BackendUsageAdapter {
     });
     const executable = this.options.executable_path('codex');
     if (executable === null) return result('unavailable', 'Codex is not installed or not on PATH.');
-    let response: unknown;
+    let response: string;
     try {
       response = await this.options.read_codex_rate_limits(executable, {
         timeout_seconds: CODEX_USAGE_REFRESH_TIMEOUT_SECONDS,

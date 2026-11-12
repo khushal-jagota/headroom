@@ -88,10 +88,13 @@ export function sign_in_json(sign_in: CodexSignIn) {
       state: sign_in.state,
       verification_url: sign_in.verification_url,
       user_code: sign_in.user_code,
-      started_at: datetime_json(sign_in.started_at).replace(/Z$/, '+00:00'),
-      deadline_at: datetime_json(sign_in.deadline_at).replace(/Z$/, '+00:00'),
+      started_at: sign_in_timestamp(sign_in.started_at),
+      deadline_at: sign_in_timestamp(sign_in.deadline_at),
       detail: sign_in.detail,
       account_label: sign_in.account_label,
     },
   };
+}
+function sign_in_timestamp(value: Date | string): string {
+  return typeof value === 'string' ? value : datetime_json(value).replace(/Z$/, '+00:00');
 }

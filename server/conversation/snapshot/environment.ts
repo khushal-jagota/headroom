@@ -1,5 +1,6 @@
 /** Production machine I/O stays outside card and route policy. */
-import { spawn } from 'node:child_process';
+import { BackendCommands } from './commands.ts';
+import type { BackendCommandOptions } from './commands.ts';
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, delimiter, normalize } from 'node:path';
@@ -41,6 +42,10 @@ function which(name: string): string | null {
   return null;
 }
 export class SubprocessBackendProbeEnvironment implements BackendProbeEnvironment {
+  private readonly commands = new BackendCommands();
+  async shutdown(): Promise<void> {
+    await this.commands.shutdown();
+  }
   constructor() {
     require_production_io();
   }
@@ -93,60 +98,21 @@ export class SubprocessBackendProbeEnvironment implements BackendProbeEnvironmen
       return false;
     }
   }
-  async run(
-    argv: readonly string[],
-    options: { timeout_seconds: number; environment_overrides?: Readonly<Record<string, string>> },
-  ): Promise<CommandOutcome> {
+  async run(argv: readonly string[], options: BackendCommandOptions): Promise<CommandOutcome> {
     require_production_io();
-    return new Promise((resolve_result) => {
-      const output: Buffer[] = [];
-      const error: Buffer[] = [];
-      let timed_out = false;
-      const child = spawn(argv[0], argv.slice(1), {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, ...options.environment_overrides },
-        detached: true,
-      });
-      const timer = setTimeout(() => {
-        timed_out = true;
-        try {
-          if (child.pid !== undefined) process.kill(-child.pid, 'SIGKILL');
-        } catch {
-          child.kill('SIGKILL');
-        }
-      }, options.timeout_seconds * 1000);
-      child.stdout.on('data', (chunk: Buffer) => output.push(chunk));
-      child.stderr.on('data', (chunk: Buffer) => error.push(chunk));
-      child.once('error', (failure) => {
-        clearTimeout(timer);
-        resolve_result({ exit_code: -1, standard_output: '', standard_error: failure.message });
-      });
-      child.once('close', (code) => {
-        clearTimeout(timer);
-        resolve_result(
-          timed_out
-            ? {
-                exit_code: -1,
-                standard_output: '',
-                standard_error: `${argv[0]} did not answer within ${options.timeout_seconds}s`,
-              }
-            : {
-                exit_code: code ?? -1,
-                standard_output: Buffer.concat(output).toString('utf8'),
-                standard_error: Buffer.concat(error).toString('utf8'),
-              },
-        );
-      });
-    });
+    return this.commands.run(argv, options);
   }
   async latest_released_version(
     package_name: string,
-    options: { timeout_seconds: number },
+    options: { timeout_seconds: number; signal?: AbortSignal },
   ): Promise<string | null> {
     require_production_io();
     try {
       const response = await fetch(`https://registry.npmjs.org/${package_name}/latest`, {
-        signal: AbortSignal.timeout(options.timeout_seconds * 1000),
+        redirect: 'manual',
+        signal: options.signal
+          ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout_seconds * 1000)])
+          : AbortSignal.timeout(options.timeout_seconds * 1000),
       });
       if (!response.ok) return null;
       const value: unknown = await response.json();
@@ -154,6 +120,7 @@ export class SubprocessBackendProbeEnvironment implements BackendProbeEnvironmen
       const version = (value as Record<string, unknown>).version;
       return typeof version === 'string' && version ? version : null;
     } catch {
+      options.signal?.throwIfAborted();
       return null;
     }
   }

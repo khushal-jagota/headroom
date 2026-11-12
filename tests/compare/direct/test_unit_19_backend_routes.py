@@ -331,7 +331,7 @@ def test_unit19_backend_route_answers_and_rows(
         "state": "pending",
         "verification_url": "https://login.invalid/device",
         "user_code": "TEST-CODE",
-        "started_at": NOW,
+        "started_at": "2026-11-12T12:00:00.123456+00:00",
         "deadline_at": "2026-11-12T12:10:00Z",
         "detail": None,
         "account_label": None,
@@ -423,6 +423,8 @@ def test_unit19_backend_route_answers_and_rows(
         "commands": environment.commands,
         "sign_in_calls": sign_in.calls,
     }
+    assert answers[8]["body"]["sign_in"]["started_at"] == pending["started_at"]
+    assert answers[8]["body"]["sign_in"]["deadline_at"] == "2026-11-12T12:10:00+00:00"
     assert [entry["status"] for entry in answers] == [200] * 10 + [
         409,
         200,

@@ -1,5 +1,5 @@
-/** A comparison host has no subprocess or network route for backend actions. */
-import type { BackendProbeEnvironment, CommandOutcome } from '../contracts.ts';
+/** A recording environment has no subprocess or network route for backend actions. */
+import type { BackendProbeEnvironment, CommandOutcome } from './contracts.ts';
 export class RecordingBackendProbeEnvironment implements BackendProbeEnvironment {
   readonly commands: string[][] = [];
   readonly registry_lookups: string[] = [];

@@ -1,5 +1,6 @@
 /** Snapshot service ordering does not need a provider process or an HTTP host. */
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
+import { writeFileSync, rmSync } from 'node:fs';
 import { BackendSnapshotService } from '../conversation/snapshot/service.ts';
 import type {
   BackendSnapshot,
@@ -16,6 +17,7 @@ import { createBackendRoutes } from '../conversation/snapshot/routes.ts';
 import { production_backend_providers } from '../conversation/snapshot/production.ts';
 import { SubprocessBackendProbeEnvironment } from '../conversation/snapshot/environment.ts';
 import { http_get_usage } from '../conversation/backend_usage/http.ts';
+import { ClaudeUsageAdapter } from '../conversation/backend_usage/claude.ts';
 const login = () => ({
   stored: {
     present: true,
@@ -262,4 +264,57 @@ test('test compositions cannot acquire production catalogs, login, updates, or H
   await expect(http_get_usage('https://invalid.example', {}, 1)).rejects.toThrow(
     'unavailable in tests',
   );
+});
+// Distinct gap: recorded response injection alone cannot prove the production redirect policy.
+test('production usage and registry transports refuse redirects without another external request', async () => {
+  const credential_path = fixture_path(fixture()) + '.credentials.json';
+  writeFileSync(
+    credential_path,
+    JSON.stringify({ claudeAiOauth: { accessToken: 'synthetic-redirect-token' } }),
+  );
+  const fetch_recording = vi.fn<typeof fetch>().mockImplementation(
+    async () =>
+      new Response(null, {
+        status: 302,
+        headers: { location: 'https://redirect.invalid/never-requested' },
+      }),
+  );
+  vi.stubGlobal('fetch', fetch_recording);
+  let environment: SubprocessBackendProbeEnvironment | undefined;
+  try {
+    vi.stubEnv('VITEST', undefined);
+    vi.stubEnv('PLAN_TEST_MODE', undefined);
+    vi.stubEnv('PYTEST_CURRENT_TEST', undefined);
+    environment = new SubprocessBackendProbeEnvironment();
+    const adapter = new ClaudeUsageAdapter({
+      credential_path,
+      http_get: http_get_usage,
+      now: () => new Date('2026-11-12T12:00:00Z'),
+    });
+    expect((await adapter.refresh()).outcome).toBe('failed');
+    expect(
+      await environment.latest_released_version('@anthropic-ai/claude-code', {
+        timeout_seconds: 1,
+      }),
+    ).toBeNull();
+    expect(fetch_recording).toHaveBeenCalledTimes(2);
+    expect(fetch_recording).toHaveBeenNthCalledWith(
+      1,
+      'https://api.anthropic.com/api/oauth/usage',
+      expect.objectContaining({
+        redirect: 'manual',
+        headers: expect.objectContaining({ authorization: 'Bearer synthetic-redirect-token' }),
+      }),
+    );
+    expect(fetch_recording).toHaveBeenNthCalledWith(
+      2,
+      'https://registry.npmjs.org/@anthropic-ai/claude-code/latest',
+      expect.objectContaining({ redirect: 'manual' }),
+    );
+  } finally {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    rmSync(credential_path, { force: true });
+    await environment?.shutdown();
+  }
 });
