@@ -56,7 +56,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
 
 Add its import and one entry to `areas` in `server/areas.ts`. The shared registration helper supplies configuration, clock, identity, read access, and the write door. It applies authority admission before each handler. Preserve Python's route parameter names. Measure areas supply the admission dependencies declared in `core/authority/intake.ts` when they register.
 
-An area that owns a commit projection exports a synchronous `CommitStep` from its data layer. Add that function to `commitSteps` in `server/areas.ts`. Keep the global Python order: signal publication, artifact links, navigation. `main.ts` supplies this list to the database before it accepts requests. The foundation leaves the list empty until those units exist.
+An area that owns a commit projection exports a synchronous `CommitStep` from its data layer. Add that function to `commitSteps` in `server/areas.ts`. Keep the global Python order: signal publication, artifact links, navigation. `startServer` supplies the real publication, artifact-link, and navigation steps to the database before it accepts requests.
 
 A step receives the same transaction capability as a state transition. It must not commit, open another writer, retain SQL access, or return a promise. Any step failure rolls back the entire transaction. A successful transaction emits one contentless signal if rows changed. Use `{ changeSignal: 'silent' }` only for the existing Python cases that do not invalidate screens.
 
@@ -64,9 +64,9 @@ A step receives the same transaction capability as a state transition. It must n
 
 ## Test selection and current boundaries
 
-Set `PANELS_TEST_SERVER_BACKEND=typescript` to select this process in the existing server fixture. The fixture still creates the database through Python and passes its listener. Explicit Python test-host modules stay on Python. Unit 15 will connect its conversation host through this selection point.
+Set `PANELS_TEST_SERVER_BACKEND=typescript` to select TypeScript in the existing server fixture. The fixture still creates the database through Python, supplies synthetic homes, and passes its bound listener. The two explicit modules `tests.e2e.rail_server` and `tests.e2e.conversation_signals_server` select `server/test_host.ts`; other explicit test-host modules stay on Python. With no explicit module, the selector uses `server/main.ts`.
 
-This unit does not supply domain routes, schema migration, projection implementations, conversation hosts, background loops, or deployment supervision. Existing tests that require those pieces remain unavailable on the foundation alone.
+Registered areas supply their domain routes and projections. The conversation test host supplies a scripted backend through the real core. Python still owns schema creation/migration, and this package does not supply deployment supervision or a configured production conversation provider.
 
 ## Known follow-ups
 
@@ -84,9 +84,46 @@ For a comparison list with `"conversation_system": "in_memory"`, the runner supp
 
 Without this switch, the host composes `SqliteProcessConversationSystem` with the record runtime's single store and tail. `createConversationCore(context)` receives that runtime and the shared clock after record initialization. Runtime facts attach to that same record runtime. Shutdown closes the core before the record, application, and database ownership.
 
-The comparison host uses `conversation/testing/scripted_process.ts` behind both Python and TypeScript backend adapters. The five existing controls beneath `/api/test/signals/:conversation_id` retain their meanings. Configuration and inspection controls expose process behavior and actual backend observations. They do not write event rows directly.
+The comparison host uses `conversation/testing/scripted_process.ts` behind both Python and TypeScript backend adapters. Existing signal controls retain their meanings. Configuration and inspection controls expose process behavior and actual backend observations; backend news enters through the real core rather than direct event-row inserts.
 
-The four core `unit-15.*` lists compare all 21 conformance scenarios through start, state, send, interrupt, kill, and permission-answer routes. They compare the conversation row, ordered events, lifecycle facts, all five view tables, runtime state, and process observations. The complete route inventory, conversation stream proof, browser tests, and earlier-unit reruns follow in later packages.
+The TS host also supplies ten existing browser controls: signal `start`, `finish`, `message`, `queue`, `questions`, `answers`, `reject-next-prompt`, and `delivered`, plus connected `bind` and `message`. Optional Ticket starts preserve the synthetic Worker role and canonical association. Answers come from the latest child; delivered content retains the history across child replacement. The eleventh `ticket-model-catalog` control depends on the backend snapshot-service injection seam and is not implemented as a successful placeholder.
+
+The four core `unit-15.*` lists compare all 21 conformance scenarios through start, state, send, interrupt, kill, and permission-answer routes. They compare the conversation row, ordered events, lifecycle facts, all five view tables, runtime state, and process observations. The complete product route surface and existing browser-fixture selection are present below. New paired route comparisons and earlier-unit rerun evidence remain separate gates; route presence does not claim those results.
+
+## Conversation HTTP surface
+
+`conversation/routes.ts` supplies sixteen route seams under `/api/conversation` when a real core is composed:
+
+| Method | Path |
+|---|---|
+| POST | `/conversations` |
+| GET | `/conversations/:conversation_id` |
+| POST | `/conversations/:conversation_id/owner-read` |
+| GET | `/conversations/:conversation_id/composer-catalog` |
+| GET | `/conversations/:conversation_id/events` |
+| GET | `/conversations/:conversation_id/events/:sequence/detail` |
+| GET | `/conversations/:conversation_id/tail` |
+| POST | `/conversations/:conversation_id/send` |
+| GET, HEAD | `/conversations/:conversation_id/files/:stored_file_id` |
+| POST | `/voice-transcriptions` |
+| POST | `/conversations/:conversation_id/interrupt` |
+| POST | `/conversations/:conversation_id/kill` |
+| DELETE | `/conversations/:conversation_id/held-prompts/:held_prompt_id` |
+| POST | `/conversations/:conversation_id/held-prompts/:held_prompt_id/promote` |
+| POST | `/conversations/:conversation_id/permission-answers` |
+| POST | `/conversations/:conversation_id/user-input-answers` |
+
+The six record-owned `/view`, `/view/pages`, `/view/body`, `/view/tail`, `/view/receipts`, and `/view/body/content` routes remain on that same record runtime, store, and live tail. Startup reconciles once and rotates one epoch. Product routes do not create another store or rerun reconciliation.
+
+The event/live tail subscribes before replay, joins at its sequence high-water mark, and emits separate `conversation-event` and `conversation-frame` SSE names. It includes the initial held-line refresh and heartbeat comments, and closes its subscription on disconnect. The selected-view tail remains the record owner's protocol. Event paging caps a page at 100 rows; public tool detail is capped at 1024 Unicode code points, with full readable output available through the detail route.
+
+Owner-read and both answer routes require the owner. Mutations preserve the active Ticket conversation guard, and raw sends reject employee-owned conversations. All five send entry points share the existing 20 MiB pre-parser limit, including streamed bodies. Kept message-file reads reuse the file delivery implementation, with private immutable caching and `nosniff`.
+
+`ConversationHttpWriteScope` owns owner-read writes through SQLite BUSY contention without adopting core runtime state. Shutdown seals this scope before new writes can enter, then drains it before core shutdown and record cleanup. Other semantic errors propagate once. It does not change the record contract or retry provider actions.
+
+Voice transcription currently provides request-shape validation and the exact unconfigured 503 answer. No configured transcription provider is connected; audio/media/base64 processing and provider policy remain with the uploads/service unit. Valid video upload and credential-wire gates also remain with their owners. Backend catalog/admin/sign-in services are outside the sixteen seams above. A stored composer catalog read is separate from backend discovery.
+
+The scripted test host can open and continue conversations through these routes. Normal `main.ts` still has no provider factory: a successful scripted browser session does not claim that installed-provider delivery is available.
 
 ## In-memory conversation instrument
 
@@ -104,11 +141,12 @@ Only committed rows reach the tail. The five status readers also check the curre
 
 The `createConversationCore(context)` factory receives the shared publication coordinator.
 Core adapters pass `context.publication.save_attempt`, a `current_read` callback, and `context.revoke_signal` through the corresponding core options.
+Core factories must also bind `on_held_model_change` to `write_held_ticket_configuration` from `runtime/conversation_start.ts`, with the same database and clock. The test host supplies this binding. After an accepted held model/effort change, it calls the existing guarded Ticket writer for the active conversation; it does not change the backend or repeat the prompt. A secondary Ticket-write error propagates after the accepted receipt settles. Future provider factories need this same binding.
 Without a core factory, the server supplies record reads and real publication from durable facts, with no local turn or substitute provider.
 An explicitly selected in-memory instrument remains separate. The idle authority helpers remain for their isolated tests.
 
 Shutdown revokes publication and closes tail subscriptions before the worker loops and background services drain.
-The core then fences native callbacks, closes its children, and drains retained writes.
+The HTTP write scope drains before the core fences native callbacks, closes its children, and drains retained writes.
 Record cleanup and HTTP closure precede navigation detachment, database closure, and lease release.
 The test registry's HTTP cleanup therefore follows core cleanup.
 

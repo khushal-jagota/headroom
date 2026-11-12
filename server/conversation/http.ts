@@ -62,7 +62,15 @@ interface ValidationIssue {
 }
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
-export function parse_owner_send_body(raw: unknown, reply: FastifyReply): OwnerSendBody | null {
+export function parse_owner_send_body(
+  raw: unknown,
+  reply: FastifyReply,
+  validation_fields: {
+    model?: 'model_change';
+    reasoning_effort?: 'reasoning_effort_change';
+    original_body?: Record<string, unknown>;
+  } = {},
+): OwnerSendBody | null {
   const errors: ValidationIssue[] = [];
   const add = (
     type: string,
@@ -73,9 +81,18 @@ export function parse_owner_send_body(raw: unknown, reply: FastifyReply): OwnerS
   ) => {
     errors.push({
       type,
-      loc: ['body', ...path],
+      loc: [
+        'body',
+        ...path.map((name, index) =>
+          index === 0 && name === 'model'
+            ? (validation_fields.model ?? name)
+            : index === 0 && name === 'reasoning_effort'
+              ? (validation_fields.reasoning_effort ?? name)
+              : name,
+        ),
+      ],
       msg,
-      input,
+      input: input === raw ? (validation_fields.original_body ?? input) : input,
       ...(ctx === undefined ? {} : { ctx }),
     });
   };

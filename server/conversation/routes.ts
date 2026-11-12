@@ -1,11 +1,19 @@
-/** Product conversation controls needed by the shared-agent comparison. */
+/** Product conversation HTTP surface, sharing the record and process runtime. */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { stat } from 'node:fs/promises';
+import { PlannerError } from '../core/contracts.ts';
+import { sendFile } from '../core/http/static.ts';
+import { body_fields, Fields, object } from './http/intake.ts';
+import { public_event, send_event_tail } from './http/record.ts';
+import type { ConversationHttpWriteScope } from './http/writes.ts';
+import { readable_tool_call_detail } from './tool_detail.ts';
+import { MessageFileMissing } from './record/message_files.ts';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { AreaServices } from '../core/authority/register.ts';
 import { requireOwner } from '../core/authority/identity.ts';
 import { HttpError } from '../core/http/errors.ts';
-import { dictionaryBody } from '../list_reads/http.ts';
+import { dictionaryBody, scalarQueries } from '../list_reads/http.ts';
 import { conversation_link_lock } from '../runtime/conversation_start.ts';
 import {
   backend_supports_steer,
@@ -14,7 +22,12 @@ import {
   ConversationStartRequest,
 } from './contracts.ts';
 import type { ConversationAccess, ConversationBackendKey } from './contracts.ts';
-import { PermissionAskedEventPayload, UserInputRequestedEventPayload } from './events.ts';
+import {
+  PermissionAskedEventPayload,
+  UserInputRequestedEventPayload,
+  ToolCallFinishedEventPayload,
+  UserInputAnswer,
+} from './events.ts';
 import { conversation_message_content, delivery_fate_json, parse_owner_send_body } from './http.ts';
 import {
   message_content_json_entries,
@@ -28,59 +41,53 @@ import type { ConversationViewRuntime } from './views/routes.ts';
 export interface ConversationHttpRuntime {
   readonly core: SqliteProcessConversationSystem;
   readonly record: ConversationViewRuntime;
+  readonly writes: ConversationHttpWriteScope;
 }
-function string_field(body: Record<string, unknown>, name: string): string {
-  if (!(name in body))
-    throw new HttpError(422, [
-      { type: 'missing', loc: ['body', name], msg: 'Field required', input: body },
-    ]);
-  const value = body[name];
-  if (typeof value !== 'string')
-    throw new HttpError(422, [
-      {
-        type: 'string_type',
-        loc: ['body', name],
-        msg: 'Input should be a valid string',
-        input: value,
-      },
-    ]);
-  return value;
-}
-function optional_string(body: Record<string, unknown>, name: string): string | null {
-  return body[name] == null ? null : string_field(body, name);
-}
-function start_request(body: Record<string, unknown>): ConversationStartRequest {
-  const role_text = optional_string(body, 'role_text');
-  const stated_identity = body.identity_environment_variables;
+function start_request(raw: unknown): ConversationStartRequest {
+  const fields = body_fields(raw);
+  const conversation_id = fields.text('conversation_id');
+  const model = fields.text('model');
+  const backend_key = fields.choice('backend_key', ['hermes', 'codex', 'claude'], true, false);
+  const reasoning_effort = fields.text('reasoning_effort', true, false);
+  const role_text = fields.text('role_text', true, false);
   const identity: [string, string][] = [];
-  if (stated_identity !== undefined && stated_identity !== null) {
-    if (typeof stated_identity !== 'object' || Array.isArray(stated_identity))
-      throw new HttpError(422, 'identity_environment_variables must be a dictionary');
-    for (const [key, value] of Object.entries(stated_identity)) {
-      if (typeof value !== 'string')
-        throw new HttpError(422, 'identity environment variables must be text');
-      identity.push([key, value]);
-    }
+  const stated_identity = fields.body.identity_environment_variables;
+  if (stated_identity != null) {
+    if (!object(stated_identity))
+      fields.issue(
+        'dict_type',
+        ['identity_environment_variables'],
+        'Input should be a valid dictionary',
+        stated_identity,
+      );
+    else
+      for (const [key, value] of Object.entries(stated_identity)) {
+        if (typeof value !== 'string')
+          fields.issue(
+            'string_type',
+            ['identity_environment_variables', key],
+            'Input should be a valid string',
+            value,
+          );
+        else identity.push([key, value]);
+      }
   }
+  let workspace_folder = fields.text('workspace_folder', true, false);
+  const access = fields.choice('access', ['full'], true, false);
+  fields.finish();
   if (role_text === null && identity.length > 0)
     throw new HttpError(
       422,
       'identity environment variables belong to a role, so role_text is required',
     );
-  let workspace_folder = optional_string(body, 'workspace_folder');
   if (workspace_folder === '~') workspace_folder = homedir();
   else if (workspace_folder?.startsWith('~/'))
     workspace_folder = join(homedir(), workspace_folder.slice(2));
-  const backend_key = optional_string(body, 'backend_key');
-  if (backend_key !== null && !['hermes', 'codex', 'claude'].includes(backend_key))
-    throw new HttpError(422, "Input should be 'hermes', 'codex' or 'claude'");
-  const access = optional_string(body, 'access');
-  if (access !== null && access !== 'full') throw new HttpError(422, "Input should be 'full'");
   const request = new ConversationStartRequest({
-    conversation_id: string_field(body, 'conversation_id'),
-    model: string_field(body, 'model'),
+    conversation_id: conversation_id!,
+    model: model!,
     backend_key: backend_key as ConversationBackendKey | null,
-    reasoning_effort: optional_string(body, 'reasoning_effort'),
+    reasoning_effort,
     role_materials:
       role_text === null
         ? null
@@ -95,6 +102,19 @@ function start_request(body: Record<string, unknown>): ConversationStartRequest 
     throw error;
   }
   return request;
+}
+function require_conversation(runtime: ConversationHttpRuntime, id: string) {
+  const record = runtime.record.store.read_conversation(id);
+  if (record === null) throw new HttpError(404, `no conversation ${id}`);
+  return record;
+}
+function integer_queries(raw: unknown, names: readonly string[]) {
+  const values = scalarQueries(object(raw) ? raw : {});
+  const fields = new Fields(values, ['query']);
+  const parsed: Record<string, number | null> = {};
+  for (const name of names) parsed[name] = fields.integer(name, false);
+  fields.finish();
+  return parsed;
 }
 function mutable_conversation(runtime: ConversationHttpRuntime, conversation_id: string): void {
   const associated = runtime.record.database.read((sql) =>
@@ -204,6 +224,8 @@ async function state_json(
   };
 }
 function direct_send_body(body: unknown, reply: FastifyReply) {
+  const fields = body_fields(body);
+  body = fields.body;
   if (!dictionaryBody(body, reply)) return null;
   // Direct SendBody carries model_change/reasoning_effort_change, unlike owner-send configuration.
   const adapted: Record<string, unknown> = {};
@@ -218,7 +240,11 @@ function direct_send_body(body: unknown, reply: FastifyReply) {
   }
   if ('model_change' in body) adapted.model = body.model_change;
   if ('reasoning_effort_change' in body) adapted.reasoning_effort = body.reasoning_effort_change;
-  return parse_owner_send_body(adapted, reply);
+  return parse_owner_send_body(adapted, reply, {
+    original_body: body,
+    model: 'model_change',
+    reasoning_effort: 'reasoning_effort_change',
+  });
 }
 function send_error(error: unknown): never {
   if (
@@ -235,7 +261,6 @@ export function createConversationRoutes(
 ): FastifyPluginAsync<AreaServices> {
   return async (app, services) => {
     app.post('/conversations', async (request, reply) => {
-      if (!dictionaryBody(request.body, reply)) return;
       const start = start_request(request.body);
       try {
         await runtime.core.start_conversation(start);
@@ -251,6 +276,149 @@ export function createConversationRoutes(
       '/conversations/:conversation_id',
       async (request) => state_json(runtime, request.params.conversation_id),
     );
+    app.post<{ Params: { conversation_id: string } }>(
+      '/conversations/:conversation_id/owner-read',
+      async (request) => {
+        const fields = body_fields(request.body);
+        const through = fields.integer('through_sequence');
+        fields.finish();
+        requireOwner(services.identity(request));
+        if (through! < 0) throw new HttpError(422, 'through_sequence must be non-negative');
+        const record = await runtime.writes.run(() =>
+          runtime.record.store.advance_owner_read_through_sequence(
+            request.params.conversation_id,
+            through!,
+          ),
+        );
+        if (record === null)
+          throw new HttpError(404, `no conversation ${request.params.conversation_id}`);
+        return { owner_read_through_sequence: record.owner_read_through_sequence };
+      },
+    );
+    app.get<{ Params: { conversation_id: string } }>(
+      '/conversations/:conversation_id/composer-catalog',
+      async (request) => ({
+        composer_catalog: require_conversation(
+          runtime,
+          request.params.conversation_id,
+        ).composer_catalog.map((entry) => ({
+          kind: entry.kind,
+          display_text: entry.display_text,
+          insertion_text: entry.insertion_text,
+          description: entry.description,
+          argument_hint: entry.argument_hint,
+        })),
+      }),
+    );
+    app.get<{ Params: { conversation_id: string } }>(
+      '/conversations/:conversation_id/events',
+      async (request) => {
+        const { after, before, limit } = integer_queries(request.query, [
+          'after',
+          'before',
+          'limit',
+        ]);
+        if (limit !== null && (limit < 1 || limit > 100))
+          throw new PlannerError('validation', 'limit must be between 1 and 100', { limit });
+        if (before !== null && limit === null)
+          throw new PlannerError('validation', 'before needs a limit: it reads backwards', {
+            before,
+          });
+        if (before !== null && after !== null)
+          throw new PlannerError('validation', 'a page reads one direction: after, or before', {
+            after,
+            before,
+          });
+        const id = request.params.conversation_id;
+        const record = require_conversation(runtime, id);
+        let events;
+        let has_more;
+        if (after === null && limit !== null) {
+          events = runtime.record.store.read_latest_events(id, {
+            before_sequence: before,
+            limit: limit + 1,
+          });
+          has_more = events.length > limit;
+          events = events.slice(-limit);
+        } else {
+          events = runtime.record.store.read_events_after(id, after || 0);
+          has_more = limit !== null && events.length > limit;
+          if (limit !== null) events = events.slice(0, limit);
+        }
+        return {
+          events: events.map((event) => public_event(event, record.backend_key)),
+          has_more,
+          diagnostics_expired: runtime.record.store.diagnostics_expired(id),
+        };
+      },
+    );
+    app.get<{ Params: { conversation_id: string; sequence: string } }>(
+      '/conversations/:conversation_id/events/:sequence/detail',
+      async (request) => {
+        const fields = new Fields({ sequence: request.params.sequence }, ['path']);
+        const sequence = fields.integer('sequence');
+        fields.finish();
+        const id = request.params.conversation_id;
+        const record = require_conversation(runtime, id);
+        const event = runtime.record.store.read_event(id, sequence!);
+        if (event === null && runtime.record.store.sequence_expired(id, sequence!))
+          throw new PlannerError('diagnostic_expired', 'This diagnostic detail expired.');
+        if (!(event?.payload instanceof ToolCallFinishedEventPayload))
+          throw new HttpError(404, `conversation ${id} has no finished tool call at ${sequence}`);
+        return {
+          detail: readable_tool_call_detail(event.payload.detail, {
+            backend_key: record.backend_key,
+          }),
+        };
+      },
+    );
+    app.get<{ Params: { conversation_id: string } }>(
+      '/conversations/:conversation_id/tail',
+      { config: { uncompressed: true } },
+      async (request, reply) => {
+        const { after } = integer_queries(request.query, ['after']);
+        const id = request.params.conversation_id;
+        const record = require_conversation(runtime, id);
+        return send_event_tail(runtime.record, id, record.backend_key, after ?? 0, reply);
+      },
+    );
+    app.route<{ Params: { conversation_id: string; stored_file_id: string } }>({
+      method: ['GET', 'HEAD'],
+      url: '/conversations/:conversation_id/files/:stored_file_id',
+      async handler(request, reply) {
+        const { conversation_id, stored_file_id } = request.params;
+        require_conversation(runtime, conversation_id);
+        const files = runtime.core.options.message_files;
+        let path;
+        try {
+          path = files.path_of(conversation_id, stored_file_id);
+          await stat(path);
+        } catch (error) {
+          if (error instanceof MessageFileMissing || (error instanceof Error && 'code' in error))
+            throw new HttpError(404, 'no such file');
+          throw error;
+        }
+        let media_type =
+          (await files.media_type_of(conversation_id, stored_file_id)) ??
+          'application/octet-stream';
+        if (media_type.startsWith('text/') && !media_type.toLowerCase().includes('charset='))
+          media_type += '; charset=utf-8';
+        reply.header('x-content-type-options', 'nosniff');
+        return sendFile(request, reply, path, {
+          mime: media_type,
+          cache: 'private, max-age=31536000, immutable',
+        });
+      },
+    });
+    app.post('/voice-transcriptions', async (request) => {
+      const fields = body_fields(request.body);
+      fields.text('audio');
+      fields.text('media_type', false, false);
+      fields.extras(['audio', 'media_type']);
+      fields.finish();
+      // Audio processing and configured transcription belong to the uploads/service unit.
+      throw new HttpError(503, 'voice transcription needs PLAN_GROQ_API_KEY, which is not set');
+    });
     app.post<{ Params: { conversation_id: string } }>(
       '/conversations/:conversation_id/send',
       async (request, reply) => {
@@ -302,17 +470,98 @@ export function createConversationRoutes(
         reply.code(204).send();
       },
     );
+    app.delete<{ Params: { conversation_id: string; held_prompt_id: string } }>(
+      '/conversations/:conversation_id/held-prompts/:held_prompt_id',
+      async (request) => {
+        const { conversation_id, held_prompt_id } = request.params;
+        mutable_conversation(runtime, conversation_id);
+        return {
+          discarded: await runtime.core.discard_held_prompt(conversation_id, held_prompt_id),
+        };
+      },
+    );
+    app.post<{ Params: { conversation_id: string; held_prompt_id: string } }>(
+      '/conversations/:conversation_id/held-prompts/:held_prompt_id/promote',
+      async (request) => {
+        const fields = body_fields(request.body);
+        const mode = fields.choice('mode', ['send_now', 'steer']);
+        fields.finish();
+        const { conversation_id, held_prompt_id } = request.params;
+        mutable_conversation(runtime, conversation_id);
+        const fate = await runtime.core.promote_held_prompt(
+          conversation_id,
+          held_prompt_id,
+          mode as 'send_now' | 'steer',
+        );
+        return fate === null
+          ? { promoted: false }
+          : { promoted: true, ...delivery_fate_json(fate) };
+      },
+    );
     app.post<{ Params: { conversation_id: string } }>(
       '/conversations/:conversation_id/permission-answers',
-      async (request, reply) => {
-        if (!dictionaryBody(request.body, reply)) return;
+      async (request) => {
+        const fields = body_fields(request.body);
+        const ask_id = fields.text('ask_id');
+        const option_id = fields.text('option_id');
+        fields.extras(['ask_id', 'option_id']);
+        fields.finish();
         requireOwner(services.identity(request));
         mutable_conversation(runtime, request.params.conversation_id);
         return {
           fate: await runtime.core.answer_permission_ask(
             request.params.conversation_id,
-            string_field(request.body, 'ask_id'),
-            string_field(request.body, 'option_id'),
+            ask_id!,
+            option_id!,
+          ),
+        };
+      },
+    );
+    app.post<{ Params: { conversation_id: string } }>(
+      '/conversations/:conversation_id/user-input-answers',
+      async (request) => {
+        const fields = body_fields(request.body);
+        const request_id = fields.text('request_id');
+        const answers: UserInputAnswer[] = [];
+        const supplied = fields.body.answers;
+        if (!('answers' in fields.body))
+          fields.issue('missing', ['answers'], 'Field required', fields.body);
+        else if (!object(supplied))
+          fields.issue('dict_type', ['answers'], 'Input should be a valid dictionary', supplied);
+        else
+          for (const [question_id, value] of Object.entries(supplied)) {
+            const nested = new Fields(value, ['body', 'answers', question_id]);
+            if (object(value)) {
+              const choices = value.answers;
+              if (!('answers' in value))
+                nested.issue('missing', ['answers'], 'Field required', value);
+              else if (!Array.isArray(choices))
+                nested.issue('list_type', ['answers'], 'Input should be a valid list', choices);
+              else {
+                choices.forEach((choice, index) => {
+                  if (typeof choice !== 'string')
+                    nested.issue(
+                      'string_type',
+                      ['answers', index],
+                      'Input should be a valid string',
+                      choice,
+                    );
+                });
+                if (nested.issues.length === 0)
+                  answers.push(new UserInputAnswer({ question_id, answers: choices as string[] }));
+              }
+            }
+            fields.issues.push(...nested.issues);
+          }
+        fields.extras(['request_id', 'answers']);
+        fields.finish();
+        requireOwner(services.identity(request));
+        mutable_conversation(runtime, request.params.conversation_id);
+        return {
+          fate: await runtime.core.answer_user_input(
+            request.params.conversation_id,
+            request_id!,
+            answers,
           ),
         };
       },
