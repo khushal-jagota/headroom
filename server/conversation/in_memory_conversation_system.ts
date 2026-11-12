@@ -156,7 +156,6 @@ interface ConversationState {
   armed_backend_start_failure: boolean;
   armed_session_load_failure: boolean;
   armed_backend_write_failure: boolean;
-  retirement_proven: boolean;
   has_delivered_prompt: boolean;
 }
 interface DeliveryOptions {
@@ -227,7 +226,6 @@ export class InMemoryConversationSystem implements ConversationSystem {
       armed_backend_start_failure: false,
       armed_session_load_failure: false,
       armed_backend_write_failure: false,
-      retirement_proven: false,
       has_delivered_prompt: false,
     });
   }
@@ -470,17 +468,12 @@ export class InMemoryConversationSystem implements ConversationSystem {
     this._observe_message(state, 'prompt_discarded', held);
     return true;
   }
-  async retirement_is_confirmed(conversation_id: string): Promise<boolean> {
-    const state = this._conversations.get(conversation_id);
-    return state !== undefined && (state.retirement_proven || state.backend_session === null);
-  }
   async kill(conversation_id: string): Promise<void> {
     const state = this._conversations.get(conversation_id);
     if (!state) return;
     for (const held of state.held_prompts.splice(0))
       this._observe_message(state, 'prompt_discarded', held);
     if (state.running_turn !== null) this._end_running_turn(state, 'interrupted');
-    state.retirement_proven = true;
   }
   async is_running(conversation_id: string): Promise<boolean> {
     return this._conversations.get(conversation_id)?.running_turn != null;
@@ -657,7 +650,6 @@ export class InMemoryConversationSystem implements ConversationSystem {
   private _establish_backend_session(
     state: ConversationState,
   ): BackendSession | PromptDeliveryRefusalReason {
-    state.retirement_proven = false;
     if (state.backend_session !== null) return state.backend_session;
     if (state.armed_backend_start_failure) return 'backend_did_not_start';
     if (state.armed_session_load_failure) return 'session_did_not_load';
