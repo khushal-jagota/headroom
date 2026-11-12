@@ -259,7 +259,7 @@ def _scripted_routes(app: FastAPI, registry: ScriptedBackendRegistry, db_path: s
             kind = fields.pop("kind")
             values = fields.get("values", fields)
             if kind == "permission_asked":
-                values = {"ask": values}
+                values = {"ask": {"detail": None, **values}}
             news = decode_scripted_event({"kind": aliases.get(kind, kind), "values": values})
             await child.emit(news, turn=child.token)
         await child.flush_events()
