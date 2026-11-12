@@ -30,6 +30,26 @@ node node_modules/vitest/vitest.mjs run
 
 Launch `node server/main.ts` from the repository root with isolated `PLAN_*` settings. The listener comes from `PLAN_SERVER_LISTENER_FD` when present. Otherwise the server binds loopback at `PLAN_PORT`. The database must exist. The process takes the same owner lock as Python before it opens the database. The dispatcher lock remains separate.
 
+`PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS` enables the existing opt-in identity refusal;
+it defaults to false and cannot be enabled by YAML. The application consumes the
+variable when loading its actual process environment, before agents inherit it.
+A supervisor must load configuration from an environment copy and preserve the flag
+for its application child. Unidentified loopback callers need same-user socket-holder
+evidence outside the exact agent cgroups. Trusted owners, identified actors and
+non-loopback callers keep the source bypass rules. The accepted TypeScript service
+name and rollback prerequisite are recorded in [DEVIATIONS.md](DEVIATIONS.md).
+
+The default peer resolver refuses before constructing its proc context or doing I/O
+when `VITEST=true`, `PYTEST_CURRENT_TEST` is present, or `PLAN_TEST_MODE` is a truthy
+test-mode value. Tests can supply an explicit private `PeerLookupContext` to exercise
+the resolver. The current raw WebSocket preview upgrade requires Tailscale-owner
+ingress. There is no general application WebSocket route: the exported close-1008
+decision is source-compared, with transport wiring reserved for Unit 22.
+
+One direct comparison reuses Python's synthetic proc fixtures and Fastify injection, without a listener or database.
+It covers peer evidence, bypasses, refusal values, config consumption and the default test I/O guard. Its body takes 0.51 seconds, with zero skill-tree guard receipts.
+TypeScript, Ruff and mypy pass. Added helpers total 423 lines against 426 product lines (99.3%).
+
 ## How an area adds itself
 
 Create `server/<area>/contracts.ts`, `logic/`, `data/`, and `routes.ts` as needed. Keep pure rules in `logic/`. Import the existing generated frontend contracts with `import type` until cutover.
