@@ -438,6 +438,7 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
         self._worker_supervisor: WorkerSupervisor | None = None
         self._worker_scratch: WorkerScratch | None = None
         self.supervision_reporter: Callable[[str], Awaitable[None]] | None = None
+        self.custody_reporter: Callable[[LocalChildIdentity], Awaitable[None]] | None = None
 
     def _build_command(self) -> list[str]:
         command = super()._build_command()
@@ -467,9 +468,8 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
                 await self._worker_supervisor.cancel_unspawned()
             elif self._worker_supervisor is not None and self._process is not None:
                 await self._worker_supervisor.spawned(self._process.pid)
-            # Only Workers add this startup cleanup. Other conversations retain
-            # the SDK's existing failure and later explicit disconnect behavior.
-            if self._worker_scratch is not None:
+            # This transport owns the native handle before the SDK initializes.
+            if self._process is not None or self._worker_scratch is not None:
                 await self.close()
             raise
 
@@ -490,7 +490,7 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
                 environment, Path(self._cwd or os.getcwd())
             )
             try:
-                self._worker_scratch = WorkerScratch(environment)
+                self._worker_scratch = await WorkerScratch.create(environment)
             except BaseException:
                 if self._worker_supervisor is not None:
                     await self._worker_supervisor.cancel_unspawned()
@@ -509,6 +509,14 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
         await super().connect()
         if self._worker_supervisor is not None and self._process is not None:
             await self._worker_supervisor.started(self._process.pid)
+        if self.custody_reporter is not None:
+            if self._process is None:
+                raise BackendSpawnFailed("Claude did not expose its process identity")
+            identity = (process_identity(self._process.pid) if self._worker_supervisor is None
+                        else self._worker_supervisor.identity())
+            if identity is None:
+                raise BackendSpawnFailed("Cannot establish the Claude process identity")
+            await self.custody_reporter(identity)
 
     async def _stop_worker(self) -> None:
         supervisor = self._worker_supervisor
@@ -555,13 +563,13 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
             if self._worker_supervisor is not None:
                 await self._stop_worker()
             if self._worker_scratch is not None:
-                self._worker_scratch.close()
+                await self._worker_scratch.aclose()
             raise
         else:
             if self._worker_supervisor is not None:
                 await self._stop_worker()
             if self._worker_scratch is not None:
-                self._worker_scratch.close()
+                await self._worker_scratch.aclose()
 
     async def close(self) -> None:
         self._cleanup_started = True
@@ -574,7 +582,7 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
         if self._cleanup_process is not None and self._cleanup_process.returncode is None:
             raise RuntimeError("Claude process termination remains unconfirmed")
         if self._worker_scratch is not None:
-            self._worker_scratch.close()
+            await self._worker_scratch.aclose()
 
 
 @dataclass(slots=True)
@@ -826,6 +834,13 @@ class _ObservedClaudeSdkClient:
         if isinstance(inner, _ClaudeCleanupTransport):
             inner.supervision_reporter = reporter
 
+    def set_custody_reporter(
+        self, reporter: Callable[[LocalChildIdentity], Awaitable[None]] | None,
+    ) -> None:
+        inner = self._transport._inner
+        if isinstance(inner, _ClaudeCleanupTransport):
+            inner.custody_reporter = reporter
+
     def local_child_identity(self) -> LocalChildIdentity | None:
         # Called after SDK initialization, so the service launch reached its child.
         inner = self._transport._inner
@@ -1017,6 +1032,9 @@ class ClaudeAgentSdkBackendChild:
             client.set_supervision_reporter(
                 getattr(self._sink, "record_local_child_supervision", None)
             )
+            client.set_custody_reporter(
+                getattr(self._sink, "record_local_child_custody", None)
+            )
         self._wire_broken = True
         self._client = client
         await self._connect(client, resumed_from=vendor_session_cursor)
@@ -1036,11 +1054,6 @@ class ClaudeAgentSdkBackendChild:
                 None, VendorSessionCursorRebound(vendor_session_cursor=minted_session_id)
             )
         await self._report_the_available_commands(client)
-        reporter = getattr(self._sink, "record_local_child_custody", None)
-        if reporter is not None and isinstance(client, _ObservedClaudeSdkClient):
-            identity = client.local_child_identity()
-            if identity is not None:
-                await reporter(identity)
 
     async def _report_the_available_commands(self, client: ClaudeSdkClient) -> None:
         """Tell the core what a person may type at this child, from its startup handshake.

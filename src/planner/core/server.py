@@ -56,6 +56,7 @@ from planner.core.response_compression import (
     uncompressed_route_patterns,
 )
 from planner.core.sse import change_stream
+from planner.core.task_settlement import run_on_worker_thread
 from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
 from planner.core.unidentified_agent_calls import UnidentifiedAgentCallsMiddleware
@@ -368,14 +369,18 @@ def create_app(
                     conversation.live_tail.views.cleanup_stale_epochs()
                     database_parent = Path(config.db_path).resolve().parent
                     if config.workspace_root is not None:
-                        provision_workspace_skills(config.workspace_root, database_parent)
+                        await run_on_worker_thread(
+                            provision_workspace_skills, config.workspace_root, database_parent
+                        )
                     account_skills_enabled = (
                         installed_app
                         if config.provision_account_skills is None
                         else config.provision_account_skills
                     )
                     if account_skills_enabled:
-                        if warning := provision_account_skills(database_parent):
+                        if warning := await run_on_worker_thread(
+                            provision_account_skills, database_parent
+                        ):
                             logging.getLogger(__name__).warning("%s", warning)
                     from planner.conversation.deploy_interruptions.coordinator import (
                         run_automatic_recovery,

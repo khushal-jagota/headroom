@@ -289,9 +289,9 @@ def test_every_executor_route_over_real_https(tmp_path: Path) -> None:
                     endpoint.presence.update_check = updates.check
                     target = updates.check().target
                     assert target is not None
-                    # Literal wire fields from d94945d8 (22) and 41ed6b5f (23).
+                    # Old leases reach update refusal before current-body decoding.
                     # Neither historical LeaseRequest contains cleanup evidence.
-                    for version in (22, 23):
+                    for version in (22, 23, 24):
                         old = ExecutorIdentity(version, "a" * 40, 5, str(uuid4()))
                         historical_lease = {
                             "identity": {

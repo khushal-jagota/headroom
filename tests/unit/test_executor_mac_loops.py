@@ -86,6 +86,8 @@ from planner.executor.protocol import (
     WorkspaceRegistrationRequest,
     WorkspaceRetirementReply,
     WorkspaceRetirementRequest,
+    WorkspaceStatesReply,
+    WorkspaceStatesRequest,
     WritePrompt,
     decode_bounded,
     decode_command_arguments,
@@ -138,6 +140,7 @@ class VpsStub:
     mailbox: list[MailboxCommand] = field(default_factory=list)
     high_sequence: int | None = None  # None: the highest command in the mailbox.
     workspace_states: tuple[WorkspaceState, ...] = ()
+    workspace_queries: list[tuple[str, ...]] = field(default_factory=list)
     lease_time_ms: int = 1
     lease_refusal: LeaseRefused | None = None
     update: MacUpdateCheck = field(default_factory=lambda: MacUpdateCheck(1, None))
@@ -174,8 +177,17 @@ class VpsStub:
         high = self.high_sequence
         if high is None:
             high = max((command.command_sequence for command in self.mailbox), default=0)
-        reply = LeaseReply(self.lease_time_ms, 60.0, self.update, high, self.workspace_states)
+        reply = LeaseReply(self.lease_time_ms, 60.0, self.update, high)
         return web.Response(body=encode_bounded(reply), content_type="application/json")
+
+    async def query_workspaces(self, request: web.Request) -> web.Response:
+        self._check(request)
+        query = decode_bounded(await request.read(), WorkspaceStatesRequest)
+        self.workspace_queries.append(query.ticket_ids)
+        states = tuple(
+            state for state in self.workspace_states if state.ticket_id in query.ticket_ids
+        )
+        return web.Response(body=encode_bounded(WorkspaceStatesReply(states, self.lease_time_ms)))
 
     async def register_workspace(self, request: web.Request) -> web.Response:
         self._check(request)
@@ -279,6 +291,7 @@ class VpsStub:
     def app(self) -> web.Application:
         app = web.Application()
         app.router.add_post("/api/executor/lease", self.lease)
+        app.router.add_post("/api/executor/workspaces/states", self.query_workspaces)
         app.router.add_post("/api/executor/workspaces/retire", self.retire_workspace)
         app.router.add_post("/api/executor/workspaces/register", self.register_workspace)
         app.router.add_get("/api/executor/commands", self.commands)
@@ -415,7 +428,9 @@ def test_each_child_runs_in_order_and_no_child_or_the_poll_waits_on_another(
         )
         # Reuse this real HTTPS host to prove the canonical state reaches local
         # cleanup: a tombstone expires, a live owner and an absent owner remain.
-        for ticket_id in ("t_01234567", "t_11234567", "t_21234567"):
+        retained = tuple(f"t_3{n:07d}" for n in range(64))
+        owners = ("t_01234567", "t_11234567", "t_21234567", *retained)
+        for ticket_id in owners:
             folder = paths.artifacts / ticket_id
             folder.mkdir(parents=True)
             (folder / "proof.txt").write_text("Ticket content")
@@ -454,6 +469,10 @@ def test_each_child_runs_in_order_and_no_child_or_the_poll_waits_on_another(
                 await until(lambda: not (paths.artifacts / "t_01234567").exists())
                 assert (paths.artifacts / "t_11234567" / "proof.txt").exists()
                 assert (paths.artifacts / "t_21234567" / "proof.txt").exists()
+                assert len(stub.workspace_queries) == 2
+                assert all(len(page) <= 64 for page in stub.workspace_queries)
+                assert {owner for page in stub.workspace_queries for owner in page} == set(owners)
+                assert all((paths.artifacts / owner / "proof.txt").exists() for owner in retained)
                 # A's start is still held: its prompt has not run, B's has, and the poll
                 # went on from the recorded cursor.
                 assert calls.count("a:prompt") == 0 and "b:prompt" in calls

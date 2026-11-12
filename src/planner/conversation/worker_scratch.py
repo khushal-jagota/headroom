@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import secrets
@@ -11,6 +12,8 @@ import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+
+from planner.core.task_settlement import run_on_worker_thread, wait_for_settlement
 
 
 class WorkerScratchError(OSError):
@@ -103,7 +106,37 @@ def prune_ticket_scratch(ticket_id: str, names: Sequence[str]) -> bool:
 
 
 class WorkerScratch:
+    _close_task: asyncio.Task[None] | None
+
+    @classmethod
+    async def create(cls, environment: Mapping[str, str]) -> WorkerScratch:
+        """Retain the constructed directory even if its caller is cancelled."""
+        task = asyncio.create_task(run_on_worker_thread(cls, environment))
+        try:
+            return await asyncio.shield(task)
+        except BaseException:
+            await wait_for_settlement(task)
+            if not task.cancelled() and task.exception() is None:
+                cleanup = asyncio.create_task(task.result().aclose())
+                await wait_for_settlement(cleanup)
+                cleanup.result()
+            raise
+
+    async def aclose(self) -> None:
+        """Cancellation waits until physical removal ends."""
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(run_on_worker_thread(self.close))
+        task = self._close_task
+        try:
+            await asyncio.shield(task)
+        except BaseException:
+            await wait_for_settlement(task)
+            if task.done() and not task.cancelled() and task.exception() is not None:
+                self._close_task = None
+            raise
+
     def __init__(self, environment: Mapping[str, str]) -> None:
+        self._close_task = None
         ticket_id = environment["PLAN_TICKET_ID"]
         _ticket_name(ticket_id)
         root = _prepare_root()

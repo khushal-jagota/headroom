@@ -594,3 +594,18 @@ def test_selective_codex_reads_preserve_strict_identities_outcomes_and_permissio
     )
     assert completed.turn.error is not None
     assert completed.turn.error.message == "provider refused"
+
+
+def test_native_identity_reaches_custody_before_protocol_initialization(tmp_path: Path) -> None:
+    """The real scripted child proves that custody precedes the first handshake write."""
+    async def exercise() -> None:
+        identities = []
+        async with _scripted_child(tmp_path, script={}) as scripted:
+            async def record(identity):  # type: ignore[no-untyped-def]
+                assert scripted.all_sent("initialize") == []
+                identities.append(identity)
+            scripted.sink.record_local_child_custody = record  # type: ignore[attr-defined]
+            await scripted.start(cursor=None)
+            assert len(identities) == 1
+            assert identities[0].pid > 0
+    _run(exercise)

@@ -43,11 +43,13 @@ from planner.executor.configuration import (
     EXECUTOR_UPLOAD_PATH,
     EXECUTOR_WORKSPACE_REGISTRATION_PATH,
     EXECUTOR_WORKSPACE_RETIREMENT_PATH,
+    EXECUTOR_WORKSPACE_STATES_PATH,
     FILE_TRANSFER_STALL_SECONDS,
     MAX_COMMAND_OUTCOME_REPORT_BYTES,
     MAX_ENVELOPE_BYTES,
     MAX_ITEM_BATCH_BYTES,
     MAX_MAILBOX_POLL_BYTES,
+    MAX_WORKSPACE_STATES_BYTES,
     TRANSFER_CHUNK_BYTES,
 )
 from planner.executor.files import regular_descriptor
@@ -61,6 +63,7 @@ from planner.executor.protocol import (
     LiveReadRequest,
     WorkspaceRegistrationRequest,
     WorkspaceRetirementRequest,
+    WorkspaceStatesRequest,
     decode_bounded,
     encode_bounded,
 )
@@ -216,6 +219,21 @@ def build_executor_router() -> APIRouter:
         if isinstance(reply, LeaseRefused):
             return _json(encode_bounded(reply), 409)
         return _json(encode_bounded(reply))
+
+    @router.post(EXECUTOR_WORKSPACE_STATES_PATH)
+    async def workspace_states(request: Request) -> Response:
+        try:
+            endpoint, identity = current_for(request)
+            query = _decode(
+                await _body(request, MAX_WORKSPACE_STATES_BYTES),
+                WorkspaceStatesRequest,
+                MAX_WORKSPACE_STATES_BYTES,
+            )
+            reply = await endpoint.workspace_states(identity, query)
+            body = encode_bounded(reply, limit=MAX_WORKSPACE_STATES_BYTES)
+        except PlannerError as error:
+            return _error(error)
+        return _json(body)
 
     @router.post(EXECUTOR_WORKSPACE_REGISTRATION_PATH)
     async def register_workspace(request: Request) -> Response:

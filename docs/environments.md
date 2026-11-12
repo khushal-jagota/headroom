@@ -28,6 +28,8 @@ An Apple Silicon Mac can run a home from source in the owner's login session. It
 
 A real home provisions its managed skills in the provider account folders. One operating system account supports one Panels instance. If another instance owns the Panels skill links, the second home starts but leaves those links unchanged. Setup output and the server log explain the conflict and the account limit. Its Workers cannot receive their own home's skills through that account. Use a separate operating system account for a second instance.
 
+The home provisions workspace and account skill files on awaited worker threads, so file removal does not block the event loop. Startup waits for provisioning before normal work starts.
+
 The disposable test option disables provisioning and can read the existing instance's skills. That exception is for tests only.
 
 The Mac home does not yet support release installs, updates, previews, native metrics, or maintenance and watchdog schedules. Other POSIX source servers retain their existing foreground lifecycle. The Mac executor remains separate. Linux checks do not prove Mac behavior.
@@ -59,7 +61,7 @@ Panels owns each Ticket's workspace. Before repository work starts, it creates t
 
 Codex, Claude, and Hermes use real disk scratch at `~/.pw/<ticket-id>-<six hex characters>` on Linux and macOS. This short path leaves room for Unix sockets. `TMPDIR`, `TMP`, and `TEMP` point there, and the launcher removes it when the backend process ends, including failed startup. A fresh backend folder replaces other scratch folders for the same Ticket. Retirement removes the scratch recorded before that workspace detached, so a later retry preserves fresh backend scratch.
 
-Scratch belongs to one backend process. Panels can remove scratch of a process that is no longer current.
+Scratch belongs to one backend process. Panels can remove scratch of a process that is no longer current. Scratch preparation and removal run on awaited worker threads. A cancelled start waits for preparation and removes its exact new directory before it releases ownership.
 
 Tools that follow the temporary environment use this scratch. Commands that name `/tmp` or `/var/tmp` still use those host paths. Workers must use `TMPDIR` or a tool's explicit temporary-folder setting. Chief and Managers retain the server's private `/tmp` on the VPS, which shares the host's memory-backed filesystem. Host storage and age cleanup remain operator policy.
 

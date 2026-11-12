@@ -48,6 +48,8 @@ from planner.executor.protocol import (
     MailboxPollReply,
     WorkspaceRegistrationRequest,
     WorkspaceRetirementReply,
+    WorkspaceStatesReply,
+    WorkspaceStatesRequest,
     as_object,
     decode_event_arguments,
 )
@@ -61,6 +63,7 @@ from planner.ticket_workspaces.contracts import WorkspaceIdentity, WorkspaceStat
 from planner.ticket_workspaces.data import (
     authorize_retirement,
     has_committed_retirement,
+    read_workspace_states_for_tickets,
 )
 from planner.ticket_workspaces.data import (
     register_workspace as register_ticket_workspace,
@@ -199,6 +202,26 @@ class VpsExecutor:
         return await self._owned_work(
             self.presence.accept_lease(request), answer_within=LEASE_SERVER_LIMIT_SECONDS
         )
+
+    async def workspace_states(
+        self, identity: ExecutorIdentity, request: WorkspaceStatesRequest
+    ) -> WorkspaceStatesReply:
+        return await self._owned_work(
+            run_on_worker_thread(self._workspace_states, identity, request),
+            answer_within=LIVE_READ_SERVER_LIMIT_SECONDS,
+        )
+
+    def _workspace_states(
+        self, identity: ExecutorIdentity, request: WorkspaceStatesRequest
+    ) -> WorkspaceStatesReply:
+        connection = connect(self.db_path)
+        try:
+            connection.execute("BEGIN")
+            require_current_incarnation_in_transaction(connection, identity.executor_incarnation)
+            states = read_workspace_states_for_tickets(connection, request.ticket_ids)
+            return WorkspaceStatesReply(states, self.clock.now_unix() * 1000)
+        finally:
+            connection.close()
 
     async def register_workspace(
         self, identity: ExecutorIdentity, registration: WorkspaceRegistrationRequest

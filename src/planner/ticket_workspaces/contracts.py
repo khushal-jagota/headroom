@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+TICKET_ID_PATTERN = r"t_[0-9abcdefghjkmnpqrstuvwxyz]{8}"
 RETENTION_SECONDS = 7 * 24 * 60 * 60
 WORKTREE_DIRECTORY = "worktree"
 OWNERSHIP_FILE = ".panels-workspace.json"

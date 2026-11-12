@@ -25,6 +25,7 @@ from tests.support.conversation_test_loop import conversation_test_loop, run_con
 
 import planner.conversation.storage as conversation_storage
 import planner.conversation.system as conversation_system
+from planner.conversation.backend_event_contracts import child_stops_outside_lock
 from planner.conversation.backends.contracts import (
     AgentMessageCompleted,
     BackendChildFactory,
@@ -234,12 +235,14 @@ class _FakeBackendChild:
     ) -> None:
         if self._backend.session_load_fails:
             raise SessionLoadFailed(self._backend.conversation_id)
-        # This adapter has no OS process. Its impossible PID must never name pytest.
-        host = host_boot_identity()
-        assert host is not None
-        await self._sink.record_local_child_custody(  # type: ignore[attr-defined]
-            LocalChildIdentity(pid=2_147_483_647, birth="test-child", boot=host.boot)
-        )
+        if not child_stops_outside_lock(self):
+            # Remote subclasses retain remote custody instead of local process evidence.
+            # This impossible PID must never name pytest.
+            host = host_boot_identity()
+            assert host is not None
+            await self._sink.record_local_child_custody(  # type: ignore[attr-defined]
+                LocalChildIdentity(pid=2_147_483_647, birth="test-child", boot=host.boot)
+            )
         self._backend.session_starts += 1
         self._backend.live_children += 1
         self._backend.most_live_children_at_once = max(

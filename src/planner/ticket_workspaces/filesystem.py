@@ -16,13 +16,14 @@ from uuid import UUID, uuid4
 from planner.ticket_workspaces.contracts import (
     OWNERSHIP_FILE,
     RETENTION_SECONDS,
+    TICKET_ID_PATTERN,
     WORKTREE_DIRECTORY,
     CleanupResult,
     WorkspaceIdentity,
     WorkspaceState,
 )
 
-_TICKET_ID = re.compile(r"^(t_[0-9abcdefghjkmnpqrstuvwxyz]{8})(?:-|$)")
+_TICKET_ID = re.compile(rf"^({TICKET_ID_PATTERN})(?:-|$)")
 _SKIP_DIRECTORIES = frozenset({".git", ".venv", "node_modules"})
 _CHECKOUT_TIMEOUT_SECONDS = 30 * 60
 
