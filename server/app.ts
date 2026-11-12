@@ -35,7 +35,7 @@ export async function createApp(config: Config, services: AppServices): Promise<
     logger: false,
     exposeHeadRoutes: false,
     bodyLimit: Number.MAX_SAFE_INTEGER,
-    forceCloseConnections: true,
+    forceCloseConnections: false,
   });
   services.own_app?.(app);
   const clock = services.clock ?? buildClock(config);

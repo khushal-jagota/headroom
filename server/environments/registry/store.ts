@@ -17,6 +17,9 @@ import {
 import type { LifecycleLease } from '../../lifecycle/contracts.ts';
 import {
   acquireRuntimeOwnership,
+  canonical_database_path,
+  runtime_authority_path,
+  observe_existing_flock,
   ConversationRuntimeAlreadyOwnedError,
 } from '../../core/locks/index.ts';
 import { EnvironmentValidationError } from './contracts.ts';
@@ -342,19 +345,16 @@ export function acquire_stopped_environment_lease(manifest: EnvironmentManifest)
 }
 export function environment_lifecycle_lease_is_held(manifest: EnvironmentManifest): boolean {
   try {
-    acquire_stopped_environment_lease(manifest).close();
-    return false;
+    const database = canonical_database_path(manifest.db_path);
+    return [
+      runtime_authority_path(database),
+      `${database}.conversation-owner.lock`,
+      environment_lifecycle_lease_path(manifest),
+    ].some((path) => observe_existing_flock(path) === 'held');
   } catch (error) {
-    if (
-      error instanceof EnvironmentValidationError &&
-      error.message === 'environment instance is running'
-    )
-      return true;
-    if (error instanceof ServerLifecycleError)
-      throw new EnvironmentValidationError(
-        `could not probe environment running state: ${error.message}`,
-      );
-    throw error;
+    throw new EnvironmentValidationError(
+      `could not probe environment running state: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 export function manifest_to_json_dict(

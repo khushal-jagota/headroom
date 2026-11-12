@@ -442,7 +442,7 @@ test('an unanswered compaction sends one queued notice and an uncertain notice p
 });
 
 // Gap: normal drain cases cannot prove that a stalled provider permits loop shutdown.
-test('loop stop aborts its observer at the deadline and retains raw start ownership', async () => {
+test('loop stop aborts its observer immediately and retains raw start ownership past the deadline', async () => {
   const { db, system, options } = setup();
   const ticket = create(db);
   const path = fixture_path(db) + '.hung-dispatcher.lock';
@@ -461,9 +461,10 @@ test('loop stop aborts its observer at the deadline and retains raw start owners
   try {
     await sending;
     const departure = read(db, ticket.id);
-    await expect(loop.stop({ deadline: performance.now() / 1000 + 0.01 })).rejects.toBeInstanceOf(
-      ShutdownDeadlineExceeded,
-    );
+    const abort = vi.spyOn(AbortController.prototype, 'abort');
+    const stopping = loop.stop({ deadline: performance.now() / 1000 + 0.01 });
+    expect(abort).toHaveBeenCalledOnce();
+    await expect(stopping).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
     expect(acquireLock(path)).toBeNull();
     let actual_done = false;
     const actual = loop.settled().then(() => {

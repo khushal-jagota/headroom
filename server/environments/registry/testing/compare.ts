@@ -1,10 +1,22 @@
 /** Export-only registry/fixture sequence. All locations come from the private driver. */
-import { cp, mkdir, readFile, readdir, rename, stat, writeFile, unlink } from 'node:fs/promises';
+import {
+  cp,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+  unlink,
+} from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { configured_worker_runtime_definitions } from '../../../worker_types/configuration.ts';
 import { acquire_server_lifecycle_lease } from '../../../lifecycle/lease.ts';
 import { startServer } from '../../../core/start.ts';
+import { ConversationRuntimeAlreadyOwnedError } from '../../../core/locks/index.ts';
+import { build_fake_environment_database } from '../../fixture.ts';
 import {
   prepare_environment_instance,
   inspect_environment_instance,
@@ -89,6 +101,7 @@ export async function registry_probe(request: Request): Promise<unknown> {
         throw new Error('injected fixture failure');
       },
       rename,
+      remove: rm,
     }),
   );
   const fixture_unchanged = hash === digest(await readFile(prepared.db_path));
@@ -96,6 +109,7 @@ export async function registry_probe(request: Request): Promise<unknown> {
   const fail_rename = await error_of(() =>
     reset_environment_instance(options, {
       build_fixture: (path) => cp(dirname(prepared.db_path), dirname(path), { recursive: true }),
+      remove: rm,
       rename: async (source, destination) => {
         if (
           !injected &&
@@ -121,6 +135,10 @@ export async function registry_probe(request: Request): Promise<unknown> {
   // The lifecycle lease is deliberately FREE: the real direct server owns its DB lock.
   const fields = {
     PLAN_DB_PATH: prepared.db_path,
+    PLAN_LOGS_DIR: prepared.logs_dir,
+    PLAN_BACKUP_DIR: join(prepared.instance_root, 'backups'),
+    PLAN_DISPATCHER_LOCK_PATH: prepared.dispatcher_lock_path,
+    PLAN_CREDENTIAL_KEY_PATH: join(prepared.instance_root, 'credential-key'),
     PLAN_CONFIG_PATH: join(request.output, 'server-config.yaml'),
     PLAN_PORT: '0',
     PLAN_TEST_MODE: '1',
@@ -133,6 +151,11 @@ export async function registry_probe(request: Request): Promise<unknown> {
     [...Object.keys(fields), 'PLAN_SERVER_LISTENER_FD'].map((key) => [key, process.env[key]]),
   );
   let server_owner: unknown;
+  const before_probe_files = (await readdir(join(prepared.instance_root, 'run'))).sort();
+  const probe_before_start = environment_lifecycle_lease_is_held(prepared);
+  const probe_files_unchanged =
+    JSON.stringify(before_probe_files) ===
+    JSON.stringify((await readdir(join(prepared.instance_root, 'run'))).sort());
   Object.assign(process.env, fields);
   delete process.env.PLAN_SERVER_LISTENER_FD;
   try {
@@ -154,7 +177,49 @@ export async function registry_probe(request: Request): Promise<unknown> {
   }
   await unlink(prepared.db_path);
   const missing_database_status = environment_lifecycle_lease_is_held(prepared);
-  const reset = await reset_environment_instance({ ...options, now: 1_800_000_002 });
+  const mutation_authority: Record<string, unknown> = {};
+  const attempt_start = async () => {
+    const previous = process.env.PLAN_DB_PATH;
+    process.env.PLAN_DB_PATH = prepared.db_path;
+    let producer_starts = 0,
+      refused = false;
+    try {
+      const server = await startServer({
+        createConversationCore() {
+          producer_starts += 1;
+          throw new Error('a mutating instance reached a runtime factory');
+        },
+      });
+      await server.close();
+    } catch (error) {
+      if (!(error instanceof ConversationRuntimeAlreadyOwnedError)) throw error;
+      refused = true;
+    } finally {
+      if (previous === undefined) delete process.env.PLAN_DB_PATH;
+      else process.env.PLAN_DB_PATH = previous;
+    }
+    return {
+      refused,
+      producer_starts,
+      data_parent_recreated: await stat(dirname(prepared.db_path)).then(
+        () => true,
+        () => false,
+      ),
+    };
+  };
+  const reset = await reset_environment_instance(
+    { ...options, now: 1_800_000_002 },
+    {
+      build_fixture: (path, now) => {
+        build_fake_environment_database(path, now);
+      },
+      async rename(source, destination) {
+        await rename(source, destination);
+        if (source === dirname(prepared.db_path)) mutation_authority.reset = await attempt_start();
+      },
+      remove: rm,
+    },
+  );
   await cp(dirname(reset.db_path), join(request.output, 'reset'), { recursive: true });
   const run_env = build_test_environment_run_env(instance_from_manifest(reset), {
     credentials: await parse_environment_file(request.credentials, 'staging'),
@@ -191,7 +256,19 @@ export async function registry_probe(request: Request): Promise<unknown> {
     ),
   );
   await unlink(reset.db_path);
-  await remove_environment_instance(options);
+  await remove_environment_instance(options, {
+    build_fixture: (path, now) => {
+      build_fake_environment_database(path, now);
+    },
+    rename,
+    async remove(path, settings) {
+      // The old lock inodes are now gone. The stable authority must still exclude startup.
+      await rm(join(path, 'data'), { recursive: true });
+      await rm(join(path, 'run'), { recursive: true });
+      mutation_authority.remove = await attempt_start();
+      await rm(path, settings);
+    },
+  });
   return {
     before: manifest_to_json_dict(before),
     prepared: manifest_to_json_dict(prepared),
@@ -200,6 +277,9 @@ export async function registry_probe(request: Request): Promise<unknown> {
     disk,
     restored_registry,
     server_owner,
+    probe_before_start,
+    probe_files_unchanged,
+    mutation_authority,
     missing_database_status,
     invalid_git_marker,
     bom_git_marker,

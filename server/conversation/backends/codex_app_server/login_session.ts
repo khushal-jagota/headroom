@@ -1,5 +1,6 @@
 /** One process-owned device-code sign-in. Evidence is drained before the final login read. */
 import { randomBytes } from 'node:crypto';
+import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import { homedir } from 'node:os';
 import {
   CodexSignInUnavailable,
@@ -43,6 +44,7 @@ export interface SignInClient {
   stop(): Promise<void>;
 }
 export interface CodexSignInOptions {
+  child_processes: OwnedChildProcesses;
   resolve_argv(): Promise<readonly string[] | null>;
   remembered_login_rejection?: CodexLoginRejectionMemory | null;
   bounds?: Partial<SignInBounds>;
@@ -223,6 +225,7 @@ export class CodexSignInService implements SignInServiceContract {
     const client = (
       this.options.client_factory ?? ((settings) => new CodexAppServerClient(settings))
     )({
+      child_processes: this.options.child_processes,
       handler,
       description: `sign-in.${this.sequence}`,
       consumed_notifications: SIGN_IN_NOTIFICATIONS,

@@ -1,5 +1,4 @@
 /** The real SDK owns the protocol. Public streams preserve Python's consumed facts. */
-import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
@@ -176,6 +175,8 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
   private cli: Query | null = null;
   private info: Record<string, unknown> | null = null;
   private child: ChildProcessWithoutNullStreams | null = null;
+  private child_exited = false;
+  private signal_sent = false;
   private child_exit: Pending<void> | null = null;
   private worker_unit: WorkerUnit | null = null;
   private worker_unit_stop: Promise<void> | null = null;
@@ -207,6 +208,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       environment: overrides,
       working_directory: this.options.cwd,
       signal: this.compatibility_controller.signal,
+      children: this.options.one_shot_children,
     });
     with_tool_shell_kill_priority(overrides);
     const environment: Record<string, string> = {};
@@ -222,15 +224,19 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     if (this.options.enableFileCheckpointing)
       environment.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING = 'true';
     if (overrides.PLAN_TICKET_ID) {
-      this.worker_unit = await WorkerUnit.create(environment, this.options.cwd ?? process.cwd());
+      this.worker_unit = await WorkerUnit.create(environment, this.options.cwd ?? process.cwd(), {
+        child_processes: this.options.child_processes,
+      });
       if (this.worker_unit !== null) Object.assign(environment, this.worker_unit.environment);
     }
     try {
       const { query: sdk_query } = await load_claude_sdk();
+      // Ownership is internal composition data, never an unknown SDK option.
+      const { child_processes: _native, one_shot_children: _probes, ...sdk_options } = this.options;
       this.cli = sdk_query({
         prompt: this.input,
         options: {
-          ...this.options,
+          ...sdk_options,
           env: environment,
           canUseTool:
             this.options.canUseTool === undefined
@@ -261,6 +267,27 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     }
   }
 
+  private signal_process(
+    child: ChildProcessWithoutNullStreams,
+    signal: NodeJS.Signals | number = 'SIGTERM',
+  ): boolean {
+    if (
+      this.child !== child ||
+      this.child_exited ||
+      child.exitCode !== null ||
+      child.signalCode !== null
+    )
+      return false;
+    if (process.platform === 'win32' || child.pid === undefined) return child.kill(signal);
+    try {
+      process.kill(-child.pid, signal);
+      this.signal_sent = true;
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+      throw error;
+    }
+  }
   private start_process(
     options: SpawnOptions,
     environment: Record<string, string>,
@@ -269,15 +296,29 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       throw new Error('a Claude transport cannot reconnect after cleanup');
     const original = [options.command, ...options.args];
     const command = this.worker_unit === null ? original : this.worker_unit.argv(original);
-    const child = spawn(command[0]!, [...command.slice(1)], {
-      cwd: options.cwd,
-      env: environment,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    this.worker_unit?.begin_launch();
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = this.options.child_processes.spawn(command[0]!, [...command.slice(1)], {
+        cwd: options.cwd,
+        env: environment,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      this.worker_unit?.launch_failed_before_spawn();
+      throw error;
+    }
+    this.worker_unit?.track_wrapper(child);
     this.child = child;
+    this.child_exited = false;
+    this.signal_sent = false;
+    child.once('exit', () => {
+      this.child_exited = true;
+    });
     const exit = new Pending<void>();
     this.child_exit = exit;
     child.once('close', () => {
+      this.child_exited = true;
       exit.resolve();
       this.receipts.stream_ended();
       this.release_permission_waiters(true);
@@ -379,11 +420,12 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       stdin.destroy(cause);
     });
     // Custom SDK spawns must consume stderr themselves. Exit follows stream closure.
+    const owner = this;
     return {
       stdin,
       stdout,
       get killed() {
-        return child.killed;
+        return child.killed || owner.signal_sent;
       },
       get exitCode() {
         return child.exitCode;
@@ -391,7 +433,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       get signalCode() {
         return child.signalCode;
       },
-      kill: (signal) => child.kill(signal),
+      kill: (signal) => this.signal_process(child, signal),
       on: (event, listener) => {
         child.on(event === 'exit' ? 'close' : event, listener as (...args: unknown[]) => void);
       },
@@ -630,11 +672,11 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     if (this.child_exit !== null) {
       let exited = await bounded(this.child_exit.promise, CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS);
       if (exited.timed_out && this.child !== null) {
-        this.child.kill('SIGTERM');
+        this.signal_process(this.child, 'SIGTERM');
         exited = await bounded(this.child_exit.promise, CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS);
       }
       if (exited.timed_out && this.child !== null) {
-        this.child.kill('SIGKILL');
+        this.signal_process(this.child, 'SIGKILL');
         exited = await bounded(this.child_exit.promise, CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS);
       }
       if (exited.timed_out) throw new Error('Claude process termination remains unconfirmed');

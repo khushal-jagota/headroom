@@ -299,6 +299,7 @@ test('notification deadline fences late web and native results and bounds adapte
     nativeEntered.resolve();
     return native.promise;
   });
+  const adapterClose = vi.fn(() => close.promise);
   const loop = new NotificationLoop({
     database,
     clock: context.clock,
@@ -309,19 +310,31 @@ test('notification deadline fences late web and native results and bounds adapte
         return web.promise;
       },
     },
-    apns_adapter: { send: nativeSend, close: () => close.promise },
+    apns_adapter: { send: nativeSend, close: adapterClose },
   });
   const pass = loop.poll_once();
   try {
     await webEntered.promise;
-    await expect(loop.stop({ deadline: performance.now() / 1000 + 0.01 })).rejects.toBeInstanceOf(
-      ShutdownDeadlineExceeded,
-    );
+    const stopping = loop.stop({ deadline: performance.now() / 1000 + 0.01 });
+    expect(adapterClose).not.toHaveBeenCalled();
+    await expect(stopping).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
+    expect(adapterClose).not.toHaveBeenCalled();
   } finally {
     web.resolve({ delivered: true });
-    close.resolve();
-    await pass;
-    await loop.settled();
+    try {
+      await pass;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(adapterClose).toHaveBeenCalledOnce();
+      let actual_done = false;
+      void loop.settled().then(() => {
+        actual_done = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(actual_done).toBe(false);
+    } finally {
+      close.resolve();
+      await loop.settled();
+    }
   }
   expect(webRecord).not.toHaveBeenCalled();
   expect(nativeSend).not.toHaveBeenCalled();

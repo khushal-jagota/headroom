@@ -1,7 +1,11 @@
 /** Manager control is mocked before import; subprocess APIs fail closed in this file. */
+import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import type { ChildProcess } from 'node:child_process';
 
 const fake = vi.hoisted(() => ({
   control: vi.fn<(...args: string[]) => Promise<readonly [number, string]>>(),
@@ -54,19 +58,23 @@ const linux = describe.skipIf(process.platform !== 'linux');
 linux('Worker containment policy, with no service-manager connection', () => {
   it('does not take inherited Worker identity as role identity', async () => {
     vi.stubEnv('PLAN_TICKET_ID', 'inherited-worker');
-    expect(await WorkerUnit.create({}, fake.home)).toBeNull();
+    expect(
+      await WorkerUnit.create({}, fake.home, { child_processes: new ChildProcesses() }),
+    ).toBeNull();
     expect(fake.control).not.toHaveBeenCalled();
   });
 
   it('refuses a missing lower-priority slice and never allocates uncontained state', async () => {
     fake.control.mockResolvedValue([0, 'LoadState=not-found\nCPUWeight=0']);
     await expect(
-      WorkerUnit.create({ PLAN_TICKET_ID: 'synthetic-worker' }, fake.home),
+      WorkerUnit.create({ PLAN_TICKET_ID: 'synthetic-worker' }, fake.home, {
+        child_processes: new ChildProcesses(),
+      }),
     ).rejects.toThrow(
       'Worker slice panels-workers.slice is unavailable or lacks its lower CPU weight. ' +
         'Install the Worker slice before starting Workers.',
     );
-    expect(fake.control.mock.calls).toEqual([
+    expect(fake.control.mock.calls.map(([, ...command]) => command)).toEqual([
       ['show', 'panels-workers.slice', '--property=LoadState', '--property=CPUWeight'],
     ]);
   });
@@ -76,12 +84,16 @@ linux('Worker containment policy, with no service-manager connection', () => {
       .mockResolvedValueOnce([0, 'LoadState=loaded\nCPUWeight=10'])
       .mockResolvedValueOnce([0, 'LoadState=loaded\nCPUWeight=100']);
     await expect(
-      WorkerUnit.create({ PLAN_TICKET_ID: 'synthetic-worker' }, fake.home),
+      WorkerUnit.create({ PLAN_TICKET_ID: 'synthetic-worker' }, fake.home, {
+        child_processes: new ChildProcesses(),
+      }),
     ).rejects.toThrow('Install panels.slice with its lower CPU weight before Workers.');
     fake.control.mockResolvedValue([0, 'LoadState=loaded\nCPUWeight=10']);
     fake.mounts = '1 0 0:1 / / rw - tmpfs tmpfs rw\n';
     await expect(
-      WorkerUnit.create({ PLAN_TICKET_ID: 'synthetic-worker' }, fake.home),
+      WorkerUnit.create({ PLAN_TICKET_ID: 'synthetic-worker' }, fake.home, {
+        child_processes: new ChildProcesses(),
+      }),
     ).rejects.toThrow(`Worker temporary storage must use disk: ${fake.home}`);
   });
 
@@ -90,6 +102,7 @@ linux('Worker containment policy, with no service-manager connection', () => {
     const unit = await WorkerUnit.create(
       { PLAN_TICKET_ID: 'synthetic-worker', VALUE: '$`\n' },
       fake.home,
+      { child_processes: new ChildProcesses() },
     );
     expect(unit).not.toBeNull();
     if (unit === null) throw new Error('Expected owned synthetic unit');
@@ -101,6 +114,28 @@ linux('Worker containment policy, with no service-manager connection', () => {
     expect(unit.environment.TMP).toBe(unit.environment.TMPDIR);
     expect(unit.environment.TEMP).toBe(unit.environment.TMPDIR);
     expect(readFileSync(`${unit.directory}/environment`, 'utf8')).toContain('VALUE="\\$\\`\n"\n');
+    let confirmed = false,
+      wrapper_closed = false;
+    void unit.finished.then(() => {
+      confirmed = true;
+    });
+    const wrapper = Object.assign(new EventEmitter(), {
+      pid: 4242,
+      exitCode: null as number | null,
+      signalCode: null as NodeJS.Signals | null,
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn<() => boolean>(() => {
+        wrapper.signalCode = 'SIGKILL';
+        wrapper.emit('exit', null, 'SIGKILL');
+        wrapper_closed = true;
+        wrapper.emit('close', null, 'SIGKILL');
+        return true;
+      }),
+    });
+    unit.begin_launch();
+    unit.track_wrapper(wrapper as unknown as ChildProcess);
     fake.control.mockReset();
     fake.control
       .mockResolvedValueOnce([0, 'LoadState=loaded'])
@@ -109,12 +144,31 @@ linux('Worker containment policy, with no service-manager connection', () => {
       `Cannot stop Worker unit ${unit.name}: synthetic refusal`,
     );
     expect(existsSync(unit.directory)).toBe(true);
+    expect(confirmed).toBe(false);
+    fake.control
+      .mockResolvedValueOnce([0, 'LoadState=not-found'])
+      .mockImplementationOnce(async () => {
+        expect(wrapper_closed).toBe(true);
+        expect(confirmed).toBe(false); // A signalled wrapper is not unit completion.
+        return [0, 'LoadState=loaded'];
+      })
+      .mockResolvedValueOnce([0, ''])
+      .mockRejectedValueOnce(new Error('synthetic reset cleanup failure'));
+    await expect(unit.stop()).rejects.toThrow('synthetic reset cleanup failure');
+    await unit.finished;
+    expect(confirmed).toBe(true);
+    expect(existsSync(unit.directory)).toBe(true);
+    expect(() => unit.argv(['/synthetic/restart'])).toThrow('Worker launch admission is closed');
     fake.control.mockResolvedValue([0, 'LoadState=loaded']);
     await unit.stop();
     expect(existsSync(unit.directory)).toBe(false);
-    expect(fake.control.mock.calls).toEqual([
+    expect(fake.control.mock.calls.map(([, ...command]) => command)).toEqual([
       ['show', unit.name, '--property=LoadState'],
       ['stop', unit.name],
+      ['show', unit.name, '--property=LoadState'],
+      ['show', unit.name, '--property=LoadState'],
+      ['stop', unit.name],
+      ['reset-failed', unit.name],
       ['show', unit.name, '--property=LoadState'],
       ['stop', unit.name],
       ['reset-failed', unit.name],
@@ -126,6 +180,7 @@ linux('Worker containment policy, with no service-manager connection', () => {
 
   it('retains private files when ownership cannot be inspected', async () => {
     const unit = new WorkerUnit({
+      child_processes: new ChildProcesses(),
       name: 'synthetic-owned.service',
       directory: `${fake.home}/owned`,
       environment: {},
@@ -136,7 +191,7 @@ linux('Worker containment policy, with no service-manager connection', () => {
     fake.control.mockResolvedValue([1, 'synthetic manager refusal']);
     await expect(unit.stop()).rejects.toBeInstanceOf(WorkerUnitError);
     expect(existsSync(unit.directory)).toBe(true);
-    expect(fake.control.mock.calls).toEqual([
+    expect(fake.control.mock.calls.map(([, ...command]) => command)).toEqual([
       ['show', 'synthetic-owned.service', '--property=LoadState'],
     ]);
   });

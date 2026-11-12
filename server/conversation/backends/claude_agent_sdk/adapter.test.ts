@@ -1,4 +1,6 @@
 /** A terminal reader failure must not prevent cleanup of its exact injected client. */
+import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { expect, it, vi } from 'vitest';
 import { ResolvedConversationStart } from '../../contracts.ts';
 import { BackendStreamEnded } from '../contracts.ts';
@@ -35,7 +37,10 @@ it('clears a failed reader and disconnects once across repeated stop calls', asy
     workspace_path_policy: 'absolute',
     access: 'full',
   });
+  const child_processes = new ChildProcesses();
   const child = new ClaudeAgentSdkBackendChild({
+    child_processes,
+    one_shot_children: new OneShotChildren(child_processes),
     launch: { claude_executable: '/synthetic/claude' },
     resolved_start: start,
     client_factory: () => client,

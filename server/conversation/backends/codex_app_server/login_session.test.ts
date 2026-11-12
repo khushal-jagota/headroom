@@ -1,4 +1,5 @@
 /** Risks unique to JS promise cancellation, service serialization, and drained evidence. */
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { afterEach, expect, test, vi } from 'vitest';
 import {
   CodexSignInService,
@@ -61,6 +62,7 @@ class FakeClient implements SignInClient {
 test('old handlers and stale cancellation cannot alter the replacement session', async () => {
   const clients: FakeClient[] = [];
   const service = new CodexSignInService({
+    child_processes: new ChildProcesses(),
     resolve_argv: async () => ['/synthetic/codex', 'app-server'],
     now,
     read_login: () => reading(),
@@ -93,6 +95,7 @@ test('a timed out resolver cannot spawn a child after startup failure', async ()
   const argv = new Deferred<readonly string[] | null>();
   let client!: FakeClient;
   const service = new CodexSignInService({
+    child_processes: new ChildProcesses(),
     resolve_argv: () => argv.promise,
     now,
     bounds: { child_startup_seconds: 0.01 },

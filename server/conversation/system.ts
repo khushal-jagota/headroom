@@ -1,6 +1,7 @@
 import { turn_is_maintenance } from './runtime/state.ts';
 import { observe_shutdown } from '../lifecycle/deadline.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../core/config.ts';
+import { is_shutdown_business_cancellation } from './shutdown.ts';
 /** Local process core. Registered as ConversationSystem after the turn-control slice lands. */
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
@@ -1415,7 +1416,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       for (const result of business) {
         if (
           result.status === 'rejected' &&
-          !(result.reason instanceof DOMException && result.reason.name === 'AbortError')
+          !(this.shutting_down && is_shutdown_business_cancellation(result.reason))
         )
           failures.push(result.reason);
       }

@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { Readable } from 'node:stream';
+import type { Socket } from 'node:net';
 import { HttpError } from './errors.ts';
 
 declare module 'fastify' {
@@ -14,7 +15,16 @@ declare module 'fastify' {
 /** Socket/response completion never substitutes for actual handler/iterator work. */
 export class HttpRequestScope {
   readonly #pending = new Set<Promise<void>>();
+  readonly #connections = new Set<Socket>();
   #sealed = false;
+  own_connection(socket: Socket): void {
+    this.#connections.add(socket);
+    socket.once('close', () => this.#connections.delete(socket));
+  }
+  /** Only sockets accepted by this invocation, including upgraded connections. */
+  force_close_connections(): void {
+    for (const socket of this.#connections) socket.destroy();
+  }
   get sealed(): boolean {
     return this.#sealed;
   }
@@ -81,6 +91,7 @@ export function install_request_lifetime(
 ): HttpRequestScope {
   if (app.request_lifetime) return app.request_lifetime;
   const scope = supplied ?? new HttpRequestScope();
+  app.server.on('connection', (socket) => scope.own_connection(socket));
   app.decorate('request_lifetime', scope);
   app.decorateRequest('request_lifetime', null);
   app.addHook('onRequest', async (request, reply) => {

@@ -1,6 +1,6 @@
 /** The selected executable must supply the native features that Panels consumes. */
 import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
-import { OneShotChildren } from '../../lifecycle/one_shot_children.ts';
+import { OneShotChildren, stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
 
 export type Backend = 'codex' | 'claude';
 export const VERSION_TIMEOUT_SECONDS = 10;
@@ -138,14 +138,14 @@ export async function ensure_cli_compatible(
       }
       const chunks: Buffer[] = [];
       const abort = () => {
-        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        stop_one_shot_child(child);
       };
       options.signal?.addEventListener('abort', abort, { once: true });
       if (options.signal?.aborted) abort();
       let timed_out = false;
       const timeout = setTimeout(() => {
         timed_out = true;
-        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        stop_one_shot_child(child);
       }, VERSION_TIMEOUT_SECONDS * 1000);
       child.stdout!.on('data', (chunk: Buffer) => chunks.push(chunk));
       child.stderr!.resume();

@@ -1,3 +1,4 @@
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { expect, test, vi } from 'vitest';
 import { read_codex_rate_limits } from './usage.ts';
 import { create_codex_providers } from './providers.ts';
@@ -12,6 +13,7 @@ function production_providers(children: OneShotChildren, database: Database = {}
   vi.stubEnv('PYTEST_CURRENT_TEST', undefined);
   return create_codex_providers({
     one_shot_children: children,
+    child_processes: children.child_processes,
     database,
     now: () => new Date(0),
     read_codex_snapshot: async () => {
@@ -44,7 +46,7 @@ test('usage cancellation covers a blocked handshake and waits for owned cleanup'
   const result = read_codex_rate_limits(
     '/synthetic/codex',
     { timeout_seconds: 30, signal: controller.signal },
-    { client_factory: () => client },
+    { child_processes: new ChildProcesses(), client_factory: () => client },
   );
   void result
     .finally(() => {
@@ -110,7 +112,7 @@ test('runtime shutdown joins the production catalog owner before reporting envir
   let signal!: AbortSignal;
   const probe = vi
     .spyOn(catalog, 'probe_codex_model_catalog')
-    .mockImplementation(async (_path, options = {}) => {
+    .mockImplementation(async (_path, options) => {
       signal = options.signal!;
       const aborted = new Promise<void>((resolve) =>
         signal.addEventListener('abort', () => resolve(), { once: true }),

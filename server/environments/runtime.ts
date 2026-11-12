@@ -26,6 +26,8 @@ import type { CollectorFactory } from './vps_metrics/sampler/contracts.ts';
 import { create_metrics_routes } from './vps_metrics/routes.ts';
 import { create_vps_status_routes } from './vps_status/routes.ts';
 import type { VpsStatusSnapshot } from './vps_status/contracts.ts';
+import type { StatusOptions } from './vps_status/contracts.ts';
+import { create_vps_status_dependencies } from './vps_status/probes.ts';
 import { layout_for } from './ticket_scratch/collect.ts';
 import { clean_finished_ticket_scratch } from './ticket_scratch/apply.ts';
 import { create_ticket_scratch_runtime } from './ticket_scratch/runtime.ts';
@@ -40,7 +42,7 @@ export interface EnvironmentOperations {
   mac: MacUpdateOperations;
   mac_reads: UpdateMacReads;
   collector: CollectorFactory | null;
-  collect_status(config: Config): Promise<VpsStatusSnapshot>;
+  collect_status(config: Config, options: StatusOptions): Promise<VpsStatusSnapshot>;
 }
 export async function createEnvironmentRuntime(
   context: TestCompositionContext,
@@ -107,7 +109,15 @@ export async function createEnvironmentRuntime(
     areas: [
       { prefix: '/api', routes: create_update_routes(updates, operations.mac_reads) },
       { prefix: '/api', routes: create_metrics_routes(metrics) },
-      { prefix: '/api', routes: create_vps_status_routes(operations.collect_status) },
+      {
+        prefix: '/api',
+        routes: create_vps_status_routes((status_config) =>
+          operations.collect_status(status_config, {
+            application_root: operations.app_root,
+            dependencies: create_vps_status_dependencies(context.one_shot_children),
+          }),
+        ),
+      },
       {
         prefix: '/api',
         routes: async (app) => {
