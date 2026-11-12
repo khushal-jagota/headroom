@@ -88,6 +88,8 @@ from planner.files.catalog.api import router as artifact_catalog_router
 from planner.goals.api import router as goals_router
 from planner.ideas.api import router as ideas_router
 from planner.ios_compatibility.middleware import IOSBuildGateMiddleware
+from planner.machines.api import router as machines_router
+from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
 from planner.managers.api import router as managers_router
 from planner.measure_sources.api import router as measure_sources_router
 from planner.measure_sources.participants import SlotParticipantFactory
@@ -337,7 +339,13 @@ def create_app(
                     )
                     remote_presence = executor_endpoint.presence
                     conversation.system.start_admission.configure_destinations(
-                        lambda destination: destination == "home" or remote_presence.is_present()
+                        lambda destination: (
+                            destination == HOME_MACHINE_ID
+                            or (
+                                destination == ORIGINAL_MAC_MACHINE_ID
+                                and remote_presence.is_present()
+                            )
+                        )
                     )
                     executor_endpoint.mailbox.start_admission = conversation.system.start_admission
                     await executor_endpoint.start()
@@ -603,6 +611,7 @@ def create_app(
     for domain_router in (
         updates_router,
         tickets_router,
+        machines_router,
         ticket_workspace_router,
         resource_versions_router,
         artifact_catalog_router,

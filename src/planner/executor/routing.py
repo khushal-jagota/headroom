@@ -16,6 +16,7 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.db import connect
 from planner.execution_identity import ChildReference
 from planner.executor.worker_identity import ticket_id_of
+from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,9 +47,14 @@ class LocaleBackendChildFactory:
             conn = connect(self.db_path)
             try:
                 row = conn.execute(
-                    "SELECT locale FROM tickets WHERE id=?", (ticket_id,)
+                    "SELECT machine_id FROM tickets WHERE id=?", (ticket_id,)
                 ).fetchone()
-                remote = row is not None and row["locale"] == "macos"
+                if row is None or row["machine_id"] not in {
+                    HOME_MACHINE_ID,
+                    ORIGINAL_MAC_MACHINE_ID,
+                }:
+                    raise ValueError("Ticket destination has no execution route")
+                remote = row["machine_id"] == ORIGINAL_MAC_MACHINE_ID
             finally:
                 conn.close()
         factory = self.remote_factory if remote else self.local_factory

@@ -50,6 +50,7 @@ class TicketValue(TypedDict):
     gating_field: str | None
     terminal: bool
     locale: str
+    machine_id: str
 
 
 class NavigationTicketIntegrityIssue(TypedDict):
@@ -70,6 +71,7 @@ class BrokenTicketValue(TypedDict):
     manager_id: str | None
     conversation_id: str | None
     locale: str
+    machine_id: str
     updated_at: int
     created_at: int
     is_backlogged: bool

@@ -223,7 +223,7 @@
 
   let headerException = $derived.by(() => {
     if (readOnly) return { text: "past · read only", accent: false };
-    if (activityUncertain) return {text:"activity unknown on Mac",accent:false};
+    if (activityUncertain) return {text:"activity unknown on this machine",accent:false};
     if (ask || userInput) return { text: "waiting for you", accent: true };
     if (running) return { text: "working", accent: false };
     if (backgroundTasks.length > 0) return { text: "background work", accent: false };
@@ -558,7 +558,7 @@
     <ConversationRestBar preview={unreadPreview} {roleLabel} {activityKnown}
       {connectionTrouble} running={running && !activityUncertain}
       backgroundWork={backgroundTasks.length > 0 ? backgroundWorkSentence(backgroundTasks.map(task => task.task_description)) : null}
-      feedback={activityUncertain ? "Current activity on Mac is unknown." : dockFeedback} onOpen={moveThroughTheStates} />
+      feedback={activityUncertain ? "Current activity on this machine is unknown." : dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
 
   {#if readOnly}

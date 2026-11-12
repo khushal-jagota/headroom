@@ -48,6 +48,7 @@ from planner.conversation.backends.contracts import (
     ToolCallProgress,
 )
 from planner.conversation.contracts import NativeMessageAdmission, NativeMessageOperation
+from planner.machines.contracts import HOME_MACHINE_ID
 
 if TYPE_CHECKING:
     from planner.conversation.model_resolution.contracts import RemoteCatalogSource
@@ -2927,12 +2928,12 @@ class SqliteProcessConversationSystem:
             conn = connect(self._store._db_path)
             try:
                 row = conn.execute(
-                    "SELECT locale FROM tickets WHERE conversation_id=?", (conversation_id,)
+                    "SELECT machine_id FROM tickets WHERE conversation_id=?", (conversation_id,)
                 ).fetchone()
                 return StartRequest(
                     identity,
                     "worker" if row is not None else "supervisor",
-                    "macos" if row is not None and row[0] == "macos" else "home",
+                    str(row[0]) if row is not None else HOME_MACHINE_ID,
                 )
             finally:
                 conn.close()

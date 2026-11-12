@@ -192,7 +192,7 @@ async def _admitted_start_ready_worker_step(
                 StartRequest(
                     automatic_identity,
                     "worker",
-                    "macos" if ticket.locale.value == "macos" else "home",
+                    ticket.machine_id,
                 )
             ):
                 automatic_identity = None
@@ -225,7 +225,7 @@ async def _admitted_start_ready_worker_step(
                 StartRequest(
                     sender_message_id,
                     "worker",
-                    "macos" if claimed.locale.value == "macos" else "home",
+                    claimed.machine_id,
                 ),
             )
             automatic_identity = sender_message_id

@@ -73,3 +73,5 @@ Renaming the account, moving host state, or changing Tailscale Serve is operator
 - `ops/panels-environments/`: user units, timers, and the host wrapper.
 
 _Last verified: 2026-11-12._
+
+Named execution destinations and physical workspace identity are separate. A Ticket’s `machine_id` selects home execution or the original executor. `WorkspaceIdentity.machine_id` identifies one local physical data tree. Workspace registration binds its folder to the conversation on that destination. A display edit never rotates either identity.

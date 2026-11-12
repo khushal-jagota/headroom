@@ -291,7 +291,7 @@ def _derive(
         found = rows(
             conn,
             "SELECT " + snapshot_column + "t.title,t.worker_type,t.stage,t.deadline,t.manager_kind,"
-            "t.manager_id,t.conversation_id,t.ceiling,t.locale,t.worker_step_claim,"
+            "t.manager_id,t.conversation_id,t.ceiling,t.locale,t.machine_id,t.worker_step_claim,"
             "t.pending_proposal,t.is_backlogged,t.ceiling_holder,t.pending_proposal_revision,"
             "t.updated_at,t.created_at,t.recap,"
             + priority_column
@@ -324,6 +324,7 @@ def _derive(
                 diagnostic.update(
                     deadline=t["deadline"],
                     locale=t["locale"],
+                    machine_id=t["machine_id"],
                     recap_preview=recap_preview(str(t["recap"])),
                     integrity_error={"reason": issue.reason},
                 )
@@ -386,6 +387,7 @@ def _derive(
                 "conversation_id",
                 "ceiling",
                 "locale",
+                "machine_id",
             )
         }
         if version < PREPARED_SCHEMA_VERSION:

@@ -149,8 +149,8 @@
     const moved = event.relatedTarget as Node | null;
     if (moved !== null && !element?.contains(moved)) onLeave?.();
   }}>
-  <div class="kicker">{#if currentWorker?.locale}<MachineIdentity locale={currentWorker.locale} />{/if}<span>{kicker}</span></div>
-  <div class="title"><span class="title-text">{currentWorker?.title ?? title}</span><MachineActivityMark agentHold={currentWorker ?? undefined} locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
+  <div class="kicker">{#if currentWorker?.locale}<MachineIdentity machineId={currentWorker.machine_id} locale={currentWorker.locale} showName />{/if}<span>{kicker}</span></div>
+  <div class="title"><span class="title-text">{currentWorker?.title ?? title}</span><MachineActivityMark machineId={currentWorker?.machine_id} agentHold={currentWorker ?? undefined} locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
   <!-- The box stays while there is an ask to hold, so pressing it leaves the recessed
        block where it is and the budget above keeps measuring. -->
   {#if recapText || recapTarget}

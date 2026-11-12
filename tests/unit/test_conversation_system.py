@@ -115,6 +115,7 @@ from planner.core.contracts import (
     PrincipalKind,
 )
 from planner.core.db import connect, create_schema
+from planner.machines.contracts import HOME_MACHINE_ID
 from planner.worker_types.store import read_definition, workflow_from_preset, workflow_to_json
 
 VENDOR_SESSION_CURSOR = "vendor-session-1"
@@ -3583,7 +3584,7 @@ def test_automatic_queue_releases_slots_and_coalesces_one_dispatch_permit(
         )
         identities = tuple(f"supervisor-auto-{i}" for i in range(4))
         for identity in identities:
-            assert gate.try_start(StartRequest(identity, "supervisor", "home"))
+            assert gate.try_start(StartRequest(identity, "supervisor", HOME_MACHINE_ID))
             fate = await harness.system.send(
                 "supervisor",
                 text_message_content(identity),
@@ -3594,7 +3595,7 @@ def test_automatic_queue_releases_slots_and_coalesces_one_dispatch_permit(
             now[0] += 1.0
         assert {snapshot.state for snapshot in gate.snapshots()} == {"queued"}
         assert all(snapshot.permit_identity is None for snapshot in gate.snapshots())
-        assert gate.try_start(StartRequest("home-worker", "worker", "home"))
+        assert gate.try_start(StartRequest("home-worker", "worker", HOME_MACHINE_ID))
         assert isinstance(
             await harness.system.send(
                 "worker",
@@ -3668,7 +3669,7 @@ def test_queued_automatic_cancel_after_bind_before_wire_releases_slot_and_priori
         await harness.system.send(
             "supervisor", text_message_content("incumbent"), sender_label="owner"
         )
-        assert gate.try_start(StartRequest("cancel-before-wire", "supervisor", "home"))
+        assert gate.try_start(StartRequest("cancel-before-wire", "supervisor", HOME_MACHINE_ID))
         assert isinstance(
             await harness.system.send(
                 "supervisor",
@@ -3751,7 +3752,7 @@ def test_queued_automatic_cancel_after_bind_before_wire_releases_slot_and_priori
         finally:
             conn.close()
         now[0] += 1.0
-        assert gate.try_start(StartRequest("worker-after-cancel", "worker", "home"))
+        assert gate.try_start(StartRequest("worker-after-cancel", "worker", HOME_MACHINE_ID))
         assert isinstance(
             await harness.system.send(
                 "worker",
@@ -3785,7 +3786,7 @@ def test_oldest_eligible_held_worker_precedes_new_readiness_starts(
         await _start(harness, "old")
         await _start(harness, "blocker")
         await harness.system.send("old", text_message_content("incumbent"), sender_label="owner")
-        assert gate.try_start(StartRequest("old-head", "worker", "home"))
+        assert gate.try_start(StartRequest("old-head", "worker", HOME_MACHINE_ID))
         assert isinstance(
             await harness.system.send(
                 "old",
@@ -3795,7 +3796,7 @@ def test_oldest_eligible_held_worker_precedes_new_readiness_starts(
             ),
             PromptDeliveryQueued,
         )
-        assert gate.try_start(StartRequest("blocker", "worker", "home"))
+        assert gate.try_start(StartRequest("blocker", "worker", HOME_MACHINE_ID))
         await harness.system.send(
             "blocker",
             text_message_content("use this instant"),
@@ -3810,7 +3811,7 @@ def test_oldest_eligible_held_worker_precedes_new_readiness_starts(
             assert len(harness.backend("old").writes) == 1
         now[0] = 1.0
         # The old head owns its rank already, even before another retry visits it.
-        assert not gate.try_start(StartRequest("new-readiness", "worker", "home"))
+        assert not gate.try_start(StartRequest("new-readiness", "worker", HOME_MACHINE_ID))
         await harness.system._drain_held_prompts(state)
         assert [write.text for write in harness.backend("old").writes] == [
             "incumbent",
@@ -3818,7 +3819,7 @@ def test_oldest_eligible_held_worker_precedes_new_readiness_starts(
         ]
         await harness.agent_message("old", text_message_content("accepted"))
         now[0] = 2.0
-        assert gate.try_start(StartRequest("new-readiness", "worker", "home"))
+        assert gate.try_start(StartRequest("new-readiness", "worker", HOME_MACHINE_ID))
         gate.finish("new-readiness")
 
     _run(exercise)
