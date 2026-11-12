@@ -1,0 +1,16 @@
+{
+  "reports": [
+    {
+      "mode": "main_blocked",
+      "observed_after_ms": 601.1510910466313,
+      "native_query_reader_dead": true,
+      "wal_clear": true
+    },
+    {
+      "mode": "parent_killed",
+      "observed_after_ms": 616.924773901701,
+      "native_query_reader_dead": true,
+      "wal_clear": true
+    }
+  ]
+}

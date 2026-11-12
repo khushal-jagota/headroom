@@ -1,6 +1,6 @@
 /** Real core admission and native shutdown are absent from the in-memory update proofs. */
 import { afterEach, expect, test, vi } from 'vitest';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fixture, fixture_path } from './ticket_fixture.ts';
@@ -40,13 +40,21 @@ function deferred<T>() {
   void promise.catch(() => {});
   return { promise, resolve, reject };
 }
-async function reached<T>(promise: Promise<T>): Promise<T> {
+async function reached<T>(promise: Promise<T>, label: string, state?: () => unknown): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('scripted boundary was not reached')), 5000);
+        timer = setTimeout(() => {
+          let detail: unknown;
+          try {
+            detail = state?.();
+          } catch (error) {
+            detail = String(error);
+          }
+          reject(new Error(`${label} was not reached: ${JSON.stringify(detail)}`));
+        }, 5000);
       }),
     ]);
   } finally {
@@ -135,6 +143,7 @@ async function owned_server(installer?: Partial<InstallerOperations>) {
     PLAN_CREDENTIAL_KEY_PATH: join(root, 'credential.key'),
     PLAN_TEST_MODE: '0',
     PLAN_DISPATCH_ENABLED: 'true',
+    PLAN_TICK_SECONDS: '1',
     PLAN_PORT: '0',
     PLAN_APP_SHA: 'a'.repeat(40),
   }))
@@ -281,7 +290,12 @@ test('real core completion admits an idle update, refuses HTTP writes without mu
     expect((await owned.status()).attempt.state).toBe('waiting');
     expect(owned.context.core!.workspace_admission.closed).toBe(false);
     await child.finish();
-    await reached(backup_entered.promise);
+    await reached(backup_entered.promise, 'idle readiness admission', () => ({
+      activity: owned.context.core!.workspace_activity(),
+      active: owned.context.core!.workspace_admission.active,
+      closed: owned.context.core!.workspace_admission.closed,
+      attempt: JSON.parse(readFileSync(join(owned.root, 'data/update-attempt.json'), 'utf8')),
+    }));
     expect(owned.context.core!.runtime_turn(delivery.conversation_id)).toBeNull();
     expect((await owned.status()).attempt.state).toBe('preparing');
     expect(owned.context.core!.workspace_admission.closed).toBe(true);
@@ -297,7 +311,7 @@ test('real core completion admits an idle update, refuses HTTP writes without mu
     };
     await refused('refused while preparing');
     backup.resolve(join(owned.root, 'backups/scripted-snapshot'));
-    await reached(launch_entered.promise);
+    await reached(launch_entered.promise, 'installer launch after backup');
     expect((await owned.status()).attempt.state).toBe('installing');
     await refused('refused while installing');
     launch.reject(new Error('scripted installer did not start'));
@@ -320,11 +334,27 @@ test('real core completion admits an idle update, refuses HTTP writes without mu
   }
 }, 20_000);
 
-test('environment shutdown shares the loop deadline and retains real core ownership through held native detach and late receipt', async () => {
+test('forced update of busy real core shares the shutdown deadline and fences a late native return after successor ownership', async () => {
   const loops_stop = vi.spyOn(BackgroundLoops.prototype, 'stop');
   const metrics_stop = vi.spyOn(MetricsRuntime.prototype, 'stop');
   const updates_stop = vi.spyOn(UpdateService.prototype, 'stop');
-  const owned = await owned_server();
+  const launch_entered = deferred<void>(),
+    trigger_stop = deferred<void>(),
+    stop_started = deferred<void>();
+  let stop_server!: () => Promise<void>;
+  let closing: Promise<void> | undefined;
+  const owned = await owned_server({
+    launch: async () => {
+      launch_entered.resolve();
+      await trigger_stop.promise;
+      // Model the service manager's stop after successful external installer launch.
+      // Never await shutdown here: UpdateService.stop joins this advancing flight.
+      closing = stop_server();
+      void closing.catch(() => {});
+      stop_started.resolve();
+    },
+  });
+  stop_server = owned.server.close;
   const receipt = deferred<void>(),
     receipt_entered = deferred<void>();
   let child: ScriptedChild | undefined;
@@ -352,7 +382,24 @@ test('environment shutdown shares the loop deadline and retains real core owners
       () => undefined,
       () => undefined,
     );
-    await reached(receipt_entered.promise);
+    await reached(receipt_entered.promise, 'held provider method return');
+    expect(owned.context.core!.workspace_activity()).toBe('busy');
+    expect(owned.context.core!.workspace_admission.active).toBe(true);
+    await vi.waitFor(async () => expect((await owned.status()).state).toBe('available'));
+    const forced = await owned.post('/api/updates/install', {
+      app_sha: 'b'.repeat(40),
+      mode: 'now',
+      confirm_activity: true,
+    });
+    expect(forced.status).toBe(200);
+    expect((await forced.json()).attempt.mode).toBe('now');
+    await reached(launch_entered.promise, 'forced installer launch');
+    expect((await owned.status()).attempt.state).toBe('installing');
+    expect(owned.context.core!.workspace_admission.closed).toBe(true);
+    expect(
+      JSON.parse(readFileSync(join(owned.root, 'data/update-attempt.json'), 'utf8'))
+        .confirm_activity,
+    ).toBe(true);
     // Database capabilities are frozen. Observe the actual store/publication doors
     // without replacing their SQL, settlement, or native cleanup behavior.
     const store = owned.context.record.store;
@@ -366,8 +413,9 @@ test('environment shutdown shares the loop deadline and retains real core owners
         if (name !== 'constructor' && typeof Reflect.get(store, name) === 'function')
           methods.add(name);
     }
+    const observed_store = store as unknown as Record<string, (...args: unknown[]) => unknown>;
     const accesses = [
-      ...[...methods].map((name) => vi.spyOn(store, name as keyof typeof store)),
+      ...[...methods].map((name) => vi.spyOn(observed_store, name)),
       vi.spyOn(owned.context.publication, 'current_read'),
       vi.spyOn(owned.context.publication, 'save_attempt'),
     ];
@@ -378,8 +426,9 @@ test('environment shutdown shares the loop deadline and retains real core owners
       },
       () => {},
     );
-    const closing = owned.server.close();
-    await reached(child.wait_for_barrier('owned-detach'));
+    trigger_stop.resolve();
+    await reached(stop_started.promise, 'external launch requests server shutdown');
+    await reached(child.wait_for_barrier('owned-detach'), 'original native detach');
     expect(loops_stop).toHaveBeenCalledOnce();
     expect(metrics_stop).toHaveBeenCalledOnce();
     expect(updates_stop).toHaveBeenCalledOnce();
@@ -390,7 +439,7 @@ test('environment shutdown shares the loop deadline and retains real core owners
     expect(() => acquireRuntimeOwnership(owned.path)).toThrow('ConversationRuntimeAlreadyOwned');
     expect(returned).toBe(false);
     await child.release('owned-detach');
-    await closing;
+    await closing!;
     await pending;
     expect(returned).toBe(false);
     const successor = acquireRuntimeOwnership(owned.path);
@@ -399,7 +448,7 @@ test('environment shutdown shares the loop deadline and retains real core owners
       const before = canonical_rows(successor_reads);
       const access_counts = accesses.map((spy) => spy.mock.calls.length);
       receipt.resolve();
-      await reached(provider_return!);
+      await reached(provider_return!, 'late provider return after successor ownership');
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(returned).toBe(true);
       expect(accesses.map((spy) => spy.mock.calls.length)).toEqual(access_counts);
@@ -409,6 +458,7 @@ test('environment shutdown shares the loop deadline and retains real core owners
       successor.close();
     }
   } finally {
+    trigger_stop.resolve();
     receipt.resolve();
     if (child) await Promise.allSettled([child.release('owned-detach')]);
     await owned.close();
