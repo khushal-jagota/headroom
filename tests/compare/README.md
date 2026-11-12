@@ -46,6 +46,14 @@ Use `headers` for caller identity and other request headers. For refused calls, 
 
 Captures use dotted object paths and numeric array indices. An empty path captures the complete body. `${capture}` substitutes separately on each server. A complete-string substitution preserves the captured JSON type. Arrays retain order.
 
+A request can supply `body_base64` instead of `json` to transfer raw bytes. The two
+fields are mutually exclusive. The runner validates base64 and decodes the same
+fixture bytes for each host. Supply the appropriate `content-type` in `headers`.
+Status checks, headers, response captures, and response comparison stay unchanged.
+Seed requests and writes after stream frames use the same request-body rule.
+Keep fixtures small. A short real video can prove upload transfer and probing
+without a large binary in the repository.
+
 The rule file contains reason maps:
 
 - `ignore`: exact `table.column` exceptions for source rows.
@@ -291,7 +299,7 @@ Restarts retain these same isolated files.
 For a non-JSON request, set `"response_bytes": true` on the request to compare
 `response.content` as a hex byte string under `body.bytes`. This avoids lossy text
 decoding for ranges and media. JSON responses still compare parsed. Existing lists
-keep text behavior unless they opt in. This does not add raw request bodies.
+keep text behavior unless they opt in. Raw request bodies use `body_base64` as described above.
 The report retains these comparisons under `byte_answers`, with both statuses,
 selected headers (also Content-Length), and exact body bytes. ETag headers remain
 literal digests, rather than random IDs. Change-token rules support SQLite BLOBs

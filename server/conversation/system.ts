@@ -1,3 +1,4 @@
+import { turn_is_maintenance } from './runtime/state.ts';
 /** Local process core. Registered as ConversationSystem after the turn-control slice lands. */
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
@@ -130,6 +131,7 @@ function new_running_turn(reservation: ReservedTurn): RunningTurn {
     token: reservation.token,
     automatic_compaction: reservation.automatic_compaction,
     automatic_notice: reservation.automatic_notice,
+    memory_notice_only: reservation.memory_notice_only,
     compaction_confirmed: false,
     pending_permission_ask_ids: new Set(),
     permission_provider_ids: new Map(),
@@ -496,7 +498,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         state.late_steers.size > 0
       )
         return this.hold_prompt(state, message);
-      if (this.automatic_compaction_is_due(state)) {
+      if (await this.automatic_compaction_may_start(state)) {
         const fate = this.hold_prompt(state, message);
         return { automatic: await this.reserve_turn(state, true), fate };
       }
@@ -536,6 +538,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       resolved: new Deferred<void>(),
       automatic_compaction,
       automatic_notice: false,
+      memory_notice_only: false,
       prompt_accepted: false,
       messages: [],
       mode: PromptDeliveryMode.queue,
@@ -624,6 +627,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       return new PromptDeliverySuppressed({ reason: delivery.suppression_reason });
     }
     reservation.automatic_notice = delivery.automatic_notice;
+    reservation.memory_notice_only = delivery.memory_notice_only;
     const survivors = delivery.messages.length > 0 ? delivery.messages : batch;
     // A drain credits only the successful admission envelopes returned by delivery.
     // A definite refusal returns none. The remaining refused rows never carry read credit.
@@ -1015,7 +1019,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
             ...(cancel_fact ? [cancel_fact] : []),
             ...interpreted.lifecycle.slice(1),
           ],
-          agent_activity: !running.automatic_compaction,
+          agent_activity: !turn_is_maintenance(running),
           automatic_compaction_confirmed: running.compaction_confirmed,
           automatic_compaction_result: interpreted.compaction_result,
           create_failure_notice: interpreted.failure_notice,
@@ -1038,12 +1042,12 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     this.note_written(state, written);
     if (written.length > 0) {
       const last = written[written.length - 1];
-      const latest_agent_activity_sequence = running.automatic_compaction
+      const latest_agent_activity_sequence = turn_is_maintenance(running)
         ? state.record.latest_agent_activity_sequence
         : last.sequence;
       state.record = new ConversationRecord({
         ...state.record,
-        latest_agent_activity_at: running.automatic_compaction
+        latest_agent_activity_at: turn_is_maintenance(running)
           ? state.record.latest_agent_activity_at
           : last.created_at,
         latest_agent_activity_sequence,
@@ -1080,6 +1084,13 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       state.child_is_quarantined = true;
     }
     return stopped;
+  }
+  async automatic_compaction_may_start(state: ConversationState): Promise<boolean> {
+    return (
+      this.automatic_compaction_is_due(state) &&
+      this.options.store.automated_maintenance_suppression_reason(state.record.conversation_id) ===
+        null
+    );
   }
   automatic_compaction_is_due(state: ConversationState): boolean {
     return automatic_compaction_is_due(this, state);
