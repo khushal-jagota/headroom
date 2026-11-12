@@ -10,6 +10,7 @@ import pytest
 from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
+from planner.conversation import worker_scratch
 from planner.conversation.backends.claude_agent_sdk import _ClaudeCleanupTransport
 from planner.conversation.tool_shell_kill_priority import TOOL_SHELL_STARTUP
 from planner.conversation.worker_unit import WorkerUnit
@@ -18,7 +19,11 @@ from planner.conversation.worker_unit import WorkerUnit
 def test_worker_launch_preserves_sdk_arguments_and_keeps_unit_across_messages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    executable = tmp_path / "claude"
+    executable.write_text("#!/bin/sh\nexit 0\n")
+    executable.chmod(0o700)
     monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
 
     async def exercise() -> None:
         unit = AsyncMock()
@@ -27,7 +32,7 @@ def test_worker_launch_preserves_sdk_arguments_and_keeps_unit_across_messages(
         create = AsyncMock(return_value=unit)
         monkeypatch.setattr(WorkerUnit, "create", create)
         options = ClaudeAgentOptions(
-            cli_path="/claude", cwd=str(tmp_path), model="model",
+            cli_path=str(executable), cwd=str(tmp_path), model="model",
             env={"PLAN_TICKET_ID": "ticket", "PLAN_TICKET_FILES_DIR": str(tmp_path),
                  "AUTH_VALUE": "secret"},
         )
@@ -35,7 +40,8 @@ def test_worker_launch_preserves_sdk_arguments_and_keeps_unit_across_messages(
         original_command = SubprocessCLITransport._build_command(transport)
 
         async def connect(self: SubprocessCLITransport) -> None:
-            assert self._build_command() == ["contained", *original_command]
+            assert self._build_command()[0] == "contained"
+            assert self._build_command()[-len(original_command):] == original_command
 
         async def messages(self: SubprocessCLITransport):  # type: ignore[no-untyped-def]
             yield {"type": "result"}
@@ -53,7 +59,7 @@ def test_worker_launch_preserves_sdk_arguments_and_keeps_unit_across_messages(
         assert environment["BASH_ENV"] == str(TOOL_SHELL_STARTUP)
         assert workspace == tmp_path
         scratch = Path(options.env["TMPDIR"])
-        assert scratch.parent == tmp_path / "tmp"
+        assert scratch.parent == tmp_path / "runs"
         assert scratch.is_dir()
         process = AsyncMock()
         process.returncode = 0
@@ -85,7 +91,8 @@ def test_failed_worker_start_closes_partial_sdk_process_before_scratch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def exercise() -> None:
-        monkeypatch.setattr(sys, "platform", "darwin")
+        monkeypatch.setattr(WorkerUnit, "create", AsyncMock(return_value=None))
+        monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
         process = AsyncMock()
         process.returncode = None
         scratch: Path | None = None

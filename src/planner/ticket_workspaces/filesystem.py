@@ -307,12 +307,7 @@ def _checkouts(root: Path) -> list[Path]:
     for directory, names, files in os.walk(root, followlinks=False, onerror=unreadable):
         if ".git" in names or ".git" in files:
             checkouts.append(Path(directory))
-        names[:] = [
-            name for name in names
-            if name not in _SKIP_DIRECTORIES
-            and not (Path(directory) == root and name == "tmp"
-                     and (root / OWNERSHIP_FILE).is_file())
-        ]
+        names[:] = [name for name in names if name not in _SKIP_DIRECTORIES]
     return checkouts
 
 
@@ -617,6 +612,11 @@ def _remove_retired(path: Path) -> str | None:
             result = _git(checkout, "worktree", "repair", str(checkout))
             if result.returncode:
                 return f"cannot repair retired worktree: {result.stderr.strip()}"
+    from planner.conversation.worker_scratch import prune_ticket_scratch
+
+    ticket_id = path.name.split("-", 1)[0]
+    if not prune_ticket_scratch(ticket_id):
+        return "Worker scratch still has live or unknown ownership"
     return cleanup_ticket_folder(path)
 
 

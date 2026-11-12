@@ -18,6 +18,7 @@ from tests.support.conversation_codex_app_server_bench import (
     _scripted_child,
 )
 
+from planner.conversation import worker_scratch
 from planner.conversation.contracts import ConversationRoleMaterials
 from planner.conversation.message_content import text_message_content
 from planner.conversation.tool_shell_kill_priority import TOOL_SHELL_STARTUP
@@ -39,6 +40,7 @@ class _ObservedUnit:
 def test_only_explicit_worker_identity_selects_containment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
     units: list[_ObservedUnit] = []
 
     async def create(environment: Mapping[str, str], working_directory: Path) -> WorkerUnit:
@@ -73,7 +75,7 @@ def test_only_explicit_worker_identity_selects_containment(
             assert len(units) == 1
             assert units[0].environment["PLAN_TICKET_ID"] == "this-worker"
             scratch = Path(units[0].environment["TMPDIR"])
-            assert scratch.parent == tmp_path / "tmp"
+            assert scratch.parent == tmp_path / "runs"
             assert scratch.is_dir()
             assert scripted.launched()["environment"]["TMPDIR"] == str(scratch)
             assert units[0].environment["BASH_ENV"] == str(TOOL_SHELL_STARTUP)
@@ -83,7 +85,7 @@ def test_only_explicit_worker_identity_selects_containment(
             await scripted.sink.wait_for_the_turn_to_end()
             assert len(units) == 1
         assert units[0].stopped
-        assert not list((tmp_path / "tmp").iterdir())
+        assert not list((tmp_path / "runs").glob("this-worker-*"))
 
     _run(exercise)
 
@@ -93,6 +95,7 @@ def test_worker_launch_failure_cleans_up_its_prepared_unit(
 ) -> None:
     from planner.conversation.backends.contracts import BackendSpawnFailed
 
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
     units: list[_ObservedUnit] = []
 
     async def create(environment: Mapping[str, str], working_directory: Path) -> WorkerUnit:
@@ -121,7 +124,7 @@ def test_worker_launch_failure_cleans_up_its_prepared_unit(
                 await scripted.child.start(start, vendor_session_cursor=None)
         assert len(units) == 1
         assert units[0].stopped
-        assert not list((tmp_path / "tmp").iterdir())
+        assert not list((tmp_path / "runs").glob("this-worker-*"))
 
     _run(exercise)
 
@@ -129,6 +132,7 @@ def test_worker_launch_failure_cleans_up_its_prepared_unit(
 def test_failed_unit_stop_keeps_the_handle_for_a_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
     units: list[_ObservedUnit] = []
     stop_calls = 0
 
@@ -166,6 +170,6 @@ def test_failed_unit_stop_keeps_the_handle_for_a_retry(
             assert not units[0].stopped
         assert stop_calls == 2
         assert units[0].stopped
-        assert not list((tmp_path / "tmp").iterdir())
+        assert not list((tmp_path / "runs").glob("this-worker-*"))
 
     _run(exercise)

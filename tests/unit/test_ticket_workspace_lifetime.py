@@ -23,6 +23,13 @@ from planner.ticket_workspaces.filesystem import (
 from planner.tickets.data import create_ticket
 
 
+@pytest.fixture(autouse=True)
+def isolated_worker_scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from planner.conversation import worker_scratch
+
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
+
+
 def test_end_clock_survives_edits_reopen_and_deletion_without_expiring_live_files(
     tmp_db: Connection,
     tmp_path: Path,
@@ -47,6 +54,9 @@ def test_end_clock_survives_edits_reopen_and_deletion_without_expiring_live_file
     folder = root / ticket.id
     prepare_workspace(folder, None, ticket.id)
     (folder / "artifacts" / "document.md").write_text("document")
+    from planner.conversation.worker_scratch import WorkerScratch
+
+    scratch = WorkerScratch({"PLAN_TICKET_ID": ticket.id})
     unknown = root / "t_aaaaaaaa"
     unknown.mkdir()
     now = RETENTION_SECONDS + 400
@@ -58,8 +68,19 @@ def test_end_clock_survives_edits_reopen_and_deletion_without_expiring_live_file
     assert state == WorkspaceState(ticket.id, 400, True)
     cleanup_local_workspaces(root, read_workspace_states(tmp_db), now - 1)
     assert folder.exists()
-    cleanup_local_workspaces(root, read_workspace_states(tmp_db), now)
+    result = cleanup_local_workspaces(root, read_workspace_states(tmp_db), now)
     assert not folder.exists() and unknown.exists()
+    assert scratch.directory.exists()
+    assert any("live or unknown ownership" in entry["reason"] for entry in result.skipped)
+    # The retry record remains until the backend lock disappears.
+    import os
+
+    assert scratch._descriptor is not None
+    os.close(scratch._descriptor)
+    scratch._descriptor = None
+    cleanup_local_workspaces(root, read_workspace_states(tmp_db), now)
+    assert not scratch.directory.exists()
+    assert not list((root.parent / ".ticket-retired").glob("*.json"))
     assert (root.parent / "ticket-workspaces-cleanup.json").exists()
 
 

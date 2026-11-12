@@ -436,6 +436,8 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
 
     def _build_command(self) -> list[str]:
         command = super()._build_command()
+        if self._worker_scratch is not None:
+            command = list(self._worker_scratch.argv(command, Path(self._cwd or os.getcwd())))
         if self._worker_unit is not None:
             return list(self._worker_unit.argv(command))
         return command
