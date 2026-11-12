@@ -53,8 +53,9 @@ Foreground return and reconnect reconcile active demand. Domain deadlines cover
 calendar changes without a database write.
 
 Goals, their readings, holder pages, and catalogs use this owner. Local edits and
-manual commands remain separate from accepted responses. A route owns unfinished
-Goal and holder edits above replaceable child views until Save or explicit discard.
+manual commands remain separate from accepted responses. The app session owns unfinished
+Goal and holder edits across route changes until Save or explicit discard. Unsaved
+conflict drafts do not survive app termination.
 Charts keep previous accepted readings, marked stale, while a newer projection loads.
 Goal details use the
 addressed document revision; lists retain their shared revision. Readings also
@@ -198,15 +199,50 @@ xcodebuild -project ios/Panels.xcodeproj -scheme Panels \
   -parallel-testing-enabled NO test
 ```
 
-`PanelsNotificationUITests` holds the notification and opt-in conversation UI
-scenarios. `PanelsTests/Fixtures` contains response samples from read-only GETs on
-2026-10-22; the full Ticket sample includes the current saved workflow controls.
-Tests protect two previously uncovered
-wire-contract risks: snake-case/nullable/grouping and page decoding; and the
-review/detail/artifact response shapes. One tiny parser test protects heartbeat
-comments being mistaken for changes. Setup is one fixture loader, with no backend
-or browser host. Simulator launch and screenshot are a separate smoke check; they
-do not prove physical-device haptics, frame rate, or every navigation flow.
+## Permanent screen tests and one-off reviews
+
+A permanent screen test runs on every release. Admit it only for a core journey
+that a real screen must prove. Keep one or two tests per journey. Merge overlapping
+walks into one walk. Use host or model tests for logic, state, wording, and layout.
+Use one-off Simulator reviews for appearance and visual polish.
+
+`PanelsNotifications` runs `PanelsTests` and the five permanent methods in
+`PanelsNotificationUITests`. `Panels` runs the unit target. The permanent list is:
+
+| Method | Core journey |
+| --- | --- |
+| `ConversationOperationTests/testOperationsAgainstLocalStub` | Open a conversation, read, reply, and paste and send one image. |
+| `ReviewMessagesTests/testUnreadReplyRefusalQueueAndHistoricalNavigation` | Reach Review from Workspace, reply, and follow the conversation route. |
+| `ReviewMessagesTests/testStackedTicketCard` | Act on a Review item and return to skipped work. |
+| `OfflineOperationTests/testDroppedConnectionRequiresExplicitRecoveryAndSlowColdLoad` | Recover uncertain delivery with an explicit Send again confirmation. |
+| `ServerReachabilityTests/testUnreachableServerReplacesContentAndRecovers` | See the unreachable-server cover and recover without a relaunch. |
+
+Discover the native tests before a release run. Discovery must find all five
+methods. A selection that executes zero tests fails, even if Xcode returns success.
+
+`PanelsReviewUITests` and the separate `PanelsReview` scheme contain one-off walks.
+They stay outside the permanent release suite. The existing fixture harnesses select
+that scheme with `--review`. These walks cover specialist attachment previews,
+Latest scrolling, detail navigation, large text, Goal edits, notification routing,
+Review composer appearance, and a live read-only Workspace review. The live walk
+contains historical selectors; review its comments before use. A one-off walk is a
+review tool, not a permanent gate. Record its result and diagnose failures.
+
+A route without a screen test still needs a one-off check when a change touches it.
+Keep physical-device gaps on the phone checklist, including server entry and Save,
+airplane-mode delivery, Goal edit and Save, and notification taps.
+
+A flaky test is a defect in the test or the product. Find and fix its cause.
+Do not use retries, longer timeouts, or load allowances to obtain a pass.
+After a tap, wait for its result with `waitForExistence` or
+`waitForNonExistence`. Share the transition deadline across related assertions.
+Bind each row by its own stable identifier. Do not bind a changing list through
+`firstMatch` or a row position.
+
+`PanelsTests/Fixtures` contains response samples from read-only GETs on
+2026-10-22. Host tests cover wire contracts and model behavior without a browser
+or backend host. Simulator results do not prove physical-device haptics, frame
+rate, delivery through APNs, or every navigation route.
 
 ## Services and ownership
 
@@ -758,6 +794,14 @@ Push registration remains disabled. Dock previews and inline attachment parity
 remain separate work. The compatibility checks use Foundation host tests, in-memory
 HTTP stubs, backend checks and one unsigned generic iOS compile. They do not prove
 physical-device behavior or a live Mac/VPS round trip from the iPhone.
+
+The offline and conversation fixture scripts accept `--server-only` for a caller-owned
+verification turn. This mode starts only the loopback fixture and writes
+`fixture-ready.json` under its output directory. The caller supplies the test runner
+environment, assigned device, build products and deadline. Fixture videos default off.
+Optional native proof endpoints require the owned device and an active deadline.
+Send TERM to the recorded fixture process to close its listeners. This mode permits
+one build for multiple fixture cases without another simulator or build host.
 
 ## Goals
 

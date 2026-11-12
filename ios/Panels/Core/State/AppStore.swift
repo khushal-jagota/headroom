@@ -5,6 +5,8 @@ import Observation
     var baseURL: URL
     private let session: URLSession
     @ObservationIgnored lazy var resources = ResourceOwner(api: client)
+    /// Unfinished Goal edits survive route pop/reentry for this app session only.
+    let goalEdits = PageSessionRoute()
     var client: APIClient { APIClient(baseURL: baseURL, session: session) }
     /// Workspace rows from the last view that carried the rail windows. A scope
     /// without them, such as Review alone, keeps the last coherent Workspace.

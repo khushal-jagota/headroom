@@ -135,6 +135,7 @@ STAGING_ONLY_TABLES = (
 # Tables created by revisions after canonical_manager_identities, which a database at
 # goal_holders does not have yet.
 LATER_TABLES = (
+    "ticket_decision_operations",
     "executor_incarnations",
     "mac_executor_presence",
     "executor_commands",
@@ -153,6 +154,9 @@ def _staging_shape(tmp_path: Path) -> Path:
             conn.execute(f"DROP TABLE {table}")
         for statement in STAGING_ONLY_TABLES:
             conn.execute(statement)
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='ticket_decision_operations'"
+        ).fetchone() is None
         # This is only an isolated unit fixture, not a database upgrade or proof stamp.
         conn.execute("UPDATE alembic_version SET version_num='goal_holders'")
         conn.commit()

@@ -49,6 +49,38 @@ final class GoalFlowTests: XCTestCase {
         XCTAssertEqual(peekWrites.last?["path"] as? String, "/api/measures/words/manual-writes")
         words.tap()
         XCTAssertTrue(element("goal-chart-words").waitForExistence(timeout: 10))
+        // Retain the conflicted draft across leaving and recreating this page.
+        // A newer accepted value must remain intact after an explicit retry.
+        app.staticTexts["Keep the next step clear."].firstMatch.tap()
+        let explanation = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Why this goal matters")).firstMatch
+        XCTAssertTrue(explanation.waitForExistence(timeout: 5))
+        explanation.typeText(" Edited locally")
+        let (_, conflict) = try await URLSession.shared.data(from: URL(string: base + "/proof/goal-conflict")!)
+        XCTAssertEqual((conflict as? HTTPURLResponse)?.statusCode, 200)
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.buttons["Retry save"].waitForExistence(timeout: 8))
+        app.buttons["detail-back"].tap()
+        XCTAssertTrue(words.waitForExistence(timeout: 8))
+        words.tap()
+        XCTAssertTrue(explanation.waitForExistence(timeout: 8))
+        XCTAssertEqual(explanation.value as? String, "Keep the next step clear. Edited locally")
+        let (beforeData, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/goal-state")!)
+        let before = try XCTUnwrap(JSONSerialization.jsonObject(with: beforeData) as? [String: Any])
+        let attempts = try XCTUnwrap(before["attempts"] as? Int)
+        app.buttons["Retry save"].tap()
+        var accepted: [String: Any] = [:]
+        for _ in 0..<40 {
+            let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/goal-state")!)
+            accepted = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            if (accepted["attempts"] as? Int ?? 0) > attempts && app.buttons["Discard edit"].isEnabled { break }
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        XCTAssertEqual(accepted["attempts"] as? Int, attempts + 1)
+        XCTAssertTrue(app.buttons["Discard edit"].isEnabled)
+        XCTAssertEqual((accepted["goal"] as? [String: Any])?["why"] as? String, "Newer server explanation.")
+        app.buttons["Discard edit"].tap()
+        XCTAssertTrue(app.staticTexts["Newer server explanation."].waitForExistence(timeout: 8))
+        capture("goals-conflict-survives-page-return")
         let add = app.buttons["+100"]
         XCTAssertTrue(add.waitForExistence(timeout: 10)); add.tap()
         try await Task.sleep(for: .seconds(1))

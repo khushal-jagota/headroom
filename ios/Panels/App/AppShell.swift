@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct AppShell: View {
     @Environment(AppStore.self) private var store
@@ -13,10 +14,12 @@ struct AppShell: View {
     @State private var morePath: [AppRoute] = []
 
     var body: some View {
-        tabs
-        // Keep route edit owners mounted beneath the connection reminder.
+        // Keep the tab graph mounted inside an owned UIKit view. Hide that exact
+        // view while the separate connection cover remains visible and accessible.
+        MountedTabContent(content: tabs, isCovered: store.serverUnreachable)
+        // The inner UIKit host owns physical and keyboard safe areas once.
+        .ignoresSafeArea(.all)
         .allowsHitTesting(!store.serverUnreachable)
-        .accessibilityHidden(store.serverUnreachable)
         .overlay {
             if store.serverUnreachable {
                 ServerUnreachableView { await store.refresh() }
@@ -150,5 +153,58 @@ struct AppShell: View {
 
     private func detail(_ route: AppRoute) -> some View {
         RouteDestination(route: route)
+    }
+}
+
+/// Own the content boundary rather than infer a UIKit ancestor from SwiftUI.
+/// Hiding the child view retains its controller, SwiftUI graph, and route state.
+private struct MountedTabContent<Content: View>: UIViewControllerRepresentable {
+    let content: Content
+    let isCovered: Bool
+
+    func makeUIViewController(context: Context) -> Controller {
+        Controller(root: Root(content: content, environment: context.environment), isCovered: isCovered)
+    }
+
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.isCovered = isCovered
+        controller.host.rootView = Root(content: content, environment: context.environment)
+        controller.host.view.isHidden = isCovered
+    }
+
+    struct Root: View {
+        let content: Content
+        let environment: EnvironmentValues
+        var body: some View { content.environment(\.self, environment) }
+    }
+
+    final class Controller: UIViewController {
+        let host: UIHostingController<Root>
+        var isCovered: Bool
+
+        init(root: Root, isCovered: Bool) {
+            host = UIHostingController(rootView: root)
+            self.isCovered = isCovered
+            super.init(nibName: nil, bundle: nil)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override func loadView() {
+            view = UIView()
+            view.backgroundColor = .clear
+            addChild(host)
+            host.view.backgroundColor = .clear
+            host.view.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(host.view)
+            NSLayoutConstraint.activate([
+                host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                host.view.topAnchor.constraint(equalTo: view.topAnchor),
+                host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            ])
+            host.view.isHidden = isCovered
+            host.didMove(toParent: self)
+        }
     }
 }

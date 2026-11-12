@@ -16,9 +16,11 @@ PORT = 18763
 
 
 def main():
+    if "--review" not in sys.argv:
+        raise SystemExit("Notification delivery is a one-off check. Run with --review.")
     if "--locked" not in sys.argv:
         return subprocess.call(
-            ["lockf", "/tmp/panels-PanelsLaneB.lock", sys.executable, __file__, "--locked"]
+            ["lockf", "/tmp/panels-PanelsLaneB.lock", sys.executable, __file__, *sys.argv[1:], "--locked"]
         )
     devices = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "--json"]))
     if not any(
@@ -61,7 +63,7 @@ def main():
                 "-project",
                 str(ROOT / "ios/Panels.xcodeproj"),
                 "-scheme",
-                "PanelsNotifications",
+                "PanelsReview",
                 "-configuration",
                 "Debug",
                 "-destination",
@@ -78,8 +80,7 @@ def main():
                 "1",
                 "PRODUCT_BUNDLE_IDENTIFIER=" + BUNDLE,
                 "CODE_SIGNING_ALLOWED=NO",
-                "-only-testing:PanelsTests/NotificationTests",
-                "-only-testing:PanelsNotificationUITests/NotificationDeliveryTests",
+                "-only-testing:PanelsReviewUITests/NotificationDeliveryTests/testDeliveryAndNativeTapDestinations",
                 "test",
             ]
         )

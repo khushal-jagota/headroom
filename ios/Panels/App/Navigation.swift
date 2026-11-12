@@ -13,7 +13,8 @@ enum AppRoute: Hashable {
 
 struct RouteDestination: View {
     let route: AppRoute
-    @State private var goalEdits = PageSessionRoute()
+    @Environment(AppStore.self) private var store
+    private var goalEdits: PageSessionRoute { store.goalEdits }
     var body: some View {
         // Roots use the system default. Hide here for every detail route and
         // its pushed children; root visibility overrides compete with this rule.

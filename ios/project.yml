@@ -68,6 +68,18 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking: YES
         TEST_TARGET_NAME: Panels
+  PanelsReviewUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [PanelsReviewUITests]
+    dependencies:
+      - target: Panels
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.panels.ios.review-uitests
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking: YES
+        TEST_TARGET_NAME: Panels
 schemes:
   Panels:
     build:
@@ -81,3 +93,9 @@ schemes:
         Panels: all
     test:
       targets: [PanelsTests, PanelsNotificationUITests]
+  PanelsReview:
+    build:
+      targets:
+        Panels: all
+    test:
+      targets: [PanelsReviewUITests]

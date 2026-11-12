@@ -14,7 +14,7 @@ struct GoalTextSubmission: Sendable {
     let revision: Int
 }
 
-/// A route owns unfinished edits and reads shared accepted Goal or holder-page data.
+/// The app session owns unfinished edits and reads shared accepted Goal or holder-page data.
 /// Goal writes stay outside the message outbox: no automatic replay.
 @MainActor @Observable final class PageSession {
     static func session(id: String, api: APIClient, initial: GoalRecord? = nil, resources: ResourceOwner? = nil) -> PageSession {
@@ -182,7 +182,7 @@ struct GoalTextSubmission: Sendable {
     func prune() { sessions = sessions.filter { selected.contains($0.key) || $0.value.hasUnfinishedEdits } }
 }
 
-/// The route owns this object above replaceable document views. Clean previous
+/// AppStore owns this object across route and document recreation. Clean previous
 /// selections disappear immediately; unfinished edits stay until Save or discard.
 @MainActor @Observable final class PageSessionRoute {
     let goals = PageSessionCollection()
