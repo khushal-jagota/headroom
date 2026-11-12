@@ -9,6 +9,7 @@ import { dictionaryBody, scalarQueries } from '../../list_reads/http.ts';
 import { read_ticket } from '../../tickets/data/index.ts';
 import { ConversationBackendKey } from '../contracts.ts';
 import { Fields, body_fields, object } from '../http/intake.ts';
+import type { ConversationHttpWriteScope } from '../http/writes.ts';
 import { resolve_usage_model_scopes } from '../backend_state.ts';
 import type { BackendHttpRuntime } from './contracts.ts';
 import type { CodexSignInService } from './provider_contracts.ts';
@@ -53,8 +54,28 @@ function sign_in_service(
     throw new HttpError(404, `${key} cannot be signed in from Panels`);
   return runtime.codex_sign_in;
 }
-export function createBackendRoutes(runtime: BackendHttpRuntime): FastifyPluginAsync<AreaServices> {
+export interface BackendRouteOptions {
+  readonly available: boolean;
+  readonly writes: ConversationHttpWriteScope;
+}
+export function createBackendRoutes(
+  runtime: BackendHttpRuntime,
+  options: BackendRouteOptions,
+): FastifyPluginAsync<AreaServices> {
   return async (app, services) => {
+    // Runtime dependency resolution precedes Python's body/query/path validation,
+    // but malformed JSON is rejected by the transport before dependencies run.
+    app.addHook('preValidation', async () => {
+      if (!options.available) throw new HttpError(503, 'the conversation system is unavailable');
+    });
+    // Even catalog GETs can start external probes and mutate cached observations.
+    // Own all eight handlers through completion under the same shutdown seal.
+    app.addHook('onRoute', (route) => {
+      const handler = route.handler;
+      route.handler = async function (request, reply) {
+        return options.writes.run(() => handler.call(this, request, reply));
+      };
+    });
     const requests = new WeakMap<FastifyRequest, { signal: AbortSignal; release(): void }>();
     app.addHook('onRequest', async (request, reply) => {
       const controller = new AbortController();
@@ -84,6 +105,8 @@ export function createBackendRoutes(runtime: BackendHttpRuntime): FastifyPluginA
       };
     });
     app.post('/backends', async (request, reply) => {
+      // Ctx validates identity only. Python imposes no owner-only rule here.
+      services.identity(request);
       const refresh_requested = refresh(request.query);
       if (!dictionaryBody(request.body, reply)) return;
       const raw = request.body;

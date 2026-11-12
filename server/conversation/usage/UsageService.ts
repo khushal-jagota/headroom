@@ -12,6 +12,8 @@ import type {
   UsageSummaryInput,
 } from './contracts.ts';
 import type { UsageWorkerRequest, UsageWorkerResponse } from './workerProtocol.ts';
+import type { StopOptions } from '../../lifecycle/contracts.ts';
+import { observe_shutdown } from '../shutdown.ts';
 
 /** File-backed workers inherit runtime switches, never the parent's eval entry. */
 function workerExecArgv(): string[] {
@@ -38,8 +40,9 @@ export class UsageService implements RecordedUsageService {
   private worker: Worker | undefined;
   private sequence = 0;
   private closed = false;
-  private stopping: Promise<void> | undefined;
-  private resourceJoin: Promise<unknown> | undefined;
+  private stopCleanup: Promise<void> | undefined;
+  private resourceJoin: Promise<void> | undefined;
+  private workerExit: Promise<void> | undefined;
   private readonly operations = new Set<Promise<unknown>>();
   private readonly pending = new Map<
     number,
@@ -77,6 +80,7 @@ export class UsageService implements RecordedUsageService {
       },
     });
     this.worker = worker;
+    this.workerExit = new Promise<void>((resolve) => worker.once('exit', () => resolve()));
     worker.on('message', (message: UsageWorkerResponse) => this.receive(worker, message));
     worker.on('error', (error) => {
       if (this.worker === worker) this.fail(error);
@@ -187,35 +191,45 @@ export class UsageService implements RecordedUsageService {
   refreshRates(): Promise<UsagePricing> {
     return this.request({ kind: 'refresh', id: ++this.sequence });
   }
-  async finish_operations(): Promise<void> {
+  private async finish_current_operations(): Promise<void> {
     while (this.operations.size !== 0) await Promise.allSettled([...this.operations]);
     if (this.closed) await this.resourceJoin;
   }
-  stop(options: { readonly deadline: number }): Promise<void> {
-    if (this.stopping) return this.stopping;
-    this.closed = true;
-    this.fail(new UsageServiceStopped());
-    const worker = this.worker;
-    this.stopping = (async () => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      this.resourceJoin = Promise.all([
-        worker?.terminate(),
-        Promise.allSettled([...this.callbackOperations]),
+  finish_operations(options: Partial<StopOptions> = {}): Promise<void> {
+    return observe_shutdown(
+      this.finish_current_operations(),
+      options,
+      'Usage operations remain unfinished at the shutdown deadline.',
+    );
+  }
+  async settled(): Promise<void> {
+    this.worker?.ref();
+    await this.finish_current_operations();
+    while (this.callbackOperations.size !== 0)
+      await Promise.allSettled([...this.callbackOperations]);
+    await (this.resourceJoin ?? this.workerExit);
+  }
+  stop(options: StopOptions): Promise<void> {
+    if (this.stopCleanup === undefined) {
+      this.closed = true;
+      this.fail(new UsageServiceStopped());
+      const worker = this.worker;
+      const cleanup = Promise.allSettled([
+        Promise.resolve().then(() => worker?.terminate()),
+        this.workerExit,
+        ...this.callbackOperations,
+        ...this.operations,
       ]);
-      try {
-        await Promise.race([
-          this.resourceJoin,
-          new Promise<never>((_resolve, reject) => {
-            timer = setTimeout(
-              () => reject(new Error('Usage resources did not stop before the shutdown deadline.')),
-              Math.max(0, (options.deadline - performance.now() / 1000) * 1000),
-            );
-          }),
-        ]);
-      } finally {
-        clearTimeout(timer);
-      }
-    })();
-    return this.stopping;
+      this.resourceJoin = cleanup.then(() => undefined);
+      this.stopCleanup = cleanup.then((results) => {
+        const termination = results[0];
+        if (termination?.status === 'rejected') throw termination.reason;
+      });
+    }
+    return observe_shutdown(
+      this.stopCleanup,
+      options,
+      'Usage resources did not stop before the shutdown deadline.',
+    );
   }
 }

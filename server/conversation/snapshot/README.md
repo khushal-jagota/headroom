@@ -19,9 +19,9 @@ these boundaries without a provider executable or network request.
 | Interface | Real implementation owner | Current production binding |
 | --- | --- | --- |
 | `ClaudeModelCatalogSource` | Claude adapter, Unit 18 | `production.ts` binds `probe_claude_model_catalog` from PR 747 |
-| `CodexModelCatalogSource` | Codex adapter, Unit 17 | Open |
-| `SavedCodexLoginSource` | Codex adapter, Unit 17 | Open |
-| `CodexSignInService` | Codex adapter, Unit 17 | Open |
+| `CodexModelCatalogSource` | Codex adapter, Unit 17 | `production.ts` binds `create_codex_providers` from merged PR 779 |
+| `SavedCodexLoginSource` | Codex adapter, Unit 17 | Bound through `create_codex_providers` with durable rejection memory |
+| `CodexSignInService` | Codex adapter, Unit 17 | Bound through `create_codex_providers` with database and clock |
 | `HermesModelCatalogSource` | Hermes adapter, Unit 16 | Open |
 
 `StoredCodexLogin`, `CodexLoginGeneration`, `CodexLoginRejectionMemory`, and
@@ -31,13 +31,13 @@ owns its child and must stop it in `shutdown`. Catalog readers translate only th
 declared unavailable errors. The Hermes source returns the retained Python
 inventory script's command outcome, including its output and error text.
 
-`../backend_usage/contracts.ts` defines `CodexUsageSource`. Unit 17 must supply a
-short-lived `account/rateLimits/read` operation. It must initialize the app server,
+`../backend_usage/contracts.ts` defines `CodexUsageSource`. Unit 17 supplies the
+bound short-lived `account/rateLimits/read` operation through `create_codex_providers`. It must initialize the app server,
 honor the supplied 30-second deadline and cancellation signal, and stop and join
 the child before it resolves or rejects. It reports timeout, rejected requests,
 and duplicate login with the declared usage errors. Pass that source into
 `CodexUsageAdapter`, then inject the adapter through `BackendProviders.usage`.
-This real binding remains open. Hermes intentionally has no usage adapter.
+This real binding is composed in `production.ts`. Hermes intentionally has no usage adapter.
 
 `CodexUsageSource` returns the raw JSON text of the `account/rateLimits/read`
 result. The source must preserve numeric tokens instead of parsing and
@@ -67,4 +67,15 @@ catalogs. `testing/ticket_models.ts` owns the eleventh browser control, which sw
 the same source that the backend routes read. Direct checks compare full cards,
 all eight HTTP routes, source rows, recording calls, and provider limit decisions
 against Python. They do not prove real provider login, child lifetime, network
-access, or the open Codex and Hermes bindings. Browser checks run in hosted CI.
+access, or the open Hermes binding. Browser checks run in hosted CI.
+
+The comparison host in `server/test_host.ts` supplies unavailable providers and
+a fixed `TicketModelSnapshots` source. Its HTTP comparisons prove route decisions
+and projections, not real provider bindings. `test_unit17_provider_parity` in
+`tests/compare/direct/test_unit17_providers.py` exercises the Codex implementations
+against a scripted app server, including a real `create_codex_providers` composition
+for sign-in shutdown. `test_unit18_model_catalog` in
+`tests/compare/direct/test_unit18_startup.py` compares Claude catalog transformation
+with a fake SDK handshake. `test_unit18_adapter_real_core_parity` in
+`tests/compare/direct/test_unit18_adapter.py` exercises its adapter through a local
+scripted CLI and the real core. None proves an external provider account or network.
