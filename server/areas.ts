@@ -17,6 +17,12 @@ import { configure_goal_resources } from './goals/resource_versions.ts';
 import { configure_goal_manager_documents } from './goals/manager_documents.ts';
 import { routes as credentials } from './credentials/routes.ts';
 import { ManagerWakeLoop } from './manager_wakes/runtime.ts';
+import {
+  all_sender_messages_are_manager_notices,
+  admit_notice_batch,
+  create_ticket_failure_notice,
+} from './manager_wakes/data.ts';
+import { PromptDispatchDecision } from './conversation/contracts.ts';
 import type { OwnedAreaContext } from './core/authority/register.ts';
 import { routes as managers } from './managers/routes.ts';
 import { routes as messageDelivery } from './message_delivery/routes.ts';
@@ -96,6 +102,20 @@ export function createAreasRuntime(
       conversation.initialize(database, config, {
         ...deployment_participants(config.db_path),
         integer_now: () => clock.nowUnix(),
+        all_are_notices: all_sender_messages_are_manager_notices,
+        failure_notice: create_ticket_failure_notice,
+        admit_notice(tx, conversation_id, sender_message_id, now) {
+          const [is_manager_notice, suppression_reason] = admit_notice_batch(tx, {
+            conversation_id,
+            sender_message_id,
+            now,
+          });
+          return new PromptDispatchDecision({
+            sender_message_id,
+            is_manager_notice,
+            suppression_reason,
+          });
+        },
         prepare_attention(tx, conversation_id) {
           const snapshot = conversation_attention_snapshot(tx, conversation_id);
           if (snapshot === null) return null;

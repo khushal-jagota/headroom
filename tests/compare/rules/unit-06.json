@@ -28,7 +28,6 @@
     "conversation_view_rows": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
     "conversation_view_turns": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
     "conversation_view_groups": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
-    "conversation_view_lookups": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
-    "conversation_runtime_epoch": "The Python app starts its dormant real core and creates its process ownership epoch. Unit 6 has no real core or conversation rows. Unit 15 owns this lifecycle fence."
+    "conversation_view_lookups": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections."
   }
 }
