@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema

@@ -14,8 +14,8 @@ from fastapi.params import Body as BodyParameter
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
+from tests.support.api_app import _app
 from tests.support.measure_sources import configured_source
-from tests.unit.test_scheduled_ticket_authority import _app
 
 from planner.cli.main import main
 from planner.core.clock import TestClock as FakeClock
@@ -59,7 +59,10 @@ def _schema_shape(
         return value
     if "$ref" in value:
         target = _reference(document, value["$ref"])
+        # FastAPI qualifies shared recursive aliases by input/output mode. The
+        # expanded body still compares exactly; cycle labels are not semantics.
         name = target.get("title", value["$ref"].rsplit("/", 1)[-1])
+        name = name.removesuffix("-Input").removesuffix("-Output")
         if name in active:
             return {"recursive": name}
         return _schema_shape(target, document, active | {name})
@@ -123,12 +126,13 @@ def test_cli_and_openapi_publish_closed_recursive_authoring_contracts(tmp_db: Co
         "title", "project_id", "kind", "primary_checklist_block_id"
     }
     assert set(branches["quantitative"]["required"]) == {
-        "title", "project_id", "kind", "primary_chart"
+        "title", "project_id", "kind", "primary_chart", "completion_rule"
     }
+    assert "default" not in branches["quantitative"]["properties"]["completed"]
     for branch in branches.values():
-        assert "expected_revision" in branch["properties"]
+        assert "expected_revision" not in branch["properties"]
         assert "default" not in branch["properties"]["kind"]
-    assert edit_schema["required"] == ["expected_revision"]
+    assert not edit_schema.get("required")
     for field in ("deadline", "primary_chart", "primary_checklist_block_id"):
         assert {"type": "null"} in branches["binary"]["properties"][field]["anyOf"]
     assert "anyOf" not in branches["quantitative"]["properties"]["primary_chart"]
@@ -248,15 +252,19 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
     tmp_db: Connection,
 ) -> None:
     """The reference must be usable at the canonical writer, with safe repair guidance."""
-    from tests.unit.test_goal_pages import create
+    from tests.unit.test_goal_pages import numeric_rule
 
+    from planner.managers.data import create_manager
+
+    clock = FakeClock(datetime(2026, 11, 4, tzinfo=UTC))
+    manager = create_manager(tmp_db, title="Examples", project_id="project_vylo", clock=clock)
+    foreign = create_manager(tmp_db, title="Other examples", project_id="project_vylo", clock=clock)
     goal_examples = _guidance("goal", "schema", "create")["examples"]
     goal_body = goal_examples["chief_goal"]
     source_body = _guidance("measure-source", "schema")["examples"]["goal_source"]
     measure_body = _guidance("measure", "schema")["examples"]["taken_daily_count"]
     chart_body = _guidance("goal", "schema", "edit")["examples"]["primary_line_chart"]
-    foreign = create(tmp_db)
-    foreign_headers = {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": foreign.id}
+    foreign_headers = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": foreign.id}
     sentinel = "private-provider-value-do-not-echo"
 
     def invalid(response: Any, *fragments: str) -> None:
@@ -307,12 +315,11 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
                     ("clear_checklist_deadline", None),
                 ):
                     edit = deepcopy(edit_examples[edit_name])
-                    edit["expected_revision"] = accepted["revision"]
                     # These complete-page examples apply to their matching fictional
                     # create example; real pages must retain all accepted content.
                     changed = client.patch(
                         f"/api/goals/{accepted['id']}", json=edit,
-                        headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": accepted["id"]},
+                        headers={"X-Plan-Actor": "chief"},
                     )
                     assert changed.status_code == 200, changed.text
                     accepted = changed.json()
@@ -327,11 +334,16 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
                 assert reread.status_code == 200, reread.text
                 assert reread.json()["page"] == saved_page
         goal_body["project_id"] = "project_vylo"
+        goal_body["completion_rule"] = numeric_rule(tmp_db)
+        goal_body["primary_chart"]["measure_id"] = (
+            goal_body["completion_rule"]["actual"]["measure_id"]
+        )
+        goal_body.update(holder_kind="manager", holder_id=manager.id)
         created = client.post("/api/goals", json=goal_body, headers={"X-Plan-Actor": "chief"})
         assert created.status_code == 200, created.text
         goal = created.json()
         goal_id = goal["id"]
-        headers = {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal_id}
+        headers = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": manager.id}
         source_body["project_id"] = "project_vylo"
         source_body["responsible"]["id"] = goal_id
 
@@ -408,7 +420,6 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             "day",
         )
         assert measure["formula"] is None
-        chart_body["expected_revision"] = goal["revision"]
         chart_body["primary_chart"]["measure_id"] = measure["id"]
 
         # Populated native chart failure; discriminator-only probes are checked separately.
@@ -453,9 +464,15 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             "bar",
             "gauge",
         )
-        # Empty objects were deliberate setup probes, not failed valid product operations.
-        for path in ("/api/measure-sources", "/api/measures"):
-            invalid(client.post(path, json={}, headers=headers), "required")
+        # Required-field probes retain valid assignment context where intake needs it.
+        invalid(
+            client.post("/api/measure-sources", json={}, headers=headers),
+            "$.responsible: expected an object with kind and id",
+        )
+        invalid(
+            client.post("/api/measures", json={"source_id": source_id}, headers=headers),
+            "$.origin", "required",
+        )
         invalid(
             client.patch(
                 f"/api/goals/{goal_id}",
@@ -475,15 +492,16 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             "unknown",
         )
 
-        # Runtime parsing order is unchanged: source/measure syntax precedes authority;
-        # goal edits check ownership, then revision, before inspecting authored content.
+        # Intake parses assignment context before permission checks. Authored fields
+        # reach command validation only after the request passes intake.
         invalid(
             client.post("/api/measure-sources", json=guessed_source, headers=foreign_headers),
             "$.responsible.goal_id",
         )
-        invalid(
-            client.post("/api/measures", json=guessed_measure, headers=foreign_headers), "unknown"
-        )
+        denied = client.post("/api/measures", json=guessed_measure, headers=foreign_headers)
+        assert denied.status_code == 400, denied.text
+        assert denied.json()["error"]["code"] == "agent_forbidden"
+        assert sentinel not in denied.text
         assert (
             client.post("/api/measures", json=measure_body, headers=foreign_headers).json()[
                 "error"
@@ -494,7 +512,7 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             client.patch(
                 f"/api/goals/{goal_id}",
                 headers=foreign_headers,
-                json={"expected_revision": 0, "primary_chart": guessed_chart},
+                json={"primary_chart": guessed_chart},
             ).json()["error"]["code"]
             == "agent_forbidden"
         )
@@ -502,9 +520,9 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             client.patch(
                 f"/api/goals/{goal_id}",
                 headers=headers,
-                json={"expected_revision": 0, "primary_chart": guessed_chart},
+                json={"primary_chart": guessed_chart},
             ).json()["error"]["code"]
-            == "stale_claim"
+            == "validation"
         )
         saved = client.patch(f"/api/goals/{goal_id}", json=chart_body, headers=headers)
         assert saved.status_code == 200, saved.text
@@ -528,7 +546,7 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
         minimal = client.post(
             "/api/goals",
             headers={"X-Plan-Actor": "chief"},
-            json={"title": "Defaults", "project_id": "project_vylo", "expected_revision": 99,
+            json={"title": "Defaults", "project_id": "project_vylo",
                   "kind": "binary", "primary_checklist_block_id": None},
         )
         assert minimal.status_code == 200, minimal.text
@@ -621,8 +639,8 @@ def test_explicit_participants_constructor_executes_registered_lifespan(tmp_db: 
     from planner.core.server import create_app
     from planner.credentials.contracts import CredentialResolver
     from planner.measure_sources.contracts import RunAdmission, RunMetrics, RunResult
+    from planner.measure_sources.registry import build_participants
     from planner.measures.contracts import CandidateObservation
-    from planner.scheduled_tickets.registry import build_participants
 
     class FixtureRuntime:
         def __init__(self) -> None:
@@ -681,21 +699,33 @@ def test_explicit_participants_constructor_executes_registered_lifespan(tmp_db: 
     assert not any(thread.name.startswith("measure-source") for thread in threading.enumerate())
 
 
-def test_goal_source_authority_covers_own_definitions_scripts_runs_and_schedule(
-    tmp_db: Connection,
+def test_goal_holder_authority_covers_definitions_scripts_runs_and_schedule(
+    tmp_db: Connection, fake_clock: FakeClock,
 ) -> None:
     from tests.unit.test_goal_pages import create
 
     from planner.core.contracts import Principal, PrincipalKind
     from planner.datasets.data import read_dataset
+    from planner.managers.data import create_manager
     from planner.measure_sources import data
 
-    own, other = create(tmp_db), create(tmp_db)
+    holder = create_manager(tmp_db, title="Owner", project_id="project_vylo", clock=fake_clock)
+    foreign_holder = create_manager(
+        tmp_db, title="Other", project_id="project_vylo", clock=fake_clock
+    )
+    own = create(tmp_db, holder_kind="manager", holder_id=holder.id)
+    other = create(tmp_db, holder_kind="manager", holder_id=foreign_holder.id)
     actor = Principal(PrincipalKind.goal, own.id)
-    headers = {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": own.id}
-    other_headers = {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": other.id}
+    headers = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": holder.id}
+    other_headers = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": foreign_holder.id}
     managed, _ = configured_source(tmp_db)
     with TestClient(_app(tmp_db)) as client:
+        retired_goal = client.patch(
+            f"/api/goals/{own.id}",
+            headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": own.id},
+            json={"expected_revision": own.revision, "title": "Retired actor"},
+        )
+        assert retired_goal.json()["error"]["code"] == "agent_forbidden"
         body = {
             "name": "Goal source",
             "project_id": "project_vylo",
@@ -762,7 +792,9 @@ def test_goal_source_authority_covers_own_definitions_scripts_runs_and_schedule(
             json={"expected_revision": source.source_revision, "text": "pass"},
         )
         assert submitted.status_code == 200, submitted.text
-        assert submitted.json()["active_script"]["authored_by"] == {"kind": "goal", "id": own.id}
+        assert submitted.json()["active_script"]["authored_by"] == {
+            "kind": "manager", "id": holder.id
+        }
         source = data.read_source(tmp_db, source_id)
         scheduled = client.put(
             f"/api/measure-sources/{source_id}/schedule",

@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from tests.support.executor_inbox import lookup_receipt
+from tests.support.executor_presence import mac_identity, make_current
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
 from planner.conversation.backends.contracts import TurnToken
@@ -23,8 +24,7 @@ from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import ChildReference, ExecutorIdentity
+from planner.execution_identity import ChildReference
 from planner.executor.mac_outbox import MacOutbox, OutboxEntry
 from planner.executor.protocol import (
     ChildCommand,
@@ -62,20 +62,17 @@ class CrashAfterCanonicalOwnerMessage(SqliteProcessConversationSystem):
 
 
 @pytest.mark.parametrize("committed", [True, False])
-def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
+def test_help_replay_after_domain_commit_keeps_original_holder(
     tmp_db: Connection,
     tmp_path: Path,
     committed: bool,
 ) -> None:
     async def run() -> None:
         path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+        identity = mac_identity()
+        make_current(path, identity)
         endpoint = VpsExecutor(path, RealClock())
         store = endpoint.inbox.store
-        identity = ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1
-        )
-        store.runs.begin_connection(identity)
-        store.runs.mark_ready(identity)
         ticket = data.create_ticket(
             tmp_db,
             title="Native message source",
@@ -88,7 +85,7 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
             employee_launch_model="scripted",
         )
         sender = Principal(PrincipalKind.ticket, ticket.id)
-        reference = ChildReference("incarnation", "child", "c_source")
+        reference = ChildReference(identity.executor_incarnation, "child", "c_source")
         native_calls: list[ChildOperation] = []
 
         async def native(command: ChildCommand) -> CommandOutcome:
@@ -168,15 +165,6 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
             saved = lookup_receipt(store, envelope.sender_id, envelope.submission_id)
             assert saved is not None
             assert saved.result["fate"] == ("recorded" if committed else "uncertain")
-            assert (
-                bool(
-                    tmp_db.execute(
-                        "SELECT 1 FROM conversation_reply_credits WHERE conversation_id='c_source' "
-                        "AND principal_kind='owner' AND principal_id='owner'"
-                    ).fetchone()
-                )
-                is committed
-            )
             changed = data.accept_proposal(
                 tmp_db,
                 ticket.id,
@@ -201,15 +189,6 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
                 "conversation_id": "c_source" if committed else None,
                 "fate": "recorded" if committed else "uncertain",
             }
-            assert (
-                bool(
-                    tmp_db.execute(
-                        "SELECT 1 FROM conversation_reply_credits WHERE conversation_id='c_source' "
-                        "AND principal_kind='owner' AND principal_id='owner'"
-                    ).fetchone()
-                )
-                is committed
-            )
             assert system.owner_deliveries == int(committed)
             assert native_calls == native_before
             rows = tmp_db.execute(
@@ -218,9 +197,11 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
             ).fetchone()[0]
             assert rows == int(committed)
             spool.close()
+            await recovered_endpoint.close()
         finally:
             for state in system._conversations.values():
                 state.child = None
             await system.shutdown()
+            await endpoint.close()
 
     asyncio.run(run())

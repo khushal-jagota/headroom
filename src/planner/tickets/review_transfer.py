@@ -104,24 +104,9 @@ async def _deliver(
                 sender_label="Panels",
                 sender=Principal(PrincipalKind.ticket, ticket_id),
                 recipient=OWNER_PRINCIPAL,
-                credit_explicit_reply=False,
             )
         return
-    if target.kind is PrincipalKind.ticket:
-        async with conversation_start.conversation_link_lock(f"ticket:{target.id}"):
-            ticket = tickets_data.read_ticket(conn, target.id)
-            delivered = await conversation_start.send_to_ticket_conversation(
-                system,
-                conn,
-                target.id,
-                content,
-                conversation_id=ticket.conversation_id,
-                sender_label="Panels",
-                mode=PromptDeliveryMode.queue,
-                reply_requested=False,
-                now=now,
-            )
-    elif target.kind is PrincipalKind.manager:
+    if target.kind is PrincipalKind.manager:
         async with managers_service.manager_lifecycle_lock(target.id):
             item = managers_data.read_manager(conn, target.id).item
             async with conversation_start.conversation_link_lock(
@@ -138,7 +123,6 @@ async def _deliver(
                     ),
                     sender_label="Panels",
                     mode=PromptDeliveryMode.queue,
-                    reply_requested=False,
                     required_manager_id=item.id,
                 )
     else:
@@ -154,7 +138,6 @@ async def _deliver(
                 ),
                 sender_label="Panels",
                 mode=PromptDeliveryMode.queue,
-                reply_requested=False,
             )
     if isinstance(delivered.fate, PromptDeliverySuppressed):
         _LOG.info(

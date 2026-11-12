@@ -29,6 +29,7 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.runtime.worker_step_readiness_loop import WorkerStepReadinessLoop
+from planner.worker_types.store import definition_from_json, workflow_from_preset, workflow_to_json
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -58,7 +59,7 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "Read Panels skills from this workspace's .agents/skills directory. "
         "Use panels worker my-ticket brief to inspect the current Ticket. "
         "Submit the current field by piping its text into panels worker propose. "
-        "The explicit reply requirement uses panels send-message. "
+        "Send messages with panels send-message. "
         "Do not inspect or edit other workspaces.\n"
     )
     monkeypatch.setenv("PATH", f"{ROOT / '.venv' / 'bin'}:{os.environ['PATH']}")
@@ -201,7 +202,7 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             project = await post("project", "/api/projects", {"name": "Isolated Luna proof"})
             item = await post(
                 "orchestrator",
-                "/api/items",
+                "/api/managers",
                 {"title": "Isolated Luna supervisor", "project_id": project["id"]},
             )
             brief = (
@@ -214,14 +215,22 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                 "Do not create other Tickets, change placement, use live systems, "
                 "or call any server except "
                 f"{server_url}. While a proposal awaits approval, respond to messages only. "
-                "For proof messages, use each authenticated reply target once with its nonce."
+                "For proof messages, send each requested reply once with its nonce."
             )
+            historical = definition_from_json(
+                (ROOT / "tests/support/retired_general_worker_type.json").read_text()
+            )
+            workflow = json.loads(
+                workflow_to_json(workflow_from_preset(historical))
+            )
+            workflow.pop("specialist_skill")
             ticket = await post(
                 "create Worker",
                 "/api/tickets",
                 {
                     "title": "Luna ordinary lifecycle proof",
-                    "worker_type": "general",
+                    "worker_type": None,
+                    "workflow": workflow,
                     "employee_backend": "codex",
                     "employee_launch_model": "gpt-6-luna",
                     "brief": brief,
@@ -260,7 +269,7 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                 {
                     "target": {"kind": "ticket", "id": ticket_id},
                     "message": (
-                        "Reply once to this owner message via the required Panels command with "
+                        "Reply once to this owner message with panels send-message --owner and "
                         "LUNA-OWNER-REPLY-323. Do not change the pending proposal."
                     ),
                 },
@@ -304,14 +313,15 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                 "This is the isolated Luna lifecycle proof. Send exactly one message to your child "
                 f"using panels send-message --ticket {ticket_id} --message "
                 "'Reply once to your supervisor with LUNA-SUPERVISOR-REPLY-323 "
-                "using the exact required Panels target. Do not change the pending proposal.' "
+                f"using panels send-message --manager {item['id']}. "
+                "Do not change the pending proposal.' "
                 "Then reply to the owner with LUNA-SUPERVISOR-SENT-323. "
                 "Do not create or edit work. "
                 f"Only use server {server_url}."
             )
             supervisor = await post(
                 "owner starts real supervisor",
-                f"/api/items/{item['id']}/conversation/send",
+                f"/api/managers/{item['id']}/conversation/send",
                 {
                     "content": [{"piece": "text", "text": supervisor_prompt}],
                     "sender_label": "owner",

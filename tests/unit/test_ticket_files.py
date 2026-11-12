@@ -323,10 +323,12 @@ def test_html_navigation_rejects_untrusted_root_descriptors(tmp_path: Path) -> N
             assert response.json() == absent.json(), root
 
 
-def _create_goal(client: TestClient) -> str:
+def _create_goal(client: TestClient, holder_id: str | None = None) -> str:
     result = client.post(
         "/api/goals", json={"title": "Files", "project_id": "project_other", "kind": "binary",
-               "primary_checklist_block_id": None}
+               "primary_checklist_block_id": None,
+               "holder_kind": "manager" if holder_id else "chief",
+               "holder_id": holder_id}
     )
     assert result.status_code == 200, result.text
     return str(result.json()["id"])
@@ -337,11 +339,18 @@ def test_goal_file_and_catalog_authority_precedes_access_and_conditional_respons
 ) -> None:
     app, db_path = _make_app(tmp_path)
     with TestClient(app) as client:
-        goal_id = _create_goal(client)
-        foreign_id = _create_goal(client)
+        holder = client.post(
+            "/api/managers", json={"title": "File owner", "project_id": "project_other"}
+        )
+        manager = client.post(
+            "/api/managers", json={"title": "Another owner", "project_id": "project_other"}
+        )
+        assert holder.status_code == manager.status_code == 200
+        goal_id = _create_goal(client, holder.json()["id"])
+        foreign_id = _create_goal(client, manager.json()["id"])
         url = f"/files/goals/{goal_id}/artifacts/brief.md"
         catalog = f"/api/artifact-catalog/goal/{goal_id}"
-        own = {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal_id}
+        own = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": holder.json()["id"]}
         allowed = [{}, {"X-Plan-Actor": "chief"}, own]
         for headers in allowed:
             assert client.put(url, json={"content": "private"}, headers=headers).status_code == 200
@@ -351,16 +360,13 @@ def test_goal_file_and_catalog_authority_precedes_access_and_conditional_respons
             unchanged = client.get(url, headers={**headers, "If-None-Match": read.headers["etag"]})
             assert unchanged.status_code == 304
             assert unchanged.headers["cache-control"] == "private, no-cache"
-        manager = client.post(
-            "/api/managers", json={"title": "Another owner", "project_id": "project_other"}
-        )
-        assert manager.status_code == 200, manager.text
         with connect(str(db_path)) as conn:
             ticket = create_ticket(
                 conn, title="Another worker", worker_type="coding", principal=OWNER_PRINCIPAL,
                 now=1, title_max_chars=200,
             )
         refused = [
+            {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal_id},
             {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": foreign_id},
             {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": manager.json()["id"]},
             {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket.id},
@@ -371,7 +377,12 @@ def test_goal_file_and_catalog_authority_precedes_access_and_conditional_respons
             )
             assert conditional.status_code == 400
             assert conditional.json()["error"]["code"] == "agent_forbidden"
-            assert conditional.json()["error"]["detail"]["target_id"] == goal_id
+            # Removed actors fail at identity parsing; valid principals reach the
+            # goal authority gate before any file access or conditional response.
+            if headers["X-Plan-Actor"] == "goal":
+                assert conditional.json()["error"]["detail"] == {"actor": "goal"}
+            else:
+                assert conditional.json()["error"]["detail"]["target_id"] == goal_id
             assert client.get(catalog, headers=headers).status_code == 400
             assert client.put(url, json={"content": "stolen"}, headers=headers).status_code == 400
             assert client.delete(url, headers=headers).status_code == 400

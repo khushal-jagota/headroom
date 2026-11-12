@@ -1,0 +1,551 @@
+import Foundation
+import Observation
+import UniformTypeIdentifiers
+
+@MainActor @Observable final class ConversationModel {
+    var machineLocale: String?
+    var conversationID: String?
+    var draft = "" { didSet { saveDraft() } }
+    private var persistenceAPI: APIClient?
+    private var persistenceOwner: ConversationOwner?
+    private var restoring = false
+    private var customDraftID: String?
+    private var draftKey: String { customDraftID ?? "conversation:" + (persistenceOwner?.path ?? "") }
+    private func saveDraft() {
+        guard !restoring, let api = persistenceAPI else { return }
+        LocalStore.shared.saveDraft(draft, server: LocalStore.server(api.baseURL), id: draftKey)
+    }
+    func restore(owner: ConversationOwner, api: APIClient, draftID: String? = nil) {
+        guard persistenceAPI?.baseURL != api.baseURL || persistenceOwner != owner || customDraftID != draftID else { syncOutbox(); return }
+        persistenceAPI = api; persistenceOwner = owner; customDraftID = draftID; restoring = true
+        defer { restoring = false }
+        draft = LocalStore.shared.draft(server: LocalStore.server(api.baseURL), id: draftKey) ?? ""
+        if let data = try? LocalStore.shared.record(server: LocalStore.server(api.baseURL), kind: "attachments", id: draftKey)?.payload {
+            attachments = (try? JSONDecoder().decode([ConversationSend.Piece].self, from: data)) ?? []
+        }
+        if let id = conversationID,
+           let snapshot: ConversationSnapshot = api.cached("/api/conversation/conversations/\(id)/view", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: "true")]) {
+            if status != snapshot.status { status = snapshot.status }; items = snapshot.page.items; older = snapshot.page.older; loadedLens = lens
+            loadedConversationID = id
+            rememberRows(items.map(\.id))
+        }
+        syncOutbox()
+    }
+    func syncOutbox() {
+        guard let api = persistenceAPI, let owner = persistenceOwner else { return }
+        let saved = Outbox.shared.entries(LocalStore.server(api.baseURL)).filter { $0.kind == .message && $0.owner == owner && (conversationID == nil || $0.message?.conversationId == conversationID) }
+        for work in saved {
+            if let previous = work.priorMessageIDs, let first = previous.first {
+                supersededIDs.formUnion(previous)
+                retryAliases[work.id] = first
+            }
+        }
+        if conversationID == nil { conversationID = saved.last?.message?.conversationId }
+        let received = Set(items.compactMap(\.senderMessageId))
+        outgoing = saved.filter { !supersededIDs.contains($0.id) && (!received.contains($0.id) || $0.state != .sent) }.map {
+            Outgoing(id: $0.id, text: $0.message?.content.compactMap(\.text).joined(separator: "\n") ?? $0.displayText, note: $0.note, retryable: $0.state == .failed,
+                     attachments: $0.message?.content.filter { $0.piece != "text" } ?? [])
+        }
+        rememberRows(saved.map { retryAliases[$0.id] ?? $0.id })
+    }
+    var lens: ConversationLens = .focus
+    var items: [ConversationItem] = [] { didSet { if oldValue != items { projectionRevision += 1 } } }
+    var expandedBodies: [String: ConversationBody] = [:] { didSet { if oldValue != expandedBodies { projectionRevision += 1 } } }
+    var status: ConversationStatus?
+    var hasUnread = false
+    private var readThroughSequence = 0
+    private var readPositionConversationID: String?
+    var heldPrompts: [ConversationConfiguration.HeldPrompt] = [] { didSet { if oldValue != heldPrompts { projectionRevision += 1 } } }
+    var older: ConversationCursor?
+    var error: String?
+    var sending = false
+    var loadingOlder = false
+    var outgoing: [Outgoing] = [] { didSet { if oldValue != outgoing { projectionRevision += 1 } } }
+    struct Outgoing: Identifiable, Equatable {
+        let id: String
+        let text: String
+        var note: String?
+        var retryable = false
+        var attachments: [ConversationSend.Piece] = []
+    }
+    var deliveryMode = "steer"
+    var attachments: [ConversationSend.Piece] = [] {
+        didSet {
+            guard !restoring, let api = persistenceAPI else { return }
+            do { try LocalStore.shared.put(server: LocalStore.server(api.baseURL), kind: "attachments", id: draftKey, data: JSONEncoder().encode(attachments)) }
+            catch { self.error = "Attachments could not be saved: \(error.localizedDescription)" }
+        }
+    }
+    /// The one way a picked, pasted, dragged or photographed file joins the message.
+    /// Images become image pieces; anything else is a file piece.
+    @discardableResult func attach(_ data: Data, type: UTType?, fileName: String) -> Bool {
+        guard data.count <= 20_000_000 else { error = "Choose a file smaller than 20 MB."; return false }
+        let image = type?.conforms(to: .image) == true
+        attachments.append(.init(piece: image ? "image" : "file", data: data.base64EncodedString(),
+            mediaType: type?.preferredMIMEType ?? (image ? "image/jpeg" : "application/octet-stream"), fileName: fileName))
+        return true
+    }
+    private var outgoingText: [String: String] = [:]
+    private var outgoingAttachments: [String: [ConversationSend.Piece]] = [:]
+    var backendKey: String?
+    var selectedModel: String?
+    var reasoningEffort: String?
+    // What the conversation runs on, as the server last said. The server holds a message
+    // that names a different model until a new turn, so only a real change is sent.
+    private var runningModel: String?
+    private var runningEffort: String?
+    private var runChange: (model: String?, reasoningEffort: String?) {
+        guard conversationID != nil else { return (selectedModel, reasoningEffort) }
+        return (selectedModel == runningModel ? nil : selectedModel, reasoningEffort == runningEffort ? nil : reasoningEffort)
+    }
+    private var pinnedMessageIDs: Set<String> = []
+    private var rowOrder: [String] = [] { didSet { if oldValue != rowOrder { projectionRevision += 1 } } }
+    private var supersededIDs: Set<String> = [] { didSet { if oldValue != supersededIDs { projectionRevision += 1 } } }
+    private var liveRow: ConversationRow? { didSet { if oldValue != liveRow { projectionRevision += 1 } } }
+    private var liveTurnKey: String?
+    private var refreshing = false
+    private var refreshAgain = false
+    private var requestedTranscript = false
+    private var retryAliases: [String: String] = [:] { didSet { if oldValue != retryAliases { projectionRevision += 1 } } }
+
+    private var projectionRevision = 0
+    @ObservationIgnored private var projectedRevision = -1
+    @ObservationIgnored private var projectedRows: [ConversationRow] = []
+    @ObservationIgnored private(set) var projectionBuildCount = 0
+    private var liveConversationID: String?
+    private var liveReference: ConversationBodyReference?
+
+    var rows: [ConversationRow] {
+        let revision = projectionRevision
+        if projectedRevision != revision {
+            projectedRows = projectRows()
+            projectedRevision = revision
+            projectionBuildCount += 1
+        }
+        return projectedRows
+    }
+    private func projectRows() -> [ConversationRow] {
+        let received = Set(items.compactMap(\.senderMessageId))
+        let remote = items.compactMap { item -> ConversationRow? in
+            guard !supersededIDs.contains(item.id) else { return nil }
+            guard let body = expandedBodies[item.key] ?? item.body?.value else {
+                return item.body?.reference == nil ? nil : ConversationRow(id: item.id, text: "Read message", own: false, note: nil, item: item)
+            }
+            guard !body.text.isEmpty else { return nil }
+            let local = outgoing.first { $0.id == item.senderMessageId }
+            let note: String?
+            switch body.kind {
+            case "prompt": note = body.isOwnerPrompt ? "Sent" : nil
+            case "prompt_refused": note = "Not delivered · " + (body.refusalDetail ?? ConversationDelivery.refusalText(body.reason))
+            case "prompt_uncertain": note = "Delivery uncertain · do not resend"
+            case "prompt_discarded": note = "Not delivered · no longer applicable"
+            case "permission_ask", "user_input": note = body.answerSentence ?? (body.state == "live" ? "Respond on the web" : body.state?.capitalized)
+            default: note = nil
+            }
+            return ConversationRow(id: retryAliases[item.id] ?? item.id, text: body.text, own: body.isOwnerPrompt, note: note,
+                                   senderLabel: body.isPrompt && !body.isOwnerPrompt ? body.senderLabel : nil,
+                                   retryID: local?.retryable == true ? local?.id : nil, item: item)
+        }
+        var combined = remote + outgoing.filter { !received.contains($0.id) }.map {
+            ConversationRow(id: retryAliases[$0.id] ?? $0.id, text: $0.text, own: true, note: heldNote($0.id) ?? $0.note, retryID: $0.retryable ? $0.id : nil, attachments: $0.attachments)
+        }
+        if let liveRow, !liveRow.text.isEmpty { combined.append(liveRow) }
+        let positions = Dictionary(uniqueKeysWithValues: rowOrder.enumerated().map { ($0.element, $0.offset) })
+        return combined.sorted { (positions[$0.id] ?? Int.max) < (positions[$1.id] ?? Int.max) }
+    }
+    var latestMessage: ConversationRow? {
+        rows.last(where: { $0.own || $0.senderLabel != nil || ["agent_message", "user_input", "permission_ask"].contains($0.item?.body?.value?.kind ?? "") || $0.id == liveRow?.id })
+    }
+    var latestLine: String {
+        guard let row = latestMessage else { return "Conversation" }
+        let delivery = row.own && row.note != "Sent" ? row.note.map { " · " + $0 } ?? "" : ""
+        return row.previewText + delivery
+    }
+
+    private func heldNote(_ id: String) -> String? {
+        heldPrompts.first { ($0.senderMessageId ?? $0.heldPromptId) == id }?.note
+    }
+    /// Held prompts whose rows have arrived: the server's queue has moved on.
+    var deliveredHeldPromptCount: Int {
+        let received = Set(items.compactMap(\.senderMessageId))
+        return heldPrompts.filter { received.contains($0.senderMessageId ?? $0.heldPromptId) }.count
+    }
+    func applyConfiguration(_ configuration: ConversationConfiguration) {
+        heldPrompts = configuration.heldPrompts
+        if readPositionConversationID != conversationID {
+            readPositionConversationID = conversationID
+            readThroughSequence = 0
+        }
+        readThroughSequence = max(readThroughSequence, configuration.ownerReadThroughSequence ?? 0)
+        hasUnread = (status?.rest.latestOwnerMessageSequence ?? 0) > readThroughSequence
+        // The selection follows the conversation until the owner picks something else.
+        if backendKey == nil || (selectedModel == runningModel && reasoningEffort == runningEffort) {
+            backendKey = configuration.backendKey
+            selectedModel = configuration.model
+            reasoningEffort = configuration.reasoningEffort
+        }
+        runningModel = configuration.model
+        runningEffort = configuration.reasoningEffort
+        let received = Set(items.compactMap(\.senderMessageId))
+        for held in configuration.heldPrompts {
+            let id = held.senderMessageId ?? held.heldPromptId
+            if !received.contains(id), !outgoing.contains(where: { $0.id == id }) {
+                outgoing.append(.init(id: id, text: held.text, note: "Queued"))
+                pinnedMessageIDs.insert(id)
+                rememberRows([id])
+            }
+        }
+    }
+    /// Only a rendered, visible remote row supplies evidence. Status/tail sequence
+    /// and local outgoing rows cannot acknowledge content the person did not see.
+    func visibleReadBoundary(rowIDs: Set<String>, active: Bool) -> ConversationReadBoundary? {
+        guard active, let id = conversationID, loadedConversationID == id else { return nil }
+        let sequence = rows.compactMap { row -> Int? in
+            guard rowIDs.contains(row.id), let item = row.item,
+                  item.body?.reference == nil || expandedBodies[item.key] != nil else { return nil }
+            return item.sourceSequence
+        }.max() ?? 0
+        let alreadyRead = readPositionConversationID == id ? readThroughSequence : 0
+        guard sequence > alreadyRead else { return nil }
+        return ConversationReadBoundary(conversationID: id, throughSequence: sequence)
+    }
+
+    func acknowledgeVisibleRows(_ rowIDs: Set<String>, active: Bool, using service: any ConversationServing) async {
+        guard !Task.isCancelled, let boundary = visibleReadBoundary(rowIDs: rowIDs, active: active) else { return }
+        do {
+            let confirmed = try await service.markConversationRead(boundary.conversationID, through: boundary.throughSequence)
+            guard !Task.isCancelled, conversationID == boundary.conversationID else { return }
+            if readPositionConversationID != conversationID {
+                readPositionConversationID = conversationID
+                readThroughSequence = 0
+            }
+            readThroughSequence = max(readThroughSequence, confirmed)
+            hasUnread = (status?.rest.latestOwnerMessageSequence ?? 0) > readThroughSequence
+        } catch {
+            // A read acknowledgment is idempotent; keep unread state on failure.
+            // The next actual visibility change can try again, never a poll alone.
+        }
+    }
+
+    var firstUnreadID: String? {
+        guard hasUnread else { return nil }
+        return items.first { ($0.sourceSequence ?? 0) > readThroughSequence && ["agent_message", "user_input", "permission_ask"].contains($0.body?.value?.kind ?? "") }.map { retryAliases[$0.id] ?? $0.id }
+    }
+    func prepareOpening(using service: any ConversationServing) async {
+        while hasUnread, older != nil, let first = items.compactMap(\.sourceSequence).min(), first > readThroughSequence {
+            let cursor = older?.order.sequence
+            await loadOlder(using: service)
+            if error != nil || cursor == older?.order.sequence || Task.isCancelled { return }
+        }
+    }
+    func applyHeldChange(_ result: ConversationHeldChange, senderID: String) {
+        if result.discarded == true { setNote(senderID, "Not delivered · removed from queue") }
+        else if let fate = result.fate {
+            _ = applyDelivery(ConversationDelivery(conversationId: nil, fate: fate, refusalReason: result.refusalReason, reason: result.reason), id: senderID)
+        }
+    }
+    private var loadedLens: ConversationLens?
+    private var loadedConversationID: String?
+
+    func updateSpeechTranscript(_ text: String, prefix: String) {
+        let prefix = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        let transcript = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft = [prefix, transcript].filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    func refresh(using service: any ConversationServing, transcript: Bool) async {
+        requestedTranscript = requestedTranscript || transcript
+        refreshAgain = true
+        guard !refreshing else { return }
+        refreshing = true
+        defer { refreshing = false }
+        repeat {
+            refreshAgain = false
+            let transcript = requestedTranscript
+            requestedTranscript = false
+            await refreshSnapshot(using: service, transcript: transcript)
+        } while refreshAgain && !Task.isCancelled
+    }
+    private func refreshSnapshot(using service: any ConversationServing, transcript: Bool) async {
+        guard !Task.isCancelled, let id = conversationID else { return }
+        let requestedLens = lens
+        do {
+            let snapshot = try await service.conversationSnapshot(id, lens: requestedLens, transcript: transcript)
+            try await admit(snapshot, id: id, lens: requestedLens, transcript: transcript, using: service)
+            error = nil
+        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+    }
+
+    // MARK: Open tail
+
+    /// The open tail's cursor and the first order of its window, both from its last snapshot.
+    private var tailCoverage: Int?
+    private var tailFirstOrder: ConversationCursor.Order?
+    func beginTail() { tailCoverage = nil; tailFirstOrder = nil }
+
+    /// Applies one frame of the open tail without reading the transcript again. Only a
+    /// changed live-output reference or unsettled outgoing messages read anything.
+    /// Returns false when the stream must be reopened for a fresh snapshot: a reset, a
+    /// gap, an invalidated window, or a changed runtime epoch or stop, as on the web.
+    /// The server marks the window invalidated with every removed row; that removal is
+    /// applied here, as the web applies it, and the stream stays open.
+    func applyTail(_ frame: ConversationTailFrame, using service: any ConversationServing) async -> Bool {
+        guard let id = conversationID else { return false }
+        let requestedLens = lens
+        switch frame {
+        case .reset: return false
+        case .snapshot(let snapshot):
+            do {
+                try await admit(snapshot, id: id, lens: requestedLens, transcript: true, using: service)
+                guard id == conversationID, lens == requestedLens else { return false }
+                tailCoverage = snapshot.coverage?.throughSequence
+                tailFirstOrder = snapshot.page.items.first?.order
+                error = nil
+                return true
+            } catch { if !Task.isCancelled { self.error = error.localizedDescription }; return false }
+        case .changes(let changes):
+            guard let coverage = tailCoverage, changes.fromSequence == coverage, changes.lens == requestedLens.rawValue,
+                  changes.removedKeys.count > 0 || !changes.invalidatedScopes.contains(where: { $0.kind == "timeline" }),
+                  changes.status.stoppedWithoutEnding == status?.stoppedWithoutEnding,
+                  changes.status.runtimeEpoch == status?.runtimeEpoch else { return false }
+            do {
+                let (liveText, receipts) = try await lightReads(changes.status, id: id, using: service)
+                try Task.checkCancellation()
+                guard id == conversationID, lens == requestedLens, tailCoverage == coverage else { return false }
+                if status != changes.status { status = changes.status }
+                let timeline = changes.scopeChanges.first { $0.scope.kind == "timeline" }
+                let removed = Set(changes.removedKeys)
+                let leftWindow = Set(timeline?.removedKeys ?? [])
+                // Explicitly loaded history before the window keeps its rows.
+                func inWindow(_ item: ConversationItem) -> Bool {
+                    guard let first = tailFirstOrder, let order = item.order else { return true }
+                    return (order.sequence, order.slot) >= (first.sequence, first.slot)
+                }
+                var next = items.filter { !removed.contains($0.key) && !(leftWindow.contains($0.key) && inWindow($0)) }
+                let upserts = Dictionary(changes.upserts.map { ($0.key, $0) }, uniquingKeysWith: { _, latest in latest })
+                for key in timeline?.itemKeys ?? [] {
+                    guard let item = upserts[key] else { continue }
+                    if let at = next.firstIndex(where: { $0.key == key }) { next[at] = item; continue }
+                    let at = next.firstIndex { other in
+                        guard let order = item.order, let otherOrder = other.order else { return false }
+                        return (order.sequence, order.slot) < (otherOrder.sequence, otherOrder.slot)
+                    } ?? next.count
+                    next.insert(item, at: at)
+                }
+                settleLiveRow(candidates: changes.upserts, output: changes.status.liveOutput)
+                if items != next { items = next }
+                reconcileItems()
+                applyLive(changes.status.liveOutput, text: liveText, id: id)
+                applyReceipts(receipts)
+                tailCoverage = changes.coverage.throughSequence
+                error = nil
+                return true
+            } catch { if !Task.isCancelled { self.error = error.localizedDescription }; return false }
+        }
+    }
+
+    // MARK: Shared admission
+
+    /// One coherent snapshot, from an explicit read or the open tail.
+    private func admit(_ snapshot: ConversationSnapshot, id: String, lens requestedLens: ConversationLens, transcript: Bool, using service: any ConversationServing) async throws {
+        let (liveText, receipts) = try await lightReads(snapshot.status, id: id, using: service)
+        try Task.checkCancellation()
+        guard id == conversationID, lens == requestedLens else { return }
+        if status != snapshot.status { status = snapshot.status }
+        if transcript {
+            if loadedConversationID != id || loadedLens != requestedLens { items = []; expandedBodies = [:]; loadedConversationID = id; loadedLens = requestedLens; older = snapshot.page.older; liveRow = nil; liveTurnKey = nil }
+            settleLiveRow(candidates: snapshot.page.items, output: snapshot.status.liveOutput)
+            // Replace the current window; retain explicitly loaded history before it.
+            let keys = Set(snapshot.page.items.map(\.key))
+            let nextItems: [ConversationItem]
+            if let first = snapshot.page.items.first, let at = items.firstIndex(where: { $0.key == first.key }) {
+                nextItems = Array(items.prefix(at)).filter { !keys.contains($0.key) } + snapshot.page.items
+            } else { nextItems = snapshot.page.items; older = snapshot.page.older }
+            if items != nextItems { items = nextItems }
+            reconcileItems()
+        }
+        applyLive(snapshot.status.liveOutput, text: liveText, id: id)
+        applyReceipts(receipts)
+    }
+
+    /// The only reads a frame may need: changed live text and unsettled receipts.
+    private func lightReads(_ status: ConversationStatus, id: String, using service: any ConversationServing) async throws -> (String?, [ConversationReceipt]) {
+        let liveText: String?
+        if let output = status.liveOutput {
+            if id == liveConversationID, output.reference == liveReference, let liveRow { liveText = liveRow.text }
+            else { liveText = try await service.conversationLiveText(id, reference: output.reference) }
+        } else { liveText = nil }
+        let receiptIDs = Array(outgoing.map(\.id).suffix(64))
+        let receipts = receiptIDs.isEmpty ? [] : try await service.conversationReceipts(id, messageIDs: receiptIDs)
+        return (liveText, receipts)
+    }
+
+    /// A recorded reply that replaces the streamed one keeps the streamed row's identity.
+    private func settleLiveRow(candidates: [ConversationItem], output: ConversationLiveOutput?) {
+        if let liveRow, output?.reference.version != liveRow.id.replacingOccurrences(of: "live:", with: "", options: .anchored),
+           let settled = candidates.last(where: { incoming in
+               incoming.turnKey == liveTurnKey && incoming.body?.value?.kind == "agent_message" && !items.contains(where: { $0.key == incoming.key })
+           }) {
+            retryAliases[settled.id] = liveRow.id
+        }
+    }
+
+    private func reconcileItems() {
+        insertRemoteRows(items.map { retryAliases[$0.id] ?? $0.id })
+        let received = Set(items.compactMap(\.senderMessageId))
+        outgoing.removeAll { message in
+            guard received.contains(message.id) else { return false }
+            // A refusal remains retryable even after its server row arrives.
+            let delivered = items.first(where: { $0.senderMessageId == message.id })?.body?.value?.kind == "prompt"
+            if delivered { outgoingText[message.id] = nil; outgoingAttachments[message.id] = nil }
+            return delivered
+        }
+        for item in items {
+            guard let senderID = item.senderMessageId else { continue }
+            switch item.body?.value?.kind {
+            case "prompt_refused": setNote(senderID, "Not delivered", retryable: true)
+            case "prompt_discarded": setNote(senderID, "Not delivered · no longer applicable")
+            case "prompt_uncertain": setNote(senderID, "Delivery uncertain · do not resend")
+            default: break
+            }
+        }
+    }
+
+    private func applyLive(_ output: ConversationLiveOutput?, text liveText: String?, id: String) {
+        if let output, let liveText, !liveText.isEmpty {
+            liveConversationID = id
+            liveReference = output.reference
+            liveTurnKey = output.turnKey
+            let identity = "live:" + output.reference.version
+            let row = ConversationRow(id: identity, text: liveText, own: false, note: nil)
+            if liveRow != row { liveRow = row }
+            rememberRows([identity])
+        } else { liveRow = nil; liveTurnKey = nil; liveReference = nil }
+    }
+
+    private func applyReceipts(_ receipts: [ConversationReceipt]) {
+        for receipt in receipts {
+            switch receipt.fate {
+            case "prompt": setNote(receipt.senderMessageId, "Sent")
+            case "prompt_refused": setNote(receipt.senderMessageId, "Not delivered", retryable: true)
+            case "prompt_uncertain": setNote(receipt.senderMessageId, "Delivery uncertain · do not resend")
+            case "prompt_discarded": setNote(receipt.senderMessageId, "Not delivered · no longer applicable")
+            default: break
+            }
+        }
+    }
+    func loadOlder(using service: any ConversationServing) async {
+        guard !loadingOlder, let id = conversationID, let cursor = older else { return }
+        loadingOlder = true
+        defer { loadingOlder = false }
+        do {
+            let page = try await service.conversationPage(id, cursor: cursor)
+            try Task.checkCancellation()
+            guard cursor.lens == lens.rawValue, id == conversationID else { return }
+            let keys = Set(items.map(\.key))
+            let earlier = page.items.filter { !keys.contains($0.key) }
+            items.insert(contentsOf: earlier, at: 0)
+            let earlierIDs = earlier.map(\.id).filter { !rowOrder.contains($0) }
+            rowOrder.insert(contentsOf: earlierIDs, at: 0)
+            older = page.older
+        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+    }
+    func loadBody(_ item: ConversationItem, using service: any ConversationServing) async {
+        guard let id = conversationID, let reference = item.body?.reference else { return }
+        do { expandedBodies[item.key] = try await service.conversationBody(id, reference: reference) }
+        catch { self.error = error.localizedDescription }
+    }
+    @discardableResult func send(to owner: ConversationOwner, using service: any ConversationServing) async -> Bool {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sending, !text.isEmpty || !attachments.isEmpty else { return false }
+        if let api = persistenceAPI {
+            let id = UUID().uuidString
+            var message = ConversationSend(conversationId: conversationID, content: (text.isEmpty ? [] : [.init(text: text)]) + attachments,
+                senderMessageId: id, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000))
+            message.mode = deliveryMode; message.backendKey = backendKey; message.model = runChange.model; message.reasoningEffort = runChange.reasoningEffort
+            let work = PendingWork(id: id, created: .now, kind: .message, owner: owner, message: message)
+            do {
+                try LocalStore.shared.put(server: LocalStore.server(api.baseURL), kind: "outbox", id: id,
+                    data: JSONEncoder().encode(work), draft: (draftKey, ""))
+                draft = ""; attachments = []; syncOutbox()
+                Task { await Outbox.shared.drain(api: api); syncOutbox() }
+                return true
+            } catch { self.error = "Message is still in the composer: \(error.localizedDescription)"; return false }
+        }
+        let id = UUID().uuidString
+        outgoing.append(Outgoing(id: id, text: text, note: "Sending…", attachments: attachments))
+        pinnedMessageIDs.insert(id)
+        rememberRows([id])
+        outgoingText[id] = text
+        outgoingAttachments[id] = attachments
+        attachments = []
+        draft = ""
+        return await deliver(id: id, text: text, to: owner, using: service)
+    }
+
+    func retry(_ id: String, to owner: ConversationOwner, using service: any ConversationServing) async {
+        if let api = persistenceAPI { Outbox.shared.retry(id, api: api); syncOutbox(); return }
+        guard !sending, let at = outgoing.firstIndex(where: { $0.id == id && $0.retryable }) else { return }
+        let old = outgoing[at]
+        // An explicitly refused attempt has a terminal server identity. A new attempt
+        // keeps the same visual identity but gets its own delivery receipt.
+        let next = UUID().uuidString
+        retryAliases[next] = retryAliases[id] ?? id
+        supersededIDs.insert(id)
+        outgoingText[next] = outgoingText.removeValue(forKey: id)
+        outgoingAttachments[next] = outgoingAttachments.removeValue(forKey: id)
+        items.removeAll { $0.senderMessageId == id }
+        outgoing[at] = Outgoing(id: next, text: old.text, note: "Sending…", attachments: old.attachments)
+        _ = await deliver(id: next, text: outgoingText[next] ?? old.text, to: owner, using: service)
+    }
+
+    private func deliver(id: String, text: String, to owner: ConversationOwner, using service: any ConversationServing) async -> Bool {
+        sending = true
+        defer { sending = false }
+        var message = ConversationSend(conversationId: conversationID, content: (text.isEmpty ? [] : [.init(text: text)]) + (outgoingAttachments[id] ?? []), senderMessageId: id, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000))
+        message.mode = deliveryMode
+        message.backendKey = backendKey
+        message.model = runChange.model
+        message.reasoningEffort = runChange.reasoningEffort
+        do {
+            let result = try await service.sendConversation(owner, message: message)
+            if let newID = result.conversationId { conversationID = newID }
+            return applyDelivery(result, id: id)
+        } catch let error as URLError where [.notConnectedToInternet, .cannotConnectToHost, .cannotFindHost].contains(error.code) {
+            setNote(id, "Offline · waiting to retry", retryable: true)
+        } catch {
+            // Timeout or a lost response does not prove the server rejected it.
+            setNote(id, "Delivery uncertain · do not resend")
+        }
+        return false
+    }
+    private func applyDelivery(_ result: ConversationDelivery, id: String) -> Bool {
+            switch result.fate {
+            case "started", "injected": setNote(id, "Sent"); return true
+            case "queued": setNote(id, "Queued"); return true
+            case "suppressed": setNote(id, "Not delivered · \(result.reason ?? "no longer applicable")")
+            case "refused": setNote(id, "Not delivered · \(ConversationDelivery.refusalText(result.refusalReason))", retryable: true)
+            default: setNote(id, "Delivery uncertain · do not resend")
+            }
+        return false
+    }
+    private func insertRemoteRows(_ ids: [String]) {
+        var known = Set(rowOrder)
+        for (index, id) in ids.enumerated() where known.insert(id).inserted {
+            if let following = ids.dropFirst(index + 1).first(where: { rowOrder.contains($0) && !pinnedMessageIDs.contains($0) }), let at = rowOrder.firstIndex(of: following) {
+                rowOrder.insert(id, at: at)
+            } else { rowOrder.append(id) }
+        }
+    }
+    private func rememberRows(_ ids: [String]) {
+        var known = Set(rowOrder)
+        let added = ids.filter { known.insert($0).inserted }
+        if !added.isEmpty { rowOrder.append(contentsOf: added) }
+    }
+    private func setNote(_ id: String, _ note: String, retryable: Bool = false) {
+        if let at = outgoing.firstIndex(where: { $0.id == id }) {
+            outgoing[at].note = note
+            outgoing[at].retryable = retryable
+        }
+    }
+}

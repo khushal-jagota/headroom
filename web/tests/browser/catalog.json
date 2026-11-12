@@ -8,10 +8,9 @@
       "companions": ["web/tests/workspace-rail-interaction.test.ts", "web/tests/manual-measurements.test.ts", "web/tests/goal-editing.test.ts"]
     },
     {
-      "id": "shell-feedback",
-      "path": "web/tests/shell-feedback-browser.test.mjs",
+      "id": "shell-utilities",
+      "path": "web/tests/shell-utilities-browser.test.mjs",
       "cases": [
-        "feedback-inbox",
         "workspace-utility-pane"
       ],
       "companions": []
@@ -27,10 +26,9 @@
       "companions": []
     },
     {
-      "id": "configuration-schedules",
-      "path": "web/tests/configuration-schedules-browser.test.mjs",
+      "id": "configuration",
+      "path": "web/tests/configuration-browser.test.mjs",
       "cases": [
-        "scheduled-tasks",
         "skill-editors"
       ],
       "companions": []

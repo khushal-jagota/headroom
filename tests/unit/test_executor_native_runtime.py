@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import threading
@@ -27,6 +28,7 @@ from planner.conversation.backends.contracts import (
     PromptWriteRefused,
     SessionLoadFailed,
     ToolCallFinished,
+    TurnEnded,
     TurnToken,
     VendorSessionCursorRebound,
 )
@@ -39,20 +41,18 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
     WorkspacePathPolicy,
 )
-from planner.conversation.events import ToolCallStatus
+from planner.conversation.events import ConversationTurnEnding, ToolCallStatus
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import ChildReference, ExecutorIdentity
+from planner.execution_identity import ChildReference
 from planner.executor.configuration import ExecutorPaths
-from planner.executor.mac_agent_gateway import AgentGateway
-from planner.executor.mac_connection import MacConnection
 from planner.executor.mac_outbox import MacOutbox, OutboxEntry
 from planner.executor.mac_runner import MacRunner
 from planner.executor.mac_service import MacService
 from planner.executor.protocol import (
     AcceptanceReceipt,
     AnswerApplication,
+    BackendEvent,
     CanonicalSkillSnapshot,
     CanonicalSkillSource,
     ChildCommand,
@@ -69,7 +69,9 @@ from planner.executor.protocol import (
     StopRun,
     as_object,
     decode_command_arguments,
+    decode_event_arguments,
     encode_value,
+    type_adapter,
 )
 
 
@@ -157,11 +159,6 @@ def native_registry(
     registry = MacRunner(
         paths=ExecutorPaths(tmp_path / "executor"),
         incarnation=reference.executor_incarnation,
-        connection=MacConnection(
-            ExecutorIdentity(
-                PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 1
-            )
-        ),
         outbox=spool,
         factory=factory,
         message_files=ConversationMessageFiles(tmp_path / "unused"),
@@ -202,7 +199,6 @@ def acknowledge_pending(spool: MacOutbox) -> None:
             AcceptanceReceipt(
                 row.sender_id,
                 row.submission_id,
-                row.payload_sha256,
                 ReceiptDisposition.accepted,
                 {},
                 1,
@@ -223,7 +219,7 @@ def acknowledge_pending(spool: MacOutbox) -> None:
         "detail",
     ],
 )
-def test_bad_ticket_entry_does_not_lose_event_write_or_stop(
+def test_bad_ticket_entry_does_not_lose_event_or_stop(
     native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -305,38 +301,7 @@ def test_bad_ticket_entry_does_not_lose_event_write_or_stop(
         if trigger != "detail":
             assert "Skipping" in caplog.text and bad.name in caplog.text
 
-        async def settle_catalogs() -> None:
-            pass
-
-        gateway = AgentGateway(
-            runner=registry,
-            outbox=spool,
-            connection=registry.connection,
-            request_exit=asyncio.Event().set,
-            settle_catalogs=settle_catalogs,
-        )
-        child = registry._children[start.child.child_id]
-        response = await gateway.handle(
-            IpcRequest(
-                "write",
-                IpcOperation.write,
-                child.reference.child_id,
-                child.capability,
-                {
-                    "operation": "ticket.edit",
-                    "arguments": {"ticket_id": "t_one", "body": {"recap": "ok"}},
-                },
-                time.monotonic() + 0.1,
-            )
-        )
-        assert response.unconfirmed is not None and response.unconfirmed.publication == "queued"
-        published = spool.lookup("write")
-        assert published is not None
-        if trigger == "changing":
-            assert [file.relative_path for file in published.envelope.file_dependencies] == [
-                "bad",
-                "good.txt",
-            ]
+        # The gateway write and retry path is proved in test_executor_ipc_publication.
         stopped = await registry.run(
             ChildCommand("stop", start.child, ChildOperation.stop, None, StopRun())
         )
@@ -423,10 +388,25 @@ def test_native_typed_refusal_is_distinct_from_possible_emission(
         assert outcome.disposition is expected
         if isinstance(failure, _LocalSessionLoadRefused):
             assert outcome.result["error_type"] == "SessionLoadFailed"
-        assert spool.pending() == ()
-        assert registry.ask((command.command_id,))[0].outcome == outcome
+        assert registry._commands[command.command_id].outcome == outcome
         assert await registry.run(command) == outcome
         assert calls == 1
+        if operation is not ChildOperation.write_prompt:
+            assert spool.pending() == ()
+            return
+        # R1: a failed prompt ends its turn failed, once, under a fixed identity, so a
+        # repeated run publishes nothing new.
+        (failed,) = spool.pending()
+        assert failed.submission_id == (
+            "turn_failed_" + hashlib.sha256(command.command_id.encode()).hexdigest()
+        )
+        ending = decode_event_arguments(type_adapter(BackendEvent).validate_python(failed.payload))
+        assert isinstance(ending, TurnEnded) and ending.ending is ConversationTurnEnding.failed
+        assert str(ending.error_summary).startswith(
+            "The Mac could not deliver this message: "
+            if expected is CommandDisposition.refused
+            else "The Mac lost track of this message; it may have reached the agent: "
+        )
 
     asyncio.run(run())
 
@@ -457,7 +437,7 @@ def test_native_error_with_admission_text_stays_uncertain_after_confirmation_and
         assert spool.pending() == ()
 
         acknowledge_pending(spool)
-        assert registry.ask((start.command_id,))[0].outcome == outcome
+        assert registry._commands[start.command_id].outcome == outcome
         blocked = await registry.quiesce()
         assert blocked.active_turn_count == 0
         assert blocked.pending_callback_count == 0
@@ -712,7 +692,7 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
         await native.sink.report(
             turn, PermissionAskRaised(ask=BackendPermissionAsk("ask", "Allow?", None, ()))
         )
-        ask = registry.children()[0].pending_asks[0]
+        ask = next(iter(next(iter(registry._children.values())).asks.values()))
         answer = DurableAnswer("answer", ask, "allow", 1)
         original = spool.add
         failed = False
@@ -743,9 +723,9 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
         with pytest.raises(OSError, match="after callback"):
             await registry.run(outer)
         monkeypatch.setattr(spool, "add", original)
-        await registry.flush_command_output((answer.answer_id,))
+        await registry.run(outer)
         assert native.answers == [("ask", "allow")]
-        assert registry.children()[0].pending_asks == ()
+        assert next(iter(registry._children.values())).asks == {}
         assert not (await registry.quiesce()).ready
         outcome = await registry.run(outer)
         assert outcome.disposition == CommandDisposition.succeeded
@@ -863,9 +843,10 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         }[backend]
         paths = ExecutorPaths(mac_home / "executor-data")
         if policy is WorkspacePathPolicy.executor_default:
-            configured_workspace = Path("/")
-            workspace = paths.workspace
-            assert not workspace.exists()
+            # A Project start names its folder inside the Mac workspace, never a VPS path.
+            configured_workspace = Path("/projects/project_panels")
+            workspace = paths.workspace / "projects" / "project_panels"
+            assert not paths.workspace.exists()
         spool = MacOutbox(paths.spool)
         received: list[ResolvedConversationStart] = []
         constructed: list[ResolvedConversationStart] = []
@@ -904,15 +885,6 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
         registry = MacRunner(
             incarnation=reference.executor_incarnation,
-            connection=MacConnection(
-                ExecutorIdentity(
-                    PROTOCOL_VERSION,
-                    "a" * 40,
-                    SPOOL_FORMAT_VERSION,
-                    reference.executor_incarnation,
-                    1,
-                )
-            ),
             outbox=spool,
             factory=factory,
             paths=paths,
@@ -941,7 +913,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
             ConversationAccess.full,
             workspace_path_policy=policy,
         )
-        from planner.executor.vps_remote_child import MacRemoteChild
+        from tests.support.executor_turns import scripted_remote_child
 
         async def send(command: ChildCommand) -> CommandOutcome:
             outcome = await registry.run(command)
@@ -950,7 +922,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
 
         # Exercise VPS encoding and Mac hydration with distinct home directories.
         monkeypatch.setattr(Path, "home", staticmethod(lambda: vps_home))
-        remote = MacRemoteChild(reference, send, lambda start: canonical_snapshot())
+        remote = scripted_remote_child(reference, send, lambda start: canonical_snapshot())
         await remote.start(resolved, vendor_session_cursor="retained-native-session")
         assert received == constructed
         assert (paths.artifacts / "t_own" / "proof.txt").read_text() == "native artifact"
@@ -958,18 +930,22 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         assert received[0].workspace_path_policy is WorkspacePathPolicy.absolute
         if policy is WorkspacePathPolicy.executor_default:
             assert workspace.is_dir()
-            assert not (mac_home / "projects" / "owned-default").exists()
+            assert not (mac_home / "projects" / "project_panels").exists()
             marker = workspace / "retained.txt"
             marker.write_text("keep")
-            localized = registry._localize_start(
-                resolved,
-                reference,
-                "capability",
-                None,
-                {"PLAN_TICKET_ID": "t_own"},
-                paths.skills,
-            )
-            assert localized.workspace_folder == workspace
+            for subfolder, expected in (
+                ("projects/project_panels", workspace),
+                (None, paths.workspace),
+            ):
+                localized = registry._localize_start(
+                    replace(resolved, workspace_folder=Path("/")),
+                    reference,
+                    "capability",
+                    subfolder,
+                    {"PLAN_TICKET_ID": "t_own"},
+                    paths.skills,
+                )
+                assert localized.workspace_folder == expected.resolve()
             assert marker.read_text() == "keep"
         assert received[0].role_materials is not None
         identity = dict(received[0].role_materials.identity_environment_variables)
@@ -991,6 +967,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
     [
         (WorkspacePathPolicy.home_relative, "projects/missing"),
         (WorkspacePathPolicy.home_relative, "../escape"),
+        (WorkspacePathPolicy.executor_default, "../escape"),
         (WorkspacePathPolicy.absolute, None),
     ],
 )
@@ -1023,7 +1000,8 @@ def test_unavailable_or_unsafe_workspace_refuses_before_native_creation(
         assert outcome.disposition is CommandDisposition.refused
         assert outcome.result["error_type"] == "BackendSpawnFailed"
         assert native.starts == 0
-        assert registry.children() == ()
+        assert registry._children == {}
+        assert not (registry.paths.workspace.parent / "escape").exists()
 
     asyncio.run(run())
 
@@ -1046,7 +1024,7 @@ def test_native_start_requires_ticket_identity(
         assert outcome.result["error_type"] == "BackendSpawnFailed"
         assert outcome.result["error_message"] == "Mac runs require a Ticket identity"
         assert native.starts == 0
-        assert registry.children() == ()
+        assert registry._children == {}
 
     asyncio.run(run())
 
@@ -1067,7 +1045,9 @@ def test_absent_stop_orders_proof_after_output_and_preserves_old_outcomes(
             ),
         )
         first = await registry.run(old)
-        assert first.disposition is CommandDisposition.uncertain
+        # This process never started the child, so nothing reached an agent.
+        assert first.disposition is CommandDisposition.refused
+        assert first.result["reason"] == "child_start_failed"
         earlier = spool.add(
             OutboxEntry(start.child.conversation_id, EnvelopeKind.backend_event, {})
         )

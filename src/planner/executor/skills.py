@@ -20,8 +20,12 @@ from planner.environments.hermes_home import resolve_planner_home
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.protocol import CanonicalSkillSnapshot, CanonicalSkillSource
 from planner.managed_skills import read_all_skill_sources, skill_description
-from planner.skill_sources import RETIRED_PANELS_SKILL_NAMES, provision_native_backend_skills
-from planner.worker_types.store import read_definitions
+from planner.skill_sources import (
+    RETIRED_PANELS_SKILL_NAMES,
+    WORKER_ONLY_SKILL_NAMES,
+    provision_native_backend_skills,
+)
+from planner.worker_types.store import workflow_from_row
 
 
 def native_skill_home(backend: ConversationBackendKey) -> Path:
@@ -67,22 +71,24 @@ def read_canonical_skill_snapshot(
 ) -> CanonicalSkillSnapshot:
     """Read authority in the caller's transaction, without seeding or committing."""
     try:
-        row = conn.execute("SELECT worker_type FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+        row = conn.execute(
+            "SELECT workflow_json FROM tickets WHERE id = ?", (ticket_id,)
+        ).fetchone()
         if row is None:
             raise ValueError("assigned Ticket does not exist")
-        definition = next(
-            (item for item in read_definitions(conn) if item.worker_type == row["worker_type"]),
-            None,
-        )
-        if definition is None:
-            raise ValueError("assigned Ticket Worker type does not exist")
+        definition = workflow_from_row(row)
+        sources = read_all_skill_sources(conn)
         required = tuple(
-            dict.fromkeys(("panels", "panels-worker", definition.worker_profile.specialist_skill))
+            dict.fromkeys(
+                ("panels", "panels-worker")
+                + ((definition.specialist_skill,) if definition.specialist_skill in sources else ())
+            )
         )
         snapshot = CanonicalSkillSnapshot(
             sources=tuple(
                 CanonicalSkillSource(name, text)
-                for name, text in read_all_skill_sources(conn).items()
+                for name, text in sources.items()
+                if name not in WORKER_ONLY_SKILL_NAMES or name in required
             ),
             required_skill_names=required,
         )
@@ -134,14 +140,14 @@ def _check_generation(generation: Path, snapshot: CanonicalSkillSnapshot) -> Non
 def _install_account_links(
     native_home: Path, generation: Path, generations: Path, snapshot: CanonicalSkillSnapshot
 ) -> None:
-    # The canonical provisioner intentionally excludes historical Panels names.
-    # All rows remain in the immutable snapshot without reviving retired paths.
+    # Generic discovery excludes historical specialists. The assigned specialist
+    # remains available through this Worker's required skills.
     target = native_home / "skills"
     if not target.exists() and not target.is_symlink():
         target.mkdir()
-    provision_native_backend_skills(native_home, generation)
-    if target.is_symlink():
-        return  # A whole-root link now names exactly the current generation.
+    provision_native_backend_skills(
+        native_home, generation, required_skill_names=snapshot.required_skill_names
+    )
     names = {source.skill_name for source in snapshot.sources}
     for entry in target.iterdir():
         if entry.name not in names and entry.is_symlink():

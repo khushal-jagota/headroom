@@ -203,10 +203,6 @@ def participate(conn: sqlite3.Connection, batch: SignalBatch, /) -> None:
         batch.cursor.scope != batch.base_cursor.scope
         or batch.cursor.runtime_epoch != batch.base_cursor.runtime_epoch
         or batch.cursor.sequence != batch.base_cursor.sequence + 1
-        or not batch.batch_id
-        or not batch.fingerprint
-        or any(not identity for identity in batch.operation_ids)
-        or len(set(batch.operation_ids)) != len(batch.operation_ids)
     ):
         raise SignalInstallationError("invalid Signal batch boundary")
     row = conn.execute(

@@ -31,6 +31,7 @@
     disabled = false,
     keepOpenWhenDisabled = false,
     showUsage = false,
+    tonedMark = false,
     below = false,
     chevron = "typed",
     label = "Model",
@@ -55,6 +56,8 @@
     chevron?: "typed" | "drawn" | "none";
     /** Usage belongs only beside the run choice in the conversation composer. */
     showUsage?: boolean;
+    /** The composer draws the provider mark in its chip's text tone rather than its colours. */
+    tonedMark?: boolean;
     below?: boolean;
     label?: string;
     attributes?: Record<string, string | undefined>;
@@ -215,8 +218,8 @@
   }}
 >
   {#snippet triggerContent(open)}
-    {#if activeBackendKey}<BackendMark backend={activeBackendKey} />{/if}
-    {#if triggerFace}<span class="model-picker-face">{triggerFace}</span>{/if}
+    {#if activeBackendKey}<BackendMark backend={activeBackendKey} toned={tonedMark} />{/if}
+    {#if triggerFace}<span class="model-picker-face">{view.modelFace}{#if view.effortFace}{" "}<span class="model-picker-effort">{view.effortFace}</span>{/if}</span>{/if}
   {/snippet}
   {#snippet beforeList()}
     <PickerRail label="Backend and reasoning" attributes={{ "data-conversation-backend-rail": "" }}>
@@ -307,7 +310,9 @@
 </ListboxPicker>
 
 <style>
-  .model-picker-face { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .model-picker-face { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-default); }
+  /* A real space between the model and its effort, so the words read and copy as two. */
+  .model-picker-effort { color: var(--text-faint); }
   .model-picker-tools { margin-top: auto; padding-top: var(--space-1); border-top: var(--border-hairline) solid var(--border-color); }
   .model-picker-tools svg { width: 13px; height: 13px; }
   .model-picker-choice-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

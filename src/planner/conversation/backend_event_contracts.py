@@ -18,7 +18,6 @@ from planner.conversation.events import (
     UserInputRequestedEventPayload,
 )
 from planner.conversation.lifecycle import LifecycleFact
-from planner.core.contracts import Principal
 
 if TYPE_CHECKING:
     from planner.conversation.storage import StoredConversationEvent
@@ -40,8 +39,6 @@ class TurnEndingContext:
     automatic_compaction: bool
     compaction_confirmed: bool
     automatic_notice: bool
-    prompt_senders: tuple[Principal, ...]
-    explicit_reply_recipients: tuple[Principal, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,9 +81,10 @@ class RunningTurn:
     pending_user_input_questions: dict[str, tuple[UserInputQuestion, ...]] = field(
         default_factory=dict
     )
-    prompt_senders: dict[Principal, None] = field(default_factory=dict)
-    explicit_reply_recipients: set[Principal] = field(default_factory=set)
     automatic_notice: bool = False
+    # Every prompt in this turn is a Worker memory-loss notice. Like automatic compaction,
+    # such a turn is maintenance: its ending does not renew compaction eligibility.
+    memory_notice_only: bool = False
     ended: bool = False
     callbacks_revoked: bool = False
     # Set when the core is part-way through ending this turn itself — an interrupt, or a

@@ -14,7 +14,7 @@
   import ProjectedRow from './ProjectedRow.svelte';
   import ViewItem from './ViewItem.svelte';
   import LiveOutput from './LiveOutput.svelte';
-  import { TURN_STOPPED_SENTENCE } from '../../../lib/conversation/transcript';
+  import { TURN_STOPPED_SENTENCE, backgroundTasksAfterTheTurn, backgroundWorkSentence } from '../../../lib/conversation/transcript';
   let { activityUncertain = false, reader, models, ownSenderLabel, livenessPulse, outgoingMessages = [], acknowledgedMessageIds = new Set<string>(), withdrawnDisplayIds = new Set<string>(), onStopDrawingMessage, onSendAgain }: {
       outgoingMessages?: readonly OutgoingMessage[];
       acknowledgedMessageIds?: ReadonlySet<string>;
@@ -189,8 +189,17 @@
     <ViewItem itemKey="live-output" marker={reader.status.live_output.byte_count===0}><LiveOutput {reader}/></ViewItem>
   {/if}
   {#if reader.status?.stopped_without_ending}<div class="acp-turn-end" data-conversation-row="turn_stopped">{TURN_STOPPED_SENTENCE}</div>{/if}
+  <!-- The turn has ended but work it started is still live: say so under "Worked for",
+       from the record the sidebar spinner reads, until the last task ends. -->
+  {#if !activityUncertain}
+    {#each backgroundTasksAfterTheTurn(reader.status) as task (task.task_id)}
+      <div class="c2-background-work" role="status" data-conversation-background-task>
+        <span class="live-text-shimmer">{backgroundWorkSentence([task.task_description])}</span>
+      </div>
+    {/each}
+  {/if}
   {#each reader.pages as page (`${page.scope.kind}:${page.scope.key}`)}
     {#if page.scope.kind==='timeline'&&page.newer}<div use:edge={{scope:page.scope,cursor:page.newer,direction:'newer'}} data-conversation-history-edge="newer" aria-hidden="true"></div>{/if}
   {/each}
 </div>
-<style>.diagnostic-expiry-notice{color:var(--text-muted);font-size:var(--type-xs);margin:0}.c2-transcript{display:contents}[data-conversation-history-edge]{height:1px;flex:none;margin-block-start:calc(-1px - var(--space-5))}</style>
+<style>.c2-background-work{justify-self:start;padding:var(--space-1) 0;color:var(--text-faintest);font-family:var(--font-mono);font-size:var(--type-xs);letter-spacing:var(--tracking-mono)}.diagnostic-expiry-notice{color:var(--text-muted);font-size:var(--type-xs);margin:0}.c2-transcript{display:contents}[data-conversation-history-edge]{height:1px;flex:none;margin-block-start:calc(-1px - var(--space-5))}</style>

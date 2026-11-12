@@ -19,8 +19,8 @@ Importantly, remember agents are really smart. You do not need to spell everythi
 - **needs\_stages** — the new worker's lifecycle: its ordered stages, what each one needs, and who owns each Stage.
 - **needs\_what\_good\_looks\_like\_at\_each\_stage** — the design substance: what a good result looks like, who does the work, the standard each stage holds.
 - **needs\_model\_and\_effort** — the collaborative choice of explicit backend, model, and reasoning effort used when this worker starts.
-- **needs\_drafting** — the artifacts: the new worker's `SKILL.md` and its Worker type definition written as ticket artifacts for review\..
-- **needs\_consequences** — landing it: files placed, registered, provisioned; a restart makes it live.
+- **needs\_drafting** — the artifacts: the structured preset and its generated specialist skill preview.
+- **needs\_consequences** — the owner or Chief saves the approved preset and verifies the generated skill. No restart is necessary.
 
 (`needs_brief` and `done` are the universal bookends every worker shares.)
 
@@ -63,21 +63,21 @@ Recommend one explicit runtime tuple from the approved design and runtime catalo
 
 ### needs\_drafting — write the artifacts
 
-From the approved What Good Looks Like at Each Stage, write the two files as artifacts:
+From the approved What Good Looks Like at Each Stage, prepare the structured preset as a Ticket artifact.
 
-- The new worker's **`SKILL.md`** — front matter plus one guidance section per stage, mirroring this skill and `panels-worker-coding`.
-- Its **Worker type definition** — the `WorkerTypeDefinition`: Stages with an ownership mode on every non-terminal Stage, ordered fields, ceiling range, and worker profile. Novel ids are plain strings; reuse the shared `needs_brief`/`brief`, `needs_consequences`/`consequences`, and `done`.
+The record holds `worker_type`, `label`, `guidance`, `stages`, `fields`, and `profile`. Each stage holds its instructions beside its name, ownership, and result field. Use `guidance` for rules across the workflow. Novel stage and field ids remain plain strings. Preserve the shared structural rules.
 
-Copy the approved Model and Effort values into the record's `profile`.
+Copy the approved Model and Effort values into `profile`. Include a `skill` block with the specialist description. Panels generates the specialist body from the structured record. Do not provide an independently edited Markdown body. Include the generated preview for review.
 
 ### needs\_consequences — land it
 
-A worker is declared in the database, so landing one is a write, not a deployment.
+A Worker type is a reusable preset. Each Ticket owns the stages it copies. Existing Tickets keep their stages when the preset changes.
 
-1. `panels worker-type save`, with the whole record on stdin — `worker_type`, `label`, `stages`, `fields`, `profile`, and a `skill` block holding `description` and `markdown_body`. Take the shape from `panels worker-type show coding` and change what differs. The `skill` block is how a new worker's skill comes into being: a Worker type may only name a skill that exists, and these arrive together or not at all.
+1. Hand the exact approved record to the owner or Chief for `panels worker-type save`. Ticket Workers cannot write presets or skills.
 2. Read it back with `panels worker-type show <type>`.
-3. Confirm `panels worker-type list` names it, and that ordinary Ticket creation offers it. The base Worker discovers its specialist from `panels worker my-ticket`; there is no second list to update.
-4. Add `src/planner/skills/<name>/SKILL.md` to the repository, so a fresh install is seeded with this worker's skill. That is an ordinary repository change through the branch and staging route, and it changes nothing on this Panels.
+3. Confirm that `panels worker-type list` names it and that creation offers it.
+4. Read the generated specialist skill and compare it with the reviewed preview.
+5. Update the repository seed through the ordinary branch route for fresh installations.
 
 The `profile` carries the backend, model and reasoning effort approved in Model and Effort. There is no second copy of them to keep in step.
 

@@ -14,7 +14,6 @@ from planner.previews.contracts import (
     TicketEligibility,
 )
 from planner.tickets.data import read_ticket
-from planner.worker_types.store import read_definition
 
 TABLE = "ticket_application_previews"
 
@@ -22,7 +21,7 @@ TABLE = "ticket_application_previews"
 def eligibility(conn: sqlite3.Connection, ticket_id: str) -> TicketEligibility:
     try:
         ticket = read_ticket(conn, ticket_id)
-        definition = read_definition(conn, ticket.worker_type)
+        definition = ticket.workflow
     except PlannerError as exc:
         raise PreviewError("This Ticket no longer exists.", 410) from exc
     row = conn.execute(

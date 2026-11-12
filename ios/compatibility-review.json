@@ -1,0 +1,6 @@
+{
+  "oldest_supported_build": 1,
+  "decision": "compatible",
+  "contract_sha256": "799c6d35b7160c7961fe4b1948fe460b66c5f098e4ea4a7fa439b902d8b0a307",
+  "evidence": "Source review against native build 1: this change stops Panels' own automatic /compact and Worker memory-loss notices from renewing compaction eligibility, and stops both for backlogged Tickets and replaced Worker conversations. It changes internal conversation dispatch admission, adds an internal is_memory_notice field to PromptDispatchDecision, adds two suppression reason strings carried in the existing prompt_discarded event, and adds a data migration that only moves an internal compaction watermark. Routes, request and response payload shapes, event kinds, status codes, and the build floor are unchanged. A search of ios/ for suppression_reason, prompt_discarded and compaction finds no use. Verification: focused conversation, Worker memory, restart and migration tests (107 passed), the full unit suite (1863 passed; 13 AF_UNIX path-length failures that also fail on clean staging under -n 6) and the integration suite (151 passed) ran; ruff and mypy were clean. No signed-device, TestFlight, or native reconnect checks ran."
+}

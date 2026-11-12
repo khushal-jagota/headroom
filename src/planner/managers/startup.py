@@ -39,7 +39,6 @@ async def start_created_manager(
             item.goal,
             sender_message_id=str(uuid4()),
             retain_created_conversation=True,
-            expects_reply=False,
             system_message=True,
         )
         return cast(

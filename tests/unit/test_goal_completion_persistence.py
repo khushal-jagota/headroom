@@ -1,21 +1,16 @@
 """Writer transitions preserve one binary input and project selected checklist completion."""
 
-import asyncio
 import json
-import shutil
-from contextlib import closing
 from copy import deepcopy
 from datetime import UTC, datetime
-from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
 import pytest
-from tests.unit.test_db import _migration_tree_through
 from tests.unit.test_goal_completion import page
+from tests.unit.test_goal_pages import numeric_rule
 from tests.unit.test_measure_persistence import NOW
 
-from planner.core import db
 from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import OWNER_PRINCIPAL, PlannerError
@@ -25,6 +20,8 @@ from planner.goals.logic.completion import effective_completion, selected_checkl
 
 
 def create(conn: Connection, **extra: Any) -> Goal:
+    if extra.get("kind") == "quantitative" and "completion_rule" not in extra:
+        extra["completion_rule"] = numeric_rule(conn)
     checklist: ChecklistBlock = {
         "type": "checklist",
         "id": "delivery",
@@ -49,7 +46,7 @@ def edit(conn: Connection, goal: Goal, **changes: Any) -> Goal:
     return actions.update_goal(
         conn,
         goal.id,
-        {"expected_revision": goal.revision, **changes},
+        {**changes},
         principal=OWNER_PRINCIPAL,
         now=NOW + goal.revision,
     )
@@ -107,7 +104,7 @@ def test_item_deadline_changes_preserve_saved_completion_selection_and_active_st
     assert effective_completion(changed.binary_checked, changed.page, "delivery")
     assert not changed.active and changed.deadline == initial.deadline
 
-    # A date write with an old revision cannot replace a newer completion or page.
+    # Ordinary page writes use the submitted checklist and retain other saved fields.
     item["state"] = "open"
     reopened = edit(tmp_db, changed, page=document, active=True)
     assert not effective_completion(reopened.binary_checked, reopened.page, "delivery")
@@ -119,9 +116,12 @@ def test_item_deadline_changes_preserve_saved_completion_selection_and_active_st
     stale_checklist = selected_checklist(stale_document, "delivery")
     assert stale_checklist is not None
     stale_checklist["items"][0]["deadline"] = None
-    with pytest.raises(PlannerError, match="goal changed"):
-        edit(tmp_db, changed, page=stale_document)
-    assert data.read_goal(tmp_db, reopened.id) == reopened
+    replaced = edit(tmp_db, changed, page=stale_document)
+    assert data.read_goal(tmp_db, replaced.id) == replaced
+    assert replaced.page == stale_document
+    assert effective_completion(replaced.binary_checked, replaced.page, "delivery")
+    assert replaced.active and replaced.primary_checklist_block_id == "delivery"
+    assert replaced.deadline == initial.deadline
 
     item["deadline"] = None
     cleared = edit(tmp_db, reopened, page=document)
@@ -187,6 +187,7 @@ def test_selection_end_snapshots_previous_effective_completion(
     elif transition == "quantitative":
         changes["kind"] = "quantitative"
         changes["primary_chart"] = {"type": "chart", "kind": "number"}
+        changes["completion_rule"] = numeric_rule(tmp_db)
     else:
         changes["primary_checklist_block_id"] = None
         if transition == "explicit_binary":
@@ -290,16 +291,22 @@ def test_invalid_selected_completion_edits_are_atomic(
     assert data.read_goal(tmp_db, goal.id) == goal
 
 
-def test_stale_page_cannot_change_selected_completion(tmp_db: Connection) -> None:
+def test_page_write_changes_selected_completion_from_submitted_checklist(
+    tmp_db: Connection,
+) -> None:
     initial = create(tmp_db)
     document = deepcopy(initial.page)
     checklist = selected_checklist(document, "delivery")
     assert checklist is not None
     checklist["items"][0]["state"] = "open"
     accepted = edit(tmp_db, initial, page=document)
-    with pytest.raises(PlannerError, match="goal changed"):
-        edit(tmp_db, initial, page=initial.page, completed=True)
-    assert data.read_goal(tmp_db, initial.id) == accepted
+    assert not effective_completion(accepted.binary_checked, accepted.page, "delivery")
+    replaced = edit(tmp_db, initial, page=initial.page, completed=True)
+    assert data.read_goal(tmp_db, initial.id) == replaced
+    assert replaced.page == initial.page
+    assert replaced.primary_checklist_block_id == "delivery"
+    assert effective_completion(replaced.binary_checked, replaced.page, "delivery")
+    assert replaced.binary_checked == initial.binary_checked
 
 
 def test_write_detail_list_and_readings_project_the_same_completion(tmp_db: Connection) -> None:
@@ -307,64 +314,29 @@ def test_write_detail_list_and_readings_project_the_same_completion(tmp_db: Conn
     clock = FakeClock(datetime(2026, 10, 28, 12, tzinfo=UTC))
     context = RequestContext(OWNER_PRINCIPAL)
 
-    async def responses(completed: bool) -> None:
-        saved = data.read_goal(tmp_db, goal.id)
-        write = await api.update_goal(
+    def responses(completed: bool) -> None:
+        data.read_goal(tmp_db, goal.id)
+        write = api.update_goal(
             goal.id,
-            {"expected_revision": saved.revision, "completed": completed},
+            {"completed": completed},
             tmp_db,
             context,
             clock,
         )
-        detail = await api.read_goal(goal.id, tmp_db, clock)
-        listing = await api.list_goals(tmp_db, clock)
-        readings = await api.readings(goal.id, tmp_db, clock)
+        detail = api.read_goal(goal.id, tmp_db, clock)
+        listing = api.list_goals(tmp_db, clock)
+        readings = api.readings(goal.id, tmp_db, clock)
         assert write == detail == listing["goals"][0]
         assert detail["completed"] is completed
         assert "binary_checked" not in detail
         assert readings["status"] == detail["status"] == ("good" if completed else "bad")
         assert readings["charts"] == {} and readings["values"] == []
 
-    asyncio.run(responses(True))
+    responses(True)
     saved = data.read_goal(tmp_db, goal.id)
     document = deepcopy(saved.page)
     checklist = selected_checklist(document, "delivery")
     assert checklist is not None
     checklist["items"][0]["state"] = "open"
     edit(tmp_db, saved, page=document)
-    asyncio.run(responses(False))
-
-
-def test_selector_migration_preserves_binary_inputs_and_saved_page(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    shipped = db.MIGRATIONS_DIRECTORY
-    tree = _migration_tree_through(tmp_path, monkeypatch, "manual_measures")
-    document = page({"type": "checklist", "id": "delivery", "items": []})
-    with closing(db.connect(str(tmp_path / "before-selector.db"))) as conn:
-        db.create_schema(conn)
-        for checked in (0, 1):
-            conn.execute(
-                "INSERT INTO goals(id,project_id,title,why,kind,active,completed,page,revision,"
-                "created_at,updated_at,employee_backend,employee_launch_model) "
-                "VALUES(?,'project_vylo','Retained','','binary',1,?,?,1,1,1,'codex','gpt-6.1-sol')",
-                (f"retained-{checked}", checked, json.dumps(document)),
-            )
-        before = [dict(row) for row in conn.execute("SELECT * FROM goals ORDER BY id")]
-        conn.commit()
-        shutil.copy(
-            shipped / "versions/primary_goal_checklist.py",
-            tree / "versions/primary_goal_checklist.py",
-        )
-        db.create_schema(conn)
-        after = [dict(row) for row in conn.execute("SELECT * FROM goals ORDER BY id")]
-        assert after == [{**row, "primary_checklist_block_id": None} for row in before]
-        for checked in (False, True):
-            goal = data.read_goal(conn, f"retained-{int(checked)}")
-            assert goal.binary_checked is checked and goal.page == document
-            assert (
-                views.goal_json(conn, goal, datetime.fromtimestamp(NOW, UTC))["completed"]
-                is checked
-            )
-        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    responses(False)

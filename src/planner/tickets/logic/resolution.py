@@ -22,7 +22,7 @@ from planner.tickets.contracts import (
 )
 from planner.tickets.logic import admission, fields_codec, machine
 from planner.tickets.logic.decisions import Decision
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import WorkflowDefinition
 
 
 def _accept_gating_proposal(
@@ -32,7 +32,7 @@ def _accept_gating_proposal(
     next_ceiling: str | None,
     next_holder: Principal | None = None,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
     approval: TicketFieldApproval | None = None,
 ) -> Decision:
     target = worker_type_definition.advance_target(ticket.stage)
@@ -63,7 +63,7 @@ def decide_file_proposal(
     now: int,
     *,
     parked_destination: Principal | None,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> Decision:
     """What a worker's answer to the current Stage becomes.
 
@@ -99,7 +99,7 @@ def decide_file_proposal(
     )
 
 
-def _pending(ticket: Ticket, field: str, definition: WorkerTypeDefinition) -> PendingTicketProposal:
+def _pending(ticket: Ticket, field: str, definition: WorkflowDefinition) -> PendingTicketProposal:
     proposal = ticket.pending_proposal
     if proposal is None:
         raise PlannerError(ErrorCode.not_found, "no pending proposal", {"ticket_id": ticket.id})
@@ -119,7 +119,7 @@ def decide_accept(
     next_ceiling: NextCeiling | None,
     next_holder: Principal | None,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
     approval: TicketFieldApproval,
 ) -> Decision:
     if edited_body is not None:
@@ -154,7 +154,7 @@ def decide_complete_user_owned_gate(
     new_body: str,
     principal: Principal,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> Decision:
     """The user does a user-owned Stage's work themselves, and the Stage advances.
 
@@ -220,7 +220,7 @@ def decide_edit_settled_field(
     field: str,
     new_body: str,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> Decision:
     """Correct a value the Ticket has already passed. It changes nothing else."""
     admission.validate_body(new_body, "field value")
@@ -256,7 +256,7 @@ def decide_reject(
     principal: Principal,
     *,
     has_guidance: bool,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> Decision:
     """Send a parked proposal back. The proposal goes; the Stage does not move.
 
@@ -287,7 +287,7 @@ def decide_set_ceiling(
     ticket: Ticket,
     ceiling: str,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> Decision:
     resolved_ceiling = worker_type_definition.resolve_ceiling(ceiling)
     if ticket.pending_proposal is not None and worker_type_definition.stage_index(

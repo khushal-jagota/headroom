@@ -1,6 +1,8 @@
 """Saved answers have process custody; only callback proof establishes application.
 
-Reuse the conversation HTTP harness and projection. No browser or native provider is needed.
+A saved answer is a mailbox row, inserted inside the core's emit_answer, so only while
+its turn is live. Reuse the conversation HTTP harness and projection over the real
+VpsExecutor mailbox. No browser, Mac or native provider is needed.
 """
 
 from __future__ import annotations
@@ -11,8 +13,8 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from tests.support.executor_presence import mac_identity, make_current
 from tests.unit.test_conversation_api import _Harness, _start
-from tests.unit.test_executor_native_runtime import canonical_snapshot
 
 from planner.conversation.backend_event_contracts import AcceptedEvent, EventTaken
 from planner.conversation.contracts import AnswerFate
@@ -24,13 +26,25 @@ from planner.conversation.events import (
 from planner.conversation.lifecycle import LifecycleStatus
 from planner.conversation.message_content import text_message_content
 from planner.conversation.views.api import router as view_router
+from planner.core.clock import RealClock
+from planner.core.db import connect
 from planner.execution_identity import AskKind, ChildReference
-from planner.executor.protocol import (
-    ChildCommand,
-    CommandDisposition,
-    CommandOutcome,
-)
-from planner.executor.vps_remote_child import MacRemoteChild
+from planner.executor.store import ExecutorStore
+from planner.executor.vps_transport import VpsExecutor
+
+
+def _answer_rows(db_path: str) -> list[tuple[str, str]]:
+    connection = connect(db_path)
+    try:
+        return [
+            (row[0], row[1])
+            for row in connection.execute(
+                "SELECT command_id,operation FROM executor_commands "
+                "WHERE operation LIKE 'answer_%' ORDER BY command_sequence"
+            )
+        ]
+    finally:
+        connection.close()
 
 
 @pytest.mark.parametrize("kind", list(AskKind))
@@ -38,8 +52,13 @@ def test_saved_choice_and_late_application_are_distinct_conversation_facts(
     tmp_db: sqlite3.Connection, kind: AskKind
 ) -> None:
     async def run() -> None:
-        harness = _Harness(Path(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
+        db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+        harness = _Harness(Path(db_path))
         harness.app.include_router(view_router, prefix="/api/conversation")
+        identity = mac_identity()
+        make_current(db_path, identity)
+        endpoint = VpsExecutor(db_path, RealClock())
+        endpoint.bind_conversations(harness.system)
         async with harness.client() as client:
 
             async def projected_answer() -> dict[str, Any]:
@@ -78,17 +97,10 @@ def test_saved_choice_and_late_application_are_distinct_conversation_facts(
                 if kind is AskKind.permission
                 else running.user_input_provider_ids
             )[request_id]
-            reference = ChildReference("original-mac", "original-child", "c")
-            commands: list[ChildCommand] = []
-
-            async def send(command: ChildCommand) -> CommandOutcome:
-                return CommandOutcome(
-                    command.command_id, command.child, CommandDisposition.succeeded, {}
-                )
-
-            proxy = MacRemoteChild(
-                reference, send, lambda _: canonical_snapshot(), send_answer=commands.append
-            )
+            reference = ChildReference(identity.executor_incarnation, "original-child", "c")
+            ExecutorStore(db_path).register_child(reference, "ticket", "test-ticket", 1)
+            proxy = endpoint.runs.recover(reference)
+            assert proxy is not None
             state.child = proxy
             state.retained_child_reference = reference
             response = await client.post(f"/api/conversation/conversations/c/{path}", json=body)
@@ -96,8 +108,11 @@ def test_saved_choice_and_late_application_are_distinct_conversation_facts(
             assert (
                 await client.post(f"/api/conversation/conversations/c/{path}", json=body)
             ).json() == {"fate": "refused"}
-            assert len(commands) == 1
-            answer_id = commands[0].command_id
+            rows = _answer_rows(db_path)
+            assert len(rows) == 1 and rows[0][1] == (
+                "answer_permission_ask" if kind is AskKind.permission else "answer_user_input"
+            )
+            answer_id = rows[0][0]
             events = await harness.store.read_events_after("c", 0)
             choice = next(
                 e.payload
@@ -114,6 +129,18 @@ def test_saved_choice_and_late_application_are_distinct_conversation_facts(
             saved_row = await projected_answer()
             assert saved_row["body"]["value"]["answer_fate"] == "saved"
             await harness.system.interrupt("c")
+            # Once its turn has ended, no answer row can be inserted for it.
+            late = (
+                await proxy.answer_permission_ask(
+                    provider_id, "allow-once", answer_id="late", turn_token=token
+                )
+                if kind is AskKind.permission
+                else await proxy.answer_user_input(
+                    provider_id, (), answer_id="late", turn_token=token
+                )
+            )
+            assert late is AnswerFate.refused
+            assert [row[0] for row in _answer_rows(db_path)] == [answer_id]
             ended_row = await projected_answer()
             assert ended_row["body"]["value"]["answer_fate"] == "unconfirmed"
             assert ended_row["changed_through_sequence"] > saved_row["changed_through_sequence"]
@@ -153,5 +180,6 @@ def test_saved_choice_and_late_application_are_distinct_conversation_facts(
             assert not await harness.system.has_pending_permission_ask("c")
             assert not await harness.system.has_pending_user_input("c")
         await harness.runtime.shutdown()
+        await endpoint.close()
 
     asyncio.run(run())

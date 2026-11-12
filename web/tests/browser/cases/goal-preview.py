@@ -94,6 +94,8 @@ class GoalFixture:
         goal = {
             "id": identity,
             "title": title,
+            "holder_kind": "chief",
+            "holder_id": None,
             "project_id": "project",
             "why": "",
             "kind": "binary",
@@ -209,8 +211,8 @@ class GoalFixture:
         else:
             identity = path.split("/")[3]
             goal = self.goals[identity]
-            assert body["expected_revision"] == goal["revision"], body
-            goal.update({key: value for key, value in body.items() if key != "expected_revision"})
+            assert "expected_revision" not in body, body
+            goal.update(body)
             goal["revision"] += 1
             if goal["primary_checklist_block_id"]:
                 items = goal["page"]["blocks"][0]["items"]
@@ -239,7 +241,8 @@ class GoalFixture:
             return
         if path == "/api/navigation/view/snapshot":
             source = self.navigation["navigation_response"](
-                {"managers": []}, {"chief_of_staff": {"label": "Chief of Staff"}}
+                {"managers": getattr(self, "managers", [])},
+                {"chief_of_staff": {"label": "Chief of Staff"}}
             )
             source["snapshot"]["records"].extend(
                 {
@@ -249,7 +252,8 @@ class GoalFixture:
                         key: goal[key]
                         for key in (
                             "title",
-                            "conversation_id",
+                            "holder_kind",
+                            "holder_id",
                             "active",
                             "completed",
                             "created_at",
@@ -290,9 +294,9 @@ class GoalFixture:
         else:
             result = {
                 "/api/worker-types": {"worker_types": []},
-                "/api/feedback/count": {"open_count": 0},
                 "/api/review": {"items": [], "running_worker_count": 0},
                 "/api/meta": {"test_mode": True, "app_sha": "fixture"},
+                "/api/managers?detail=full": {"managers": []},
                 "/api/conversation/backends": {"backends": []},
                 "/api/workers/chief-of-staff/settings": {
                     "employee_id": "chief",
@@ -370,7 +374,7 @@ def native_manual_controls(page, fixture):
             panel.get_by_role("button", name=re.compile("29 Oct,")).click()
             expect(value).to_have_value("2")
             value.fill("8")
-            value.press("Tab")
+            panel.locator("h1").click()
             expect(value).to_have_attribute("data-reading", "8")
             assert fixture.writes[-1][1]["date"] == YESTERDAY
         elif model == "individual_readings":
@@ -381,7 +385,7 @@ def native_manual_controls(page, fixture):
             plot.press("Enter")
             expect(value).to_have_value("2")
             value.fill("8")
-            value.press("Tab")
+            panel.locator("h1").click()
             expect(value).to_have_attribute("data-reading", "8")
             assert fixture.writes[-1][1]["date"] == YESTERDAY
         else:
@@ -440,8 +444,7 @@ def late_failure_sessions(page, fixture):
         page.wait_for_function("async () => await window.__fixturePendingWrites() === 1")
         assert len(fixture.held) == 1
         fixture.reject_held()
-        # Publish newer accepted data before reopening. Changing it after the
-        # mount read starts instead creates a legitimate stale-revision conflict.
+        # Publish newer accepted data before reopening.
         fixture.goals["checklist"]["revision"] += 1
         fixture.goals["checklist"]["page"]["blocks"][0]["items"][0]["label"] = (
             "A newer accepted draft"
@@ -504,12 +507,27 @@ def cumulative_preflight_lifetime(page, fixture):
 
 def native_owner_interactions(page):
     # The real adjacent document can cover a preview trapped in the rail's wash
-    # stacking context. Reuse this host to prove pointer access and native Tab.
+    # stacking context. Reuse this host to prove pointer access and sidebar Tab order.
     page.evaluate("location.hash='#/workspace/chief-of-staff'")
     expect(page.locator('.board-workspace-right--chief .manager-doc')).to_be_visible()
     panel = open_preview(page, "daily_quota")
     row = page.locator('a[data-goal-id="daily_quota"]')
+    # The reading control arrives after the preview opens. It must stay outside
+    # sequential navigation even after that asynchronous body admission.
+    expect(panel.get_by_role("textbox")).to_be_visible()
+    next_id = row.evaluate("""node => {
+      const rows=[...node.closest('.goals-rail').querySelectorAll('a[data-goal-id]')];
+      return rows[rows.indexOf(node)+1]?.dataset.goalId;
+    }""")
+    assert next_id, "This fixture needs an adjacent goal row for native Tab proof"
+    next_row = page.locator(f'a[data-goal-id="{next_id}"]')
     row.press("Tab")
+    expect(next_row).to_be_focused()
+    next_row.press("Shift+Tab")
+    expect(row).to_be_focused()
+    expect(panel).to_be_visible()
+    # Pointer input still reaches the same preview control.
+    panel.get_by_role("textbox").click()
     expect(panel.get_by_role("textbox")).to_be_focused()
     panel.get_by_role("textbox").fill("42")
     panel.get_by_role("textbox").press("Escape")
@@ -547,9 +565,10 @@ def native_owner_interactions(page):
         'node => node.dispatchEvent(new Event("scroll"))'
     )
     expect(panel).to_be_visible()
-    page.keyboard.press("Tab")
+    page.keyboard.press("Shift")
+    page.locator('a[data-goal-id="long"]').focus()
     expect(panel).to_be_visible()
-    # Keyboard focus scroll repositions instead of dismissing the preview.
+    # Keyboard row focus and layout scroll events retain the preview.
     page.locator("[data-active-work-scroll]").evaluate(
         'node => node.dispatchEvent(new Event("scroll"))'
     )
@@ -564,6 +583,7 @@ def touch_overlap(browser, url):
         viewport={"width": 390, "height": 700}, has_touch=True, is_mobile=True
     )
     page = context.new_page()
+    page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
     page.set_default_timeout(5000)
     fixture = GoalFixture()
     page.route("**/api/**", fixture.respond)
@@ -614,6 +634,16 @@ def touch_overlap(browser, url):
     box = long_panel.bounding_box()
     footer = page.locator(".workspace-mobile-nav").bounding_box()
     assert box and footer and box["y"] + box["height"] <= footer["y"] - 12
+    evidence = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    if evidence:
+        Path(evidence).mkdir(parents=True, exist_ok=True)
+        page.screenshot(
+            path=str(Path(evidence) / "goal-preview-short-phone.png"), animations="disabled"
+        )
+        (Path(evidence) / "goal-preview-short-phone.json").write_text(json.dumps({
+            "preview": box, "footer": footer, "lastControl": last.bounding_box(),
+            "checked": last.get_attribute("aria-checked"), "nativeTap": True,
+        }, indent=2))
     page.touchscreen.tap(5, 5)
     expect(long_panel).to_have_count(0)
     # A normal tap still follows the real goal destination.
@@ -843,6 +873,7 @@ def agent_unit_spacing(browser, url):
             has_touch=phone, is_mobile=phone, reduced_motion="reduce",
         )
         page = context.new_page()
+        page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
         page.set_default_timeout(5000)
         errors = []
         page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
@@ -988,6 +1019,14 @@ def agent_unit_spacing(browser, url):
                 else:
                     target = probe.locator(".allocation-legend button").last
                 if phone:
+                    if not canvas:
+                        # Settle scrolling first, then move the touch pointer off the ring.
+                        # Clear retained inspection before the fresh legend gesture.
+                        target.tap(trial=True)
+                        page.touchscreen.tap(5, 5)
+                        target.press("Escape")
+                        page.keyboard.press("Tab")
+                        expect_inspection(page, probe, False)
                     inspections[identity] = touch_inspection(
                         page, session, probe, target, canvas=canvas,
                         contact=canvas, retained=identity != "allocation-events",
@@ -1063,336 +1102,6 @@ def resolved_chart_color(page, token):
     }""", token)
 
 
-def gauge_visual_equivalence(browser, url):
-    """Measure the extraction boundary in the existing application/HTTP host.
-
-    Existing helpers own the full pointer matrix. These probes add the missing
-    gauge layout, native-input accessibility, and two distinct motion mechanisms.
-    The same file runs before and after extraction; receipts use semantic keys.
-    """
-    started = time.monotonic()
-    artifact_root = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
-    output = Path(artifact_root) / "gauge-equivalence" if artifact_root else None
-    if output:
-        output.mkdir(parents=True, exist_ok=True)
-    receipts = []
-    recorder = """() => {
-      const records = [];
-      const watched = new WeakMap();
-      let phase = 'reveal';
-      function watch(meter) {
-        if (watched.has(meter)) return;
-        const token = {};
-        watched.set(meter, token);
-        const host = meter.closest('[data-chart-id]');
-        if (!host) return;
-        const manual = !!meter.closest('.manual-measurement');
-        const record = {chart:host.dataset.chartId, manual, phase, samples:[]};
-        records.push(record);
-        const start = performance.now();
-        function sample(now) {
-          if (!meter.isConnected || watched.get(meter) !== token) return;
-          const fill = meter.querySelectorAll('path')[1];
-          const readout = meter.nextElementSibling;
-          const style = getComputedStyle(fill);
-          const fraction = manual ? parseFloat(style.strokeDasharray) :
-            fill.getTotalLength() / (42 * Math.PI * 1.5);
-          const digits = readout?.querySelector('[class*="digits"]');
-          record.samples.push({ms:now-start, fraction,
-            opacity:Number(style.opacity), stroke:style.stroke,
-            count:digits ? Number(digits.textContent) : null});
-          if (now-start < 1800) requestAnimationFrame(sample);
-        }
-        requestAnimationFrame(sample);
-      }
-      window.__gaugeEvidence = records;
-      window.__gaugeArm = nextPhase => {
-        phase = nextPhase;
-        document.querySelectorAll('svg[role=meter]').forEach(meter => {
-          watched.delete(meter); watch(meter);
-        });
-      };
-      window.__gaugeReset = () => {
-        records.length = 0;
-        window.__gaugeArm('reveal');
-      };
-      new MutationObserver(() => document.querySelectorAll('svg[role=meter]')
-        .forEach(watch)).observe(document, {childList:true,subtree:true});
-    }"""
-
-    def snapshot(chart):
-        return chart.evaluate("""node => {
-          const origin = node.getBoundingClientRect();
-          const rect = element => {
-            if (!element) return null;
-            const box = element.getBoundingClientRect();
-            return {x:box.x-origin.x,y:box.y-origin.y,width:box.width,height:box.height};
-          };
-          const meter = node.querySelector('svg[role=meter]');
-          const readout = meter?.nextElementSibling;
-          const input = node.querySelector('input');
-          const summary = node.querySelector('.support-summary');
-          const paths = meter ? [...meter.querySelectorAll('path')].slice(0,2) : [];
-          return {host:{width:origin.width,height:origin.height},
-            meter:rect(meter),readout:rect(readout),input:rect(input),summary:rect(summary),
-            attributes:meter ? Object.fromEntries(['role','aria-label','aria-valuemin',
-              'aria-valuemax','aria-valuenow','aria-valuetext','focusable']
-              .map(name => [name,meter.getAttribute(name)])) : null,
-            summaryExpanded:summary?.getAttribute('aria-expanded') ?? null,
-            inputHidden:input ? !!input.closest('[aria-hidden=true],[inert]') : null,
-            inputLabel:input?.getAttribute('aria-label') ?? null,
-            inputValue:input?.value ?? null,
-            readoutHidden:readout?.getAttribute('aria-hidden') ?? null,
-            paths:paths.map(path => {const css=getComputedStyle(path);return {
-              d:path.getAttribute('d'),stroke:css.stroke,strokeWidth:css.strokeWidth,
-              strokeLinecap:css.strokeLinecap,opacity:css.opacity,
-              dasharray:css.strokeDasharray};}),
-            layout:readout ? {display:getComputedStyle(readout).display,
-              gap:getComputedStyle(readout).gap,
-              pointerEvents:getComputedStyle(readout).pointerEvents} : null};
-        }""")
-
-    capture_geometry_script = """node => {
-          const rect = element => {
-            if (!element) return null;
-            const box = element.getBoundingClientRect();
-            return {x:box.x,y:box.y,width:box.width,height:box.height};
-          };
-          const matrix = element => {
-            const value = element?.getScreenCTM();
-            return value ? Object.fromEntries(['a','b','c','d','e','f']
-              .map(key => [key,value[key]])) : null;
-          };
-          const meter = node.querySelector('svg[role=meter]');
-          const fill = meter?.querySelectorAll('path')[1];
-          return {chart:rect(node),visual:rect(meter?.parentElement),
-            meter:rect(meter),readout:rect(meter?.nextElementSibling),
-            input:rect(node.querySelector('input')),svgCTM:matrix(meter),
-            fillCTM:matrix(fill),transform:getComputedStyle(node).transform,
-            paths:meter ? [...meter.querySelectorAll('path')].map(path => {
-              const css = getComputedStyle(path);
-              return {d:path.getAttribute('d'),pathLength:path.getAttribute('pathLength'),
-                dashAttribute:path.getAttribute('stroke-dasharray'),
-                rawStyle:path.getAttribute('style'),dasharray:css.strokeDasharray,
-                stroke:css.stroke,strokeWidth:css.strokeWidth,opacity:css.opacity};
-            }) : [],
-            rangeSelections:[...node.querySelectorAll('.range-selection')].map(selection => {
-              const css = getComputedStyle(selection);
-              return {rect:rect(selection),rawStyle:selection.getAttribute('style'),
-                transform:css.transform,opacity:css.opacity,
-                selected:selection.closest('button')?.getAttribute('aria-pressed') ?? null};
-            }),
-            tooltips:[...node.querySelectorAll('[role=tooltip]')].map(tooltip => ({
-              hidden:tooltip.getAttribute('aria-hidden'),
-              opacity:getComputedStyle(tooltip).opacity,
-            })),
-            devicePixelRatio,viewport:{width:innerWidth,height:innerHeight},
-            windowScroll:{x:scrollX,y:scrollY}};
-        }"""
-
-    def capture_geometry(chart):
-        return chart.evaluate(capture_geometry_script)
-
-    def wait_for_capture_stability(chart):
-        # Four unchanged frames distinguish settled Motion DOM from compositor
-        # paint variation. Keep the exact signatures instead of masking pixels.
-        return chart.evaluate("async node => {const read = (" + capture_geometry_script + """ );
-          const start = performance.now();
-          let previous = null, consecutive = 0, frames = 0;
-          const signatures = [];
-          while (consecutive < 4) {
-            await new Promise(requestAnimationFrame);
-            const signature = JSON.stringify(read(node));
-            consecutive = signature === previous ? consecutive + 1 : 1;
-            previous = signature;
-            signatures.push(signature);
-            if (signatures.length > 4) signatures.shift();
-            frames++;
-            if (performance.now()-start > 5000) {
-              throw new Error('Gauge capture did not reach four stable frames: ' + signature);
-            }
-          }
-          return {frames,milliseconds:performance.now()-start,
-            consecutive,signatures:signatures.map(JSON.parse)};
-        }""")
-
-    def capture(page, chart, name):
-        # Existing inspection helpers prove dismissal when the fade starts.
-        # Capture only after that fade finishes, so a tooltip cannot ghost into
-        # the paired image. Keep raw captures and their exact crop provenance.
-        chart.scroll_into_view_if_needed()
-        # Scrolling can put the figure under a stationary desktop pointer.
-        # Leave through the real pointer path before waiting for its fade.
-        page.mouse.move(0, 0)
-        tooltip = chart.locator('[role="tooltip"]')
-        dismissal = {"pointerExit": True, "escapeAndTab": False}
-        if tooltip.count():
-            # Mouse exit deliberately preserves keyboard and touch inspection.
-            # Use the figure's existing Escape path, then leave native focus.
-            if tooltip.get_attribute("aria-hidden") != "true":
-                chart.locator("figure[tabindex]").press("Escape")
-                page.keyboard.press("Tab")
-                dismissal["escapeAndTab"] = True
-            expect(tooltip).to_have_attribute("aria-hidden", "true")
-            expect(tooltip).to_have_css("opacity", "0")
-        raw_stability = wait_for_capture_stability(chart)
-        record = {"dismissal": dismissal,
-                  "raw": {"stability": raw_stability, "before": capture_geometry(chart)}}
-        chart.screenshot(path=str(output / f"{name}.png"))
-        record["raw"]["after"] = capture_geometry(chart)
-        original_style = chart.get_attribute("style")
-        before = record["raw"]["after"]
-        assert before["transform"] == "none", before
-        origin = before["chart"]
-        dx, dy = round(origin["x"]) - origin["x"], round(origin["y"]) - origin["y"]
-        assert abs(dx) <= .5 and abs(dy) <= .5, (dx, dy)
-        record["translation"] = {"x": dx, "y": dy}
-        try:
-            chart.evaluate("""(node, delta) => {
-              node.style.transform = `translate(${delta.x}px, ${delta.y}px)`;
-            }""", {"x": dx, "y": dy})
-            aligned_stability = wait_for_capture_stability(chart)
-            record["aligned"] = {"stability": aligned_stability,
-                                 "before": capture_geometry(chart)}
-            chart.screenshot(path=str(output / f"{name}-aligned.png"))
-            record["aligned"]["after"] = capture_geometry(chart)
-        finally:
-            chart.evaluate("""(node, value) => {
-              if (value === null) node.removeAttribute('style');
-              else node.setAttribute('style', value);
-            }""", original_style)
-            restored_stability = wait_for_capture_stability(chart)
-        assert chart.get_attribute("style") == original_style
-        record["restored"] = capture_geometry(chart)
-        record["restoredStability"] = restored_stability
-        return record
-
-    for phone, reduced in ((False, False), (False, True), (True, False), (True, True)):
-        mode = f"{'phone' if phone else 'desktop'}-{'reduced' if reduced else 'normal'}"
-        context = browser.new_context(
-            viewport={"width": 390 if phone else 1280, "height": 844 if phone else 900},
-            has_touch=phone, is_mobile=phone,
-            reduced_motion="reduce" if reduced else "no-preference",
-        )
-        page = context.new_page()
-        page.set_default_timeout(5000)
-        page.add_init_script(f"({recorder})()")
-        settle_ms = 80 if reduced else 1900
-        fixture = GoalFixture()
-        fixture.observations["cumulative_target"] = {TODAY: 8}
-        manual = fixture.goals["cumulative_target"]
-        manual["page"]["blocks"] = [{**manual["primary_chart"],
-            "id": "support-manual-gauge", "placement": "supporting"}]
-        readonly = fixture.goal("readonly-gauge", "Read-only gauge", 6)
-        readonly["kind"] = "quantitative"
-        readonly["primary_chart"] = {
-            "type": "chart", "kind": "gauge", "id": "readonly-gauge",
-            "placement": "primary", "title": "Read-only gauge", "domain": [0, 20],
-            "target": 12, "unit": "events", "ranges": [
-                {"id": key, "label": label, "series": [{"name": "Current", "points": [
-                    {"label": TODAY, "value": value}]}]}
-                for key, label, value in (("week", "Week", 8), ("month", "Month", 16))
-            ],
-        }
-        readonly["page"]["blocks"] = [{**readonly["primary_chart"],
-            "id": "support-readonly-gauge", "placement": "supporting"}]
-        page.route("**/api/**", fixture.respond)
-        row = {"mode": mode, "surfaces": {}, "motion": {}, "focus": {}, "captures": {}}
-        receipts.append(row)
-        errors = []
-        page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
-        try:
-            for identity, support_id in (("cumulative_target", "support-manual-gauge"),
-                                         ("readonly-gauge", "support-readonly-gauge")):
-                # Hash navigation can retain the document and its recorder.
-                page.evaluate("window.__gaugeReset?.()")
-                page.goto(url + f"#/workspace/goal/{identity}", wait_until="domcontentloaded")
-                chart = page.locator(f'[data-chart-id="{identity}"]')
-                meter = chart.get_by_role("meter")
-                expect(meter).to_be_visible()
-                meter.scroll_into_view_if_needed()
-                # Keep initial reveal samples before a screenshot waits for stability.
-                page.wait_for_timeout(settle_ms)
-                row["surfaces"][identity + ":normal"] = snapshot(chart)
-                if identity == "cumulative_target":
-                    value = chart.get_by_role("textbox")
-                    expect(value).to_have_attribute("data-reading", "8")
-                    assert not row["surfaces"][identity + ":normal"]["inputHidden"]
-                    value.focus()
-                    assert value.evaluate("node => node === document.activeElement")
-                    row["focus"][identity] = value.get_attribute("aria-label")
-                else:
-                    figure = chart.locator("figure[tabindex]")
-                    if phone:
-                        touch_inspection(page, context.new_cdp_session(page), chart, figure)
-                    else:
-                        desktop_inspection(page, chart, figure)
-                    row["focus"][identity] = figure.get_attribute("aria-label")
-                if output:
-                    row["captures"][identity + ":normal"] = capture(
-                        page, chart, f"{mode}-{identity}-normal"
-                    )
-
-                support = page.locator(f'[data-chart-id="{support_id}"]')
-                if phone:
-                    summary = support.locator(".support-summary")
-                    expect(summary).to_have_attribute("aria-expanded", "false")
-                    row["surfaces"][identity + ":smallest"] = snapshot(support)
-                    summary.tap()
-                    expect(summary).to_have_attribute("aria-expanded", "true")
-                expect(support.get_by_role("meter")).to_be_visible()
-                support.get_by_role("meter").scroll_into_view_if_needed()
-                page.wait_for_timeout(settle_ms)
-                row["surfaces"][identity + ":support-expanded"] = snapshot(support)
-                if output:
-                    row["captures"][identity + ":support-expanded"] = capture(
-                        page, support, f"{mode}-{identity}-support"
-                    )
-                if phone:
-                    page.set_viewport_size({"width": 320, "height": 844})
-                    row["surfaces"][identity + ":narrow320"] = snapshot(support)
-                    page.set_viewport_size({"width": 390, "height": 844})
-
-                page.evaluate("window.__gaugeArm('update')")
-                if identity == "cumulative_target":
-                    chart.get_by_role("button", name="+1", exact=True).click()
-                    expect(chart.get_by_role("textbox")).to_have_attribute("data-reading", "9")
-                else:
-                    # The current preference starts at Month (16). Choose Week
-                    # (8) to exercise a real sweep and threshold change.
-                    chart.get_by_role("button", name="Week", exact=True).click()
-                    expect(meter).to_have_attribute("aria-valuenow", "8")
-                page.wait_for_timeout(settle_ms)
-                row["surfaces"][identity + ":updated"] = snapshot(chart)
-                row["motion"][identity] = page.evaluate(
-                    "keys => window.__gaugeEvidence.filter(record => keys.includes(record.chart))",
-                    [identity, support_id],
-                )
-
-            page.goto(url + "#/workspace/chief-of-staff", wait_until="domcontentloaded")
-            for identity in ("cumulative_target", "readonly-gauge"):
-                chart = page.locator(f'[data-goal-card="{identity}"] [data-chart-id="{identity}"]')
-                expect(chart.get_by_role("meter")).to_be_visible()
-                chart.scroll_into_view_if_needed()
-                page.wait_for_timeout(settle_ms)
-                row["surfaces"][identity + ":small"] = snapshot(chart)
-                if output:
-                    row["captures"][identity + ":small"] = capture(
-                        page, chart, f"{mode}-{identity}-small"
-                    )
-            assert errors == [], errors
-            row["errors"] = errors
-        finally:
-            if output:
-                (output / "measurement.json").write_text(json.dumps({
-                    "browser": browser.version, "seconds": time.monotonic() - started,
-                    "modes": receipts,
-                }, indent=2) + "\n")
-            context.close()
-    print(f"gauge extraction equivalence probes: passed (+{time.monotonic() - started:.2f}s)",
-          flush=True)
-
-
 def manual_unit_spacing(browser, url):
     # Shared formatting tests own the suffix matrix. This boundary proves that
     # manual controls, comparisons, and split flex counters use that contract.
@@ -1409,6 +1118,7 @@ def manual_unit_spacing(browser, url):
             has_touch=phone, is_mobile=phone, reduced_motion="reduce",
         )
         page = context.new_page()
+        page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
         page.set_default_timeout(5000)
         errors = []
         page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
@@ -1722,11 +1432,9 @@ def centered_checklist_row(row):
         };
         return {surface:rect(surface), title:rect(node.querySelector('.title-text')),
                 checkbox:rect(node.querySelector('.check-visual')),
-                hovered:surface.matches(':hover'),
-                background:getComputedStyle(surface).backgroundColor};
+                hovered:surface.matches(':hover')};
     }""")
     assert geometry["hovered"], geometry
-    assert geometry["background"] != "rgba(0, 0, 0, 0)", geometry
     for part in ("title", "checkbox"):
         assert abs(geometry[part]["centerY"] - geometry["surface"]["centerY"]) <= 1, geometry
     return geometry
@@ -1830,6 +1538,7 @@ def authored_goal_presentation(browser, url):
             reduced_motion="reduce" if reduced else "no-preference",
         )
         page = context.new_page()
+        page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
         page.set_default_timeout(5000)
         fixture = goal_presentation_fixture()
         writes, errors = [], []
@@ -2009,10 +1718,13 @@ def authored_goal_presentation(browser, url):
 
 
 def run(browser, urls):
+    manager_text_readonly(browser, urls[0])
     started = time.monotonic()
+    manager_goal_tags(browser, urls[0])
     checklist_deadline_controls(browser, urls[0])
     fixture = GoalFixture()
     page = browser.new_page(viewport={"width": 1280, "height": 720})
+    page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
     page.set_default_timeout(5000)
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
@@ -2039,7 +1751,7 @@ def run(browser, urls):
     manual_unit_spacing(browser, urls[0])
     authored_goal_presentation(browser, urls[0])
     native_goal_edits(browser, urls[0])
-    gauge_visual_equivalence(browser, urls[0])
+    score_table_layout(browser, urls[0])
 
 
 class NativeGoalEditFixture(GoalFixture):
@@ -2175,19 +1887,8 @@ class NativeGoalEditFixture(GoalFixture):
             )
             return
         goal = self.goals[path.split("/")[3]]
-        if body["expected_revision"] != goal["revision"]:
-            route.fulfill(
-                status=409,
-                json={
-                    "error": {
-                        "code": "conflict",
-                        "message": "Goal changed. Discard the draft before another edit.",
-                    }
-                },
-            )
-            return
         goal.update(
-            copy.deepcopy({key: value for key, value in body.items() if key != "expected_revision"})
+            copy.deepcopy(body)
         )
         goal["revision"] += 1
         self.version += 1
@@ -2250,6 +1951,7 @@ def native_goal_edits(browser, url):
             reduced_motion="reduce",
         )
         page = context.new_page()
+        page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
         page.set_default_timeout(5000)
         fixture = NativeGoalEditFixture()
         errors = []
@@ -2307,7 +2009,7 @@ def native_goal_edits(browser, url):
                     urlsplit(response.url).path == f"/api/goals/{goal_id}"
                     and response.request.method == "PATCH"
                     and response.request.post_data_json == {
-                        field: value, "expected_revision": revision
+                        field: value
                     }
                 )
             ) as response:
@@ -2335,7 +2037,7 @@ def native_goal_edits(browser, url):
             assert len(fixture.writes) == before + 1, fixture.writes[before:]
             path, body = fixture.writes[-1]
             assert path == f"/api/goals/{goal_id}", (path, body)
-            assert body == {field: value, "expected_revision": revision}, body
+            assert body == {field: value}, body
             for key, accepted in configuration.items():
                 assert fixture.goals[goal_id][key] == accepted, (field, key)
 
@@ -2362,17 +2064,32 @@ def native_goal_edits(browser, url):
 
         def refresh(goal_id=identity):
             key = f"/api/goals/{goal_id}"
+            # A route or mutation can leave a read in flight. Wait for cache
+            # admission before focus requests a distinct authoritative read.
+            page.wait_for_function(
+                "id => { const state = window.__goalQueryState(id); "
+                "return state.fetchStatus === 'idle' && state.status === 'success'; }",
+                arg=goal_id,
+            )
+            accepted = page.evaluate("id => window.__goalQueryState(id)", goal_id)
             before = fixture.reads.get(key, 0)
+            revision = fixture.goals[goal_id]["revision"]
             with page.expect_response(
-                lambda response: (
+                lambda response: response.request.method == "GET" and (
                     urlsplit(response.url).path == key
                     or parse_qs(urlsplit(response.url).query).get("key", [None])[0] == key
-                )
+                ) and fixture.reads.get(key, 0) > before
             ):
                 page.evaluate(
                     "document.dispatchEvent(new Event('visibilitychange', {bubbles:true}))"
                 )
             assert fixture.reads.get(key, 0) > before
+            page.wait_for_function(
+                "({id, count, revision}) => { const state = window.__goalQueryState(id); "
+                "return state.fetchStatus === 'idle' && state.status === 'success' "
+                "&& state.dataUpdateCount > count && state.revision === revision; }",
+                arg={"id": goal_id, "count": accepted["dataUpdateCount"], "revision": revision},
+            )
 
         try:
             page.goto(url + f"#/workspace/goal/{identity}", wait_until="domcontentloaded")
@@ -2385,6 +2102,11 @@ def native_goal_edits(browser, url):
             for label in ("Project", "By date", "State"):
                 expect(goal.get_by_label(label, exact=True)).to_be_visible()
             assert why.bounding_box()["height"] > 0
+            if not phone:
+                # Full-page editors retain their ordinary sequential Tab order.
+                title.focus()
+                title.press("Tab")
+                expect(why).to_be_focused()
             field_write(
                 "title", "Native Wren release", lambda: text_action(title, "Native Wren release")
             )
@@ -2450,7 +2172,7 @@ def native_goal_edits(browser, url):
                 deadline = goal.get_by_label("By date", exact=True)
                 field_write("deadline", None, lambda: (deadline.fill(""), deadline.press("Enter")))
                 expect(deadline).to_have_value("")
-                expect(goal.locator(".deadline-empty")).to_have_text("No deadline")
+                expect(goal.locator(".deadline-label")).to_have_text("No deadline")
                 deadline.click()
                 expect(deadline).to_be_focused()
                 deadline.press("Escape")
@@ -2505,7 +2227,6 @@ def native_goal_edits(browser, url):
                 if not phone:
                     # Preserve a focused draft through a background accepted refresh.
                     title.fill("Local draft after refresh")
-                    original_revision = fixture.goals[identity]["revision"]
                     fixture.goals[identity]["title"] = "Remote accepted title"
                     fixture.goals[identity]["why"] = "Remote accepted purpose"
                     fixture.goals[identity]["revision"] += 1
@@ -2515,15 +2236,13 @@ def native_goal_edits(browser, url):
                     expect(title).to_have_text("Local draft after refresh")
                     count = len(fixture.writes)
                     title.press("Enter")
-                    expect(goal.locator(".error-line").first).to_contain_text("Goal changed")
-                    assert fixture.writes[-1][1] == {
-                        "title": "Local draft after refresh",
-                        "expected_revision": original_revision,
-                    }
+                    wait_writes(count + 1)
+                    expect(goal.locator(".error-line")).to_have_count(0)
+                    assert fixture.writes[-1][1] == {"title": "Local draft after refresh"}
                     assert len(fixture.writes) == count + 1
                     expect(title).to_have_text("Local draft after refresh")
                     title.press("Escape")
-                    expect(title).to_have_text("Remote accepted title")
+                    expect(title).to_have_text("Local draft after refresh")
 
                     # Failed structured drafts retain their selected value. Explicit
                     # retry uses the same payload; discard restores accepted data.
@@ -2550,18 +2269,13 @@ def native_goal_edits(browser, url):
                     expect(state).to_have_value("true")
                     assert len(fixture.writes) == count
 
-                    # The same binary metadata snapshot also rejects stale selects.
+                    # Background changes do not require a revision token for this edit.
                     state.focus()
-                    revision = fixture.goals[identity]["revision"]
                     fixture.goals[identity]["revision"] += 1
                     fixture.version += 1
-                    state.select_option("false")
-                    expect(goal.locator(".error-line").first).to_contain_text("Goal changed")
-                    assert fixture.writes[-1][1] == {"active": False, "expected_revision": revision}
+                    field_write("active", False, lambda: state.select_option("false"))
                     expect(state).to_have_value("false")
-                    assert fixture.goals[identity]["active"] is True
-                    goal.get_by_role("button", name="Discard edit", exact=True).click()
-                    expect(state).to_have_value("true")
+                    assert fixture.goals[identity]["active"] is False
 
                     # A held receipt must retain the old goal identity after routing
                     # reuses the workspace for another goal.
@@ -2619,7 +2333,7 @@ def native_goal_edits(browser, url):
                 )
                 deadline = goal.get_by_label("By date", exact=True)
                 field_write("deadline", None, lambda: (deadline.fill(""), deadline.press("Enter")))
-                expect(goal.locator(".deadline-empty")).to_have_text("No deadline")
+                expect(goal.locator(".deadline-label")).to_have_text("No deadline")
                 deadline.tap()
                 expect(deadline).to_be_focused()
                 deadline.press("Escape")
@@ -2674,25 +2388,19 @@ def native_goal_edits(browser, url):
                     )
             nested = goal.locator('[data-block="segmented"]')
             count = len(fixture.writes)
-            label = nested.get_by_role("textbox", name="View label: Evidence", exact=True)
+            expect(nested.get_by_role(
+                "textbox", name="View label: Evidence", exact=True
+            )).to_have_count(0)
+            tab = nested.get_by_role("tab", name="Evidence", exact=True)
             if phone:
-                label.tap()
-                label.press("ArrowLeft")
-                expect(
-                    nested.get_by_role("radio", name="Show Readiness view", exact=True)
-                ).to_have_attribute("aria-checked", "true")
-                label.press("Escape")
+                tab.tap()
             else:
-                page_text(label, "Proof", "native-views", ["views", 1, "label"])
-            selected_label = "Evidence" if phone else "Proof"
-            radio = nested.get_by_role("radio", name=f"Show {selected_label} view", exact=True)
-            if phone:
-                radio.tap()
-            else:
-                native_radio = nested.get_by_role("radio", name="Show Readiness view", exact=True)
-                native_radio.focus()
-                native_radio.press("ArrowRight")
-            expect(radio).to_have_attribute("aria-checked", "true")
+                first_tab = nested.get_by_role("tab", name="Readiness", exact=True)
+                first_tab.focus()
+                first_tab.press("ArrowRight")
+                expect(tab).to_be_focused()
+            expect(tab).to_have_attribute("aria-selected", "true")
+            assert len(fixture.writes) == count
             count = len(fixture.writes)
             table = nested.locator('[data-block="table"]').first
             sort = table.get_by_role("button", name="Sort by Name", exact=True)
@@ -2718,7 +2426,7 @@ def native_goal_edits(browser, url):
                 empty = nested.get_by_role("textbox", name="Table empty message", exact=True)
                 page_text(empty, "No evidence yet", "native-empty", ["empty_message"])
 
-            nested.get_by_role("radio", name="Show Readiness view", exact=True).click()
+            nested.get_by_role("tab", name="Readiness", exact=True).click()
             checklist = nested.locator('[data-block="checklist"]')
             if phone:
                 expect(checklist).to_have_attribute("data-presentation", "smallest")
@@ -2809,10 +2517,12 @@ def native_goal_edits(browser, url):
                 const w=why.getBoundingClientRect(), e=editor.getBoundingClientRect();
                 const context=header.querySelector('.goal-context');
                 return {wrapperHeight:w.height,editorHeight:e.height,
-                    alignment:getComputedStyle(context).alignItems,
                     controls:[...context.querySelectorAll('input,select')].map(control=>{
                         const c=control.getBoundingClientRect();
-                        const sizer=control.parentElement.querySelector('.control-size');
+                        const labels=control.parentElement.querySelectorAll(
+                            '.control-size,.deadline-label');
+                        const sizer=[...labels]
+                            .find(node=>node.getClientRects().length>0);
                         const size=sizer.getBoundingClientRect();
                         return {name:control.getAttribute('aria-label'),width:c.width,
                             measuredWidth:size.width,top:c.top,bottom:c.bottom,
@@ -2824,7 +2534,9 @@ def native_goal_edits(browser, url):
                 mode,
                 heading_geometry,
             )
-            assert heading_geometry["alignment"] == "baseline", heading_geometry
+            # The goal's facts and controls sit on one line above its title.
+            tops = {round(control["top"]) for control in heading_geometry["controls"]}
+            assert max(tops) - min(tops) <= 1, heading_geometry
             assert [control["name"] for control in heading_geometry["controls"]] == [
                 "Project", "By date", "State",
             ], heading_geometry
@@ -2852,15 +2564,13 @@ def native_goal_edits(browser, url):
             geometry = rail.evaluate("""rail => {
                 const chief = rail.closest('.chief').querySelector('[data-chief-destination]');
                 const c = chief.getBoundingClientRect(), r = rail.getBoundingClientRect();
-                const firstGoal = rail.querySelector('a[data-goal-id] .row-heading');
+                const firstGoal = rail.querySelector('a[data-goal-id] .row-title');
                 const first = firstGoal.getBoundingClientRect();
                 return {containerGap:r.top-c.bottom, firstGoalInset:first.top-c.bottom,
-                    railMargin:getComputedStyle(rail).marginTop,
                     viewport:innerWidth, scrollWidth:document.documentElement.scrollWidth};
             }""")
-            assert abs(geometry["containerGap"] - 8) <= 1, geometry
-            assert abs(geometry["firstGoalInset"] - 16) <= 1, geometry
-            assert geometry["railMargin"] == "8px", geometry
+            # The goal rows sit below their Manager's name, and nothing scrolls sideways.
+            assert geometry["containerGap"] >= 0, geometry
             assert geometry["scrollWidth"] <= geometry["viewport"], geometry
             if output:
                 page.screenshot(path=str(output / f"{mode}-rail.png"))
@@ -2884,6 +2594,273 @@ def native_goal_edits(browser, url):
             json.dumps({"seconds": elapsed, "renders": receipts}, indent=2) + "\n"
         )
     print(f"native goal edits metadata/page desktop/phone: passed (+{elapsed:.2f}s)", flush=True)
+
+
+SCORE_LABELS = (
+    "Typography", "Colour", "Contrast and legibility", "Spacing and layout rhythm",
+    "Visual hierarchy", "Consistency across pages",
+    "Interaction states (hover, focus, selected)", "Polish (alignment, icons, detail)",
+)
+
+
+def score_table(rounds):
+    return {
+        "type": "table",
+        "id": "scores",
+        "columns": ["Category", *(f"Round {index}" for index in range(1, rounds + 1))],
+        "rows": [
+            [label, *(f"{6 + (row + index) % 30 / 10:.1f}" for index in range(rounds))]
+            for row, label in enumerate(SCORE_LABELS)
+        ],
+        "cell_tones": [[None, *("attention" for _ in range(rounds))] for _ in SCORE_LABELS],
+    }
+
+
+def score_table_geometry(table):
+    return table.evaluate("""table => {
+        const box = element => element.getBoundingClientRect();
+        const scroller = table.parentElement;
+        const heads = [...table.querySelectorAll('thead th[data-key]')];
+        const firstRow = table.querySelector('tbody tr');
+        const label = head => head.querySelector('[contenteditable]');
+        const shown = element => element.getClientRects().length > 0;
+        // The drawn arrow, with its stroke, spans the middle half of its icon.
+        const glyph = head => {
+            const icon = box([...head.querySelectorAll('svg.sort-arrow')].find(shown));
+            return {left: icon.left + icon.width / 4, right: icon.right - icon.width / 4};
+        };
+        return {
+            widths: heads.map(head => box(head).width),
+            // A header label that leaves its cell overlaps its neighbour.
+            spill: heads.map(head => Math.max(box(label(head)).right - box(head).right,
+                box(head).left - box(label(head)).left)),
+            // Space between each number header's arrow and the labels on both sides.
+            arrowClearance: heads.slice(1).map((head, index) => Math.min(
+                glyph(head).left - box(label(heads[index])).right,
+                box(label(head)).left - glyph(head).right)),
+            headerRight: heads.map(head => box(label(head)).right),
+            valueRight: [...firstRow.querySelectorAll('td')].map(cell =>
+                box(cell.querySelector('.cell-copy')).right),
+            labelLines: [...table.querySelectorAll('tbody td[data-primary]')].map(cell => {
+                const text = cell.querySelector('.cell-copy');
+                const lineHeight = parseFloat(getComputedStyle(text).lineHeight);
+                return {text: text.textContent.trim(),
+                    lines: Math.round(box(text).height / lineHeight)};
+            }),
+            // Header controls in Tab order, by their left edge.
+            tabOrder: [...table.querySelectorAll('thead button, thead [contenteditable="true"]')]
+                .filter(shown).map(element => box(element).left),
+            // The label column stays at the scroller's left edge.
+            labelOffset: box(heads[0]).left - box(scroller).left,
+            scrolls: scroller.scrollWidth > scroller.clientWidth,
+        };
+    }""")
+
+
+def assert_readable_score_table(geometry):
+    assert geometry["widths"][0] >= 180, geometry
+    assert min(geometry["widths"]) > 60, geometry
+    assert max(geometry["spill"]) <= 0.5, geometry
+    assert min(geometry["arrowClearance"]) >= 3.5, geometry
+    assert geometry["tabOrder"] == sorted(geometry["tabOrder"]), geometry
+    # Number headers end where their values end.
+    for header, value in zip(
+        geometry["headerRight"][1:], geometry["valueRight"][1:], strict=True
+    ):
+        assert abs(header - value) <= 1, geometry
+    # Labels wrap between words. Fresh load gave the longest label four lines.
+    for label in geometry["labelLines"]:
+        assert label["lines"] <= 3, geometry
+    assert {label["text"] for label in geometry["labelLines"]} == set(SCORE_LABELS), geometry
+
+
+def score_table_layout(browser, url):
+    """Score tables fit when they can, scroll with a pinned label column when not."""
+    started = time.monotonic()
+    context = browser.new_context(
+        viewport={"width": 1280, "height": 1400}, reduced_motion="reduce", has_touch=True
+    )
+    page = context.new_page()
+    page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
+    page.set_default_timeout(5000)
+    fixture = NativeGoalEditFixture()
+    identity = "goal_wrapfixture"
+    goal = fixture.goals[identity]
+    goal["page"]["blocks"].append(score_table(5))
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.route("**/api/**", fixture.respond)
+    artifact_root = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    output = Path(artifact_root, "score-table") if artifact_root else None
+    if output:
+        output.mkdir(parents=True, exist_ok=True)
+
+    def publish(rounds):
+        # The Manager changes the table while the page stays open.
+        goal["page"]["blocks"][-1] = score_table(rounds)
+        goal["revision"] += 1
+        fixture.version += 1
+        page.evaluate("document.dispatchEvent(new Event('visibilitychange', {bubbles:true}))")
+        expect(table.locator("thead th[data-key]")).to_have_count(rounds + 1)
+        expect(table).to_have_attribute("data-fixed", "")
+
+    def screenshot(name):
+        if output:
+            table.locator("xpath=ancestor::*[@data-block='table']").screenshot(
+                path=str(output / name))
+
+    try:
+        page.goto(url + f"#/workspace/goal/{identity}", wait_until="domcontentloaded")
+        table = page.locator(f'[data-goal-page="{identity}"] [data-block="table"] table')
+        expect(table).to_have_attribute("data-fixed", "")
+        assert len(score_table_geometry(table)["widths"]) == 6
+
+        # Eight columns fit the goal page's table width without scrolling.
+        publish(7)
+        eight = score_table_geometry(table)
+        screenshot("eight-columns.png")
+        assert_readable_score_table(eight)
+        assert not eight["scrolls"], eight
+
+        # Arrow keys move between the sort buttons that are shown.
+        table.get_by_role("button", name="Sort by Round 1", exact=True).focus()
+        page.keyboard.press("ArrowRight")
+        expect(table.get_by_role("button", name="Sort by Round 2", exact=True)).to_be_focused()
+
+        # Sorting keeps every column at its width.
+        table.get_by_role("button", name="Sort by Round 7", exact=True).click()
+        expect(table.locator("th[data-sorted]")).to_have_count(1)
+        assert score_table_geometry(table)["widths"] == eight["widths"]
+
+        # Ten columns cannot fit. The table scrolls and the label column stays pinned.
+        publish(9)
+        ten = score_table_geometry(table)
+        screenshot("ten-columns.png")
+        assert_readable_score_table(ten)
+        assert ten["scrolls"], ten
+        table.evaluate("table => table.parentElement.scrollTo({left: 10000})")
+        page.wait_for_function(
+            "table => table.parentElement.scrollLeft > 0", arg=table.element_handle())
+        scrolled = score_table_geometry(table)
+        screenshot("ten-columns-scrolled.png")
+        assert abs(scrolled["labelOffset"]) <= 1, scrolled
+        # Hidden column handles must remain behind the pinned first header.
+        assert table.locator('th[data-key="0"]').evaluate("""head => {
+            const rect = head.getBoundingClientRect();
+            for (let x = rect.left + 2; x < rect.right - 2; x += 4) {
+                if (!head.contains(document.elementFromPoint(x, rect.top + rect.height / 2))) return false;
+            }
+            return true;
+        }""")
+        assert max(scrolled["spill"]) <= 0.5, scrolled
+
+        # A narrower page keeps every column at its content and scrolls further.
+        page.set_viewport_size({"width": 1000, "height": 1400})
+        page.wait_for_function(
+            "table => table.parentElement.clientWidth < 640", arg=table.element_handle())
+        narrow = score_table_geometry(table)
+        assert max(narrow["spill"]) <= 0.5, narrow
+        assert narrow["scrolls"], narrow
+
+        resize_started = time.monotonic()
+        page.set_viewport_size({"width": 1280, "height": 1400})
+        table.evaluate("table => table.parentElement.scrollTo({left: 0})")
+        handle = table.get_by_role("separator", name="Resize Round 1 column", exact=True)
+        handle.scroll_into_view_if_needed()
+        before = score_table_geometry(table)["widths"]
+        sorted_before = table.locator("th[data-sorted]").get_attribute("data-key")
+        bounds = handle.bounding_box()
+        x, y = bounds["x"] + bounds["width"] / 2, bounds["y"] + bounds["height"] / 2
+        page.mouse.move(x, y)
+        page.mouse.down()
+        page.mouse.move(x + 96, y + 60, steps=6)
+        page.mouse.up()
+        # Capture keeps the drag alive after the pointer leaves the header.
+        page.wait_for_function(
+            "table => table.querySelectorAll('th[data-key]')[1].getBoundingClientRect().width > 140",
+            arg=table.element_handle())
+        dragged = score_table_geometry(table)["widths"]
+        assert abs(dragged[1] - before[1] - 96) <= 1, (before, dragged)
+        assert all(abs(left - right) <= 1 for index, (left, right) in
+                   enumerate(zip(before, dragged, strict=True)) if index != 1), (before, dragged)
+        expect(table.locator("th[data-sorted]")).to_have_attribute("data-key", sorted_before)
+
+        handle.focus()
+        page.keyboard.press("ArrowRight")
+        after_key = float(handle.get_attribute("aria-valuenow"))
+        assert after_key > dragged[1], (after_key, dragged)
+        expect(handle).to_be_focused()
+        # Repeated left arrows reach the published minimum without moving focus.
+        for _ in range(40):
+            page.keyboard.press("ArrowLeft")
+        expect(handle).to_have_attribute("aria-valuenow", "80")
+        assert abs(score_table_geometry(table)["widths"][1] - 80) <= 1
+        # Touch sorting and the wider coarse resize edge share the same header.
+        table.get_by_role("button", name="Sort by Category", exact=True).tap()
+        expect(table.locator("th[data-sorted]")).to_have_attribute("data-key", "0")
+
+        # Chromium's touch input exercises pointer capture and touch-action together.
+        first_handle = table.get_by_role("separator", name="Resize Category column", exact=True)
+        first_handle.scroll_into_view_if_needed()
+        touch_before = score_table_geometry(table)["widths"][0]
+        bounds = first_handle.bounding_box()
+        x, y = bounds["x"] + bounds["width"] / 2, bounds["y"] + bounds["height"] / 2
+        touch = context.new_cdp_session(page)
+        touch.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
+        touch.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y}]})
+        touch.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{"x": x + 40, "y": y}]})
+        touch.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+        touch.detach()
+        page.wait_for_function(
+            "([table, width]) => table.querySelector('th[data-key]').getBoundingClientRect().width > width + 30",
+            arg=[table.element_handle(), touch_before])
+        saved = score_table_geometry(table)["widths"]
+        assert abs(saved[0] - touch_before - 40) <= 1, (saved, touch_before)
+        # CDP drag suppresses Chromium's next synthesized tap even on plain HTML.
+        # The earlier tap proves touch sorting. Check the coarse hit area after resize.
+        category_sort = table.get_by_role("button", name="Sort by Category, currently ascending", exact=True)
+        assert category_sort.evaluate("""button => {
+            const rect = button.getBoundingClientRect();
+            return document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.closest('button') === button;
+        }""")
+        category_sort.click()
+        expect(table.locator("th[data-sorted]")).to_have_attribute("aria-sort", "descending")
+        assert score_table_geometry(table)["widths"] == saved
+        assert fixture.writes == [], fixture.writes
+
+        # Reload restores this table without a shared document write.
+        page.reload(wait_until="domcontentloaded")
+        expect(table.get_by_role("separator", name="Resize Round 1 column", exact=True)).to_have_attribute("aria-valuenow", "80")
+        restored = score_table_geometry(table)["widths"]
+        assert all(abs(left - right) <= 1 for left, right in zip(saved, restored, strict=True)), (saved, restored)
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.wait_for_function("table => table.parentElement.clientWidth < 390", arg=table.element_handle())
+        assert table.evaluate("table => getComputedStyle(table).display") == "table"
+        assert table.evaluate("table => table.parentElement.scrollWidth > table.parentElement.clientWidth")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        screenshot("resized-phone.png")
+        page.set_viewport_size({"width": 1280, "height": 1400})
+        other = fixture.goal("goal_resizeother", "Other table page", 20)
+        other["page"]["blocks"] = [score_table(9)]
+        page.goto(url + "#/workspace/goal/goal_resizeother", wait_until="domcontentloaded")
+        other_table = page.locator('[data-goal-page="goal_resizeother"] [data-block="table"] table')
+        expect(other_table).to_have_attribute("data-fixed", "")
+        assert abs(score_table_geometry(other_table)["widths"][0] - saved[0]) > 20
+        page.goto(url + f"#/workspace/goal/{identity}", wait_until="domcontentloaded")
+        expect(table.get_by_role("separator", name="Resize Round 1 column", exact=True)).to_have_attribute("aria-valuenow", "80")
+        # A replacement block on the same page does not inherit its predecessor's widths.
+        goal["page"]["blocks"][-1]["id"] = "other-scores"
+        goal["revision"] += 1
+        fixture.version += 1
+        page.reload(wait_until="domcontentloaded")
+        expect(table).to_have_attribute("data-fixed", "")
+        assert abs(score_table_geometry(table)["widths"][0] - saved[0]) > 20
+        assert fixture.writes == [], fixture.writes
+        print(f"score table resize coverage: passed (+{time.monotonic() - resize_started:.2f}s)", flush=True)
+        assert errors == [], errors
+    finally:
+        context.close()
+    print(f"score table layout: passed (+{time.monotonic() - started:.2f}s)", flush=True)
 
 
 class ChecklistDeadlineFixture(NativeGoalEditFixture):
@@ -2960,6 +2937,7 @@ def checklist_deadline_controls(browser, url):
             reduced_motion="reduce",
         )
         page = context.new_page()
+        page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
         page.set_default_timeout(5000)
         fixture = ChecklistDeadlineFixture()
         errors = []
@@ -3024,6 +3002,21 @@ def checklist_deadline_controls(browser, url):
             assert (
                 "Due today" not in publish.locator(".date-face").inner_text()
             )  # Status stays nonvisual.
+
+            # Focusing expands the date field before pointerup. The first click
+            # must still reach the picker, even when its target becomes the wrapper.
+            picker = publish.locator('input[type="date"]')
+            picker.evaluate("""node => {
+                node.dataset.pickerCalls = '0';
+                const open = node.showPicker.bind(node);
+                node.showPicker = () => {
+                    open();
+                    node.dataset.pickerCalls = String(Number(node.dataset.pickerCalls) + 1);
+                };
+            }""")
+            picker.tap() if phone else picker.click()
+            expect(picker).to_have_attribute("data-picker-calls", "1")
+            picker.press("Escape")
 
             # Native entry, intentional clear, and Escape never edit authored labels.
             original = copy.deepcopy(fixture.goals["checklist"]["page"])
@@ -3182,23 +3175,24 @@ def checklist_deadline_controls(browser, url):
                 date_control(panel).get_by_role("button", name="Discard edit", exact=True).click()
                 expect(native).to_have_value("2026-11-04")
                 # An external edit invalidates the focused draft. Recovery refreshes
-                # accepted data, but only a new explicit edit can use that revision.
+                # accepted data, and the next edit keeps neighboring content.
                 native.fill("2026-11-06")
                 accepted_item("review")["detail"] = "Accepted neighboring context"
                 fixture.goals["checklist"]["revision"] += 1
                 fixture.version += 1
-                external_revision = fixture.goals["checklist"]["revision"]
                 native.press("Enter")
-                expect(date_control(panel).get_by_role("alert")).to_contain_text("Goal changed")
-                assert accepted_item()["deadline"] == "2026-11-04"
-                date_control(panel).get_by_role("button", name="Discard edit", exact=True).click()
+                wait_fixture(
+                    lambda: accepted_item().get("deadline") == "2026-11-06",
+                    "Date edit after external change",
+                )
+                expect(date_control(panel).get_by_role("alert")).to_have_count(0)
                 native.fill("2026-11-07")
                 native.press("Enter")
                 wait_fixture(
                     lambda: accepted_item().get("deadline") == "2026-11-07",
-                    "New explicit edit after conflict",
+                    "New explicit edit",
                 )
-                assert fixture.writes[-1][1]["expected_revision"] == external_revision
+                assert "expected_revision" not in fixture.writes[-1][1]
                 assert accepted_item("review")["detail"] == "Accepted neighboring context"
                 expect(date_control(panel).get_by_role("alert")).to_have_count(0)
                 if output:
@@ -3210,7 +3204,7 @@ def checklist_deadline_controls(browser, url):
                     "data-deadline-tone", "bad"
                 )
                 expect(date_control(card)).to_have_attribute("data-tone", "neutral")
-                page.evaluate("location.hash='#/workspace/goals'")
+                page.evaluate("location.hash='#/goals'")
                 table_row = page.locator("tbody tr").filter(
                     has=page.get_by_role("link", name="Prepare the field guide", exact=True)
                 )
@@ -3231,3 +3225,752 @@ def checklist_deadline_controls(browser, url):
             json.dumps({"seconds": elapsed, "renders": receipts}, indent=2) + "\n"
         )
     print(f"checklist deadlines native desktop/phone: passed (+{elapsed:.2f}s)", flush=True)
+
+
+def manager_goal_tags(browser, url):
+    """Real header hit testing, chart reflow, and preference changes share the App host.
+
+    Pure status coverage cannot prove pointer travel across sibling controls, the
+    header/preview gap, native focus, or ResizeObserver placement after expansion.
+    """
+    started = time.monotonic()
+    fixture = GoalFixture()
+    keep = ("daily_quota", "binary", "checklist", "long")
+    fixture.goals = {key: fixture.goals[key] for key in keep}
+    fixture.managers = [
+        {"id": key, "title": title, "project_id": "project", "project": "Field guide",
+         "created_at": index + 1, "recap": "The next release awaits review. " * 20,
+         "tickets": [{"id": f"ticket_{key}", "manager_id": key,
+                      "title": f"Worker for {title}", "worker_type": "coding",
+                      "stage": "needs_implementation", "ticket_status": "agent",
+                      "recap": "Worker recap"}]}
+        for index, (key, title) in enumerate((
+            ("one", "One chart"), ("many", "Several goals"), ("none", "No goals")))
+    ]
+    fixture.managers[0]["project"] = (
+        "A long project name that must never overlap the goal tag or Settle"
+    )
+    fixture.managers[2]["project"] = "A long project name that must never overlap the Settle action"
+    fixture.goals["daily_quota"].update(holder_kind="manager", holder_id="one", status="good")
+    fixture.observations["daily_quota"][TODAY] = 20
+    fixture.goals["binary"].update(holder_kind="manager", holder_id="many", status="bad")
+    fixture.goals["checklist"].update(holder_kind="manager", holder_id="many", status="good")
+    fixture.goals["long"].update(
+        title="Inbox zero weekly", status="attention", primary_checklist_block_id=None)
+    context = browser.new_context(viewport={"width": 1280, "height": 900})
+    context.add_init_script("localStorage.setItem('panels.workspace.rail-width', '288')")
+    page = context.new_page()
+    page.set_default_timeout(5000)
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.route("**/api/**", fixture.respond)
+    output = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    if output:
+        output = Path(output) / "manager-goal-tags"
+        output.mkdir(parents=True, exist_ok=True)
+    try:
+        page.goto(url + "#/workspace", wait_until="domcontentloaded")
+        expect(page.locator("a[data-goal-id]")).to_have_count(0)
+        rail_width = page.locator(".workspace-rail").bounding_box()["width"]
+        assert rail_width == 288, rail_width
+        one = page.locator('[data-manager="one"]')
+        many = page.locator('[data-manager="many"]')
+        none = page.locator('[data-manager="none"]')
+        chief = page.locator('.manager-card.chief')
+        expect(one.get_by_role("button", name="Goals: On track", exact=True)).to_be_visible()
+        expect(many.get_by_role("button", name="Goals: Off track", exact=True)).to_be_visible()
+        expect(none.locator('[data-goal-status]')).to_have_count(0)
+        expect(chief.get_by_text("All projects", exact=True)).to_be_visible()
+        expect(chief.get_by_role("button", name="Goals: At risk", exact=True)).to_be_visible()
+        expect(chief.get_by_role("button", name=re.compile("Settle"))).to_have_count(0)
+        panel = page.locator('[data-rail-hover-panel].visible')
+
+        # Native :has states and pseudo-element transitions need the rendered header.
+        # Reuse this host for the three status colors and the no-goal boundary.
+        haze_started = time.monotonic()
+        page.evaluate("location.hash='#/workspace/goal/daily_quota'")
+        expect(chief).not_to_have_class(re.compile(r'\bselected\b'))
+        page.mouse.move(1100, 820)
+
+        def haze_opacity(card, value):
+            page.wait_for_function(
+                "([card,value]) => getComputedStyle(card,'::after').opacity===value",
+                arg=[card.element_handle(), value])
+
+        for card, token, percent in (
+                (one, '--accent-done', 7), (many, '--accent-error', 9),
+                (chief, '--accent-attention', 9)):
+            haze_opacity(card, '1')
+            assert card.evaluate("""(card, [token,percent]) => {
+              const slot=card, haze=getComputedStyle(card,'::after');
+              const expected=document.createElement('div');
+              const tint=`color-mix(in srgb,var(${token}) ${percent}%,transparent)`;
+              expected.style.backgroundImage=`linear-gradient(${tint},transparent 70px)`;
+              slot.append(expected);
+              const equal=haze.backgroundImage===getComputedStyle(expected).backgroundImage;
+              expected.remove();return equal;
+            }""", [token, percent])
+            card.locator('.identity').hover()
+            haze_opacity(card, '0')
+            page.mouse.move(1100, 820)
+            haze_opacity(card, '1')
+        assert none.evaluate(
+            "card => getComputedStyle(card,'::after').content") == 'none'
+        if output:
+            page.locator('.workspace-rail').screenshot(path=str(output / 'haze-rest.png'))
+        for control in (one.locator('.item-head'),
+                        one.get_by_role('button', name='Goals: On track', exact=True)):
+            control.focus()
+            haze_opacity(one, '0')
+            control.blur()
+            haze_opacity(one, '1')
+        chief.locator('.item-head').click()
+        expect(chief).to_have_class(re.compile(r'\bselected\b'))
+        page.mouse.move(1100, 820)
+        chief.locator('.item-head').blur()
+        haze_opacity(chief, '0')
+        if output:
+            page.locator('.workspace-rail').screenshot(path=str(output / 'haze-selected.png'))
+        page.evaluate("location.hash='#/workspace/goal/daily_quota'")
+        haze_opacity(chief, '1')
+        page.emulate_media(reduced_motion='reduce')
+        one.locator('.identity').hover()
+        haze_opacity(one, '0')
+        assert one.evaluate(
+            "card => getComputedStyle(card,'::after').transitionDuration") == '0s'
+        page.mouse.move(1100, 820)
+        haze_opacity(one, '1')
+        page.emulate_media(reduced_motion='no-preference')
+        elapsed = time.monotonic() - haze_started
+        print(f'manager haze native states: passed (+{elapsed:.2f}s)', flush=True)
+
+        # Existing endpoint checks missed the lost slide. Observe native transition
+        # interpolation, plus the text boundary during that same transition.
+        tag = one.locator('.goal-tag')
+        label = one.locator('.manager-eyebrow > span')
+        page.mouse.move(1100, 820)
+        expect(tag).to_have_css('transform', 'none')
+        rest = tag.bounding_box()
+        rest_label = label.bounding_box()
+        assert abs(rest['x'] - rest_label['x'] - rest_label['width'] - 8) < 1
+        if output:
+            page.screenshot(path=str(output / 'goal-slide-rest.png'), animations='disabled')
+        tag.evaluate("""el => {
+          window.goalSlideSamples = [];
+          el.addEventListener('transitionrun', function sampleSlide(event) {
+            if (event.propertyName !== 'transform') return;
+            const animation = el.getAnimations().find(a => a.transitionProperty === 'transform');
+            const duration = animation.effect.getTiming().duration;
+            const moving = [animation, ...el.parentElement.querySelector('span').getAnimations()];
+            for (const item of moving) { item.pause(); item.currentTime = duration / 2; }
+            const label = el.parentElement.querySelector('span').getBoundingClientRect();
+            const tag = el.getBoundingClientRect();
+            window.goalSlideSamples.push({
+              x: new DOMMatrixReadOnly(getComputedStyle(el).transform).m41,
+              gap: tag.left - label.right,
+              duration,
+            });
+            for (const item of moving) item.play();
+            if (window.goalSlideSamples.length === 2)
+              el.removeEventListener('transitionrun', sampleSlide);
+          });
+        }""")
+        one.locator('.identity').hover()
+        expect(tag).to_have_css('transform', 'matrix(1, 0, 0, 1, -60, 0)')
+        samples = page.evaluate('window.goalSlideSamples')
+        assert len(samples) == 1 and -60 < samples[0]['x'] < 0, samples
+        assert samples[0]['gap'] >= 7, samples
+        fast = tag.evaluate(
+            "el => parseFloat(getComputedStyle(el).getPropertyValue('--motion-fast'))"
+        )
+        assert samples[0]['duration'] == fast, (samples, fast)
+        active = tag.bounding_box()
+        assert abs(rest['x'] - active['x'] - 60) < 1, (rest, active)
+        assert label.bounding_box()['x'] + label.bounding_box()['width'] <= active['x']
+        action = one.locator('.settle').bounding_box()
+        assert active['x'] + active['width'] <= action['x'], (active, action)
+        if output:
+            page.screenshot(path=str(output / 'goal-slide-settle.png'), animations='disabled')
+        page.mouse.move(1100, 820)
+        expect(tag).to_have_css('transform', 'none')
+        samples = page.evaluate('window.goalSlideSamples')
+        assert len(samples) == 2 and -60 < samples[1]['x'] < 0, samples
+        assert samples[1]['gap'] >= 7, samples
+        # Keyboard focus uses the same endpoint and leaves Settle in the tab order.
+        tag.focus()
+        expect(tag).to_have_css('transform', 'matrix(1, 0, 0, 1, -60, 0)')
+        one.locator('.item-head').focus()
+        page.locator('[data-chief-destination]').first.focus()
+        expect(tag).to_have_css('transform', 'none')
+        chief_tag = chief.locator('.goal-tag')
+        chief_rest = chief_tag.bounding_box()
+        chief.locator('.identity').hover()
+        expect(chief_tag).to_have_css('transform', 'none')
+        assert chief_tag.bounding_box()['x'] == chief_rest['x']
+        page.mouse.move(1100, 820)
+        page.emulate_media(reduced_motion='reduce')
+        one.locator('.identity').hover()
+        expect(tag).to_have_css('transform', 'matrix(1, 0, 0, 1, -60, 0)')
+        assert tag.evaluate('el => el.getAnimations().length') == 0
+        page.mouse.move(1100, 820)
+        expect(tag).to_have_css('transform', 'none')
+        page.emulate_media(reduced_motion='no-preference')
+
+        # Follow the owner path: enter the header to reveal Settle, then target
+        # the action. Outside the header, its empty space belongs to the goal tag.
+        for card in (one, none):
+            page.mouse.move(1100, 820)
+            settle = card.get_by_role('button', name=re.compile(r'^Settle '))
+            card.locator('.identity').hover()
+            expect(settle).to_have_css('opacity', '1')
+            settle.click(trial=True)
+            if card == none:
+                label = card.locator('.manager-eyebrow > span').bounding_box()
+                action = settle.bounding_box()
+                assert label['x'] + label['width'] <= action['x'], (label, action)
+                if output:
+                    page.screenshot(
+                        path=str(output / 'long-project-settle.png'), animations='disabled')
+        one.get_by_role('button', name='Goals: On track', exact=True).focus()
+        page.keyboard.press('Tab')
+        expect(one.get_by_role('button', name='Settle One chart', exact=True)).to_be_focused()
+        page.keyboard.press('Tab')
+
+        # Move the real pointer across eyebrow, name, and moving status tag.
+        for part in (one.locator('.manager-eyebrow > span').first,
+                     one.locator('.item-head'),
+                     one.get_by_role("button", name="Goals: On track", exact=True)):
+            box = part.bounding_box()
+            page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, steps=8)
+            expect(panel.locator('.title')).to_contain_text("One chart")
+            expect(panel.locator('[data-manager-goals]')).to_be_visible()
+        summary = panel.locator('.support-summary')
+        expect(summary).to_have_attribute('aria-expanded', 'false')
+        expect(summary).to_contain_text('Daily Quota')
+        expect(panel.get_by_role('button', name='Ask for a recap', exact=True)).to_be_visible()
+        if output:
+            page.screenshot(path=str(output / 'one-collapsed.png'), animations='disabled')
+        bounds = panel.bounding_box()
+        page.mouse.move(bounds['x'] + 24, bounds['y'] + 24, steps=8)
+        expect(panel).to_be_visible()
+        summary.click()
+        expect(summary).to_have_attribute('aria-expanded', 'true')
+        page.wait_for_function("""() => {
+          const p=document.querySelector('[data-rail-hover-panel].visible');
+          if(!p)return false; const r=p.getBoundingClientRect();
+          return r.top>=0 && r.bottom<=innerHeight;
+        }""")
+        if output:
+            page.screenshot(path=str(output / 'one-expanded.png'), animations='disabled')
+        page.set_viewport_size({'width': 1280, 'height': 480})
+        page.wait_for_function("""() => {
+          const p=document.querySelector('[data-rail-hover-panel].visible');
+          if(!p)return false; const r=p.getBoundingClientRect();
+          return r.top>=0 && r.bottom<=innerHeight;
+        }""")
+        if output:
+            page.screenshot(path=str(output / 'one-expanded-resized.png'), animations='disabled')
+        page.set_viewport_size({'width': 1280, 'height': 900})
+        page.mouse.move(1100, 820)
+        expect(panel).to_have_count(0)
+        one.locator('.identity').hover()
+        expect(panel.locator('.support-summary')).to_have_attribute('aria-expanded', 'true')
+
+        # A Ticket owns its own preview, with no Manager goals.
+        one.locator('[data-ticket-id="ticket_one"]').hover()
+        expect(panel.locator('.title')).to_contain_text('Worker for One chart')
+        expect(panel.locator('[data-manager-goals]')).to_have_count(0)
+        many.locator('.identity').hover()
+        expect(panel.locator('[data-manager-goal-id]')).to_have_count(2)
+        expect(panel.locator('.support-summary')).to_have_count(0)
+        expect(panel.locator('[data-manager-goal-id="checklist"]')).to_contain_text('1 of 2 done')
+        if output:
+            page.screenshot(path=str(output / 'many-goals.png'), animations='disabled')
+        none.locator('.identity').hover()
+        expect(panel.locator('.title')).to_contain_text('No goals')
+        expect(panel.locator('[data-manager-goals]')).to_have_count(0)
+        chief.locator('.identity').hover()
+        expect(panel.locator('[data-manager-goal-id]')).to_have_count(0)
+        expect(panel.locator('[data-chart-id="completion"] .completion-summary')).to_be_visible()
+        expect(panel.locator('.completion-summary')).to_contain_text('Inbox zero weekly')
+
+        if output:
+            page.screenshot(path=str(output / 'chief-binary.png'), animations='disabled')
+
+        # Keyboard focus opens the same preview; Escape dismisses without navigation.
+        page.mouse.move(1100, 820)
+        page.keyboard.press('Tab')
+        tag = many.get_by_role('button', name='Goals: Off track', exact=True)
+        tag.focus()
+        expect(panel.locator('.title')).to_contain_text('Several goals')
+        expect(tag).to_be_focused()
+        assert tag.evaluate('el => getComputedStyle(el).outlineStyle') != 'none'
+        panel.locator('[data-manager-goal-id="binary"]').focus()
+        page.keyboard.press('Escape')
+        expect(panel).to_have_count(0)
+        expect(tag).to_be_focused()
+        # A real preview row click dismisses the panel before the goal page opens.
+        one.locator('.item-head').focus()
+        tag.focus()
+        panel.locator('[data-manager-goal-id="binary"]').click()
+        expect(page.locator('[data-goal-page="binary"]')).to_be_visible()
+        expect(panel).to_have_count(0)
+        page.keyboard.press('Tab')
+        one.locator('.item-head').focus()
+        expect(panel.locator('.title')).to_contain_text('One chart')
+        panel.get_by_role('button', name='Ask for a recap', exact=True).focus()
+        page.keyboard.press('Escape')
+        expect(panel).to_have_count(0)
+        # Restored header focus must not immediately reopen the dismissed panel.
+        page.evaluate(
+            '() => new Promise(resolve => '
+            'requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        expect(panel).to_have_count(0)
+        tag.focus()
+        expect(panel.locator('.title')).to_contain_text('Several goals')
+        tag.click()
+        expect(panel).to_have_count(0)
+        page.wait_for_function(
+            "location.hash.includes('binary') && !location.hash.includes('/managers/')")
+
+        # The actual setting restores the old row surface and removes preview goals.
+        page.locator('.rail-utilities [aria-label="Settings"]').click()
+        setting = page.get_by_role('checkbox', name='Show goals in sidebar rows', exact=True)
+        expect(setting).not_to_be_checked()
+        setting.check()
+        expect(chief.get_by_text('All projects', exact=True)).to_have_count(0)
+        if output:
+            page.screenshot(path=str(output / 'chief-sidebar-rows.png'), animations='disabled')
+        expect(page.locator('a[data-goal-id]')).not_to_have_count(0)
+        expect(page.get_by_role('button', name=re.compile(r'^Goals: '))).to_have_count(0)
+        expect(page.locator('.manager-card[data-goal-status]')).to_have_count(0)
+        many.locator('.identity').hover()
+        expect(panel.locator('[data-manager-goals]')).to_have_count(0)
+        setting.uncheck()
+        expect(chief.get_by_text('All projects', exact=True)).to_be_visible()
+        expect(page.locator('a[data-goal-id]')).to_have_count(0)
+        expect(many.get_by_role('button', name='Goals: Off track', exact=True)).to_be_visible()
+        if output:
+            page.screenshot(path=str(output / 'settings-default.png'), animations='disabled')
+        # A sole checklist reuses the compact summary, with real goal writes.
+        fixture.goals['long'].update(
+            title='Prepare the field guide', primary_checklist_block_id='delivery',
+            page=copy.deepcopy(fixture.goals['checklist']['page']))
+        page.reload(wait_until='domcontentloaded')
+        chief.locator('.identity').hover()
+        checklist = panel.locator('[data-block="checklist"]')
+        expect(checklist).to_have_attribute('data-presentation', 'smallest')
+        expect(checklist).to_contain_text('Delivery')
+        expect(checklist).to_contain_text('1 of 2 done')
+        expect(checklist.get_by_role('progressbar')).to_have_attribute('aria-valuenow', '1')
+        expect(panel.locator('[data-manager-goal-id]')).to_have_count(0)
+        if output:
+            page.screenshot(path=str(output / 'chief-checklist.png'), animations='disabled')
+        checklist.get_by_role('button', name='Show checklist', exact=True).click()
+        with page.expect_request('**/api/goals/long'):
+            checklist.get_by_role('checkbox', name='Publish guide', exact=True).click()
+        expect(checklist.get_by_role('progressbar')).to_have_attribute('aria-valuenow', '2')
+        assert fixture.goals['long']['page']['blocks'][0]['items'][1]['state'] == 'done'
+        page.reload(wait_until='domcontentloaded')
+        chief.locator('.identity').hover()
+        expect(checklist.get_by_role('progressbar')).to_have_attribute('aria-valuenow', '2')
+
+        # The same component also fits a Manager recap and a long expanded list.
+        fixture.goals['long'].update(holder_kind='manager', holder_id='none')
+        fixture.goals['long']['page']['blocks'][0]['items'] = [
+            {'id': f'item-{index}', 'label': f'Long item {index}', 'state': 'open'}
+            for index in range(30)
+        ]
+        fixture.goals['long']['completed'] = False
+        page.set_viewport_size({'width': 1280, 'height': 480})
+        page.reload(wait_until='domcontentloaded')
+        none.locator('.identity').hover()
+        expect(checklist).to_have_attribute('data-presentation', 'smallest')
+        expect(checklist).to_contain_text('0 of 30 done')
+        recap = panel.locator('[data-recap-text]')
+        expect(recap).to_be_visible()
+        # Enter the panel before expansion so the recap retains its visit budget.
+        checklist.hover()
+        recap_height = recap.bounding_box()['height']
+        checklist.get_by_role('button', name='Show checklist', exact=True).click()
+        expect(checklist).to_have_attribute('data-presentation', 'small')
+        page.wait_for_function("""() => {
+          const p=document.querySelector('[data-rail-hover-panel].visible');
+          if(!p)return false;
+          const r=p.getBoundingClientRect(), g=p.querySelector('[data-manager-goals]');
+          return r.top>=0 && r.bottom<=innerHeight && g.scrollHeight>g.clientHeight;
+        }""")
+        assert abs(recap.bounding_box()['height'] - recap_height) <= 1
+        recap_lines = recap.evaluate("el => getComputedStyle(el).getPropertyValue('--recap-lines')")
+        assert 0 <= int(recap_lines) <= 5
+        # The disclosure grows after the first overflowing frame. Scroll until
+        # the final item enters the actual clipped goals viewport.
+        last_item = checklist.get_by_role('checkbox', name='Long item 29', exact=True)
+        page.wait_for_function("""() => {
+          const g=document.querySelector('[data-rail-hover-panel].visible [data-manager-goals]');
+          g.scrollTop=g.scrollHeight;
+          const last=g.querySelector('[data-step="item-29"] [data-check]');
+          return last.getBoundingClientRect().bottom<=g.getBoundingClientRect().bottom;
+        }""")
+        expect(last_item).to_be_in_viewport()
+        if output:
+            page.screenshot(path=str(output / 'manager-long-checklist.png'), animations='disabled')
+        # Capture every numeric chart kind through this same single-goal host.
+        # This covers display dispatch without another connected fixture or host.
+        page.set_viewport_size({'width': 1280, 'height': 900})
+        for kind in ('line', 'bar', 'gauge', 'number', 'progress', 'time-budget', 'allocation'):
+            fixture.goals['daily_quota']['primary_chart'] = {
+                'type': 'chart', 'id': f'preview-{kind}', 'kind': kind,
+                'placement': 'primary', 'title': f'{kind} goal',
+                'measure_id': 'daily_quota', 'target': 20,
+            }
+            page.reload(wait_until='domcontentloaded')
+            one.locator('.identity').hover()
+            chart = panel.locator(f'[data-chart-id="preview-{kind}"]')
+            expect(chart).to_have_attribute('data-compact', 'true')
+            expect(chart.locator('.support-summary')).to_have_attribute('aria-expanded', 'false')
+            expect(panel.locator('[data-manager-goal-id]')).to_have_count(0)
+            if output:
+                page.screenshot(path=str(output / f'single-{kind}.png'), animations='disabled')
+        assert errors == [], errors
+    except Exception:
+        if output:
+            page.screenshot(path=str(output / 'failure.png'), animations='disabled')
+            (output / 'failure.html').write_text(page.content())
+        raise
+    finally:
+        context.close()
+    print(
+        'manager goal header/preview pointer and settings: '
+        f'passed ({time.monotonic()-started:.2f}s, rail {rail_width}px)', flush=True)
+
+
+def manager_text_readonly(browser, url):
+    """One App host proves text capability separation from native data controls.
+
+    Existing Goal editor tests do not cover the same content embedded in a Manager.
+    This uses the existing navigation/Goal fixture, without another server or host.
+    """
+    started = time.monotonic()
+    fixture = GoalFixture()
+    fixture.managers = [
+        {
+            "id": "text",
+            "title": "Release manager",
+            "project_id": "project",
+            "project": "Field guide",
+            "created_at": 1,
+            "recap": "Release status stays visible.",
+            "tickets": [],
+        },
+        {
+            "id": "sole",
+            "title": "Checklist manager",
+            "project_id": "project",
+            "project": "Field guide",
+            "created_at": 2,
+            "recap": "Checklist status stays visible.",
+            "tickets": [],
+        },
+    ]
+    fixture.goals = {"checklist": fixture.goals["checklist"]}
+    goal = fixture.goals["checklist"]
+    goal.update(holder_kind="manager", holder_id="sole", why="Why the guide matters")
+    goal["page"]["blocks"].append(
+        {"type": "text", "id": "context", "text": "Guide background stays visible."}
+    )
+    document = {
+        "kind": "headroom.page",
+        "version": 1,
+        "title": "Release plan",
+        "summary": "",
+        "blocks": [
+            {
+                "type": "text",
+                "id": "opening",
+                "text": "Release guidance with a [documentation link](https://example.com/guide).",
+            },
+            {
+                "type": "section",
+                "id": "plan",
+                "title": "Release overview",
+                "summary": "Saved context",
+                "views": [
+                    {
+                        "id": "status",
+                        "label": "Status",
+                        "blocks": [
+                            {
+                                "type": "table",
+                                "id": "status-table",
+                                "caption": "Release table",
+                                "columns": ["Name", "Count"],
+                                "rows": [["Beta", "2"], ["Alpha", "1"]],
+                            }
+                        ],
+                    },
+                    {
+                        "id": "notes",
+                        "label": "Notes",
+                        "blocks": [
+                            {
+                                "type": "text",
+                                "id": "notes-text",
+                                "text": "The second view remains reachable.",
+                            }
+                        ],
+                    },
+                ],
+            },
+        ],
+    }
+    context = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = context.new_page()
+    page.set_default_timeout(5000)
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    mutations = []
+
+    def respond(route):
+        parts = urlsplit(route.request.url)
+        path = parts.path
+        key = parse_qs(parts.query).get("key", [path])[0]
+        result = None
+        if route.request.method not in ("GET", "HEAD"):
+            mutations.append(path)
+        if key.endswith("/workspace-content"):
+            identity = key.split("/")[3]
+            result = {
+                "goal": "The Manager purpose remains visible.",
+                "recap": "Release status stays visible.",
+                "goals": [goal] if identity == "sole" else [],
+            }
+        elif key in ("/api/chief/page", "/api/managers/text/page", "/api/managers/sole/page"):
+            result = {"page": document, "page_revision": 1}
+        elif key.endswith("/page/readings"):
+            result = {
+                "values": [],
+                "sources": [],
+                "charts": {},
+                "status_date": TODAY,
+                "next_refresh_at": int(time.time()) + 86400,
+            }
+        elif key == "/api/workers/chief-of-staff/settings":
+            result = {
+                "employee_id": "chief",
+                "label": "Chief of Staff",
+                "recap": "Chief status stays visible.",
+                "skill": None,
+                "launch_defaults": {
+                    "employee_backend": "codex",
+                    "employee_launch_model": None,
+                    "employee_launch_reasoning_effort": None,
+                },
+            }
+        if result is not None:
+            route.fulfill(
+                json={
+                    "key": key,
+                    "epoch": "readonly-fixture",
+                    "revision": str(fixture.version),
+                    "body": result,
+                }
+                if path == "/api/resource-body"
+                else result
+            )
+            return
+        fixture.respond(route)
+
+    page.route("**/api/**", respond)
+    evidence = os.environ.get("PANELS_READONLY_EVIDENCE_DIR")
+    output = Path(evidence) if evidence else None
+    if output:
+        output.mkdir(parents=True, exist_ok=True)
+    try:
+        for identity, title in (
+            ("text", "Release manager"),
+            ("chief-of-staff", "Chief of Staff"),
+            ("sole", "Checklist manager"),
+        ):
+            address = "chief-of-staff" if identity == "chief-of-staff" else f"manager/{identity}"
+            page.goto(url + "#/workspace/" + address, wait_until="domcontentloaded")
+            doc = page.locator(".manager-doc")
+            expect(doc.locator("h1")).to_have_text(title)
+            if identity != "sole":
+                expect(doc.get_by_text("Release overview", exact=True)).to_be_visible()
+            else:
+                expect(doc.get_by_text("Why the guide matters", exact=True)).to_be_visible()
+            if output:
+                page.screenshot(path=str(output / f"{identity}-after.png"), animations="disabled")
+            expect(
+                doc.locator('[contenteditable="true"], [data-markdown-inline-edit], .ed')
+            ).to_have_count(0)
+            assert doc.locator("h1").evaluate("el => getComputedStyle(el).cursor") != "text"
+            expect(doc.locator('h1 [role="textbox"], h1 [tabindex="0"]')).to_have_count(0)
+            doc.locator("h1").click()
+            page.keyboard.press("Enter")
+            expect(doc.locator('[contenteditable="true"]')).to_have_count(0)
+            expect(doc.get_by_role("button", name="Ask for a recap", exact=True)).to_be_visible()
+            if identity == "sole":
+                # Structured completion remains writable in the read-only Manager.
+                with page.expect_request("**/api/goals/checklist"):
+                    doc.get_by_role("checkbox", name="Publish guide", exact=True).click()
+                expect(doc.get_by_role("progressbar")).to_have_attribute("aria-valuenow", "2")
+            else:
+                tabs = doc.get_by_role("tablist", name="Views")
+                tabs.get_by_role("tab", name="Notes", exact=True).click()
+                expect(
+                    doc.get_by_text("The second view remains reachable.", exact=True)
+                ).to_be_visible()
+                tabs.get_by_role("tab", name="Notes", exact=True).press("ArrowLeft")
+                expect(doc.get_by_role("table")).to_be_visible()
+                doc.get_by_role("button", name="Sort by Name", exact=True).click()
+                expect(doc.locator("tbody tr").first).to_contain_text("Alpha")
+                expect(
+                    doc.get_by_role("link", name="documentation link", exact=True)
+                ).to_have_attribute("href", "https://example.com/guide")
+            if identity == "text":
+                doc.locator("[data-goal-band] summary").click()
+                expect(
+                    doc.get_by_text("The Manager purpose remains visible.", exact=True)
+                ).to_be_visible()
+            expect(doc.locator('[contenteditable="true"]')).to_have_count(0)
+        # Reuse this Chief/App host: DOM mocks cannot prove clipped focus, overflow,
+        # actual underline transitions, or the section layout in the page column.
+        tab_started = time.monotonic()
+        original_views = copy.deepcopy(document["blocks"][1]["views"])
+        names = [
+            "All projects", "Panels", "Wren", "Write", "Atlas",
+            "Headroom", "Website", "Docs", "Infra",
+        ]
+        for width in (1280, 390):
+            page.set_viewport_size({"width": width, "height": 900})
+            for count in (4, 9):
+                views = [
+                    {"id": f"view-{index}", "label": name,
+                     "blocks": copy.deepcopy(original_views[index % 2]["blocks"])}
+                    for index, name in enumerate(names[:count])
+                ]
+                document["blocks"][1]["views"] = views
+                document["blocks"] = document["blocks"][:2] + [
+                    {"type": "segmented", "id": "standalone-tabs", "views": copy.deepcopy(views)}
+                ]
+                fixture.version += 1
+                page.goto(url + "#/workspace/chief-of-staff", wait_until="domcontentloaded")
+                page.reload(wait_until="domcontentloaded")
+                doc = page.locator(".manager-doc")
+                strips = doc.get_by_role("tablist", name="Views")
+                expect(strips).to_have_count(2)
+                for strip_index in range(2):
+                    strip = strips.nth(strip_index)
+                    tabs = strip.get_by_role("tab")
+                    expect(tabs).to_have_count(count)
+                    first, last = tabs.first, tabs.last
+                    expect(first).to_have_attribute("aria-selected", "true")
+                    expect(first).to_have_attribute("tabindex", "0")
+                    # Every placement supplies a real panel and a unique link.
+                    panel_id = first.get_attribute("aria-controls")
+                    panel = doc.locator(f'[id="{panel_id}"]')
+                    expect(panel).to_have_attribute("role", "tabpanel")
+                    expect(panel).to_have_attribute("aria-labelledby", first.get_attribute("id"))
+                    strip.evaluate("el => window.__tabStrip = el")
+                    ink = strip.locator(".ink")
+                    expect(ink).to_have_count(1)
+                    assert ink.evaluate("el => getComputedStyle(el).transitionDuration") == "0s"
+                    first.focus()
+                    first.press("ArrowLeft")
+                    expect(first).to_be_focused()
+                    first.press("End")
+                    expect(last).to_be_focused()
+                    expect(last).to_have_attribute("aria-selected", "true")
+                    expect(panel).to_have_attribute("aria-labelledby", last.get_attribute("id"))
+                    last.press("ArrowRight")
+                    expect(last).to_be_focused()
+                    # Manual scroll can hide the selected label. A boundary key
+                    # must restore it even when selection does not change.
+                    strip.evaluate("el => el.closest('.tabstrip-scroll').scrollLeft = 0")
+                    last.press("End")
+                    page.wait_for_function("""() => {
+                      const tab=window.__tabStrip.querySelector('[aria-selected="true"]');
+                      const a=tab.getBoundingClientRect();
+                      const b=tab.closest('.tabstrip-scroll').getBoundingClientRect();
+                      return a.left>=b.left-1 && a.right<=b.right+1;
+                    }""")
+                    last.press("Home")
+                    expect(first).to_be_focused()
+                    first.press("ArrowRight")
+                    expect(tabs.nth(1)).to_be_focused()
+                    expect(tabs.nth(1)).to_have_attribute("aria-selected", "true")
+                    page.wait_for_function("""() => {
+                      const strip=window.__tabStrip, ink=strip.querySelector('.ink');
+                      const tab=strip.querySelector('[aria-selected="true"]');
+                      return !ink.classList.contains('nomove') &&
+                        Math.abs(ink.getBoundingClientRect().width-tab.offsetWidth)<1;
+                    }""")
+                    assert ink.evaluate("el => getComputedStyle(el).transitionDuration") != "0s"
+                    assert strip.evaluate("el => el === window.__tabStrip"), (
+                        "selection replaced the tab strip"
+                    )
+                    expect(strip.locator('[tabindex="0"]')).to_have_count(1)
+                    tabs.last.click()
+                    expect(last).to_have_attribute("aria-selected", "true")
+                    # Fades must follow the actual clipped edge, not just a class.
+                    page.wait_for_function("""() => {
+                      const strip=window.__tabStrip.closest('.tabstrip');
+                      const scroll=strip.querySelector('.tabstrip-scroll');
+                      if(scroll.scrollWidth<=scroll.clientWidth+2)return true;
+                      return getComputedStyle(strip,'::before').opacity === '1' &&
+                        getComputedStyle(strip,'::after').opacity === '0';
+                    }""")
+                    # Selection must bring the last label inside the scroll viewport.
+                    page.wait_for_function("""() => {
+                      const tab=window.__tabStrip.querySelector('[aria-selected="true"]');
+                      const scroll=tab.closest('.tabstrip-scroll');
+                      const a=tab.getBoundingClientRect(),b=scroll.getBoundingClientRect();
+                      return a.left >= b.left-1 && a.right <= b.right+1;
+                    }""")
+                    assert first.evaluate("el => getComputedStyle(el).whiteSpace") == "nowrap"
+                    assert first.evaluate(
+                        "el => parseFloat(getComputedStyle(el).outlineOffset)"
+                    ) <= 0
+                    # Neither width nor the number of labels can overflow the page.
+                    assert doc.evaluate("el => el.getBoundingClientRect().right <= innerWidth + 1")
+                title = doc.get_by_text("Release overview", exact=True)
+                title_box = title.bounding_box()
+                assert strips.first.bounding_box()["y"] >= title_box["y"] + title_box["height"]
+                if output:
+                    page.screenshot(
+                        path=str(output / f"chief-tabs-{width}-{count}.png"), animations="disabled"
+                    )
+        touch = context.new_cdp_session(page)
+        touch.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
+        assert page.evaluate("matchMedia('(pointer: coarse)').matches")
+        assert strips.first.get_by_role("tab").first.evaluate(
+            "el => el.getBoundingClientRect().height"
+        ) == 44
+        touch.send("Emulation.setTouchEmulationEnabled", {"enabled": False})
+        page.emulate_media(reduced_motion="reduce")
+        ink = doc.locator(".ink").first
+        expect(ink).to_have_count(1)
+        assert ink.evaluate("el => getComputedStyle(el).transitionDuration") == "0s"
+        page.emulate_media(reduced_motion="no-preference")
+        print(
+            "Chief underline tabs on reused App host: passed "
+            f"(+{time.monotonic() - tab_started:.2f}s)", flush=True
+        )
+        # A sole Manager-held goal routes to its Manager. A Chief-held copy opens
+        # the separate Goal workspace with the same shared content and header.
+        standalone = copy.deepcopy(goal)
+        standalone.update(id="standalone", holder_kind="chief", holder_id=None)
+        fixture.goals["standalone"] = standalone
+        fixture.version += 1
+        page.goto(url + "#/workspace/goal/standalone", wait_until="domcontentloaded")
+        doc = page.locator('[data-goal-page="standalone"]')
+        expect(doc.get_by_role("textbox", name="Goal title", exact=True)).to_be_visible()
+        expect(doc.get_by_role("textbox", name="Why this goal matters", exact=True)).to_be_visible()
+        expect(doc.locator('[data-block="text"] [contenteditable="true"]')).to_be_visible()
+        assert mutations == ["/api/goals/checklist"], mutations
+        assert errors == [], errors
+    finally:
+        context.close()
+    print(f"Manager/Chief text boundary: passed (+{time.monotonic() - started:.2f}s)", flush=True)

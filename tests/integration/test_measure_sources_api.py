@@ -29,8 +29,8 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.measure_sources.registry import build_participants
 from planner.measure_sources.runtime import Runtime
-from planner.scheduled_tickets.registry import build_participants
 
 FIRST_TOKEN = "fixture-first-key"
 SECOND_TOKEN = "fixture-replacement-key"

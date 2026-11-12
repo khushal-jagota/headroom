@@ -1,69 +1,89 @@
 ---
 name: "panels-worker-amend-worker"
-description: "Stage-by-stage guidance for an amend-worker ticket \u2014 changing an existing Worker type in place."
+description: "Stage-by-stage guidance for an amend-worker ticket \u2014 changing or removing a Worker type."
 ---
 
-# Amending an existing worker
+This Ticket changes or removes one Worker type. One type per Ticket.
 
-This Ticket changes a Worker that already works. One Worker per Ticket.
+A Worker type is a preset. A Ticket copies the preset's stages, fields, guidance and launch setup when it is made, and keeps that copy. Its Worker follows the Ticket's own guide. So an amendment reaches Tickets made after the save, and no Ticket that already exists.
 
-Structural change is the normal case: a Stage is removed, or added, or an ownership mode, a runtime default, or the skill guidance changes. Removal is the most common, and it is usually correct — a Stage earns its place, and two Stages that always get approved together are one Stage. Do not argue the user out of a removal.
+Structural change is the normal case: a Stage is removed or added, or an ownership mode, a launch default or the guidance changes. Removal is the most common, and it is usually correct. A Stage earns its place, and two Stages that are always approved together are one Stage. Do not argue the user out of a removal.
 
-Small skill-text edits are not this worker's job. The user makes those directly.
+Small guidance edits are not this Worker's job. The user makes those in the preset editor in Settings.
 
-**Stages: Brief → Amendment → Drafting → Consequences → Done.**
+## What this Worker cannot change
 
-## Where a Worker lives
+- A custom workflow. It belongs to one Ticket and has no type.
+- The stages of a Ticket that already exists. No command changes a Ticket's workflow after it is made. If a live Ticket must follow the new shape, a new Ticket replaces it. The user decides that.
 
-A Worker is declared in the database, in one place, and an amendment takes effect at once. There is no repository change and no deployment.
+## Where a type lives
 
-- **Structure** — stages, fields, ownership modes, runtime defaults. Read it with `panels worker-type show <type>`, which prints the record. It is written back with `panels worker-type save`, which reads the whole record on stdin.
-- **Skill text** — `panels worker-type skill <type> --description "..."`, with the markdown body on stdin. Panels writes the row, writes the file every agent reads, and records the exact bytes.
+A type is one database row. A save or a delete takes effect at once.
 
-You can read both. You cannot write either: both endpoints are owner-only, and no Ticket principal of any type can reach them. That is deliberate, not a fault to work around. Overriding your principal would be forging one. So you prepare the exact bytes and hand them up — see Consequences.
+- `panels worker-type show <type>` prints the record, in the shape that `panels worker-type save` takes back on stdin.
+- The record holds the guidance and the instructions for each Stage. A save writes the specialist skill from them. Panels refuses a skill body sent any other way. Only the skill description is a separate write: `panels worker-type skill <type> --description "..."`.
+- `panels worker-type delete <type>` removes a type. It refuses Coding, because the board lays out its columns in the order of Coding. It also refuses a type with an unfinished Ticket that saved no model, and names those Tickets.
 
-Both take effect immediately. `src/planner/skills/` is only what a database with no skills in it is seeded from, so a shipped skill and a live one can differ, and the live one wins.
+You can read all of this. You cannot write any of it. These doors are owner-only, and no Ticket principal can reach them. That is deliberate. So you prepare the exact bytes and hand them up. See Consequences.
 
-## needs_amendment — agree the change and its blast radius (user-owned)
-
-Read the current definition and skill before you say anything. Then agree with the user what changes, and report what it does to live tickets of that type.
-
-Look before you propose. `panels ticket list --json` names the live tickets and where they sit. Report three things:
-
-- Tickets sitting in a Stage that is being removed. Panels refuses the save while any of them is unfinished, and names them. Agree with the user where each one goes first.
-- Tickets holding text in a field that is being removed. Panels refuses that save too, for the same reason: the text would be dropped.
-- Everything else, which is fine — including finished Tickets holding content in a removed field. That content goes dark. That is accepted loss. Do not rewrite history.
-
-Give the count and the ids. "Some tickets may be affected" is not a blast radius.
-
-The user decides what happens to anything in the way. That decision belongs in this field.
-
-## needs_drafting — write the revised record
-
-Write the revised record, and the revised skill text if the skill changes, as Ticket artifacts. Nothing is saved in this Stage.
-
-The point is that the exact stages get read before they take effect, not after. Show what changed, not the whole record, when the change is small.
-
-Skill text is instruction for a capable agent, not documentation. Amending a skill is more often deleting than adding.
-
-## needs_consequences — get it saved, then verify it
-
-The two writes are not yours to make. Hand them up and verify the result.
-
-1. Move any Ticket the user agreed to move, before the save. Panels refuses a save that would strand one.
-2. Prove the record before you hand it over. The refusal arrives before the record is ever looked at, so you cannot learn from it that the record would have been accepted. Parse the prepared record with the deployed validator, and re-run the strand conditions read-only, so whoever runs the save is not running it blind. Report both results.
-3. Hand your supervisor, or the Chief if you have none, the two commands to run back to back, in this order: `panels worker-type save` with the approved record on stdin, then `panels worker-type skill <type> --description "..."` with the skill body on stdin, when the skill text changed. Record first, then skill — a skill that describes fewer Stages than the record still gates would deny a Stage that is live.
-4. Give the sha256 of each artifact you prepared, so whoever runs it can confirm they ran what was approved, and so you can confirm it afterwards.
-5. Read it back yourself with `panels worker-type show <type>`, and read the stored skill bytes. Write Consequences from what the live store returns, never from what was sent.
-6. Update `src/planner/skills/panels-worker-<name>/SKILL.md` in the repository when the skill text changed, so a fresh install is seeded with the current text. This is a repository change with no effect on this Panels, and it goes through the ordinary branch and staging route.
-7. Update `docs/worker-types.md` when the set of types or their shape changed.
-
-A seeding pass on a fresh deploy will not apply your amendment: seeding declines a table that already holds rows. Only the explicit save does it.
-
-A good Consequences is short and verified: what changed, what `panels worker-type show` reports now, who ran the save, and what if anything is waiting on a repository change.
+`src/planner/worker_types/shipped_worker_types.json` and `src/planner/skills/` seed only a database that has no types or skills. A live row and a shipped one can differ, and the live row wins.
 
 ## Boundaries
 
-- One Worker per Ticket. If the change clearly belongs on a second Worker too, name it and stop.
+- One type per Ticket. If the change clearly belongs on a second type too, name it and stop.
 - Repair only what is stuck.
 
+## Amendment
+
+Agree the change and its blast radius with the user. Read the current record with `panels worker-type show <type>` before you say anything.
+
+Then report what the change does to the Tickets of the type. `panels ticket list --json` names them and where they sit. Give the count and the ids. "Some Tickets are affected" is not a blast radius.
+
+- **Unfinished Tickets of the type** keep their own stages and guidance. The amendment does not reach them. Say for each whether that is acceptable, or whether the user wants a replacement Ticket.
+- **For a removal**, new Tickets of the type are refused after the delete. Name each unfinished Ticket that saved no model, because the delete refuses while one exists. The user decides what happens to each: a saved model, done, or deleted.
+- **Finished Tickets** keep their record. Do not rewrite history.
+
+The user decides what happens to anything in the way. Put that decision in this field.
+
+## Drafting
+
+Write the revised record as a Ticket artifact, in the exact shape that `panels worker-type show` prints. For a removal, the artifact is the delete command. Nothing is saved in this Stage.
+
+The exact stages get read before they take effect, not after. Show what changed, not the whole record, when the change is small.
+
+Guidance is instruction for a capable agent, not documentation. Amending it is more often deleting than adding. Do not start the guidance with a top heading, and do not repeat a Stage name as a heading in its instructions. Panels adds both.
+
+## Consequences
+
+The writes are not yours to make. Hand them up and verify the result.
+
+1. Prove the record before you hand it over. Validate it with the code that runs live, without a database and without writes to the installed tree:
+
+   ```sh
+   PYTHONDONTWRITEBYTECODE=1 /home/vps/Deployments/Panels/current/app/.venv/bin/python -B -c '
+   import sys
+   from planner.worker_types.guidance import render_workflow_guide
+   from planner.worker_types.registry import KNOWN_TOOLSET_PROFILES, validate_definition
+   from planner.worker_types.store import definition_from_json
+   record = definition_from_json(open(sys.argv[1]).read())
+   validate_definition(record, known_skills=frozenset(sys.argv[2:]),
+                       known_toolset_profiles=KNOWN_TOOLSET_PROFILES)
+   sys.stdout.write(render_workflow_guide(record))' record.json $(panels skill list)
+   ```
+
+   It prints the skill body that the save will store. Keep that body as an artifact too.
+2. Hand your supervisor, or the Chief if you have none, the exact commands in order:
+   - `panels worker-type save` with the approved record on stdin. This also writes the specialist skill.
+   - `panels worker-type skill <type> --description "..."`, only when the description changes.
+   - For a removal, `panels worker-type delete <type>` instead.
+3. Give the sha256 of each artifact, so whoever runs it can confirm they ran what was approved, and so you can confirm it afterwards.
+4. Read it back yourself with `panels worker-type show <type>` and `panels skill show <skill>`. After a removal, `show` must return not found. Write Consequences from what the live store returns, never from what was sent.
+5. After a removal, the specialist skill stays. `panels skill delete <skill>` can remove it after no Worker type uses it. Existing Tickets keep their saved guide. Hand that delete to the owner or Chief.
+6. Bring the repository in line through the ordinary branch and staging route. This has no effect on this Panels.
+   - Update the entry for the type in `src/planner/worker_types/shipped_worker_types.json`, or remove it.
+   - Update `src/planner/skills/panels-worker-<name>/SKILL.md`, or remove it. A fresh install converts it into the guidance and the Stage instructions, so keep one heading per Stage.
+   - Update `docs/worker-types.md` when the set of types or their shape changed.
+
+A seeding pass on a fresh deploy does not apply your amendment: seeding declines a table that already holds rows. Only the explicit write does it.
+
+A good Consequences is short and verified: what changed, what the live store reports now, who ran the write, and what waits on a repository change.

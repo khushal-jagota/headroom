@@ -26,7 +26,9 @@ from tests.support.connected_rows import _bind
 from tests.support.connected_rows import _conversation as _conversation
 from tests.support.connected_rows import _message as _message
 from tests.support.connected_rows import _post as _post
-from tests.support.server_fixtures import rail_server as rail_server
+from tests.support.server_fixtures import (
+    owner_read_traced_rail_server as owner_read_traced_rail_server,
+)
 
 from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
 
@@ -44,23 +46,23 @@ def _read_position(server: ServerHandle, conversation: str) -> int:
 
 
 def test_approval_membership_and_each_workers_durable_message_dot(
-    rail_server: ServerHandle,
+    owner_read_traced_rail_server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     api: ApiHelper,
 ) -> None:
-    server = rail_server
+    server = owner_read_traced_rail_server
     EVIDENCE.mkdir(parents=True, exist_ok=True)
     project = _post(server, "/api/projects", {"name": "Message proof"})
     item = _post(
         server,
-        "/api/items",
+        "/api/managers",
         {"title": "Approval and message proof", "project_id": project["id"]},
     )
     tickets = []
     for title, holder in (
-        ("Owner approval without Day membership", {"kind": "owner", "id": "owner"}),
-        ("Supervisor approval without Day membership", {"kind": "sprint_item", "id": item["id"]}),
+        ("Owner-held approval", {"kind": "owner", "id": "owner"}),
+        ("Manager-held approval", {"kind": "manager", "id": item["id"]}),
     ):
         ticket = _post(
             server,
@@ -68,7 +70,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             {
                 "title": title,
                 "worker_type": "coding",
-                "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+                "manager": {"kind": "manager", "id": item["id"]},
                 "brief": "The brief is agreed.",
             },
         )
@@ -88,7 +90,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         )
         assert response.is_success, response.text
         tickets.append(ticket)
-    # Active orchestrators remain represented without Day membership.
+    # Active Managers remain represented alongside their child Tickets.
     # The user-owned Feedback assignment is not a parked approval.
     feedback = _post(
         server,
@@ -96,19 +98,26 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         {
             "title": "User-owned Feedback",
             "worker_type": "initiative_review",
-            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+            "manager": {"kind": "manager", "id": item["id"]},
             "brief": "Review is ready.",
         },
     )
     _bind(server, "feedback", feedback["id"])
     ticket = tickets[0]
-    for name in ("dot-ticket", "dot-supervisor", "dot-chief"):
+    # A row waiting on the owner's approval shows the Review mark, which outranks an unread
+    # dot (redesign, owner). The Manager-held approval's row shows its dot, so the durable
+    # dot is proved on that Worker.
+    dot_ticket = tickets[1]
+    for name in ("dot-ticket", "dot-manager", "dot-chief"):
         _conversation(server, name)
-    _bind(server, "ticket", ticket["id"], "dot-ticket")
-    _bind(server, "agent", item["manager"]["agent_key"], "dot-supervisor")
+    _bind(server, "ticket", dot_ticket["id"], "dot-ticket")
+    _bind(server, "agent", item["manager"]["agent_key"], "dot-manager")
     _bind(server, "agent", "chief_of_staff", "dot-chief")
     _message(
-        server, "dot-ticket", Principal(PrincipalKind.ticket, ticket["id"]), "Child direct message"
+        server,
+        "dot-ticket",
+        Principal(PrincipalKind.ticket, dot_ticket["id"]),
+        "Child direct message",
     )
 
     context = context_factory()
@@ -129,7 +138,11 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         page = open_page(context, server, "#/workspace?view=items", '[data-screen="workspace"]')
         left = page.locator(f'[data-manager="{item["id"]}"]')
         owner_row = left.locator(f'[data-ticket-id="{ticket["id"]}"]')
-        expect(owner_row.locator('[data-conversation-signal="message"]')).to_have_count(
+        expect(owner_row.locator('[data-approval-mark="owner"]')).to_have_count(
+            1, timeout=WAIT_MS
+        )
+        dot_row = left.locator(f'[data-ticket-id="{dot_ticket["id"]}"]')
+        expect(dot_row.locator('[data-conversation-signal="message"]')).to_have_count(
             1, timeout=WAIT_MS
         )
         expect(left.locator('[data-bucket-key="awaiting_approval"]')).to_contain_text(
@@ -189,7 +202,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         expect(right.get_by_text(tickets[1]["title"], exact=True)).to_be_visible(timeout=WAIT_MS)
         capture_success(page, str(EVIDENCE / "approvals-child-message.png"))
 
-        owner_row.click(timeout=WAIT_MS)
+        dot_row.click(timeout=WAIT_MS)
         page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
         page.wait_for_function(
             "() => document.querySelector('[data-conversation-state=opened]')", timeout=WAIT_MS
@@ -209,22 +222,22 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         diagnostics.record("transcript-route-remove-return")
         page.locator('[data-conversation-lens-choice="full"]').click(timeout=WAIT_MS)
         expect(page.get_by_text("Child direct message", exact=True)).to_be_visible(timeout=WAIT_MS)
-        expect(owner_row).to_be_visible(timeout=WAIT_MS)
-        expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
+        expect(dot_row).to_be_visible(timeout=WAIT_MS)
+        expect(dot_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
         assert _read_position(server, "dot-ticket") == 1
 
         # The read is durable across refresh. A stale acknowledgement cannot eat a newer message.
         page.goto(server.base + "/#/workspace?view=items")
         page.reload()
-        reloaded_owner_row = page.locator(f'[data-ticket-id="{ticket["id"]}"]')
-        expect(reloaded_owner_row).to_be_visible(timeout=WAIT_MS)
-        expect(reloaded_owner_row.locator("[data-conversation-signal]")).to_have_count(
+        reloaded_dot_row = page.locator(f'[data-ticket-id="{dot_ticket["id"]}"]')
+        expect(reloaded_dot_row).to_be_visible(timeout=WAIT_MS)
+        expect(reloaded_dot_row.locator("[data-conversation-signal]")).to_have_count(
             0, timeout=WAIT_MS
         )
         _message(
             server,
             "dot-ticket",
-            Principal(PrincipalKind.ticket, ticket["id"]),
+            Principal(PrincipalKind.ticket, dot_ticket["id"]),
             "New child direct message",
         )
         _post(
@@ -232,51 +245,49 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         )
         page.reload()
         expect(
-            page.locator(f'[data-ticket-id="{ticket["id"]}"]').locator(
+            page.locator(f'[data-ticket-id="{dot_ticket["id"]}"]').locator(
                 '[data-conversation-signal="message"]'
             )
         ).to_have_count(1, timeout=WAIT_MS)
         assert _read_position(server, "dot-ticket") == 1
         assert page.locator("[data-chief-destination] .stage-mark").count() == 0
-        assert (
-            page.locator(f'[data-manager="{item["id"]}"] .item-head .stage-mark').count() == 0
-        )
+        assert page.locator(f'[data-manager="{item["id"]}"] .item-head .stage-mark').count() == 0
 
         _post(
             server, "/api/conversation/conversations/dot-ticket/owner-read", {"through_sequence": 2}
         )
         _message(
             server,
-            "dot-supervisor",
+            "dot-manager",
             Principal(PrincipalKind.manager, item["id"]),
-            "Supervisor direct message",
+            "Manager direct message",
         )
         page.reload()
         expect(left.locator(".item-head .stage-mark")).to_be_visible(timeout=WAIT_MS)
-        expect(owner_row).to_be_visible(timeout=WAIT_MS)
-        expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
+        expect(dot_row).to_be_visible(timeout=WAIT_MS)
+        expect(dot_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
         assert page.locator("[data-chief-destination] .stage-mark").count() == 0
         left.locator(".item-head").click(timeout=WAIT_MS)
         expect(right.locator(".manager-workspace-title-mark")).to_be_visible(timeout=WAIT_MS)
         expect(left.locator(".item-head .stage-mark")).to_be_visible(timeout=WAIT_MS)
-        expect(owner_row).to_be_visible(timeout=WAIT_MS)
-        expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
+        expect(dot_row).to_be_visible(timeout=WAIT_MS)
+        expect(dot_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
         assert page.locator("[data-chief-destination] .stage-mark").count() == 0
-        # Selecting the Item keeps the conversation at rest and does not claim a read.
+        # Selecting the Manager keeps the conversation at rest and does not claim a read.
         expect(page.locator('[data-conversation-state="rest"]')).to_be_visible(timeout=WAIT_MS)
-        assert _read_position(server, "dot-supervisor") == 0
-        capture_success(page, str(EVIDENCE / "supervisor-own-message-title-and-rail.png"))
+        assert _read_position(server, "dot-manager") == 0
+        capture_success(page, str(EVIDENCE / "manager-own-message-title-and-rail.png"))
         page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
         expect(right.locator(".manager-workspace-title-mark")).to_have_count(0, timeout=WAIT_MS)
         expect(left.locator(".item-head .stage-mark")).to_have_count(0, timeout=WAIT_MS)
-        assert _read_position(server, "dot-supervisor") == 1
+        assert _read_position(server, "dot-manager") == 1
         page.goto(server.base + "/#/workspace?view=items")
         _message(server, "dot-chief", CHIEF_PRINCIPAL, "Chief direct message")
         page.reload()
         expect(page.locator("[data-chief-destination] .stage-mark")).to_be_visible(timeout=WAIT_MS)
         assert left.locator(".item-head .stage-mark").count() == 0
-        expect(owner_row).to_be_visible(timeout=WAIT_MS)
-        expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
+        expect(dot_row).to_be_visible(timeout=WAIT_MS)
+        expect(dot_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
         capture_success(page, str(EVIDENCE / "chief-own-message-only.png"))
         page.locator("[data-chief-destination]").click(timeout=WAIT_MS)
         expect(page.locator('[data-conversation-state="rest"]')).to_be_visible(timeout=WAIT_MS)

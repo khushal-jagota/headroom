@@ -15,23 +15,26 @@ from planner.worker_types.contracts import (
     RETIRED_WORKER_TYPES,
     WorkerTypeDefinition,
     WorkerTypeManifest,
-    WorkerTypeManifestField,
-    WorkerTypeManifestStage,
+    WorkflowDefinition,
+    WorkflowManifest,
 )
 
 KNOWN_TOOLSET_PROFILES = frozenset({"default"})
 
 
-def validate_definition(
-    definition: WorkerTypeDefinition,
-    *,
-    known_skills: frozenset[str],
-    known_toolset_profiles: frozenset[str],
-) -> None:
-    worker_type = definition.worker_type
+def validate_workflow(definition: WorkflowDefinition) -> None:
+    """Validate the stage machine independently of a preset or launch profile."""
+    worker_type = definition.label
 
     def fail(message: str, detail: JsonDict) -> PlannerError:
         return PlannerError(ErrorCode.validation, message, detail)
+
+    if not isinstance(definition.guidance, str):
+        raise fail("workflow guidance must be text", {})
+    if not isinstance(definition.label, str) or not definition.label.strip():
+        raise fail("workflow label must be non-empty text", {})
+    if any(not isinstance(stage.instructions, str) for stage in definition.stages):
+        raise fail("stage instructions must be text", {})
 
     if len(definition.stages) < 1:
         raise fail("definition has no stages", {"worker_type": worker_type})
@@ -177,6 +180,19 @@ def validate_definition(
             {"worker_type": worker_type, "field": CONSEQUENCES_FIELD_ID},
         )
 
+
+def validate_definition(
+    definition: WorkerTypeDefinition,
+    *,
+    known_skills: frozenset[str],
+    known_toolset_profiles: frozenset[str],
+) -> None:
+    validate_workflow(definition)
+    worker_type = definition.worker_type
+
+    def fail(message: str, detail: JsonDict) -> PlannerError:
+        return PlannerError(ErrorCode.validation, message, detail)
+
     if definition.worker_profile.specialist_skill not in known_skills:
         raise fail(
             "worker profile references an unknown skill",
@@ -261,37 +277,50 @@ class WorkerTypeRegistry:
 
     def manifest(self, worker_type: str) -> WorkerTypeManifest:
         definition = self.require(worker_type)
-        stages: list[WorkerTypeManifestStage] = [
+        workflow = workflow_manifest(
+            definition,
+            worker_type=worker_type,
+            specialist_skill=definition.worker_profile.specialist_skill,
+        )
+        return {
+            **workflow,
+            "worker_type": worker_type,
+            "worker_profile_id": definition.worker_profile.specialist_skill,
+            "creatable": worker_type not in RETIRED_WORKER_TYPES,
+            "default_backend": definition.worker_profile.default_backend,
+            "default_model": definition.worker_profile.default_model,
+            "default_reasoning_effort": definition.worker_profile.default_reasoning_effort,
+        }
+
+
+def workflow_manifest(
+    definition: WorkflowDefinition,
+    *,
+    worker_type: str | None = None,
+    specialist_skill: str | None = None,
+) -> WorkflowManifest:
+    return {
+        "worker_type": worker_type,
+        "label": definition.label,
+        "guidance": definition.guidance,
+        "stages": [
             {
                 "id": stage.id,
                 "label": stage.label,
                 "gating_field": stage.gating_field,
                 "is_terminal": stage.is_terminal,
-                "ownership_mode": (
-                    stage.ownership_mode.value if stage.ownership_mode is not None else None
-                ),
+                "ownership_mode": stage.ownership_mode,
+                "instructions": stage.instructions,
             }
             for stage in definition.stages
-        ]
-        fields: list[WorkerTypeManifestField] = [
-            {"id": field.id, "label": field.label} for field in definition.fields
-        ]
-        advance: dict[str, str] = {}
-        for stage in definition.stage_ids():
-            target = definition.advance_target(stage)
-            if target is not None:
-                advance[stage] = target
-        return {
-            "creatable": definition.worker_type not in RETIRED_WORKER_TYPES,
-            "worker_type": definition.worker_type,
-            "label": definition.label,
-            "stages": stages,
-            "advance": advance,
-            "fields": fields,
-            "ceiling_range": list(definition.ceiling_range()),
-            "default_ceiling": definition.default_ceiling(),
-            "worker_profile_id": definition.worker_profile.specialist_skill,
-            "default_backend": (definition.worker_profile.default_backend),
-            "default_model": definition.worker_profile.default_model,
-            "default_reasoning_effort": (definition.worker_profile.default_reasoning_effort),
-        }
+        ],
+        "fields": [{"id": field.id, "label": field.label} for field in definition.fields],
+        "advance": {
+            stage: target
+            for stage in definition.stage_ids()
+            if (target := definition.advance_target(stage)) is not None
+        },
+        "ceiling_range": list(definition.ceiling_range()),
+        "default_ceiling": definition.default_ceiling(),
+        "worker_profile_id": specialist_skill,
+    }

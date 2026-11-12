@@ -338,47 +338,54 @@
 </section>
 
 <style>
+  /* THE CARD (page system). Inside a goal card the host card is the surface, and this
+     draws none of its own. */
   .card {
     container-type: inline-size;
     width: 100%;
     min-width: 0;
-    border-radius: var(--space-5);
-    background: var(--surface-recessed);
-    color: var(--text-default);
+    border: var(--border-hairline) solid var(--page-card-edge);
+    border-radius: var(--page-card-radius);
+    background: var(--page-card-fill);
+    color: var(--tone-primary);
   }
   .roll { position: relative; display: inline-grid; vertical-align: top; }
   .roll > span { grid-area: 1 / 1; }
-  .save-feedback { margin: 0; padding: 0 var(--space-5) var(--space-3); color: var(--text-faint); font-size: var(--type-sm); }
-  .checklist-header { position: relative; border-radius: inherit; transition: background var(--motion-fast) var(--motion-ease); }
-  .checklist-header:hover { background: var(--surface-2); }
-  .header-action { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text-faint); font-size: var(--type-sm); font-weight: 500; }
+  .save-feedback { margin: 0; padding: 0 var(--space-5) var(--space-3); color: var(--tone-tertiary); font-size: var(--type-small); }
+  .checklist-header { position: relative; border-radius: var(--radius-md); transition: background var(--motion-fast) var(--motion-ease); }
+  .checklist-header:hover { background-image: var(--interaction-hover); }
+  .header-action { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--tone-tertiary); font-size: var(--type-small); font-weight: var(--weight-small); }
   .header-toggle { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   .header-toggle:focus-visible, .check:focus-visible, .step-title:focus-visible, .action:focus-visible, .group-toggle:focus-visible {
-    outline: var(--border-strong) solid var(--accent-bright);
+    outline: var(--focus-width) solid var(--focus-ring);
     outline-offset: 2px;
   }
   .small .body-inner { padding: var(--space-1); }
-  .small .step-inner { column-gap: var(--space-2); padding-inline: var(--space-2); }
-  .small .group-toggle { padding-left: calc(40px + var(--space-2) * 2); }
-  .chevron { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--motion-base) var(--motion-ease); }
+  .small .step-inner { column-gap: var(--space-3); padding-inline: var(--space-3); }
+  .small .group-toggle { padding-left: calc(var(--page-check-target) + var(--space-3) * 2); }
+  .chevron { width: var(--page-chevron); height: var(--page-chevron); fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--motion-base) var(--motion-ease); }
   .chevron.turned { transform: rotate(180deg); }
   .body { overflow: hidden; }
-  .body-inner { padding: var(--space-2); border-top: var(--border-hairline) solid var(--border-color); }
+  .body-inner { padding: 0 var(--space-2) var(--space-2); }
   .list { margin: 0; padding: 0; list-style: none; }
   .step { overflow: hidden; }
+  /* A step: staging's check, a 22px circle on a 40px target in its own column, the name after
+     it on a 40px line. */
   .step-inner {
     display: grid;
-    grid-template-columns: 40px minmax(0, 1fr);
+    grid-template-columns: var(--page-check-target) minmax(0, 1fr);
     column-gap: var(--space-3);
     align-items: start;
     padding: var(--space-1) var(--space-3);
-    border-radius: calc(var(--space-5) - var(--space-2));
+    border-radius: var(--radius-md);
   }
-  .step.current .step-inner { background: var(--surface-2); }
+  /* The open step is marked by its own note under its name; a fill inside the card would only
+     be one more grey on the card's surface. */
+  .step.current .step-inner { background: transparent; }
   .check {
     display: grid;
-    width: 40px;
-    height: 40px;
+    width: var(--page-check-target);
+    height: var(--page-check-target);
     place-items: center;
     margin: 0;
     padding: 0;
@@ -390,29 +397,29 @@
   .check-visual {
     position: relative;
     display: block;
-    width: 22px;
-    height: 22px;
-    border: 1.5px solid var(--text-faint);
+    width: var(--page-check-size);
+    height: var(--page-check-size);
+    border: 1.5px solid var(--tone-secondary);
     border-radius: var(--radius-pill);
-    background: var(--surface-recessed);
+    background: transparent;
     transition: transform 110ms var(--motion-ease), border-color var(--motion-fast) var(--motion-ease);
   }
   .check:active .check-visual { transform: scale(0.92); }
-  .check[aria-checked="true"] .check-visual { border-color: var(--text-strong); }
+  .check[aria-checked="true"] .check-visual { border-color: var(--accent-done); }
   .check-fill {
     position: absolute;
     inset: -1.5px;
     border-radius: inherit;
-    background: var(--text-strong);
+    background: var(--accent-done);
     opacity: 0;
     transform: scale(0.6);
     transition: transform var(--motion-slow) var(--motion-ease), opacity var(--motion-fast) linear;
   }
   .check[aria-checked="true"] .check-fill { opacity: 1; transform: scale(1); }
-  .check-mark { position: absolute; inset: -1.5px; width: 22px; height: 22px; }
+  .check-mark { position: absolute; inset: -1.5px; width: var(--page-check-size); height: var(--page-check-size); }
   .check-mark path {
     fill: none;
-    stroke: var(--surface-recessed);
+    stroke: var(--surface-1);
     stroke-width: 1.75;
     stroke-linecap: round;
     stroke-linejoin: round;
@@ -424,6 +431,10 @@
   .check[aria-checked="true"] .check-mark path { stroke-dashoffset: 0; opacity: 1; }
   .step-main { display: grid; min-width: 0; }
   .step-heading { display: flex; min-width: 0; align-items: start; gap: var(--space-2); }
+  /* A step's date (or the mark that sets one) follows its name, 8px after it, rather than
+     standing alone at the row's far end. */
+  .step-heading:has(:global([data-item-deadline])) > .step-title,
+  .step-heading:has(:global([data-item-deadline])) > .completed-title { flex: 0 1 auto; width: auto; }
   .step-inner:has(:global([data-item-deadline])) > .check { margin-top: 2px; }
   .step-heading:has(:global([data-item-deadline])) > .step-title,
   .step-heading:has(:global([data-item-deadline])) > .completed-title { min-height: 44px; }
@@ -432,17 +443,17 @@
     flex: 1 1 auto;
     min-width: 0;
     width: 100%;
-    min-height: 40px;
+    min-height: var(--page-check-target);
     align-items: center;
     margin: 0;
     padding: 0;
     border: 0;
     background: transparent;
-    color: var(--text-strong);
+    color: var(--tone-primary);
     font: inherit;
-    font-size: var(--type-sm);
-    font-weight: 500;
-    line-height: 1.4;
+    font-size: var(--type-body);
+    font-weight: var(--weight-body);
+    line-height: 20px;
     text-align: left;
   }
   .step-title { cursor: pointer; border-radius: var(--radius-md); }
@@ -456,12 +467,12 @@
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
   }
-  .step.struck .title-text { color: var(--text-faint); }
+  .step.struck .title-text { color: var(--tone-tertiary); }
   .step.struck .strike-mark { background-size: 100% 1px; }
   /* Named for this disclosure, so the application-wide .panel card cannot style it. */
   .step-panel { overflow: hidden; }
-  .step-panel-inner { padding: 0 0 var(--space-3); }
-  .detail { white-space: pre-wrap; max-width: 46ch; margin: 0; color: var(--text-faint); font-size: var(--type-sm); font-weight: 400; line-height: 1.45; }
+  .step-panel-inner { padding: 0 0 var(--space-2); }
+  .detail { white-space: pre-wrap; max-width: 46ch; margin: 0; color: var(--tone-secondary); font-size: var(--type-small); font-weight: var(--weight-small); line-height: 18px; }
   .blocked { margin: var(--space-2) 0 0; color: var(--accent-error); font-size: var(--type-sm); }
   .action {
     display: inline-flex;
@@ -476,7 +487,7 @@
     color: var(--surface-recessed);
     font: inherit;
     font-size: var(--type-sm);
-    font-weight: 500;
+    font-weight: var(--weight-small);
     cursor: pointer;
   }
   .action svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
@@ -485,22 +496,24 @@
     display: grid;
     width: 100%;
     min-height: 44px;
-    grid-template-columns: minmax(0, 1fr) auto;
+    /* The fold's chevron right after its count, as on every fold on the page. */
+    grid-template-columns: auto auto;
+    justify-content: start;
     align-items: center;
-    column-gap: var(--space-3);
+    column-gap: 6px;
     margin-top: 2px;
-    padding: 0 var(--space-3) 0 64px;
+    padding: 0 var(--space-3) 0 calc(var(--page-check-target) + var(--space-3) * 2);
     border: 0;
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-md);
     background: transparent;
-    color: var(--text-faint);
+    color: var(--tone-tertiary);
     font: inherit;
-    font-size: var(--type-sm);
-    font-weight: 500;
+    font-size: var(--type-small);
+    font-weight: var(--weight-small);
     text-align: left;
     cursor: pointer;
   }
-  .group-toggle:hover { background: var(--surface-2); color: var(--text-strong); }
+  .group-toggle:hover { background-image: var(--interaction-hover); color: var(--tone-strong); }
   .sr {
     position: absolute;
     width: 1px;
@@ -511,6 +524,7 @@
     clip: rect(0 0 0 0);
     border: 0;
   }
+  /* A mouse needs no 44px target: rows keep one 36px pitch, like every list on the page. */
   @container (max-width: 380px) {
     .hide-label { display: none; }
   }

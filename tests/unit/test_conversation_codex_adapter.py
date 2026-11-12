@@ -14,7 +14,9 @@ transcript of what it was sent — lives in
 
 from __future__ import annotations
 
+import asyncio
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -130,6 +132,21 @@ def test_an_ordinary_steer_still_carries_its_sender_label(tmp_path: Path) -> Non
             steered = scripted.sent("turn/steer")
             assert "owner" in json.dumps(steered["params"]["input"])
             assert "stop and summarize" in json.dumps(steered["params"]["input"])
+
+    _run(exercise)
+
+
+def test_a_goal_command_reply_is_reported_as_the_command_reply(tmp_path: Path) -> None:
+    """Codex answers a goal through its own call, so no agent message carries the reply."""
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={"turns": []}) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("/goal set ship the fix"))
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            assert scripted.sink.command_replies == ["Goal set: ship the fix"]
+            assert scripted.sink.agent_message_texts == []
 
     _run(exercise)
 
@@ -372,10 +389,14 @@ def test_metadata_batches_stop_on_failure_and_cache_expires_only_on_a_hint(tmp_p
             reads = scripted.all_sent("app/read")
             assert [len(read["params"]["appIds"]) for read in reads] == [100, 100, 1]
             reports = len(scripted.sink.composer_catalog_reports)
+            installed_before_hint = coordinator.installed
             coordinator.hint_apps()
             now[0] += 1
             coordinator.wake()
             await _until(lambda: len(scripted.all_sent("app/installed")) == 2)
+            # Wait for the reply, not only the request: applying it asks for metadata,
+            # and that refresh must read the clock before the clock jumps below.
+            await _until(lambda: coordinator.installed is not installed_before_hint)
             await _until(lambda: not coordinator._lanes["metadata"].pending)
             assert len(scripted.all_sent("app/read")) == 3
             assert len(scripted.sink.composer_catalog_reports) == reports
@@ -457,23 +478,21 @@ def test_catalog_publication_failures_back_off_and_republish_after_sink_recovery
     _run(exercise)
 
 
-@pytest.mark.parametrize("respond", ["never", "error"])
 def test_ordinary_start_needs_correlated_response(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    respond: str,
 ) -> None:
     from planner.conversation.backends.codex_app_server import client
-    from planner.conversation.backends.contracts import BackendPromptRejected, PromptWriteFailed
-
-    monkeypatch.setattr(client, "REQUEST_TIMEOUT_SECONDS", 0.1)
+    from planner.conversation.backends.contracts import PromptWriteFailed
 
     async def exercise() -> None:
-        script: dict[str, Any] = {"turns": [{"respond": respond, "actions": []}]}
+        script: dict[str, Any] = {"turns": [{"respond": "never", "actions": []}]}
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            expected = PromptWriteFailed if respond == "never" else BackendPromptRejected
-            with pytest.raises(expected):
+            # Only the reply that never comes gets a short wait. The initialize
+            # handshake keeps the full wait.
+            monkeypatch.setattr(client, "REQUEST_TIMEOUT_SECONDS", 0.1)
+            with pytest.raises(PromptWriteFailed):
                 await scripted.write_prompt(1, text_message_content("exact provider token"))
             assert scripted.sink.endings == []
 
@@ -488,7 +507,18 @@ def test_early_output_waits_for_start_response_and_stale_turn_does_not_bind(tmp_
                     "started_turn_id": "stale-turn",
                     "response_order": "after_actions",
                     "actions": [
+                        {"do": "item_started", "item": {"type": "futureItem", "newField": 1}},
                         {"do": "agent_delta", "item_id": "a", "text": "early output"},
+                        {
+                            "do": "item_completed",
+                            "item": {
+                                "type": "agentMessage",
+                                "id": "a",
+                                "text": "early output",
+                                "futureField": {"anything": True},
+                            },
+                        },
+                        {"do": "item_completed", "item": {"type": "futureItem"}},
                         {"do": "complete", "status": "completed"},
                     ],
                 }
@@ -500,5 +530,100 @@ def test_early_output_waits_for_start_response_and_stale_turn_does_not_bind(tmp_
             await scripted.sink.wait_for_the_turn_to_end()
             assert scripted.sink.agent_message_texts == ["early output"]
             assert len(scripted.sink.endings) == 1
+
+    _run(exercise)
+
+
+def test_selective_codex_reads_preserve_strict_identities_outcomes_and_permissions() -> None:
+    """Selective reads cannot turn malformed control data into valid operations."""
+    from pydantic import BaseModel, ValidationError
+
+    from planner.conversation.backends.codex_app_server import protocol
+
+    malformed: list[tuple[type[BaseModel], dict[str, Any]]] = [
+        (protocol.ThreadStartResponse, {"thread": {"id": " ", "ephemeral": False}}),
+        (protocol.TurnSteerResponse, {"turnId": 1}),
+        (protocol.Turn, {"id": "turn", "status": "futureOutcome"}),
+        (protocol.ThreadGoalClearResponse, {"cleared": "false"}),
+        (protocol.CommandExecutionRequestApprovalResponse, {"decision": "futureApproval"}),
+        (
+            protocol.ToolRequestUserInputParams,
+            {"threadId": "thread", "turnId": "turn", "questions": []},
+        ),
+        (
+            protocol.ItemCompletedNotification,
+            {"threadId": "thread", "turnId": "turn", "item": {"type": []}},
+        ),
+        (
+            protocol.ItemCompletedNotification,
+            {
+                "threadId": "thread",
+                "turnId": "turn",
+                "item": {"type": "agentMessage", "text": "missing identity"},
+            },
+        ),
+    ]
+    for model, payload in malformed:
+        with pytest.raises(ValidationError):
+            model.model_validate(payload)
+
+    assert protocol.ThreadGoalGetResponse.model_validate({}).goal is None
+    changed = protocol.FileChangeThreadItem.model_validate(
+        {
+            "type": "fileChange",
+            "id": "file",
+            "status": "completed",
+            "changes": [{"path": "new-name", "kind": {"type": "futureRename"}}],
+        }
+    )
+    assert changed.changes[0].kind.type == "futureRename"
+
+    # Optional upstream diagnostics and unrelated required upstream fields do not bind us.
+    completed = protocol.TurnCompletedNotification.model_validate(
+        {
+            "threadId": "thread",
+            "turn": {
+                "id": "turn",
+                "status": "failed",
+                "futureField": True,
+                "error": {
+                    "message": "provider refused",
+                    "codexErrorInfo": {"newKind": {"value": 1}},
+                },
+            },
+        }
+    )
+    assert completed.turn.error is not None
+    assert completed.turn.error.message == "provider refused"
+
+
+def test_a_child_whose_reader_died_with_an_error_still_stops(tmp_path: Path) -> None:
+    """A task that died raises its error on every await, so stop() once never got past it.
+
+    The reader died of a database lock during an outage. Every later stop hit the same
+    dead task, never reached the process, and the conversation kept trying to stop it.
+    """
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={"turns": []}) as scripted:
+            await scripted.start(cursor=None)
+            client = scripted.child._client
+            process = client._process
+            assert process is not None and process.returncode is None
+            assert client._reader is not None
+            client._reader.cancel()
+            await asyncio.gather(client._reader, return_exceptions=True)
+
+            async def died_of_a_lock() -> None:
+                raise sqlite3.OperationalError("database is locked")
+
+            client._reader = asyncio.create_task(died_of_a_lock())
+            await asyncio.gather(client._reader, return_exceptions=True)
+
+            await scripted.child.stop()
+
+            assert process.returncode is not None
+            assert client._process is None
+            assert client._reader is None
 
     _run(exercise)

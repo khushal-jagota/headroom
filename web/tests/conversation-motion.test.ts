@@ -50,6 +50,22 @@ describe('conversation surface frame ownership', () => {
     expect(order).toEqual(['size:1', 'scroll']);
     expect(frames).toHaveLength(0);
   });
+  it('keeps a continued move on the clock it was given, so a late frame does not delay the next line', async () => {
+    const { motion, frame } = rig();
+    const key = {};
+    const first: number[] = [];
+    const line = motion.move(key, t => first.push(t), 120, undefined, true);
+    frame(150);
+    expect(await line).toBe(true);
+    // The next line was due to start at 120, when the first one was due to end.
+    const next: number[] = [];
+    const following = motion.move(key, t => next.push(t), 120, undefined, true, 120);
+    frame(180);
+    expect(next.at(-1)).toBe(0.5);
+    frame(240);
+    expect(await following).toBe(true);
+    expect(next.at(-1)).toBe(1);
+  });
 });
 
 

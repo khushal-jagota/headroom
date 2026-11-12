@@ -26,11 +26,12 @@ def run(browser, urls):
         page.goto(url + "?draft=outlives-a-rebuild", wait_until="domcontentloaded")
         page.locator(INPUT).fill("")
         page.locator(INPUT).type("half a thought, unsent")
-        page.wait_for_timeout(50)
+        # The draft is written by an effect, which flushes before the next frame.
+        settled(page)
         page.goto(url + "?draft=outlives-a-rebuild", wait_until="domcontentloaded")
         assert page.locator(INPUT).input_value() == "half a thought, unsent"
         page.locator(INPUT).fill("")
-        page.wait_for_timeout(50)
+        settled(page)
         page.goto(url + "?draft=outlives-a-rebuild", wait_until="domcontentloaded")
         assert page.locator(INPUT).input_value() == ""
 

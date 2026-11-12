@@ -48,6 +48,13 @@ export function categoryRange(projection: ChartProjection | undefined, range = '
   return projection?.kind === 'category' ? projection.ranges.find(item => item.id === range) ?? projection.ranges.find(item => item.id === 'all') : undefined;
 }
 
+/** True when the x axis holds dates rather than named categories. Hand-written points count as dates only when every key is an ISO date. */
+export function hasDateAxis(block: ChartBlock, data: LineChartDatum[], projection?: ChartProjection, range = 'all'): boolean {
+  if (block.binding) return categoryRange(projection, range)?.axis === 'date';
+  if (block.expectation || block.measure_id) return true;
+  return data.length > 0 && data.every(datum => /^\d{4}-\d{2}-\d{2}$/.test(datum.key));
+}
+
 export function categoryNumber(value: CategoryChartValue | null | undefined): number | undefined {
   return value?.status === 'value' && value.value !== null && Number.isFinite(value.value) ? value.value : undefined;
 }

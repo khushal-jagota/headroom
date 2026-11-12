@@ -15,11 +15,12 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 from tests.support.principals import OWNER_PRINCIPAL
 
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
+from planner.core.contracts import PlannerError
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets import data as tickets_data
@@ -57,14 +58,12 @@ def _arrival_record(coding: dict[str, Any]) -> dict[str, Any]:
     record["worker_type"] = "arrival"
     record["label"] = "Arrival"
     record["profile"]["specialist_skill"] = "panels-worker-arrival"
-    record["skill"] = {
-        "description": "A worker declared without a release.",
-        "markdown_body": "# Arrival\n\nDo the work.\n",
-    }
+    record["guidance"] = "# Arrival\n\nDo the work.\n"
+    record["skill"] = {"description": "A worker declared without a release."}
     return record
 
 
-def test_a_rewrite_returns_backward_migrations_and_keeps_the_read_record_shape(
+def test_a_rewrite_keeps_ticket_snapshots_and_the_read_record_shape(
     client: tuple[TestClient, Path],
 ) -> None:
     test_client, db_path = client
@@ -116,41 +115,18 @@ def test_a_rewrite_returns_backward_migrations_and_keeps_the_read_record_shape(
     response = test_client.post("/api/worker-types", json=without_implementation)
 
     assert response.status_code == 200, response.text
-    assert sorted(
-        response.json()["migrations"], key=lambda migration: migration["ticket_id"]
-    ) == sorted(
-        [
-            {
-                "ticket_id": ticket.id,
-                "title": "Mid flight",
-                "old_stage": "needs_implementation",
-                "new_stage": "needs_what_changes",
-                "old_ceiling": "needs_brief",
-                "new_ceiling": "needs_brief",
-            },
-            {
-                "ticket_id": finished.id,
-                "title": "Historical Implementation ceiling",
-                "old_stage": "done",
-                "new_stage": "done",
-                "old_ceiling": "needs_implementation",
-                "new_ceiling": "needs_what_changes",
-            },
-        ],
-        key=lambda migration: migration["ticket_id"],
-    )
     assert test_client.get("/api/worker-types/coding").json() == without_implementation
     assert configured_worker_type_registry().require("coding").stage_ids() == tuple(
         stage["id"] for stage in without_implementation["stages"]
     )
     with closing(connect(str(db_path))) as conn:
         assert conn.execute("SELECT stage FROM tickets WHERE id=?", (ticket.id,)).fetchone()[0] == (
-            "needs_what_changes"
+            "needs_implementation"
         )
     historical = test_client.get(f"/api/tickets?detail=full&id={finished.id}")
     assert historical.status_code == 200, historical.text
     assert historical.json()["stage"] == "done"
-    assert historical.json()["ceiling"] == "needs_what_changes"
+    assert historical.json()["ceiling"] == "needs_implementation"
     listing = test_client.get("/api/tickets?detail=full")
     assert listing.status_code == 200, listing.text
     assert finished.id in {row["id"] for row in listing.json()["tickets"]}
@@ -159,8 +135,8 @@ def test_a_rewrite_returns_backward_migrations_and_keeps_the_read_record_shape(
             conn.execute("SELECT * FROM tickets WHERE id=?", (finished.id,)).fetchone()
         )
         assert finished_after["stage"] == finished_before["stage"] == "done"
-        assert finished_after["ceiling"] == "needs_what_changes"
-        for key in ("field_values", "field_approvals", "ceiling_holder", "guidance"):
+        assert finished_after["ceiling"] == "needs_implementation"
+        for key in ("field_values", "field_approvals", "ceiling_holder", "workflow_json"):
             assert finished_after[key] == finished_before[key]
         tickets_data.audit_ticket_registry_integrity(conn)
 
@@ -185,11 +161,11 @@ def test_failed_bundled_amendment_preserves_skill_definition_and_runtime(
         conn.execute("UPDATE tickets SET stage='needs_implementation' WHERE id=?", (ticket.id,))
     replacement = json.loads(json.dumps(coding))
     replacement["stages"] = [s for s in replacement["stages"] if s["id"] != "needs_implementation"]
-    replacement["fields"] = [f for f in replacement["fields"] if f["id"] != "implementation"]
+    # Leave the field undeclared by any stage: the record itself is invalid.
     replacement["skill"] = {"description": "must not persist"}
     response = test_client.post("/api/worker-types", json=replacement)
     assert response.status_code == 400, response.text
-    assert ticket.id in response.text
+    assert "field" in response.text
     assert test_client.get("/api/worker-types/coding").json() == coding
     assert test_client.get("/api/skills/panels-worker-coding").json() == skill_before
     assert configured_worker_type_registry() is registry_before
@@ -287,9 +263,9 @@ def test_generic_skill_edit_and_legacy_adapters_use_the_same_partial_writer(
     client: tuple[TestClient, Path],
 ) -> None:
     test_client, db_path = client
-    before = test_client.get("/api/skills/panels-worker-coding").json()
+    before = test_client.get("/api/skills/panels-worker").json()
     response = test_client.patch(
-        "/api/skills/panels-worker-coding",
+        "/api/skills/panels-worker",
         json={"description": "common writer", "markdown_body": "# Updated"},
     )
     assert response.status_code == 200, response.text
@@ -300,9 +276,37 @@ def test_generic_skill_edit_and_legacy_adapters_use_the_same_partial_writer(
         response = test_client.request(
             method, "/api/workers/coding/skill", json={"body": f"# {method}"}
         )
-        assert response.status_code == 200, response.text
-        assert response.json()["specialist_skill"]["description"] == "common writer"
-        assert response.json()["specialist_skill"]["markdown_body"] == f"\n# {method}\n"
+        assert response.status_code == 400, response.text
+        assert "structured Worker preset" in response.text
+    source_before = test_client.get("/api/skills/panels-worker-coding").json()["source_text"]
+    independent = test_client.patch(
+        "/api/skills/panels-worker-coding", json={"markdown_body": "Independent instructions"}
+    )
+    assert independent.status_code == 400, independent.text
+    batch = test_client.post(
+        "/api/skills/apply",
+        json={
+            "skills": [
+                {
+                    "name": "panels-worker-coding",
+                    "source_text": source_before.replace("Coding", "Independent"),
+                    "expected_sha256": hashlib.sha256(source_before.encode()).hexdigest(),
+                }
+            ]
+        },
+    )
+    assert batch.status_code == 400, batch.text
+    assert (
+        test_client.get("/api/skills/panels-worker-coding").json()["source_text"] == source_before
+    )
+    structured = test_client.get("/api/worker-types/coding").json()
+    structured["stages"][1]["instructions"] = "STRUCTURED STAGE INSTRUCTIONS"
+    generated = test_client.post("/api/worker-types", json=structured)
+    assert generated.status_code == 200, generated.text
+    assert (
+        "STRUCTURED STAGE INSTRUCTIONS"
+        in test_client.get("/api/skills/panels-worker-coding").json()["source_text"]
+    )
     for method in ("put", "patch"):
         response = test_client.request(
             method, "/api/workers/chief-of-staff/skill", json={"body": f"# Chief {method}"}
@@ -354,7 +358,6 @@ def test_embedded_skill_validates_the_original_payload_and_requires_initial_fiel
     test_client, _db_path = client
     coding = test_client.get("/api/worker-types/coding").json()
     for skill in (
-        {"description": "initial"},
         {"body": "initial body"},
         {"name": "wrong", "description": "initial", "body": "body"},
         {"description": "initial", "body": "body", "unknown": "bad"},
@@ -370,7 +373,6 @@ def test_embedded_skill_validates_the_original_payload_and_requires_initial_fiel
     record["skill"] = {
         "name": "panels-worker-arrival",
         "description": "initial",
-        "body": "new body",
     }
     assert test_client.post("/api/worker-types", json=record).status_code == 200
 
@@ -426,7 +428,7 @@ def test_reviewed_skill_batch_accepts_owner_and_chief_but_refuses_other_agents(
 ) -> None:
     test_client, _db_path = client
     source = "---\nname: batch-role\ndescription: Reviewed role\n---\n\nExact owner instructions.\n"
-    payload = {"skills": [{"name": "batch-role", "source_text": source, "expected_sha256": None}]}
+    payload = {"skills": [{"name": "batch-role", "source_text": source}]}
     before = test_client.get("/api/skills").json()
     for headers in (
         {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_denied"},
@@ -446,7 +448,6 @@ def test_reviewed_skill_batch_accepts_owner_and_chief_but_refuses_other_agents(
             {
                 "name": "batch-role",
                 "source_text": chief_source,
-                "expected_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
             }
         ]
     }
@@ -455,6 +456,33 @@ def test_reviewed_skill_batch_accepts_owner_and_chief_but_refuses_other_agents(
     )
     assert accepted.status_code == 200, accepted.text
     assert test_client.get("/api/skills/batch-role").json()["source_text"] == chief_source
+
+
+def test_skill_delete_and_file_write_refuse_agents_and_accept_the_chief(
+    client: tuple[TestClient, Path],
+) -> None:
+    """Risk: the two new skill writes open a door for Workers or Managers."""
+    test_client, db_path = client
+    file_body = {"path": "notes/extra.md", "content": "supporting"}
+    for headers in (
+        {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_denied"},
+        {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_denied"},
+    ):
+        deleted = test_client.delete("/api/skills/probe-worker", headers=headers)
+        written = test_client.put("/api/skills/panels/files", json=file_body, headers=headers)
+        for result in (deleted, written):
+            assert result.status_code == 400, result.text
+            assert result.json()["error"]["code"] == "agent_forbidden"
+    skills_home = db_path.parent / "skills"
+    assert (skills_home / "probe-worker" / "SKILL.md").is_file()
+    assert not (skills_home / "panels" / "notes").exists()
+    chief = {"X-Plan-Actor": "chief"}
+    written = test_client.put("/api/skills/panels/files", json=file_body, headers=chief)
+    assert written.status_code == 200, written.text
+    assert (skills_home / "panels" / "notes" / "extra.md").read_text() == "supporting"
+    deleted = test_client.delete("/api/skills/probe-worker", headers=chief)
+    assert deleted.status_code == 200, deleted.text
+    assert test_client.get("/api/skills/probe-worker").status_code == 404
 
 
 def test_committed_amendment_receipt_survives_skill_file_publication_failure(
@@ -489,16 +517,6 @@ def test_committed_amendment_receipt_survives_skill_file_publication_failure(
     assert response.status_code == 500, response.text
     detail = response.json()["error"]["detail"]
     assert detail["definition_saved"] is True
-    assert detail["migrations"] == [
-        {
-            "ticket_id": ticket.id,
-            "title": "Receipt survives",
-            "old_stage": "needs_what_changes",
-            "new_stage": "needs_what_changes",
-            "old_ceiling": "needs_implementation",
-            "new_ceiling": "needs_what_changes",
-        }
-    ]
     assert (
         "needs_implementation"
         not in configured_worker_type_registry().require("coding").stage_ids()
@@ -506,4 +524,95 @@ def test_committed_amendment_receipt_survives_skill_file_publication_failure(
     with closing(connect(str(db_path))) as conn:
         assert conn.execute("SELECT ceiling FROM tickets WHERE id=?", (ticket.id,)).fetchone()[
             0
-        ] == ("needs_what_changes")
+        ] == ("needs_implementation")
+
+
+def test_removing_a_type_leaves_its_tickets_on_their_own_workflow(
+    client: tuple[TestClient, Path],
+) -> None:
+    """Risk: removing a preset strands its Tickets, or removes one something still reads."""
+    test_client, db_path = client
+    historical = json.loads(
+        (Path(__file__).parents[1] / "support" / "retired_general_worker_type.json").read_text()
+    )
+    historical["skill"] = {"description": "Historical General specialist"}
+    restored = test_client.post("/api/worker-types", json=historical)
+    assert restored.status_code == 200, restored.text
+    with closing(connect(str(db_path))) as conn:
+        running = tickets_data.create_ticket(
+            conn,
+            worker_type="general",
+            title="Still running",
+            brief="Kickoff",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+        )
+        workflow_before = conn.execute(
+            "SELECT workflow_json FROM tickets WHERE id=?", (running.id,)
+        ).fetchone()[0]
+        conn.execute("UPDATE tickets SET employee_launch_model=NULL WHERE id=?", (running.id,))
+        conn.commit()
+
+    for path in ("/api/worker-types/general", "/api/worker-types/coding"):
+        response = test_client.delete(path, headers={"X-Plan-Actor": "worker"})
+        assert response.json()["error"]["code"] == "agent_forbidden", response.text
+    refused = test_client.delete("/api/worker-types/general")
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["detail"]["ticket_ids"] == [running.id]
+
+    with closing(connect(str(db_path))) as conn:
+        conn.execute(
+            "UPDATE tickets SET employee_launch_model='gpt-6.1-sol' WHERE id=?", (running.id,)
+        )
+        conn.commit()
+    deleted = test_client.delete("/api/worker-types/general", headers={"X-Plan-Actor": "chief"})
+    assert deleted.json() == {"worker_type": "general", "deleted": True}, deleted.text
+
+    assert test_client.get("/api/worker-types/general").status_code == 404
+    # The browser and the native app read the Ticket's own workflow from its detail.
+    detail = test_client.get("/api/tickets", params={"detail": "full", "id": running.id})
+    assert detail.status_code == 200, detail.text
+    assert [stage["id"] for stage in detail.json()["workflow"]["stages"]] == [
+        stage["id"] for stage in json.loads(workflow_before)["stages"]
+    ]
+    assert "general" not in configured_worker_type_registry().registered_worker_types()
+    with closing(connect(str(db_path))) as conn:
+        kept = tickets_data.read_ticket(conn, running.id)
+        assert kept.stage == running.stage
+        assert (
+            conn.execute("SELECT workflow_json FROM tickets WHERE id=?", (running.id,)).fetchone()[
+                0
+            ]
+            == workflow_before
+        )
+        with pytest.raises(PlannerError):
+            tickets_data.create_ticket(
+                conn,
+                worker_type="general",
+                title="Refused",
+                brief="Kickoff",
+                principal=OWNER_PRINCIPAL,
+                now=2,
+                title_max_chars=200,
+            )
+    assert test_client.get("/api/skills/panels-worker-general").status_code == 200
+
+    assert running.pending_proposal is not None
+    accepted = test_client.post(
+        f"/api/tickets/{running.id}/accept/brief",
+        json={
+            "next_ceiling": "needs_work_done",
+            "next_holder": {"kind": "owner", "id": "owner"},
+            "expected_proposal_revision": running.pending_proposal_revision,
+        },
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["stage"] == "needs_work_done"
+    proposed = test_client.post(
+        f"/api/tickets/{running.id}/propose",
+        json={"body": "The historical work can continue."},
+        headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": running.id},
+    )
+    assert proposed.status_code == 200, proposed.text
+    assert proposed.json()["pending_proposal"]["field"] == "work_done"

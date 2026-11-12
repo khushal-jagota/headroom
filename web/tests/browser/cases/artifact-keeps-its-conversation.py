@@ -15,8 +15,8 @@ pane, each with its own real conversation, through the real navigation projectio
 real conversation view reader.
 
 The same host also protects the distinct standalone/Review boundary: the file owner
-supplies the recipient, a local artifact does not acknowledge Review or activate its
-hidden shortcuts, and the retained card keeps its draft and skipped cohort. Existing
+supplies the recipient, an artifact visit does not acknowledge Review or activate its
+shortcuts, and the return restores the card, draft, and skipped cohort. Existing
 source-pane assertions do not exercise this boundary. Synthetic HTTP responses establish
 browser routing and native send payloads; they do not establish provider delivery.
 """
@@ -47,6 +47,9 @@ MANAGER_TITLE = "Rollout manager"
 # reached by going to the owner's own page.
 MANAGER_ARTIFACT = "/files/tickets/t_elsewhere/artifacts/plan.md"
 CHIEF_ARTIFACT = "/files/tickets/t_faraway/artifacts/budget.md"
+# The Manager's own web page. A raw link to it downloads, because the server sends every
+# HTML file as an attachment, so chat must draw it as a preview card.
+MANAGER_PAGE = f"/files/managers/{MANAGER_ID}/artifacts/compare.html"
 MANAGER_TRANSCRIPT = "The rollout manager keeps its own thread."
 CHIEF_TRANSCRIPT = "The Chief keeps its own thread."
 
@@ -84,7 +87,8 @@ TRANSCRIPTS = {
     FILE_CONVERSATION: [prompt(1, "Read this artifact"), answer(2, "The file owner answers here. Read [the budget](/files/tickets/t_faraway/artifacts/budget.md).")],
     MANAGER_CONVERSATION: [
         prompt(1, "Where did the rollout plan end up?"),
-        answer(2, f"It landed on another Ticket: [the plan]({MANAGER_ARTIFACT}).\n\n{MANAGER_TRANSCRIPT}"),
+        answer(2, f"It landed on another Ticket: [the plan]({MANAGER_ARTIFACT}).\n\n"
+                  f"Compare it with [the comparison]({MANAGER_PAGE}).\n\n{MANAGER_TRANSCRIPT}"),
     ],
     CHIEF_CONVERSATION: [
         prompt(1, "What should I read first?"),
@@ -120,6 +124,7 @@ def conversation_status(conversation_id):
         "turn_key": None,
         "turn_running": False,
         "stopped_without_ending": False,
+        "background_tasks": [],
         "pending_permission": None,
         "pending_user_input": None,
         "plan": None,
@@ -201,13 +206,14 @@ def run(browser, urls):
         "/api/goals": {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
         "/api/workers/chief-of-staff/settings": {"employee_id": "chief", "label": "Chief", "recap": "The Chief's conversation names another Ticket's artifact.", "skill": None, "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}},
         "/api/chief/conversation/start-values": start_values,
+        "/api/chief/conversation": {"conversation_id": CHIEF_CONVERSATION},
+        "/api/chief/page": {"page": None, "page_revision": 0},
+        f"/api/managers/{MANAGER_ID}/page": {"page": None, "page_revision": 0},
         f"/api/managers/{MANAGER_ID}/conversation/start-values": start_values,
-        f"/api/managers/{MANAGER_ID}/workspace-content": {"goal": "Ship the rollout.", "recap": "The Manager's own conversation names another Ticket's artifact."},
+        f"/api/managers/{MANAGER_ID}/workspace-content": {"goals": [], "goal": "Ship the rollout.", "recap": "The Manager's own conversation names another Ticket's artifact."},
         "/api/worker-types?supported=true": manifest,
         "/api/worker-types": manifest,
-        "/api/feedback/count": {"open_count": 0},
-        "/api/deployment-status": {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None},
-        "/api/updates": {"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None},
+        "/api/updates": {"state": "up_to_date", "allowed_actions": [], "activity": "unknown", "available": None, "attempt": None, "app_sha": "fixture", "detail": None, "deadline_at": None, "mac_details": None},
         "/api/meta": {"test_mode": True, "app_sha": None},
         "/api/review": {"items": [], "running_worker_count": 0},
         "/api/conversation/backends": {"backends": []},
@@ -224,12 +230,14 @@ def run(browser, urls):
         "/api/tickets?detail=full&id=t_elsewhere": {"id": "t_elsewhere", "title": "Artifact owner", "conversation_id": FILE_CONVERSATION, "locale": "vps", "worker_type": "coding"},
         "/api/tickets/t_elsewhere/conversation/start-values": start_values,
         f"/api/managers/{MANAGER_ID}/workspace": {"id": MANAGER_ID, "title": MANAGER_TITLE, "manager": {"conversation_id": MANAGER_CONVERSATION}},
-        "/api/goals/goal_fixture": {"id": "goal_fixture", "title": "Artifact goal", "conversation_id": FILE_CONVERSATION},
-        "/api/goals/goal_fixture/conversation/start-values": start_values,
+        "/api/goals/goal_fixture": {"id": "goal_fixture", "title": "Artifact goal", "holder_kind": "manager", "holder_id": MANAGER_ID},
+        "/api/goals/goal_chieffixture": {"id": "goal_chieffixture", "title": "Chief artifact goal", "holder_kind": "chief", "holder_id": None},
     })
     unexpected = []
     writes = []
     review_mode = False
+    review_anchors = []
+    rebased_review_anchors = []
 
     def respond(route):
         parts = urlsplit(route.request.url)
@@ -244,7 +252,13 @@ def run(browser, urls):
             return
         if path == "/api/navigation/view/snapshot":
             view = json.loads(parse_qs(query)["view"][0])
-            route.fulfill(json=fixture["scoped_navigation_response"](source, view))
+            review_anchors.extend(window["anchor"] for window in view["windows"] if window["section"] == "review")
+            response = fixture["scoped_navigation_response"](source, view)
+            requested = next((window["anchor"] for window in view["windows"] if window["section"] == "review"), None)
+            if requested is not None:
+                rebased_review_anchors.extend(window["request"]["anchor"] for window in response["content"]["windows"]
+                                              if window["request"]["section"] == "review" and window["request"]["anchor"] != requested)
+            route.fulfill(json=response)
             return
         if path.startswith("/api/conversation/conversations/"):
             rest = path[len("/api/conversation/conversations/"):].split("/")
@@ -454,6 +468,22 @@ def run(browser, urls):
     open_the_conversation()
     expect(transcript).to_be_visible()
 
+    # 7. A link to the Manager's own web page is a preview card, like a Ticket or goal
+    #    file, and not the raw link that downloads. Pressing it opens the page in place.
+    expect(conversation.locator(f'a[href="{MANAGER_PAGE}"]')).to_have_count(0)
+    page_card = conversation.locator('[data-file-preview-kind="html"]')
+    expect(page_card).to_have_count(1)
+    if screenshots:
+        page.screenshot(path=str(Path(screenshots) / "manager-page-card.png"))
+    page_card.locator(f'a[href*="manager={MANAGER_ID}"]:visible').first.click()
+    expect(artifact).to_have_attribute("aria-label", "compare.html")
+    expect(conversation).to_have_attribute("data-conversation-id", MANAGER_CONVERSATION)
+    if screenshots:
+        page.screenshot(path=str(Path(screenshots) / "manager-page-opened.png"))
+    artifact.get_by_role("button", name="Close", exact=True).click()
+    expect(artifact).to_have_count(0)
+    open_the_conversation()
+
     # 2. The conversation it was named in stays usable: words typed while the artifact is
     #    open land in the real composer, and a draft survives opening and closing it.
     box = conversation.locator("[data-conversation-input]")
@@ -552,8 +582,14 @@ def run(browser, urls):
     assert not writes, writes
 
     page.goto(url + "#/preview?source=goal&goal=goal_fixture&path=notes.md", wait_until="domcontentloaded")
-    expect(viewer.locator("[data-conversation-pane]")).to_have_attribute("data-conversation-id", FILE_CONVERSATION)
-    expect(viewer).to_contain_text("Artifact goal")
+    expect(viewer.locator("[data-conversation-pane]")).to_have_attribute("data-conversation-id", MANAGER_CONVERSATION)
+    expect(viewer).to_contain_text(MANAGER_TITLE)
+    assert not writes, writes
+
+    # A cold direct goal-file visit reads its Chief holder's native pointer.
+    page.goto("about:blank")
+    page.goto(url + "#/preview?source=goal&goal=goal_chieffixture&path=notes.md", wait_until="domcontentloaded")
+    expect(viewer.locator("[data-conversation-pane]")).to_have_attribute("data-conversation-id", CHIEF_CONVERSATION)
     assert not writes, writes
 
     page.goto(url + "#/preview?source=ticket&ticket=t_missing&path=artifacts%2Fplan.md", wait_until="domcontentloaded")
@@ -573,8 +609,8 @@ def run(browser, urls):
     values["/api/tickets?detail=full&id=t_elsewhere"]["conversation_id"] = FILE_CONVERSATION
     writes.clear()
 
-    # Review keeps both the skipped cohort and the current reply DOM alive beneath the
-    # artifact. Keyboard shortcuts from the artifact must not act on the hidden card.
+    # Review saves its skipped cohort and current draft across actual route changes.
+    # The real shell owns selection and native history, which a card-only host cannot prove.
     review_mode = True
     review_board = json.loads(json.dumps(board))
     review_board["managers"][0]["awaiting_reply"] = True
@@ -591,7 +627,6 @@ def run(browser, urls):
     assert first_conversation != current_conversation
     reply = card.locator("[data-review-reply]")
     reply.fill("Keep this unfinished response")
-    page.evaluate("window.__reviewReply = document.querySelector('[data-review-reply]')")
     writes.clear()
     artifact_link(card, "t_elsewhere").click()
     expect(viewer).to_be_visible()
@@ -600,14 +635,33 @@ def run(browser, urls):
     page.keyboard.press("s")
     page.keyboard.press("o")
     page.keyboard.press("Control+Enter")
-    assert page.evaluate("location.hash") == "#/review"
+    preview_hash = "#/preview?source=ticket&ticket=t_elsewhere&path=artifacts%2Fplan.md"
+    assert page.evaluate("location.hash") == preview_hash
+    expect(page.locator('[data-screen="review"][aria-current="page"]')).to_have_count(0)
+    expect(page.locator('[data-review-card]')).to_have_count(0)
     assert not writes, writes
     viewer.locator('[data-ticket-artifact-close]').click()
     expect(viewer).to_have_count(0)
     expect(reply).to_have_value("Keep this unfinished response")
-    assert page.evaluate("window.__reviewReply === document.querySelector('[data-review-reply]')")
+    page.wait_for_function("() => location.hash === '#/review'")
+    expect(page.locator('[data-screen="review"][aria-current="page"]:visible')).to_have_count(1)
     assert card.get_attribute("data-conversation-id") == current_conversation
     assert not writes, writes
+
+    # Every way back restores the same unfinished reply and does not undo the skip.
+    for return_way in ("review", "back", "escape"):
+        artifact_link(card, "t_elsewhere").click()
+        expect(viewer).to_be_visible()
+        if return_way == "review":
+            page.locator('[data-screen="review"]:visible').first.click()
+        elif return_way == "back":
+            page.go_back()
+        else:
+            page.keyboard.press("Escape")
+        expect(viewer).to_have_count(0)
+        expect(reply).to_have_value("Keep this unfinished response")
+        assert card.get_attribute("data-conversation-id") == current_conversation
+        assert not writes, writes
 
     artifact_link(card, "t_elsewhere").click()
     nested_conversation = viewer.locator("[data-conversation-pane]")
@@ -615,8 +669,7 @@ def run(browser, urls):
     artifact_link(nested_conversation, "t_faraway").click()
     expect(viewer.locator("[data-ticket-artifact]")).to_have_attribute("aria-label", "budget.md")
     expect(nested_conversation).to_have_attribute("data-conversation-id", FILE_CONVERSATION)
-    expect(viewer.locator("[data-artifact-recipient]")).to_have_text("Message Artifact owner")
-    assert page.evaluate("location.hash") == "#/review"
+    assert page.evaluate("location.hash") == preview_hash
     viewer.locator('[data-ticket-artifact-close]').click()
     expect(reply).to_have_value("Keep this unfinished response")
     writes.clear()
@@ -634,6 +687,93 @@ def run(browser, urls):
         page.screenshot(path=str(Path(screenshots) / "review-artifact-owner.png"))
     viewer.locator('[data-ticket-artifact-close]').click()
     expect(reply).to_have_value("Keep this unfinished response")
+    if screenshots:
+        page.screenshot(path=str(Path(screenshots) / "review-return-restored.png"))
+
+    # Resolution elsewhere during a visit must win over the saved queue position.
+    writes.clear()
+    artifact_link(card, "t_elsewhere").click()
+    expect(viewer).to_be_visible()
+    source = fixture["navigation_response"](board, {"chief_of_staff": {
+        "label": "Chief", "conversation_id": CHIEF_CONVERSATION}})
+    viewer.locator('[data-ticket-artifact-close]').click()
+    expect(page.locator('[data-review-card]')).to_have_count(0)
+    expect(page.locator('[data-review-empty]')).to_be_visible()
+    assert not writes, writes
+
+    # Proposal revision text has a different owner from a conversation reply. Reuse
+    # this shell to prove that draft survives unmount, without a second browser host.
+    proposal_board = json.loads(json.dumps(board))
+    proposal_rows = [{
+        "id": f"t_proposal{index:02}", "title": f"Proposal {index:02}",
+        "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent",
+        "manager_id": MANAGER_ID, "created_at": index + 1, "awaiting_approval": True,
+        "recap": f"Read the [artifact]({MANAGER_ARTIFACT}).",
+    } for index in range(31)]
+    proposal_board["managers"][0]["tickets"] = proposal_rows
+    # Each Ticket carries its own saved workflow, which the review card reads.
+    for item in proposal_rows:
+        values[f"/api/tickets/{item['id']}/workspace"] = {
+            "id": item["id"], "title": item["title"], "worker_type": "coding",
+            "stage": "needs_implementation", "ceiling": "done",
+            "ceiling_holder": {"kind": "owner", "id": "owner"},
+            "ticket_status": "awaiting_approval", "conversation_id": MANAGER_CONVERSATION,
+            "manager_id": MANAGER_ID, "manager_title": MANAGER_TITLE,
+            "recap": "", "field_summaries": {},
+            "pending_proposal": {"field": "implementation", "body": "A reviewed result", "revision": 1, "created_at": 1},
+            "workflow": manifest["worker_types"][0],
+        }
+    source = fixture["navigation_response"](proposal_board, {"chief_of_staff": {
+        "label": "Chief", "conversation_id": CHIEF_CONVERSATION}})
+    page.goto(url + "#/review", wait_until="domcontentloaded")
+    page.reload(wait_until="domcontentloaded")
+    proposal = page.locator('[data-review-item-type="proposal"]')
+    revision = proposal.locator('[data-review-revision-input]')
+    proposal.locator('[data-send-back]').click()
+    revision.fill("Keep this proposed revision")
+    body_editor = proposal.locator('[data-edit]')
+    body_editor.click()
+    body_editor.fill("Keep this edited proposal body")
+    body_editor.press("Tab")
+    writes.clear()
+    artifact_link(page.locator('[data-review-ticket-card]'), "t_elsewhere").click()
+    expect(viewer).to_be_visible()
+    viewer.locator('[data-ticket-artifact-close]').click()
+    expect(revision).to_have_value("Keep this proposed revision")
+    expect(proposal.locator('[data-edit]')).to_have_text("Keep this edited proposal body")
+    assert not writes, writes
+
+    # A saved continuation can outlive the page it names. Exercise the real backend
+    # projection's rebase rather than inventing a view payload or another host.
+    for _ in range(29):
+        previous = proposal.get_attribute("data-ticket-id")
+        page.locator('[data-skip]:visible').first.click()
+        page.wait_for_function("previous => document.querySelector('[data-review-item-type=proposal]')?.dataset.ticketId !== previous", arg=previous)
+        expect(proposal).to_have_count(1)
+    # An older ask can push the saved current card beyond the first bounded page.
+    saved_id = proposal.get_attribute("data-ticket-id")
+    artifact_link(page.locator('[data-review-ticket-card]'), "t_elsewhere").click()
+    expect(viewer).to_be_visible()
+    earlier = {**proposal_rows[0], "id": "t_earlier", "title": "Earlier ask"}
+    proposal_board["managers"][0]["tickets"] = [earlier, *proposal_rows]
+    source = fixture["navigation_response"](proposal_board, {"chief_of_staff": {
+        "label": "Chief", "conversation_id": CHIEF_CONVERSATION}})
+    viewer.locator('[data-ticket-artifact-close]').click()
+    expect(proposal).to_have_attribute("data-ticket-id", saved_id)
+    page.locator('[data-skip]:visible').first.click()
+    expect(proposal).not_to_have_attribute("data-ticket-id", saved_id)
+    last_id = proposal.get_attribute("data-ticket-id")
+    assert any(anchor is not None for anchor in review_anchors), review_anchors
+    artifact_link(page.locator('[data-review-ticket-card]'), "t_elsewhere").click()
+    expect(viewer).to_be_visible()
+    proposal_board["managers"][0]["tickets"] = [item for item in proposal_rows if item["id"] not in {saved_id, last_id}]
+    source = fixture["navigation_response"](proposal_board, {"chief_of_staff": {
+        "label": "Chief", "conversation_id": CHIEF_CONVERSATION}})
+    viewer.locator('[data-ticket-artifact-close]').click()
+    expect(page.locator('[data-review-empty]')).to_be_visible()
+    expect(page.locator('[data-review-card]')).to_have_count(0)
+    assert None in rebased_review_anchors, rebased_review_anchors
+    assert not writes, writes
 
     assert not unexpected, unexpected
     assert not errors, errors

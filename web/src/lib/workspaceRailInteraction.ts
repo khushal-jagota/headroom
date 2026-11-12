@@ -81,46 +81,100 @@ export function createRailHoverController<T>(
 export const RAIL_TOUCH_HOLD_MS = 400;
 export const RAIL_TOUCH_MOVE_TOLERANCE = 8;
 
-/** Touch uses a hold. Pointer hover is gated before compatibility mouse events exist. */
+const RAIL_SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End", " "]);
+
+/**
+ * A row, manager or Chief preview leaves when the person scrolls: the wheel, a touch
+ * drag past the hold tolerance, or a scroll key outside a text field. A scroll event
+ * alone does not dismiss it. Layout, data refreshes and the browser itself also move
+ * scroll positions, and a pointer that stays still on a row gets no second
+ * pointerenter to bring the preview back.
+ */
+export function listenForUserScroll(page: EventTarget, scrolled: (event: Event) => void): () => void {
+  const wheel = (event: Event) => scrolled(event);
+  // A finger that holds a row to open its preview trembles a little. Only a drag counts.
+  let touchStart: { x: number; y: number } | null = null;
+  const touchPoint = (event: Event) => (event as TouchEvent).touches?.[0];
+  const touchDown = (event: Event) => { const point = touchPoint(event); touchStart = point ? { x: point.clientX, y: point.clientY } : null; };
+  const touchMove = (event: Event) => {
+    const point = touchPoint(event);
+    if (!touchStart || !point) return;
+    if (Math.hypot(point.clientX - touchStart.x, point.clientY - touchStart.y) <= RAIL_TOUCH_MOVE_TOLERANCE) return;
+    touchStart = null;
+    scrolled(event);
+  };
+  const key = (event: Event) => {
+    const press = event as KeyboardEvent;
+    const source = press.target as HTMLElement | null;
+    const closest = (selector: string) => typeof source?.closest === "function" && source.closest(selector) !== null;
+    if (press.defaultPrevented || press.altKey || press.ctrlKey || press.metaKey || !RAIL_SCROLL_KEYS.has(press.key)) return;
+    if (closest('input,textarea,select,[contenteditable="true"]') || (press.key === " " && closest("button,summary,a"))) return;
+    scrolled(press);
+  };
+  page.addEventListener("wheel", wheel, { passive: true });
+  page.addEventListener("touchstart", touchDown, { passive: true });
+  page.addEventListener("touchmove", touchMove, { passive: true });
+  page.addEventListener("keydown", key);
+  return () => {
+    page.removeEventListener("wheel", wheel);
+    page.removeEventListener("touchstart", touchDown);
+    page.removeEventListener("touchmove", touchMove);
+    page.removeEventListener("keydown", key);
+  };
+}
+
+/**
+ * Touch uses a hold. Pointer hover is gated before compatibility mouse events exist.
+ * Lifting the finger after a completed hold fires a touch pointerleave, and the release
+ * can blur the row to nowhere. Neither is the person leaving: the held preview stays
+ * until the screen dismisses it on an outside press or a scroll, or another row opens.
+ */
 export function createRailPreviewInput(show: (target: HTMLElement, immediate: boolean) => void, leave: () => void) {
   let hold: ReturnType<typeof setTimeout> | undefined;
   let start: { x: number; y: number; id: number } | null = null;
   let suppressClick = false;
   let pointerPressed = false;
+  let held = false;
   const cancel = () => { clearTimeout(hold); start = null; pointerPressed = false; };
+  const releaseOfHold = (event?: Event) => held && (
+    (event?.type === "pointerleave" && (event as PointerEvent).pointerType === "touch")
+    || (event?.type === "blur" && ((event as FocusEvent).relatedTarget === null || (event as FocusEvent).relatedTarget === document.body)));
   return {
     pointerEnter(event: PointerEvent) {
-      if (event.pointerType !== "touch" && window.matchMedia("(hover: hover) and (pointer: fine)").matches)
-        show(event.currentTarget as HTMLElement, false);
+      if (event.pointerType !== "touch" && window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
+        held = false; show(event.currentTarget as HTMLElement, false);
+      }
     },
     focus(event: FocusEvent) {
       const focused = event.target as HTMLElement | null;
       const target = focused?.matches ? focused : event.currentTarget as HTMLElement;
-      if (!pointerPressed && target.matches(":focus-visible")) show(target, true);
+      if (!pointerPressed && target.matches(":focus-visible")) { held = false; show(target, true); }
     },
     down(event: PointerEvent) {
       cancel();
       pointerPressed = true;
       suppressClick = false;
+      held = false;
       if (event.pointerType !== "touch") return;
       start = {x:event.clientX, y:event.clientY, id:event.pointerId};
       const target = event.currentTarget as HTMLElement;
-      hold = setTimeout(() => { if (!target.isConnected) return; suppressClick = true; show(target, true); }, RAIL_TOUCH_HOLD_MS);
+      hold = setTimeout(() => { if (!target.isConnected) return; suppressClick = true; held = true; show(target, true); }, RAIL_TOUCH_HOLD_MS);
     },
     move(event: PointerEvent) {
       if (start && (event.pointerId !== start.id || Math.hypot(event.clientX-start.x,event.clientY-start.y) > RAIL_TOUCH_MOVE_TOLERANCE)) {
-        cancel(); suppressClick = false; leave();
+        cancel(); suppressClick = false; held = false; leave();
       }
     },
     end() { cancel(); },
-    leave() { cancel(); leave(); },
-    cancel() { cancel(); suppressClick = false; leave(); },
+    /** Pass the pointerleave or blur, so the release of a completed hold is kept. */
+    leave(event?: Event) { cancel(); if (!releaseOfHold(event)) leave(); },
+    cancel() { cancel(); suppressClick = false; held = false; leave(); },
     click(event?: MouseEvent): boolean {
       cancel();
       if (suppressClick) { suppressClick = false; event?.preventDefault(); return false; }
-      leave(); return true;
+      held = false; leave(); return true;
     },
-    dispose() { cancel(); suppressClick = false; }
+    dispose() { cancel(); suppressClick = false; held = false; }
   };
 }
 
@@ -132,13 +186,13 @@ export function railPreview(node: HTMLElement, options: RailPreviewOptions | nul
   const input = createRailPreviewInput((target, immediate) => current?.show(target, immediate), () => current?.leave());
   const listeners: Record<string, EventListener> = {
     pointerenter: (event) => input.pointerEnter(event as PointerEvent),
-    pointerleave: () => input.leave(),
+    pointerleave: (event) => input.leave(event),
     pointerdown: (event) => input.down(event as PointerEvent),
     pointermove: (event) => input.move(event as PointerEvent),
     pointerup: () => input.end(),
     pointercancel: () => input.cancel(),
     focus: (event) => input.focus(event as FocusEvent),
-    blur: () => input.leave(),
+    blur: (event) => input.leave(event),
     click: (event) => { if (!input.click(event as MouseEvent)) event.stopImmediatePropagation(); }
   };
   const capture = (name: string) => ["click", "focus", "blur"].includes(name);

@@ -24,25 +24,26 @@ def content_app(tmp_path: Path) -> tuple[FastAPI, Path, list[str]]:
     path = tmp_path / "content.db"
     with sqlite3.connect(path) as conn:
         conn.execute(
+            "CREATE TABLE goals(id TEXT,holder_kind TEXT,holder_id TEXT,active INTEGER,"
+            "project_id TEXT,created_at INTEGER)"
+        )
+        conn.execute(
             "CREATE TABLE resource_source_versions("
             "source_kind TEXT,source_id TEXT,revision INTEGER)"
         )
-        conn.execute(
-            "INSERT INTO resource_source_versions VALUES('workspace-manager','item',7)"
-        )
+        conn.execute("INSERT INTO resource_source_versions VALUES('workspace-manager','item',7)")
         conn.execute(
             "CREATE TABLE managers(id TEXT PRIMARY KEY,goal TEXT NOT NULL,recap TEXT NOT NULL)"
         )
         conn.execute(
-            "INSERT INTO managers VALUES(?,?,?)", ("item", "Original\n  goal", "Right now")
+            "INSERT INTO managers(id,goal,recap) VALUES(?,?,?)",
+            ("item", "Original\n  goal", "Right now"),
         )
         conn.execute(
             "CREATE TABLE conversations(conversation_id TEXT PRIMARY KEY,"
             "identity_environment_variables TEXT,created_at INTEGER)"
         )
-        identity = json.dumps(
-            [["PLAN_ACTOR", "manager"], ["PLAN_SPRINT_ITEM_ID", "item"]]
-        )
+        identity = json.dumps([["PLAN_ACTOR", "manager"], ["PLAN_MANAGER_ID", "item"]])
         conn.executemany(
             "INSERT INTO conversations VALUES(?,?,?)",
             [
@@ -61,6 +62,7 @@ def content_app(tmp_path: Path) -> tuple[FastAPI, Path, list[str]]:
         path=None,
         env={
             "PLAN_TEST_MODE": "1",
+            "PLAN_FAKE_NOW": "2026-10-28T12:00:00+01:00",
             "PLAN_DB_PATH": str(path),
             "PLAN_LOGS_DIR": str(tmp_path / "logs"),
             "PLAN_DISPATCHER_LOCK_PATH": str(tmp_path / "dispatcher.lock"),
@@ -70,7 +72,8 @@ def content_app(tmp_path: Path) -> tuple[FastAPI, Path, list[str]]:
     reads: list[str] = []
 
     def connect() -> sqlite3.Connection:
-        conn = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
+        # Like core.db.connect: the request connection opens on a worker thread.
+        conn = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA query_only=ON")
         conn.set_trace_callback(reads.append)
@@ -96,6 +99,7 @@ def test_content_keeps_exact_document_without_unopened_catalog_or_summary_work(
     expected = {
         "goal": "Original\n  goal",
         "recap": "Right now",
+        "goals": [],
     }
 
     async def run() -> None:
@@ -105,7 +109,7 @@ def test_content_keeps_exact_document_without_unopened_catalog_or_summary_work(
             owner = await client.get("/api/managers/item/workspace-content")
             supervisor = await client.get(
                 "/api/managers/item/workspace-content",
-                headers={"X-Plan-Actor": "manager", "X-Plan-Sprint-Item-ID": "item"},
+                headers={"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "item"},
             )
             versioned = await client.get(
                 "/api/resource-body", params={"key": "/api/managers/item/workspace-content"}
@@ -114,7 +118,7 @@ def test_content_keeps_exact_document_without_unopened_catalog_or_summary_work(
         assert owner.json() == supervisor.json() == expected
         assert versioned.status_code == 200
         assert versioned.json()["body"] == expected
-        assert versioned.json()["revision"] == "7"
+        assert versioned.json()["revision"] == "7:0:2026-10-28"
         assert owner.headers["cache-control"] == supervisor.headers["cache-control"] == "no-store"
 
     asyncio.run(run())
@@ -144,7 +148,7 @@ def test_content_checks_authority_before_read_and_preserves_missing_identity(
                     "/api/managers/item/workspace-content",
                     headers={
                         "X-Plan-Actor": "manager",
-                        "X-Plan-Sprint-Item-ID": "foreign",
+                        "X-Plan-Manager-ID": "foreign",
                     },
                 )
                 foreign_versioned = await client.get(
@@ -152,7 +156,7 @@ def test_content_checks_authority_before_read_and_preserves_missing_identity(
                     params={"key": "/api/managers/item/workspace-content"},
                     headers={
                         "X-Plan-Actor": "manager",
-                        "X-Plan-Sprint-Item-ID": "foreign",
+                        "X-Plan-Manager-ID": "foreign",
                     },
                 )
             assert foreign.status_code == 400  # Existing agent_forbidden HTTP mapping.

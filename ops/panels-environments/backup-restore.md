@@ -4,7 +4,7 @@ The user timer runs a verified live backup every night at 02:30. It invokes the
 deployed application:
 
 ```sh
-"$HOME/Deployments/Panels/current/app/bin/panels-launcher" \
+"$HOME/Deployments/Panels/current/app/bin/panels" \
   environment backup-current \
   --source-db "$HOME/Deployments/Panels/current/data/planner.db" \
   --backup-dir "$HOME/Deployments/Panels/current/data/backups" \

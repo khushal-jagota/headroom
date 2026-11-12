@@ -4,6 +4,8 @@ from datetime import UTC, datetime
 from sqlite3 import Connection
 
 import pytest
+from fastapi.testclient import TestClient
+from tests.support.api_app import _app
 from tests.unit.test_manager_wakes import _item_and_ticket
 
 from planner.core.clock import TestClock as FakeClock
@@ -423,29 +425,39 @@ def test_assigned_worker_can_manage_taken_definitions(
     manager_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     _, other_ticket_id = _item_and_ticket(tmp_db, fake_clock)
     worker = Principal(PrincipalKind.ticket, ticket_id)
-    outsider = Principal(PrincipalKind.ticket, other_ticket_id)
     identifier = source(tmp_db, responsible=Principal(PrincipalKind.manager, manager_id))
     measure = taken(tmp_db, identifier, principal=worker)
-    with pytest.raises(PlannerError):
-        taken(tmp_db, identifier, principal=outsider)
-    with pytest.raises(PlannerError):
-        actions.update_measure(
+    headers = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": other_ticket_id}
+    with TestClient(_app(tmp_db)) as client:
+        denied = client.post(
+            "/api/measures",
+            json={
+                "project_id": "project_vylo", "name": "Synthetic value", "unit": "items",
+                "origin": "taken", "kind": "reading", "timezone": "Europe/Berlin",
+                "period": None, "source_id": identifier, "formula": None,
+            },
+            headers=headers,
+        )
+        assert denied.status_code == 400, denied.text
+        assert denied.json()["error"]["code"] == "agent_forbidden"
+        denied = client.patch(
+            f"/api/measures/{measure.id}",
+            json={"expected_revision": 1, "name": "Other"}, headers=headers,
+        )
+        assert denied.status_code == 400, denied.text
+        assert denied.json()["error"]["code"] == "agent_forbidden"
+        changed = actions.update_measure(
             tmp_db,
             measure.id,
-            UpdateMeasureBody(expected_revision=1, name="Other"),
-            principal=outsider,
+            UpdateMeasureBody(expected_revision=1, name="Repaired"),
+            principal=worker,
             now=NOW,
         )
-    changed = actions.update_measure(
-        tmp_db,
-        measure.id,
-        UpdateMeasureBody(expected_revision=1, name="Repaired"),
-        principal=worker,
-        now=NOW,
-    )
-    assert changed.name == "Repaired"
-    with pytest.raises(PlannerError):
-        actions.delete_measure(tmp_db, measure.id, principal=outsider, now=NOW)
+        assert changed.name == "Repaired"
+        denied = client.delete(f"/api/measures/{measure.id}", headers=headers)
+        assert denied.status_code == 400, denied.text
+        assert denied.json()["error"]["code"] == "agent_forbidden"
+        assert data.read_measure(tmp_db, measure.id).name == "Repaired"
     actions.delete_measure(tmp_db, measure.id, principal=worker, now=NOW)
     assert tmp_db.execute("SELECT 1 FROM measures WHERE id=?", (measure.id,)).fetchone() is None
     # Goal reads tolerate deleted formula inputs, while save/read defaults remain strict.

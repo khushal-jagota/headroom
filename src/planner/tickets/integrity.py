@@ -65,14 +65,16 @@ class TicketIntegrityError(PlannerError):
 
 def issue_for_ticket(conn: sqlite3.Connection, ticket_id: str) -> TicketIntegrityError | None:
     """Read the startup audit's nullable reason; never interpret human Ticket text."""
-    # Historical migrations rebuild navigation before the new column exists.
-    if "integrity_error_reason" not in {
-        str(column[1]) for column in conn.execute("PRAGMA table_info(tickets)")
-    }:
-        return None
-    row = conn.execute(
-        "SELECT integrity_error_reason FROM tickets WHERE id=?", (ticket_id,)
-    ).fetchone()
+    try:
+        row = conn.execute(
+            "SELECT integrity_error_reason FROM tickets WHERE id=?", (ticket_id,)
+        ).fetchone()
+    except sqlite3.OperationalError as error:
+        # Historical migrations rebuild navigation before the new column exists. Asking
+        # the schema first cost a second statement for every Ticket of every list read.
+        if "no such column" in str(error):
+            return None
+        raise
     if row is None or row["integrity_error_reason"] is None:
         return None
     return TicketIntegrityError(ticket_id, str(row["integrity_error_reason"]))
@@ -93,7 +95,7 @@ def diagnostic_projection(
     result: JsonDict = {
         "id": str(row["id"]),
         "title": str(row["title"]),
-        "worker_type": str(row["worker_type"]),
+        "worker_type": row["worker_type"],
         "stage": str(row["stage"]),
         "ticket_status": "errored",
         "integrity_error": {"reason": issue.reason},
@@ -173,7 +175,6 @@ async def notify_chief(
                 f"The Ticket '{row['title']}' is unusable because its saved record is invalid. "
                 f"Reason: {issue.reason}. Panels remains available. "
                 "Inspect this Ticket before any repair.",
-                expects_reply=False,
                 system_message=True,
             )
         except Exception:

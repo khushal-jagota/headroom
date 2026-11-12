@@ -11,6 +11,7 @@ from planner.conversation.views.configuration import STATUS_INLINE_BODY_BYTES
 from planner.conversation.views.contracts import (
     ConversationViewLens,
     ConversationViewStatus,
+    ViewBackgroundTask,
     ViewBodyReference,
     ViewPlanProgress,
     ViewRequestIdentity,
@@ -83,8 +84,6 @@ def project_rest_event(
             if len(encoded) <= STATUS_INLINE_BODY_BYTES
             else {"kind": "deferred", "reference": _body_reference(row, encoded)},
         }
-    if body["kind"] == "explicit_reply_missing":
-        return body
     if body["kind"] == "turn_ended" and body["ending"] != event.ConversationTurnEnding.completed:
         return {**body, "error_summary": excerpt(body["error_summary"] or "") or None}
     return None
@@ -247,6 +246,16 @@ def read_status(
         "last_boundary_failed": failed,
         "plan_progress": progress,
     }
+    # The same record the conversation's working signal reads, so the sidebar and the
+    # conversation cannot disagree about background work.
+    background_tasks: list[ViewBackgroundTask] = [
+        {"task_id": row[0], "task_description": row[1]}
+        for row in conn.execute(
+            "SELECT task_id,task_description FROM conversation_background_tasks "
+            "WHERE conversation_id=? ORDER BY rowid",
+            (conversation_id,),
+        )
+    ]
     revision, activity_at = live.status(conversation_id)
     return {
         "runtime_epoch": live.runtime_epoch,
@@ -258,6 +267,7 @@ def read_status(
         "turn_key": turn_key,
         "turn_running": running,
         "stopped_without_ending": stopped,
+        "background_tasks": background_tasks,
         "pending_permission": permission,
         "pending_user_input": user_input,
         "plan": plan_reference,

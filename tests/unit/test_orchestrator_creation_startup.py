@@ -18,7 +18,6 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.events import (
     ConversationTurnEnding,
-    ExplicitReplyMissingEventPayload,
     PromptEventPayload,
 )
 from planner.conversation.message_content import message_content_text
@@ -107,7 +106,6 @@ def test_creation_delivers_exact_goal_as_panels_with_supervisor_defaults(
         wire = harness.backend(conversation_id).written_texts
         assert len(wire) == 1
         assert wire[0].endswith(goal)
-        assert not wire[0].startswith("[Authenticated Panels reply requirement]")
         assert item["goal"] == goal
         backend = harness.backend(conversation_id)
         assert backend.sink is not None and backend.live_turn_token is not None
@@ -125,8 +123,6 @@ def test_creation_delivers_exact_goal_as_panels_with_supervisor_defaults(
 
         client.portal.call(complete_turn)
         client.portal.call(runtime.system.wait_until_quiescent)
-        events = client.portal.call(store.read_events_after, conversation_id, 0)
-        assert not any(isinstance(e.payload, ExplicitReplyMissingEventPayload) for e in events)
         with closing(connect(str(db_path))) as conn:
             full = read_page(conn, conversation_id, "full")
             focus = read_page(conn, conversation_id, "focus")

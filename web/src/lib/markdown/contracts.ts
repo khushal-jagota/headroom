@@ -1,6 +1,7 @@
 /** Sanitized logical document exchanged with the Markdown parser worker. */
 export type MarkdownTreeNode = {
   type: string;
+  chart?: import("./charts/contracts").MarkdownChart;
   tagName?: string;
   value?: string;
   properties?: Record<string, unknown>;

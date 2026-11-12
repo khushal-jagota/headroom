@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import functools
 import inspect
 import sqlite3
 from collections.abc import Callable
@@ -40,9 +41,16 @@ def acquire_runtime_ownership(db_path: str) -> IO[bytes]:
     return lock
 
 
+@functools.lru_cache(maxsize=16)
+def _canonical_database_path(db_path: str) -> Path:
+    # Every conversation read checks its authority, so a fresh resolve per check cost
+    # thousands of file-system calls for one list read.
+    return Path(db_path).resolve()
+
+
 def validate_runtime_ownership(db_path: str, ownership: IO[bytes]) -> None:
     """Accept only the exact live handle acquired for this canonical database."""
-    if ownership.closed or _OWNERSHIP_PATHS.get(ownership) != Path(db_path).resolve():
+    if ownership.closed or _OWNERSHIP_PATHS.get(ownership) != _canonical_database_path(db_path):
         raise ConversationRuntimeAlreadyOwned(
             "runtime ownership handle does not bind this database"
         )

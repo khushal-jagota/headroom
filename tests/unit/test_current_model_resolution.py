@@ -97,7 +97,7 @@ def test_actual_creation_route_preserves_offline_explicit_effort(
 
     async def exercise() -> None:
         try:
-            result = await ticket_api.create_ticket(
+            result = ticket_api.create_ticket(
                 raw,
                 conn,
                 RequestContext(OWNER_PRINCIPAL),
@@ -166,7 +166,9 @@ def test_explicit_default_effort_reaches_the_provider_on_the_next_send(
             assert conversation_id is not None
             if not held:
                 await harness.complete_turn(conversation_id)
-            request = Request({"type": "http", "app": FastAPI()})
+            app = FastAPI()
+            app.state.conn_factory = lambda: connect(str(path))
+            request = Request({"type": "http", "app": app})
             clock = TestClock(datetime.fromtimestamp(1000, UTC))
 
             async def send() -> JsonDict:
@@ -180,7 +182,6 @@ def test_explicit_default_effort_reaches_the_provider_on_the_next_send(
                         sender_message_id="explicit-default",
                     ),
                     request,
-                    conn,
                     RequestContext(OWNER_PRINCIPAL),
                     clock,
                     harness.system,
@@ -203,7 +204,7 @@ def test_explicit_default_effort_reaches_the_provider_on_the_next_send(
                 # Regression: configuration must refuse rather than deadlock with a send.
                 try:
                     with pytest.raises(PlannerError, match="frozen"):
-                        await ticket_api.put_ticket_employee_configuration(
+                        ticket_api.put_ticket_employee_configuration(
                             ticket.id,
                             {
                                 "employee_backend": "claude",

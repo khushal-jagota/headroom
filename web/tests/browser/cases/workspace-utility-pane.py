@@ -25,6 +25,31 @@ _state_barriers = runpy.run_path(str(Path(__file__).resolve().parents[1] / "supp
 establish_scrollback = _state_barriers["establish_scrollback"]
 refresh_projection = _state_barriers["refresh_projection"]
 
+# Every layout writer these checks wait on runs from an observer, a timer that marks
+# its element while pending, or an animation frame. Settled means none of those marks
+# remain, no finite animation runs, and the named boxes and scroll offsets read the
+# same on consecutive animation frames.
+_SETTLED = """([token, selectors, frames]) => {
+  const busy = document.querySelector('[data-rail-motion-busy], .rail-wash--leaving, [data-conversation-motion], '
+    + '[data-conversation-dock-transition], [data-recap-slot][style*="overflow: hidden"]')
+    || document.getAnimations().some(a => a.playState === 'running' && a.effect?.getTiming().iterations !== Infinity);
+  const key = JSON.stringify(selectors.flatMap(selector => [...document.querySelectorAll(selector)].map(node => {
+    const r = node.getBoundingClientRect();
+    return [r.x, r.y, r.width, r.height, node.scrollTop, node.scrollHeight];
+  })));
+  const state = window[token] ??= {key: null, count: 0};
+  state.count = !busy && key === state.key ? state.count + 1 : 0;
+  state.key = key;
+  return state.count >= frames;
+}"""
+_settle_tokens = iter(range(1 << 30))
+
+
+def wait_settled(page, *selectors, frames=3):
+    token = f"__settled{next(_settle_tokens)}"
+    page.wait_for_function(_SETTLED, arg=[token, list(selectors), frames], polling="raf")
+    page.evaluate("token => delete window[token]", token)
+
 
 def run(browser, urls):
     url = urls[0]
@@ -56,6 +81,17 @@ def run(browser, urls):
     metrics = MetricsFixture()
     metrics.append()
     metrics_calls = []
+    backend_updates = {"enabled": False, "hold": [], "calls": [], "fail_discovery": False, "mode": "succeeded", "unsupported": False}
+    backend_versions = {"claude": "2.1.1", "codex": "0.1.0"}
+
+    def backend_snapshots():
+        return [{"backend_key": key, "installed": True, "executable_path": f"/home/fixture/.local/bin/{key}",
+                 "version": version, "identity": None, "available_models": [], "reasoning_effort_options": [],
+                 "cached_usage": None, "diagnoses": [], "update_advisory": {
+                     "install_method": "npm_global", "update_command": None if backend_updates["unsupported"] and key == "codex" else f"npm install {key}@latest",
+                     "latest_version": None if backend_updates["unsupported"] and key == "codex" else {"claude": "2.1.2", "codex": "0.2.0"}[key],
+                     "update_available": True, "detail": "This installation needs a manual update."}}
+                for key, version in backend_versions.items()]
 
     fold = {"enabled": False, "count": 3, "overflow": False, "active_count": 1, "release_sha": "fixture-boot"}
     card_fixture = {"enabled": False}
@@ -66,6 +102,47 @@ def run(browser, urls):
     def respond(route):
         parts = urlsplit(route.request.url)
         path = parts.path
+        if card_fixture.get("preview_details"):
+            preview_launch = {"backend_key": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "medium"}
+            if path == "/api/artifact-catalog/manager/preview_manager":
+                route.fulfill(json={"revision": "fixture", "directory": "", "offset": 0, "total": 0, "entries": []})
+                return
+            if path == "/api/managers/preview_manager/page":
+                route.fulfill(json={"page": None, "page_revision": 0})
+                return
+            if path == "/api/managers/preview_manager/conversation/start-values":
+                route.fulfill(json=preview_launch)
+                return
+            if path == "/api/resource-body":
+                key = parse_qs(parts.query).get("key", [""])[0]
+                body = {"goal": "Make previews useful", "recap": "Preview work", "goals": []} if key == "/api/managers/preview_manager/workspace-content" else preview_launch if key == "/api/chief/conversation/start-values" else None
+                if body is not None:
+                    route.fulfill(json={"key": key, "epoch": "fixture", "revision": "1", "body": body})
+                    return
+        if card_fixture.get("enabled") and path.endswith("/conversation/start-values"):
+            preview_owners = [item for manager in card_fixture.get("board", {}).get("managers", []) for item in manager.get("tickets", [])]
+            preview_owners.extend(item for column in card_fixture.get("board", {}).get("columns", []) for item in column.get("cards", []))
+            if any(path == f"/api/tickets/{item['id']}/conversation/start-values" for item in preview_owners):
+                route.fulfill(json={"backend_key": "codex", "model": "gpt-6.1-sol" if card_fixture.get("preview_details") else None,
+                                    "reasoning_effort": "medium" if card_fixture.get("preview_details") else None})
+                return
+        if backend_updates["enabled"] and path == "/api/conversation/backends":
+            if backend_updates["fail_discovery"] and parse_qs(parts.query).get("refresh") == ["true"]:
+                route.fulfill(status=503, json={"detail": "Registry discovery failed"})
+            else:
+                route.fulfill(json={"backends": backend_snapshots()})
+            return
+        if backend_updates["enabled"] and path in {"/api/conversation/backends/claude/update", "/api/conversation/backends/codex/update"}:
+            assert route.request.method == "POST"
+            key = path.split("/")[-2]
+            backend_updates["calls"].append(key)
+            if key == "claude":
+                backend_updates["hold"].append(route)
+            else:
+                outcome = backend_updates["mode"]
+                route.fulfill(json={"outcome": outcome, "detail": "The installed version did not change." if outcome == "unchanged" else "The update command failed.",
+                                    "output_tail": "Controlled npm failure" if outcome == "failed" else ""})
+            return
         # The standalone artifact resolves its owner and launch settings. Keep these
         # exact: an unrelated ticket read must still fail this case's request guard.
         if route.request.method == "GET" and path == "/api/tickets" and parse_qs(parts.query) == {"detail": ["full"], "id": [artifact_owner["id"]]}:
@@ -92,7 +169,7 @@ def run(browser, urls):
             source = fixture["navigation_response"](board, {"chief_of_staff": card_fixture.get("chief", {"label": "Chief"})})
             source["snapshot"]["records"].extend(
                 {"kind": "goal", "id": goal["id"], "value": {key: goal[key] for key in (
-                    "title", "conversation_id", "active", "completed", "created_at", "updated_at")}}
+                    "title", "holder_kind", "holder_id", "active", "completed", "created_at", "updated_at")}}
                 for goal in card_fixture.get("goals", [])
             )
             view = json.loads(parse_qs(parts.query)["view"][0])
@@ -119,6 +196,15 @@ def run(browser, urls):
             response = metrics.client.request(route.request.method, path + ("?" + parts.query if parts.query else ""))
             route.fulfill(status=response.status_code, content_type="application/json", body=response.content)
             return
+        if path == "/api/resource-versions":
+            keys = json.loads(parse_qs(parts.query)["keys"][0])
+            assert isinstance(keys, list) and all(isinstance(key, str) for key in keys), keys
+            # Fixture bodies change directly, without source revisions. A null
+            # revision uses their existing guarded body reads for this exact scope.
+            route.fulfill(json={"epoch": "fixture", "resources": [
+                {"key": key, "revision": None} for key in keys
+            ]})
+            return
         if path == "/api/resource-body":
             # Versioned reads arrive wrapped. The screen only needs the body.
             key = parse_qs(parts.query).get("key", [""])[0]
@@ -129,9 +215,11 @@ def run(browser, urls):
                 "/api/goals": {"goals": card_fixture.get("goals", []), "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
                 "/api/worker-types?supported=true": {"worker_types": manifests},
                 "/api/worker-types": {"worker_types": manifests},
-                "/api/feedback/count": {"open_count": 0},
-                "/api/deployment-status": {"state": "preparing", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3600))},
             }.get(key)
+            # Whether a Chief composer reads its launch settings depends on how far the
+            # screen loads, so this read is always served.
+            if key == "/api/chief/conversation/start-values":
+                inner = {"backend_key": "codex", "model": None, "reasoning_effort": None}
             if key == "/api/projects" and card_fixture.get("goals"):
                 inner = {"projects": []}
             if key.startswith("/api/goals/") and card_fixture.get("goals"):
@@ -144,7 +232,9 @@ def run(browser, urls):
             route.fulfill(json={"key": key, "epoch": "fixture", "revision": "1", "body": inner})
             return
         if path == "/api/updates":
-            route.fulfill(json={"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None})
+            route.fulfill(json={"state": "updating" if fold["release_sha"] == "fixture-boot" and not backend_updates["enabled"] else "up_to_date", "allowed_actions": [],
+                                "activity": "unknown", "available": None, "attempt": None, "app_sha": fold["release_sha"], "detail": None,
+                                "deadline_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3600)), "mac_details": None})
             return
         if path == "/api/goals":
             result = {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400}
@@ -154,8 +244,6 @@ def run(browser, urls):
             result = {"skills": [skill]}
         elif path == "/api/worker-types":
             result = {"worker_types": manifests}
-        elif path == "/api/feedback/count":
-            result = {"open_count": 0}
         elif path == "/api/meta":
             result = {"test_mode": True, "app_sha": fold["release_sha"]}
         elif path == "/api/review":
@@ -173,7 +261,12 @@ def run(browser, urls):
     context = browser.new_context(viewport={"width": 1280, "height": 700})
     page = context.new_page()
     errors = []
+    invalid_height_keyframes = []
     page.on("pageerror", lambda error: errors.append(str(error)))
+    # Responsive navigation also animates sidebar groups while their rail is hidden.
+    # Chromium warns instead of throwing when that animation receives a nonfinite height.
+    page.on("console", lambda message: invalid_height_keyframes.append(message.text)
+            if "Invalid keyframe value" in message.text and "NaNpx" in message.text else None)
     page.route("**/api/**", respond)
 
     def host_with_boot_sha(route):
@@ -213,9 +306,68 @@ def run(browser, urls):
     expect(pane.locator("[data-settings]")).to_be_visible()
     # The back-arrow to Usage belonged to a page that reached Settings from Usage.
     assert pane.locator('a[href="#/backends"]').count() == 0
-    pane.get_by_role("link", name="Scheduled tasks").click()
-    page.wait_for_function("location.hash === '#/workspace/utility/settings/scheduled-tasks?view=managers'")
+    pane.get_by_role("link", name="Notifications").click()
+    page.wait_for_function("location.hash === '#/workspace/utility/settings/notifications?view=managers'")
     expect(rail).to_be_visible()
+
+    # Settings updates use the same routed shell and wire requests. The subprocess
+    # itself belongs to backend coverage. This browser boundary protects the click,
+    # per-backend busy state, outcome feedback, and refreshed installed version.
+    backend_started = time.monotonic()
+    backend_updates["enabled"] = True
+    pane.get_by_role("link", name="Backends", exact=True).click()
+    page.wait_for_function("location.hash === '#/workspace/utility/settings/backends?view=managers'")
+    # Reload proves the nested address and starts with an idle app-update fixture.
+    page.reload(wait_until="domcontentloaded")
+    settings = pane.locator('[data-backend-settings]')
+    claude = settings.locator('[data-backend="claude"]')
+    codex = settings.locator('[data-backend="codex"]')
+    expect(claude.locator('[data-installed]')).to_have_text('2.1.1')
+    expect(claude.locator('[data-latest]')).to_have_text('2.1.2')
+    expect(codex.locator('[data-latest]')).to_have_text('0.2.0')
+    expect(codex.get_by_role('button', name='Update Codex')).to_be_enabled()
+    evidence = Path(os.environ.get('PANELS_BACKEND_ARTIFACT_DIR', os.environ['PANELS_SIDEBAR_ARTIFACT_DIR']))
+    evidence.mkdir(parents=True, exist_ok=True)
+    page.screenshot(animations="disabled", path=str(evidence / 'backend-settings-desktop.png'))
+    page.set_viewport_size({"width": 390, "height": 844})
+    expect(settings).to_be_visible()
+    expect(claude.get_by_role('button', name='Update Claude')).to_be_in_viewport()
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+    page.screenshot(animations="disabled", path=str(evidence / 'backend-settings-mobile.png'))
+    page.set_viewport_size({"width": 1280, "height": 700})
+    claude.get_by_role('button', name='Update Claude').click()
+    expect(claude.get_by_role('button', name='Update Claude')).to_be_disabled()
+    expect(codex.get_by_role('button', name='Update Codex')).to_be_enabled()
+    assert backend_updates["calls"] == ["claude"]
+    backend_versions["claude"] = "2.1.2"
+    backend_updates["hold"].pop().fulfill(json={"outcome": "succeeded", "detail": "Updated to 2.1.2.", "output_tail": ""})
+    expect(claude.get_by_role('status')).to_have_text('Updated to 2.1.2.')
+    expect(claude.locator('[data-installed]')).to_have_text('2.1.2')
+    expect(claude.get_by_role('button', name='Update Claude')).to_be_enabled()
+    backend_updates["mode"] = "unchanged"
+    codex.get_by_role('button', name='Update Codex').click()
+    expect(codex.get_by_role('status')).to_have_text('The installed version did not change.')
+    expect(codex.get_by_role('button', name='Update Codex')).to_be_enabled()
+    backend_updates["mode"] = "failed"
+    codex.get_by_role('button', name='Update Codex').click()
+    expect(codex.get_by_role('alert')).to_have_text('The update command failed.')
+    codex.get_by_text('Update output', exact=True).click()
+    expect(codex.locator('pre')).to_have_text('Controlled npm failure')
+    expect(codex.get_by_role('button', name='Update Codex')).to_be_enabled()
+    backend_updates["fail_discovery"] = True
+    settings.get_by_role('button', name='Refresh', exact=True).click()
+    expect(settings.get_by_role('alert').first).to_contain_text('Could not refresh backend versions.')
+    expect(claude.locator('[data-latest]')).to_have_text('Unavailable')
+    # Latest discovery does not prevent an otherwise supported update.
+    expect(claude.get_by_role('button', name='Update Claude')).to_be_enabled()
+    backend_updates["fail_discovery"] = False
+    backend_updates["unsupported"] = True
+    settings.get_by_role('button', name='Refresh', exact=True).click()
+    expect(codex.get_by_role('button', name='Update Codex')).to_be_disabled()
+    expect(codex.get_by_text('This installation needs a manual update.', exact=True)).to_be_visible()
+    page.screenshot(animations="disabled", path=str(evidence / 'backend-settings-errors.png'))
+    print(f"Backend Settings browser boundary: {time.monotonic() - backend_started:.2f}s", flush=True)
+    backend_updates["enabled"] = False
 
     # A row of the Config index is a link like any other, and it was never reported.
     page.goto(url + "#/workspace/utility/settings?view=managers", wait_until="domcontentloaded")
@@ -278,18 +430,7 @@ def run(browser, urls):
     vps_evidence = Path(os.environ.get('PANELS_VPS_ARTIFACT_DIR', os.environ['PANELS_SIDEBAR_ARTIFACT_DIR']))
     vps_evidence.mkdir(parents=True, exist_ok=True)
     page.screenshot(animations="disabled", path=str(vps_evidence / 'vps-shell-pane.png'))
-    page.evaluate("location.hash='#/settings'")
-    expect(pane.locator('[data-settings]')).to_be_visible()
-    before = len(metrics_calls)
-    page.wait_for_timeout(2200)
-    page.evaluate("dispatchEvent(new Event('focus')); dispatchEvent(new Event('online'))")
-    page.wait_for_timeout(30)
-    assert len(metrics_calls) == before, metrics_calls[before:]
-    page.evaluate("location.hash='#/vps'")
-    expect(pane.locator('[data-vps-metric="cpu"]')).to_contain_text("27")
-    assert '/api/vps-metrics/latest' in metrics_calls[before:]
-    assert '/api/vps-metrics/activity' in metrics_calls[before:]
-    assert rail.evaluate("node => node === window.__persistentRail")
+    # Leaving the route is proved at the end of this host, under the browser clock.
 
     # Preview's own full-height document styles must remain inside the same pane.
     page.route("**/files/tickets/t_fixture/artifacts/wide.html", lambda route: route.fulfill(
@@ -297,26 +438,32 @@ def run(browser, urls):
     page.evaluate("location.hash='#/preview?source=ticket&ticket=t_fixture&path=artifacts%2Fwide.html'")
     preview = pane.locator('[data-file-preview-route]')
     expect(preview.locator('iframe')).to_be_visible()
-    expect(preview.locator('[data-artifact-recipient]')).to_have_text("Message Wide artifact owner")
     expect(preview.locator('[data-conversation-pane]')).to_have_attribute("data-conversation-state", "rest")
     expect(preview.get_by_placeholder("Message Wide artifact owner...", exact=True)).to_be_visible()
     expect(preview.locator('[data-artifact-owner-unavailable]')).to_have_count(0)
+    # Nothing sits above the artifact's conversation: it starts at the top of its column.
+    conversation_offset = preview.evaluate("node => { const column = node.querySelector('.conversation-column');"
+                                           " return column.querySelector('[data-conversation-pane]').getBoundingClientRect().top - column.getBoundingClientRect().top; }")
+    assert abs(conversation_offset) <= 1, conversation_offset
     assert rail.evaluate("node => node === window.__persistentRail")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     bounds = pane.bounding_box()
     assert bounds and bounds['y'] >= 0 and bounds['y'] + bounds['height'] <= 701, bounds
 
-    # At minimum width all six controls and both end labels remain inside the rail.
+    # At minimum width all five destinations (VPS lives in Settings), the Focus switch and
+    # every label remain inside the rail.
     grip = page.get_by_role("separator", name="Resize workspace panel")
     grip.focus()
     for _ in range(20):
         page.keyboard.press("Shift+ArrowLeft")
     expect(grip).to_have_attribute("aria-valuenow", "232")
-    expect(rail.locator('.utility')).to_have_count(6)
+    expect(rail.locator('.utility')).to_have_count(5)
+    focus_switch = page.locator(".rail-foot").get_by_role("switch", name="Focus", exact=True)
+    expect(focus_switch).to_have_count(1)
     rail_bounds = page.locator('.workspace-rail').bounding_box()
     assert rail_bounds and abs(rail_bounds['width'] - 232) < 2, rail_bounds
-    for name in ["Review", "Usage", "Ideas", "Feedback", "VPS", "Settings"]:
-        control = rail.get_by_label(name, exact=True)
+    for name in ["Review", "Usage", "Ideas", "Goals", "Settings", "Focus"]:
+        control = focus_switch if name == "Focus" else rail.get_by_label(name, exact=True)
         control.focus()
         label = control.locator('.utility-label')
         expect(label).to_have_css("opacity", "1")
@@ -342,8 +489,8 @@ def run(browser, urls):
     expect(pane.locator('[data-settings]')).to_be_visible()
     expect(page.locator('.workspace-rail')).to_be_hidden()
     # Resizing while the compact bar owns focus must reveal an equivalent target.
-    for name in ["Review", "Workspace"]:
-        link = page.locator('.workspace-mobile-nav').get_by_role('link', name=name, exact=True)
+    for name in ["Review", "Workspace", "More"]:
+        link = page.locator('.workspace-mobile-nav').get_by_role("button" if name == "More" else "link", name=name, exact=name != "More")
         link.focus()
         page.set_viewport_size({"width": 721, "height": 700})
         page.wait_for_function("document.activeElement && document.activeElement.getClientRects().length > 0 && document.activeElement !== document.body")
@@ -358,19 +505,56 @@ def run(browser, urls):
     verify_settled_fold(page, url, fold, evidence)
     verify_rail_overflow(page, fold, evidence)
     verify_selection_washes(page, url, card_fixture, evidence)
-    capture_card_motion(browser, url, card_fixture, respond, evidence)
+    verify_focus_slide_fill(page, url, card_fixture)
+    # Review clips are optional artifacts, separate from the geometry assertions below.
+    if os.environ.get("PANELS_BROWSER_VIDEO") == "1":
+        capture_card_motion(browser, url, card_fixture, respond, evidence)
     verify_card_geometry(page, url, card_fixture, evidence)
+    verify_card_background_motion(page, url, card_fixture, evidence)
+    verify_empty_handoff(page, url, card_fixture, evidence)
     verify_rail_pagination(page, url, card_fixture, evidence)
     fold["release_sha"] = "fixture-boot"
     verify_recap_pointer_floor(browser, page, url, card_fixture, respond, evidence)
+    verify_ticket_preview_details(page, url, card_fixture, evidence)
+    verify_vps_route_leave(page, url, pane, rail, metrics_calls)
     verify_owner_updates(browser, url)
     verify_conversation_overlay(browser, url)
 
     assert not errors, errors
-    unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]
+    assert not invalid_height_keyframes, invalid_height_keyframes
+    unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/notifications/settings", "/api/conversation", "/api/workers/chief-of-staff"))]
     assert not unwanted, unwanted
     context.close()
     metrics.close()
+
+
+def verify_vps_route_leave(page, url, pane, rail, metrics_calls):
+    """The real App route owns the live page. Leaving it stops reads and lease renewals.
+
+    The poll is a 2000 ms timer. The browser clock runs 2200 ms of timers without
+    waiting for them. It is installed last on this host because it also replaces
+    animation frames, which every earlier motion proof here samples in real time.
+    """
+    page.clock.install()
+    page.goto(url + "#/vps", wait_until="domcontentloaded")
+    # A reload starts the App, and so every timer it creates, under the installed clock.
+    page.reload(wait_until="domcontentloaded")
+    expect(pane.locator('[data-vps-metric="cpu"]')).to_contain_text("27")
+    rail.evaluate("node => window.__persistentRail = node")
+    page.evaluate("location.hash='#/settings'")
+    expect(pane.locator('[data-settings]')).to_be_visible()
+    before = len(metrics_calls)
+    page.clock.run_for(2200)
+    page.evaluate("dispatchEvent(new Event('focus')); dispatchEvent(new Event('online'))")
+    page.clock.run_for(30)
+    # A read started above reaches the route before this later one completes.
+    page.evaluate("() => fetch('/api/meta').then(response => response.json())")
+    assert len(metrics_calls) == before, metrics_calls[before:]
+    page.evaluate("location.hash='#/vps'")
+    expect(pane.locator('[data-vps-metric="cpu"]')).to_contain_text("27")
+    assert '/api/vps-metrics/latest' in metrics_calls[before:]
+    assert '/api/vps-metrics/activity' in metrics_calls[before:]
+    assert rail.evaluate("node => node === window.__persistentRail")
 
 
 def verify_settled_fold(page, url, fixture, evidence):
@@ -383,7 +567,9 @@ def verify_settled_fold(page, url, fixture, evidence):
     page.goto(url + "#/workspace/utility/settings", wait_until="domcontentloaded")
     page.reload(wait_until="domcontentloaded")
     head = page.locator(".settled-head")
-    expect(head).to_contain_text("(3)")
+    # The count is a plain numeral after the word (redesign), no brackets.
+    expect(head.locator("[data-settled-count]")).to_have_text("3")
+    expect(head).not_to_contain_text("(")
     page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
     page.evaluate("""() => {
       window.__foldProof = [];
@@ -396,7 +582,11 @@ def verify_settled_fold(page, url, fixture, evidence):
             const body = section.querySelector('[data-settled-scroll]');
             const rows = [...section.querySelectorAll('[data-settled-item]')];
             const animations = section.getAnimations({subtree:true});
-            samples.push({ms:performance.now()-start, height:section.getBoundingClientRect().height,
+            // The final keyframe of the section's running height animation is where
+            // the fold says it will come to rest.
+            const target = section.getAnimations().map(a => a.effect?.getKeyframes().at(-1)?.height)
+              .filter(height => typeof height === 'string').map(parseFloat).at(-1) ?? null;
+            samples.push({ms:performance.now()-start, height:section.getBoundingClientRect().height, target,
               body:body?.getBoundingClientRect().height ?? 0, rows:rows.length,
               bodyPresent:!!body, expanded:section.querySelector('button').getAttribute('aria-expanded'),
               cap:parseFloat(getComputedStyle(section).maxHeight),
@@ -425,15 +615,20 @@ def verify_settled_fold(page, url, fixture, evidence):
         page.wait_for_function("window.__foldDone")
         return page.evaluate("window.__foldProof.at(-1).samples")
 
-    def smooth(samples, opening=True):
+    def settles(samples, opening=True):
+        # How many frames land mid-fold depends on runner load, so this checks where
+        # the fold settles, not how it moves. A stale animation target used to
+        # disappear and jump to intrinsic height. Once no animation runs, the height
+        # is the last target and stays there.
         heights = [sample["height"] for sample in samples]
         assert max(heights) - min(heights) > 20, samples
-        low, high = min(heights), max(heights)
-        assert sum(low + 2 < value < high - 2 for value in heights) >= 3, samples
-        # A stale animation target used to disappear and jump to intrinsic height.
-        assert all(abs(current["height"] - previous["height"]) < 2
-                   for previous, current in zip(samples, samples[1:], strict=False)
-                   if not current["sectionEffects"]), samples
+        target = None
+        for sample in samples:
+            if sample["sectionEffects"]:
+                target = sample["target"] if sample["target"] is not None else target
+            elif target is not None:
+                assert abs(sample["height"] - target) <= 1, (target, sample, samples)
+        assert target is not None and not samples[-1]["sectionEffects"], samples[-4:]
         assert abs(heights[-1] - heights[-3]) < 1, samples[-4:]
         assert all(sample["rowEffects"] == 0 for sample in samples), samples
         assert samples[-1]["expanded"] == ("true" if opening else "false"), samples[-1]
@@ -444,38 +639,39 @@ def verify_settled_fold(page, url, fixture, evidence):
     fixture["count"] = 7
     page.evaluate("window.__navigationDelay=0; void window.__refreshNavigation()")
     samples = finish()
-    smooth(samples)
+    settles(samples)
     assert samples[-1]["rows"] == 7, samples[-1]
     page.screenshot(path=str(evidence / "settled-fold-open.png"))
 
     # The body survives until the close completes, even when the source changes.
     start("close-with-refresh", duration=650)
-    page.wait_for_timeout(70)
+    # The source changes while the close is moving.
+    page.wait_for_function("document.querySelector('.settled').getAnimations().length > 0")
     fixture["count"] = 5
     page.evaluate("void window.__refreshNavigation()")
     samples = finish()
-    smooth(samples, False)
+    settles(samples, False)
     assert any(sample["bodyPresent"] and sample["height"] > samples[-1]["height"] + 2 for sample in samples)
     assert not samples[-1]["bodyPresent"], samples[-1]
 
     # Content arrives after the original Glide deadline. It still enters as a fold.
     start("late-after-glide", duration=1050, delay=450)
     samples = finish()
-    smooth(samples)
+    settles(samples)
     assert samples[-1]["rows"] == 5, samples[-1]
     assert any(sample["ms"] > 450 and sample["sectionEffects"] for sample in samples), samples
 
     # Rapid close/open/close preserves the sampled starting height and latest intent.
     start("reversal", duration=850, toggles=[90, 180])
     samples = finish()
-    smooth(samples, False)
+    settles(samples, False)
     assert not samples[-1]["bodyPresent"], samples[-1]
 
     # The production flex cap and internal scrollbar constrain a large settled page.
     fixture["count"] = 30
     start("capped-open", duration=850)
     samples = finish()
-    smooth(samples)
+    settles(samples)
     final = samples[-1]
     assert final["rows"] == 30 and final["scrollHeight"] > final["body"] + 50, final
     bounds = page.locator('.settled').bounding_box()
@@ -537,7 +733,21 @@ def verify_card_geometry(page, url, fixture, evidence):
         const rect = card.getBoundingClientRect(), title = card.querySelector('.item-title');
         const titleRect = title.getBoundingClientRect();
         const style = getComputedStyle(title);
-        return {top:rect.top,bottom:rect.bottom,height:rect.height,
+        for (const row of card.querySelectorAll('.worker-row.rail-travelling')) {
+          const r=row.getBoundingClientRect(), scroller=card.closest('.active-work-scroll').getBoundingClientRect();
+          const x=r.left+r.width/2,y=r.top+r.height/2;
+          if(y>scroller.top && y<scroller.bottom) {
+            const painted=document.elementFromPoint(x,y);
+            if(!row.contains(painted) || getComputedStyle(row).zIndex!=='2')
+              throw new Error('Travelling Worker must paint above other groups');
+          }
+        }
+        const bubble = getComputedStyle(card, '::before');
+        if (bubble.content === 'none' || bubble.zIndex !== '-2' ||
+            Math.abs(parseFloat(bubble.height)-rect.height) > 1 ||
+            getComputedStyle(card.parentElement, '::before').content !== 'none')
+          throw new Error('Bubble must share the animated card border: '+id);
+        return {bubbleHeight:parseFloat(bubble.height),top:rect.top,bottom:rect.bottom,height:rect.height,
           gap:next ? next.getBoundingClientRect().top-rect.bottom : null,
           titleHeight:titleRect.height,titleScale:titleRect.height/parseFloat(style.lineHeight),
           tickets:[...card.querySelectorAll('[data-ticket-id]')].map(n=>n.dataset.ticketId),
@@ -702,7 +912,7 @@ def verify_card_geometry(page, url, fixture, evidence):
     scroll.evaluate("async n=>{n.scrollTop=n.scrollHeight; await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);}")
     expect(page.locator('[data-manager="geometry_b"]')).to_be_in_viewport()
     assert page.locator('.settled-head').is_visible()
-    assert not page.locator('.manager-card [style*="height:"]').count()
+    assert not page.locator('.manager-card [style*="height:"]:not(.rail-wash):not(.rail-wash-origin)').count()
     page.screenshot(path=str(evidence / "card-short-wrapped-final.png"))
     # A bottom-anchored scroll can clamp when the final slot shrinks. The same
     # border/gap proof must hold there, while the real scroll anchor is active.
@@ -780,6 +990,215 @@ def verify_card_geometry(page, url, fixture, evidence):
     }, indent=2))
 
 
+
+
+def verify_card_background_motion(page, url, fixture, evidence):
+    """Reuse the App host to prove card exits, arrivals and reflow share a bubble.
+
+    Existing resize samples cover row changes, scrolling and reduced motion.
+    They did not check the painted layer or a whole card's opacity lifecycle.
+    """
+    started = time.perf_counter()
+    managers = [{"id": "bubble_"+str(i), "title": "Background travels with Manager "+str(i),
+                 "created_at": i+1, "settled": False, "tickets": []} for i in range(5)]
+    worker={"id":"bubble_worker","title":"Worker changes group during settle","manager_id":"bubble_4",
+            "worker_type":"coding","stage":"needs_implementation","ticket_status":"agent"}
+    managers[4]["tickets"]=[worker]
+    goal={"id":"bubble_goal","title":"Keep the rail together","active":True,"completed":False,
+          "kind":"binary","holder_kind":"manager","holder_id":"bubble_3","created_at":1,"updated_at":1,
+          "project_id":None,"why":"","deadline":None,"primary_chart":None,"primary_checklist_block_id":None,
+          "revision":0,"status":"attention","status_date":time.strftime("%Y-%m-%d"),
+          "next_refresh_at":int(time.time())+86400,"employee_backend":"codex","employee_launch_model":"",
+          "employee_launch_reasoning_effort":None,
+          "page":{"kind":"headroom.page","version":1,"title":"Approach","summary":"","blocks":[]}}
+    fixture.update(enabled=True, board={"managers": managers, "columns": []}, chief={"label": "Chief"},goals=[goal])
+    page.set_viewport_size({"width": 1100, "height": 700})
+    page.mouse.move(1000, 650)
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator('[data-manager="bubble_4"]')).to_be_visible()
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+    page.evaluate("""() => {
+      window.__bubbleFrames=[];
+      window.__bubbleCapture=true;
+      const take=()=>{
+        const cards=[...document.querySelectorAll('.manager-card')];
+        window.__bubbleFrames.push(cards.map(card=>{
+          const r=card.getBoundingClientRect(), b=getComputedStyle(card,'::before');
+          const title=card.querySelector('.item-title').getBoundingClientRect();
+          const tint=getComputedStyle(card,'::after');
+          return {tint:tint.content,tintHeight:parseFloat(tint.height),tintZ:tint.zIndex,id:card.dataset.railMotion,top:r.top,bottom:r.bottom,height:r.height,
+            titleTop:title.top,titleBottom:title.bottom,
+            bubble:b.content,bubbleHeight:parseFloat(b.height),bubbleZ:b.zIndex,
+            slotBubble:getComputedStyle(card.parentElement,'::before').content,
+            opacity:+getComputedStyle(card).opacity,transform:getComputedStyle(card).transform};
+        }));
+        if(window.__bubbleCapture)requestAnimationFrame(take);
+      };take();
+    }""")
+    proof=[]
+
+    def change(name, mutate):
+        mutate()
+        page.evaluate("async () => {await window.__refreshNavigation();await new Promise(requestAnimationFrame);}")
+        # Pause the actual effects for a reviewable midpoint, then let them finish.
+        page.evaluate("""() => {
+          window.__bubbleEffects=document.getAnimations().filter(a=>a.effect && a.effect.getTiming().iterations!==Infinity);
+          window.__bubbleEffects.forEach(a=>{a.pause();a.currentTime=Number(a.effect.getTiming().duration)*.5;});
+        }""")
+        page.screenshot(path=str(evidence / ("bubble-"+name+"-midpoint.png")))
+        page.evaluate("window.__bubbleEffects.forEach(a=>a.play())")
+        page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+        proof.append(name)
+
+    expect(page.locator('[data-manager="bubble_3"]')).to_have_attribute("data-goal-status", "attention")
+    change("settle-one", lambda: managers[0].update(settled=True))
+    change("reopen", lambda: managers[0].update(settled=False))
+    for i in range(3):
+        change("settle-sequence-"+str(i), lambda i=i: managers[i].update(settled=True))
+    change("settle-with-group-transfer", lambda: (managers[3].update(settled=True), worker.update(awaiting_approval=True)))
+    change("manager-arrives", lambda: managers.append({"id":"bubble_new", "title":"A new Manager and its bubble",
+                                                      "created_at":10,"tickets":[]}))
+    page.emulate_media(reduced_motion="reduce")
+    change("reduced-reopen", lambda: managers[0].update(settled=False))
+    page.emulate_media(reduced_motion="no-preference")
+    fixture["goals"]=[]
+    frames=page.evaluate("window.__bubbleCapture=false;window.__bubbleFrames")
+    for frame in frames:
+        for card in frame:
+            assert card["bubble"] != 'none' and card["slotBubble"] == 'none', card
+            assert card["bubbleZ"] == '-2' and abs(card["bubbleHeight"]-card["height"]) < 1, card
+            if card["tint"] != 'none':
+                assert card["tintZ"] == '-1' and abs(card["tintHeight"]-card["height"]) < 1, card
+            assert card["titleTop"] >= card["top"]-1 and card["titleBottom"] <= card["bottom"]+1, card
+    assert any(0 < card["opacity"] < 1 for frame in frames for card in frame), frames
+    assert any(card["transform"] != 'none' for frame in frames for card in frame), frames
+    (evidence / "bubble-motion-frames.json").write_text(json.dumps({
+        "seconds":round(time.perf_counter()-started,3),"newHosts":0,"flows":proof,"frames":frames},indent=2))
+
+
+def verify_empty_handoff(page, url, fixture, evidence):
+    """Prove temporal placement through real navigation, motion, marks, and Focus.
+
+    The existing App host supplies synthetic navigation frames. Pure timer tests
+    cannot prove which bucket the real row enters during the motion queue.
+    """
+    started = time.perf_counter()
+    ticket = {"id": "handoff_worker", "manager_id": None, "title": "Continue the next stage",
+              "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent",
+              "conversation_id": "handoff_conversation",
+              "conversation_signal": {"working": False, "message_for_owner": False}}
+    fixture.update(enabled=True, board={"managers": [], "columns": [{"cards": [ticket]}]}, chief={"label": "Chief"})
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.emulate_media(reduced_motion="no-preference")
+    page.mouse.move(1100, 800)
+    page.goto(url + "#/workspace/utility/settings", wait_until="domcontentloaded")
+    page.reload(wait_until="domcontentloaded")
+    focus = page.locator('.rail-foot').get_by_role("switch", name="Focus", exact=True)
+    if focus.get_attribute("aria-checked") == "true":
+        focus.click()
+    row = page.locator('[data-ticket-id="handoff_worker"]')
+    expect(row).to_be_visible()
+    wait_settled(page, '.workspace-rail')
+
+    def refresh():
+        page.evaluate("async () => { await window.__refreshNavigation(); await new Promise(requestAnimationFrame); }")
+
+    def bucket():
+        return row.evaluate("n => n.closest('[data-bucket-key]').dataset.bucketKey")
+
+    page.evaluate("""() => {
+      window.__handoffSamples = [];
+      window.__handoffObserver = new MutationObserver(() => {
+        const row = document.querySelector('[data-ticket-id="handoff_worker"]');
+        window.__handoffSamples.push({ms:performance.now(),
+          bucket:row?.closest('[data-bucket-key]')?.dataset.bucketKey,
+          status:row?.dataset.ticketStatus});
+      });
+      window.__handoffObserver.observe(document.querySelector('.workspace-rail'), {subtree:true,childList:true,attributes:true});
+    }""")
+    ticket.update(ticket_status="empty", stage="needs_consequences", title="Fresh stage facts during handoff")
+    refresh()
+    expect(row).to_have_attribute("data-ticket-status", "empty")
+    expect(row).to_have_attribute("data-ticket-stage", "needs_consequences")
+    expect(row).to_contain_text("Fresh stage facts during handoff")
+    assert bucket() == "agent"
+    page.screenshot(path=str(evidence / "handoff-short-retained.png"))
+    ticket.update(ticket_status="agent")
+    refresh()
+    wait_settled(page, '.workspace-rail')
+    assert bucket() == "agent"
+    assert all(sample.get("bucket") != "empty" for sample in page.evaluate("window.__handoffSamples"))
+
+    # A cleared approval retains its heading only. The mark uses fresh facts.
+    ticket.update(ticket_status="awaiting_approval", awaiting_approval=True)
+    refresh()
+    expect(row.locator('[data-approval-mark="owner"]')).to_be_visible()
+    wait_settled(page, '.workspace-rail')
+    ticket.update(ticket_status="empty", awaiting_approval=False)
+    refresh()
+    expect(row.locator('[data-approval-mark]')).to_have_count(0)
+    assert bucket() == "awaiting_approval"
+    page.screenshot(path=str(evidence / "handoff-cleared-approval.png"))
+    ticket.update(ticket_status="agent")
+    refresh()
+    wait_settled(page, '.workspace-rail')
+
+    # Focus filters the retained Agent placement with the fresh unread fact.
+    ticket["conversation_signal"]["message_for_owner"] = True
+    refresh()
+    focus.click()
+    expect(focus).to_have_attribute("aria-checked", "true")
+    expect(row).to_be_visible()
+    wait_settled(page, '.workspace-rail')
+    ticket.update(ticket_status="empty")
+    ticket["conversation_signal"]["message_for_owner"] = False
+    refresh()
+    expect(row).to_have_count(0)
+    ticket.update(ticket_status="agent")
+    refresh()
+    focus.click()
+    expect(row).to_be_visible()
+    wait_settled(page, '.workspace-rail')
+
+    # Reduced motion keeps the same grace. Repeated frames cannot renew it,
+    # and expiry must release placement while the pointer stays over the row.
+    page.emulate_media(reduced_motion="reduce")
+    row.hover()
+    ticket.update(ticket_status="empty")
+    refresh()
+    assert bucket() == "agent"
+    first_empty = page.evaluate("performance.now()")
+    refresh()
+    refresh()
+    page.wait_for_function("""() => document.querySelector('[data-ticket-id="handoff_worker"]')
+      ?.closest('[data-bucket-key]')?.dataset.bucketKey === 'empty'""", timeout=2500)
+    elapsed = page.evaluate("performance.now()") - first_empty
+    assert elapsed <= 1500, elapsed
+    page.screenshot(path=str(evidence / "handoff-persistent-empty.png"))
+    assert bucket() == "empty"
+    page.mouse.move(1100, 800)
+    ticket.update(ticket_status="agent")
+    refresh()
+    wait_settled(page, '.workspace-rail')
+
+    # Removing the incoming member cancels its timer and cannot restore it.
+    ticket.update(ticket_status="empty")
+    refresh()
+    assert bucket() == "agent"
+    fixture["board"]["columns"][0]["cards"].clear()
+    refresh()
+    expect(row).to_have_count(0)
+    page.evaluate("async () => { await new Promise(resolve => setTimeout(resolve, 1100)); }")
+    expect(row).to_have_count(0)
+    samples = page.evaluate("window.__handoffObserver.disconnect(); window.__handoffSamples")
+    (evidence / "handoff-browser-proof.json").write_text(json.dumps({
+        "seconds": round(time.perf_counter()-started, 3), "newHosts": 0,
+        "persistentEmptyObservedAfterMs": round(elapsed, 1), "samples": samples,
+        "boundary": "Synthetic navigation frames through the existing real App, rail motion, Focus, and row marks",
+    }, indent=2))
+    page.emulate_media(reduced_motion="no-preference")
+
+
 def capture_card_motion(browser, url, fixture, respond, evidence):
     """Record a short, ordinary-speed review clip in the same existing App host."""
     recordings = []
@@ -804,24 +1223,34 @@ def capture_card_motion(browser, url, fixture, respond, evidence):
             expect(page.locator('[data-ticket-id="clip_two"]')).to_be_visible()
             page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
             page.mouse.move(1000, 650)
-            page.wait_for_timeout(250)
+            # The clip opens on a still rail: the pointer's hover has left it.
+            wait_settled(page, ".manager-card")
+
+            def published(page=page):
+                # The fixture refresh resolves after snapshot delivery. One frame lets
+                # Svelte commit, so the motion controller has marked any travel.
+                page.evaluate("async () => { await window.__refreshNavigation(); await new Promise(requestAnimationFrame); }")
+
+            def played(page=page):
+                # Each change plays to its end at ordinary speed before the next.
+                published(page)
+                wait_settled(page, ".manager-card")
+
             for approval in [True, False]:
                 two["awaiting_approval"] = approval
-                page.evaluate("void window.__refreshNavigation()")
-                page.wait_for_timeout(650)
+                played()
             arriving = {**one, "id": "clip_arriving", "title": "A new Worker appears"}
             rows.append(arriving)
-            page.evaluate("void window.__refreshNavigation()")
-            page.wait_for_timeout(650)
+            played()
             arriving.update(stage="done", ticket_status="done")
-            page.evaluate("void window.__refreshNavigation()")
-            page.wait_for_timeout(750)
+            played()
+            # Rapid changes each arrive while the previous one still moves.
             for approval in [True, False, True]:
                 two["awaiting_approval"] = approval
-                page.evaluate("void window.__refreshNavigation()")
-                page.wait_for_timeout(90)
+                published()
             page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
-            page.wait_for_timeout(300)
+            # The recording holds the final state over consecutive painted frames.
+            wait_settled(page, ".manager-card")
         finally:
             video = page.video
             context.close()
@@ -934,81 +1363,63 @@ def verify_rail_pagination(page, url, fixture, evidence):
     # Native wheel input continues after the request, protecting the gap left by
     # immediate-publication coverage above. No additional browser host is created.
     continued_scroll_started = time.perf_counter()
-    for queued in [False, True]:
-        page.reload(wait_until="domcontentloaded")
-        expect(page.locator('.chief [data-ticket-id]')).to_have_count(30)
-        settled()
-        page.mouse.move(900, 600)
-        prior = window('rail_tickets')
-        scroll.evaluate("""n => {
-          n.style.setProperty('overflow-anchor','auto','important');
-          window.__holdNavigation=true;
-          window.__navigationOrder=[];
-          window.__paginationScrollEvents=[];
-          n.addEventListener('scroll',event=>window.__paginationScrollEvents.push({
-            trusted:event.isTrusted, top:n.scrollTop, ms:performance.now()}), {capture:true});
-        }""")
-        anchor = '[data-ticket-id="page_worker_17"]'
-        scroll.evaluate("""(surface,selector)=>{const row=document.querySelector(selector);
-          surface.scrollTop+=row.getBoundingClientRect().top-surface.getBoundingClientRect().top-8;
-        }""", anchor)
-        page.wait_for_function('window.__heldNavigation.length>0')
-        request_top = top(anchor)
-        # Hover deliberately holds card structure only in the queued-publication
-        # case. The delayed case releases on a trusted native scroll at capture
-        # phase, before the production action receives that event.
-        row = page.locator(anchor)
-        if queued:
-            row.hover()
-            page.evaluate("async()=>{window.__holdNavigation=false;window.__releaseNavigation();await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame)}")
-            assert members('rail_tickets') == [key['id'] for key in prior['members']]
-        else:
-            bounds = scroll.bounding_box()
-            page.mouse.move(bounds['x']+1, bounds['y']+30)
-        scroll.evaluate("""(n,queued) => {
-          window.__releaseOnNativeScroll=event=>{
-            if(!event.isTrusted) return;
-            n.removeEventListener('scroll',window.__releaseOnNativeScroll,true);
-            const row=document.querySelector('[data-ticket-id="page_worker_17"]');
-            window.__continuedScroll={top:row.getBoundingClientRect().top,scrollTop:n.scrollTop,
-              trusted:event.isTrusted,ms:performance.now(),queued};
-            if(!queued){
-              // Withhold this dispatch from the action: publication must sample
-              // native movement itself, rather than relying on an onScroll call.
-              event.stopImmediatePropagation();
-              window.__navigationOrder.push({kind:'native-scroll-before-action',ms:performance.now(),top:n.scrollTop});
-              window.__holdNavigation=false;window.__releaseNavigation();
-            }
-          };
-          n.addEventListener('scroll',window.__releaseOnNativeScroll,true);
-        }""", queued)
-        page.mouse.wheel(0, 36)
-        page.wait_for_function('window.__continuedScroll?.queued === '+str(queued).lower())
-        continued = page.evaluate('window.__continuedScroll')
-        assert continued['trusted'] and abs(continued['top']-request_top)>10, (request_top,continued)
-        if queued:
-            # Further native movement occurred while the new page was already
-            # queued. Leaving the row publishes the still-deferred card once.
-            assert members('rail_tickets') == [key['id'] for key in prior['members']]
-        (evidence / ('queued-publication-before-wait.json' if queued else 'delayed-publication-before-wait.json')).write_text(json.dumps({
-            'prior':prior,'continued':continued,'frames':page.evaluate('window.__navigationFrames'),
-            'order':page.evaluate('window.__navigationOrder'),'held':page.evaluate('window.__heldNavigation.length'),
-            'heldFrames':page.evaluate('window.__heldNavigationFrames'),
-            'members':members('rail_tickets')},indent=2))
-        page.mouse.move(900, 600)
-        if queued:
-            # Leaving the row releases the held page. It turns without any fade.
-            page.wait_for_function("""()=>!document.querySelector('[data-ticket-id="page_worker_00"]')""")
-        after_view = page_changed('rail_tickets', prior)
-        assert abs(top(anchor)-continued['top']) < 1.5, (queued,continued,top(anchor),after_view)
-        policy = scroll.evaluate("n=>({value:n.style.getPropertyValue('overflow-anchor'),priority:n.style.getPropertyPriority('overflow-anchor')})")
-        assert policy == {'value':'auto','priority':'important'}, policy
-        order = page.evaluate('window.__navigationOrder')
-        if not queued:
-            assert [entry['kind'] for entry in order][:2] == ['native-scroll-before-action','publication'], order
-        proof.append({'name':'queued-publication-continued-wheel' if queued else 'delayed-publication-native-scroll-before-action',
-                      'requestTop':request_top,'continued':continued,'after':top(anchor),'policy':policy,
-                      'eventOrder':order,'scrollEvents':page.evaluate('window.__paginationScrollEvents')})
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator('.chief [data-ticket-id]')).to_have_count(30)
+    settled()
+    page.mouse.move(900, 600)
+    prior = window('rail_tickets')
+    scroll.evaluate("""n => {
+      n.style.setProperty('overflow-anchor','auto','important');
+      window.__holdNavigation=true;
+      window.__navigationOrder=[];
+      window.__paginationScrollEvents=[];
+      n.addEventListener('scroll',event=>window.__paginationScrollEvents.push({
+        trusted:event.isTrusted, top:n.scrollTop, ms:performance.now()}), {capture:true});
+    }""")
+    anchor = '[data-ticket-id="page_worker_17"]'
+    scroll.evaluate("""(surface,selector)=>{const row=document.querySelector(selector);
+      surface.scrollTop+=row.getBoundingClientRect().top-surface.getBoundingClientRect().top-8;
+    }""", anchor)
+    page.wait_for_function('window.__heldNavigation.length>0')
+    request_top = top(anchor)
+    # The release happens on a trusted native scroll at capture phase, before the
+    # production action receives that event.
+    bounds = scroll.bounding_box()
+    page.mouse.move(bounds['x']+1, bounds['y']+30)
+    scroll.evaluate("""n => {
+      window.__releaseOnNativeScroll=event=>{
+        if(!event.isTrusted) return;
+        n.removeEventListener('scroll',window.__releaseOnNativeScroll,true);
+        const row=document.querySelector('[data-ticket-id="page_worker_17"]');
+        window.__continuedScroll={top:row.getBoundingClientRect().top,scrollTop:n.scrollTop,
+          trusted:event.isTrusted,ms:performance.now()};
+        // Withhold this dispatch from the action: publication must sample
+        // native movement itself, rather than relying on an onScroll call.
+        event.stopImmediatePropagation();
+        window.__navigationOrder.push({kind:'native-scroll-before-action',ms:performance.now(),top:n.scrollTop});
+        window.__holdNavigation=false;window.__releaseNavigation();
+      };
+      n.addEventListener('scroll',window.__releaseOnNativeScroll,true);
+    }""")
+    page.mouse.wheel(0, 36)
+    page.wait_for_function('window.__continuedScroll')
+    continued = page.evaluate('window.__continuedScroll')
+    assert continued['trusted'] and abs(continued['top']-request_top)>10, (request_top,continued)
+    (evidence / 'delayed-publication-before-wait.json').write_text(json.dumps({
+        'prior':prior,'continued':continued,'frames':page.evaluate('window.__navigationFrames'),
+        'order':page.evaluate('window.__navigationOrder'),'held':page.evaluate('window.__heldNavigation.length'),
+        'heldFrames':page.evaluate('window.__heldNavigationFrames'),
+        'members':members('rail_tickets')},indent=2))
+    page.mouse.move(900, 600)
+    after_view = page_changed('rail_tickets', prior)
+    assert abs(top(anchor)-continued['top']) < 1.5, (continued,top(anchor),after_view)
+    policy = scroll.evaluate("n=>({value:n.style.getPropertyValue('overflow-anchor'),priority:n.style.getPropertyPriority('overflow-anchor')})")
+    assert policy == {'value':'auto','priority':'important'}, policy
+    order = page.evaluate('window.__navigationOrder')
+    assert [entry['kind'] for entry in order][:2] == ['native-scroll-before-action','publication'], order
+    proof.append({'name':'delayed-publication-native-scroll-before-action',
+                  'requestTop':request_top,'continued':continued,'after':top(anchor),'policy':policy,
+                  'eventOrder':order,'scrollEvents':page.evaluate('window.__paginationScrollEvents')})
     # A separate ordering proof moves the actual DOM scroller and publishes the
     # held wire frame in one JavaScript task. Its movement is programmatic; the
     # later scroll event is native. This is the precise pre-dispatch boundary,
@@ -1121,6 +1532,7 @@ def verify_conversation_overlay(browser, url):
     brief = "\n\n".join(f"Document paragraph {i}. " + "This content retains its place beneath the floating conversation. " * 4 for i in range(30)) + "\n\nFinal document paragraph."
     detail = {**tickets[0], "project_id": None, "project": "", "manager_id": None, "manager_title": None, "employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None, "employee_configuration_editable": False, "ceiling": "done", "ceiling_holder": {"kind":"owner","id":"owner"}, "blocked": False, "is_backlogged": False, "blocker_summary": {"blocked_by": []}, "field_values": {"brief": brief}, "field_summaries": {"brief": {"revision": brief, "byte_count": len(brief.encode())}}, "pending_proposal": None}
     manifest = {"worker_types": [{"worker_type":"coding", "label":"Coding", "stages":[{"id":"needs_brief","label":"Brief","gating_field":"brief","is_terminal":False,"ownership_mode":"user"},{"id":"done","label":"Done","gating_field":None,"is_terminal":True,"ownership_mode":None}], "fields":[{"id":"brief","label":"Brief"}], "advance":{"needs_brief":"done"}, "ceiling_range":["none","needs_brief","done"], "default_ceiling":"needs_brief"}]}
+    detail["workflow"] = manifest["worker_types"][0]
     source = fixture["navigation_response"]({"columns": [{"cards": tickets}]}, {"chief_of_staff": {"label": "Chief", "conversation_id": "bounded-reader"}})
     evidence = Path(os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR", "/tmp/panels-overlay")) / "overlay"
     evidence.mkdir(parents=True, exist_ok=True)
@@ -1142,9 +1554,7 @@ def verify_conversation_overlay(browser, url):
             "/api/tickets/t_overlay0/conversation/start-values": {"backend_key":"codex","model":None,"reasoning_effort":None},
             "/api/worker-types?supported=true": manifest,
             "/api/worker-types": manifest,
-            "/api/feedback/count": {"open_count": 0},
-            "/api/deployment-status": {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None},
-            "/api/updates": {"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None},
+            "/api/updates": {"state": "up_to_date", "allowed_actions": [], "activity": "unknown", "available": None, "attempt": None, "app_sha": "fixture-boot", "detail": None, "deadline_at": None, "mac_details": None},
             "/api/meta": {"test_mode": True, "app_sha": None},
             "/api/review": {"items": [], "running_worker_count": 0},
         }
@@ -1161,7 +1571,7 @@ def verify_conversation_overlay(browser, url):
         page.route("**/api/**", respond)
         page.add_init_script("""(() => {
           const viewport = new EventTarget();
-          Object.assign(viewport,{offsetTop:0,offsetLeft:0,width:innerWidth,height:innerHeight,scale:1});
+          Object.assign(viewport,{offsetTop:0,offsetLeft:0,width:innerWidth,height:innerHeight,scale:1});Object.defineProperties(viewport,{pageTop:{get(){return scrollY+this.offsetTop;}},pageLeft:{get(){return scrollX+this.offsetLeft;}}});
           Object.defineProperty(window,'visualViewport',{value:viewport,configurable:true});
           window.__keyboardViewport=(top,height)=>{Object.assign(viewport,{offsetTop:top,height});viewport.dispatchEvent(new Event('resize'));viewport.dispatchEvent(new Event('scroll'));};
         })();""")
@@ -1171,6 +1581,11 @@ def verify_conversation_overlay(browser, url):
         box = page.locator('[data-conversation-input]')
         document = page.locator('.ticket-doc' if ticket_host else '.chief-workspace .manager-doc')
         final_text = 'Final document paragraph.' if ticket_host else 'Overlay document row 35'
+        def settle(page=page):
+            # Reduced motion: each layout below lands through observers and frames.
+            wait_settled(page, '[data-conversation-pane]', '.conversation-layer', '[data-conversation-thread]',
+                         '[data-conversation-input]', '.ticket-doc, .manager-doc', '.ticket-page, .manager-page',
+                         '.ticket-artifact-body')
         try:
             expect(box).to_be_visible()
         except AssertionError:
@@ -1183,24 +1598,32 @@ def verify_conversation_overlay(browser, url):
             page.mouse.down()
             page.mouse.move(width - 440, grip_box['y'] + grip_box['height']/2, steps=5)
             page.mouse.up()
-            page.wait_for_timeout(100)
+            settle()
         expect(document.get_by_text(final_text, exact=True)).to_have_count(1)
         # Initial selection stays product-owned. Choose dock state for this proof.
         if pane.get_attribute('data-conversation-state') == 'opened':
             page.locator('[data-conversation-collapse]').click()
-        # Open by the same controls as an owner. A viewport read follows each layout.
-        box.click()
-        expect(pane).to_have_attribute('data-conversation-state', 'rest')
-        box.fill("Draft keeps its place.\n" * 6)
-        page.wait_for_timeout(250)
+        # On a phone, focus in the field opens the conversation. The dock proofs here take
+        # the draft without that focus, and the keyboard proof below takes it on purpose.
+        phone = width <= 720
+        if phone:
+            box.evaluate("e=>{e.value='Draft keeps its place.\\n'.repeat(6);e.dispatchEvent(new Event('input',{bubbles:true}))}")
+        else:
+            # Open by the same controls as an owner. A viewport read follows each layout.
+            box.click()
+            expect(pane).to_have_attribute('data-conversation-state', 'rest')
+            box.fill("Draft keeps its place.\n" * 6)
+        settle()
         doc_before = document.bounding_box()
         dock_before = page.locator('.conversation-layer').bounding_box()
-        assert doc_before['y'] + doc_before['height'] <= dock_before['y'] + 1, (name, doc_before, dock_before)
+        # The page scrolls under the composer zone (redesign): the document runs on beneath the
+        # dock, and its last line still scrolls clear of the dock (checked at the end below).
+        assert doc_before['y'] + doc_before['height'] >= dock_before['y'] + dock_before['height'] - 1, (name, doc_before, dock_before)
         document.evaluate('e=>e.scrollTop=240')
         scroll_before = document.evaluate('e=>e.scrollTop')
         page.locator('[data-conversation-expand]').click()
         expect(pane).to_have_attribute('data-conversation-state', 'opened')
-        page.wait_for_timeout(250)
+        settle()
         doc_open = document.bounding_box()
         card_open = pane.bounding_box()
         title = document.locator('.ticket-title' if ticket_host else '.manager-workspace-title').bounding_box()
@@ -1247,11 +1670,11 @@ def verify_conversation_overlay(browser, url):
             assert measured and measured['text'] == anchor['text'] and abs(measured[coordinate] - anchor[coordinate]) <= 2, (name,label,anchor,measured)
             return measured
         box.fill('A shorter draft')
-        page.wait_for_timeout(250)
+        settle()
         assert box.input_value() == 'A shorter draft'
         assert_anchor('composer shrink')
         box.fill('Draft grows again.\n' * 6)
-        page.wait_for_timeout(250)
+        settle()
         assert_anchor('composer growth')
         # Collapse cannot remove document scroll range or clamp the reader.
         document.evaluate('e=>e.scrollTop=e.scrollHeight')
@@ -1259,62 +1682,74 @@ def verify_conversation_overlay(browser, url):
         collapse_before = {'thread':transcript_bounds(),'anchor':anchor}
         page.locator('[data-conversation-collapse]').click()
         expect(pane).to_have_attribute('data-conversation-state', 'rest')
-        page.wait_for_timeout(250)
+        settle()
         assert not thread.is_visible()
         assert document.evaluate('e=>e.scrollHeight') >= highwater
         assert document.evaluate('e=>e.scrollTop') == end_scroll
         # Dock state keeps the mounted reader and its full-conversation anchor.
         page.locator('[data-conversation-expand]').click()
-        page.wait_for_timeout(250)
+        expect(pane).to_have_attribute('data-conversation-state', 'opened')
+        settle()
         assert_anchor('return from dock')
         collapse_after = {'thread':transcript_bounds(),'anchor':anchor}
         page.locator('[data-conversation-collapse]').click()
-        page.wait_for_timeout(250)
-        box.click()
+        expect(pane).to_have_attribute('data-conversation-state', 'rest')
+        settle()
+        if not phone:
+            box.click()
         expect(pane).to_have_attribute('data-conversation-state', 'rest')
         final = document.get_by_text(final_text, exact=True)
         document.evaluate('e=>e.scrollTop=e.scrollHeight')
-        page.wait_for_timeout(100)
+        settle()
         card_peek = pane.bounding_box()
         final_box = final.bounding_box()
         # Wheel over uncovered document space above the full-column card.
         uncovered_point = {'x':host['x'] + host['width']/2, 'y':(host['y'] + card_peek['y'])/2}
         assert page.evaluate('point=>Boolean(document.elementFromPoint(point.x,point.y)?.closest(".ticket-doc,.manager-doc"))', uncovered_point), (name, uncovered_point)
         page.mouse.move(uncovered_point['x'], uncovered_point['y'])
+        page.evaluate("() => { window.__overlayWheel = false; addEventListener('wheel', () => { window.__overlayWheel = true; }, {capture: true, once: true, passive: true}); }")
         page.mouse.wheel(0, final_box['y'] + final_box['height'] - card_peek['y'] + 24)
-        page.wait_for_timeout(180)
+        page.wait_for_function('window.__overlayWheel')
+        settle()
         final_box = final.bounding_box()
         assert final_box['y'] >= host['y'], (name, final_box, host, page.evaluate('''([x,y])=>document.elementFromPoint(x,y)?.outerHTML.slice(0,500)''',[uncovered_point['x'],uncovered_point['y']]),document.evaluate('e=>e.scrollTop'))
         assert final_box['y'] + final_box['height'] <= card_peek['y'] + 1, (name, final_box, card_peek)
         page.screenshot(path=str(evidence / f'{name}-document-tail.png'), animations='disabled')
         # Simulated keyboard reduction plus displacement stays inside the host intersection.
+        # On a phone the keyboard comes with focus in the field, in the open conversation.
+        if phone:
+            box.focus()
+            expect(pane).to_have_attribute('data-conversation-state', 'opened')
         page.evaluate('window.__keyboardViewport(100, 420)')
-        page.wait_for_timeout(250)
+        settle()
         card_keyboard = pane.bounding_box()
         assert card_keyboard['y'] >= max(host['y'], 100) - 1, (name, card_keyboard, host)
         assert card_keyboard['y'] + card_keyboard['height'] <= min(host['y'] + host['height'], 520) + 1, (name, card_keyboard, host)
         # Full conversation follows the displaced viewport without losing scrollback.
-        page.locator('[data-conversation-expand]').click()
-        page.wait_for_timeout(250)
+        if not phone:
+            page.locator('[data-conversation-expand]').click()
+        expect(pane).to_have_attribute('data-conversation-state', 'opened')
+        settle()
         assert_anchor('keyboard reduction and displacement')
         thread.evaluate('e=>e.scrollTop=e.scrollHeight')
-        page.wait_for_timeout(100)
+        settle()
         expect(tail).to_be_in_viewport()
         keyboard_transcript = transcript_bounds()
         assert keyboard_transcript['tail']['bottom'] <= keyboard_transcript['bottom'] + 1, (name, keyboard_transcript)
         page.screenshot(path=str(evidence / f'{name}-keyboard.png'), animations='disabled')
         page.evaluate('window.__keyboardViewport(0, innerHeight)')
         document.evaluate('e=>e.scrollTop=0')
-        page.wait_for_timeout(250)
+        settle()
         thread.evaluate('e=>e.scrollTop=e.scrollHeight')
-        page.wait_for_timeout(100)
+        settle()
         page.screenshot(path=str(evidence / f'{name}.png'), animations='disabled')
         page.locator('[data-conversation-collapse]').click()
-        page.wait_for_timeout(250)
+        expect(pane).to_have_attribute('data-conversation-state', 'rest')
+        settle()
         artifact_proof = None
         if ticket_host:
             page.evaluate('window.__keyboardViewport(0, innerHeight)')
-            page.wait_for_timeout(200)
+            settle()
             doc_scroll_before_artifact = document.evaluate('e=>e.scrollTop')
             page.evaluate("location.hash='#/workspace/t_overlay0?source=ticket&ticket=t_overlay0&path=overlay.html'")
             artifact = page.locator('[data-ticket-artifact]')
@@ -1323,23 +1758,26 @@ def verify_conversation_overlay(browser, url):
             expect(artifact.locator('[data-ticket-artifact-close]')).to_be_in_viewport()
             frame_before = frame.bounding_box()
             page.locator('[data-conversation-expand]').click()
-            page.wait_for_timeout(250)
+            expect(pane).to_have_attribute('data-conversation-state', 'opened')
+            settle()
             assert frame.bounding_box() == frame_before
             page.locator('[data-conversation-collapse]').click()
-            page.wait_for_timeout(250)
+            expect(pane).to_have_attribute('data-conversation-state', 'rest')
+            settle()
             artifact_scroll = artifact.locator('.ticket-artifact-body')
             card = pane.bounding_box()
             frame_tail = frame.bounding_box()
             assert frame_tail['y'] + frame_tail['height'] <= card['y'] + 1, (frame_tail, card)
             assert frame_tail['height'] == frame_before['height']
             artifact.frame_locator('iframe').locator('#end').evaluate('e=>e.ownerDocument.defaultView.scrollTo(0,e.ownerDocument.documentElement.scrollHeight)')
-            page.wait_for_timeout(100)
+            artifact.locator('iframe').element_handle().content_frame().wait_for_function(
+                '() => scrollY + innerHeight >= document.documentElement.scrollHeight - 1')
             artifact_end = artifact.frame_locator('iframe').locator('#end').bounding_box()
             assert artifact_end['y'] + artifact_end['height'] <= card['y'] + 1, (artifact_end,card)
             assert artifact_end['y'] >= artifact_scroll.bounding_box()['y'], (artifact_end,artifact_scroll.bounding_box())
             page.screenshot(path=str(evidence / 'narrow-ticket-artifact-tail.png'), animations='disabled')
             artifact_scroll.evaluate('e=>e.scrollTop=0')
-            page.wait_for_timeout(100)
+            settle()
             expect(artifact.locator('[data-ticket-artifact-refresh]')).to_be_in_viewport()
             page.screenshot(path=str(evidence / 'narrow-ticket-artifact.png'), animations='disabled')
             artifact_proof = {'frameOriginal':frame_before,'frameTail':frame_tail,'finalParagraph':artifact_end,'scrollHeight':artifact_scroll.evaluate('e=>e.scrollHeight'),'clientHeight':artifact_scroll.evaluate('e=>e.clientHeight')}
@@ -1349,9 +1787,16 @@ def verify_conversation_overlay(browser, url):
         proof['hosts'].append({'name':name,'host':host,'titleChannel':title,'document':doc_open,'openedCard':card_open,'scrollTop':scroll_before,'retainedScrollHeight':highwater,'documentTail':final_box,'transcriptOpened':transcript_open,'scrollbackAnchor':anchor,'anchorChecks':anchor_proof,'collapse':{'before':collapse_before,'after':collapse_after},'keyboardCard':card_keyboard,'keyboardTranscript':keyboard_transcript,'artifact':artifact_proof})
         draft_before_dismissal = box.input_value()
         doc_before_dismissal = document.evaluate('e=>e.scrollTop')
-        point = {'x':host['x'] + host['width']/2, 'y':(host['y'] + pane.bounding_box()['y'])/2}
-        hit = page.evaluate('''point=>Boolean(document.elementFromPoint(point.x,point.y)?.closest('.ticket-doc,.manager-doc'))''', point)
-        assert hit, (name,point)
+        # A plain part of the document above the card: a link there would open another page.
+        point = page.evaluate('''([host, top]) => {
+          for (let y = host.y + 8; y < top - 8; y += 8) for (const x of [host.x + host.width / 2, host.x + 24]) {
+            const e = document.elementFromPoint(x, y);
+            if (e?.closest('.ticket-doc,.manager-doc') && !e.closest('a,button,input,textarea,[role=button]')) return {x, y};
+          }
+          return null;
+        }''', [host, pane.bounding_box()['y']])
+        hit = point is not None
+        assert hit, name
         page.mouse.click(point['x'], point['y'])
         expect(pane).to_have_attribute('data-conversation-state', 'rest')
         assert box.input_value() == draft_before_dismissal
@@ -1379,7 +1824,7 @@ def verify_rail_overflow(page, fixture, evidence):
     grip = page.get_by_role("separator", name="Resize workspace panel")
     proof = []
 
-    def status_geometry(word="Deploying"):
+    def status_geometry(word="Updating…"):
         status = page.locator(".status-card:visible")
         expect(status).to_contain_text(word)
         bounds = status.bounding_box()
@@ -1388,9 +1833,15 @@ def verify_rail_overflow(page, fixture, evidence):
         assert bounds and rail_bounds and viewport
         assert bounds["x"] >= rail_bounds["x"] and bounds["x"] + bounds["width"] <= rail_bounds["x"] + rail_bounds["width"] + 1, bounds
         assert bounds["y"] >= 0 and bounds["y"] + bounds["height"] <= viewport["height"], bounds
-        for scroller in [active, *([settled] if settled.count() else [])]:
-            box = scroller.bounding_box()
-            assert box and box["y"] + box["height"] <= bounds["y"] + 1, (box, bounds)
+        # Desktop: between the active work and Settled. Phone: above the bottom bar, below both.
+        box = active.bounding_box()
+        assert box and box["y"] + box["height"] <= bounds["y"] + 1, (box, bounds)
+        settled_head = head.bounding_box()
+        assert settled_head
+        if viewport["width"] > 720:
+            assert bounds["y"] + bounds["height"] <= settled_head["y"] + 1, (settled_head, bounds)
+        else:
+            assert settled_head["y"] + settled_head["height"] <= bounds["y"] + 1, (settled_head, bounds)
         return bounds
 
     def geometry(scroller):
@@ -1399,7 +1850,7 @@ def verify_rail_overflow(page, fixture, evidence):
           const style=getComputedStyle(node);
           return {clientWidth:node.clientWidth, scrollWidth:node.scrollWidth, scrollLeft:node.scrollLeft,
             clientHeight:node.clientHeight, scrollHeight:node.scrollHeight,
-            overflowX:style.overflowX, overflowY:style.overflowY, gutter:style.scrollbarGutter,
+            overflowX:style.overflowX, overflowY:style.overflowY,
             paddingRight:style.paddingRight, marginRight:style.marginRight};
         }""")
 
@@ -1416,7 +1867,7 @@ def verify_rail_overflow(page, fixture, evidence):
             fixture["active_count"] = count
             page.evaluate("void window.__refreshNavigation()")
             expect(rail.locator(".manager-card:not(.chief)")).to_have_count(count)
-            expect(head).to_contain_text(f"({count})")
+            expect(head.locator("[data-settled-count]")).to_have_text(str(count))
             for opened in [False, True]:
                 if head.get_attribute("aria-expanded") != str(opened).lower():
                     head.click()
@@ -1430,7 +1881,7 @@ def verify_rail_overflow(page, fixture, evidence):
                                   "scroller": scroller.get_attribute("class"), **values})
                     assert values["scrollWidth"] == values["clientWidth"], proof[-1]
                     assert values["scrollLeft"] == 0, proof[-1]
-                    assert values["overflowY"] == "auto" and values["gutter"] == "stable", proof[-1]
+                    # Neither list scrolls sideways, whatever its scrollbar takes.
                     if count == 24:
                         assert values["scrollHeight"] > values["clientHeight"], proof[-1]
                     scroller.evaluate("node => node.scrollTop=node.scrollHeight")
@@ -1477,12 +1928,11 @@ def verify_rail_overflow(page, fixture, evidence):
     # The predecessor's real prompt shares this slot. Exercise its public monitor
     # and Update control, rather than a second host or a simulated status card.
     fixture["release_sha"] = "fixture-next"
-    page.evaluate("dispatchEvent(new Event('pageshow'))")
+    page.evaluate("window.__ownerUpdatesSignal(); dispatchEvent(new Event('pageshow'))")
     status_samples = []
-    for state, word in [("ready", "New version ready"), ("held", "Page refresh waits until this message is safe")]:
-        if state == "held":
+    for state, word in [("ready", "Update complete"), ("composing", "Update complete")]:
+        if state == "composing":
             page.evaluate("document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))")
-            page.locator("[data-shell-refresh]:visible").click()
         for viewport_width in [721, 720]:
             page.set_viewport_size({"width": viewport_width, "height": 700})
             expect(rail).to_be_visible()
@@ -1493,12 +1943,11 @@ def verify_rail_overflow(page, fixture, evidence):
                 expect(grip).to_have_attribute("aria-valuenow", "232")
             bounds = status_geometry(word)
             status = page.locator(".status-card:visible")
-            assert status.locator(".status-action").count() == (1 if state == "ready" else 0)
+            assert status.locator(".status-action").count() == 1
             values = []
             for scroller, selector in [(active, ".manager-card:not(.chief) .settle"), (settled, ".reopen")]:
                 dimensions = geometry(scroller)
                 assert dimensions["scrollWidth"] == dimensions["clientWidth"] and dimensions["scrollLeft"] == 0, dimensions
-                assert dimensions["overflowY"] == "auto" and dimensions["gutter"] == "stable", dimensions
                 assert dimensions["scrollHeight"] > dimensions["clientHeight"], dimensions
                 scroller.evaluate("node => node.scrollTop=node.scrollHeight")
                 control = scroller.locator(selector).last
@@ -1517,27 +1966,30 @@ def verify_rail_overflow(page, fixture, evidence):
                 values.append(dimensions)
             status_samples.append({"state": state, "viewportWidth": viewport_width, "status": bounds, "scrollers": values})
             page.screenshot(path=str(evidence / f"rail-overflow-status-{state}-{viewport_width}.png"))
+    # Composition no longer holds a requested refresh. Keep both geometry modes
+    # actionable, then cross the real reload boundary before later fixture work.
+    page.evaluate("window.__beforeStatusRefreshDocument = document")
+    with page.expect_navigation(wait_until="domcontentloaded"):
+        page.locator("[data-shell-refresh]:visible").click()
+    assert page.evaluate("document !== window.__beforeStatusRefreshDocument")
     (evidence / "rail-overflow-status-geometry.json").write_text(json.dumps(status_samples, indent=2))
     (evidence / "rail-overflow-geometry.json").write_text(json.dumps({
         "seconds": round(time.perf_counter() - started, 3), "newHosts": 0, "samples": proof,
     }, indent=2))
 
 
-def verify_owner_updates(browser, url, *, problem_only=False):
-    """Browser clicks cross real owner routes and durable receipts on the existing host.
+def verify_owner_updates(browser, url):
+    """One update card from press to done, across native dialogs and a lost connection.
 
-    The provider records external dispatch only. The Problem composition must keep
-    confirmation, retry, and cancellation usable beside the failure explanation.
-    The narrow problem_only path skips unrelated recovery and cutover checks.
-    A synthetic SHA change proves refresh hold, not deployment or database migration.
+    The existing App host proves the retained card DOM at desktop and phone sizes,
+    native dialogs, the rail placement, page dimming and closed-stream recovery.
+    The update server is a double of the contract shape: its rules have their own tests.
+    A synthetic SHA change proves browser refresh safety, not service deployment.
     """
-    from dataclasses import replace
-
     started = time.perf_counter()
     backend = OwnerUpdatesFixture()
     navigation = runpy.run_path(str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py"))
     source = navigation["navigation_response"]({}, {"chief_of_staff": {"label": "Chief", "conversation_id": "bounded-reader"}})
-    deployment = {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None, "success_display_until": None}
     posts = []
     documents = []
     navigation_health = {"mode": "current", "generation": 1, "reason": None}
@@ -1553,13 +2005,11 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         parts = urlsplit(route.request.url)
         path = parts.path
         if path.startswith("/api/updates") or path == "/api/meta":
+            body = route.request.post_data_json if route.request.method != "GET" else None
             if route.request.method != "GET":
-                posts.append({"path": path, "body": route.request.post_data_json,
-                              "boot_sha": route.request.headers.get("x-panels-app-sha")})
-            response = backend.client.request(route.request.method, path,
-                                              content=route.request.post_data,
-                                              headers={"Content-Type": "application/json"})
-            route.fulfill(status=response.status_code, content_type="application/json", body=response.content)
+                posts.append({"path": path, "body": body, "app_sha": route.request.headers.get("x-panels-app-sha")})
+            status, answer = backend.respond(route.request.method, path, body)
+            route.fulfill(status=status, json=answer)
             return
         if path == "/api/navigation/view/snapshot":
             view = json.loads(parse_qs(parts.query)["view"][0])
@@ -1577,7 +2027,6 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             "/api/chief/conversation/start-values": {"backend_key": "codex", "model": None, "reasoning_effort": None},
             "/api/worker-types?supported=true": {"worker_types": []},
             "/api/feedback/count": {"open_count": 0},
-            "/api/deployment-status": deployment,
             "/api/review": {"items": [], "running_worker_count": 0},
         }
         body = values.get(key, {})
@@ -1592,405 +2041,187 @@ def verify_owner_updates(browser, url, *, problem_only=False):
     page.route("**/api/**", respond)
     page.route(url + "?*", host_with_boot_sha)
     card = page.locator(".status-card:visible")
+    action = card.locator(".status-action")
+    info = card.get_by_role("button", name="Update details", exact=True)
+    dialog = page.locator("[data-update-dialog]:is([open])")
     box = page.locator("[data-conversation-input]")
+    dimmed = page.locator(".board-workspace-right")
 
     def signal():
         with page.expect_response(lambda response: urlsplit(response.url).path == "/api/updates" and response.status == 200):
             page.evaluate("window.__ownerUpdatesSignal()")
 
+    def capture(name):
+        for size, viewport in (("desktop", {"width": 1280, "height": 900}),
+                               ("phone", {"width": 390, "height": 844})):
+            page.set_viewport_size(viewport)
+            expect(card).to_be_visible()
+            page.screenshot(animations="disabled", path=str(evidence / f"{name}-{size}.png"))
+        page.set_viewport_size({"width": 1280, "height": 900})
+
+    def retained():
+        assert page.evaluate("window.__updateCards.every(node => node.isConnected && [...document.querySelectorAll('.status-card')].includes(node))")
+
+    def no_restarting_text():
+        assert "Restarting" not in page.evaluate("document.body.innerText")
+
     try:
         page.goto(url + "?overlay=1&owner-updates=1#/workspace/chief-of-staff", wait_until="domcontentloaded")
         expect(box).to_be_visible()
-        expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
-        page.screenshot(path=str(evidence / "update-available.png"))
-        # Capture the real App shell before the interaction proof. The same six
-        # states and neighbors are used on the baseline and changed revision.
-        from datetime import UTC, datetime, timedelta
-
-        from planner.environments.update_contracts import OwnerUpdateRequest
-
-        capture_started = time.perf_counter()
-        capture_proof = []
-        offered = backend.provider.offered
-        deadline = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
-        idle_deployment = dict(deployment)
-
-        def capture(name):
-            for size, viewport in (("desktop", {"width": 1280, "height": 900}),
-                                   ("mobile", {"width": 390, "height": 844})):
-                page.set_viewport_size(viewport)
-                expect(card).to_be_visible()
-                if name == "confirming":
-                    proceed = card.get_by_role("button", name="Proceed with update", exact=True)
-                    if not proceed.is_visible():
-                        card.get_by_role("button", name="Start update", exact=True).click()
-                    expect(proceed).to_be_visible()
-                    expect(card.get_by_text("Work is active.", exact=False)).to_be_visible()
-                elif name in {"available", "failed-retry"}:
-                    expect(card.get_by_role("button", name="Update when idle", exact=True)).to_be_visible()
-                    expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
-                elif name == "active-requested":
-                    expect(card.get_by_text("Update requested", exact=True)).to_be_visible()
-                    expect(card.get_by_role("button", name="Cancel update", exact=True)).to_be_visible()
-                elif name == "active-idle":
-                    expect(card.get_by_text("Update waits for idle", exact=False)).to_be_visible()
-                    expect(card.get_by_role("button", name="Cancel update", exact=True)).to_be_visible()
-                elif name == "active-applying":
-                    expect(card.get_by_text("Update in progress", exact=False)).to_be_visible()
-                    expect(card.get_by_role("button", name="Cancel update", exact=True)).to_have_count(0)
-                if name.startswith("failed-"):
-                    expect(card.get_by_text("Update failed", exact=True)).to_be_visible()
-                if name == "failed-expired":
-                    expect(card.get_by_role("button", name="Start update", exact=True)).to_have_count(0)
-                # Reduced motion still has a one-millisecond transition. Wait for
-                # two animation frames rather than capturing an intermediate frame.
-                page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
-                page.screenshot(path=str(evidence / f"{name}-{size}.png"))
-                geometry = card.evaluate("node => ({width:node.getBoundingClientRect().width,height:node.getBoundingClientRect().height,background:getComputedStyle(node).backgroundColor,padding:getComputedStyle(node).padding,railWidth:node.closest('.workspace-rail')?.getBoundingClientRect().width ?? node.closest('.approved-rail')?.getBoundingClientRect().width ?? null,typeSize:node.querySelector('.update-actions') ? getComputedStyle(node.querySelector('.update-actions')).fontSize : null})")
-                capture_proof.append({"state": name, "viewport": size, **geometry})
-            page.set_viewport_size({"width": 1280, "height": 900})
-
+        expect(card).to_contain_text("Update available")
+        page.evaluate("window.__updateCards = [...document.querySelectorAll('.status-card')]")
+        assert page.evaluate("window.__updateCards.length") == 2
+        # Desktop: the card sits between the active work and Settled, not in the rail foot.
+        placement = card.evaluate("""node => {
+          const box = node.getBoundingClientRect();
+          const active = document.querySelector('[data-active-work-scroll]').getBoundingClientRect();
+          const settled = document.querySelector('.settled-head').getBoundingClientRect();
+          return {inFoot: Boolean(node.closest('.rail-foot')), belowActive: active.bottom <= box.top + 1, aboveSettled: box.bottom <= settled.top + 1};
+        }""")
+        assert placement == {"inFoot": False, "belowActive": True, "aboveSettled": True}, placement
         capture("available")
-        for size, viewport in (("desktop", {"width": 1280, "height": 900}),
-                               ("mobile", {"width": 390, "height": 844})):
-            page.set_viewport_size(viewport)
-            for label in ("Update when idle", "Start update"):
-                button = card.get_by_role("button", name=label, exact=True)
-                page.keyboard.press("Tab")
-                button.focus()
-                page.screenshot(path=str(evidence / f"focus-{label.replace(' ', '-')}-{size}.png"))
-                capture_proof.append({"state": "focus", "label": label, "viewport": size,
-                    **button.evaluate("node => ({outline:getComputedStyle(node).outline,offset:getComputedStyle(node).outlineOffset,button:node.getBoundingClientRect().toJSON(),clip:node.closest('[data-shell-status]').getBoundingClientRect().toJSON()})")})
-        page.set_viewport_size({"width": 1280, "height": 900})
-        backend.activity.activity = "busy"
-        signal()
-        card.get_by_role("button", name="Start update", exact=True).click()
-        expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
-        capture("confirming")
-        # Desktop and compact shells have distinct local confirmation state.
-        # Establish and clear the decision on each mount without changing that model.
-        for viewport in ({"width": 1280, "height": 900}, {"width": 390, "height": 844}):
-            page.set_viewport_size(viewport)
-            card.get_by_role("button", name="Go back", exact=True).click()
-        page.set_viewport_size({"width": 1280, "height": 900})
-        backend.store.create(OwnerUpdateRequest("capture", offered, "idle", "pending", datetime.now(UTC).isoformat()))
-        signal()
-        expect(card.get_by_text("Update waits for idle", exact=False)).to_be_visible()
-        capture("active-idle")
-        backend.store.transition("capture", frozenset({"pending"}), "applying")
-        signal()
-        expect(card.get_by_text("Update in progress", exact=False)).to_be_visible()
-        capture("active-applying")
-        backend.store.transition("capture", frozenset({"applying"}), "failed", detail="Update failed")
-        signal()
-        expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
-        capture("failed-retry")
-        backend.provider.offered = replace(offered, expires_at="2000-01-01T00:00:00Z")
-        backend.service.refresh_available(force=True)
-        signal()
-        expect(card.get_by_role("button", name="Start update", exact=True)).to_have_count(0)
-        capture("failed-expired")
-        backend.store.path.unlink()
-        for name, state, outcome in (("neighbor-problem", "problem", "failed"),
-                                     ("neighbor-preparing", "preparing", None),
-                                     ("neighbor-restarting", "restarting", None),
-                                     ("neighbor-back-up", "back_up", "succeeded"),
-                                     ("neighbor-reconnecting", "unknown", None)):
-            deployment.update(state=state, outcome=outcome, detail="Neighbor status evidence.",
-                              valid_until=deadline, success_display_until=deadline)
-            signal()
-            capture(name)
-        deployment.clear()
-        deployment.update(idle_deployment)
-        backend.provider.offered = offered
-        backend.service.refresh_available(force=True)
-        backend.activity.activity = "unknown"
-        signal()
-        expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
-        (evidence / "banner-capture-proof.json").write_text(json.dumps({
-            "seconds": round(time.perf_counter() - capture_started, 3),
-            "newHosts": 0, "boundary": "Actual AppWithQueryClient + ShellStatus + real update routes and request store; external provider synthetic",
-            "captures": capture_proof,
-        }, indent=2))
-        # Reuse this App, actual navigation transport, and composer. No new host.
-        health_started = time.perf_counter()
-        health = card.locator("[data-navigation-health]")
-        retained_draft = "Keep this draft through navigation availability changes."
-        box.fill(retained_draft)
-        page.evaluate("window.__navigationDocument = document; window.__disconnectNavigation()")
-        expect(health).to_have_attribute("data-navigation-health", "reconnecting")
-        expect(health).to_have_text("Navigation reconnecting")
-        expect(box).to_have_value(retained_draft)
-        expect(page.locator("[data-chief-conversation-error], [data-chief-conversation-retry], .rail-work .error-line, .chief-workspace .error-line")).to_have_count(0)
-        expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
-        page.screenshot(path=str(evidence / "navigation-reconnecting.png"))
-        page.evaluate("window.__navigationOffline = false")
-        expect(health).to_have_count(0)
-        reason = "Runtime <script> is unavailable. " + "The server keeps durable navigation data while runtime authority recovers. " * 3
-        navigation_health.update(mode="degraded", generation=2, reason=reason)
-        page.evaluate("void window.__refreshNavigation()")
-        expect(health).to_have_attribute("data-navigation-health", "degraded")
-        expect(health.get_by_text("Navigation degraded", exact=True)).to_be_visible()
-        expect(health.locator(".navigation-reason")).to_have_text(reason)
-        expect(health.locator("script")).to_have_count(0)
-        expect(box).to_have_value(retained_draft)
-        page.screenshot(path=str(evidence / "navigation-degraded-desktop.png"))
-        page.set_viewport_size({"width": 390, "height": 844})
-        compact_health = page.locator(".compact-bar [data-navigation-health]")
-        expect(compact_health).to_be_visible()
-        expect(compact_health.locator(".navigation-reason")).to_have_text(reason)
-        dimensions = compact_health.evaluate("node => ({width:node.clientWidth, scroll:node.scrollWidth, reasonHeight:node.querySelector('.navigation-reason').getBoundingClientRect().height, lineHeight:parseFloat(getComputedStyle(node).lineHeight)})")
-        assert dimensions["scroll"] == dimensions["width"], dimensions
-        assert dimensions["reasonHeight"] > dimensions["lineHeight"] * 2, dimensions
-        page.screenshot(path=str(evidence / "navigation-degraded-compact.png"))
-        page.set_viewport_size({"width": 1280, "height": 900})
-        expect(health).to_have_attribute("data-navigation-health", "degraded")
-        assert page.evaluate("document === window.__navigationDocument")
-        navigation_seconds = time.perf_counter() - health_started
-        if not problem_only:
-            # Notice priority must not hide an eligible update or reset an owner decision.
-            # Reuse the mounted shell and real update routes, without another host.
-            recovery = "Installation is unconfirmed. Work remains paused. Chief review is required."
-            deployment.update(state="unknown", detail=recovery, installation_confirmed=False)
-            signal()
-            expect(card.locator(".deployment-detail")).to_have_text(recovery)
-            expect(card.locator(".deployment-detail")).to_have_count(1)
-            expect(card.get_by_text("Deployment outcome unknown", exact=True)).to_be_visible()
-            expect(card.get_by_role("button", name="Update when idle", exact=True)).to_be_visible()
-            expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
-            page.screenshot(path=str(evidence / "installation-unconfirmed.png"))
-            # Unknown notices do not weaken release eligibility.
-            for unavailable in (None, replace(offered, expires_at="2000-01-01T00:00:00Z")):
-                backend.provider.offered = unavailable
-                backend.service.refresh_available(force=True)
-                signal()
-                expect(card.get_by_role("button", name="Start update", exact=True)).to_have_count(0)
-                expect(card.get_by_role("button", name="Update when idle", exact=True)).to_have_count(0)
-                expect(card.locator(".deployment-detail")).to_have_text(recovery)
-            backend.provider.offered = offered
-            backend.service.refresh_available(force=True)
-            backend.service.provider = None
-            signal()
-            expect(card.get_by_role("button", name="Start update", exact=True)).to_have_count(0)
-            backend.service.provider = backend.provider
-            signal()
-            before_notice_posts = len(posts)
-            card.get_by_role("button", name="Start update", exact=True).click()
-            expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
-            for state in ("preparing", "restarting"):
-                deployment.update(state=state, valid_until="2000-01-01T00:00:00Z")
-                signal()
-                expect(card.get_by_text("Deployment outcome unknown", exact=True)).to_be_visible()
-                expect(card.locator(".deployment-detail")).to_be_visible()
-                expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
-            assert len(posts) == before_notice_posts
-            page.screenshot(path=str(evidence / "expired-notice-with-confirmation.png"))
-            deployment.update(state="unknown")
-            installed = "The requested app is installed and available. Its final report is unconfirmed. No action is needed from you."
-            deployment.update(installation_confirmed=True, detail=installed,
-                              unknown_display_until="2099-01-01T00:00:00Z")
-            signal()
-            expect(card.locator(".deployment-detail")).to_have_text(installed)
-            expect(card.locator(".deployment-detail")).to_have_count(1)
-            expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
-            card.get_by_role("button", name="Go back", exact=True).click()
-            expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
-            page.screenshot(path=str(evidence / "installed-report-unconfirmed.png"))
-            deployment.update(unknown_display_until="2020-01-01T00:00:00Z")
-            signal()
-            expect(card.get_by_text("Deployment outcome unknown", exact=True)).to_have_count(0)
-            expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
-            deployment.update(state="idle", detail=None)
-            signal()
-            expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
 
-        # The actual ShellStatus composition must retain controls under a permanent
-        # deployment failure. Opening confirmation before the transition also proves
-        # that the shared UpdateActions instance keeps its local decision state.
-        failure = "The previous update failed. The installed application remains available."
-        card.get_by_role("button", name="Start update", exact=True).click()
-        expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
-        deployment.update(state="problem", outcome="failed", detail=failure)
+        # The Mac's diagnostics are not a separate block in the shell.
+        backend.mac_details = {"presence": "not_heard_from", "since_ms": 1000, "identity": None, "last_contact_at_ms": 1000, "refusal": None, "update": None}
         signal()
-        expect(card.get_by_text("Problem", exact=True)).to_be_visible()
-        expect(card.locator(".deployment-detail")).to_have_text(failure)
-        expect(card.locator(".deployment-detail")).to_be_visible()
-        expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
-        deployment.update(state="idle", outcome=None, detail=None)
-        signal()
-        expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
-        deployment.update(state="problem", outcome="failed", detail=failure)
-        signal()
-        expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
-        card.get_by_role("button", name="Go back", exact=True).click()
-        expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
-        expect(health).to_have_attribute("data-navigation-health", "degraded")
-        expect(box).to_have_value(retained_draft)
-        page.screenshot(path=str(evidence / "problem-with-update-actions.png"))
-        navigation_health.update(mode="current", generation=3, reason=None)
-        page.evaluate("void window.__refreshNavigation()")
-        expect(health).to_have_count(0)
-        expect(card.get_by_text("Problem", exact=True)).to_be_visible()
-        expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
-        expect(box).to_have_value(retained_draft)
-        box.fill("")
-        (evidence / "navigation-health-proof.json").write_text(json.dumps({
-            "seconds": round(navigation_seconds, 3), "newHosts": 0,
-            "boundary": "App + production scoped navigation transport + both shell mounts + retained composer + existing Problem and update controls",
-            "compactReason": dimensions, "reason": reason,
-        }, indent=2))
+        expect(page.locator("[data-mac-status]")).to_have_count(0)
 
-        for activity, warning in (("unknown", "Activity is unknown. The update can interrupt work."), ("busy", "Work is active. The update can interrupt it.")):
-            backend.activity.activity = activity
-            signal()
-            expect(card.locator("[data-update-activity]")).to_have_attribute("data-update-activity", activity)
-            before_posts, before_dispatches = len(posts), len(backend.provider.dispatched)
-            card.get_by_role("button", name="Start update", exact=True).click()
-            expect(card.get_by_text(warning, exact=True)).to_be_visible()
-            assert len(posts) == before_posts and len(backend.provider.dispatched) == before_dispatches
-            if activity == "unknown":
-                page.screenshot(path=str(evidence / "confirmation.png"))
-            card.get_by_role("button", name="Proceed with update", exact=True).click()
-            expect(card.get_by_text("Update requested", exact=False)).to_be_visible()
-            receipt = backend.store.read()
-            assert receipt is not None and receipt.state == "dispatched" and receipt.confirm_activity
-            if activity == "unknown":
-                capture("active-requested")
-            assert len(backend.provider.dispatched) == before_dispatches + 1
-            body = posts[-1]["body"]
-            selected = backend.provider.offered
-            assert receipt.release == selected
-            assert backend.provider.dispatched[-1].release == selected
-            assert body == {"publication_run_id": selected.publication_run_id, "artifact_id": selected.artifact_id,
-                            "proof_artifact_id": selected.proof_artifact_id, "app_sha": selected.manifest.app_sha,
-                            "artifact_digest": selected.manifest.artifact_digest, "archive_sha256": selected.archive_sha256,
-                            "mode": "now", "confirm_activity": True}
-            assert posts[-1]["boot_sha"] == "a" * 40
-            assert backend.provider.dispatched[-1].request_id == receipt.request_id
-            expect(card.get_by_text("Problem", exact=True)).to_be_visible()
-            expect(card.locator(".deployment-detail")).to_have_text(failure)
-            expect(card.locator(".deployment-detail")).to_be_visible()
-            if activity == "busy":
-                # A failed request leaves an available publication usable for retry.
-                # Its failure and the deployment failure remain visible at each step.
-                failed_request = "The runner refused the previous attempt."
-                backend.store.transition(receipt.request_id, frozenset({"dispatched"}), "failed", detail=failed_request)
-                signal()
-                expect(card.get_by_text("Update failed", exact=True)).to_be_visible()
-                card.get_by_role("button", name="Start update", exact=True).click()
-                expect(card.get_by_text("Work is active.", exact=False)).to_be_visible()
-                expect(card.locator(".deployment-detail")).to_have_text(failure)
-                expect(card.locator(".deployment-detail")).to_be_visible()
-                expect(card.get_by_text("Update failed", exact=True)).to_be_visible()
-                assert len(backend.provider.dispatched) == before_dispatches + 1
-                page.screenshot(path=str(evidence / "problem-with-retry-confirmation.png"))
-                card.get_by_role("button", name="Proceed with update", exact=True).click()
-                expect(card.get_by_text("Update requested", exact=False)).to_be_visible()
-                assert len(backend.provider.dispatched) == before_dispatches + 2
-                expect(card.locator(".deployment-detail")).to_have_text(failure)
-                expect(card.locator(".deployment-detail")).to_be_visible()
-            card.get_by_role("button", name="Cancel update", exact=True).click()
-            expect(card.get_by_role("button", name="Update when idle", exact=True)).to_be_visible()
-            expect(card.locator(".deployment-detail")).to_have_text(failure)
-            expect(card.locator(".deployment-detail")).to_be_visible()
-            assert backend.store.read().state == "cancelled"
+        backend.activity = "busy"
+        signal()
+        action.click()
+        expect(dialog).to_be_visible()
+        expect(dialog).to_contain_text("A new version is ready for Panels and the Mac. Panels restarts, then you refresh to finish.")
+        expect(dialog).to_contain_text("Work is running. Updating now interrupts it.")
+        assert len(posts) == 0
+        page.keyboard.press("Escape")
+        expect(action).to_be_focused()
+        action.click()
+        page.screenshot(path=str(evidence / "offer-dialog.png"))
+        dialog.get_by_role("button", name="When work finishes", exact=True).click()
+        expect(card).to_contain_text("Update waits for work to finish")
+        assert posts[-1] == {"path": "/api/updates/install", "body": {"app_sha": "b" * 40, "mode": "idle", "confirm_activity": False}, "app_sha": "a" * 40}
+        retained()
+        capture("waiting")
+        action.click()
+        expect(dialog).to_contain_text("Panels updates as soon as running work finishes.")
+        dialog.get_by_role("button", name="Cancel update", exact=True).click()
+        expect(card).to_contain_text("Update available")
+        assert posts[-1]["path"] == "/api/updates/attempts/attempt-1/cancel"
+        retained()
 
-        backend.activity.activity = "unknown"
-        signal()
-        expect(card.locator("[data-update-activity]")).to_have_attribute("data-update-activity", "unknown")
-        card.get_by_role("button", name="Update when idle", exact=True).click()
-        expect(card.get_by_text("Update waits for idle", exact=False)).to_be_visible()
-        assert backend.store.read().state == "pending"
-        assert backend.store.read().release == backend.provider.offered
-        assert len(backend.provider.dispatched) == 3
-        expect(card.locator(".deployment-detail")).to_have_text(failure)
-        expect(card.locator(".deployment-detail")).to_be_visible()
-        page.screenshot(path=str(evidence / "problem-with-pending-cancel.png"))
-        pinned_receipt = backend.store.read()
-        assert pinned_receipt is not None
-        pinned = pinned_receipt.release
-        # Keep the complete selected publication, not only its displayed SHA:
-        # changing repository availability must not rewrite a pending receipt.
-        assert pinned == backend.provider.offered
-        backend.provider.offered = replace(pinned, artifact_id=201, manifest=replace(pinned.manifest, app_sha="f" * 40))
-        backend.service.refresh_available(force=True)
-        signal()
-        expect(card.get_by_text("Update waits for idle", exact=True)).to_be_visible()
-        assert backend.store.read() == pinned_receipt
-        assert backend.store.read().release == pinned
-        expect(card.get_by_text("bbbbbbb", exact=False)).to_have_count(0)
-        card.get_by_role("button", name="Cancel update", exact=True).click()
-        expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
-        expect(card.get_by_text("fffffff", exact=False)).to_have_count(0)
-        assert backend.store.read().state == "cancelled"
-        expect(card.locator(".deployment-detail")).to_have_text(failure)
-        expect(card.locator(".deployment-detail")).to_be_visible()
-        if problem_only:
-            assert errors == [], errors
-            (evidence / "problem-composition-proof.json").write_text(json.dumps({
-                "seconds": round(time.perf_counter() - started, 3), "newHosts": 0,
-                "dispatchCount": len(backend.provider.dispatched), "requests": posts,
-                "boundary": "Mounted ShellStatus preserves Problem explanation and UpdateActions through confirmation, failed retry, and pending cancellation",
-            }, indent=2))
-            return
+        # Queue, then promote the same attempt. The dialog closes at once.
+        action.click()
+        dialog.get_by_role("button", name="When work finishes", exact=True).click()
+        expect(card).to_contain_text("Update waits for work to finish")
+        action.click()
+        dialog.get_by_role("button", name="Update now", exact=True).click()
+        expect(dialog).to_have_count(0)
+        expect(card).to_contain_text("Updating…")
+        expect(card.locator(".status-track")).to_be_visible()
+        assert posts[-1] == {"path": "/api/updates/attempts/attempt-2/now", "body": {"confirm_activity": True}, "app_sha": "a" * 40}
+        retained()
+        capture("updating")
 
-        deployment.update(state="idle", outcome=None, detail=None)
-        backend.provider.offered = pinned
-        backend.service.refresh_available(force=True)
-        backend.activity.activity = "idle"
+        # A failure has Try again on the card and plain facts behind the info button.
+        backend.fail_install("The new version did not pass its health check, so Panels went back to the previous version and its data.")
         signal()
-        expect(card.get_by_role("button", name="Start update", exact=True)).to_be_visible()
-        expect(card.locator("[data-update-activity]")).to_have_attribute("data-update-activity", "idle")
-        card.get_by_role("button", name="Start update", exact=True).click()
-        expect(card.get_by_text("Update requested", exact=False)).to_be_visible()
-        receipt = backend.store.read()
-        backend.store.transition(receipt.request_id, frozenset({"dispatched"}), "applying")
-        signal()
-        expect(card.get_by_text("Update in progress", exact=False)).to_be_visible()
-        expect(card.get_by_role("button", name="Cancel update", exact=True)).to_have_count(0)
-        assert len(backend.provider.dispatched) == 4
+        expect(card).to_contain_text("Update didn't install")
+        expect(action).to_have_text("Try again")
+        info.click()
+        expect(dialog).to_contain_text("The new version did not pass its health check")
+        expect(dialog).to_contain_text("aaaaaaaa (previous)")
+        expect(dialog).to_contain_text("Not changed")
+        dialog.get_by_role("button", name="Close", exact=True).click()
+        retained()
+        capture("failed")
+        action.click()
+        expect(card).to_contain_text("Updating…")
+        assert posts[-1]["path"] == "/api/updates/attempts/attempt-2/retry"
+        retained()
 
-        # The application version changes synthetically. The retained App and its
-        # actual composer keep the unsent draft until the owner clears it.
-        draft = "Keep this unsent draft across the installed revision change."
+        # The restart drops the connection. Before the deadline that is still Updating….
+        page.evaluate("window.__ownerUpdatesDisconnect()")
+        expect(dimmed).to_have_css("opacity", "0.5")
+        expect(card).to_contain_text("Updating…")
+        no_restarting_text()
+        page.wait_for_timeout(3100)
+        expect(card).to_contain_text("Updating…")
+        retained()
+        capture("updating-disconnected")
+        backend.finish_install()
+        page.evaluate("window.__ownerUpdatesOffline = false")
+        expect(card).to_have_attribute("data-connection-state", "connected", timeout=7000)
+        expect(dimmed).to_have_css("opacity", "1")
+        # The new server answers while the Mac still updates. The page is behind, and it is still one update.
+        expect(card).to_contain_text("Updating…")
+        no_restarting_text()
+
+        # The Mac cannot be reached. This page is behind and cannot write, so it refreshes first.
+        backend.mac_details = {"presence": "not_heard_from", "since_ms": int(time.time() * 1000) - 14 * 60_000, "identity": None, "last_contact_at_ms": int(time.time() * 1000) - 14 * 60_000,
+                               "refusal": None, "update": None}
+        backend.mac_outcome("mac_unreachable")
+        signal()
+        expect(card).to_contain_text("Update complete")
+        retained()
+        capture("complete")
+        draft = "Keep this unsent draft across the revision change."
         box.fill(draft)
-        page.evaluate("window.__beforeUpdateDocument = document")
-        backend.store.transition(receipt.request_id, frozenset({"applying"}), "applied")
-        backend.current_sha = pinned.manifest.app_sha
-        backend.service.current_app_sha = backend.current_sha
-        signal()
-        page.evaluate("dispatchEvent(new Event('pageshow'))")
-        expect(card.get_by_text("Refresh page", exact=True)).to_be_visible()
-        expect(box).to_have_value(draft)
-        assert len(documents) == 1
-        page.evaluate("window.__disconnectNavigation()")
+        page.evaluate("window.__beforeUpdateDocument = document; window.__disconnectNavigation()")
+        health = card.locator("[data-navigation-health]")
         expect(health).to_have_attribute("data-navigation-health", "reconnecting")
         assert not health.evaluate("node => Boolean(node.closest('button'))")
         health.click()
-        expect(card.locator("[data-shell-refresh]")).to_be_visible()
         assert page.evaluate("document === window.__beforeUpdateDocument")
-        page.screenshot(path=str(evidence / "navigation-with-refresh-control.png"))
-        card.locator("[data-shell-refresh]").click()
-        expect(card.get_by_text("Page refresh waits until this message is safe", exact=True)).to_be_visible()
-        expect(box).to_have_value(draft)
-        assert page.evaluate("document === window.__beforeUpdateDocument")
-        assert len(documents) == 1
-        page.screenshot(path=str(evidence / "refresh-keeps-draft.png"))
-        box.fill("")
+        page.locator("[data-shell-refresh]:visible").click()
         page.wait_for_function("document !== window.__beforeUpdateDocument")
         expect(box).to_be_visible()
         assert documents == ["a" * 40, "b" * 40]
-        expect(page.get_by_text("Refresh page", exact=True)).to_have_count(0)
+
+        # After Refresh the Mac failure the server kept shows. Its details sit behind the info button only.
+        expect(card).to_contain_text("Can't reach the Mac")
+        page.evaluate("window.__updateCards = [...document.querySelectorAll('.status-card')]")
+        expect(card).not_to_contain_text("Last contact")
+        info.click()
+        expect(dialog).to_contain_text("14 minutes ago")
+        expect(dialog).to_contain_text("bbbbbbbb (updated)")
+        dialog.get_by_role("button", name="Try again", exact=True).click()
+        expect(card).to_contain_text("Updating…")
+        assert posts[-1]["path"] == "/api/updates/attempts/attempt-3/retry-mac"
+        retained()
+
+        backend.mac_outcome("mac_failed", "The new Mac runtime did not start in 60 seconds, so the Mac went back to its previous version.")
+        signal()
+        expect(card).to_contain_text("Mac didn't update")
+        retained()
+        capture("mac-failed")
+        action.click()
+        expect(card).to_contain_text("Updating…")
+        assert posts[-1]["path"] == "/api/updates/attempts/attempt-3/retry-mac"
+        retained()
+
+        # The Mac is current and this page is current: the card leaves.
+        backend.mac_outcome("up_to_date")
+        signal()
+        expect(card).to_have_count(0)
+
+        # No update runs, so a lost connection immediately offers Try now.
+        page.evaluate("window.__ownerUpdatesDisconnect()")
+        expect(card).to_contain_text("Can't reach Panels")
+        expect(dimmed).to_have_css("opacity", "0.5")
+        capture("unreachable")
+        page.evaluate("window.__ownerUpdatesOffline = false")
+        action.click()
+        expect(card).to_have_count(0)
+        expect(dimmed).to_have_css("opacity", "1")
         assert errors == [], errors
         (evidence / "proof.json").write_text(json.dumps({
-            "seconds": round(time.perf_counter() - started, 3), "newHosts": 0,
-            "dispatchCount": len(backend.provider.dispatched), "requests": posts, "documentVersions": documents,
-            "boundary": "Browser actions -> actual FastAPI owner routes -> UpdateService -> file receipt -> fake external dispatcher",
-            "cutover": "Synthetic installed SHA; no service replacement, hosted ingress, or database migration proof",
+            "seconds": round(time.perf_counter() - started, 3), "newHosts": 1,
+            "requests": posts, "documentVersions": documents,
+            "boundary": "Full App and native dialogs -> contract double of /api/updates and its action routes",
+            "cardIdentity": "Both desktop and phone card nodes retained from Update available through waiting, updating, failure, retry, lost connection and complete, and after Refresh through the Mac failures",
         }, indent=2))
     finally:
         context.close()
-        backend.close()
 
 
 def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
@@ -2030,10 +2261,15 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
         refresh_projection(target_page, required_content=required,
                            required_recaps=[{"id": worker["id"], "text": worker["recap"]}])
 
+    def panel_settled(target_page=page):
+        # The panel's fade and the slot's height transition have ended, and the slot's
+        # settle timer has released its overflow.
+        wait_settled(target_page, '[data-rail-hover-panel]', '[data-recap-slot]')
+
     def open_panel():
         row.hover()
         expect(panel).to_have_attribute("aria-hidden", "false")
-        page.wait_for_timeout(300)
+        panel_settled()
         panel.hover()
 
     def leave():
@@ -2129,7 +2365,7 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
             assert row.bounding_box()["y"] > 450
         open_panel()
         three = set_lines(3)
-        page.wait_for_timeout(300)
+        panel_settled()
         if not reduced and not lower:
             page.screenshot(path=str(evidence / "recap-floor-initial-three-lines.png"))
         floor = panel.bounding_box()["height"]
@@ -2158,7 +2394,7 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
         # A delayed response or no response cannot retain the old floor after exit.
         worker["recap"] = three
         refresh()
-        page.wait_for_timeout(300)
+        panel_settled()
         panel.hover()
         sample_change(tag + '-no-reply', request, floor)
         leave()
@@ -2170,15 +2406,33 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
         # Retarget while the shared panel is already open. Its old floor must not
         # leak into the next Worker, even without an intervening hide.
         set_lines(5)
-        page.wait_for_timeout(300)
+        panel_settled()
         page.keyboard.press('Tab')
         page.locator('[data-ticket-id="recap_neighbor"]').focus()
         expect(panel.locator('.title')).to_contain_text('Other recap')
-        page.wait_for_timeout(300)
+        panel_settled()
         assert panel.bounding_box()["height"] < floor - 10
         proof["sessions"].append({"name": tag, "threeLines": floor, "largest": grown,
                                   "twoLinesAfterExit": natural, "emptyAfterExit": empty})
         leave()
+
+    # Sidebar Tab skips the shared preview's recap action in both directions.
+    # Existing pointer requests above prove that the excluded action still works.
+    sidebar_rows = page.locator('[data-ticket-id="recap_floor"], [data-ticket-id="recap_neighbor"]')
+    expect(sidebar_rows).to_have_count(2)
+    first_row, second_row = sidebar_rows.nth(0), sidebar_rows.nth(1)
+    page.keyboard.press('Shift')
+    first_row.focus()
+    expect(panel).to_have_attribute('aria-hidden', 'false')
+    expect(panel.locator('[data-request-recap]')).to_have_attribute(
+        'data-request-recap', 'ticket:' + first_row.get_attribute('data-ticket-id'))
+    first_row.press('Tab')
+    expect(second_row).to_be_focused()
+    expect(panel.locator('[data-request-recap]')).to_have_attribute(
+        'data-request-recap', 'ticket:' + second_row.get_attribute('data-ticket-id'))
+    second_row.press('Shift+Tab')
+    expect(first_row).to_be_focused()
+    leave()
 
     # Keyboard focus opens the same panel without pointer entry. It must shrink.
     page.emulate_media(reduced_motion="no-preference")
@@ -2188,7 +2442,7 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     row.focus()
     expect(panel).to_have_attribute('aria-hidden', 'false')
     set_lines(3)
-    page.wait_for_timeout(300)
+    panel_settled()
     before = panel.bounding_box()["height"]
     keyboard_request()
     refresh()
@@ -2206,7 +2460,7 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     row.focus()
     expect(panel).to_have_attribute('aria-hidden', 'false')
     set_lines(3)
-    page.wait_for_timeout(300)
+    panel_settled()
     full = panel.bounding_box()["height"]
     def pause_shrink():
         # Pause the browser-owned CSS transition at a known intermediate time.
@@ -2238,47 +2492,60 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     assert after + 1 < entered < full - 1, (after, entered, full)
     sample_change('enter-during-shrink', lambda: None, entered, point)
     proof["sessions"].append({"name": "enter-during-shrink", "full": full, "entered": entered})
-    # The scroll dismissal hides the panel while the pointer remains on it.
-    # Reopening must size to the empty recap, even when no reply ever arrives.
-    page.locator('[data-active-work-scroll]').dispatch_event('scroll')
+    # The person's own scrolling of the rail hides the panel while the pointer
+    # remains on it. Reopening must size to the empty recap, even when no reply
+    # ever arrives. A bare scroll event no longer dismisses it, because layout and
+    # data refreshes fire those too.
+    page.locator('[data-active-work-scroll]').dispatch_event('wheel')
     expect(panel).to_have_attribute('aria-hidden', 'true')
     open_panel()
     assert panel.bounding_box()["height"] < entered - 1
     leave()
 
-    # Real touch input (including its implicit pointerenter) must not acquire a floor.
-    touch_context = browser.new_context(viewport={"width": 1280, "height": 700}, has_touch=True)
-    touch_page = touch_context.new_page()
-    touch_page.route('**/api/**', respond)
-    worker["recap"] = three
-    touch_page.goto(url + '#/workspace/utility/settings', wait_until='domcontentloaded')
-    mounted_projection(touch_page)
-    refresh(touch_page)
-    touch_row = touch_page.locator('[data-ticket-id="recap_floor"]')
-    expect(touch_row).to_be_visible()
-    bounds = touch_row.bounding_box()
-    session = touch_context.new_cdp_session(touch_page)
-    session.send('Input.dispatchTouchEvent', {"type": "touchStart", "touchPoints": [{"x": bounds["x"] + 20, "y": bounds["y"] + 10}]})
-    touch_panel = touch_page.locator('[data-rail-hover-panel]')
-    expect(touch_panel).to_have_attribute('aria-hidden', 'false')
-    expect(touch_panel.locator('.title')).to_contain_text('Recap floor')
-    before = touch_panel.bounding_box()["height"]
-    expect(touch_panel.get_by_role('button', name='Ask for a recap', exact=True)).to_have_attribute('aria-disabled', 'false')
-    session.send('Input.dispatchTouchEvent', {"type": "touchEnd", "touchPoints": []})
-    with touch_page.expect_response('**/api/recap-requests'):
-        touch_panel.get_by_role('button', name='Ask for a recap', exact=True).tap()
-    refresh(touch_page)
-    expect(touch_panel.locator('[data-recap-text]')).to_have_count(0)
-    touch_page.wait_for_timeout(380)
-    after = touch_panel.bounding_box()["height"]
-    assert after < before - 20, (before, after)
-    proof["sessions"].append({"name": "touch", "before": before, "after": after})
-    touch_page.screenshot(path=str(evidence / 'recap-floor-touch.png'))
-    touch_context.close()
     fixture.pop("recap_worker")
     proof["seconds"] = round(time.perf_counter() - started, 3)
     (evidence / 'recap-floor-geometry.json').write_text(json.dumps(proof, indent=2))
     print('RECAP_FLOOR_PROOF ' + json.dumps({"seconds": proof["seconds"], "sessions": proof["sessions"]}), flush=True)
+
+
+
+def verify_focus_slide_fill(page, url, fixture):
+    """Focus slides the selected row's group away with its height clipped. The selection fill
+    must be clipped with it, not hang below the group over the card beneath it."""
+    agent = {"id": "focus_agent", "title": "Selected row in a hidden group", "worker_type": "coding", "stage": "needs_implementation",
+             "ticket_status": "agent", "conversation_id": "conv_focus_agent"}
+    fixture.update(enabled=True, rail_only_tickets=["focus_agent"], board={"managers": [], "columns": [{"cards": [agent]}]},
+                   chief={"label": "Chief of Staff"}, goals=[])
+    page.emulate_media(reduced_motion="no-preference")
+    page.goto(url + "#/workspace/utility/settings", wait_until="domcontentloaded")
+    page.reload(wait_until="domcontentloaded")
+    row = page.locator('.worker-row[data-ticket-id="focus_agent"]')
+    expect(row).to_be_visible()
+    row.click()
+    page.mouse.move(1300, 950)
+    expect(row).to_have_attribute("aria-current", "page")
+    wait_settled(page, ".worker-row", ".rail-wash")
+    switch = page.locator(".rail-foot").get_by_role("switch", name="Focus", exact=True)
+    for turn_on in (True, False):
+        page.evaluate("""() => {
+          window.__focusFill = {frames: [], done: false}; let count = 0;
+          const take = () => {
+            const fill = document.querySelector('.rail-wash--item:not(.rail-wash--leaving):not([hidden])');
+            const group = document.querySelector('[data-bucket-key="agent"]');
+            if (fill && !fill.hidden && group) {
+              const box = fill.getBoundingClientRect();
+              // A fill with no height paints nothing, wherever it sits.
+              window.__focusFill.frames.push(box.height > .5 ? box.bottom - group.getBoundingClientRect().bottom : 0);
+            }
+            if (++count < 40) requestAnimationFrame(() => setTimeout(take, 0)); else window.__focusFill.done = true;
+          };
+          requestAnimationFrame(() => setTimeout(take, 0));
+        }""")
+        switch.click()
+        page.wait_for_function("window.__focusFill.done")
+        overhang = page.evaluate("window.__focusFill.frames")
+        assert overhang and max(overhang) <= 1, (turn_on, overhang)
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy], .rail-wash--leaving')")
 
 
 def verify_selection_washes(page, url, fixture, evidence):
@@ -2304,22 +2571,29 @@ def verify_selection_washes(page, url, fixture, evidence):
     row = page.locator('.worker-row[data-ticket-id="wash_one"]')
     expect(row).to_be_visible()
     page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+
+    def selection_settled(selector):
+        # The selected control carries the route, and every wash and ghost has landed.
+        expect(page.locator(selector)).to_have_attribute("aria-current", "page")
+        wait_settled(page, selector, ".rail-wash")
+
     # Warm the intended selected route before any frame-level checks.
     page.locator('[data-manager="wash_a"] .item-head').click()
     page.mouse.move(1300, 950)
-    page.wait_for_timeout(350)
+    selection_settled('[data-manager="wash_a"] .item-head')
     page.evaluate("""() => {
       window.__washProof=[];
       window.__washSample=selector=>{
         const target=document.querySelector(selector);
         if(!target)return {missing:true};
         const rect=n=>{if(!n)return null;const r=n.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};};
-        const host=target.closest('.active-work-scroll,.settled-body,.rail-utilities');
+        const host=target.closest('.manager-card,.active-work-scroll,.settled-body,.rail-utilities');
         const group=target.closest('.manager-card');
         const item=host.querySelector('.rail-wash--item:not(.rail-wash--leaving)');
-        const context=host.querySelector('.rail-wash--group:not(.rail-wash--leaving)');
-        return {target:rect(target.closest('.settled-row')??target),group:rect(group),item:rect(item),context:rect(context),
-          itemHidden:item.hidden,contextHidden:context.hidden,
+        // Only the open item is lit: no layer marks the Manager the item sits in (owner).
+        const context=host.querySelector('.rail-wash--group');
+        return {target:rect(target.closest('.settled-row')??target),group:rect(group),item:rect(item),
+          itemHidden:item.hidden,contextPresent:!!context,
           targetBackground:getComputedStyle(target).backgroundColor,targetOutline:getComputedStyle(target).outlineStyle,
           itemBackground:getComputedStyle(item).backgroundColor,itemOpacity:+getComputedStyle(item).opacity,
           reduced:matchMedia('(prefers-reduced-motion: reduce)').matches,
@@ -2350,15 +2624,14 @@ def verify_selection_washes(page, url, fixture, evidence):
             group = frame["group"]
             assert abs(wash["x"] - group["x"] - 4) < 1.6, frame
             assert abs(wash["width"] - group["width"] + 8) < 1.6, frame
-            assert not frame["contextHidden"], frame
-        else:
-            assert frame["contextHidden"], frame
-        assert frame["itemBackground"] == "rgb(44, 44, 44)", frame
+        assert not frame["contextPresent"], frame
+        assert frame["itemBackground"] != "rgba(0, 0, 0, 0)", frame
 
     def capture(name, selector, change):
         page.evaluate("selector=>window.__washCapture(selector)", selector)
         change()
-        page.wait_for_timeout(70)
+        # The midpoint frame: the recorder has sampled the first 70 ms of the change.
+        page.wait_for_function("window.__washProof.at(-1).frames.at(-1)?.ms >= 70")
         page.screenshot(path=str(evidence / f"selection-wash-{name}-midpoint.png"))
         page.wait_for_function("window.__washDone")
         frames = page.evaluate("window.__washProof.at(-1).frames")
@@ -2375,10 +2648,9 @@ def verify_selection_washes(page, url, fixture, evidence):
         expect(grip).to_have_attribute('aria-valuenow', str(width))
         row.click()
         page.mouse.move(1300, 950)
-        page.wait_for_timeout(350)
+        selection_settled(selector)
         frame = sample(selector)
         aligned(frame)
-        assert all(abs(frame['context'][key] - frame['group'][key]) < 1.6 for key in ['x', 'y', 'width', 'height']), frame
         page.screenshot(path=str(evidence / f'selection-wash-rail-{width}.png'))
 
     frames = capture('within-group', '.worker-row[data-ticket-id="wash_two"]', lambda: page.locator('.worker-row[data-ticket-id="wash_two"]').evaluate('node=>node.click()'))
@@ -2389,14 +2661,13 @@ def verify_selection_washes(page, url, fixture, evidence):
     assert all(abs(f['item']['y'] - f['target']['y']) < 1.6 for f in frames if f['ms'] >= 350), frames
     aligned(frames[-1])
     frames = capture('deepen', '[data-manager="wash_b"] .item-head', lambda: page.locator('[data-manager="wash_b"] .item-head').evaluate('node=>node.click()'))
-    context_y = [f['context']['y'] for f in frames if not f['contextHidden']]
-    assert len({round(y, 1) for y in context_y}) > 3, frames
+    assert not any(f['contextPresent'] for f in frames), frames
     assert any(f['itemOpacity'] < .95 for f in frames), frames
     page.screenshot(path=str(evidence / 'selection-wash-deepen-final.png'))
 
     # The selected row changes bucket while its real WAAPI transform moves it.
     row.evaluate('node=>node.click()')
-    page.wait_for_timeout(300)
+    selection_settled(selector)
     page.mouse.move(1300, 950)
     def move_bucket():
         one['awaiting_approval'] = True
@@ -2421,25 +2692,54 @@ def verify_selection_washes(page, url, fixture, evidence):
     page.mouse.move(1300, 950)
     row.hover()
     expect(page.locator('[data-manager="wash_a"] .settle')).to_have_css('opacity', '0')
-    hover = page.locator('.active-work-scroll > .rail-wash--hover:not(.rail-wash--leaving)')
+    hover = page.locator('[data-manager="wash_a"] > .rail-wash--hover:not(.rail-wash--leaving)')
     expect(hover).not_to_have_attribute('hidden', '')
+    wait_settled(page, ".rail-wash")
+    # A correct wash box can still hide behind an opaque card bubble. Compare a
+    # flat painted pixel with the same token composited above the bubble.
+    def painted_fill(layer):
+        box=layer.bounding_box()
+        clip={"x":int(box["x"]+3),"y":int(box["y"]+box["height"]/2),"width":1,"height":1}
+        actual=page.screenshot(clip=clip)
+        layer.evaluate("""(node,clip)=>{
+          const ref=document.createElement('div');ref.id='wash-paint-reference';
+          const fill=getComputedStyle(node).backgroundColor;
+          Object.assign(ref.style,{position:'fixed',left:clip.x+'px',top:clip.y+'px',width:'1px',height:'1px',
+            zIndex:'99999',background:`linear-gradient(${fill},${fill}),var(--rail-bubble-fill)`});
+          document.body.append(ref);
+        }""",clip)
+        expected=page.screenshot(clip=clip)
+        page.locator('#wash-paint-reference').evaluate("node=>node.remove()")
+        assert actual==expected, "The card bubble obscures the rail fill"
+    painted_fill(hover)
     row.click()
+    # The fills are see-through: a click on the hovered row lights it at once and never shows the
+    # hover fill (or a fading copy of it) under the selected one, which would flash brighter.
+    page.evaluate('async () => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); }')
+    lit = page.evaluate("""() => { const host=document.querySelector('[data-manager=wash_a]'); const item=host.querySelector(':scope > .rail-wash--item:not(.rail-wash--leaving)');
+      return {hover:[...host.querySelectorAll(':scope > .rail-wash--hover')].filter(n=>!n.hidden).length, itemOpacity:+getComputedStyle(item).opacity, itemHidden:item.hidden}; }""")
+    assert lit == {"hover": 0, "itemOpacity": 1, "itemHidden": False}, lit
+    painted_fill(page.locator('[data-manager=wash_a] > .rail-wash--item:not(.rail-wash--leaving)'))
     page.mouse.move(1300, 950)
-    page.wait_for_timeout(450)
+    selection_settled(selector)
     expect(hover).to_have_attribute('hidden', '')
     page.keyboard.press("Tab")
     row.focus()
     page.evaluate('async () => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); }')
-    ring = page.locator('.active-work-scroll > .rail-wash--focus')
+    ring = page.locator('[data-manager="wash_a"] > .rail-wash--focus')
     expect(ring).not_to_have_attribute('hidden', '')
     expect(row).to_have_css('outline-style', 'none')
     ring_box, item_box = ring.bounding_box(), sample(selector)['item']
     assert ring_box and all(abs(ring_box[key] - item_box[key]) < 1.6 for key in ['x', 'y', 'width', 'height']), (ring_box, item_box)
     page.screenshot(path=str(evidence / 'selection-wash-keyboard.png'))
 
+    # This geometry proof explicitly exercises the optional sidebar rows.
+    # Default header tags and preview navigation belong to goal-preview.
+    previous_goal_rows = page.evaluate("localStorage.getItem('panels.goals-sidebar-rows')")
+    page.evaluate("localStorage.setItem('panels.goals-sidebar-rows', '1')")
     # Goals use the same selected-row geometry inside Chief, before its Workers.
     goal = {"id": "wash_goal", "title": "Ship the rail", "active": True, "completed": False,
-            "kind": "binary", "conversation_id": None, "created_at": 1, "updated_at": 1,
+            "kind": "binary", "holder_kind": "chief", "holder_id": None, "created_at": 1, "updated_at": 1,
             "project_id": None, "why": "", "deadline": None, "primary_chart": None,
             "primary_checklist_block_id": None, "revision": 0, "status": "neutral",
             "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400,
@@ -2451,22 +2751,25 @@ def verify_selection_washes(page, url, fixture, evidence):
     page.evaluate("code=>window.__washSample=eval('('+code+')')", sampler)
     goal_row = page.locator('[data-goal-id="wash_goal"]')
     expect(goal_row).to_be_visible()
-    goal_row.click()
+    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/resource-body"
+                              and parse_qs(urlsplit(response.url).query).get("key") == ["/api/chief/conversation/start-values"]) as launch:
+        goal_row.click()
+    assert launch.value.ok
     page.mouse.move(1300, 950)
-    page.wait_for_timeout(350)
+    selection_settled('[data-goal-id="wash_goal"]')
     aligned(sample('[data-goal-id="wash_goal"]'))
     fixture["goals"] = []
 
-    # Ungrouped selections have one strong wash and no context wash.
+    # Ungrouped selections have the same one fill.
     page.locator('.settled-head').click()
     page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
     settled_selector = '[data-settled-item="wash_settled"] .settled-title'
     page.locator(settled_selector).click()
     page.mouse.move(1300, 950)
-    page.wait_for_timeout(350)
+    selection_settled(settled_selector)
     aligned(sample(settled_selector), grouped=False)
     page.locator('.rail-utilities [aria-label="Settings"]').click()
-    page.wait_for_timeout(350)
+    selection_settled('.rail-utilities [aria-label="Settings"]')
     aligned(sample('.rail-utilities [aria-label="Settings"]'), grouped=False)
 
     # Rapid reversal cannot leave a stale target or fading ghost behind.
@@ -2477,9 +2780,10 @@ def verify_selection_washes(page, url, fixture, evidence):
       await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
       document.querySelector('.worker-row[data-ticket-id="wash_two"]').click();
     }""")
-    page.wait_for_timeout(450)
+    selection_settled('.worker-row[data-ticket-id="wash_two"]')
     aligned(sample('.worker-row[data-ticket-id="wash_two"]'))
     expect(page.locator('.rail-wash--leaving')).to_have_count(0)
+
     page.emulate_media(reduced_motion='reduce')
     row.evaluate('node=>node.click()')
     page.evaluate('() => new Promise(requestAnimationFrame)')
@@ -2487,9 +2791,182 @@ def verify_selection_washes(page, url, fixture, evidence):
     aligned(frame)
     assert frame['effects'] == 0, frame
     page.screenshot(path=str(evidence / 'selection-wash-reduced.png'))
+
+    # The hover wash is the box of the row that responds. A header's padding and a settled
+    # row's padding are inside it, and the bubble's own inset is outside it. A Manager's only
+    # goal uses the optional sidebar row, so its wash and clicks use that row.
+    # Reduced motion lets the hover wash land in one frame.
+    fixture["goals"] = [{**goal, "id": "wash_sole", "title": "Ship the second group", "holder_kind": "manager", "holder_id": "wash_b"}]
+    page.reload(wait_until="domcontentloaded")
+    sole_row = '[data-manager="wash_b"] .goals-rail a.goal[data-goal-id="wash_sole"]'
+    expect(page.locator(sole_row)).to_be_visible()
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+
+    def hover_at(row_selector, host_selector, where):
+        page.mouse.move(*where(page.locator(row_selector).bounding_box()))
+        return page.evaluate("""async ([row, host]) => {
+          await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+          const node=document.querySelector(row), wash=document.querySelector(host+' > .rail-wash--hover:not(.rail-wash--leaving)');
+          const box=n=>{const r=n.getBoundingClientRect();return [r.x,r.y,r.width,r.height];};
+          return {hover:node.matches(':hover'), hidden:wash.hidden, row:box(node), wash:box(wash)};
+        }""", [row_selector, host_selector])
+
+    def responds(state):
+        assert state["hover"] and not state["hidden"], state
+        assert all(abs(a - b) < 1.6 for a, b in zip(state["row"], state["wash"], strict=True)), state
+
+    # The header spans the bubble less its 4px inset on each side and ends 4px past the name's
+    # line. Without this the header could shrink back to its content and the wash with it.
+    for manager in ["wash_a", "wash_b"]:
+        header, card, line = page.evaluate("""manager => {
+          const card=document.querySelector(`[data-manager="${manager}"]`);
+          const box=n=>{const r=n.getBoundingClientRect();return [r.x,r.y,r.width,r.bottom];};
+          const head=card.querySelector('.item-head'), nudge=parseFloat(getComputedStyle(head).top)||0;
+          const line=box(head); line[3]-=nudge;
+          return [box(card.querySelector('.identity')), box(card), line];
+        }""", manager)
+        expected = [card[0] + 4, header[1], card[2] - 8, line[3] + 4]
+        assert all(abs(a - b) < 1.6 for a, b in zip(header, expected, strict=True)), (manager, header, expected)
+        assert 4 - 0.6 <= header[1] - card[1] <= 7 + 0.6, (manager, header, card)
+
+    def bottom_edge(box):
+        return box["x"] + box["width"] / 2, box["y"] + box["height"] - 2
+
+    def left_edge(box):
+        return box["x"] + 2, box["y"] + box["height"] / 2
+
+    def middle(box):
+        return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+
+    responds(hover_at('[data-manager="wash_a"] .identity', '[data-manager="wash_a"]', bottom_edge))
+    responds(hover_at('[data-manager="wash_b"] .identity', '[data-manager="wash_b"]', left_edge))
+    responds(hover_at('[data-manager="wash_b"] .identity', '[data-manager="wash_b"]', bottom_edge))
+    responds(hover_at(sole_row, '[data-manager="wash_b"]', left_edge))
+    responds(hover_at(sole_row, '[data-manager="wash_b"]', middle))
+    outside = hover_at('[data-manager="wash_b"] .identity', '[data-manager="wash_b"]', lambda box: (box["x"] + box["width"] / 2, box["y"] - 2))
+    assert not outside["hover"] and outside["hidden"], outside
+    page.mouse.click(*left_edge(page.locator(sole_row).bounding_box()))
+    expect(page.locator(sole_row)).to_have_attribute("aria-current", "page")
+    if page.locator('.settled-head').get_attribute("aria-expanded") == "false":
+        page.locator('.settled-head').click()
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+    settled_row = '[data-settled-item="wash_settled"] .settled-row'
+    responds(hover_at(settled_row, '.settled-body', left_edge))
+    page.mouse.click(*left_edge(page.locator(settled_row).bounding_box()))
+    expect(page.locator('[data-settled-item="wash_settled"] .settled-title')).to_have_attribute("aria-current", "page")
+    page.screenshot(path=str(evidence / 'hover-wash-rows.png'))
+    fixture["goals"] = []
+    page.evaluate("""value => {
+        if (value === null) localStorage.removeItem('panels.goals-sidebar-rows');
+        else localStorage.setItem('panels.goals-sidebar-rows', value);
+    }""", previous_goal_rows)
     page.emulate_media(reduced_motion='no-preference')
     (evidence / 'selection-wash-proof.json').write_text(json.dumps({
         'seconds': round(time.perf_counter() - started, 3), 'newHosts': 0,
         'boundary': 'Real App layout and WAAPI with existing mocked navigation source',
         'samples': samples,
     }, indent=2))
+
+
+def verify_ticket_preview_details(page, url, fixture, evidence):
+    """Real hit testing and shared live duration in the existing App host.
+
+    Existing hover-controller units cannot prove access to a panel beside a wide
+    Manager row, or that dock and preview share the conversation's live turn clock.
+    """
+    started = time.perf_counter()
+    worker = {"id": "preview_worker", "manager_id": "preview_manager", "title": "Fix Ticket previews", "worker_type": "coding",
+              "stage": "needs_implementation", "ticket_status": "agent", "recap": "The preview stays open for recap requests.",
+              "conversation_id": "preview-conversation", "conversation_signal": {"working": True, "message_for_owner": False}}
+    manager = {"id": "preview_manager", "title": "Preview work", "created_at": 1,
+               "conversation_id": "preview-manager", "tickets": [worker, {**worker, "id": "preview_new", "title": "New Ticket", "conversation_id": None}]}
+    fixture.update(enabled=True, preview_details=True, recap_worker=worker,
+                   board={"managers": [manager]}, chief={"label": "Chief", "conversation_id": "preview-chief"})
+    page.evaluate("localStorage.removeItem('panels.workspace.rail-width')")
+    page.goto(url + '?preview-clock&unread=0#/workspace/manager/preview_manager', wait_until='domcontentloaded')
+    page.wait_for_selector('[data-worker-ticket-id="preview_worker"]')
+    panels = page.locator('[data-rail-hover-panel][aria-hidden="false"]')
+    rail_row = page.locator('[data-ticket-id="preview_worker"]')
+    rail_row.hover()
+    expect(panels).to_have_count(1)
+    wait_settled(page, '[data-rail-hover-panel]')
+    page.screenshot(path=str(evidence / 'ticket-preview-sidebar.png'), animations='disabled')
+    expect(panels.locator('[data-preview-model]')).to_have_text('GPT 6.1 Sol medium')
+    expect(panels.locator('[data-preview-activity]')).to_contain_text('Working · 4m')
+    # The shared preview resolves both supervisor sources and a new Worker's launch values.
+    for selector, model in [('[data-chief-destination]', 'GPT 6.1 Terra medium'), ('[data-manager="preview_manager"] .item-head', 'GPT 6.1 Sol medium')]:
+        page.locator(selector).hover()
+        expect(panels.locator('[data-preview-model]')).to_have_text(model)
+        expect(panels.locator('[data-preview-activity]')).to_contain_text('Working · 4m')
+    page.locator('[data-ticket-id="preview_new"]').hover()
+    expect(panels.locator('[data-preview-model]')).to_have_text('GPT 6.1 Sol medium')
+    expect(panels.locator('[data-preview-activity]')).to_have_text('Idle')
+    rail_row.hover()
+    expect(panels.locator('[data-preview-activity]')).to_contain_text('Working · 4m')
+    # A real model change at the next turn refreshes the same visible preview.
+    page.evaluate("window.__previewActivity('model')")
+    expect(panels.locator('[data-preview-model]')).to_have_text('GPT 6.1 Terra medium')
+    page.mouse.move(1200, 680)
+    expect(panels).to_have_count(0)
+    row = page.locator('[data-worker-ticket-id="preview_worker"]')
+    row.hover()
+    expect(panels).to_have_count(1)
+    wait_settled(page, '[data-rail-hover-panel]')
+    page.screenshot(path=str(evidence / 'ticket-preview-manager-before-click.png'), animations='disabled')
+    before = fixture.get('recap_requests', 0)
+    # Cross the gap with real pointer events; a forced click would miss the bug.
+    panels.hover()
+    with page.expect_response('**/api/recap-requests'):
+        panels.get_by_role('button', name='Ask for a recap', exact=True).click()
+    assert fixture['recap_requests'] == before + 1
+    refresh_projection(page, required_recaps=[{"id": worker["id"], "text": ""}])
+    expect(panels.locator('[data-recap-text]')).to_have_count(0)
+    expect(panels).to_have_count(1)
+    page.screenshot(path=str(evidence / 'ticket-preview-manager-recap-clicked.png'), animations='disabled')
+    page.mouse.move(1200, 680)
+    expect(panels).to_have_count(0)
+    line = page.locator('[data-conversation-rest-line]')
+    expect(line).to_contain_text('Working')
+    page.screenshot(path=str(evidence / 'ticket-preview-composer-working.png'), animations='disabled')
+    expect(line).to_contain_text('Working · 4m')
+    old = line.inner_text()
+    expect(line).not_to_have_text(old, timeout=2500)
+    row.hover()
+    expect(panels).to_have_count(1)
+    page.wait_for_function("""() => document.querySelector('[data-rail-hover-panel][aria-hidden="false"] [data-preview-activity]')?.textContent
+      === document.querySelector('[data-conversation-rest-line]')?.textContent""")
+    page.mouse.move(1200, 680)
+    expect(panels).to_have_count(0)
+    # Hover-only reads must never send an owner-read request.
+    calls = page.evaluate('window.__viewCalls')
+    assert not any('/owner-read' in call for call in calls), calls
+    # Reopen the same conversation: the turn head uses exactly the same duration.
+    page.locator('[data-conversation-expand]').click()
+    page.wait_for_function("""() => {
+      const head=[...document.querySelectorAll('[data-conversation-turn]')].find(n=>n.textContent.includes('Working for'));
+      return Boolean(head);
+    }""")
+    head_text = page.locator('[data-conversation-turn][data-conversation-turn-settled="false"]').inner_text()
+    assert 'Working for 4m' in head_text, head_text
+    page.screenshot(path=str(evidence / 'ticket-preview-open-conversation.png'), animations='disabled')
+    page.keyboard.press('Escape')
+    expect(line).to_be_visible()
+    row.hover()
+    expect(panels).to_have_count(1)
+    page.evaluate("window.__previewActivity('permission')")
+    expect(panels.locator('[data-preview-activity]')).to_have_text('Waiting for you')
+    expect(line).to_contain_text('Working · 4m')
+    page.evaluate("window.__previewActivity('background')")
+    expect(panels.locator('[data-preview-activity]')).to_have_text('Background work running: Run checks')
+    expect(line).to_have_text('Background work running: Run checks')
+    page.evaluate("window.__previewActivity('idle')")
+    expect(panels.locator('[data-preview-activity]')).to_have_text('Idle')
+    page.evaluate("window.__previewActivity('unknown')")
+    expect(panels.locator('[data-preview-activity]')).to_have_text('Activity unknown')
+    page.evaluate("window.__previewActivity('working')")
+    expect(panels.locator('[data-preview-activity]')).to_contain_text('Working · 4m')
+    (evidence / 'ticket-preview-proof.json').write_text(json.dumps({
+        'seconds': round(time.perf_counter() - started, 3), 'newHosts': 0,
+        'boundary': 'Existing App host, navigation and compact live conversation transport; real pointer and recap request',
+    }, indent=2))
+    fixture['preview_details'] = False

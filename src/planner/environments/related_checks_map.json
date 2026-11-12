@@ -10,65 +10,27 @@
   ],
   "domains": [
     {
-      "name": "feedback persisted capture",
+      "name": "Worker readiness and default API/CLI handoff",
       "patterns": [
-        "src/planner/feedback/*",
-        "web/src/lib/feedback.ts",
-        "web/src/*/FeedbackCapture.svelte",
-        "web/src/*/FeedbackToast.svelte",
-        "web/src/*/FeedbackRoute.svelte",
-        "tests/unit/test_ticket_derivation.py",
-        "tests/unit/test_feedback.py",
-        "tests/e2e/test_feedback_inbox.py",
-        "web/tests/shell-feedback-browser.test.mjs",
-        "tests/unit/test_authority_matrix.py"
-      ],
-      "tests": {
-        "unit": [
-          "tests/unit/test_authority_matrix.py",
-          "tests/unit/test_feedback.py",
-          "tests/unit/test_ticket_derivation.py"
-        ],
-        "e2e": [],
-        "browser": [
-          "web/tests/shell-feedback-browser.test.mjs"
-        ]
-      }
-    },
-    {
-      "name": "scheduled Tickets and default API/CLI handoff",
-      "patterns": [
-        "src/planner/scheduled_tickets/*",
-        "web/src/lib/scheduledTasks.ts",
-        "web/src/*/ScheduledTasksRoute.svelte",
         "tests/unit/test_worker_step_readiness_loop.py",
         "tests/unit/test_worker_step_readiness.py",
-        "tests/unit/test_scheduled_tickets.py",
         "tests/unit/test_cli_verbs_in_process.py",
         "tests/unit/test_supported_worker_catalog.py",
-        "tests/unit/test_schedule_locale.py",
         "tests/integration/test_ticket_locale.py",
-        "web/tests/scheduled-tasks.test.ts",
-        "web/tests/configuration-schedules-browser.test.mjs",
-        "tests/unit/test_authority_matrix.py"
+        "web/tests/configuration-browser.test.mjs"
       ],
       "tests": {
         "unit": [
-          "tests/unit/test_authority_matrix.py",
-          "tests/unit/test_cli_verbs_in_process.py",
-          "tests/unit/test_schedule_locale.py",
-          "tests/unit/test_scheduled_tickets.py",
+            "tests/unit/test_cli_verbs_in_process.py",
           "tests/unit/test_supported_worker_catalog.py",
           "tests/unit/test_worker_step_readiness.py",
           "tests/unit/test_worker_step_readiness_loop.py",
           "tests/unit/test_ticket_locale_creation.py"
         ],
         "integration": [],
-        "vitest": [
-          "web/tests/scheduled-tasks.test.ts"
-        ],
+        "vitest": [],
         "browser": [
-          "web/tests/configuration-schedules-browser.test.mjs"
+          "web/tests/configuration-browser.test.mjs"
         ]
       }
     },
@@ -88,7 +50,6 @@
         "tests/e2e/test_ticket_file_previews.py",
         "web/tests/ticket-page-artifacts.test.ts",
         "web/tests/managed-file-read.test.ts",
-        "tests/unit/test_authority_matrix.py",
         "web/src/lib/artifactStrip.ts",
         "web/src/lib/managedFileRead.ts",
         "web/src/routes/FilePreviewRoute.svelte",
@@ -98,8 +59,7 @@
       "tests": {
         "unit": [
           "tests/unit/test_artifact_listing.py",
-          "tests/unit/test_authority_matrix.py",
-          "tests/unit/test_orchestrator_artifact_cli.py",
+            "tests/unit/test_orchestrator_artifact_cli.py",
           "tests/unit/test_ticket_artifact_listing.py",
           "tests/unit/test_ticket_files.py",
           "tests/unit/test_sprint_item_supervisors.py"
@@ -129,14 +89,16 @@
         "tests/unit/test_environment_lifecycle.py",
         "tests/unit/test_environment_runtime_port.py",
         "tests/unit/test_environment_credentials.py",
-        "tests/unit/test_deployment.py",
-        "tests/unit/test_deployment_lifecycle.py",
+        "tests/unit/test_update_service.py",
+        "tests/unit/test_update_experience.py",
+        "tests/unit/test_update_prefetch.py",
+        "tests/unit/test_update_bridge.py",
+        "tests/integration/test_update_installer.py",
         "tests/unit/test_deployment_assets.py",
         "tests/integration/test_cli_verbs.py",
         "tests/integration/test_server_lifecycle.py",
         "tests/integration/test_environment_runtime_isolation.py",
         "tests/unit/test_related_checks.py",
-        "tests/unit/test_deployment_gate.py",
         "tests/unit/test_deployment_check_report.py",
         "tests/integration/test_candidate_bootstrap.py",
         "tests/unit/test_deployment_progress.py",
@@ -148,11 +110,12 @@
           "tests/unit/test_app.py",
           "tests/unit/test_cli_entrypoints.py",
           "tests/unit/test_database_backups.py",
-          "tests/unit/test_deployment.py",
           "tests/unit/test_deployment_assets.py",
           "tests/unit/test_deployment_check_report.py",
-          "tests/unit/test_deployment_gate.py",
-          "tests/unit/test_deployment_lifecycle.py",
+          "tests/unit/test_update_bridge.py",
+          "tests/unit/test_update_experience.py",
+          "tests/unit/test_update_prefetch.py",
+          "tests/unit/test_update_service.py",
           "tests/unit/test_environment_credentials.py",
           "tests/unit/test_environment_lifecycle.py",
           "tests/unit/test_environment_repository_runtime.py",
@@ -165,7 +128,8 @@
           "tests/integration/test_cli_verbs.py",
           "tests/integration/test_environment_runtime_isolation.py",
           "tests/integration/test_server_lifecycle.py",
-          "tests/integration/test_candidate_bootstrap.py"
+          "tests/integration/test_candidate_bootstrap.py",
+          "tests/integration/test_update_installer.py"
         ]
       }
     }

@@ -18,7 +18,7 @@ import ReviewRoute from '../src/routes/ReviewRoute.svelte';
 import ReviewProposalCard from '../src/components/ReviewProposalCard.svelte';
 import FilePreviewRoute from '../src/routes/FilePreviewRoute.svelte';
 import { navigationReviewPresentation } from '../src/lib/navigation/presentation';
-import { reviewBadgeDomMatches } from '../src/lib/shellDom';
+import { reviewBadgeDomMatches } from '../tests/support/shellDom';
 import {readComposerDraft,writeComposerDraft} from '../src/lib/conversation/composerDraft';
 (window as any).__writeChiefDraft=(text:string)=>writeComposerDraft('owner:chief',text);
 (window as any).__readChiefDraft=()=>readComposerDraft('owner:chief');
@@ -50,12 +50,6 @@ navigation.owner.setDemand=(name,demand)=>{
  }
  return setDemand(name,demand);
 };
-const wait=navigation.owner.waitForVisibility;
-navigation.owner.waitForVisibility=(fence,options)=>{
- (window as any).__commandWait='pending';
- (window as any).__commandObservers=options.requiredObservers.slice();
- return wait(fence,options).then(result=>{(window as any).__commandWait=result.status;return result;});
-};
 (window as any).__refresh=()=>navigation.owner.recover().catch(()=>undefined);
 (window as any).__batch=async()=>{
  const request=navigation.owner.getRequest();
@@ -75,11 +69,6 @@ navigation.owner.waitForVisibility=(fence,options)=>{
  if(event==='checkpoint'){delete frame.upserts;delete frame.evictions;delete frame.windows;delete frame.counts;delete frame.review_context;delete frame.review_summary;delete frame.previous_content_version;frame.event=event;}
  (window as any).__navigationSource.dispatchEvent(new MessageEvent(event,{data:JSON.stringify(frame)}));
  await tick();
-};
-(window as any).__wait=()=>{
- const publication=navigation.owner.getState().publication!;
- return navigation.owner.waitForVisibility({...publication.continuity,version:1,coverage:'complete',witnesses:['a'.repeat(64)],signature:'synthetic'},
- {requiredObservers:navigation.captureRenderBoundaries(),timeoutMs:250});
 };
 import ConfigRoute from '../src/routes/ConfigRoute.svelte';
 client.setDefaultOptions({ queries: { retry: false } });

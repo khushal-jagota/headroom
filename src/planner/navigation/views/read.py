@@ -127,10 +127,7 @@ def request(value: object, config: ViewConfig = DEFAULT_CONFIG) -> ViewRequest:
             window["owner"] is None or window["owner"]["kind"] not in ("chief", "manager")
         ):
             raise ValueError("window requires a parent")
-        if (
-            section in ("rail_parents", "settled", "review", "goals")
-            and window["owner"] is not None
-        ):
+        if section in ("rail_parents", "settled", "review") and window["owner"] is not None:
             raise ValueError("global window has no parent")
         if (
             section not in ("children", "rail_tickets")
@@ -181,7 +178,7 @@ def continuity(conn: sqlite3.Connection) -> Continuity:
     return {
         "scope": row[0],
         "schema_version": row[1],
-        "semantics": "attention-knowledge-v9-review-messages",
+        "semantics": "attention-knowledge-v10-ticket-workflows",
         "epoch": row[2],
         "revision": str(row[3]),
     }
@@ -239,11 +236,10 @@ def read_content(
     conn: sqlite3.Connection,
     value: ViewRequest,
     *,
-    current: bool,
     config: ViewConfig = DEFAULT_CONFIG,
 ) -> tuple[Continuity, ViewContent]:
     coverage = continuity(conn)
-    profile = "current" if current else "durable"
+    profile = "current"
     records: dict[Key, Any] = {}
     used = 0
     # Window requests, member keys and cursors are bounded too; reserve room before
@@ -273,17 +269,17 @@ def read_content(
                 config,
                 settled_only=not full,
             )
-            if row["kind"] == "conversation" and not current:
-                row["value"]["attention"] = {
-                    "current": None,
-                    "durable": raw["attention"]["durable"],
-                }
             found[item] = row
             if item[0] in ("ticket", "manager", "chief", "goal"):
-                if raw["conversation_id"]:
+                if item[0] != "goal" and raw["conversation_id"]:
                     pending.append((("conversation", raw["conversation_id"]), True))
                 if raw.get("project_id") and (item[0] != "manager" or full):
                     pending.append((("project", raw["project_id"]), True))
+                if item[0] == "goal":
+                    pending.append(
+                        (("manager", raw["holder_id"])
+                         if raw["holder_kind"] == "manager" else ("chief", "chief"), True)
+                    )
                 if item[0] == "ticket":
                     pending.append(
                         (
@@ -551,8 +547,6 @@ def read_content(
     counts = dict(conn.execute("SELECT name,value FROM navigation_view_globals"))
     if set(counts) != {"running_conversations", "out_claims", "review", "unread", "settled"}:
         raise DeliveryUnavailable("navigation aggregates are incomplete")
-    if not current:
-        counts["running_conversations"] = None
     content = cast(
         ViewContent,
         {

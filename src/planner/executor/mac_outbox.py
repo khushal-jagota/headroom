@@ -1,4 +1,8 @@
-"""Keep agent output and immutable changed files until the VPS confirms them."""
+"""Keep agent output and immutable changed files until the VPS confirms them.
+
+Each conversation sends its own items in ordered batches on route 4 and backs off by
+itself, so one conversation's failures never hold up another's.
+"""
 
 from __future__ import annotations
 
@@ -13,15 +17,20 @@ import threading
 import time
 from collections import defaultdict
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from planner.execution_configuration import SPOOL_FORMAT_VERSION
+from planner.execution_identity import ChildReference
 from planner.executor.configuration import (
     FILE_MODIFIED_WINDOW_NS,
-    MAX_TRANSFERS,
+    MAX_ITEM_BATCH_BYTES,
+    MAX_ITEM_BATCH_ITEMS,
+    MAX_LEASE_WAITING_CONVERSATIONS,
+    OUTBOX_RETRY_INITIAL_SECONDS,
+    OUTBOX_RETRY_MAX_SECONDS,
     ExecutorPaths,
 )
 from planner.executor.files import (
@@ -33,28 +42,30 @@ from planner.executor.files import (
     regular_descriptor,
     safe_component,
 )
-from planner.executor.link import Link
-from planner.executor.link_files import put_file
+from planner.executor.mac_files import UploadRefused
+from planner.executor.mac_http import failure_name
 from planner.executor.protocol import (
     AcceptanceReceipt,
     EnvelopeKind,
-    EnvelopeRefusal,
     FileManifest,
     FileScope,
     FileSnapshot,
-    FileTransfer,
+    FileUploadRequest,
+    ItemBatch,
+    ItemBatchReply,
+    ItemSubmission,
     JsonObject,
     QueuedEnvelope,
     ReceiptDisposition,
-    WireMessage,
-    WireMessageKind,
-    as_object,
-    encode_message,
+    WaitingConversation,
+    encode_bounded,
     encode_value,
-    envelope_payload_digest,
     payload_child,
     type_adapter,
 )
+
+if TYPE_CHECKING:
+    from planner.executor.contracts import MacFilesApi, MacHttpClient
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +76,29 @@ class OutboxRecord:
     @property
     def pending(self) -> bool:
         return self.receipt is None
+
+
+@dataclass(frozen=True, slots=True)
+class OutboxBacklog:
+    """What the lease reports: items without a receipt, the age of the oldest of them
+    in this process, and the waiting conversations, oldest first."""
+
+    queue_depth: int
+    oldest_item_age_ms: int | None
+    waiting_conversations: tuple[WaitingConversation, ...]
+    waiting_conversations_truncated: bool
+
+
+class _RetryLater(Exception):
+    """The VPS took its own time limit and asked for the batch again later."""
+
+
+@dataclass
+class _ConversationSending:
+    """One conversation's send state between attempts."""
+
+    refusals: dict[str, str] = field(default_factory=dict)
+    uploaded: dict[str, set[FileManifest]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,15 +147,19 @@ class MacOutbox:
         self._waiters: dict[str, set[asyncio.Future[AcceptanceReceipt]]] = {}
         self._closed = False
         self._capturing = 0
+        # When this process first held each unreceipted item (monotonic seconds).
+        self._first_held: dict[int, float] = {}
         self._database: sqlite3.Connection | None = None
         path = root / DATABASE_NAME
-        # An old draft format is refused before creating even a lock file.
+        # An incompatible format is preserved before creating even a lock file.
         if path.exists():
             with sqlite3.connect(f"{path.absolute().as_uri()}?mode=ro", uri=True) as check:
                 if check.execute("PRAGMA user_version").fetchone()[0] != SPOOL_FORMAT_VERSION:
-                    raise ValueError("unsupported outbox format; rebuild the unshipped spool")
+                    raise ValueError(
+                        "unsupported outbox format; preserve the spool for compatible Panels"
+                    )
         elif root.exists() and any(p.name != "lock" for p in root.iterdir()):
-            raise ValueError("unsupported outbox format; rebuild the unshipped spool")
+            raise ValueError("unsupported outbox format; preserve the spool for compatible Panels")
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._process_lock = (root / "lock").open("a+b")
         try:
@@ -149,6 +187,8 @@ class MacOutbox:
             fsync_directory(root)
             with db:
                 db.execute("DELETE FROM items WHERE receipt_json IS NOT NULL")
+            opened = time.monotonic()
+            self._first_held = {row[0]: opened for row in db.execute("SELECT sequence FROM items")}
             self._sweep_blobs()
         except BaseException:
             self.close()
@@ -164,7 +204,21 @@ class MacOutbox:
         if self._loop is not None and not self._loop.is_closed():
             self._loop.call_soon_threadsafe(self._wake.set)
 
+    def _existing(self, submission_id: str | None) -> QueuedEnvelope | None:
+        if submission_id is None:
+            return None
+        with self._lock:
+            row = self._db.execute(
+                "SELECT * FROM items WHERE submission_id=?", (safe_component(submission_id),)
+            ).fetchone()
+            return None if row is None else self._envelope(row)
+
     def add(self, entry: OutboxEntry, *, ticket_id: str | None = None) -> QueuedEnvelope:
+        """Add an item, or return the item already held under its submission ID, so
+        publishing the same output again never fails and never adds it twice."""
+        existing = self._existing(entry.submission_id)
+        if existing is not None:
+            return existing
         if ticket_id is None:
             return self._add(entry)
         with self._lock:
@@ -306,6 +360,9 @@ class MacOutbox:
             ).encode()
             child = payload_child(entry.payload)
             child_id = str(child.get("child_id", "")) if child is not None else ""
+            existing = self._existing(entry.submission_id)
+            if existing is not None:
+                return existing
             with self._db:
                 cursor = self._db.execute(
                     "INSERT INTO items"
@@ -339,9 +396,8 @@ class MacOutbox:
                     ).fetchone()
                 )
                 # Reject an unsendable item before acknowledging its durable addition.
-                encode_message(
-                    WireMessage(WireMessageKind.envelope, "0" * 32, as_object(envelope))
-                )
+                encode_bounded(ItemSubmission(envelope))
+            self._first_held[envelope.sequence] = time.monotonic()
             self._notify()  # Only a committed item may wake sending.
             return envelope
 
@@ -350,15 +406,6 @@ class MacOutbox:
         files = type_adapter(tuple[FileManifest, ...]).validate_python(value["files"])
         payload: JsonObject = type_adapter(JsonObject).validate_python(value["payload"])
         kind = EnvelopeKind(row["kind"])
-        digest = envelope_payload_digest(
-            payload,
-            files,
-            sender_id=self.sender_id,
-            conversation_id=row["conversation_id"],
-            sequence=row["sequence"],
-            submission_id=row["submission_id"],
-            kind=kind,
-        )
         return QueuedEnvelope(
             self.sender_id,
             row["conversation_id"],
@@ -366,7 +413,6 @@ class MacOutbox:
             row["submission_id"],
             kind,
             payload,
-            digest,
             files,
         )
 
@@ -411,15 +457,39 @@ class MacOutbox:
                 )
             )
 
-    def pending_heads(self) -> tuple[QueuedEnvelope, ...]:
+    def pending_conversations(self) -> tuple[str, ...]:
+        """Conversations with a waiting item, the one waiting longest first."""
         with self._lock:
             return tuple(
-                self._envelope(row)
+                row[0]
                 for row in self._db.execute(
-                    "SELECT * FROM items WHERE sequence IN (SELECT MIN(sequence) FROM items "
-                    "WHERE receipt_json IS NULL GROUP BY conversation_id) ORDER BY sequence"
+                    "SELECT conversation_id FROM items WHERE receipt_json IS NULL "
+                    "GROUP BY conversation_id ORDER BY MIN(sequence)"
                 )
             )
+
+    def lease_backlog(self) -> OutboxBacklog:
+        with self._lock:
+            count = int(
+                self._db.execute(
+                    "SELECT COUNT(*) FROM items WHERE receipt_json IS NULL"
+                ).fetchone()[0]
+            )
+            rows = self._db.execute(
+                "SELECT conversation_id,MIN(sequence) FROM items WHERE receipt_json IS NULL "
+                "GROUP BY conversation_id ORDER BY MIN(sequence) LIMIT ?",
+                (MAX_LEASE_WAITING_CONVERSATIONS + 1,),
+            ).fetchall()
+            held = self._first_held.get(rows[0][1]) if rows else None
+        return OutboxBacklog(
+            count,
+            None if held is None else int((time.monotonic() - held) * 1000),
+            tuple(
+                WaitingConversation(conversation, sequence)
+                for conversation, sequence in rows[:MAX_LEASE_WAITING_CONVERSATIONS]
+            ),
+            len(rows) > MAX_LEASE_WAITING_CONVERSATIONS,
+        )
 
     def pending_count(self) -> int:
         with self._lock:
@@ -438,10 +508,7 @@ class MacOutbox:
             if row is None:
                 return
             envelope = row.envelope
-            if (receipt.sender_id, receipt.payload_sha256) != (
-                self.sender_id,
-                envelope.payload_sha256,
-            ):
+            if receipt.sender_id != self.sender_id:
                 raise ValueError("receipt identity mismatch")
             with self._db:
                 if receipt.disposition is not ReceiptDisposition.accepted:
@@ -467,6 +534,7 @@ class MacOutbox:
                         "DELETE FROM items WHERE child_id=? AND receipt_json IS NOT NULL",
                         (child["child_id"],),
                     )
+            self._first_held.pop(envelope.sequence, None)
             if self._loop is not None and not self._loop.is_closed():
                 self._loop.call_soon_threadsafe(self._confirmed, receipt)
             self._sweep_blobs()
@@ -491,105 +559,172 @@ class MacOutbox:
                 path.unlink()
         fsync_directory(self._blobs)
 
-    async def _upload(
-        self, link: Link, envelope: QueuedEnvelope, snapshot: FileSnapshot
-    ) -> AcceptanceReceipt | None:
+    def _batch(self, conversation_id: str, state: _ConversationSending) -> ItemBatch | None:
+        """The conversation's next items within the batch budget, always at least one.
+        A batch ends right after its first item that is not a plain backend event, so a
+        resend after a lost reply gets that item's real stored receipt."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT * FROM items WHERE receipt_json IS NULL AND conversation_id=? "
+                "ORDER BY sequence LIMIT ?",
+                (conversation_id, MAX_ITEM_BATCH_ITEMS),
+            ).fetchall()
+            envelopes = [self._envelope(row) for row in rows]
+        items: list[ItemSubmission] = []
+        size = len(type_adapter(ItemBatch).dump_json(ItemBatch(self.sender_id, ())))
+        for envelope in envelopes:
+            item = ItemSubmission(envelope, state.refusals.get(envelope.submission_id))
+            item_size = len(type_adapter(ItemSubmission).dump_json(item)) + 1
+            if items and size + item_size > MAX_ITEM_BATCH_BYTES:
+                break
+            items.append(item)
+            size += item_size
+            if envelope.kind is not EnvelopeKind.backend_event or envelope.file_dependencies:
+                break
+        return ItemBatch(self.sender_id, tuple(items)) if items else None
+
+    async def _apply_reply(
+        self,
+        files: MacFilesApi,
+        batch: ItemBatch,
+        reply: ItemBatchReply,
+        state: _ConversationSending,
+    ) -> None:
+        """Acknowledge the receipted prefix, then act on where the VPS stopped."""
+        if len(reply.receipts) > len(batch.items):
+            raise ValueError("VPS answered more items than the batch holds")
+        for item, receipt in zip(batch.items, reply.receipts, strict=False):
+            if receipt.submission_id != item.envelope.submission_id:
+                raise ValueError("receipt names another item")
+            await asyncio.to_thread(self.acknowledge, receipt)
+            state.refusals.pop(item.envelope.submission_id, None)
+            state.uploaded.pop(item.envelope.submission_id, None)
+        stop = reply.stop
+        if stop is None:
+            if len(reply.receipts) != len(batch.items):
+                raise ValueError("VPS answered part of a batch without saying why")
+            return
+        if len(reply.receipts) == len(batch.items) or (
+            batch.items[len(reply.receipts)].envelope.sequence != stop.sequence
+        ):
+            raise ValueError("VPS stopped at an item outside this batch")
+        if stop.reason == "retry_later":
+            raise _RetryLater(stop.message)
+        envelope = batch.items[len(reply.receipts)].envelope
+        uploaded = state.uploaded.setdefault(envelope.submission_id, set())
+        # A reply that makes no progress fails the attempt, so it waits its back-off
+        # instead of resending at once without end.
+        if not set(stop.missing_files) - uploaded:
+            # The VPS lost what it was sent (a restart between upload and resend): the
+            # next attempt, after its back-off, uploads again.
+            state.uploaded.pop(envelope.submission_id, None)
+            raise ValueError("VPS asked again for files already uploaded")
+        snapshots = {snapshot.manifest: snapshot for snapshot in self.snapshots(envelope)}
         child = payload_child(envelope.payload)
         if child is None:
             raise ValueError("file upload lacks assigned child")
-        async with link.transfer_capacity():
-            request_id = uuid4().hex
+        reference = type_adapter(ChildReference).validate_python(child)
+        for manifest in stop.missing_files:
+            if manifest not in snapshots:
+                raise ValueError("VPS requested a file outside this item")
             try:
-                response = await link.request(
-                    WireMessageKind.put_file,
-                    {
-                        "manifest": as_object(snapshot.manifest),
-                        "child": child,
-                    },
-                    request_id=request_id,
+                await files.upload(
+                    FileUploadRequest(manifest, reference), snapshots[manifest].local_path
                 )
-                slot = type_adapter(FileTransfer).validate_python(response.payload)
-                if (
-                    response.kind is not WireMessageKind.file_transfer
-                    or slot.direction != "upload"
-                    or slot.manifest != snapshot.manifest
-                ):
-                    raise ValueError("invalid upload transfer")
-                await put_file(link, slot, snapshot.local_path)
-            except ValueError as error:
-                if link.is_closing():
-                    raise ConnectionError("file generation changed") from error
-                # This item cannot use the descriptor. Answer its request and
-                # obtain a durable refusal without disturbing other conversations.
-                refused = await link.request(
-                    WireMessageKind.refuse_envelope,
-                    as_object(EnvelopeRefusal(envelope, str(error))),
-                    request_id=request_id,
-                )
-                if refused.kind is not WireMessageKind.receipt:
-                    raise ValueError("expected upload refusal receipt") from error
-                return type_adapter(AcceptanceReceipt).validate_python(refused.payload)
-            if link.is_closing():
-                raise ConnectionError("file generation changed")
-            return None
+            except UploadRefused as error:
+                # This item cannot use the file. The resend carries the refusal, which
+                # the VPS records as the item's refused receipt.
+                state.refusals[envelope.submission_id] = str(error)
+                return
+            uploaded.add(manifest)
 
-    async def _send_one(self, link: Link, envelope: QueuedEnvelope) -> None:
-        while True:
-            response = await link.request(WireMessageKind.envelope, as_object(envelope))
-            if response.kind is WireMessageKind.missing_files:
-                missing = type_adapter(tuple[FileManifest, ...]).validate_python(
-                    response.payload.get("files")
-                )
-                snapshots = {s.manifest: s for s in self.snapshots(envelope)}
-                for manifest in missing:
-                    if manifest not in snapshots:
-                        raise ValueError("VPS requested a file outside this item")
-                    refusal = await self._upload(link, envelope, snapshots[manifest])
-                    if refusal is not None:
-                        await asyncio.to_thread(self.acknowledge, refusal)
-                        return
-                continue
-            if response.kind is not WireMessageKind.receipt:
-                raise ValueError("expected outbox receipt")
-            receipt = type_adapter(AcceptanceReceipt).validate_python(response.payload)
-            await asyncio.to_thread(self.acknowledge, receipt)
-            return
+    async def _send_conversation(
+        self, client: MacHttpClient, files: MacFilesApi, conversation_id: str
+    ) -> None:
+        """Send one conversation's items in order, one batch in flight, until none wait.
 
-    async def send_pending(self, link: Link) -> None:
+        A failure of this conversation's batch, including reading it from the outbox,
+        backs off and retries it alone.
+        """
+        delay = OUTBOX_RETRY_INITIAL_SECONDS
+        attempt = 0
+        state = _ConversationSending()
+        while not self._closed:
+            batch: ItemBatch | None = None
+            try:
+                batch = await asyncio.to_thread(self._batch, conversation_id, state)
+                if batch is None:
+                    return
+                reply = await client.post_items(conversation_id, batch)
+                await self._apply_reply(files, batch, reply, state)
+            except Exception as error:
+                if self._closed:
+                    return  # Sending is ending; the item stays queued.
+                attempt += 1
+                logging.getLogger(__name__).warning(
+                    "outbox send failed conversation=%s sequence=%s attempt=%s"
+                    " retry_in=%gs error=%s",
+                    conversation_id,
+                    None if batch is None else batch.items[0].envelope.sequence,
+                    attempt,
+                    delay,
+                    "retry_later" if isinstance(error, _RetryLater) else failure_name(error),
+                )
+                await asyncio.sleep(delay)
+                if isinstance(error, _RetryLater):
+                    # The VPS took its own time limit to answer, so the resend need not
+                    # wait longer each time.
+                    delay = OUTBOX_RETRY_INITIAL_SECONDS
+                else:
+                    delay = min(delay * 2, OUTBOX_RETRY_MAX_SECONDS)
+            else:
+                delay, attempt = OUTBOX_RETRY_INITIAL_SECONDS, 0
+
+    async def send_pending(self, client: MacHttpClient, files: MacFilesApi) -> None:
+        """Send until the outbox closes, each conversation in its own task."""
         self._loop = asyncio.get_running_loop()
         async with self._sending:
-            tasks: dict[asyncio.Task[None], str] = {}
+            senders: dict[str, asyncio.Task[None]] = {}
             wake: asyncio.Task[bool] | None = None
-
             try:
                 while not self._closed:
                     self._wake.clear()
-                    active = set(tasks.values())
-                    for envelope in await asyncio.to_thread(self.pending_heads):
-                        if len(tasks) >= MAX_TRANSFERS:
-                            break
-                        if envelope.conversation_id not in active:
-                            tasks[asyncio.create_task(self._send_one(link, envelope))] = (
-                                envelope.conversation_id
+                    try:
+                        waiting = await asyncio.to_thread(self.pending_conversations)
+                    except (OSError, sqlite3.Error) as error:
+                        logging.getLogger(__name__).warning(
+                            "outbox scan failed error=%s", failure_name(error)
+                        )
+                        await asyncio.sleep(OUTBOX_RETRY_INITIAL_SECONDS)
+                        continue
+                    for conversation_id in waiting:
+                        if conversation_id not in senders:
+                            senders[conversation_id] = asyncio.create_task(
+                                self._send_conversation(client, files, conversation_id)
                             )
-                            active.add(envelope.conversation_id)
                     wake = asyncio.create_task(self._wake.wait())
-                    done, _ = await asyncio.wait(
-                        (*tasks, wake), return_when=asyncio.FIRST_COMPLETED
+                    await asyncio.wait(
+                        (*senders.values(), wake), return_when=asyncio.FIRST_COMPLETED
                     )
                     wake.cancel()
                     await asyncio.gather(wake, return_exceptions=True)
-                    for task in done:
-                        if task is not wake:
-                            finished = cast(asyncio.Task[None], task)
-                            tasks.pop(finished)
-                            await finished
+                    for conversation_id, sender in tuple(senders.items()):
+                        if sender.done():
+                            del senders[conversation_id]
+                            if not sender.cancelled() and sender.exception() is not None:
+                                logging.getLogger(__name__).warning(
+                                    "outbox sender ended conversation=%s error=%s",
+                                    conversation_id,
+                                    failure_name(sender.exception() or Exception()),
+                                )
             finally:
                 if wake is not None:
                     wake.cancel()
-                for task in tasks:
-                    task.cancel()
-                await asyncio.gather(*tasks, *([wake] if wake else []), return_exceptions=True)
+                for sender in senders.values():
+                    sender.cancel()
+                await asyncio.gather(
+                    *senders.values(), *([wake] if wake else []), return_exceptions=True
+                )
 
     def close(self) -> None:
         with self._lock:

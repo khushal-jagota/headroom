@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import asdict
 from pathlib import Path
 
@@ -22,17 +22,41 @@ from tests.support.skill_tree_protection.inventory import (
     compare_manifests,
     snapshot,
 )
-from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
+from tests.support.synthetic_homes import (
+    create_synthetic_homes,
+    shared_package_caches,
+    synthetic_home_environment,
+)
 
 
 class SkillTreeProtectionPlugin:
     def __init__(
-        self, inventory: ProtectionInventory, baseline: Manifest, export_root: Path | None = None
+        self, inventory: ProtectionInventory, baseline: Manifest, export_root: Path | None = None,
+        *, launch_environment: Mapping[str, str] | None = None,
     ) -> None:
+        from test_runtime import evidence_environment
+
+        launch = evidence_environment(
+            os.environ if launch_environment is None else launch_environment
+        )
+        native_home = Path(launch.get("HOME") or Path.home()) / ".hermes"
+        self._hermes_environment = {
+            "PLAN_HERMES_HOME": launch.get("PLAN_HERMES_HOME") or str(native_home),
+            **({"PLAN_HERMES_PYTHON": launch["PLAN_HERMES_PYTHON"]}
+               if launch.get("PLAN_HERMES_PYTHON") else {}),
+        }
+        self._real_hermes_requested = any(
+            launch.get(flag) == "1" for flag in (
+                "PANELS_REAL_HERMES_TESTS",
+                "PANELS_REAL_PERMISSION_TESTS",
+                "PANELS_REAL_SYSTEM_STEERING_TESTS",
+            )
+        )
         self.inventory = inventory
         self.baseline = baseline
         self.guard = AuditGuard(inventory)
         self.guard.install()
+        self._package_caches = shared_package_caches(os.environ)
         self._homes_storage = tempfile.TemporaryDirectory(prefix="panels-synthetic-homes-")
         self.final: Manifest | None = None
         self.differences: tuple[ManifestDifference, ...] = ()
@@ -57,10 +81,18 @@ class SkillTreeProtectionPlugin:
             if item.get_closest_marker("real_provider_homes") is not None
             else create_synthetic_homes(Path(self._homes_storage.name))
         )
+        if (
+            item.get_closest_marker("real_provider_homes") is not None
+            and self._real_hermes_requested
+        ):
+            from test_runtime import validate_environment
+
+            validate_environment(self._hermes_environment)
+            homes.update(self._hermes_environment)
         try:
             # Fixture scope does not determine when native profiles first resolve.
             # Route before pytest sets up even session- and module-scoped fixtures.
-            with synthetic_home_environment(homes):
+            with synthetic_home_environment({**self._package_caches, **homes}):
                 yield
         finally:
             self.guard.set_context("session after test teardown")
@@ -156,10 +188,20 @@ class SkillTreeProtectionPlugin:
             )
 
 
-def bootstrap(*, export_root: Path | None = None) -> SkillTreeProtectionPlugin:
+def bootstrap(
+    *, export_root: Path | None = None, launch_environment: Mapping[str, str] | None = None,
+) -> SkillTreeProtectionPlugin:
     """Freeze launch roots before collection or any synthetic home replacement."""
-    inventory, baseline = capture_launch_inventory(dict(os.environ), Path.cwd())
-    return SkillTreeProtectionPlugin(inventory, baseline, export_root)
+    from test_runtime import evidence_environments
+
+    launch = dict(os.environ) if launch_environment is None else launch_environment
+    snapshots = evidence_environments(launch)
+    inventory, baseline = capture_launch_inventory(
+        snapshots[0], Path.cwd(), extra_environments=(*snapshots[1:], dict(os.environ))
+    )
+    return SkillTreeProtectionPlugin(
+        inventory, baseline, export_root, launch_environment=launch,
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:

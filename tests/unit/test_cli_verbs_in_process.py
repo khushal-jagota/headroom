@@ -14,13 +14,13 @@ import pytest
 from click.testing import CliRunner
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.in_memory_conversation_system import (
+    InMemoryConversationSystem,
+)
 from tests.support.probe import seed_probe_worker_type
 
 from planner.cli.main import main as cli_main
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.in_memory_conversation_system import (
-    InMemoryConversationSystem,
-)
 from planner.conversation.snapshot import BackendModel, BackendSnapshot
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -208,16 +208,14 @@ def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(
         server,
         "ticket",
         "create",
-        "--worker-type",
-        "coding",
-        "--employee-backend",
-        "hermes",
-        "--employee-launch-model",
-        "hermes-model",
-        "--title",
-        "CLI backend selection",
-        "--kickoff-note",
-        "Keep Kickoff pristine",
+        "--input-json", "-",
+        stdin=json.dumps({
+            "worker_type": "coding",
+            "employee_backend": "hermes",
+            "employee_launch_model": "hermes-model",
+            "title": "CLI backend selection",
+            "brief": "Keep Kickoff pristine",
+        }),
     )
     assert created["employee_backend"] == "hermes"
     assert created["employee_launch_model"] == "hermes-model"

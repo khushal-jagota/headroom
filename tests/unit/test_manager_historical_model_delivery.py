@@ -105,10 +105,11 @@ def test_historical_saved_choice_does_not_block_existing_manager_delivery(
                 )
                 wake_data.create_worker_error_wake(
                     conn,
-                    manager_id=manager["id"],
+                    target=Principal(PrincipalKind.manager, manager["id"]),
                     ticket_id=ticket_id,
                     claim_revision=1,
                     ticket_title="Transferred review",
+                    error_reason="delivery uncertain",
                     now=1,
                 )
                 conn.commit()
@@ -228,10 +229,11 @@ def test_cold_invalid_manager_wake_refuses_durably_then_repairs_without_blocking
                 )
                 wake_data.create_worker_error_wake(
                     conn,
-                    manager_id=manager["id"],
+                    target=Principal(PrincipalKind.manager, manager["id"]),
                     ticket_id=ticket_id,
                     claim_revision=1,
                     ticket_title=manager["title"],
+                    error_reason="delivery uncertain",
                     now=1,
                 )
             conn.commit()
@@ -352,10 +354,11 @@ def test_explicit_saved_choice_reaches_wake_and_review_without_owner_message(
                 )
                 wake_data.create_worker_error_wake(
                     conn,
-                    manager_id=manager["id"],
+                    target=Principal(PrincipalKind.manager, manager["id"]),
                     ticket_id=ticket_id,
                     claim_revision=1,
                     ticket_title="New review",
+                    error_reason="delivery uncertain",
                     now=1,
                 )
                 conn.commit()

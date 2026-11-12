@@ -65,9 +65,7 @@ def _ready(
     return is_ready_for_worker_step(
         conn,
         tickets_data.read_ticket(conn, ticket.id),
-        worker_type_definition=(
-            definition or configured_worker_type_registry().require(ticket.worker_type)
-        ),
+        worker_type_definition=(definition or ticket.workflow),
     )
 
 

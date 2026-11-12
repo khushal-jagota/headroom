@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  feedbackLabel,
   managerHeading,
   ticketFacts,
   ticketPageMark,
@@ -18,7 +17,6 @@ describe("a worker that holds the claim but is between turns", () => {
   it("still reads as the agent's on every screen", () => {
     expect(workspaceHeading(held)).toBe("Agent");
     expect(managerHeading(held)).toBe("Agent");
-    expect(feedbackLabel(held)).toBe("Agent");
   });
 
   it("does not read as an untouched Stage on its own page", () => {
@@ -31,7 +29,6 @@ describe("a live turn with no claim behind it", () => {
 
   it("reads the same, so neither fact alone is the carrier", () => {
     expect(workspaceHeading(running)).toBe("Agent");
-    expect(feedbackLabel(running)).toBe("Agent");
     expect(ticketPageMark(running)).toBe("current-running");
   });
 });
@@ -41,7 +38,6 @@ describe("a Ticket no worker has", () => {
 
   it("is named as the agent's nowhere", () => {
     expect(workspaceHeading(untouched)).toBe("Empty");
-    expect(feedbackLabel(untouched)).not.toBe("Agent");
     expect(ticketPageMark(untouched)).toBe("current-waiting");
   });
 });
@@ -53,7 +49,6 @@ describe("a broken worker", () => {
 
   it("is named before the work it holds", () => {
     expect(workspaceHeading(broken)).toBe("Errored");
-    expect(feedbackLabel(broken)).toBe("Errored");
     expect(ticketPageMark(broken)).toBe("errored");
   });
 });

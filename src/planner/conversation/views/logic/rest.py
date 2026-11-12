@@ -43,7 +43,6 @@ def event_has_rest_text(payload: event.ConversationEventPayload) -> bool:
             event.PromptDeliveryRefusedEventPayload,
             event.PromptDeliveryUncertainEventPayload,
             event.PromptDiscardedEventPayload,
-            event.ExplicitReplyMissingEventPayload,
             event.ToolCallStartedEventPayload,
             event.ToolCallFinishedEventPayload,
         ),

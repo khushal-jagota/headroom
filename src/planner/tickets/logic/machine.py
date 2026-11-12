@@ -8,14 +8,14 @@ from planner.tickets.contracts import (
     NextCeiling,
     StageOwnershipMode,
 )
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import WorkflowDefinition
 
 
 def field_is_passed(
     field: str,
     stage: str,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> bool:
     """A field is passed when its gated Stage precedes the current Stage."""
     gated_stage = worker_type_definition.stage_gated_by(field)
@@ -28,7 +28,7 @@ def at_or_beyond_ceiling(
     stage: str,
     ceiling: str,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> bool:
     return worker_type_definition.stage_index(stage) >= worker_type_definition.stage_index(ceiling)
 
@@ -37,7 +37,7 @@ def resolve_next_ceiling(
     new_stage: str,
     next_ceiling: NextCeiling | None,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> str:
     """The onward ceiling an approval grants, with the "none" sentinel concretized."""
     if next_ceiling is None:
@@ -69,7 +69,7 @@ def resolve_next_ceiling(
 def stage_ownership_mode(
     stage: str,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> StageOwnershipMode | None:
     if worker_type_definition.is_terminal(stage):
         return None

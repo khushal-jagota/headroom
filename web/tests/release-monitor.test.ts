@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { COMPOSITION_STATE_EVENT, createReleaseMonitor, type ReleaseSnapshot } from "../src/lib/releaseMonitor";
+import { createReleaseMonitor, type ReleaseSnapshot } from "../src/lib/releaseMonitor";
 
-// One monitor now feeds both ShellStatus mounts, so the hold that keeps a reload
-// back until a message is safe is no longer owned by the component that shows it.
-// Nothing else proves a reload cannot land mid-message.
 function listeners() {
   const handlers = new Map<string, Set<EventListener>>();
   return {
@@ -19,12 +16,8 @@ function listeners() {
   };
 }
 
-function composition(active: boolean): Event {
-  return { type: COMPOSITION_STATE_EVENT, detail: { active } } as unknown as Event;
-}
-
-describe("the release monitor's composition hold", () => {
-  it("keeps a requested reload back until the message is safe, then reloads once", async () => {
+describe("the release monitor", () => {
+  it("reloads once when requested, even during composition", async () => {
     const page = listeners();
     const reload = vi.fn();
     const fetchMeta = vi.fn(async () => ({ ok: true, json: async () => ({ app_sha: "new" }) }) as unknown as Response);
@@ -38,13 +31,12 @@ describe("the release monitor's composition hold", () => {
     await monitor.check();
     expect(seen.at(-1)?.updateAvailable).toBe(true);
 
-    page.fire(COMPOSITION_STATE_EVENT, composition(true));
+    page.fire("panels:composition-state", { detail: { active: true } } as unknown as Event);
     monitor.requestReload();
     await monitor.check();
-    expect(reload).not.toHaveBeenCalled();
-    expect(seen.at(-1)).toMatchObject({ compositionActive: true, reloadRequested: true });
+    expect(seen.at(-1)).toMatchObject({ reloadRequested: true });
+    monitor.requestReload();
 
-    page.fire(COMPOSITION_STATE_EVENT, composition(false));
     await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
   });
 
@@ -57,25 +49,22 @@ describe("the release monitor's composition hold", () => {
     });
     monitor.start();
     await monitor.check();
-    page.fire(COMPOSITION_STATE_EVENT, composition(true));
-    page.fire(COMPOSITION_STATE_EVENT, composition(false));
+    page.fire("panels:composition-state", { detail: { active: true } } as unknown as Event);
     await monitor.check();
     expect(reload).not.toHaveBeenCalled();
   });
 });
 
-// The fetch helper must fence writes when a tab misses the change stream.
-// The existing monitor fixture proves this without a connected browser host.
-describe("the stale page mutation fence", () => {
-  it("checks boot SHA on wake and before writes, attaches the SHA, and refuses stale or unverifiable writes", async () => {
+// Reuse the monitor fixture to prove writes retain the page header without a preflight.
+describe("page version headers", () => {
+  it("sends writes directly despite an unavailable update check and preserves server refusals", async () => {
     const { fetchJson } = await import("../src/lib/api");
-    const { startReleaseMonitor, stopReleaseMonitor } = await import("../src/lib/releaseMonitor");
+    const { startReleaseMonitor, stopReleaseMonitor, mutationHeaders } = await import("../src/lib/releaseMonitor");
     const page = listeners();
-    let serverSha = "booted";
-    let available = true;
     const reload = vi.fn();
     const request = vi.fn<typeof globalThis.fetch>(async (path) => {
-      if (path === "/api/meta") return new Response(JSON.stringify({ app_sha: serverSha }), { status: available ? 200 : 503 });
+      if (path === "/api/meta") return new Response("{}", { status: 503 });
+      if (path === "/api/refused") return new Response(JSON.stringify({error:{code:"validation",message:"Refresh page before making changes."}}), {status:409});
       return new Response("{}");
     });
     vi.stubGlobal("fetch", request);
@@ -84,26 +73,15 @@ describe("the stale page mutation fence", () => {
     try {
       startReleaseMonitor();
       await fetchJson("/api/example", { method: "POST", body: {} });
-      const mutation = request.mock.calls.find(([path]) => path === "/api/example");
-      expect(mutation?.[1]?.headers).toMatchObject({ "X-Panels-App-SHA": "booted" });
-      const checks = request.mock.calls.filter(([path]) => path === "/api/meta").length;
-      serverSha = "new";
-      page.fire("pageshow", { type: "pageshow" } as Event);
-      await vi.waitFor(() => expect(request.mock.calls.filter(([path]) => path === "/api/meta").length).toBeGreaterThan(checks));
-      await expect(fetchJson("/api/example", { method: "PATCH", body: {} })).rejects.toThrow("Refresh page");
-      const { interruptConversation } = await import("../src/lib/conversation/wire");
-      const { postVoiceTranscription } = await import("../src/lib/conversation/voiceCapture");
-      const { videoUploadAdapter } = await import("../src/lib/conversation/videoUploads/adapter");
-      await expect(interruptConversation("conversation")).rejects.toThrow("Refresh page");
-      await expect(postVoiceTranscription({ audio: "audio", media_type: "audio/webm" })).rejects.toThrow("Refresh page");
-      const file = new File(["video"], "clip.mp4", { type: "video/mp4" });
-      await expect(videoUploadAdapter.cancel("upload")).rejects.toThrow("Refresh page");
-      await expect(videoUploadAdapter.transfer("upload", file, new AbortController().signal, () => {})).rejects.toThrow("Refresh page");
-      serverSha = "booted";
-      available = false;
-      await expect(fetchJson("/api/example", { method: "DELETE" })).rejects.toThrow("Cannot confirm");
-      expect(request.mock.calls.filter(([path]) => path === "/api/example")).toHaveLength(1);
+      await fetchJson("/api/example", { method: "PATCH", body: {} });
+      await fetchJson("/api/example", { method: "DELETE" });
+      const mutations = request.mock.calls.filter(([path]) => path === "/api/example");
+      expect(mutations).toHaveLength(3);
+      for (const [,options] of mutations) expect(options?.headers).toMatchObject({"X-Panels-App-SHA":"booted"});
+      expect(await mutationHeaders({"Content-Type":"application/octet-stream"})).toEqual({"content-type":"application/octet-stream","X-Panels-App-SHA":"booted"});
+      await expect(fetchJson("/api/refused", {method:"POST",body:{}})).rejects.toMatchObject({code:"validation",message:"Refresh page before making changes."});
+      expect(request.mock.calls.filter(([path]) => path === "/api/meta")).toHaveLength(1);
       expect(reload).not.toHaveBeenCalled();
-    } finally { stopReleaseMonitor(); }
+    } finally { stopReleaseMonitor(); vi.unstubAllGlobals(); }
   });
 });

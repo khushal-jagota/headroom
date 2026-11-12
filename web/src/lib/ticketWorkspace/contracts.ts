@@ -23,10 +23,35 @@ export interface WorkspaceFieldSummary {
   revision: string;
 }
 
+export interface WorkflowControlStage {
+  id: string;
+  label: string;
+  gating_field: string | null;
+  is_terminal: boolean;
+  ownership_mode: "worker" | "user" | null;
+}
+
+export interface WorkflowControlsManifest {
+  worker_type: string | null;
+  label: string;
+  stages: Array<WorkflowControlStage>;
+  fields: Array<WorkerTypeManifestField>;
+  advance: Record<string, string>;
+  ceiling_range: Array<string>;
+  default_ceiling: string;
+  worker_profile_id: string | null;
+}
+
+export interface WorkerTypeManifestField {
+  id: string;
+  label: string;
+}
+
 export interface ValidWorkspaceTicket {
   id: string;
   title: string;
-  worker_type: string;
+  worker_type: string | null;
+  workflow: WorkflowControlsManifest;
   locale: "vps" | "macos";
   employee_backend: string;
   employee_launch_model: string | null;

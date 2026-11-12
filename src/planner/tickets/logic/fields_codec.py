@@ -15,7 +15,7 @@ from planner.tickets.contracts import (
     TicketFieldApprovals,
     TicketFieldValues,
 )
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import WorkflowDefinition
 
 
 def _require(condition: bool) -> None:
@@ -68,7 +68,7 @@ def validate_state(
     proposal: PendingTicketProposal | None,
     stage: str,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> None:
     _require(
         all(
@@ -83,7 +83,7 @@ def validate_state(
 
 
 def field_value(
-    values: TicketFieldValues, field: str, *, worker_type_definition: WorkerTypeDefinition
+    values: TicketFieldValues, field: str, *, worker_type_definition: WorkflowDefinition
 ) -> str | None:
     worker_type_definition.field_definition(field)
     return values.get(field)

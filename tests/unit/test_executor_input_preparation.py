@@ -34,7 +34,7 @@ def test_withdraw_preparing_input_settles_before_exact_stop_and_never_invokes(
         command = replace(native_registry[3], command_id="input-command", child=child)
         sending = asyncio.create_task(registry.run(command))
         await entered.wait()
-        assert registry.ask((command.command_id,))[0].phase == "preparing"
+        assert registry._commands[command.command_id].phase == "preparing"
         assert registry.withdraw(command.command_id)
         stop = asyncio.create_task(
             registry.run(
@@ -48,7 +48,7 @@ def test_withdraw_preparing_input_settles_before_exact_stop_and_never_invokes(
         cleanup.set()
         assert (await sending).disposition is CommandDisposition.refused
         assert (await stop).disposition is CommandDisposition.succeeded
-        assert registry.ask((command.command_id,))[0].phase == "finished"
+        assert registry._commands[command.command_id].phase == "finished"
         assert not registry._commands[command.command_id].invoking
         assert (await registry.run(command)).disposition is CommandDisposition.refused
 

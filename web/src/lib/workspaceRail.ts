@@ -1,4 +1,3 @@
-import type { Lifecycle } from "./lifecycle";
 import type {
   BoardCard,
   BoardManager,
@@ -120,8 +119,8 @@ export function refreshWorkspaceRailSignals(current: WorkspaceRail, next: Worksp
     items: refreshItems(current.items), settledItems: refreshItems(current.settledItems)};
 }
 
-export function workspaceWorkerStageSentence(ticket: WorkItemTicketFacts, lifecycle: Lifecycle | null): string {
-  const stage = lifecycle?.stageLabel[ticket.stage];
+export function workspaceWorkerStageSentence(ticket: WorkItemTicketFacts): string {
+  const stage = ticket.stage_label;
   if (!stage) return "";
   if (ticket.blocked || ticket.ticket_status === "blocked") return `Blocked at ${stage}.`;
   if (ticket.awaiting_approval) return `Awaiting your approval at ${stage}.`;

@@ -33,7 +33,7 @@ import json
 import sqlite3
 from typing import Any, Literal
 
-from tests.unit.test_conversation_view_projection import FIXTURES, database
+from tests.support.conversation_view_database import FIXTURES, database
 from tests.unit.test_conversation_view_storage import event, prompt
 
 from planner.conversation.views.api import _changes
@@ -173,10 +173,12 @@ def test_one_tail_wake_costs_what_it_costs_today() -> None:
             changes = _changes(conn, "fixture", "focus", through, ranges, status)
         assert changes is not None
         bytes_out = len(json.dumps(changes))
-        # Today: 11 statements and 1,406 bytes for a wake carrying no change at all, of
-        # which the status block is 1,056 — sent whether or not it moved.
+        # Today: 13 statements and 1,498 bytes for a wake carrying no change at all, most
+        # of it the status block, sent whether or not it moved. The thirteenth is the
+        # primary-key read of the live background tasks, which the status carries so the
+        # conversation says what the sidebar's working signal says.
         assert changes["upserts"] == []
-        assert len(work.statements) <= 12, f"one wake now runs {len(work.statements)} statements"
+        assert len(work.statements) <= 13, f"one wake now runs {len(work.statements)} statements"
         assert bytes_out <= 1_600, f"one wake now sends {bytes_out} bytes with nothing changed"
 
 

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from starlette.responses import Response, StreamingResponse
 
 from planner.core.authctx import RequestContext, request_context
-from planner.core.response_compression import answers_with_an_event_stream
+from planner.core.response_compression import answers_uncompressed
 from planner.navigation.api import DeadlineStreamingResponse, FencedJSONResponse
 from planner.navigation.delivery_authority import DeliveryUnavailable
 from planner.navigation.views.contracts import ViewRequest
@@ -37,17 +37,10 @@ def router(runtime: ScopedDeliveryRuntime) -> APIRouter:
     async def snapshot(
         view: str,
         ctx: Annotated[RequestContext, Depends(request_context)],
-        fence: str | None = None,
     ) -> Response:
         value = parse(view)
-        if fence and len(fence.encode()) > runtime.parent.config.proof_request_bytes:
-            raise HTTPException(413, "navigation fence is too large")
         try:
-            proof = json.loads(fence) if fence else None
-        except (ValueError, RecursionError) as exc:
-            raise HTTPException(400, "invalid navigation fence") from exc
-        try:
-            content, access = await runtime.snapshot(value, proof)
+            content, access = await runtime.snapshot(value)
         except DeliveryUnavailable as exc:
             raise HTTPException(503, "navigation view is unavailable") from exc
         # Encoding runs off the event loop, while the existing response owns send fencing.
@@ -62,7 +55,7 @@ def router(runtime: ScopedDeliveryRuntime) -> APIRouter:
         return response
 
     @result.get("/api/navigation/view/events")
-    @answers_with_an_event_stream
+    @answers_uncompressed
     async def events(
         view: str, ctx: Annotated[RequestContext, Depends(request_context)]
     ) -> Response:
@@ -76,7 +69,7 @@ def router(runtime: ScopedDeliveryRuntime) -> APIRouter:
             media_type="text/event-stream",
             send_timeout=runtime.parent.config.send_timeout_seconds,
             admission=runtime.parent.admission,
-            read=captured[1],
+            read=captured[0],
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 

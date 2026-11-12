@@ -10,15 +10,12 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 from urllib.parse import quote, unquote, urlsplit
 
 import anyio.to_thread
 from fastapi import APIRouter, Request
 
-from planner.core import authority
 from planner.core.authctx import request_context
-from planner.core.authority import require_above_or_self
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files import goal_files
 from planner.files.catalog.config import (
@@ -44,7 +41,7 @@ from planner.files.logic.paths import (
     ticket_files_root,
 )
 from planner.resource_versions.data import source_revision
-from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.store import workflow_from_row
 
 router = APIRouter()
 
@@ -126,12 +123,12 @@ def _inventory(root: Path, prefix: str) -> Inventory:
 def _linked(
     conn: sqlite3.Connection, ticket_id: str, origin: str, seen: set[str], offset: int, limit: int
 ) -> tuple[int, list[ArtifactCatalogEntry]]:
-    row = conn.execute("SELECT worker_type FROM tickets WHERE id=?", (ticket_id,)).fetchone()
+    row = conn.execute("SELECT workflow_json FROM tickets WHERE id=?", (ticket_id,)).fetchone()
     if row is None:
         raise PlannerError(ErrorCode.not_found, "ticket not found", {})
     fields = (
         "@proposal",
-        *reversed(configured_worker_type_registry().require(str(row[0])).field_ids()),
+        *reversed(workflow_from_row(row).field_ids()),
     )
     ranks = {field: index for index, field in enumerate(fields)}
     conn.create_function("artifact_field_rank", 1, lambda field: ranks.get(field, len(ranks)))
@@ -198,13 +195,9 @@ def _read(
     conn = request.app.state.conn_factory()
     try:
         conn.execute("BEGIN")
-        if kind == "manager":
-            require_above_or_self(
-                conn, request_context(request).principal, authority.manager(owner_id)
-            )
-        elif kind == "goal":
+        if kind == "goal":
             goal_files.require_goal(conn, request_context(request).principal, owner_id)
-        else:
+        elif kind == "ticket":
             if conn.execute("SELECT 1 FROM tickets WHERE id=?", (owner_id,)).fetchone() is None:
                 raise PlannerError(ErrorCode.not_found, "ticket not found", {})
         configured_db = Path(request.app.state.config.db_path)
@@ -262,13 +255,12 @@ def _read(
 @router.get("/artifact-catalog/{kind}/{owner_id}")
 async def artifact_catalog(
     request: Request,
-    kind: ArtifactOwnerKind | Literal["sprint_item"],
+    kind: ArtifactOwnerKind,
     owner_id: str,
     directory: str = "",
     offset: int = 0,
     limit: int = PAGE_SIZE,
 ) -> ArtifactDirectoryPage:
-    canonical_kind: ArtifactOwnerKind = "manager" if kind == "sprint_item" else kind
     return await anyio.to_thread.run_sync(
-        _read, request, canonical_kind, owner_id, directory, offset, limit
+        _read, request, kind, owner_id, directory, offset, limit
     )

@@ -3,10 +3,10 @@ import type { ConversationViewRow, ViewRowBody, ConversationViewTurn, Conversati
 import type { MessagePiece } from '../wire';
 import type { ViewMessagePiece } from './contracts';
 import type { TranscriptRow } from '../transcript';
-import { refusalSentence, workingSentence } from '../transcript';
+import { refusalSentence } from '../transcript';
 import type { ThreadItem } from '../threadLayout';
 import type { ConversationTaskProgress } from '../taskProgress';
-import { whatThisRowSays, toolCallSentence, type RestLine } from '../restLine';
+import { whatThisRowSays, toolCallSentence, restLineBodyFor, type RestLine } from '../restLine';
 import type { ConversationViewItem, ConversationViewPage, ViewHistoryScope, ViewPageCursor } from './contracts';
 
 export function transcriptHistoryEdges(pages: readonly Pick<ConversationViewPage, 'scope' | 'items' | 'older' | 'newer'>[], items: readonly ConversationViewItem[]): {
@@ -41,13 +41,13 @@ function uncachedRowForBody(item: Pick<ConversationViewRow, 'key' | 'source_sequ
         case 'prompt_uncertain':
         case 'prompt_discarded': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null };
         case 'agent_message': return { ...base, kind: body.kind, content: pieces(body.content), toOwner: body.to_owner };
-        case 'explicit_reply_missing': return { ...base, kind: body.kind, promptSender: body.prompt_sender };
         case 'tool_call': return { ...base, kind: body.kind, toolCallId: body.tool_call_id, title: body.title, toolKind: body.tool_kind, detail: body.detail, startedDetail: body.started_detail, cappedDetailSequence: body.capped_detail_sequence, status: body.status, progress: null };
         case 'permission_ask': return { ...base, kind: body.kind, askId: body.ask_id, title: body.title, detail: body.detail, options: body.options, state: body.state, deadReason: body.dead_reason, answeredOptionLabel: body.answered_option_label, answerFate:body.answer_fate };
         case 'user_input': return { ...base, kind: body.kind, requestId: body.request_id, questions: body.questions, state: body.state, deadReason: body.dead_reason, answers: body.answers === null ? null : Object.fromEntries(body.answers.map(a => [a.question_id, { answers: a.answers }])), failureDetail: body.failure_detail, answerFate:body.answer_fate };
         case 'model_changed': return { ...base, kind: body.kind, model: body.model, reasoningEffort: body.reasoning_effort };
         case 'token_usage': return { ...base, kind: body.kind, inputTokens: body.input_tokens, outputTokens: body.output_tokens, cachedInputTokens: body.cached_input_tokens, costUsd: body.cost_usd };
         case 'turn_ended': return { ...base, kind: body.kind, ending: body.ending, errorSummary: body.error_summary, automaticCompactionResult: body.automatic_compaction_result };
+        case 'command_reply': return { ...base, kind: body.kind, replyText: body.reply_text };
         case 'context_compacted':
         case 'turn_stopped': return { ...base, kind: body.kind };
     }
@@ -87,7 +87,7 @@ function happened(event: ViewRestEvent | null, sender: string): {
         const text = event.kind === 'prompt_refused' ? `not delivered · ${refusalSentence(event.refusal_reason!, event.refusal_detail_excerpt)}` : event.kind === 'prompt_uncertain' ? 'delivery uncertain · do not resend' : 'discarded';
         return { who: event.sender_label === sender ? 'you' : event.sender_label, text };
     }
-    if (event.kind === 'explicit_reply_missing' || event.kind === 'turn_ended' || event.kind === 'context_compacted' || event.kind === 'turn_stopped')
+    if (event.kind === 'turn_ended' || event.kind === 'context_compacted' || event.kind === 'turn_stopped')
         return whatThisRowSays(rowForBody({ key: 'rest', source_sequence: 0, created_at: 0 }, event), sender);
     return null;
 }
@@ -95,19 +95,16 @@ export function restFor(status: ConversationViewStatus, sender: string, readThro
     const facts = status.rest;
     const last = happened(facts.latest_happened, sender);
     const running = status.turn_running === true;
-    let line: Omit<RestLine, 'marks'>;
-    if (status.pending_permission !== null)
-        line = { who: null, text: facts.permission_title_excerpt ?? 'waiting for you', aside: null, taskProgress: null, waiting: true, workingSinceUnixMilliseconds: null };
-    else if (running && progress.currentEntry !== null)
-        line = { who: null, text: progress.currentEntry.text, aside: null, taskProgress: progress, waiting: false, workingSinceUnixMilliseconds: facts.latest_turn?.started_at_unix_milliseconds ?? null };
-    else if (running) {
-        const tool = facts.latest_tool;
-        const row = tool?.body.kind === 'inline' ? rowForBody({ key: 'rest', source_sequence: 0, created_at: 0 }, tool.body.value) : null;
-        line = { who: tool === null ? last?.who ?? null : null, text: row?.kind === 'tool_call' ? toolCallSentence(row) : tool?.title ?? last?.text ?? workingSentence(null), aside: null, taskProgress: null, waiting: false, workingSinceUnixMilliseconds: facts.latest_turn?.started_at_unix_milliseconds ?? null };
-    }
-    else if (last !== null)
-        line = { ...last, aside: null, taskProgress: null, waiting: false, workingSinceUnixMilliseconds: null };
-    else
-        return null;
+    const tool = facts.latest_tool;
+    const row = tool?.body.kind === 'inline' ? rowForBody({ key: 'rest', source_sequence: 0, created_at: 0 }, tool.body.value) : null;
+    const line = restLineBodyFor({
+        permissionTitle: status.pending_permission === null ? null : facts.permission_title_excerpt ?? 'waiting for you',
+        running,
+        startedAt: facts.latest_turn?.started_at_unix_milliseconds ?? null,
+        tool: row?.kind === 'tool_call' ? toolCallSentence(row) : tool?.title ?? null,
+        last,
+        progress
+    });
+    if (line === null) return null;
     return { ...line, marks: { running, unreadReply: facts.latest_owner_message_sequence > readThrough, failed: facts.last_boundary_failed } };
 }

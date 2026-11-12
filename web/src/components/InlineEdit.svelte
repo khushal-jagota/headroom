@@ -200,7 +200,11 @@
     observedSaving = saving;
   });
 
+  // Teardown must not re-read the draft prop: its source can already be gone.
+  let mountedDraft: InlineEditDraft | undefined;
+  $effect.pre(() => { mountedDraft = draft; });
   onDestroy(() => {
+    const draft = mountedDraft;
     if (draft && editing && !draft.saving && el) {
       draft.value = markdown
         ? (markdownSurface?.hasChanges() ? markdownSurface.read() : pendingMarkdownSave ?? markdownSurface?.read() ?? rawValue())

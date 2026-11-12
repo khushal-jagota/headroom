@@ -7,5 +7,5 @@
   <MachineSymbol {locale} />
 </span>
 <style>
-  .machine-identity { display:inline-flex; align-items:center; flex:none; width:var(--type-md); height:var(--type-md); color:var(--text-muted); }
+  .machine-identity { display:inline-flex; align-items:center; flex:none; width:16px; height:16px; color:var(--text-faint); }
 </style>

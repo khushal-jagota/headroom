@@ -31,6 +31,23 @@ def effective_completion(
     return checklist is not None and checklist_completed(checklist)
 
 
+def goal_completed(goal: Goal) -> bool:
+    """Project the one accepted completion fact for every goal consumer."""
+    if goal.kind == "quantitative" and goal.completion_rule is not None:
+        return goal.completion_date is not None
+    return effective_completion(goal.binary_checked, goal.page, goal.primary_checklist_block_id)
+
+
+def completion_date_after_edit(
+    current: Goal, accepted: Goal, *, today: str, creating: bool
+) -> str | None:
+    if not goal_completed(accepted):
+        return None
+    if creating or not goal_completed(current):
+        return today
+    return current.completion_date
+
+
 def prepare_completion(
     current: Goal,
     resulting: Goal,
@@ -88,6 +105,8 @@ def prepare_completion(
             selector = None
 
     binary_checked = resulting.binary_checked
+    if current.completion_rule is not None and resulting.kind == "binary":
+        binary_checked = goal_completed(current)
     if current.primary_checklist_block_id is not None and selector is None:
         binary_checked = effective_completion(
             current.binary_checked, current.page, current.primary_checklist_block_id

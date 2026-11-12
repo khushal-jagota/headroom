@@ -1,4 +1,4 @@
-"""Supervised, read-only account of turns ended by an operator deployment stop.
+"""Read-only account of turns ended by an update stop; the installer runs it, bounded.
 
 The helper owns the canonical conversation lease only while it captures evidence.
 It cannot initialize an application database or migrate a source schema.
@@ -9,21 +9,16 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-import subprocess
 import sys
 import time
 from contextlib import closing
 from pathlib import Path
-from uuid import uuid4
 
 from planner.conversation.deploy_interruptions.contracts import CapturedTurn, CaptureManifest
 from planner.conversation.deploy_interruptions.files import write_manifest
 from planner.conversation.lifecycle_storage import (
     acquire_runtime_ownership,
     retained_run_is_unresolved,
-)
-from planner.environments.interruption_capture_configuration import (
-    INTERRUPTION_CAPTURE_BUDGET_SECONDS,
 )
 
 _LOG = logging.getLogger(__name__)
@@ -52,7 +47,7 @@ def capture_stopped_database(db_path: Path, deployment_id: str, capture_id: str)
                 conn.row_factory = sqlite3.Row
                 conn.execute("PRAGMA query_only=ON")
                 conn.execute("BEGIN")
-                turns = _read_unresolved_turns(conn)
+                turns = read_unresolved_turns(conn)
             result = CaptureManifest(
                 deployment_id, capture_id, captured_at, "captured", None, turns
             )
@@ -71,7 +66,11 @@ def capture_stopped_database(db_path: Path, deployment_id: str, capture_id: str)
     return result
 
 
-def _read_unresolved_turns(conn: sqlite3.Connection) -> tuple[CapturedTurn, ...]:
+def read_unresolved_turns(
+    conn: sqlite3.Connection, *, conversation_ids: tuple[str, ...] | None = None
+) -> tuple[CapturedTurn, ...]:
+    """Turns still intent or running, outside unresolved Mac runs, optionally for some
+    conversations only."""
     tables = {
         str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
@@ -87,10 +86,17 @@ def _read_unresolved_turns(conn: sqlite3.Connection) -> tuple[CapturedTurn, ...]
         ).fetchone()
     epoch = str(row[0]) if row is not None else None
     occurrences = "conversation_turn_occurrences" in tables
+    only = (
+        ""
+        if conversation_ids is None
+        else f"AND conversation_id IN ({','.join('?' for _ in conversation_ids)}) "
+    )
     facts = conn.execute(
         "SELECT conversation_id,turn_number,status FROM conversation_lifecycle_facts "
         "WHERE kind='turn' AND status IN ('intent','running') "
-        "ORDER BY conversation_id,turn_number"
+        + only
+        + "ORDER BY conversation_id,turn_number",
+        conversation_ids or (),
     ).fetchall()
     captured: list[CapturedTurn] = []
     for fact in facts:
@@ -153,33 +159,6 @@ def _read_unresolved_turns(conn: sqlite3.Connection) -> tuple[CapturedTurn, ...]
                 )
             )
             continue
-        # Capture also reads pre-goal deployments without migrating their database.
-        goal = (
-            conn.execute(
-                "SELECT h.owner_id,g.title FROM conversation_history_catalog h "
-                "JOIN goals g ON g.id=h.owner_id WHERE h.conversation_id=? "
-                "AND h.owner_kind='goal' LIMIT 1",
-                (conversation_id,),
-            ).fetchone()
-            if "goals" in tables
-            else None
-        )
-        if goal is not None:
-            captured.append(
-                CapturedTurn(
-                    conversation_id,
-                    int(fact["turn_number"]),
-                    occurrence_id,
-                    turn_epoch,
-                    str(fact["status"]),
-                    str(goal[1]),
-                    "goal",
-                    str(goal[0]),
-                    None,
-                    None,
-                )
-            )
-            continue
         owner = conn.execute(
             "SELECT h.owner_id,m.title FROM conversation_history_catalog h "
             "JOIN managers m ON m.id=h.owner_id "
@@ -207,71 +186,6 @@ def _read_unresolved_turns(conn: sqlite3.Connection) -> tuple[CapturedTurn, ...]
             )
         )
     return tuple(captured)
-
-
-def capture_after_stop(
-    db_path: Path,
-    deployment_id: str,
-    *,
-    budget_seconds: float = INTERRUPTION_CAPTURE_BUDGET_SECONDS,
-) -> None:
-    """Fail open without changing the ordinary deployment gates or return value."""
-    start = time.monotonic()
-    capture_id = uuid4().hex
-    process: subprocess.Popen[bytes] | None = None
-    cleanup_seconds = 0.0
-    try:
-        if budget_seconds <= 0:
-            raise ValueError("capture budget must be positive")
-        process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "planner.environments.interruption_capture",
-                str(db_path.resolve()),
-                deployment_id,
-                capture_id,
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-        )
-        process.wait(timeout=max(0.0, budget_seconds - (time.monotonic() - start)))
-        assert process.stdout is not None
-        output = process.stdout.read(4096)
-        process.stdout.close()
-        if process.returncode:
-            raise RuntimeError(f"helper exit status {process.returncode}")
-        outcome = json.loads(output)
-        if outcome.get("state") != "captured":
-            _LOG.warning(
-                "Deployment %s interruption account unavailable: %s",
-                deployment_id,
-                outcome.get("detail", "unknown capture failure"),
-            )
-    except Exception as exc:
-        _LOG.warning("Deployment %s interruption account unavailable: %s", deployment_id, exc)
-    finally:
-        if process is not None and process.poll() is None:
-            cleanup_start = time.monotonic()
-            # No process groups or service-wide signals: only this exact helper.
-            try:
-                process.kill()
-                process.wait()
-            except OSError:
-                _LOG.exception("Interruption helper cleanup failed")
-            cleanup_seconds = time.monotonic() - cleanup_start
-        if process is not None and process.stdout is not None:
-            process.stdout.close()
-        _LOG.warning(
-            "Deployment %s interruption capture %s: duration=%.6fs cleanup=%.6fs budget=%.6fs",
-            deployment_id,
-            capture_id,
-            time.monotonic() - start - cleanup_seconds,
-            cleanup_seconds,
-            budget_seconds,
-        )
 
 
 def main() -> None:

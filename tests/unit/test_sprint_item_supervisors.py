@@ -13,15 +13,15 @@ from typing import Any, cast
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.in_memory_conversation_system import (
+    InMemoryConversationSystem,
+)
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.backends.contracts import BackendChildFactory
 from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
-)
-from planner.conversation.in_memory_conversation_system import (
-    InMemoryConversationSystem,
 )
 from planner.conversation.message_content import text_message_content
 from planner.core.clock import RealClock, build_clock, parse_fake_now

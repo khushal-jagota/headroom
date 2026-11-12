@@ -473,13 +473,11 @@ def main() -> None:
         mobile_wrapper.locator("iframe").wait_for()
         mobile_review = child_frame(mobile_wrapper, "iframe")
         mobile_review.get_by_label("Host width", exact=True).select_option("390")
-        mobile_review.get_by_role("button", name="Type instead", exact=True).click()
         mobile_review.locator("[data-conversation-input]").fill("Mobile draft stays local")
         result["mobile"] = {
             "measurement": mobile_review.evaluate(MEASURE),
             "coarsePointer": mobile_review.evaluate('matchMedia("(pointer:coarse)").matches'),
             "draft": mobile_review.locator("[data-conversation-input]").input_value(),
-            "typeInsteadSucceeded": True,
         }
         mobile_page.screenshot(path=str(args.output / "managed-mobile-keyboard.png"))
         mobile.close()

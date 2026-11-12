@@ -203,7 +203,6 @@ async def _exercise(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                     text_message_content(prompt),
                     sender_label="Proof owner",
                     sender_message_id=uuid.uuid4().hex,
-                    reply_requested=False,
                 )
 
                 async def pending(request_id: str = request_id) -> dict[str, Any] | None:

@@ -107,4 +107,4 @@ def _staging_instance(tmp_path: Path) -> ResolvedEnvironmentInstance:
 
 def _short_environment_root(tmp_path: Path) -> Path:
     digest = hashlib.sha1(str(tmp_path).encode("utf-8")).hexdigest()[:8]
-    return Path("/tmp") / f"pe-credentials-{os.getpid()}-{digest}"
+    return Path(os.environ.get("TMPDIR", "/tmp")) / f"pe-credentials-{os.getpid()}-{digest}"

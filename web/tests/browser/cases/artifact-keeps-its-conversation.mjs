@@ -84,6 +84,12 @@ mount(Host,{target:document.getElementById('app')!});`);
         path: "/files/managers/si_fixture/notes.md",
         body: "# The handover notes\n\nNamed in the Manager's own document.\n",
         contentType: "text/markdown"
+      },
+      // The Manager's own web page, named in its conversation.
+      {
+        path: "/files/managers/si_fixture/artifacts/compare.html",
+        body: "<!doctype html><title>Comparison</title><h1>The comparison</h1>",
+        contentType: "text/html"
       }
     ],
     inputs: [index],

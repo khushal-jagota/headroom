@@ -9,6 +9,7 @@ from sqlite3 import Connection
 
 import pytest
 from tests.support.executor_inbox import lookup_receipt
+from tests.support.executor_presence import mac_identity, make_current
 from tests.support.probe import (
     install_probe_registry,
     seed_probe_worker_type,
@@ -18,8 +19,7 @@ from tests.support.probe import (
 from planner.conversation.backends.contracts import TurnToken
 from planner.core.clock import TestClock as ClockForTest
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import ChildReference, ExecutorIdentity
+from planner.execution_identity import ChildReference
 from planner.executor.ipc_client import cli_mutation
 from planner.executor.mac_outbox import MacOutbox, OutboxEntry
 from planner.executor.protocol import (
@@ -71,11 +71,8 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
     try:
         database_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
         store = InboxStore(database_path)
-        identity = ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "mac_process", 1
-        )
-        store.runs.begin_connection(identity)
-        store.runs.mark_ready(identity)
+        identity = mac_identity()
+        make_current(database_path, identity)
         ticket = data.create_ticket(
             tmp_db,
             title="Mac collaborative proposal",
@@ -196,14 +193,10 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
         wakes_after_advancement = _wakes(tmp_db, ticket.id)
         openers_after_advancement = _openers(tmp_db, ticket.id)
         fake_clock.set(fake_clock.now() + timedelta(hours=1))
-        reconnected = ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, identity.executor_incarnation, 2
-        )
-        store.runs.mark_lost(identity)
-        store.runs.begin_connection(reconnected)
-        store.runs.mark_ready(reconnected)
+        # The same process, back after an hour: a new lease, not a new identity.
+        make_current(database_path, identity)
         for _ in range(2):
-            assert store.accept(envelope, writer, 2002, identity=reconnected) == receipt
+            assert store.accept(envelope, writer, 2002, identity=identity) == receipt
             assert data.read_ticket(tmp_db, ticket.id) == next_claim
             assert _openers(tmp_db, ticket.id) == openers_after_advancement
             assert _wakes(tmp_db, ticket.id) == wakes_after_advancement

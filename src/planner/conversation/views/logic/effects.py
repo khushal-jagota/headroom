@@ -32,8 +32,8 @@ def event_effect(payload: event.ConversationEventPayload) -> EventEffect:
         return EventEffect("prompt_discarded", visible, sender_message_id=payload.sender_message_id)
     if isinstance(payload, (event.AgentMessageEventPayload, event.MessageToOwnerEventPayload)):
         return EventEffect("agent_message", visible)
-    if isinstance(payload, event.ExplicitReplyMissingEventPayload):
-        return EventEffect("explicit_reply_missing", visible)
+    if isinstance(payload, event.RetiredExplicitReplyMissingEventPayload):
+        return EventEffect(None, False)
     if isinstance(payload, event.ToolCallStartedEventPayload):
         return EventEffect("tool_call", False, "tool", payload.tool_call_id)
     if isinstance(payload, event.ToolCallFinishedEventPayload):
@@ -58,6 +58,9 @@ def event_effect(payload: event.ConversationEventPayload) -> EventEffect:
         return EventEffect("token_usage", False)
     if isinstance(payload, event.ContextCompactedEventPayload):
         return EventEffect("context_compacted", False)
+    if isinstance(payload, event.CommandReplyEventPayload):
+        # The reply answers what the sender typed, so Focus shows it as it shows the prompt.
+        return EventEffect("command_reply", True)
     if isinstance(payload, event.TurnEndedEventPayload):
         return EventEffect("turn_ended", visible, closes_turn=True)
     raise AssertionError(f"Unclassified event: {payload!r}")

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from "./Button.svelte";
   /* The owner's ask for a fresh recap, in the quiet action voice.
    *
    * The same words in every place it appears, because it does the same thing in every
@@ -12,14 +13,19 @@
   import { fateSentence } from "../lib/conversation/composer";
   import type { PromptDeliveryFate } from "../lib/conversation/wire";
 
-  let { kind, id, class: extraClass = "" }: {
+  let { kind, id, class: extraClass = "", variant = "ghost", note = $bindable(null), noteInline = true }: {
     kind: "ticket" | "manager" | "chief";
     id: string;
     class?: string;
+    /** A quiet text action, as staging (the ghost); a host may ask for the secondary fill. */
+    variant?: "secondary" | "ghost";
+    /** What became of a send nobody can vouch for. A host that places the button away from
+     *  the recap (a page's top band) binds it and shows it under the recap, as staging. */
+    note?: string | null;
+    noteInline?: boolean;
   } = $props();
 
   let sending = $state(false);
-  let note = $state<string | null>(null);
 
   async function ask(): Promise<void> {
     if (sending) return;
@@ -47,21 +53,18 @@
        renames itself when pressed moves the page under the hand that pressed it.
        Marked rather than disabled: a disabled control loses focus the instant it is
        pressed, and inside a hover panel losing focus is how the panel decides you left. -->
-  <button
-    type="button"
+  <Button
+    {variant}
     class="request-recap-action"
     aria-disabled={sending}
     data-request-recap-action
     onclick={() => void ask()}
-  >Ask for a recap</button>
-  {#if note}<span class="request-recap-note" data-request-recap-note>{note}</span>{/if}
+  >Ask for a recap</Button>
+  {#if note && noteInline}<span class="request-recap-note" data-request-recap-note>{note}</span>{/if}
 </span>
 
 <style>
   .request-recap { display:inline-flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; }
-  .request-recap-action { border:0; background:none; padding:var(--space-1) 0; color:var(--text-faint); font:inherit; cursor:pointer; }
-  .request-recap-action:hover { color:var(--text-strong); }
-  .request-recap-action[aria-disabled="true"] { cursor:default; color:var(--text-faintest); }
-  .request-recap-action[aria-disabled="true"]:hover { color:var(--text-faintest); }
-  .request-recap-note { color:var(--text-faintest); font-size:var(--type-xs); }
+
+  .request-recap-note { color:var(--tone-tertiary); font-size:var(--type-small); }
 </style>

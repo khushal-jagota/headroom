@@ -11,93 +11,12 @@ from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
-from tests.unit.test_deployment import SHA_A, SHA_B, FakeHealth, FakeService, _app
-from tests.unit.test_owner_updates import release
+from tests.support.update_apps import SHA_B, release
+from tests.support.update_apps import build_app as _app
 
 from planner.environments import runtime_admission as admission
 from planner.environments.app import AppValidationError, digest_app_artifact, validate_app_manifest
-from planner.environments.deployment import DeploymentError, deploy_app
-from planner.environments.update_requests import parse_release
-
-
-@pytest.mark.parametrize("first_install", [True, False])
-@pytest.mark.parametrize("stage,failure", [
-    (False, "native"), (True, "native"),
-    (False, "artifact_mutation"), (True, "artifact_mutation"),
-    (False, "manifest_mutation"), (True, "manifest_mutation"),
-    (True, "copy_manifest_mutation"),
-])
-def test_refusal_precedes_claim_service_backup_and_replacement(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    first_install: bool,
-    stage: bool,
-    failure: str,
-) -> None:
-    current = tmp_path / "current"
-    if not first_install:
-        old = _app(current / "app", SHA_A, "old", include_cli=False)
-        payload = json.loads((old / "manifest.json").read_text())
-        payload.pop("runtime_contract")
-        (old / "manifest.json").write_text(json.dumps(payload))
-    candidate = _app(tmp_path / "candidate", SHA_B, "new")
-    current.mkdir(exist_ok=True)
-    database = current / "database"
-    database.write_text("untouched")
-    events: list[str] = []
-    calls = []
-
-    def refuse(root: Path, manifest: object) -> None:
-        calls.append(root)
-        if failure == "copy_manifest_mutation":
-            return
-        if stage and root == candidate:
-            return
-        if failure == "native":
-            raise AppValidationError("native operation failed")
-        if failure == "artifact_mutation":
-            (root / "new").write_text("probe changed payload")
-        else:
-            # The manifest is outside the artifact digest. Full identity equality
-            # must still reject a probe that substitutes it after initial validation.
-            path = root / "manifest.json"
-            value = json.loads(path.read_text())
-            value["source_digest"] = "f" * 64
-            path.write_text(json.dumps(value))
-
-    if failure == "copy_manifest_mutation":
-        copytree = shutil.copytree
-
-        def changed_copy(
-            source: Path, destination: Path, *args: object, **kwargs: object
-        ) -> Path:
-            result = copytree(source, destination, *args, **kwargs)  # type: ignore[arg-type]
-            path = Path(destination) / "manifest.json"
-            if path.is_file():
-                value = json.loads(path.read_text())
-                value["source_digest"] = "f" * 64
-                path.write_text(json.dumps(value))
-            return result
-
-        monkeypatch.setattr("planner.environments.deployment.shutil.copytree", changed_copy)
-    monkeypatch.setattr("planner.environments.deployment.admit_runtime", refuse)
-    with pytest.raises(DeploymentError, match="runtime admission refused|copied candidate differs"):
-        deploy_app(
-            candidate_app=candidate,
-            current_root=current,
-            source_db=database,
-            backup=lambda _: events.append("backup"),  # type: ignore[arg-type, return-value]
-            restore=lambda _: events.append("restore"),
-            service=FakeService(events),
-            health=FakeHealth(events, {SHA_B}),
-            before_stop=lambda: events.append("claim"),
-        )
-    assert not events
-    assert len(calls) == (2 if stage and failure != "copy_manifest_mutation" else 1)
-    assert database.read_text() == "untouched"
-    assert (current / "app/old").exists() == (not first_install)
-    assert not (current / "app/new").exists()
-    assert not list(current.glob(".app-candidate-*"))
+from planner.environments.update_attempts import parse_release
 
 
 def test_contract_binding_and_legacy_reads(tmp_path: Path) -> None:

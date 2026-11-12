@@ -1,45 +1,46 @@
 # Previews
 
-A preview is one link Khushal can open to an application a Worker is running on the Headroom host. The link looks like:
+A preview is one link Khushal can open to an application a Worker is running on the Headroom host. It exists so he can try a running dev server from his own browser without anything new being exposed to the internet. A document or saved HTML artifact uses the Ticket's file preview instead.
 
-`https://panels-vps.tail687c57.ts.net/dev/tickets/<ticket-id>/<generation>/`
+## What it is made of
 
-The dev server stays on loopback. Headroom proxies that generation through the existing tailnet HTTPS origin. A code change or a Ticket approval does not publish the route. The release that contains previews has to be installed, and Tailscale ingress has to be configured. With no ingress configuration, there are no previews.
+- **A registry.** One preview per Ticket, each with a fresh generation in its address: `/dev/tickets/<ticket-id>/<generation>/` on the existing tailnet HTTPS origin.
+- **A proxy inside Headroom.** It forwards that generation to the Worker's dev server on loopback. It does not rewrite pages or strip the prefix, so the app must serve under that exact base path.
+- **The Worker's commands.** `panels preview prepare`, `register`, `show`, and `stop`, which act only on the Worker's own Ticket. The steps a Worker follows are in [ops/runbooks/application-preview.md](../ops/runbooks/application-preview.md).
 
-Previews are unavailable for Tickets set to run on the Mac. All `panels preview` commands refuse for those Tickets. Existing preview addresses expire when the Ticket moves to the Mac; they never forward to the Mac or fall back to a VPS process.
+```
+ Khushal's browser ──tailnet HTTPS──► Headroom proxy ──loopback──► Worker's dev server
+                                        │                            (Ticket preview worktree)
+                                        └── registry: Ticket, generation, observed process
+```
+
+## How it works
+
+The Worker prepares a preview, which reserves the address and names the one worktree the app must run from. It starts the app on loopback under that base path, then registers the port. Headroom checks that the listening process really comes from the reserved worktree before it hands back the link.
+
+A generation ends when the Worker stops it, when the process exits or the port is reused, when the Ticket is done or deleted, or when Headroom restarts. An old address shows an ended preview. A restarted app needs a new generation.
+
+Previews need trusted Tailscale ingress to be configured on the live host. Without it there are none. Tickets that run on the Mac cannot have previews, and an existing preview ends if its Ticket moves to the Mac. Nothing forwards to the Mac.
 
 ## Why the content has to be trusted
 
-Preview JavaScript runs in Headroom’s browser origin. It can call Headroom’s APIs and read its storage. Cookie paths do not contain hostile script. Never put a vendor demo, a downloaded sample, or a page that embeds third-party scripts behind a preview. The application already runs as the same Unix user as Headroom. The registration checks prove that an observed process is listening from the reserved Ticket worktree. They do not prove who wrote the program, and they do not contain a malicious program running as that user.
+Preview pages run in Headroom's own browser origin. Their scripts can call Headroom's APIs and read its storage. The app already runs as the same Unix user as Headroom. The registration check proves where a process runs from. It does not prove who wrote it or contain it. Never put a vendor demo, a downloaded sample, or a page with third-party scripts behind a preview.
 
-The tailnet gate is membership in the tailnet before traffic reaches the published origin. It is not local authentication. A process on the host can reach the loopback port and forge headers. The published origin stays tailnet-only.
+The tailnet is the gate: only tailnet members reach the origin. It is not local authentication. Any process on the host can reach a loopback port.
 
-## How a Worker starts one
+## The load it places on Headroom
 
-The commands use the Worker’s own Ticket identity. They cannot aim at another Ticket or invent a hostname.
+Preview traffic runs inside Headroom's process. Headroom caps concurrent requests and WebSockets, globally and per preview, and limits transfer. Streams share the transfer limit in the order they ask, so a busy preview cannot starve one of its own requests. Excess gets a busy response at once, with no queue. These bounds protect ordinary Headroom work from the proxy. They do not limit the app's own CPU or memory.
 
-1. The git worktree is exactly `<project.folder_path>/worktrees/<ticket-id>-preview`, inside the project folder. A symlink that escapes is refused.
-2. `panels preview prepare` reserves the address and returns `base_path`, `generation`, `public_origin`, and `worktree`.
-3. The application starts from that worktree, on `127.0.0.1`, on a free unprivileged port, serving that exact `base_path` including the trailing slash.
-4. `panels preview register --port` checks the listener and returns the `url` to share.
-5. `panels preview stop` revokes the address. The Worker still stops the application process.
+## Decisions that shape it
 
-The proxy does not rewrite HTML, CSS, or JavaScript and does not strip the base path. Assets, API calls, redirects, cookies, and hot reload all use the generation prefix. A bare prefix is not a running app and must not be shared as one. For Vite, set `base` to the returned path, bind `127.0.0.1` with a strict port, and point hot reload at the public hostname over `wss` on port 443, with the socket path under `base`. Do not reuse a generation for a restarted process. Prepare and register a new one.
+- Same origin, trusted content. Previews are a convenience for Khushal's own Workers, not a sandbox.
+- One fixed worktree per Ticket and a fresh generation per run, so an old link never reaches a new process.
+- No rewriting. The app adapts to the base path, which keeps the proxy simple and honest.
+- Bounded inside Headroom so a busy preview cannot starve the workspace.
 
-Relative redirects stay inside the generation. Cookies set an explicit Path inside it and no Domain. Root-only apps, root auth callbacks, `__Host-` cookies, public hot-reload ports, and non-Linux hosts are unsupported. Adapt the app before sharing the link.
+## Code
 
-## Lifetime and the load it places on Headroom
+- `src/planner/previews/`: registry, proxy, process checks, and the CLI. Limits are in `config.py` and `limits.py`.
 
-A generation ends on stop, on process exit or port reuse, when the Ticket is Done or deleted, or when Headroom restarts. Old addresses show an ended preview. Restarting Headroom needs a new prepare and register. Active connections close within about two seconds of expiry.
-
-Preview traffic shares Headroom’s process. Caps sit at 32 HTTP requests globally and 16 per preview, and at eight WebSockets globally and two per preview. Excess traffic gets a busy response. There is no admission queue. Transfer is limited, and bodies stream with a size cap. Those bounds protect ordinary Headroom work from the proxy. They do not stop the application process from using the host’s CPU or memory.
-
-## Where it shows up
-
-The Worker shares the returned URL. Khushal opens it in the browser he already uses for Headroom. The Ticket’s file preview remains the path for a document or a saved HTML artifact. A preview is for a running dev server.
-
-## Pointers
-
-`src/planner/previews/`. Limits live in `src/planner/previews/config.py` and `limits.py`.
-
-_Last verified: 2026-10-30._
+_Last verified: 2026-11-04._

@@ -45,7 +45,6 @@ def _row_to_project(row: sqlite3.Row) -> Project:
         folder_path=Path(str(row["folder_path"])) if row["folder_path"] is not None else None,
         created_at=int(row["created_at"]),
         updated_at=int(row["updated_at"]),
-        requires_macos=bool(row["requires_macos"]),
     )
 
 
@@ -54,7 +53,6 @@ def project_json(project: Project) -> JsonDict:
         "id": project.id,
         "name": project.name,
         "summary": project.summary,
-        "requires_macos": project.requires_macos,
         "folder_path": str(project.folder_path) if project.folder_path is not None else None,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
@@ -78,7 +76,7 @@ def seed_default_projects(conn: sqlite3.Connection) -> None:
 
 def list_projects(conn: sqlite3.Connection) -> list[Project]:
     rows = conn.execute(
-        "SELECT id, name, summary, folder_path, created_at, updated_at, requires_macos "
+        "SELECT id, name, summary, folder_path, created_at, updated_at "
         "FROM projects ORDER BY lower(name), id"
     ).fetchall()
     return [_row_to_project(row) for row in rows]
@@ -105,7 +103,7 @@ def list_project_summaries(
 
 def read_project(conn: sqlite3.Connection, project_id: str) -> Project:
     row = conn.execute(
-        "SELECT id, name, summary, folder_path, created_at, updated_at, requires_macos "
+        "SELECT id, name, summary, folder_path, created_at, updated_at "
         "FROM projects WHERE id = ?",
         (project_id,),
     ).fetchone()
@@ -116,7 +114,7 @@ def read_project(conn: sqlite3.Connection, project_id: str) -> Project:
 
 def read_project_by_name(conn: sqlite3.Connection, name: str) -> Project:
     row = conn.execute(
-        "SELECT id, name, summary, folder_path, created_at, updated_at, requires_macos "
+        "SELECT id, name, summary, folder_path, created_at, updated_at "
         "FROM projects WHERE name = ? COLLATE NOCASE",
         (name.strip(),),
     ).fetchone()
@@ -151,12 +149,9 @@ def create_project(
     *,
     name: str,
     summary: str = "",
-    requires_macos: bool = False,
     folder_path: str | Path | None = None,
     now: int,
 ) -> Project:
-    if type(requires_macos) is not bool:
-        raise PlannerError(ErrorCode.validation, "requires_macos must be a boolean", {})
     clean_name = name.strip()
     clean_summary = summary.strip()
     normalized_folder_path = _normalize_folder_path(folder_path)
@@ -183,8 +178,8 @@ def create_project(
             suffix += 1
         conn.execute(
             "INSERT INTO projects "
-            "(id, name, summary, folder_path, created_at, updated_at, requires_macos) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "(id, name, summary, folder_path, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (
                 project_id,
                 clean_name,
@@ -192,7 +187,6 @@ def create_project(
                 str(normalized_folder_path) if normalized_folder_path is not None else None,
                 now,
                 now,
-                int(requires_macos),
             ),
         )
     return read_project(conn, project_id)
@@ -204,15 +198,10 @@ def update_project(
     *,
     name: str | None = None,
     summary: str | None = None,
-    requires_macos: bool | None = None,
     folder_path: str | Path | None | object = _FOLDER_PATH_UNSET,
     now: int,
 ) -> Project:
     updates: dict[str, str | int | None] = {}
-    if requires_macos is not None:
-        if type(requires_macos) is not bool:
-            raise PlannerError(ErrorCode.validation, "requires_macos must be a boolean", {})
-        updates["requires_macos"] = int(requires_macos)
     if name is not None:
         clean_name = name.strip()
         if not clean_name:

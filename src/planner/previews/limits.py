@@ -47,19 +47,24 @@ class TransferBudget:
         self.lock = asyncio.Lock()
 
     async def consume(self, amount: int) -> None:
-        while amount:
-            part = min(amount, self.burst)
-            async with self.lock:
+        # Streams are served in the order they asked. The lock queues its waiters first
+        # in, first out, and the stream at the head keeps it while it waits for budget.
+        # If waiters raced instead, they would all wake at the same instant and one could
+        # lose for many seconds. A preview's headers wait for its first chunk, so that
+        # stream would not answer at all.
+        if not amount:
+            return
+        async with self.lock:
+            while amount:
+                part = min(amount, self.burst)
                 now = self.clock()
                 self.available = min(self.burst, self.available + (now - self.updated) * self.rate)
                 self.updated = now
                 if self.available >= part:
                     self.available -= part
                     amount -= part
-                    delay = 0.0
                 else:
-                    delay = (part - self.available) / self.rate
-            await asyncio.sleep(delay)
+                    await asyncio.sleep((part - self.available) / self.rate)
 
 
 class MessageBudget:

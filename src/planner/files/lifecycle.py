@@ -1,4 +1,4 @@
-"""Recoverable lifecycle operations for managed Manager files."""
+"""Recoverable lifecycle operations for managed files."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from planner.files.logic.paths import manager_files_root
+from planner.files.logic.paths import goal_files_root, manager_files_root
 
 
 @dataclass(frozen=True)
-class QuarantinedManagerFiles:
+class QuarantinedFiles:
     original: Path
     quarantine: Path
 
@@ -20,36 +20,47 @@ class QuarantinedManagerFiles:
 def database_path(conn: sqlite3.Connection) -> str:
     row = conn.execute("PRAGMA database_list").fetchone()
     if row is None or not row[2]:
-        raise RuntimeError("Manager file lifecycle needs a file-backed database")
+        raise RuntimeError("managed file lifecycle needs a file-backed database")
     return str(row[2])
 
 
-def quarantine_manager_files(
-    conn: sqlite3.Connection, manager_id: str
-) -> QuarantinedManagerFiles | None:
-    root = manager_files_root(database_path(conn))
+def quarantine_manager_files(conn: sqlite3.Connection, manager_id: str) -> QuarantinedFiles | None:
+    return _quarantine_files(
+        manager_files_root(database_path(conn)), manager_id, ".sprint-item-quarantine", "Manager"
+    )
+
+
+def quarantine_goal_files(conn: sqlite3.Connection, goal_id: str) -> QuarantinedFiles | None:
+    return _quarantine_files(
+        goal_files_root(database_path(conn)), goal_id, ".goal-quarantine", "goal"
+    )
+
+
+def _quarantine_files(
+    root: Path, owner_id: str, quarantine_directory: str, label: str
+) -> QuarantinedFiles | None:
     if root.is_symlink():
-        raise RuntimeError("managed Manager file root is a symlink")
-    original = root / manager_id
+        raise RuntimeError(f"managed {label} file root is a symlink")
+    original = root / owner_id
     if not original.exists() and not original.is_symlink():
         return None
-    quarantine_root = root.parent / ".sprint-item-quarantine"
+    quarantine_root = root.parent / quarantine_directory
     quarantine_root.mkdir(parents=True, exist_ok=True)
-    quarantine = quarantine_root / f"{manager_id}.{uuid4().hex}"
+    quarantine = quarantine_root / f"{owner_id}.{uuid4().hex}"
     original.rename(quarantine)
-    return QuarantinedManagerFiles(original, quarantine)
+    return QuarantinedFiles(original, quarantine)
 
 
-def restore_quarantined_manager_files(
-    quarantined: QuarantinedManagerFiles | None,
+def restore_quarantined_files(
+    quarantined: QuarantinedFiles | None,
 ) -> None:
     if quarantined is None:
         return
     quarantined.quarantine.rename(quarantined.original)
 
 
-def purge_quarantined_manager_files(
-    quarantined: QuarantinedManagerFiles | None,
+def purge_quarantined_files(
+    quarantined: QuarantinedFiles | None,
 ) -> None:
     if quarantined is None:
         return

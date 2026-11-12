@@ -9,17 +9,18 @@ from __future__ import annotations
 
 import sqlite3
 
+from planner.executor.clock import now_ms
 from planner.tickets import locale_configuration
-from planner.tickets.contracts import StageOwnershipMode, Ticket, TicketStatus
+from planner.tickets.contracts import StageOwnershipMode, Ticket, TicketLocale, TicketStatus
 from planner.tickets.logic import machine
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import WorkflowDefinition
 
 
 def worker_step_blocker(
     conn: sqlite3.Connection,
     ticket: Ticket,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> str | None:
     """Why Panels may not start this Ticket's next worker step, or nothing when it may.
 
@@ -32,10 +33,13 @@ def worker_step_blocker(
     if ticket.is_backlogged:
         return "the Ticket is backlogged"
     if not locale_configuration.can_execute_locale(conn, ticket.locale):
-        return (
-            f"the Ticket locale is {ticket.locale.value}, so it cannot start on "
-            f"this {locale_configuration.CURRENT_EXECUTION_LOCALE.value} machine"
-        )
+        return locale_configuration.execution_unavailable_reason(conn, ticket.locale)
+    # A start never waits in the mailbox for a Mac that may not come back: the claim is
+    # not taken until the Mac is here, and nothing errors meanwhile.
+    if ticket.locale is TicketLocale.macos and not locale_configuration.mac_is_present(
+        conn, now_ms()
+    ):
+        return locale_configuration.WAITING_FOR_THE_MAC
     if worker_type_definition.is_terminal(ticket.stage):
         return f"the Stage {ticket.stage} is terminal"
     ownership_mode = machine.stage_ownership_mode(
@@ -57,15 +61,16 @@ def worker_step_blocker(
     from planner.conversation.backend_state import model_is_enabled
     from planner.conversation.contracts import require_conversation_backend_key
 
-    defaults = worker_type_definition.worker_profile
-    model = ticket.employee_launch_model or defaults.default_model
+    model = ticket.employee_launch_model
+    backend = ticket.employee_backend
+    if model is None and ticket.worker_type is not None:
+        from planner.worker_types.configuration import configured_worker_type_registry
+
+        defaults = configured_worker_type_registry().require(ticket.worker_type).worker_profile
+        model, backend = defaults.default_model, defaults.default_backend
     if model is not None and not model_is_enabled(
         conn,
-        require_conversation_backend_key(
-            defaults.default_backend
-            if ticket.employee_launch_model is None
-            else ticket.employee_backend
-        ),
+        require_conversation_backend_key(backend),
         model,
     ):
         return f"the model {model} is disabled"
@@ -76,7 +81,7 @@ def is_ready_for_worker_step(
     conn: sqlite3.Connection,
     ticket: Ticket,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> bool:
     """Whether Panels may automatically start this Ticket's next worker step now."""
     return (

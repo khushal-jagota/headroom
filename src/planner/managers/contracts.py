@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Final, Literal, NotRequired, TypedDict
 
 from planner.conversation.contracts import ConversationBackendKey
+from planner.goals.contracts import GoalResponse, PageDocument
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +39,9 @@ class Manager:  # §3.2
 
     launch_configuration_is_explicit: bool = field(default=False, kw_only=True)
 
+    page: PageDocument | None = field(default=None, kw_only=True)
+    page_revision: int = field(default=0, kw_only=True)
+
     stored_agent_key: str | None = field(default=None, kw_only=True, repr=False)
 
     @property
@@ -54,11 +58,18 @@ class ManagerDeletion:
     title: str
 
 
+class HolderPageEditBody(TypedDict):
+    """CLI input for replacement of a Manager or Chief page document."""
+
+    page: PageDocument | None
+
+
 class ManagerWorkspaceDocument(TypedDict):
-    """Selected document only; catalogs have separate bounded readers."""
+    """Selected document and held goals; catalogs have separate bounded readers."""
 
     goal: str
     recap: str
+    goals: list[GoalResponse]
 
 
 class ManagerWorkspaceContent(ManagerWorkspaceDocument):
@@ -73,7 +84,7 @@ class ManagerWorkspaceContent(ManagerWorkspaceDocument):
 # keys carry the string form and are parsed against the contract enums in api.
 
 
-class CreateManagerBody(TypedDict, total=False):  # POST /items
+class CreateManagerBody(TypedDict, total=False):  # POST /managers
     title: str  # default ""
     project: str | None  # legacy project name; route requires project or project_id
     project_id: str | None

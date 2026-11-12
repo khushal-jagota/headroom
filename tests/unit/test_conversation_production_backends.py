@@ -11,6 +11,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 from planner.conversation.production_backends import production_backend_launches
 
 # Where the server under test is answering. Any local origin does; what the tests care
@@ -43,6 +45,38 @@ def test_every_agent_is_told_where_panels_is_answering() -> None:
     assert dict(launches.hermes.environment_overrides)["PLAN_SERVER_URL"] == SERVER_URL
     assert dict(launches.codex.environment_overrides)["PLAN_SERVER_URL"] == SERVER_URL
     assert dict(launches.claude.environment_overrides)["PLAN_SERVER_URL"] == SERVER_URL
+
+
+def test_release_changes_do_not_replace_external_cli_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    external = "/owner/.local/bin/claude"
+    resolver = _machine(codex="/owner/.local/bin/codex", claude=external)
+    monkeypatch.delenv("PLAN_CLAUDE_EXECUTABLE", raising=False)
+    for root in ("/release/old", "/release/new"):
+        monkeypatch.setenv("PLAN_APP_ROOT", root)
+        launches = production_backend_launches(
+            panels_server_url=SERVER_URL, executable_path=resolver
+        )
+        assert launches.claude.claude_executable == Path(external)
+        assert launches.codex.argv[0] == "/owner/.local/bin/codex"
+        # An old permanent Mac supervisor supplies this generated override on handoff.
+        monkeypatch.setenv(
+            "PLAN_CLAUDE_EXECUTABLE",
+            root + "/agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+        )
+        assert production_backend_launches(
+            panels_server_url=SERVER_URL, executable_path=resolver
+        ).claude.claude_executable == Path(external)
+        monkeypatch.delenv("PLAN_CLAUDE_EXECUTABLE")
+    monkeypatch.setenv("PLAN_CLAUDE_EXECUTABLE", "/operator/claude")
+    assert production_backend_launches(
+        panels_server_url=SERVER_URL, executable_path=resolver
+    ).claude.claude_executable == Path("/operator/claude")
+    monkeypatch.delenv("PLAN_CLAUDE_EXECUTABLE")
+    assert production_backend_launches(
+        panels_server_url=SERVER_URL, executable_path=_machine()
+    ).claude.claude_executable == Path("claude")
 
 
 def test_local_providers_refuse_unresolved_executor_workspace(tmp_path: Path) -> None:

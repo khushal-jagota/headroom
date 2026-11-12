@@ -183,16 +183,9 @@ def test_removed_field_approval_survives_edits_and_proposals_until_redeclared(
     tmp_db: Connection,
     fake_clock: TestClock,
     probe_registry: WorkerTypeDefinition,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Hiding a Worker field cannot erase who approved its surviving text."""
-    from tests.support.probe import (
-        PROBE_KNOWN_SKILLS,
-        PROBE_KNOWN_TOOLSET_PROFILES,
-        SHIPPED_DEFINITIONS,
-    )
-
-    from planner.worker_types.registry import WorkerTypeRegistry
+    """Hiding a field from a Ticket's saved workflow cannot erase who approved its text."""
+    from planner.worker_types.store import workflow_from_preset, workflow_to_json
 
     now = fake_clock.now_unix()
     tid = _create(tmp_db, now)
@@ -222,34 +215,38 @@ def test_removed_field_approval_survives_edits_and_proposals_until_redeclared(
         fields=tuple(field for field in probe_registry.fields if field.id != A_FIELD),
         stages=tuple(stage for stage in probe_registry.stages if stage.id != A),
     )
-    registry = WorkerTypeRegistry(
-        SHIPPED_DEFINITIONS + (reduced,),
-        known_skills=PROBE_KNOWN_SKILLS,
-        known_toolset_profiles=PROBE_KNOWN_TOOLSET_PROFILES,
+    # The Ticket owns its workflow, so the field is hidden in the Ticket's own snapshot.
+    (saved_workflow,) = tmp_db.execute(
+        "SELECT workflow_json FROM tickets WHERE id=?", (tid,)
+    ).fetchone()
+    tmp_db.execute(
+        "UPDATE tickets SET workflow_json=? WHERE id=?",
+        (workflow_to_json(workflow_from_preset(reduced)), tid),
     )
-    with monkeypatch.context() as patch:
-        patch.setattr(data, "configured_worker_type_registry", lambda: registry)
-        assert A_FIELD not in data.read_ticket(tmp_db, tid).field_approvals
-        data.edit_ticket(
-            tmp_db,
-            tid,
-            edit={"field_values": {"brief": "New brief"}},
-            title_max_chars=TITLE_MAX_CHARS,
-            principal=OWNER_PRINCIPAL,
-            now=now,
-        )
-        data.file_current_proposal(
-            tmp_db, tid, body="Beta", principal=ticket_principal(tid), now=now
-        )
-        data.accept_proposal(
-            tmp_db,
-            tid,
-            field=B_FIELD,
-            principal=OWNER_PRINCIPAL,
-            now=now,
-            next_ceiling=NO_FURTHER,
-            next_holder=OWNER_PRINCIPAL,
-        )
+    tmp_db.commit()
+    assert A_FIELD not in data.read_ticket(tmp_db, tid).field_approvals
+    data.edit_ticket(
+        tmp_db,
+        tid,
+        edit={"field_values": {"brief": "New brief"}},
+        title_max_chars=TITLE_MAX_CHARS,
+        principal=OWNER_PRINCIPAL,
+        now=now,
+    )
+    data.file_current_proposal(
+        tmp_db, tid, body="Beta", principal=ticket_principal(tid), now=now
+    )
+    data.accept_proposal(
+        tmp_db,
+        tid,
+        field=B_FIELD,
+        principal=OWNER_PRINCIPAL,
+        now=now,
+        next_ceiling=NO_FURTHER,
+        next_holder=OWNER_PRINCIPAL,
+    )
+    tmp_db.execute("UPDATE tickets SET workflow_json=? WHERE id=?", (saved_workflow, tid))
+    tmp_db.commit()
     restored = data.read_ticket(tmp_db, tid)
     assert restored.field_values[A_FIELD] == "Approved alpha"
     assert restored.field_approvals[A_FIELD] == original.field_approvals[A_FIELD]

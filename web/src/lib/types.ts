@@ -1,63 +1,6 @@
 import type { ConversationSignal } from "./conversationSignal";
 export type AnyRecord = Record<string, any>;
 
-export type DeploymentStatusState =
-  | "idle"
-  | "preparing"
-  | "restarting"
-  | "back_up"
-  | "problem"
-  | "unknown";
-
-export type DeploymentOutcome = "succeeded" | "failed" | "rolled_back" | "cancelled";
-
-export type SuccessPresentation = {
-  state: "connected" | "reconnecting" | "back_up";
-  wakeAt: number | null;
-};
-
-export type DeploymentStatus = {
-  state: DeploymentStatusState;
-  deployed_sha: string | null;
-  target_sha: string | null;
-  outcome: DeploymentOutcome | null;
-  detail: string | null;
-  valid_until: string | null;
-  success_display_until: string | null;
-  installation_confirmed?: boolean;
-  work_paused?: boolean;
-  unknown_display_until?: string | null;
-  attention_status?: "pending" | "queued" | "started" | "delivery_uncertain" | "resolved" | "superseded" | null;
-};
-
-export type VpsMetricState = "healthy" | "warning" | "critical" | "unavailable";
-
-export type VpsPercentageMetric = {
-  used_percent: number | null;
-  state: VpsMetricState;
-  unavailable_reason: string | null;
-};
-
-export type VpsBackupMetric = {
-  age_seconds: number | null;
-  state: VpsMetricState;
-  unavailable_reason: string | null;
-};
-
-export type VpsDeploymentSummary = {
-  outcome: DeploymentOutcome | null;
-  detail: string | null;
-};
-
-export type VpsStatusSummary = {
-  deployed_sha: string | null;
-  deployment: VpsDeploymentSummary;
-  cpu: VpsPercentageMetric;
-  ram: VpsPercentageMetric;
-  disk: VpsPercentageMetric;
-  backup: VpsBackupMetric;
-};
-
 // The served Worker-type manifest response (GET /api/worker-types).
 import type { WorkerTypeManifest } from "./lifecycle";
 export type { WorkerTypesResponse } from "./lifecycle";
@@ -143,36 +86,6 @@ export type ProjectsResponse = {
   projects: ProjectSummary[];
 };
 
-export type ScheduleCadence =
-  | "daily"
-  | "every_planning_day"
-  | "current_sprint_day_four"
-  | "current_sprint_final_day";
-
-export type ScheduledTask = {
-  manager_kind?: "chief" | "manager";
-  manager?: Principal;
-  id: string;
-  enabled: boolean;
-  cadence: ScheduleCadence;
-  local_time: string;
-  title: string;
-  worker_type: string;
-  kickoff_note: string;
-  deadline: string | null;
-  project_id: string | null;
-  manager_id: string | null;
-  employee_backend: string | null;
-  employee_launch_model: string | null;
-  blocked_by_ticket_ids: string[];
-  created_at: number;
-  updated_at: number;
-};
-
-export type SchedulesResponse = {
-  schedules: ScheduledTask[];
-};
-
 export type TicketFieldValues = Record<string, string>;
 
 export type PendingTicketProposal = {
@@ -214,9 +127,11 @@ export type WorkerTypeRecordStage = {
   gating_field: string | null;
   is_terminal: boolean;
   ownership_mode: StageOwnershipMode | null;
+  instructions?: string;
 };
 
 export type WorkerTypeRecord = {
+  guidance?: string;
   worker_type: string;
   label: string;
   stages: WorkerTypeRecordStage[];
@@ -300,7 +215,8 @@ export type TicketDetail = {
   manager?: Principal;
   id: string;
   title: string;
-  worker_type: string;
+  worker_type: string | null;
+  workflow?: import("./lifecycle").WorkflowManifest;
   employee_backend: string;
   employee_launch_model: string | null;
   employee_launch_reasoning_effort: string | null;
@@ -360,7 +276,8 @@ export type ManagerWorkspaceTicket = WorkAttention & {
   has_pending_proposal: boolean;
   gating_field: string | null;
   blocked: boolean;
-  worker_type: string;
+  worker_type: string | null;
+  stage_label?: string;
 };
 
 export type ManagerWorkspace = ManagerSummary & {
@@ -397,14 +314,6 @@ import type { ReviewItem } from "./navigation/contracts";
 export type ReviewResponse = {
   items: ReviewItem[];
   running_worker_count: number;
-};
-
-export type BoardResponse = {
-  columns: Array<{
-    stage: string;
-    cards: BoardCard[];
-  }>;
-  managers: BoardManager[];
 };
 
 // A Manager's own identity and its manager's conversation. No card answers for
@@ -448,7 +357,7 @@ export type BoardCard = WorkAttention & {
   activity_at: number;
   has_pending_proposal: boolean;
   ticket_status: string;
-  worker_type: string;
+  worker_type: string | null;
   employee_backend: string;
   stage: string;
   stage_label: string;
@@ -488,7 +397,7 @@ export type NotificationSettingsResponse = {
 export type WorkspaceMessageConversation = {
   locale?: import("./ticketMachines").TicketLocale;
   conversationSignal?: Partial<ConversationSignal>;
-  kind: "chief" | "manager" | "ticket" | "goal";
+  kind: "chief" | "manager" | "ticket";
   id: string;
   title: string;
   conversationId: string;
@@ -498,4 +407,6 @@ export type WorkspaceMessageConversation = {
 };
 
 /** Exact detail-only reply, independent of shared navigation facts. */
-export type ManagerWorkspaceContent = Pick<ManagerWorkspace, "goal" | "recap">;
+export type ManagerWorkspaceContent = Pick<ManagerWorkspace, "goal" | "recap"> & {
+  goals: import("./goals/contracts").GoalResponse[];
+};

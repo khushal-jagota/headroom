@@ -6,7 +6,7 @@ from datetime import date
 from typing import Final
 
 from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
-from planner.worker_types.contracts import RETIRED_WORKER_TYPES, WorkerTypeDefinition
+from planner.worker_types.contracts import RETIRED_WORKER_TYPES, WorkflowDefinition
 
 REVISION_GUIDANCE_MAX_CHARACTERS: Final = 10_000
 
@@ -56,7 +56,7 @@ def check_agent_proposal(
     stage: str,
     field: str,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> None:
     """Whether this Ticket can take a worker submission on this field at all.
 

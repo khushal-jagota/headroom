@@ -57,7 +57,8 @@ export type PromptDeliveryRefusalReason =
   | "running_turn_cannot_accept_steer"
   | "message_cannot_be_steered"
   | "backend_rejected_steer"
-  | "command_cannot_join_running_turn";
+  | "command_cannot_join_running_turn"
+  | "remote_steer_not_delivered";
 
 /** What one message is made of: written words, pictures, and files.
  *
@@ -283,7 +284,6 @@ export type ConversationEvent =
       } & SenderMintedPromptFields
     >
   | Row<"agent_message", StoredMessageContent>
-  | Row<"explicit_reply_missing", { prompt_sender: Principal }>
   | Row<
       "tool_call_started",
       { tool_call_id: string; title: string; tool_kind: string; detail: string | null }
@@ -332,6 +332,9 @@ export type ConversationEvent =
   /** The backend summarised what came before and dropped it. No payload: that it
    *  happened, and where, is the whole of it. */
   | Row<"context_compacted", Record<string, never>>
+  /** The backend's own answer to a slash command, such as a refused or inspected goal.
+   *  Nothing streams it, so this row is the only place it is shown. */
+  | Row<"command_reply", { reply_text: string }>
   /** The agent's plan as it stands now. Each row is the whole plan, not a change to it,
    *  so the newest one is the plan and the ones before it are history. */
   | Row<"plan_updated", { entries: PlanEntry[] }>

@@ -6,12 +6,13 @@ import type { ChartBlock, ChartSeries, ChartProjection } from '../../goals/contr
 import type { LineChartDatum } from './line-chart-integrated';
 import { chartHeadline, chartTone, formatReading, formatAxisTick, hasCountAxis, categoryRange, seriesKey } from '../presentation';
 import { motionTokens } from '../lib/chart-motion';
+import { SeriesLegend } from './series-legend';
 import { seriesColor } from './goal-indicators';
 
 Chart.register(...registerables);
 
-export function Bars({ block, data, series, compact, activeKey, onActive, projection, range = 'all' }: {
-  block: ChartBlock; data: LineChartDatum[]; series: ChartSeries[]; compact: boolean; activeKey: string | null; onActive: (d: LineChartDatum | null) => void; projection?: ChartProjection; range?: string;
+export function Bars({ block, data, series, compact, activeKey, onActive, projection, range = 'all', dateAxis, showLegend = false }: {
+  showLegend?: boolean; block: ChartBlock; data: LineChartDatum[]; series: ChartSeries[]; compact: boolean; dateAxis: boolean; activeKey: string | null; onActive: (d: LineChartDatum | null) => void; projection?: ChartProjection; range?: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null), chart = useRef<Chart<'bar' | 'line'> | null>(null);
   const callback = useRef(onActive); callback.current = onActive;
@@ -30,7 +31,7 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
   const unknownVerdict = (summary: typeof latestSummary) => !!block.binding && !!summary && summary.comparison !== null && summary.meets_expectation === null;
   const currentColor = latest?.actual === undefined ? 'var(--chart-muted)' : unknownVerdict(latestSummary) ? 'var(--chart-muted)' : latest.target === undefined ? 'var(--accent-bright)'
     : { good: 'var(--accent-done)', bad: 'var(--accent-error)', attention: 'var(--accent-attention)', neutral: 'var(--chart-muted)' }[currentTone];
-  const entries = plotted.map((item, i) => ({ key: block.measure_id && i === 0 ? 'actual' : seriesKey(item, i), label: item.name, color: block.stacked ? seriesColor(item, i, 'composition') : i === 0 ? currentColor : seriesColor(item, i, 'composition') }));
+  const entries = plotted.map((item, i) => ({ key: block.measure_id && i === 0 ? 'actual' : seriesKey(item, i), label: item.name, color: block.stacked ? seriesColor(item, i, 'composition') : i === 0 ? showLegend ? 'var(--accent-bright)' : currentColor : seriesColor(item, i, 'composition') }));
   const topStackKey = entries.at(-1)?.key;
   if (data.some(d => d.values.target !== undefined)) entries.push({ key: 'target', label: block.target_label ?? 'Target', color: 'var(--chart-reference)' });
 
@@ -66,7 +67,7 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
             callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y === null ? 'No reading' : formatReading(block, ctx.parsed.y)}` } },
         },
         scales: {
-          x: { stacked: block.stacked, border: { display: false }, grid: { display: false }, ticks: { color: color('--chart-muted'), font: { size: 11 }, maxRotation: 0, maxTicksLimit: 4 } },
+          x: { stacked: block.stacked, border: { display: false }, grid: { display: false }, ticks: { color: color('--chart-muted'), font: { size: 11 }, maxRotation: 0, maxTicksLimit: dateAxis ? 4 : undefined } },
           y: { stacked: block.stacked, position: 'right', beginAtZero: true, min: block.domain?.[0], max: block.domain?.[1], border: { display: false }, grid: { color: color('--chart-grid') }, ticks: { color: color('--chart-muted'), font: { size: 11 }, maxTicksLimit: 5, precision: hasCountAxis(block, projection, range) ? 0 : undefined, callback: v => formatAxisTick(block, Number(v)) } },
         },
         onHover: (event, elements) => {
@@ -81,7 +82,7 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
       chart.current.options = configuration.options;
       chart.current.update();
     } else chart.current = new Chart<'bar' | 'line'>(ref.current, configuration);
-  }, [data, block, series, reduce, projection, range]);
+  }, [data, block, series, reduce, projection, range, dateAxis]);
 
   useEffect(() => () => { chart.current?.destroy(); chart.current = null; }, []);
 
@@ -118,5 +119,6 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
           inspect(next, 'keyboard');
         }} />
     </div>
+    {showLegend && <SeriesLegend series={entries} />}
   </>;
 }

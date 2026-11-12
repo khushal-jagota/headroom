@@ -20,6 +20,7 @@ from tests.support.probe import (
 from tests.support.ticket_progress import advance_ticket
 
 from planner.core import ticket_blocks
+from planner.core.authority.intake import admit_command
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.runtime import worker_step_readiness
@@ -405,6 +406,10 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
     assert _ticket_row(tmp_db, t.id) == row_before
 
     with pytest.raises(PlannerError) as e_agent:
+        admit_command(
+            tmp_db, TEST_TICKET_PRINCIPAL, "POST", "/api/tickets/{ticket_id}/accept/{field}",
+            {"ticket_id": t.id, "field": "what_changes"}, {},
+        )
         data.accept_proposal(
             tmp_db,
             t.id,

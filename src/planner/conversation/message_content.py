@@ -167,9 +167,8 @@ def sender_labeled_composed_message_content(
 ) -> MessageContent:
     """Label only the sender-authored suffix of core-composed wire content.
 
-    When a reply requirement exists, it starts the entire prompt with nothing before it.
-    Role text follows it, and every sender-authored byte follows the authenticated sender
-    label. The same words inside sender content are therefore not trusted instructions.
+    Core-composed text such as role text comes first, and every sender-authored byte
+    follows the sender label.
     """
     sender_piece_count = len(sender_content)
     if sender_piece_count and content[-sender_piece_count:] == sender_content:

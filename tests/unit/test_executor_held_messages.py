@@ -10,6 +10,7 @@ from typing import Any, cast
 
 import pytest
 from tests.support.executor_inbox import lookup_receipt
+from tests.support.executor_presence import mac_identity, make_current
 from tests.support.executor_turns import MacRemoteChildFactory
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
@@ -25,8 +26,7 @@ from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import ChildReference, ExecutorIdentity
+from planner.execution_identity import ChildReference
 from planner.executor.mac_outbox import MacOutbox, OutboxEntry
 from planner.executor.protocol import (
     AcceptanceReceipt,
@@ -46,9 +46,7 @@ from planner.tickets import data
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 
 CHIEF = Principal(PrincipalKind.chief, "chief")
-IDENTITY = ExecutorIdentity(
-    PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "11111111-1111-1111-1111-111111111111", 1
-)
+IDENTITY = mac_identity("11111111-1111-1111-1111-111111111111")
 
 
 class InjectedCrash(RuntimeError):
@@ -88,6 +86,8 @@ class HeldFixture:
     async def new_core(self) -> SqliteProcessConversationSystem:
         for previous in self.systems:
             await previous.shutdown()
+        if hasattr(self, "endpoint"):
+            await self.endpoint.close()
 
         factory = MacRemoteChildFactory(
             lambda start, sink: ChildReference(
@@ -156,34 +156,19 @@ class HeldFixture:
         self.endpoint.bind_conversations(system or self.system)
         return await self.endpoint.inbox.accept(envelope, IDENTITY)
 
-    async def source_reply_credited(
-        self, system: SqliteProcessConversationSystem | None = None
-    ) -> bool:
-        state = (system or self.system)._conversations["c_source"]
-        token = state.running_turn.token if state.running_turn else state.last_ended_turn_token
-        assert token is not None
-        return (
-            self.connection.execute(
-                "SELECT 1 FROM conversation_reply_credits WHERE conversation_id='c_source' "
-                "AND turn_number=? AND principal_kind='chief' AND principal_id='chief'",
-                (token.turn_number,),
-            ).fetchone()
-            is not None
-        )
-
     async def close(self) -> None:
         self.spool.close()
         for system in self.systems:
             for state in system._conversations.values():
                 state.child = None
             await system.shutdown()
+        await self.endpoint.close()
 
 
 async def boot(connection: Connection, root: Path) -> HeldFixture:
     path = str(connection.execute("PRAGMA database_list").fetchone()[2])
     store = InboxStore(path)
-    store.runs.begin_connection(IDENTITY)
-    store.runs.mark_ready(IDENTITY)
+    make_current(path, IDENTITY)
     ticket = data.create_ticket(
         connection,
         title="Held source",
@@ -277,7 +262,6 @@ def test_waiting_native_messages_are_interrupted_without_restore_or_replay(
                 assert (await fixture.deliver(envelope)).result == replay_result(fixture, envelope)
                 fixture.spool.acknowledge(receipt)
             assert fixture.spool.pending() == ()
-            assert not await fixture.source_reply_credited()
             before = list(fixture.native.commands)
             fresh = await fixture.new_core()
             assert await fresh.held_prompts("c_target") == ()
@@ -286,7 +270,6 @@ def test_waiting_native_messages_are_interrupted_without_restore_or_replay(
                     fixture, envelope
                 )
             assert fixture.native.commands == before
-            assert not await fixture.source_reply_credited(fresh)
         finally:
             await fixture.close()
 
@@ -309,10 +292,12 @@ def test_lost_first_receipt_keeps_operation_binding_and_never_repeats_held_send(
                 raise InjectedCrash("first receipt interrupted")
 
             monkeypatch.setattr(service, "send_message", crash)
-            with pytest.raises(InjectedCrash, match="first receipt interrupted"):
-                await fixture.deliver(envelope)
+            # A failure that would repeat is answered, not raised: the answer is the
+            # durable reservation, uncertain, so the Mac never sends the message again.
+            first = await fixture.deliver(envelope)
             saved = lookup_receipt(fixture.store, envelope.sender_id, envelope.submission_id)
             assert saved is not None and saved.result["fate"] == "uncertain"
+            assert first == saved
             before = list(fixture.native.commands)
             fresh = await fixture.new_core()
             monkeypatch.setattr(service, "send_message", send)

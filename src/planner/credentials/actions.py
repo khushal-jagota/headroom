@@ -4,7 +4,6 @@ import sqlite3
 from dataclasses import replace
 from pathlib import Path
 
-from planner.core import authority
 from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
 from planner.core.ids import new_id
 from planner.credentials import data
@@ -216,7 +215,6 @@ def rename_credential(
 def delete_credential(
     conn: sqlite3.Connection, credential_id: str, *, principal: Principal
 ) -> None:
-    authority.require_above(conn, principal, authority.owner_only("credentials"))
     with data.transaction(conn):
         data.read_metadata(conn, credential_id)
         conn.execute("DELETE FROM credentials WHERE id=?", (credential_id,))

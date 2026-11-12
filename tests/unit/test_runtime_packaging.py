@@ -107,41 +107,6 @@ def test_musl_addon_requires_package_selector_and_native_edge(tmp_path: Path) ->
     assert not _inactive_musl(codex.with_name("zsh"), ["libc.so.6"], "/lib64/ld-linux-x86-64.so.2")
 
 
-def test_native_inventory_distinguishes_build_objects_libraries_and_static_pie() -> None:
-    assert (
-        _native_role(
-            ".venv/lib/python3.12/config-3.12-x86_64-linux-gnu/python.o",
-            "Type: REL (Relocatable file)",
-            inactive=False,
-        )
-        == "build object"
-    )
-    assert (
-        _native_role(
-            ".venv/lib/libicudata.so.74",
-            "Type: DYN (Shared object file)",
-            inactive=False,
-        )
-        == "runtime library"
-    )
-    assert (
-        _native_role(
-            "vendor/x86_64-unknown-linux-musl/bin/codex",
-            "Type: DYN (Position-Independent Executable file)",
-            inactive=False,
-        )
-        == "runtime entrypoint"
-    )
-    assert (
-        _native_role(
-            ".venv/bin/ruff",
-            "Type: DYN (Position-Independent Executable file)",
-            inactive=False,
-        )
-        == "development tool"
-    )
-
-
 def test_tk_omission_removes_stale_payload_and_retains_required_extensions(tmp_path: Path) -> None:
     from planner.environments.runtime_packaging import _exclude_tkinter, _stdlib_ignore
 

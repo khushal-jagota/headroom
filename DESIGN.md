@@ -12,7 +12,12 @@ bubble-less assistant, recessed composer).
 ## Surface roles
 
 - `--surface-1` is the main neutral plane; `--surface-2` is the contained neutral
-  plane for cards, menus, controls, and the human message bubble.
+  plane for cards, controls, and the human message bubble. A page card has no edge: its
+  fill alone separates it. The workspace rail's column takes the page's colour with no line
+  between them, and `--surface-rail` fills its bubbles, one close step from the page.
+  `--surface-raised` is the one floating plane, for popovers, menus, tooltips and hover previews (`#2a2a2a`), with a 1px
+  `--border-raised` ring and `--shadow-float`; nothing nests a darker well inside it. The
+  composer field is `--surface-input` with a 1px `--border-input` edge one step lighter.
 - `--surface-recessed` is for wells, editors, code, and persistent selections.
 - `--surface-ink` is the cool near-black conversation band and human-input panel;
   it also supplies dark foreground ink on bright fills.
@@ -52,16 +57,27 @@ bubble-less assistant, recessed composer).
    hand off to smooth streaming, a working marker on a running ticket. Never leave a surface
    frozen and silent.
 
-8. **Use the shared scales.** Typography uses 11, 13, 15, 18, 20, 28, and 30px.
-   The owner asked to preserve sizes while removing serif, so the 18px prose,
-   28px display, and 30px hero sizes are an explicit exception to the five-size
-   limit. Existing sans size exceptions remain unchanged. The radius and spacing
-   scales stay fixed; new sizes need an explicit design decision.
+8. **Use the shared scales.** Text uses six roles and five tones (the "Direction v2 roles"
+   block in `tokens.css`): page title 26/600, section head 15/600, body 14/400 at 1.55,
+   rail title 16/600, row 13.5/400 (500 when it needs the person), and Small 12.5/450 for
+   eyebrows, group headings, meta, dates, counts, axes and table heads. Tones are strong
+   (92%), primary (84%, body and recaps), secondary (62%, dimmed rows, secondary button
+   labels), tertiary (45%, Small text) and faint (32%, placeholders and disabled). The older
+   `--text-*` and `--type-*` names land on these, so no screen can reach a seventh size.
+   Hierarchy comes from tone, not from more sizes and weights. Nothing marks a
+   selected or current state with a left-edge line: selection is a fill. Every page has one
+   line above its title (where it lives, then its own facts) and only its recap below; the
+   rail keeps one left edge, with the Manager's name, not an indent, carrying its structure.
+   There is one button (`Button.svelte`, `.button`): 28px tall, radius 8, padding 0 12,
+   label 13.5/450; primary is inverse, secondary a 13% fill, ghost no fill; a hover adds
+   one 6% step. There is one segmented control (`SegmentedControl.svelte`, `.segmented`)
+   with a 12% selected segment, and one focus ring: 1.5px accent, 2px off the control.
+   Surfaces use the 12px radius. The radius and spacing scales stay fixed; new sizes need
+   an explicit design decision.
 
-9. **One sans voice.** Content and controls use the same system sans stack
-   (`--font-ui`). Hierarchy comes from size, weight, spacing, and emphasis. Former
-   serif text keeps its larger 18px prose, 28px display, and 30px hero sizes.
-   Smaller body text uses 15px and section titles use 20px. Code, diffs, tool output,
+9. **One sans voice.** Content and controls use the same sans stack (`--font-ui`):
+   the system face on a Mac, and the self-hosted Inter (`assets/fonts/`) everywhere
+   else. Hierarchy comes from size, weight, spacing, and emphasis. Code, diffs, tool output,
    and `code`, `pre`, `kbd`, and `samp` retain monospace because alignment carries meaning. Italics are for
    input placeholders and the quiet line on a Manager page.
 

@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from planner.execution_identity import ChildReference
 from planner.executor.configuration import (
@@ -20,8 +20,9 @@ from planner.executor.configuration import (
 from planner.executor.files import (
     safe_component,
 )
-from planner.executor.mac_connection import MacConnection
+from planner.executor.mac_http import ExecutorHttpError
 from planner.executor.mac_outbox import MacOutbox, OutboxEntry
+from planner.executor.mac_presence import MacPresence
 from planner.executor.mac_runner import MacRunner, RunningChild
 from planner.executor.protocol import (
     AcceptanceReceipt,
@@ -39,12 +40,14 @@ from planner.executor.protocol import (
     QuiesceRequest,
     ReceiptDisposition,
     UnconfirmedCliResult,
-    WireMessageKind,
     as_object,
     encode_frame,
     read_typed_frame,
     type_adapter,
 )
+
+if TYPE_CHECKING:
+    from planner.executor.contracts import MacHttpClient
 
 
 class AgentGateway:
@@ -53,13 +56,15 @@ class AgentGateway:
         *,
         runner: MacRunner,
         outbox: MacOutbox,
-        connection: MacConnection,
+        presence: MacPresence,
+        client: MacHttpClient | None,
         request_exit: Callable[[], None],
         settle_catalogs: Callable[[], Awaitable[None]],
     ) -> None:
         self.runner = runner
         self.spool = outbox
-        self.connection = connection
+        self.presence = presence
+        self.client = client
         self._request_exit = request_exit
         self._settle_catalogs = settle_catalogs
         self._publishing: dict[str, tuple[ChildReference, asyncio.Task[QueuedEnvelope]]] = {}
@@ -69,7 +74,8 @@ class AgentGateway:
     async def handle(self, request: IpcRequest) -> IpcResponse:
         try:
             if request.operation == IpcOperation.health:
-                return IpcResponse(request.request_id, as_object(self.connection.health()), None)
+                status = self.presence.status(admission_stopped=self.runner.admission_stopped)
+                return IpcResponse(request.request_id, as_object(status), None)
             if request.operation == IpcOperation.quiesce:
                 return await self._quiesce(request)
             child = self.runner.authenticate(request.child_id, request.capability)
@@ -98,7 +104,7 @@ class AgentGateway:
     async def _quiesce(self, request: IpcRequest) -> IpcResponse:
         maintenance = type_adapter(QuiesceRequest).validate_python(request.payload)
         async with self._quiesce_lock:
-            self.connection.admission_stopped = True
+            self.runner.admission_stopped = True
             await self._settle_catalogs()
             quiescence = await self.runner.quiesce()
             exit_committed = quiescence.ready and maintenance.exit_when_ready
@@ -106,25 +112,30 @@ class AgentGateway:
                 self.exit_committed = True
                 self._request_exit()
             result = QuiescenceReceipt(
-                self.connection.identity, os.getpid(), quiescence, exit_committed
+                self.presence.identity, os.getpid(), quiescence, exit_committed
             )
             return IpcResponse(request.request_id, as_object(result), None)
 
     async def _read(self, request: IpcRequest, child: RunningChild) -> IpcResponse:
-        link = self.connection.ready_link()
-        if link is None:
+        """A read goes straight to the VPS and is never answered from the journal."""
+        if self.client is None:
             raise ConnectionError("VPS unavailable; reads never use journal")
-        response = await link.request(
-            WireMessageKind.read_request,
-            as_object(
-                LiveReadRequest(
-                    child.reference,
-                    str(request.payload["path"]),
-                    cast(JsonObject, request.payload.get("params", {})),
-                )
-            ),
+        read = LiveReadRequest(
+            child.reference,
+            str(request.payload["path"]),
+            cast(JsonObject, request.payload.get("params", {})),
         )
-        return IpcResponse(request.request_id, response.payload, None)
+        try:
+            result = await self.client.read(read)
+        except ExecutorHttpError as error:
+            if error.status == 400:
+                raise ValueError(error.message or "read refused") from error
+            if error.status == 403:
+                raise PermissionError(error.message or "read forbidden") from error
+            raise ConnectionError(f"VPS read failed: HTTP {error.status} {error.code}") from error
+        except Exception as error:  # A timeout, a dropped request, a malformed answer.
+            raise ConnectionError(f"VPS read failed: {type(error).__name__}") from error
+        return IpcResponse(request.request_id, result, None)
 
     async def _retry(self, request: IpcRequest, child: RunningChild) -> IpcResponse:
         retry = type_adapter(IpcRetryPayload).validate_python(request.payload)

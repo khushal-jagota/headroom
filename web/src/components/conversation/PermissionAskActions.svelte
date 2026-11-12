@@ -98,7 +98,7 @@
     background: var(--accent-bright);
     border-color: var(--accent-bright);
     color: var(--surface-ink);
-    font-weight: 600;
+    font-weight: 660;
   }
   .c2-ask-answer.is-primary:hover { filter: brightness(1.08); }
   .c2-ask-answer.is-supplied { border-style: dashed; }

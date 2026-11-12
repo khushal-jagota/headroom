@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Iterable
 
 from planner.conversation.contracts import ConversationAttention, ConversationSystem
@@ -19,20 +18,21 @@ async def read_conversation_signals(
     ids = set(conversation_ids)
     durable = await conversation_record.attention_facts(ids)
 
-    async def one(conversation_id: str) -> tuple[str, ConversationAttention]:
-        running, permission, question = await asyncio.gather(
-            conversation_system.is_running(conversation_id),
-            conversation_system.has_pending_permission_ask(conversation_id),
-            conversation_system.has_pending_user_input(conversation_id),
-        )
-        fact = durable.get(conversation_id, ConversationAttentionFacts(False, False))
-        return conversation_id, ConversationAttention(
+    # Each check reads live state and never waits, so they run in turn. Gathering them
+    # cost three tasks per conversation, thousands for one list read.
+    signals: dict[str, ConversationAttention] = {}
+    for conversation_id in ids:
+        running = await conversation_system.is_running(conversation_id)
+        permission = await conversation_system.has_pending_permission_ask(conversation_id)
+        question = await conversation_system.has_pending_user_input(conversation_id)
+        fact = durable.get(conversation_id, ConversationAttentionFacts(False, False, False))
+        signals[conversation_id] = ConversationAttention(
             signal=conversation_signal(
-                is_running=running,
+                turn_is_running=running,
+                has_live_background_task=fact.has_live_background_task,
                 unread_message_to_owner=fact.unread_message_to_owner,
             ),
             awaiting_answer=permission or question,
             last_turn_failed=fact.last_turn_failed,
         )
-
-    return dict(await asyncio.gather(*(one(conversation_id) for conversation_id in ids)))
+    return signals

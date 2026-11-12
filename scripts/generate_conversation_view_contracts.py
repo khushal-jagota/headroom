@@ -85,21 +85,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument("--check", action="store_true")
     arguments = parser.parse_args()
-    from pydantic import TypeAdapter
-
-    from planner.conversation.views.contracts import ViewRowBody
-
-    schema_target = ROOT / "web/src/lib/conversation/view/bodySchema.ts"
-    schema_content = (
-        "// Generated from the canonical ViewRowBody. Do not edit.\nexport default "
-        + json.dumps(TypeAdapter(ViewRowBody).json_schema(), separators=(",", ":"))
-        + ";\n"
-    )
-    if arguments.check:
-        if not schema_target.exists() or schema_target.read_text() != schema_content:
-            raise SystemExit("Conversation body schema drifted. Regenerate contracts.")
-    else:
-        schema_target.write_text(schema_content)
     target = ROOT / "web/src/lib/conversation/view/contracts.ts"
     content = generate()
     if arguments.check:

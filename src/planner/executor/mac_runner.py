@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import logging
 import secrets
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 from uuid import uuid4
 
 from planner.conversation.backends.contracts import (
@@ -21,10 +22,15 @@ from planner.conversation.backends.contracts import (
     BackendSpawnFailed,
     BackendSteerAccepted,
     BackendSteerRefused,
+    BackendStreamEnded,
+    BackgroundTaskEnded,
+    BackgroundTaskStarted,
     NeedsRebind,
     PermissionAskRaised,
     PromptWriteRefused,
     SessionLoadFailed,
+    ToolCallFinished,
+    ToolCallStarted,
     TurnEnded,
     TurnToken,
     UserInputRequested,
@@ -35,8 +41,8 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
     WorkspacePathPolicy,
 )
-from planner.conversation.logic.addressed_reply import with_runtime_prompt_context
-from planner.conversation.message_content import MessageFile
+from planner.conversation.events import ConversationTurnEnding
+from planner.conversation.message_content import MessageFile, prefix_message_content_text
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.production_backends import production_backend_child_factories
 from planner.execution_identity import (
@@ -49,17 +55,12 @@ from planner.executor.configuration import (
     EXECUTOR_CAPABILITY_ENV,
     EXECUTOR_CHILD_ID_ENV,
     EXECUTOR_ROOT_ENV,
+    MAX_TOOL_DETAIL_CHARACTERS,
     NATIVE_SKILLS_DIR_ENV,
     NATIVE_WORKER_CONTEXT,
     ExecutorPaths,
 )
-from planner.executor.files import (
-    contained_path,
-    install_verified,
-    safe_component,
-)
-from planner.executor.link_files import get_file, settled_io
-from planner.executor.mac_connection import MacConnection
+from planner.executor.files import safe_component
 from planner.executor.mac_event_sink import NativeEventSink
 from planner.executor.mac_outbox import OutboxEntry
 from planner.executor.protocol import (
@@ -70,32 +71,30 @@ from planner.executor.protocol import (
     BackendEventMethod,
     CancelTurn,
     ChildCommand,
-    ChildInventory,
     ChildOperation,
     CommandDisposition,
     CommandOutcome,
-    CommandState,
+    CommandResult,
     DurableAnswer,
     EnvelopeKind,
-    FileDownloadRequest,
-    FileScope,
-    FileTransfer,
     JsonObject,
+    MailboxCommand,
     QueuedEnvelope,
     Quiescence,
     StartRun,
     Steer,
-    WireMessageKind,
-    WithdrawCommands,
+    StopRun,
+    WorkingTurn,
     WritePrompt,
-    as_object,
     encode_backend_event,
     encode_value,
     type_adapter,
 )
 from planner.executor.skills import install_native_skill_snapshot, native_skill_home
-from planner.files.logic.paths import conversation_files_root
-from planner.workspace_localization import localize_workspace
+from planner.workspace_localization import localize_workspace, require_safe_relative_workspace
+
+if TYPE_CHECKING:
+    from planner.executor.contracts import CommandJournalApi, MacFilesApi
 
 
 class MacOutboxWriter(Protocol):
@@ -106,8 +105,106 @@ class MacOutboxWriter(Protocol):
     def pending_count(self) -> int: ...
 
 
+class MacLiveEvents(Protocol):
+    """Lossy live delivery; sending never waits on the VPS."""
+
+    def send(self, event: BackendEvent) -> None: ...
+
+
+class MacAgentProcesses(Protocol):
+    def record_children(self) -> None: ...
+
+
 class _CommandAdmissionRefused(Exception):
     """An admission guard proved that the native command was not dispatched."""
+
+
+# A write_prompt for a child whose start failed is refused with this reason. Its R1
+# turn failure is then followed by R2, a stop proof, so the VPS retires the child.
+CHILD_START_FAILED = "child_start_failed"
+
+
+def _digest(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _stop_proof(outcome: CommandOutcome, submission_id: str) -> OutboxEntry:
+    # Last in this child's FIFO: accepting this item proves prior output arrived.
+    return OutboxEntry(
+        outcome.child.conversation_id,
+        EnvelopeKind.child_stopped,
+        cast(JsonObject, encode_value(outcome)),
+        submission_id,
+    )
+
+
+def owed_outputs(command: ChildCommand, outcome: CommandOutcome) -> tuple[OutboxEntry, ...]:
+    """The outbox items a finished command owes, each with a fixed submission ID, so a
+    publication repeated after a crash adds nothing new to a pending outbox."""
+    if outcome.disposition is CommandDisposition.succeeded:
+        if command.operation is ChildOperation.stop:
+            return (_stop_proof(outcome, "stopped_" + _digest(command.command_id)),)
+        application = outcome.result.get("answer_application")
+        if command.operation in (
+            ChildOperation.answer_permission_ask,
+            ChildOperation.answer_user_input,
+        ) and isinstance(application, dict):
+            answer = type_adapter(AnswerApplication).validate_python(application)
+            return (
+                OutboxEntry(
+                    answer.ask.child.conversation_id,
+                    EnvelopeKind.answer_application,
+                    cast(JsonObject, encode_value(answer)),
+                    "application_" + _digest(answer.answer_id),
+                ),
+            )
+        return ()
+    if command.operation is not ChildOperation.write_prompt or command.turn is None:
+        return ()
+    # R1: the turn this prompt started ends failed, so the VPS never waits on it.
+    detail = str(
+        outcome.result.get("error_message")
+        or outcome.result.get("reason")
+        or outcome.disposition.value
+    )[:MAX_TOOL_DETAIL_CHARACTERS]
+    text = (
+        f"The Mac could not deliver this message: {detail}"
+        if outcome.disposition is CommandDisposition.refused
+        else f"The Mac lost track of this message; it may have reached the agent: {detail}"
+    )
+    method, arguments = encode_backend_event(
+        TurnEnded(ending=ConversationTurnEnding.failed, error_summary=text)
+    )
+    outputs = [
+        OutboxEntry(
+            command.child.conversation_id,
+            EnvelopeKind.backend_event,
+            cast(
+                JsonObject,
+                encode_value(BackendEvent(command.child, method, command.turn, arguments)),
+            ),
+            "turn_failed_" + _digest(command.command_id),
+        )
+    ]
+    if outcome.result.get("reason") == CHILD_START_FAILED:
+        # R2: the same stop proof prepare_update publishes, under a fixed identity.
+        stopped = CommandOutcome(
+            f"start_failed_stop_{command.child.child_id}",
+            command.child,
+            CommandDisposition.succeeded,
+            {},
+        )
+        outputs.append(_stop_proof(stopped, "start_failed_stop_" + _digest(command.child.child_id)))
+    return tuple(outputs)
+
+
+def command_owes_outputs(command: MailboxCommand, result: CommandResult) -> bool:
+    child_command, outcome = command.child_command, result.child_outcome
+    return (
+        child_command is not None
+        and outcome is not None
+        and bool(owed_outputs(child_command, outcome))
+    )
 
 
 _REFUSALS = (
@@ -134,7 +231,8 @@ def _error_outcome(command: ChildCommand, error: Exception) -> CommandOutcome:
         CommandDisposition.refused if refusal is not None else CommandDisposition.uncertain,
         {
             "error_type": refusal.__name__ if refusal is not None else type(error).__name__,
-            "error_message": str(error),
+            # Bounded, so one result can never outgrow a report.
+            "error_message": str(error)[:MAX_TOOL_DETAIL_CHARACTERS],
         },
     )
 
@@ -150,6 +248,9 @@ class RunningChild:
     backend_key: ConversationBackendKey
     active_turn: TurnToken | None = None
     asks: dict[str, AskReference] = field(default_factory=dict)
+    background_task_ids: set[str] = field(default_factory=set)
+    # Tool calls of the active turn that started and have not finished.
+    open_tool_calls: set[str] = field(default_factory=set)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     model: str | None = None
     reasoning_effort: str | None = None
@@ -162,8 +263,11 @@ class _CommandRecord:
     preparation: asyncio.Task[None] | None = None
     outcome: CommandOutcome | None = None
     invoking: bool = False
-    required_output: AnswerApplication | CommandOutcome | None = None
-    output_published: bool = False
+    # A mailbox command has a journal row; a synthetic update stop does not.
+    journaled: bool = True
+    journal_finished: bool = False
+    outputs: tuple[OutboxEntry, ...] = ()
+    outputs_published: bool = False
 
     @property
     def phase(self) -> Literal["preparing", "invoking", "finished"]:
@@ -180,26 +284,37 @@ class MacRunner:
         outbox: MacOutboxWriter,
         factory: Callable[[ResolvedConversationStart], BackendChildFactory] | None = None,
         panels_server_url: str = "",
-        connection: MacConnection,
         message_files: ConversationMessageFiles,
         paths: ExecutorPaths,
         workspace_home: Path | None = None,
+        journal: CommandJournalApi | None = None,
+        files: MacFilesApi | None = None,
+        live: MacLiveEvents | None = None,
+        agent_processes: MacAgentProcesses | None = None,
     ) -> None:
         self.workspace_home = workspace_home or Path.home()
         self.paths = paths
         self.incarnation = incarnation
         self.outbox = outbox
-        self.connection = connection
+        self.journal = journal
+        self.files = files
+        self.live = live
+        self.agent_processes = agent_processes
         self.factory = factory or self._factory(panels_server_url)
         self.message_files = message_files
         self._children: dict[str, RunningChild] = {}
         self._withdrawn_commands: set[str] = set()
         self._commands: dict[str, _CommandRecord] = {}
         self.admission_stopped = False
+        self.planned_update_replay = False
+        self._planned_replay_finished = asyncio.Event()
+        self._planned_replay_finished.set()
         self._retired_children: set[str] = set()
         self._retiring_children: set[str] = set()
         self._source_tasks: dict[ChildReference, set[asyncio.Task[object]]] = {}
         self._failed_source_work: set[ChildReference] = set()
+        # Children whose start ended refused or uncertain, with the reason shown for it.
+        self._start_failed: dict[str, str] = {}
 
     def authenticate(self, child_id: str | None, capability: str | None) -> RunningChild:
         child = self._children.get(child_id or "")
@@ -247,59 +362,33 @@ class MacRunner:
 
         return factory
 
-    async def _send_live_event(self, event: BackendEvent) -> None:
-        link = self.connection.ready_link()
-        if link is not None:
-            with contextlib.suppress(ConnectionError, OSError):
-                await link.tell(WireMessageKind.live_backend_event, as_object(event))
+    def send_live_event(self, event: BackendEvent) -> None:
+        if self.live is not None:
+            self.live.send(event)
+
+    def working_turns(self) -> tuple[WorkingTurn, ...]:
+        """Each active turn, and whether one of its tool calls is still running."""
+        return tuple(
+            WorkingTurn(child.reference, child.active_turn, bool(child.open_tool_calls))
+            for child in self._children.values()
+            if child.active_turn is not None
+        )
 
     async def _prepare_inputs(self, command: ChildCommand) -> None:
         args = command.arguments
-        if not isinstance(args, (WritePrompt, Steer)):
+        if not isinstance(args, (WritePrompt, Steer)) or not any(
+            isinstance(piece, MessageFile)
+            for content in (args.content, args.sender_content or ())
+            for piece in content
+        ):
             return
-        seen: set[str] = set()
-        for content in (args.content, args.sender_content or ()):
-            for piece in content:
-                if isinstance(piece, MessageFile) and piece.stored_file_id not in seen:
-                    seen.add(piece.stored_file_id)
-                    await self._download_input(command, piece.stored_file_id)
-
-    async def _download_input(self, command: ChildCommand, stored_file_id: str) -> None:
-        link = self.connection.link
-        if link is None:
-            raise ConnectionError("executor link unavailable")
-        temporary = self.paths.run / (".input-" + uuid4().hex)
-        try:
-            async with link.transfer_capacity():
-                response = await link.request(
-                    WireMessageKind.get_file,
-                    as_object(FileDownloadRequest(command.command_id, stored_file_id)),
-                )
-                slot = type_adapter(FileTransfer).validate_python(response.payload)
-                manifest = slot.manifest
-                if (
-                    response.kind is not WireMessageKind.file_transfer
-                    or slot.direction != "download"
-                    or manifest.scope is not FileScope.conversation
-                    or manifest.owner_id != command.child.conversation_id
-                    or Path(manifest.relative_path).name != stored_file_id
-                ):
-                    raise ValueError("invalid input transfer")
-                root = conversation_files_root(self.paths.message_files_anchor)
-                target = contained_path(
-                    root, f"{safe_component(manifest.owner_id)}/{manifest.relative_path}"
-                )
-                self.paths.run.mkdir(parents=True, exist_ok=True, mode=0o700)
-                await get_file(link, slot, temporary)
-                if link is not self.connection.link:
-                    raise ConnectionError("input generation changed")
-
-                await settled_io(install_verified, temporary, target, manifest)
-
-        finally:
-            temporary.unlink(missing_ok=True)
+        if self.files is None:
+            raise ConnectionError("this runner has no file client")
+        await self.files.download_inputs(command)
 
     async def run(self, command: ChildCommand) -> CommandOutcome:
+        """Run a command once. A repeat returns its outcome and finishes what it owes:
+        the journal result, then its outbox output. It never repeats the native call."""
         record = self._commands.get(command.command_id)
         if record is not None and record.command != command:
             raise ValueError("command id reused with different content")
@@ -307,42 +396,42 @@ class MacRunner:
             record = _CommandRecord(command)
             self._commands[command.command_id] = record
         if record.outcome is not None:
-            await self._publish_required_output(record)
+            await self._settle(record)
             return record.outcome
         if record.task is None:
             record.task = asyncio.create_task(self._execute(command))
         # Socket cancellation must not cancel a native operation whose fate is unknown.
         return await asyncio.shield(record.task)
 
-    async def flush_command_output(self, command_ids: tuple[str, ...]) -> None:
-        """Retry required output after a failed disk write, never the native operation."""
-        for command_id in command_ids:
-            record = self._commands.get(command_id)
-            if record is not None and record.outcome is not None:
-                await self._publish_required_output(record)
-
-    def ask(self, command_ids: tuple[str, ...]) -> tuple[CommandState, ...]:
-        states: list[CommandState] = []
-        for command_id in command_ids:
-            record = self._commands.get(command_id)
-            states.append(
-                CommandState(
-                    command_id,
-                    "unknown" if record is None else record.phase,
-                    record.outcome if record is not None else None,
-                )
+    async def _settle(self, record: _CommandRecord) -> None:
+        """Record the result, then publish what it owes, then mark that published."""
+        outcome = record.outcome
+        assert outcome is not None
+        command_id = record.command.command_id
+        if self.journal is not None and record.journaled and not record.journal_finished:
+            await asyncio.to_thread(
+                self.journal.finish,
+                command_id,
+                CommandResult(command_id, child_outcome=outcome),
+                outputs_owed=bool(record.outputs),
             )
-        return tuple(states)
+            record.journal_finished = True
+        if record.outputs_published or not record.outputs:
+            return
+        for entry in record.outputs:
+            await asyncio.to_thread(self.outbox.add, entry)
+        if self.journal is not None and record.journaled:
+            await asyncio.to_thread(self.journal.mark_outputs_published, command_id)
+        record.outputs_published = True
 
-    def children(self) -> tuple[ChildInventory, ...]:
-        return tuple(
-            ChildInventory(
-                child.reference,
-                child.active_turn,
-                tuple(child.asks.values()),
-            )
-            for child in self._children.values()
-        )
+    async def publish_owed_outputs(self, command: MailboxCommand, result: CommandResult) -> None:
+        """Publish again what a finished command owes (after a crash, or a repeat)."""
+        child_command, outcome = command.child_command, result.child_outcome
+        if child_command is not None and outcome is not None:
+            for entry in owed_outputs(child_command, outcome):
+                await asyncio.to_thread(self.outbox.add, entry)
+        if self.journal is not None:
+            await asyncio.to_thread(self.journal.mark_outputs_published, command.command_id)
 
     def _localize_start(
         self,
@@ -355,9 +444,17 @@ class MacRunner:
     ) -> ResolvedConversationStart:
         try:
             if resolved.workspace_path_policy == WorkspacePathPolicy.executor_default:
-                self.paths.workspace.mkdir(parents=True, exist_ok=True)
+                # A Project start names its folder inside the workspace. Make it here.
+                subfolder = (
+                    None
+                    if workspace_home_relative is None
+                    else require_safe_relative_workspace(workspace_home_relative)
+                )
+                (self.paths.workspace / (subfolder or "")).mkdir(parents=True, exist_ok=True)
                 workspace = localize_workspace(
-                    self.paths.workspace, workspace_home=self.workspace_home
+                    self.paths.workspace,
+                    workspace_home=self.paths.workspace,
+                    workspace_home_relative=subfolder,
                 )
                 workspace.relative_to(self.paths.root.resolve(strict=True))
             else:
@@ -448,8 +545,8 @@ class MacRunner:
                 await self._finish_source_work(reference)
             if reference in self._failed_source_work or any(
                 record.command.child == reference
-                and record.required_output is not None
-                and not record.output_published
+                and record.outputs
+                and not record.outputs_published
                 for record in self._commands.values()
             ):
                 raise RuntimeError("required source publication failed")
@@ -457,7 +554,10 @@ class MacRunner:
             return _outcome(
                 command,
                 CommandDisposition.uncertain,
-                {"error_type": type(error).__name__, "error_message": str(error)},
+                {
+                    "error_type": type(error).__name__,
+                    "error_message": str(error)[:MAX_TOOL_DETAIL_CHARACTERS],
+                },
             )
         self._retired_children.add(reference.child_id)
         if child is not None and self._children.get(reference.child_id) is child:
@@ -515,13 +615,29 @@ class MacRunner:
             backend_key=resolved.backend_key,
         )
         self._children[command.child.child_id] = child
-        async with child.lock:
-            self._check_child_admission(child)
-            self._mark_invoking(command)
-            await native.start(
-                resolved,
-                vendor_session_cursor=args.vendor_session_cursor,
-            )
+        try:
+            async with child.lock:
+                self._check_child_admission(child)
+                self._mark_invoking(command)
+                await native.start(
+                    resolved,
+                    vendor_session_cursor=args.vendor_session_cursor,
+                )
+        except BaseException:
+            # A failed start leaves no child to address: its prompts are refused (R1, R2).
+            if self._children.get(command.child.child_id) is child:
+                del self._children[command.child.child_id]
+            with contextlib.suppress(Exception):
+                await native.stop()
+            raise
+        finally:
+            if self.agent_processes is not None:
+                try:
+                    await asyncio.to_thread(self.agent_processes.record_children)
+                except Exception as error:  # Priority is best effort; the start stands.
+                    logging.getLogger(__name__).warning(
+                        "agent processes were not recorded error=%s", type(error).__name__
+                    )
         return {}
 
     def _check_child_admission(self, child: RunningChild) -> None:
@@ -546,7 +662,7 @@ class MacRunner:
         try:
             result = await child.native.write_prompt(
                 command.turn,
-                with_runtime_prompt_context(args.content, NATIVE_WORKER_CONTEXT),
+                prefix_message_content_text(args.content, NATIVE_WORKER_CONTEXT, "\n\n"),
                 sender_label=args.sender_label,
                 sender_content=args.sender_content,
                 sender_message_count=args.sender_message_count,
@@ -572,7 +688,7 @@ class MacRunner:
         self._mark_invoking(command)
         outcome = await child.native.steer(
             command.turn,
-            with_runtime_prompt_context(args.content, NATIVE_WORKER_CONTEXT),
+            prefix_message_content_text(args.content, NATIVE_WORKER_CONTEXT, "\n\n"),
             sender_content=args.sender_content,
             sender_label=args.sender_label,
         )
@@ -612,7 +728,6 @@ class MacRunner:
         if ask is None:
             return {}
         application = AnswerApplication(command.command_id, ask, now_ms())
-        self._commands[command.command_id].required_output = application
         return {"answer_application": encode_value(application)}
 
     async def _answer_permission(
@@ -630,15 +745,6 @@ class MacRunner:
         self._mark_invoking(command)
         await child.native.answer_user_input(args.request_id, args.answers)
         return self._answer_application(command, child.asks.pop(args.request_id, None))
-
-    def withdraw_commands(self, request: WithdrawCommands) -> tuple[str, ...]:
-        if request.child.executor_incarnation != self.incarnation:
-            raise ValueError("withdraw belongs to another executor")
-        for command_id in request.command_ids:
-            previous = self._commands.get(command_id)
-            if previous is not None and previous.command.child != request.child:
-                raise ValueError("withdraw command belongs to another child")
-        return tuple(key for key in request.command_ids if self.withdraw(key))
 
     def withdraw(self, command_id: str) -> bool:
         """True proves this command has not called, and now cannot call, its provider."""
@@ -665,13 +771,19 @@ class MacRunner:
             outcome = await self._dispatch(command)
         except Exception as error:
             outcome = _error_outcome(command, error)
-        record.outcome = outcome
+        child_id = command.child.child_id
         if (
-            command.operation is ChildOperation.stop
-            and outcome.disposition is CommandDisposition.succeeded
+            command.operation is ChildOperation.start
+            and outcome.disposition is not CommandDisposition.succeeded
+            and child_id not in self._retiring_children
+            and child_id not in self._retired_children
         ):
-            record.required_output = outcome
-        await self._publish_required_output(record)
+            self._start_failed[child_id] = str(
+                outcome.result.get("error_message") or outcome.result.get("reason") or "unknown"
+            )
+        record.outcome = outcome
+        record.outputs = owed_outputs(command, outcome)
+        await self._settle(record)
         return outcome
 
     async def _prepare(self, record: _CommandRecord) -> None:
@@ -710,7 +822,21 @@ class MacRunner:
             result = await self._start_run(command, args)
         else:
             child = self._children.get(command.child.child_id)
-            if child is None or child.reference != command.child:
+            if child is None:
+                # Commands run in order after their start, so this process never started
+                # the child: its start failed here, or in the process this one took over
+                # from in a planned handoff. Nothing reached an agent (R1, then R2).
+                return _outcome(
+                    command,
+                    CommandDisposition.refused,
+                    {
+                        "reason": CHILD_START_FAILED,
+                        "error_message": self._start_failed.get(
+                            command.child.child_id, "the Mac has no agent for this conversation"
+                        ),
+                    },
+                )
+            if child.reference != command.child:
                 return _outcome(command, CommandDisposition.uncertain, {"reason": "child_gone"})
             async with child.lock:
                 self._check_child_admission(child)
@@ -733,35 +859,6 @@ class MacRunner:
             if result.get("kind") == "steer_uncertain"
             else CommandDisposition.succeeded,
             result,
-        )
-
-    async def _publish_required_output(self, record: _CommandRecord) -> None:
-        output = record.required_output
-        if output is None or record.output_published:
-            return
-        if isinstance(output, AnswerApplication):
-            kind = EnvelopeKind.answer_application
-            child = output.ask.child
-            submission_id = "application_" + hashlib.sha256(output.answer_id.encode()).hexdigest()
-        else:
-            # Last in this child's FIFO: accepting this item proves prior output arrived.
-            kind = EnvelopeKind.child_stopped
-            child = output.child
-            submission_id = "stopped_" + hashlib.sha256(output.command_id.encode()).hexdigest()
-        await self._emit(child.conversation_id, kind, output, submission_id=submission_id)
-        record.output_published = True
-
-    async def _emit(
-        self,
-        conversation_id: str,
-        kind: EnvelopeKind,
-        value: object,
-        submission_id: str | None = None,
-    ) -> None:
-        payload = cast(JsonObject, encode_value(value))
-        await asyncio.to_thread(
-            self.outbox.add,
-            OutboxEntry(conversation_id, kind, payload, submission_id),
         )
 
     async def report_event(
@@ -799,10 +896,21 @@ class MacRunner:
             child.asks[request.request_id] = AskReference(
                 reference, turn, request.request_id, AskKind.user_input
             )
+        elif isinstance(event, ToolCallStarted):
+            child.open_tool_calls.add(event.tool_call_id)
+        elif isinstance(event, ToolCallFinished):
+            child.open_tool_calls.discard(event.tool_call_id)
         elif isinstance(event, TurnEnded):
             if child.active_turn == turn:
                 child.active_turn = None
                 child.asks.clear()
+                child.open_tool_calls.clear()
+        elif isinstance(event, BackgroundTaskStarted):
+            child.background_task_ids.add(event.task_id)
+        elif isinstance(event, BackgroundTaskEnded):
+            child.background_task_ids.discard(event.task_id)
+        elif isinstance(event, BackendStreamEnded):
+            child.background_task_ids.clear()
         method, arguments = encode_backend_event(event)
         wire_event = BackendEvent(reference, method, turn, arguments)
         await asyncio.to_thread(
@@ -845,7 +953,7 @@ class MacRunner:
             if (outcome := record.outcome) is not None
         )
         unresolved += sum(
-            record.required_output is not None and not record.output_published
+            bool(record.outputs) and not record.outputs_published
             for record in self._commands.values()
         )
         unresolved += sum(len(tasks) for tasks in self._source_tasks.values())
@@ -868,3 +976,77 @@ class MacRunner:
             counts = self._quiescence_counts()
             stopped = not self._children and not any(counts)
         return Quiescence(True, *counts, stopped)
+
+    def resume_after_cancelled_update(self) -> None:
+        self.admission_stopped = False
+
+    def begin_planned_replay(self) -> None:
+        """A planned handoff: nothing is admitted until the update controller admits this
+        runtime. The previous runtime's saved output is sent meanwhile, and after."""
+        self.planned_update_replay = True
+        self._planned_replay_finished.clear()
+        self.admission_stopped = True
+
+    async def planned_replay_finished(self) -> None:
+        await self._planned_replay_finished.wait()
+
+    def finish_planned_replay(self) -> None:
+        self.planned_update_replay = False
+        self._planned_replay_finished.set()
+
+    async def prepare_update(self, mode: Literal["now", "idle"]) -> bool:
+        """Stop processes, but retain output that already reached the journal.
+
+        Normal maintenance still requires all receipts. A planned runtime swap
+        transfers journal custody and only waits for local publication safety.
+        """
+        if mode == "idle" and (
+            any(self._quiescence_counts()[:3])
+            or any(child.background_task_ids for child in self._children.values())
+        ):
+            return False
+        # No await separates the idle observation from both admission gates.
+        self.admission_stopped = True
+        children = tuple(self._children.values())
+        for child in children:
+            self._retiring_children.add(child.reference.child_id)
+        for command_id in tuple(self._commands):
+            self.withdraw(command_id)
+        # A provider call can hold child.lock until its process stops. Stop the
+        # native processes before joining those calls or taking their locks.
+        await asyncio.gather(*(child.native.stop() for child in children))
+        command_tasks = tuple(
+            record.task
+            for record in self._commands.values()
+            if record.task is not None and not record.task.done()
+        )
+        if command_tasks:
+            await asyncio.gather(*(asyncio.shield(task) for task in command_tasks))
+        for child in children:
+            await self._finish_source_work(child.reference)
+        for record in tuple(self._commands.values()):
+            if record.outcome is not None:
+                await self._settle(record)
+        if self._failed_source_work or any(
+            record.outputs and not record.outputs_published for record in self._commands.values()
+        ):
+            raise RuntimeError("update cannot abandon required local output")
+        for child in children:
+            # This proof follows every saved result in the conversation FIFO.
+            # It closes old assignments only after replay accepts prior output.
+            command = ChildCommand(
+                f"update_stop_{uuid4().hex}",
+                child.reference,
+                ChildOperation.stop,
+                None,
+                StopRun(),
+            )
+            outcome = _outcome(command, CommandDisposition.succeeded, {})
+            record = _CommandRecord(
+                command, outcome=outcome, journaled=False, outputs=owed_outputs(command, outcome)
+            )
+            self._commands[command.command_id] = record
+            await self._settle(record)
+            self._retired_children.add(child.reference.child_id)
+            self._children.pop(child.reference.child_id, None)
+        return True

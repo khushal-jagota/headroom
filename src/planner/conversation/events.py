@@ -58,7 +58,8 @@ class ConversationEventKind(StrEnum):
     prompt_discarded = "prompt_discarded"
     agent_message = "agent_message"
     message_to_owner = "message_to_owner"
-    explicit_reply_missing = "explicit_reply_missing"
+    # Retired: stored history only, never written. See RetiredExplicitReplyMissingEventPayload.
+    retired_explicit_reply_missing = "explicit_reply_missing"
     tool_call_started = "tool_call_started"
     tool_call_finished = "tool_call_finished"
     permission_asked = "permission_asked"
@@ -71,6 +72,7 @@ class ConversationEventKind(StrEnum):
     model_changed = "model_changed"
     token_usage = "token_usage"
     context_compacted = "context_compacted"
+    command_reply = "command_reply"
     turn_ended = "turn_ended"
 
 
@@ -82,6 +84,7 @@ CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION: Final = frozenset(
         ConversationEventKind.plan_updated,
         ConversationEventKind.token_usage,
         ConversationEventKind.context_compacted,
+        ConversationEventKind.command_reply,
     }
 )
 """The kinds nothing outside an open conversation draws.
@@ -227,6 +230,9 @@ class PromptEventPayload:
     recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
     # Reviewed receipt settlement can identify an earlier unminted uncertainty row.
     reconciles_sequence: int | None = None
+    # Set only by the canonical system writer for internal, unaddressed automation.
+    # Absent legacy provenance stays unknown. No send request accepts this field.
+    system_generated: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,7 +268,8 @@ class PromptDeliveryRefusedEventPayload:
 class PromptDeliveryUncertainEventPayload:
     """A prompt whose admission stayed unknown after possible transmission.
 
-    Panels does not retransmit it. A sender-id replay reads the latest explicit outcome.
+    Panels retransmits it only when its Mac command later proves it never arrived; it
+    then goes as the next message. A sender-id replay reads the latest explicit outcome.
     Reviewed provider evidence can append a later receipt that settles this row, while
     the original uncertainty remains in the append-only history.
     """
@@ -332,15 +339,15 @@ class AgentMessageEventPayload:
 
 
 @dataclass(frozen=True, slots=True)
-class ExplicitReplyMissingEventPayload:
-    """A turn ended without an explicit message to one of its prompt senders.
+class RetiredExplicitReplyMissingEventPayload:
+    """A retired marker that a turn ended without an explicit reply to one prompt sender.
 
-    This is a system marker, not an addressed message. ``prompt_sender`` identifies the
-    person whose delivered prompt went unanswered without making the marker itself a
-    message to that person.
+    Panels no longer asks agents to reply to each sender, and nothing writes this kind.
+    Records written before then still hold it, so it still loads, and every view shows
+    nothing for it. ``prompt_sender`` is kept only so the stored row reads back exactly.
     """
 
-    kind: ClassVar[ConversationEventKind] = ConversationEventKind.explicit_reply_missing
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.retired_explicit_reply_missing
 
     prompt_sender: Principal
 
@@ -503,6 +510,19 @@ class ContextCompactedEventPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class CommandReplyEventPayload:
+    """The backend's own answer to a slash command, such as a refused or inspected goal.
+
+    It is stored, unlike agent prose, because nothing streams it: without this row the
+    reply is shown nowhere. It is plain words, and it is not model context.
+    """
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.command_reply
+
+    reply_text: str
+
+
+@dataclass(frozen=True, slots=True)
 class TurnEndedEventPayload:
     """A turn that has stopped running, and why.
 
@@ -533,7 +553,7 @@ type ConversationEventPayload = (
     | PromptDiscardedEventPayload
     | MessageToOwnerEventPayload
     | AgentMessageEventPayload
-    | ExplicitReplyMissingEventPayload
+    | RetiredExplicitReplyMissingEventPayload
     | ToolCallStartedEventPayload
     | ToolCallFinishedEventPayload
     | PermissionAskedEventPayload
@@ -546,6 +566,7 @@ type ConversationEventPayload = (
     | ModelChangedEventPayload
     | TokenUsageEventPayload
     | ContextCompactedEventPayload
+    | CommandReplyEventPayload
     | TurnEndedEventPayload
 )
 
@@ -629,6 +650,7 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 **message_content_json_entries(payload.content),
                 "sender_label": payload.sender_label,
                 "mode": str(payload.mode),
+                **({"system_generated": True} if payload.system_generated else {}),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
                 **(
                     {
@@ -725,7 +747,7 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             }
         case AgentMessageEventPayload():
             return message_content_json_entries(payload.content)
-        case ExplicitReplyMissingEventPayload():
+        case RetiredExplicitReplyMissingEventPayload():
             return {
                 "prompt_sender": {
                     "kind": payload.prompt_sender.kind.value,
@@ -824,6 +846,8 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             }
         case ContextCompactedEventPayload():
             return {}
+        case CommandReplyEventPayload():
+            return {"reply_text": payload.reply_text}
         case TurnEndedEventPayload():
             return {
                 "ending": str(payload.ending),
@@ -859,6 +883,9 @@ def _payload_from_json_object(
                     stored, "sent_at_unix_milliseconds"
                 ),
                 reconciles_sequence=_optional_whole_number(stored, "reconciles_sequence"),
+                system_generated=_boolean(stored, "system_generated")
+                if "system_generated" in stored
+                else False,
                 sender=_optional_principal(stored, "sender"),
                 recipient=_optional_principal(stored, "recipient"),
             )
@@ -926,11 +953,11 @@ def _payload_from_json_object(
             )
         case ConversationEventKind.agent_message:
             return AgentMessageEventPayload(content=message_content_from_stored(stored))
-        case ConversationEventKind.explicit_reply_missing:
+        case ConversationEventKind.retired_explicit_reply_missing:
             prompt_sender = _optional_principal(stored, "prompt_sender")
             if prompt_sender is None:
                 raise ValueError("explicit_reply_missing requires prompt_sender")
-            return ExplicitReplyMissingEventPayload(prompt_sender=prompt_sender)
+            return RetiredExplicitReplyMissingEventPayload(prompt_sender=prompt_sender)
         case ConversationEventKind.tool_call_started:
             return ToolCallStartedEventPayload(
                 tool_call_id=_text(stored, "tool_call_id"),
@@ -1038,6 +1065,8 @@ def _payload_from_json_object(
             )
         case ConversationEventKind.context_compacted:
             return ContextCompactedEventPayload()
+        case ConversationEventKind.command_reply:
+            return CommandReplyEventPayload(reply_text=_text(stored, "reply_text"))
         case ConversationEventKind.turn_ended:
             return TurnEndedEventPayload(
                 ending=ConversationTurnEnding(_text(stored, "ending")),
@@ -1080,7 +1109,11 @@ def _optional_principal(stored: dict[str, Any], field_name: str) -> Principal | 
     principal_id = value.get("id")
     if not isinstance(kind, str) or not isinstance(principal_id, str):
         raise ValueError(f"{field_name} must contain text kind and id")
-    return Principal(PrincipalKind(kind), principal_id)
+    # Archived event payloads retain their original sender bytes. This decoder is
+    # only for stored events, not request principals.
+    return Principal(
+        PrincipalKind.manager if kind == "sprint_item" else PrincipalKind(kind), principal_id
+    )
 
 
 def _text(stored: dict[str, Any], field_name: str) -> str:

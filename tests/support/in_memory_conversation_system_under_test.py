@@ -19,12 +19,12 @@ from tests.support.conversation_contract_conformance import (
     RecordedFactKind,
     RecordedTurnEnding,
 )
-
-from planner.conversation.contracts import AnswerFate, ConversationSystem
-from planner.conversation.in_memory_conversation_system import (
+from tests.support.in_memory_conversation_system import (
     InMemoryConversationObservation,
     InMemoryConversationSystem,
 )
+
+from planner.conversation.contracts import AnswerFate, ConversationSystem
 
 
 def _recorded_fact(observation: InMemoryConversationObservation) -> RecordedFact:

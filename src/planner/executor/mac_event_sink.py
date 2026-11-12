@@ -38,8 +38,6 @@ class NativeEventSink:
                 event = replace(event, detail=event.detail[:MAX_TOOL_DETAIL_CHARACTERS])
         method, arguments = encode_backend_event(event)
         if method in LIVE_BACKEND_EVENT_METHODS:
-            await self.runner._send_live_event(
-                BackendEvent(self.reference, method, turn, arguments)
-            )
+            self.runner.send_live_event(BackendEvent(self.reference, method, turn, arguments))
             return
         await self.runner.report_event(self.reference, turn, event)

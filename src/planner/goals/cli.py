@@ -1,4 +1,4 @@
-"""Goal agents and owners use the same canonical writer."""
+"""Goal holders and owners use the same canonical writer."""
 
 import json
 import sys
@@ -20,7 +20,10 @@ def _emit_goal_response(data: Any, as_json: bool) -> NoReturn:
 
 @click.group("goal")
 def goal() -> None:
-    """Read and edit goals. See goal schema create|edit|primary-chart for request contracts."""
+    """Read, edit, and permanently delete goals.
+
+    See goal schema create|edit|primary-chart for request contracts.
+    """
 
 
 @goal.command("schema")
@@ -67,7 +70,7 @@ def create_goal(as_json: bool) -> None:
 @click.argument("goal_id")
 @json_option
 def edit_goal(goal_id: str, as_json: bool) -> None:
-    """Read revision-checked changes from stdin. Discover display switches with goal schema edit."""
+    """Read changes from stdin. Discover display switches with goal schema edit."""
     _emit_goal_response(
         http.send(
             "PATCH",
@@ -172,3 +175,31 @@ def write_artifact(goal_id: str, artifact_path: str, body_file: str, as_json: bo
 def delete_artifact(goal_id: str, artifact_path: str, as_json: bool) -> None:
     data = http.send("DELETE", _artifact_url(goal_id, artifact_path), as_json=as_json)
     http.emit(data, as_json, f"{artifact_path} deleted")
+
+
+@goal.command("make-manager")
+@click.argument("goal_id")
+@json_option
+def make_manager(goal_id: str, as_json: bool) -> None:
+    """Move one Chief goal to a new Manager. Read the request body from stdin."""
+    _emit_goal_response(
+        http.send(
+            "POST",
+            f"/api/goals/{quote(goal_id, safe='')}/make-manager",
+            json_body=stdin_object(as_json),
+            as_json=as_json,
+        ),
+        as_json,
+    )
+
+
+@goal.command("delete")
+@click.argument("goal_id")
+@click.option("--yes", is_flag=True, help="Permanently delete the goal, page, and artifacts.")
+@json_option
+def delete_goal(goal_id: str, yes: bool, as_json: bool) -> None:
+    """Delete a goal permanently. The owner, Chief, and holding Manager can delete it."""
+    if not yes:
+        http.fail_validation("permanent deletion requires --yes", as_json)
+    data = http.send("DELETE", f"/api/goals/{quote(goal_id, safe='')}", as_json=as_json)
+    http.emit(data, as_json, f"{goal_id} permanently deleted")

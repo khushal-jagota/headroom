@@ -100,13 +100,12 @@ def render_launch_agent(configuration: ServiceConfiguration) -> bytes:
             "LimitLoadToSessionType": "Aqua",
             "RunAtLoad": True,
             "KeepAlive": {"SuccessfulExit": False},
+            # Scheduled as foreground work, so App Nap and timer coalescing do not delay
+            # its lease, and builds started by its agents do not starve it.
+            "ProcessType": "Interactive",
             "ThrottleInterval": LAUNCH_AGENT_RESTART_THROTTLE_SECONDS,
             "EnvironmentVariables": {
                 "HOME": str(configuration.home),
-                "PLAN_CLAUDE_EXECUTABLE": str(
-                    configuration.source
-                    / "agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
-                ),
                 "PLAN_EXECUTOR_ROOT": str(executor_root),
                 "PATH": str(configuration.venv / "bin") + os.pathsep + backend_path,
             },

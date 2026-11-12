@@ -1,12 +1,13 @@
 <script lang="ts">
+  import Button from "./Button.svelte";
   import type { Snippet } from "svelte";
   import type { TicketDetail } from "../lib/types";
-  import type { ResponseMetadata } from "../lib/navigation/commandEvidence";
   import { mutateJson } from "../lib/mutate";
-  import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
 
-  let { ticket, terminal, assertCurrent, runCommand, leading }: { ticket: TicketDetail; terminal: boolean; assertCurrent?: () => void; runCommand?: (request:(metadata:ResponseMetadata)=>Promise<unknown>)=>Promise<unknown>; leading?: Snippet } = $props();
+  /* The ticket's own page actions. They are ghosts on the ticket page, where the decision card
+   * below carries the page's call to action. */
+  let { ticket, terminal, leading, variant = "ghost" }: { ticket: TicketDetail; terminal: boolean; leading?: Snippet; variant?: "secondary" | "ghost" } = $props();
   let busy = $state(false);
   let error = $state<unknown>(null);
 
@@ -15,14 +16,11 @@
     busy = true;
     error = null;
     try {
-      assertCurrent?.();
-      const request=(responseMetadata:ResponseMetadata)=>mutateJson(`/api/tickets/${encodeURIComponent(ticket.id)}/${action}`, {
-        method: "POST",responseMetadata,
-        body: {
-          ...(ticket.record_sha256 ? { expected_record_sha256: ticket.record_sha256 } : {})
-        }
+      await mutateJson(`/api/tickets/${encodeURIComponent(ticket.id)}/${action}`, {
+        method: "POST",
+        body: {}
       });
-      await (runCommand ? runCommand(request) : request({}));
+
     } catch (err) {
       error = err;
     } finally {
@@ -39,9 +37,9 @@
       {#if leading}<span class="separator" aria-hidden="true">·</span>{/if}
       {#if ticket.is_backlogged}<span class="state" data-ticket-backlogged>Backlogged</span>{/if}
       {#if ticket.is_backlogged}
-        <Button disabled={busy} data-ticket-backlog-action onclick={() => void change("resume")}>Resume ticket</Button>
+        <Button variant="secondary" disabled={busy} data-ticket-backlog-action onclick={() => void change("resume")}>Resume ticket</Button>
       {:else}
-        <button type="button" class="text-action" disabled={busy} data-ticket-backlog-action onclick={() => void change("backlog")}>Backlog ticket</button>
+        <Button {variant} class="text-action" disabled={busy} data-ticket-backlog-action onclick={() => void change("backlog")}>Backlog ticket</Button>
       {/if}
       {/if}
     </div>
@@ -51,12 +49,9 @@
 </div>
 
 <style>
-  .ticket-lifecycle { margin-top:var(--space-4); font-size:13px; color:var(--text-muted); }
+  .ticket-lifecycle { font-size:var(--type-small); color:var(--tone-tertiary); }
   .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); }
-  .text-action { border:0; background:none; padding:var(--space-1) 0; color:var(--text-faint); font:inherit; cursor:pointer; }
-  .text-action:hover { color:var(--text-strong); }
-  .text-action:disabled { cursor:default; opacity:.5; }
-  .separator { color:var(--text-faintest); }
-  .state { color:var(--text-strong); font-weight:600; }
-  .hint { margin:var(--space-2) 0; line-height:1.6; }
+  .separator { display:none; }
+  .state { color:var(--tone-secondary); font-size:var(--type-small); font-weight:var(--weight-small); margin-right:var(--space-1); }
+  .hint { margin:var(--space-2) 0; line-height:18px; }
 </style>

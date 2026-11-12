@@ -18,6 +18,7 @@ from planner.conversation.contracts import (
     NativeMessageAdmission,
     NativeMessageOperation,
     PromptDeliveryMode,
+    PromptDeliveryStarted,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
@@ -229,7 +230,7 @@ def test_storage_write_retries_real_sqlite_busy_after_rollback(tmp_path: Path) -
                 store.append_event(
                     "c",
                     MessageToOwnerEventPayload(
-                        content=text_message_content("explicit reply"),
+                        content=text_message_content("message to the owner"),
                         sender_label="Worker",
                         sender=Principal(PrincipalKind.ticket, "worker"),
                         recipient=OWNER_PRINCIPAL,
@@ -311,7 +312,7 @@ def test_sqlite_commit_failure_with_automatic_rollback_is_not_reported_as_saved(
 
 
 def test_grouped_messages_keep_their_own_commit_participants(store: ConversationStore) -> None:
-    """One sender's receipt or reply credit must not be used for another grouped sender."""
+    """One sender's delivery receipt must not be used for another grouped sender."""
 
     async def exercise() -> None:
         await store.create_conversation(_resolved())
@@ -329,7 +330,7 @@ def test_grouped_messages_keep_their_own_commit_participants(store: Conversation
             ) -> None:
                 assert conversation_id == "c" and isinstance(payload, PromptEventPayload)
                 assert payload.sender_message_id == submission_id
-                assert admission is not None and admission.composed_content_delivered
+                assert admission is not None and admission.fate == PromptDeliveryStarted()
                 conn.execute("INSERT INTO sender_effects VALUES (?)", (submission_id,))
                 if submission_id == "second" and fail_second:
                     raise RuntimeError("second sender failed")

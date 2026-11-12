@@ -7,10 +7,9 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable
 from pathlib import Path
 
-from tests.support.server import ApiHelper, JsonObject, ServerHandle
+from tests.support.server import ApiHelper, ServerHandle
 
 from planner.environments.app import _write_app_entrypoints
 
@@ -22,18 +21,18 @@ DEPLOYED_APP_SHA = "0123456789abcdef0123456789abcdef01234567"
 def test_installed_panels_preserves_worker_identity_for_read_and_write(
     tmp_path: Path,
     server: ServerHandle,
-    cli: Callable[..., JsonObject],
     api: ApiHelper,
 ) -> None:
-    ticket_id = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Installed CLI worker",
-    )["id"]
+    ticket_id = api.direct_post(server, "/api/tickets", {
+        "worker_type": "coding",
+        "title": "Installed CLI worker",
+        "brief": "Agreed brief.",
+        "manager": {"kind": "chief", "id": "chief"},
+    })["id"]
+    api.direct_post(server, f"/api/tickets/{ticket_id}/accept/brief", {
+        "next_ceiling": "needs_what_changes",
+        "next_holder": {"kind": "owner", "id": "owner"},
+    })
     home = tmp_path / "operator"
     command_directory = home / ".local" / "bin"
     command_directory.mkdir(parents=True)

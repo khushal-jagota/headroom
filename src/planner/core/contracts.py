@@ -22,11 +22,6 @@ class PrincipalKind(StrEnum):
     goal = "goal"
     ticket = "ticket"
 
-    @classmethod
-    def _missing_(cls, value: object) -> PrincipalKind | None:
-        if value == "sprint_item":
-            return cls.manager
-        return None
 
 
 OWNER_PRINCIPAL_ID: Final = "owner"
@@ -104,6 +99,14 @@ class ErrorCode(StrEnum):
     not_found = "not_found"
     validation = "validation"  # generic input validation
     skill_save_incomplete = "skill_save_incomplete"
+    # Nothing was saved and no receipt was written; the sender keeps the item and sends it again.
+    retry_later = "retry_later"
+    # The VPS could not save this item, and saving it again would fail the same way.
+    save_failed = "save_failed"
+    # The Mac's protocol or spool version is not the one this server speaks. Nothing applied.
+    executor_version_refused = "executor_version_refused"
+    # The sending Mac process is not the current executor incarnation. Nothing applied.
+    executor_incarnation_not_current = "executor_incarnation_not_current"
 
 
 class PlannerError(Exception):

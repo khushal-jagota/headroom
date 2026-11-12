@@ -10,8 +10,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import select
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -24,8 +26,18 @@ from pathlib import Path
 
 import httpx
 import pytest
-from tests.support.server import BOOT_BUDGET_S, REPO_ROOT
-from tests.support.server_fixtures import _free_port, _scrubbed_env
+from tests.support.server import REPO_ROOT
+from tests.support.server_fixtures import (
+    _bind_loopback_listener,
+    _first_meta_answer,
+    _scrubbed_env,
+)
+
+# A systemd unit cannot inherit the fixture's listener, so the bootstrap command fetches
+# it over this Unix socket before the ordinary CLI starts and finds it where the
+# supervisor already looks. The variable is removed before the supervisor reads its
+# environment.
+_LISTENER_HANDOFF_VARIABLE = "PANELS_LIFECYCLE_PROOF_LISTENER_HANDOFF"
 
 
 @dataclass(frozen=True)
@@ -64,21 +76,41 @@ def _properties(unit: str) -> dict[str, str]:
     return dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
 
 
-def _ready(base: str, log: Path) -> None:
-    deadline = time.monotonic() + BOOT_BUDGET_S
-    while time.monotonic() < deadline:
-        try:
-            response = httpx.get(base + "/api/meta", timeout=0.5)
-            if response.status_code == 200:
-                assert response.json()["test_mode"] is True
-                return
-        except httpx.HTTPError:
-            pass
-        time.sleep(0.05)
-    raise AssertionError(f"fixture HTTP did not become ready: {log.read_text()}")
+def _bind_listener_handoff(path: Path) -> socket.socket:
+    handoff = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        handoff.bind(str(path))
+        handoff.listen(1)
+    except BaseException:
+        handoff.close()
+        raise
+    return handoff
 
 
-def _environment(root: Path, port: int, control_socket: Path) -> dict[str, str]:
+def _hand_listener_to(
+    pid: int, handoff: socket.socket, listener: socket.socket, log: Path
+) -> None:
+    """Pass the bound listener to the bootstrap of process ``pid``.
+
+    The wait ends when the bootstrap connects or when ``pid`` exits, whichever is first.
+    """
+    exited = f"fixture process {pid} exited before taking its listener"
+    # systemd reports MainPID 0 once the unit's main process is gone.
+    assert pid > 0, f"{exited}: {log.read_text()}"
+    process_exit = os.pidfd_open(pid)
+    try:
+        readable, _, _ = select.select([handoff, process_exit], [], [])
+    finally:
+        os.close(process_exit)
+    assert handoff in readable, f"{exited}: {log.read_text()}"
+    connection, _ = handoff.accept()
+    with connection:
+        socket.send_fds(connection, [b"L"], [listener.fileno()])
+
+
+def _environment(
+    root: Path, port: int, control_socket: Path, listener_handoff: Path
+) -> dict[str, str]:
     from planner.core.db import connect, create_schema
 
     root.mkdir()
@@ -107,6 +139,7 @@ def _environment(root: Path, port: int, control_socket: Path) -> dict[str, str]:
         "PLAN_HERMES_HOME": str(root / "hermes-home"),
         "PLAN_DISPATCHER_LOCK_PATH": str(root / "dispatcher.lock"),
         "PLAN_SERVER_CONTROL_SOCKET": str(control_socket),
+        _LISTENER_HANDOFF_VARIABLE: str(listener_handoff),
     }
 
 
@@ -157,7 +190,12 @@ def guarded_unit(tmp_path: Path, request: pytest.FixtureRequest) -> Iterator[Fix
     socket_directory = tempfile.TemporaryDirectory(prefix="panels-lifecycle-", dir=socket_root)
     unit = f"panels-lifecycle-proof-{nonce}.service"
     # The normal CLI stays the supervisor. Only its bootstrap command is test-specific.
-    source = f"from planner.cli.main import main; main() # panels-lifecycle-proof-{nonce}"
+    source = (
+        "import os,socket; h=socket.socket(socket.AF_UNIX); "
+        f"h.connect(os.environ.pop({_LISTENER_HANDOFF_VARIABLE!r})); "
+        "os.environ['PLAN_SERVER_LISTENER_FD']=str(socket.recv_fds(h,1,1)[1][0]); h.close(); "
+        f"from planner.cli.main import main; main() # panels-lifecycle-proof-{nonce}"
+    )
     if getattr(request, "param", False):
         # A fixture-only stuck-cleanup fault. No production flags or code change.
         source = (
@@ -168,8 +206,11 @@ def guarded_unit(tmp_path: Path, request: pytest.FixtureRequest) -> Iterator[Fix
     command = (sys.executable, "-c", source, "serve")
     # AF_UNIX's path limit prevents a socket under this long worktree path.
     control_socket = Path(socket_directory.name) / "control.sock"
-    port = _free_port()
-    env = _environment(tmp_path / "guarded", port, control_socket)
+    listener = _bind_loopback_listener()
+    port = int(listener.getsockname()[1])
+    handoff_path = Path(socket_directory.name) / "listener-handoff.sock"
+    handoff = _bind_listener_handoff(handoff_path)
+    env = _environment(tmp_path / "guarded", port, control_socket, handoff_path)
     log = tmp_path / "guarded.log"
     stop_record = tmp_path / "manager-stop.json"
     stop_source = (
@@ -195,6 +236,8 @@ def guarded_unit(tmp_path: Path, request: pytest.FixtureRequest) -> Iterator[Fix
         env=_scrubbed_env(), capture_output=True, text=True, timeout=10,
     )
     if result.returncode:
+        listener.close()
+        handoff.close()
         _systemctl(unit, "stop")
         _systemctl(unit, "reset-failed")
         socket_directory.cleanup()
@@ -202,7 +245,17 @@ def guarded_unit(tmp_path: Path, request: pytest.FixtureRequest) -> Iterator[Fix
         pytest.fail(f"fixture unit start failed: {result.stderr}")
     fixture: FixtureUnit | None = None
     try:
-        _ready(f"http://127.0.0.1:{port}", log)
+        try:
+            _hand_listener_to(int(_properties(unit)["MainPID"]), handoff, listener, log)
+        finally:
+            # The unit holds the only other copies, so its exit closes the listener.
+            listener.close()
+            handoff.close()
+        _first_meta_answer(
+            f"http://127.0.0.1:{port}",
+            log,
+            lambda: f"fixture unit ({_properties(unit).get('ActiveState')})",
+        )
         process = _identity(int(_properties(unit)["MainPID"]))
         assert process.command == command
         fixture = FixtureUnit(
@@ -246,20 +299,38 @@ def test_foreign_pattern_signal_is_visible_and_dogfood_still_stops(
     guarded_unit: FixtureUnit, tmp_path: Path
 ) -> None:
     fixture = guarded_unit
-    port = _free_port()
-    socket = Path(f"/tmp/panels-dogfood-proof-{uuid.uuid4().hex}.sock")
-    env = _environment(tmp_path / "dogfood", port, socket)
+    listener = _bind_loopback_listener()
+    port = int(listener.getsockname()[1])
+    handoff_path = fixture.control_socket.parent / "dogfood-listener-handoff.sock"
+    handoff = _bind_listener_handoff(handoff_path)
+    control_socket = Path(f"/tmp/panels-dogfood-proof-{uuid.uuid4().hex}.sock")
+    env = _environment(tmp_path / "dogfood", port, control_socket, handoff_path)
     log = tmp_path / "dogfood.log"
-    with log.open("wb") as output:
-        dogfood = subprocess.Popen(
-            fixture.command, cwd=REPO_ROOT, env=env,
-            stdout=output, stderr=subprocess.STDOUT,
-        )
-    recorded = _identity(dogfood.pid)
+    try:
+        with log.open("wb") as output:
+            dogfood = subprocess.Popen(
+                fixture.command, cwd=REPO_ROOT, env=env,
+                stdout=output, stderr=subprocess.STDOUT,
+            )
+        recorded = _identity(dogfood.pid)
+    except BaseException:
+        listener.close()
+        handoff.close()
+        handoff_path.unlink(missing_ok=True)
+        raise
     assert recorded.parent == os.getpid()
     assert recorded.command == fixture.command
     try:
-        _ready(f"http://127.0.0.1:{port}", log)
+        try:
+            _hand_listener_to(dogfood.pid, handoff, listener, log)
+        finally:
+            # The dogfood server holds the only other copies once it has the listener.
+            listener.close()
+            handoff.close()
+            handoff_path.unlink(missing_ok=True)
+        _first_meta_answer(
+            f"http://127.0.0.1:{port}", log, lambda: f"dogfood (rc={dogfood.poll()})"
+        )
         fixture.assert_owned()
         _assert_owned(recorded)
         # Fully anchored exact argv with one unpredictable nonce. Enumerate every
@@ -275,7 +346,7 @@ def test_foreign_pattern_signal_is_visible_and_dogfood_still_stops(
         assert sender.wait(timeout=5) == 0
         dogfood.wait(timeout=10)
         assert dogfood.returncode == 0
-        assert not socket.exists()
+        assert not control_socket.exists()
         deadline = time.monotonic() + 5
         while "refused SIGTERM" not in fixture.log.read_text() and time.monotonic() < deadline:
             time.sleep(0.02)
@@ -296,7 +367,7 @@ def test_foreign_pattern_signal_is_visible_and_dogfood_still_stops(
                 _assert_owned(recorded)
                 dogfood.kill()
                 dogfood.wait(timeout=5)
-        socket.unlink(missing_ok=True)
+        control_socket.unlink(missing_ok=True)
 
 
 @pytest.mark.parametrize("guarded_unit", [True], indirect=True)

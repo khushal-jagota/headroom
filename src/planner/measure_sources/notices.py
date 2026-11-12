@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from typing import cast
 
 from planner.measure_sources import data
 from planner.measure_sources.contracts import (
@@ -75,17 +76,28 @@ def notify_episode(conn: sqlite3.Connection, source: MeasureSource, *, now: int)
     from planner.manager_wakes import data as wake_data
     from planner.manager_wakes.contracts import WakeSourceKind
 
+    target = source.responsible
+    if target.kind.value == "goal":
+        from planner.core.contracts import Principal, PrincipalKind
+        from planner.goals.data import read_goal
+
+        goal = read_goal(conn, target.id)
+        target = (
+            Principal(PrincipalKind.manager, cast(str, goal.holder_id))
+            if goal.holder_kind == "manager"
+            else Principal(PrincipalKind.chief, "chief")
+        )
     wake_data.create_wake(
         conn,
-        manager_id=source.responsible.id if source.responsible.kind.value == "manager" else None,
+        manager_id=target.id if target.kind.value == "manager" else None,
         ticket_id=None,
         source_kind=WakeSourceKind.source_failure,
         source_revision=episode.episode,
         summary=summary,
         now=now,
-        target=source.responsible,
+        target=target,
         source_identity=FailureNoticeIdentity(
-            source.id, episode.episode, source.responsibility_revision, source.responsible
+            source.id, episode.episode, source.responsibility_revision, target
         ),
     )
 
@@ -117,23 +129,13 @@ def record_failure(conn: sqlite3.Connection, run: SourceRun, *, now: int) -> Non
 
 def notice_is_current(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
     source = conn.execute(
-        "SELECT responsible_kind,responsible_manager_id,responsible_goal_id,"
-        "responsibility_revision "
+        "SELECT responsibility_revision "
         "FROM measure_sources WHERE id=?",
         (row["measure_source_id"],),
     ).fetchone()
     if source is None:
         return False
-    target_id = "chief"
-    if source["responsible_kind"] == "manager":
-        target_id = source["responsible_manager_id"]
-    elif source["responsible_kind"] == "goal":
-        target_id = source["responsible_goal_id"]
-    if (source["responsible_kind"], target_id, source["responsibility_revision"]) != (
-        row["target_kind"],
-        row["target_id"],
-        row["source_responsibility_revision"],
-    ):
+    if source["responsibility_revision"] != row["source_responsibility_revision"]:
         return False
     return (
         conn.execute(

@@ -63,7 +63,6 @@ async def application_runtime(
                     composition.initialize()
                     binding.attach()
                     conversation.system.require_runtime_ownership()
-                    composition.coordinator.admit_runtime()
                     yield conversation
                 except BaseException as error:
                     failure = error

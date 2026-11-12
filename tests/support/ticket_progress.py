@@ -5,14 +5,13 @@ from sqlite3 import Connection
 from planner.core.contracts import Principal, PrincipalKind
 from planner.tickets import data
 from planner.tickets.contracts import Ticket, TicketEdit
-from planner.worker_types.configuration import configured_worker_type_registry
 
 
 def advance_ticket(
     conn: Connection, ticket_id: str, *, new_stage: str, principal: Principal, now: int
 ) -> Ticket:
     ticket = data.read_ticket(conn, ticket_id)
-    definition = configured_worker_type_registry().require(ticket.worker_type)
+    definition = ticket.workflow
     if definition.stage_index(new_stage) < definition.stage_index(ticket.stage):
         raise ValueError("fixture progression cannot rewind a Ticket")
     if ticket.pending_proposal is None:

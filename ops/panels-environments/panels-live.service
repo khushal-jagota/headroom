@@ -13,6 +13,7 @@ Environment=PLAN_DISPATCHER_LOCK_PATH=%h/Deployments/Panels/current/data/dispatc
 Environment=PLAN_HERMES_HOME=%h/.hermes
 Environment=PLAN_LOGS_DIR=%h/Deployments/Panels/current/logs
 Environment=PLAN_PORT=8767
+Environment=PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS=1
 Environment=PLAN_SERVER_CONTROL_SOCKET=%h/Deployments/Panels/current/data/server-control.sock
 Environment=PLAN_BACKUP_DIR=%h/Deployments/Panels/current/data/backups
 ExecStart=%h/Deployments/Panels/current/app/bin/panels-launcher serve
@@ -20,6 +21,11 @@ Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes
 PrivateTmp=yes
+OOMPolicy=continue
+OOMScoreAdjust=-500
+MemoryAccounting=yes
+MemoryLow=1G
+CPUWeight=100
 
 [Install]
 WantedBy=default.target

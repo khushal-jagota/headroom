@@ -23,9 +23,8 @@ from planner.measure_sources.contracts import (
     RuntimeLimits,
 )
 from planner.measure_sources.dispatcher import SourceDispatcher
+from planner.measure_sources.schedule_loop import SourceScheduleLoop
 from planner.measure_sources.scheduling import SourceScheduleParticipant
-from planner.scheduled_tickets.participants import TicketScheduleParticipant
-from planner.scheduled_tickets.runtime import ScheduledTicketLoop
 
 
 class HeldRuntime:
@@ -95,11 +94,10 @@ def test_shared_clock_source_slot_creates_no_ticket_or_model_work(
     config = load_config(path=None, env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": path})
     runtime = HeldRuntime()
     participant = SourceScheduleParticipant(config, fake_clock, runtime)
-    loop = ScheduledTicketLoop(
-        path, fake_clock, participants=(TicketScheduleParticipant(), participant)
-    )
+    loop = SourceScheduleLoop(path, fake_clock, participants=(participant,))
     before = tmp_db.execute("SELECT COUNT(*) FROM tickets").fetchone()[0]
-    assert loop.poll_once() == [] and loop.poll_once() == []
+    loop.poll_once()
+    loop.poll_once()
     rows = tmp_db.execute(
         "SELECT * FROM measure_source_runs WHERE source_id=?", (source.id,)
     ).fetchall()

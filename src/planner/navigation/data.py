@@ -24,15 +24,13 @@ from planner.navigation.contracts import (
     Snapshot,
     parse_revision,
 )
-from planner.navigation.legacy_v1 import lifecycle_payload
-from planner.navigation.lifecycle_summary import INDEXES, read_summary
-from planner.navigation.schema import SCHEMA
+from planner.navigation.lifecycle_summary import read_summary
 from planner.tickets.contracts import TicketStatus, WorkerStepClaim
 from planner.tickets.derivation import StoredTicketFacts, derive_ticket_status
 from planner.tickets.logic.fields_codec import proposal_from_json
 from planner.tickets.logic.recap import recap_preview
-from planner.worker_types.contracts import WorkerTypeDefinition
-from planner.worker_types.store import definition_from_json
+from planner.worker_types.contracts import WorkerTypeDefinition, WorkflowDefinition
+from planner.worker_types.store import definition_from_json, workflow_from_json
 
 type Key = tuple[str, str]
 type TicketOwners = dict[str, dict[str, dict[str, Any]]]
@@ -79,41 +77,26 @@ def available(conn: sqlite3.Connection) -> bool:
 def attach(conn: sqlite3.Connection) -> None:
     # REPLACE performs an implicit deletion. Its OLD dependencies need capture too.
     conn.execute("PRAGMA recursive_triggers=ON")
-    conn.create_function("navigation_transaction_active", 0, lambda: int(conn.in_transaction))
 
 
-def create_schema(conn: sqlite3.Connection, *, schema_version: int = 3) -> None:
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone():
-        from planner.navigation import historical_data
+def remove_source_admission_triggers(conn: sqlite3.Connection) -> None:
+    """Remove obsolete source admission before migrations and startup seed writes."""
+    triggers = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger' "
+        "AND name LIKE 'navigation_%' AND instr(sql,'navigation_transaction_active')>0"
+    ).fetchall()
+    for row in triggers:
+        conn.execute('DROP TRIGGER "' + str(row[0]).replace('"', '""') + '"')
 
-        historical_data.create_schema(conn, schema_version=schema_version)
-        return
-    if not conn.in_transaction:
-        raise RuntimeError("navigation schema requires a transaction")
-    if schema_version not in (1, 2, 3):
-        raise ValueError("unsupported navigation schema version")
-    # Historical migration helpers run on either side of the joined DAG. Select
-    # an explicit prepared shape when staging has already removed priority.
-    legacy_source = _priority_source_shape(conn)
-    if not legacy_source:
-        schema_version = PREPARED_SCHEMA_VERSION
-    attach(conn)
-    for statement in SCHEMA:
-        conn.execute(statement)
-    conn.execute(
-        "INSERT INTO navigation_meta VALUES(1,?,?,?,0)",
-        (str(uuid.uuid4()), schema_version, str(uuid.uuid4())),
-    )
+
+def install_source_triggers(conn: sqlite3.Connection) -> None:
+    """Restore source change capture after schema preparation."""
     _install_source_triggers(conn)
-    if schema_version >= 2:
-        for statement in INDEXES:
-            conn.execute(statement)
-    rebuild(conn)
 
 
 def _priority_source_shape(conn: sqlite3.Connection) -> bool:
     """Recognize the two accepted canonical histories before changing any rows."""
-    tables = ("projects", "managers", "tickets", "scheduled_ticket_schedules")
+    tables = ("projects", "managers", "tickets")
     shapes = []
     for table in tables:
         columns = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
@@ -162,72 +145,9 @@ def _install_source_triggers(conn: sqlite3.Connection) -> None:
             conn.execute(
                 f"CREATE TRIGGER navigation_{table}_{operation.lower()} "
                 f"{timing} {clause} ON {table} BEGIN "
-                "SELECT CASE WHEN navigation_transaction_active()=0 THEN "
-                "RAISE(ABORT,'navigation source write requires transaction') END;"
                 + capture
                 + " END"
             )
-
-
-def upgrade_current_workspace(conn: sqlite3.Connection) -> None:
-    """Join accepted source removal and navigation without granting Signal authority."""
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone():
-        from planner.navigation import historical_data
-
-        historical_data.upgrade_current_workspace(conn)
-        return
-    if not conn.in_transaction:
-        raise RuntimeError("navigation upgrade requires a transaction")
-    if _priority_source_shape(conn):
-        raise RuntimeError("current navigation requires priority removal")
-    version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
-    if version not in (3, 4, PREPARED_SCHEMA_VERSION):
-        raise RuntimeError("current workspace upgrade requires prepared navigation")
-    _install_source_triggers(conn)
-    conn.execute("UPDATE navigation_meta SET schema_version=?", (PREPARED_SCHEMA_VERSION,))
-    rebuild(conn)
-
-
-def upgrade_compact_lifecycle(conn: sqlite3.Connection) -> None:
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone():
-        from planner.navigation import historical_data
-
-        historical_data.upgrade_compact_lifecycle(conn)
-        return
-    if not conn.in_transaction:
-        raise RuntimeError("navigation upgrade requires a transaction")
-    _priority_source_shape(conn)
-    if (
-        conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
-        == PREPARED_SCHEMA_VERSION
-    ):
-        return
-    if conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] != 1:
-        raise RuntimeError("compact lifecycle upgrade requires navigation schema 1")
-    for statement in INDEXES:
-        conn.execute(statement)
-    conn.execute("UPDATE navigation_meta SET schema_version=2")
-    rebuild(conn)
-
-
-def upgrade_consumer_metadata(conn: sqlite3.Connection) -> None:
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone():
-        from planner.navigation import historical_data
-
-        historical_data.upgrade_consumer_metadata(conn)
-        return
-    if not conn.in_transaction:
-        raise RuntimeError("navigation upgrade requires a transaction")
-    _priority_source_shape(conn)
-    if (
-        conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
-        == PREPARED_SCHEMA_VERSION
-    ):
-        return
-    if conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] != 2:
-        raise RuntimeError("consumer metadata upgrade requires navigation schema 2")
-    conn.execute("UPDATE navigation_meta SET schema_version=3")
-    rebuild(conn)
 
 
 def _capture_dirty(kind: str, identity_expression: str) -> str:
@@ -311,13 +231,11 @@ def _new_roots(conn: sqlite3.Connection, table: str, identity: str) -> set[Key]:
     elif table == "agents":
         if identity == "chief_of_staff":
             roots.add(("chief", "chief"))
-        elif identity.startswith("goal_"):
-            roots.add(("goal", identity.removeprefix("goal_")))
-        elif identity.startswith(("manager_", "sprint_item_supervisor_")):
+        elif identity.startswith("manager_"):
             roots.add(
                 (
                     "manager",
-                    identity.removeprefix("manager_").removeprefix("sprint_item_supervisor_"),
+                    identity.removeprefix("manager_"),
                 )
             )
         for row in conn.execute(
@@ -366,9 +284,13 @@ def _derive(
         deps.add(("tickets", identity))
         version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
         priority_column = "t.priority," if version < PREPARED_SCHEMA_VERSION else ""
+        snapshots_present = any(
+            column[1] == "workflow_json" for column in conn.execute("PRAGMA table_info(tickets)")
+        )
+        snapshot_column = "t.workflow_json," if snapshots_present else ""
         found = rows(
             conn,
-            "SELECT t.title,t.worker_type,t.stage,t.deadline,t.manager_kind,"
+            "SELECT " + snapshot_column + "t.title,t.worker_type,t.stage,t.deadline,t.manager_kind,"
             "t.manager_id,t.conversation_id,t.ceiling,t.locale,t.worker_step_claim,"
             "t.pending_proposal,t.is_backlogged,t.ceiling_holder,t.pending_proposal_revision,"
             "t.updated_at,t.created_at,t.recap,"
@@ -380,7 +302,8 @@ def _derive(
         if not found:
             return [], deps
         t = found[0]
-        deps.add(("worker_types", t["worker_type"]))
+        if not snapshots_present:
+            deps.add(("worker_types", t["worker_type"]))
         if t["manager_id"]:
             deps.add(("managers", t["manager_id"]))
         blockers = rows(
@@ -434,16 +357,21 @@ def _derive(
         )
         if version <= 2 and t["stage"] == "cancelled":
             status = TicketStatus.empty
-        definition = None if definitions is None else definitions.get(t["worker_type"])
-        if definition is None:
-            definition_row = conn.execute(
-                "SELECT definition_json FROM worker_types WHERE worker_type=?", (t["worker_type"],)
-            ).fetchone()
-            if definition_row is None:
-                raise RuntimeError("navigation Ticket names a missing Worker type")
-            definition = definition_from_json(str(definition_row[0]))
-            if definitions is not None:
-                definitions[t["worker_type"]] = definition
+        definition: WorkflowDefinition | None
+        if snapshots_present:
+            definition = workflow_from_json(t["workflow_json"])
+        else:
+            definition = None if definitions is None else definitions.get(t["worker_type"])
+            if definition is None:
+                definition_row = conn.execute(
+                    "SELECT definition_json FROM worker_types WHERE worker_type=?",
+                    (t["worker_type"],),
+                ).fetchone()
+                if definition_row is None:
+                    raise RuntimeError("navigation Ticket names a missing Worker type")
+                definition = definition_from_json(str(definition_row[0]))
+                if definitions is not None:
+                    definitions[t["worker_type"]] = definition
         stage = definition.stage_definition(t["stage"])
         proposal = None if t["pending_proposal"] is None else json.loads(t["pending_proposal"])
         value = {
@@ -472,6 +400,8 @@ def _derive(
             terminal=stage.is_terminal,
             stage_ownership=None if stage.ownership_mode is None else stage.ownership_mode.value,
         )
+        if snapshots_present:
+            value.update(stage_label=stage.label, workflow_label=definition.label)
         if version >= 3:
             validated_proposal = proposal_from_json(t["pending_proposal"])
             value.update(
@@ -532,18 +462,23 @@ def _derive(
         records.append(_record(kind, identity, value))
     elif kind == "goal":
         deps.add(("goals", identity))
-        deps.add(("agents", "goal_" + identity))
         found = rows(
             conn,
             "SELECT * FROM goals WHERE id=?",
             (identity,),
         )
-        if found:
+        # Historical commits can finalize navigation before the holder migration.
+        # That migration rebuilds these records once their canonical shape exists.
+        if found and "holder_kind" in found[0]:
             goal = found[0]
             value = {
+                "holder_kind": goal["holder_kind"],
+                "holder_id": goal["holder_id"],
                 "title": goal["title"],
                 "active": bool(goal["active"]),
-                "completed": effective_completion(
+                "completed": bool(goal.get("completion_date"))
+                if goal.get("kind") == "quantitative" and goal.get("completion_rule") is not None
+                else effective_completion(
                     bool(goal["completed"]),
                     cast(PageDocument, json.loads(goal["page"])),
                     # Navigation rebuilds also run before this column's migration.
@@ -552,10 +487,6 @@ def _derive(
                 "created_at": goal["created_at"],
                 "updated_at": goal["updated_at"],
             }
-            linked = conn.execute(
-                "SELECT conversation_id FROM agents WHERE agent_key=?", ("goal_" + identity,)
-            ).fetchone()
-            value["conversation_id"] = None if linked is None else linked[0]
             records.append(_record(kind, identity, value))
     elif kind == "project":
         deps.add(("projects", identity))
@@ -610,10 +541,7 @@ def _derive(
         ).fetchone()
         value["error_acknowledged_through_sequence"] = 0 if ack is None else ack[0]
         version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
-        if version == 1:
-            value["lifecycle"] = lifecycle_payload(conn, identity)
-        else:
-            value["lifecycle_summary"] = read_summary(conn, identity)
+        value["lifecycle_summary"] = read_summary(conn, identity)
         if version == 4 or version == SCHEMA_VERSION:
             from planner.navigation.signal_publication import read_current_attention
 
@@ -657,20 +585,8 @@ def _derive(
                     "parent_kind": None,
                     "parent_id": None,
                 }
-            elif key.startswith("goal_"):
-                owner = key.removeprefix("goal_")
-                deps.add(("goals", owner))
-                if conn.execute("SELECT 1 FROM goals WHERE id=?", (owner,)).fetchone():
-                    addresses[("goal", owner)] = {
-                        "owner_kind": "goal",
-                        "owner_id": owner,
-                        "conversation_id": identity,
-                        "current": True,
-                        "parent_kind": None,
-                        "parent_id": None,
-                    }
-            elif key.startswith(("manager_", "sprint_item_supervisor_")):
-                owner = key.removeprefix("manager_").removeprefix("sprint_item_supervisor_")
+            elif key.startswith("manager_"):
+                owner = key.removeprefix("manager_")
                 deps.add(("managers", owner))
                 if conn.execute("SELECT 1 FROM managers WHERE id=?", (owner,)).fetchone():
                     addresses[("manager", owner)] = {
@@ -691,35 +607,14 @@ def _derive(
             )
         except (ValueError, TypeError):
             values = {}
-        if values.get("PLAN_ACTOR") in ("manager", "sprint_item_supervisor"):
-            owner = values.get("PLAN_MANAGER_ID", values.get("PLAN_SPRINT_ITEM_ID", ""))
-            if (
-                values.get("PLAN_MANAGER_ID")
-                and values.get("PLAN_SPRINT_ITEM_ID")
-                and values["PLAN_MANAGER_ID"] != values["PLAN_SPRINT_ITEM_ID"]
-            ):
-                raise ValueError("conflicting Manager conversation identities")
+        if values.get("PLAN_ACTOR") == "manager":
+            owner = values.get("PLAN_MANAGER_ID", "")
             deps.add(("managers", owner))
             if conn.execute("SELECT 1 FROM managers WHERE id=?", (owner,)).fetchone():
                 addresses.setdefault(
                     ("manager", owner),
                     {
                         "owner_kind": "manager",
-                        "owner_id": owner,
-                        "conversation_id": identity,
-                        "current": False,
-                        "parent_kind": None,
-                        "parent_id": None,
-                    },
-                )
-        if values.get("PLAN_ACTOR") == "goal" and values.get("PLAN_GOAL_ID"):
-            owner = values["PLAN_GOAL_ID"]
-            deps.add(("goals", owner))
-            if conn.execute("SELECT 1 FROM goals WHERE id=?", (owner,)).fetchone():
-                addresses.setdefault(
-                    ("goal", owner),
-                    {
-                        "owner_kind": "goal",
                         "owner_id": owner,
                         "conversation_id": identity,
                         "current": False,
@@ -858,11 +753,6 @@ def _continuity(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def finalize(conn: sqlite3.Connection) -> None:
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone():
-        from planner.navigation import historical_data
-
-        historical_data.finalize(conn)
-        return
     if not available(conn):
         return
     dirty = {(str(r[0]), str(r[1])) for r in conn.execute("SELECT kind,id FROM navigation_dirty")}
@@ -949,11 +839,6 @@ def reset_epoch(conn: sqlite3.Connection) -> Continuity:
 
 
 def rebuild(conn: sqlite3.Connection) -> None:
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone():
-        from planner.navigation import historical_data
-
-        historical_data.rebuild(conn)
-        return
     if not conn.in_transaction:
         raise RuntimeError("navigation rebuild requires a transaction")
     legacy_source = _priority_source_shape(conn)
@@ -997,6 +882,12 @@ def _require_current_schema(conn: sqlite3.Connection) -> None:
     version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
     if version != SCHEMA_VERSION:
         raise RuntimeError("navigation public reads require the current schema")
+
+
+def require_records_current(conn: sqlite3.Connection) -> None:
+    """Refuse a read whose own transaction holds source writes the records lack yet."""
+    if conn.execute("SELECT 1 FROM navigation_dirty LIMIT 1").fetchone():
+        raise RuntimeError("navigation read requires a transaction with no pending source writes")
 
 
 def _require_clean_read(conn: sqlite3.Connection) -> None:

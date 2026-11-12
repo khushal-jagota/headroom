@@ -13,10 +13,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import select
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from planner.conversation.backends.claude_model_catalog import (
     ClaudeModel,
@@ -311,17 +314,77 @@ def _claude_update_command() -> tuple[str, ...]:
     )
 
 
+@pytest.mark.parametrize("backend", [ConversationBackendKey.claude, ConversationBackendKey.codex])
+def test_updates_the_selected_user_local_installation(backend: ConversationBackendKey) -> None:
+    async def exercise() -> None:
+        machine = (
+            _installed_claude() if backend is ConversationBackendKey.claude else _installed_codex()
+        )
+        path = CLAUDE_PATH if backend is ConversationBackendKey.claude else CODEX_PATH
+        package = (
+            "@anthropic-ai/claude-code"
+            if backend is ConversationBackendKey.claude else "@openai/codex"
+        )
+        machine.real_paths[path] = f"{USER_LOCAL_NPM_PREFIX}/lib/node_modules/{package}/bin/cli"
+        command = (
+            "npm", "install", "--global", "--prefix", USER_LOCAL_NPM_PREFIX, package + "@latest"
+        )
+        machine.outcomes[command] = CommandOutcome(0, "installed", "")
+        machine.after_run[command] = lambda: machine.outcomes.__setitem__(
+            (path, "--version"), CommandOutcome(0, "9.0.0", "")
+        )
+        service = BackendSnapshotService(
+            machine, claude_model_catalog_probe=_claude_that_answers(),
+            codex_model_catalog_probe=_codex_that_answers(),
+        )
+        result = await service.update_backend(backend)
+        assert result.outcome == "succeeded"
+        assert result.detail == "Updated to 9.0.0."
+        assert command in machine.run_commands
+        assert (await service.snapshot(backend)).version == "9.0.0"
+
+    _run(exercise)
+
+
+def test_update_reports_no_change_or_failure_and_refuses_other_prefixes() -> None:
+    async def exercise() -> None:
+        machine = _installed_claude()
+        command = _claude_update_command()
+        machine.outcomes[command] = CommandOutcome(0, "already current", "")
+        service = BackendSnapshotService(machine, claude_model_catalog_probe=_claude_that_answers())
+        assert (await service.update_backend(ConversationBackendKey.claude)).outcome == "unchanged"
+        machine.outcomes[command] = CommandOutcome(1, "", "network failed")
+        failed = await service.update_backend(ConversationBackendKey.claude)
+        assert failed.outcome == "failed"
+        assert "network failed" in failed.output_tail
+        machine.writable_prefixes.clear()
+        before = machine.run_commands.count(command)
+        refused = await service.update_backend(ConversationBackendKey.claude)
+        assert refused.outcome == "failed"
+        assert machine.run_commands.count(command) == before
+
+    _run(exercise)
+
+
 # --- what a command that runs out of time leaves behind ------------------------------------
 
 
-def _still_alive(process_id: int) -> bool:
+def _exits(process_id: int, *, within_seconds: float) -> bool:
+    """A zombie or a reaped PID has exited. A pidfd becomes readable when it exits."""
     try:
-        os.kill(process_id, 0)
+        descriptor = os.pidfd_open(process_id)
     except ProcessLookupError:
-        return False
-    except PermissionError:
         return True
-    return True
+    try:
+        try:
+            stat = Path(f"/proc/{process_id}/stat").read_text()
+        except FileNotFoundError:
+            return True
+        if stat.rsplit(")", 1)[1].split()[0] == "Z":
+            return True
+        return bool(select.select([descriptor], [], [], within_seconds)[0])
+    finally:
+        os.close(descriptor)
 
 
 def test_a_command_that_runs_out_of_time_takes_what_it_started_with_it(
@@ -349,11 +412,9 @@ def test_a_command_that_runs_out_of_time_takes_what_it_started_with_it(
         assert "did not answer within" in outcome.standard_error
 
         child_process_id = int(child_process_id_file.read_text().strip())
-        for _ in range(100):
-            if not _still_alive(child_process_id):
-                break
-            await asyncio.sleep(0.05)
-        assert not _still_alive(child_process_id), (
+        # The group's SIGKILL lands asynchronously, and the orphan stays a zombie until
+        # init reaps it. Either way it is no longer running.
+        assert _exits(child_process_id, within_seconds=5), (
             f"the command's own child ({child_process_id}) outlived it"
         )
 

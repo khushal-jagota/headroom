@@ -43,14 +43,7 @@ class DeliveryRead:
     profile_check: Callable[[], None] | None = None
 
 
-@dataclass(frozen=True)
-class DeliveryDegradedRead:
-    admission_identity: object
-    generation: int
-    profile_check: Callable[[], None]
-
-
-type DeliveryAccess = DeliveryRead | DeliveryDegradedRead | None
+type DeliveryAccess = DeliveryRead | None
 
 
 class DeliveryAdmission:
@@ -109,14 +102,6 @@ class DeliveryAdmission:
         read = DeliveryRead(
             self._identity, generation, authority.capture_permit(), authority, profile_check
         )
-        self.validate(read)
-        return read
-
-    def capture_degraded(self, profile_check: Callable[[], None]) -> DeliveryDegradedRead:
-        with self._lock:
-            if not self._configured:
-                raise DeliveryUnavailable("navigation knowledge authority is not configured")
-            read = DeliveryDegradedRead(self._identity, self._generation, profile_check)
         self.validate(read)
         return read
 

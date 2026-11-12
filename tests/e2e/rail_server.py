@@ -1,5 +1,6 @@
 """Isolated rail host with the application runtime and scripted backend children."""
 
+import os
 from pathlib import Path
 
 import uvicorn
@@ -14,7 +15,9 @@ def main() -> None:
     assert config.test_mode
     assert Path(config.db_path).name == "rail-proof.db"
     app = build_app(config)
-    ChangeStreamClosingServer(uvicorn.Config(app, host="127.0.0.1", port=config.port)).run()
+    # The fixture binds the port and hands the listener over, so nothing can take it.
+    listener_fd = int(os.environ["PLAN_SERVER_LISTENER_FD"])
+    ChangeStreamClosingServer(uvicorn.Config(app, fd=listener_fd)).run()
 
 
 if __name__ == "__main__":

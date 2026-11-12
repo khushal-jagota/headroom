@@ -6,6 +6,9 @@
    *  claimed across the whole pane — the conversation included. That is the point: the
    *  artifact and the conversation it was named in belong on the screen together, and an
    *  artifact named in a conversation is usually some other Ticket's. */
+  import { createQuery } from "@tanstack/svelte-query";
+  import { goalQueries } from "../lib/goals/queries";
+  import { PlannerFetchError } from "../lib/api";
   import { conversationDock } from "../lib/conversation/layout/dock";
   import type { Snippet } from "svelte";
   import type { HTMLAttributes } from "svelte/elements";
@@ -44,6 +47,15 @@
     conversationState: () => conversationState,
     dismissConversation: () => { conversationState = "rest"; },
     root: () => paneRoot
+  });
+  // An artifact can belong to a goal outside the page beneath it. Observe that
+  // goal's existence so a deletion cannot leave an already rendered file open.
+  const artifactGoal = createQuery(() => ({
+    ...goalQueries.detail(artifact.shown?.kind === "goal-file" ? artifact.shown.goalId : ""),
+    enabled: artifact.shown?.kind === "goal-file"
+  }));
+  $effect(() => {
+    if (artifact.shown?.kind === "goal-file" && artifactGoal.error instanceof PlannerFetchError && artifactGoal.error.status === 404) artifact.close();
   });
 </script>
 

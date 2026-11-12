@@ -52,7 +52,6 @@
     position: relative;
     min-width: 0;
     max-width: 100%;
-    border-inline-start: var(--border-hairline) solid var(--border-color);
     margin-inline-start: var(--space-3);
     padding-inline-start: var(--space-3);
   }
@@ -63,7 +62,6 @@
     inset-block-start: calc(var(--space-1) * -1);
     inset-inline-start: calc(var(--border-hairline) * -1);
     block-size: var(--space-1);
-    border-inline-start: var(--border-hairline) solid var(--border-color);
     pointer-events: none;
   }
 </style>

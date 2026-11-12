@@ -5,6 +5,7 @@
 
   import { PAGE_CONTEXT, type PageContext } from "../../lib/pageKit/context";
   import PageText from "./PageText.svelte";
+  import { TABLE_COLUMN_MIN_WIDTH, TABLE_COLUMN_KEY_STEP, TABLE_COLUMN_LARGE_KEY_STEP } from "../../lib/pageKit/tableSizing";
   const context = getContext<PageContext | undefined>(PAGE_CONTEXT);
 
   let { block, selectable = false }: { block: TableBlock; selectable?: boolean } = $props();
@@ -22,9 +23,77 @@
   let shiftHeld = false;
   let anchor: number | null = null;
   let tableEl = $state<HTMLTableElement | null>(null);
-  let measuredWidths = $state<number[] | null>(null);
-  let widths = $derived(block.column_widths ?? measuredWidths);
+  // Widths measured for one column count. A block that gains or loses columns
+  // lays out again and is measured again, so new columns never get zero width.
+  let measured = $state<{ count: number; widths: number[]; minWidth: number } | null>(null);
+  let measuredWidths = $derived(measured?.count === block.columns.length ? measured.widths : null);
+  let preferenceKey = $derived(JSON.stringify(["page-table-widths", context?.goalId ?? window.location.pathname + window.location.hash, block.id, block.columns]));
+  let resized = $state<{ key: string; widths: number[] } | null>(null);
+  let pixelWidths = $derived(resized?.key === preferenceKey ? resized.widths : null);
+  let widths = $derived(pixelWidths ?? block.column_widths ?? measuredWidths);
+  let drag = $state<{ pointerId: number; index: number; x: number; widths: number[] } | null>(null);
+
+  $effect(() => {
+    const key = preferenceKey;
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem(key) ?? "null");
+      if (Array.isArray(saved) && saved.length === block.columns.length && saved.every(width => typeof width === "number" && Number.isFinite(width) && width > 0)) {
+        resized = { key, widths: saved };
+      }
+    } catch { /* Browser storage can be unavailable. Resizing still works for this visit. */ }
+  });
+
+  function currentWidths(): number[] {
+    return [...(tableEl?.querySelectorAll<HTMLTableCellElement>("thead th[data-key]") ?? [])]
+      .map(cell => cell.getBoundingClientRect().width);
+  }
+
+  function resizeColumn(index: number, width: number, initial = pixelWidths ?? currentWidths()) {
+    resized = { key: preferenceKey, widths: initial.map((value, column) => column === index ? Math.max(TABLE_COLUMN_MIN_WIDTH, width) : value) };
+  }
+
+  function columnWidth(index: number): number {
+    return Math.round(pixelWidths?.[index] ?? tableEl?.querySelectorAll<HTMLTableCellElement>("thead th[data-key]")[index]?.getBoundingClientRect().width ?? TABLE_COLUMN_MIN_WIDTH);
+  }
+
+  function rememberWidths() {
+    if (!pixelWidths) return;
+    try { localStorage.setItem(preferenceKey, JSON.stringify(pixelWidths)); }
+    catch { /* A local preference must not prevent a resize. */ }
+  }
+
+  function startResize(event: PointerEvent, index: number) {
+    if (!event.isPrimary || event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.currentTarget as HTMLElement;
+    handle.focus({ preventScroll: true });
+    handle.setPointerCapture(event.pointerId);
+    drag = { pointerId: event.pointerId, index, x: event.clientX, widths: currentWidths() };
+  }
+
+  function moveResize(event: PointerEvent) {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    resizeColumn(drag.index, drag.widths[drag.index] + event.clientX - drag.x, drag.widths);
+  }
+
+  function finishResize(event: PointerEvent) {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    rememberWidths();
+    drag = null;
+  }
+
+  function resizeKey(event: KeyboardEvent, index: number) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const initial = pixelWidths ?? currentWidths();
+    const step = event.shiftKey ? TABLE_COLUMN_LARGE_KEY_STEP : TABLE_COLUMN_KEY_STEP;
+    resizeColumn(index, initial[index] + (event.key === "ArrowRight" ? step : -step), initial);
+    rememberWidths();
+    message = `${block.columns[index]} width ${Math.round(pixelWidths?.[index] ?? 0)} pixels`;
+  }
   let band = $state<{ left: number; width: number } | null>(null);
+  let scrolled = $state(false);
 
   $effect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -44,7 +113,16 @@
       const total = table.getBoundingClientRect().width;
       const cells = [...table.querySelectorAll<HTMLTableCellElement>("thead th[data-key]")];
       if (!total || cells.length !== block.columns.length) return false;
-      measuredWidths = cells.map((cell) => (cell.getBoundingClientRect().width / total) * 100);
+      const percents = cells.map((cell) => (cell.getBoundingClientRect().width / total) * 100);
+      // The narrowest table width at which every column still holds its content
+      // at its measured share. The fixed layout keeps it, so a crowded table scrolls.
+      table.style.width = "0";
+      const minWidth = Math.max(
+        table.getBoundingClientRect().width,
+        ...cells.map((cell, index) => cell.getBoundingClientRect().width / (percents[index] / 100)),
+      );
+      table.style.width = "";
+      measured = { count: cells.length, widths: percents, minWidth };
       return true;
     };
     if (measure()) return;
@@ -77,17 +155,6 @@
       band = next;
     };
     update();
-    if (index !== undefined && getComputedStyle(table).display !== "table") {
-      const cell = table.querySelectorAll<HTMLTableCellElement>("thead th[data-key]")[index];
-      const strip = cell?.parentElement;
-      if (cell && strip && strip.scrollWidth > strip.clientWidth) {
-        const bounds = strip.getBoundingClientRect();
-        const target = cell.getBoundingClientRect();
-        const start = Math.max(bounds.left, strip.querySelector("th:not([data-key])")?.getBoundingClientRect().right ?? bounds.left) + 8;
-        const shift = target.right > bounds.right - 8 ? target.right - bounds.right + 8 : target.left < start ? target.left - start : 0;
-        if (shift) strip.scrollTo({ left: strip.scrollLeft + shift, behavior: reduced ? "auto" : "smooth" });
-      }
-    }
     const observer = new ResizeObserver(update);
     observer.observe(table);
     return () => observer.disconnect();
@@ -109,6 +176,9 @@
   }
 
   let numeric = $derived(block.columns.map((_, index) => numericColumn(index)));
+  /** A column where any cell carries a status keeps a dot slot in every cell, so its values
+   *  share one edge and one line whether or not they carry a dot. */
+  let toned = $derived(block.columns.map((_, index) => (block.cell_tones ?? []).some((row) => Boolean(row?.[index]))));
 
   let ordered = $derived.by(() => {
     const lines: Line[] = block.rows.map((cells, key) => ({ key, cells }));
@@ -256,7 +326,7 @@
     const target = event.target;
     if (!(target instanceof HTMLElement) || !target.dataset.nav) return;
     const nav = target.dataset.nav;
-    const list = (name: string) => [...node.querySelectorAll<HTMLElement>(`[data-nav="${name}"]`)];
+    const list = (name: string) => [...node.querySelectorAll<HTMLElement>(`[data-nav="${name}"]`)].filter((item) => item.getClientRects().length > 0);
     const items = list(nav);
     const index = items.indexOf(target);
     if (index < 0) return;
@@ -309,6 +379,17 @@
   }
 </script>
 
+<!-- A number column shows its sort button before the label on wide pages and after it
+     on phones. Each layout shows one, so Tab order follows what the reader sees. -->
+{#snippet headSort(index: number, placement: "before" | "after")}
+  <button type="button" class="sort icon-only" data-placement={placement} data-nav="head" aria-label={sortLabel(index)} onclick={() => sortBy(index)}>
+    <span class="sort-icon" aria-hidden="true">
+      <svg class="sort-hint" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
+      <svg class="sort-arrow" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
+    </span>
+  </button>
+{/snippet}
+
 {#snippet box(checked: boolean, mixed: boolean, label: string, nav: "head" | "row", role: string, onToggle: (extend: boolean) => void)}
   <label class="hit">
     <input
@@ -338,16 +419,16 @@
     return { ...old, caption: raw };
   }} /></div>{/if}
   <div class="card">
-    <div class="scroller">
+    <div class="scroller" data-scrolled={scrolled ? "" : undefined} onscroll={(event) => (scrolled = event.currentTarget.scrollLeft > 0)}>
       {#if band}<span class="band" style:left="{band.left}px" style:width="{band.width}px" aria-hidden="true"></span>{/if}
-      <table bind:this={tableEl} data-fixed={widths ? "" : undefined} data-selectable={selectable ? "" : undefined}>
+      <table bind:this={tableEl} data-fixed={widths ? "" : undefined} data-resized={pixelWidths ? "" : undefined} style:width={pixelWidths ? `calc(${pixelWidths.reduce((sum, width) => sum + width, 0)}px + ${selectable ? "var(--space-7)" : "0px"})` : undefined} style:min-width={pixelWidths ? "0" : undefined} style:--table-min-width={!pixelWidths && !block.column_widths && measuredWidths ? `${measured?.minWidth}px` : undefined} data-selectable={selectable ? "" : undefined}>
         {#if block.caption}<caption class="sr">{block.caption}</caption>{/if}
         {#if widths || selectable}
           <colgroup>
             {#if selectable}<col class="select-col" />{/if}
             {#if widths}
               {#each widths as width, index (`col-${index}`)}
-                <col style:width="{width}%" />
+                <col style:width={pixelWidths ? `${width}px` : `${width}%`} />
               {/each}
             {/if}
           </colgroup>
@@ -369,18 +450,14 @@
               >
                 {#if context?.authorText}
                   <div class="editable-sort">
-                    <PageText blockId={block.id} field={`columns.${index}`} value={column} label={`Table column ${index + 1}`} update={(old, raw) => columnText(index, raw, old)} />
-                    <button type="button" class="sort icon-only" data-nav="head" aria-label={sortLabel(index)} onclick={() => sortBy(index)}>
-                      <span class="sort-icon" aria-hidden="true">
-                        <svg class="sort-hint" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
-                        <svg class="sort-arrow" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
-                      </span>
-                    </button>
+                    {#if numeric[index]}{@render headSort(index, "before")}{/if}
+                    <div class="header-copy"><PageText blockId={block.id} field={`columns.${index}`} value={column} label={`Table column ${index + 1}`} update={(old, raw) => columnText(index, raw, old)} /></div>
+                    {@render headSort(index, "after")}
                   </div>
                 {:else}
                   <button type="button" class="sort" data-nav="head" aria-label={sortLabel(index)} onclick={() => sortBy(index)}>
                     <span class="sort-inner">
-                      <span>{column}</span>
+                      <span class="header-copy">{column}</span>
                       <span class="sort-icon" aria-hidden="true">
                         <svg class="sort-hint" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
                         <svg class="sort-arrow" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
@@ -388,6 +465,26 @@
                     </span>
                   </button>
                 {/if}
+                <!-- A focusable separator follows the WAI window splitter pattern: arrow keys resize the column. -->
+                <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+                <div
+                  class="resize-handle"
+                  class:resizing={drag?.index === index}
+                  role="separator"
+                  tabindex="0"
+                  aria-label={`Resize ${column} column`}
+                  aria-orientation="vertical"
+                  aria-valuemin={Math.min(TABLE_COLUMN_MIN_WIDTH, columnWidth(index))}
+                  aria-valuenow={columnWidth(index)}
+                  aria-valuemax={Number.MAX_SAFE_INTEGER}
+                  aria-valuetext={`${columnWidth(index)} pixels`}
+                  onpointerdown={(event) => startResize(event, index)}
+                  onpointermove={moveResize}
+                  onpointerup={finishResize}
+                  onpointercancel={finishResize}
+                  onlostpointercapture={finishResize}
+                  onkeydown={(event) => resizeKey(event, index)}
+                ></div>
               </th>
             {/each}
           </tr>
@@ -422,7 +519,8 @@
                     data-numeric={numeric[index] ? "" : undefined}
                     data-tone={block.cell_tones?.[line.key]?.[index] ?? undefined}
                     data-missing={missing(cell) ? "" : undefined}
-                  ><div class="cell-copy">{#if block.cell_tones?.[line.key]?.[index]}<span class="cell-status-dot" aria-hidden="true"></span>{/if}<PageText blockId={block.id} field={`rows.${line.key}.${index}`} value={cell} label={`${block.columns[index] ?? `Column ${index + 1}`}, row ${line.key + 1}`} update={(old, raw) => cellText(line.key, index, raw, old)} /></div></td>
+                    data-dot-slot={toned[index] ? "" : undefined}
+                  ><div class="cell-copy">{#if toned[index]}<span class="cell-status-dot" aria-hidden="true"></span>{/if}<PageText blockId={block.id} field={`rows.${line.key}.${index}`} value={cell} label={`${block.columns[index] ?? `Column ${index + 1}`}, row ${line.key + 1}`} update={(old, raw) => cellText(line.key, index, raw, old)} /></div></td>
                 {/each}
               </tr>
             {/each}
@@ -443,32 +541,35 @@
 </div>
 
 <style>
+  /* THE CARD (page system). The table sits on the card itself: no second box inside it,
+     only the hairlines between its rows. Its first and last columns stand on the card's
+     inset, the same edge as the caption above them. */
   .table-block {
     min-width: 0;
-    padding: 28px;
-    border: 1px solid var(--chart-card-border);
-    border-radius: 28px;
-    background: var(--chart-surface);
-    color: var(--text-strong);
+    padding: var(--page-card-pad);
+    border: var(--border-hairline) solid var(--page-card-edge);
+    border-radius: var(--page-card-radius);
+    background: var(--page-card-fill);
+    color: var(--tone-primary);
   }
   .caption {
-    margin: 0 0 24px;
-    color: var(--text-strong);
-    font-size: 18px;
-    font-weight: 550;
-    line-height: normal;
-    letter-spacing: -.012em;
+    margin: 0 0 var(--page-head-gap);
+    color: var(--tone-primary);
+    font-size: var(--type-page-section);
+    font-weight: var(--weight-page-section);
+    line-height: 20px;
+    letter-spacing: 0;
   }
   .card {
-    --column-wash: var(--chart-surface-muted);
-    --row-line: color-mix(in srgb, var(--chart-grid) 92%, transparent);
+    --column-wash: var(--wash-context);
+    --row-line: var(--border-color);
     position: relative;
     min-width: 0;
     overflow: hidden;
-    border: var(--border-hairline) solid var(--chart-grid);
-    border-radius: 8px;
-    background: var(--chart-surface);
-    color: var(--text-strong);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--tone-primary);
   }
   .scroller { position: relative; overflow-x: auto; overscroll-behavior-x: contain; }
   .band {
@@ -483,16 +584,16 @@
     position: relative;
     z-index: 1;
     width: 100%;
-    min-width: 560px;
+    min-width: max(560px, var(--table-min-width, 0px));
     border-collapse: separate;
     border-spacing: 0;
-    font-size: 13px;
-    line-height: 1.5;
+    font-size: var(--type-body);
+    line-height: 20px;
     text-align: left;
   }
   table[data-fixed] { table-layout: fixed; }
   th, td {
-    --cell-base: var(--chart-surface);
+    --cell-base: transparent;
     --cell-fill: var(--cell-base);
     position: relative;
     background-color: var(--cell-fill);
@@ -500,33 +601,45 @@
   }
   th[data-sorted], td[data-sorted] { --cell-base: var(--column-wash); }
   th {
-    height: 44px;
+    height: 32px;
     padding: 0;
-    border-bottom: var(--border-hairline) solid var(--chart-grid);
-    color: var(--chart-muted);
-    font-size: var(--type-sm);
-    font-weight: 500;
+    border-bottom: var(--border-hairline) solid var(--row-line);
+    color: var(--tone-tertiary);
+    font-size: var(--type-small);
+    font-weight: var(--weight-small);
     white-space: nowrap;
   }
-  th[data-sorted] { color: var(--text-strong); }
+  th[data-sorted] { color: var(--tone-secondary); }
   td {
-    height: 52px;
+    height: 40px;
     padding: 0 var(--space-4);
     border-bottom: var(--border-hairline) solid var(--row-line);
-    color: var(--text-strong);
-    font-weight: 400;
+    color: var(--tone-primary);
+    font-weight: var(--weight-body);
+    font-variant-numeric: tabular-nums;
     overflow-wrap: anywhere;
   }
-  td[data-primary] { color: var(--text-strong); font-weight: 400; }
-  td[data-missing] { color: var(--chart-muted); }
+  /* A label cell keeps room to read when columns are added, and breaks long words only where
+     it must (staging); its words in the page's voice. */
+  td[data-primary] { min-width: 180px; color: var(--tone-primary); font-weight: var(--weight-body); overflow-wrap: break-word; }
+  td[data-missing] { color: var(--tone-tertiary); }
+  /* As staging, a cell with a status says it in its colour: the value and its dot in the
+     status colour. In a column with any status every cell keeps the dot's slot (empty where
+     there is none), so the values share one right edge and one line. */
   td[data-tone="good"] { color: var(--accent-done); }
   td[data-tone="attention"] { color: var(--accent-attention); }
   td[data-tone="bad"] { color: var(--accent-error); }
   td[data-tone="neutral"] { color: var(--chart-legend); }
   td[data-tone="info"] { color: var(--accent-bright); }
-  td[data-tone] .cell-copy { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 12px; }
-  .cell-status-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+  td[data-dot-slot] .cell-copy, td[data-numeric] .cell-copy { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  td[data-numeric] .cell-copy { justify-content: flex-end; }
+  .cell-status-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: transparent; }
+  td[data-tone] .cell-status-dot { background: currentColor; }
   tbody tr:last-child td { border-bottom: 0; }
+  /* The outer columns stand on the card's inset, so the rules between rows span exactly the
+     card's content width. */
+  td:first-child, th:first-child .sort, th:first-child .editable-sort { padding-left: 0; }
+  td:last-child, th:last-child .sort { padding-right: 0; }
   table[data-selectable] tbody tr { cursor: pointer; }
   tbody tr[data-selected] td {
     --cell-fill: color-mix(in srgb, var(--accent-bright) 8%, var(--cell-base));
@@ -541,7 +654,7 @@
     align-items: center;
     cursor: pointer;
   }
-  td.select-cell .hit { height: 52px; }
+  td.select-cell .hit { height: 40px; }
   .hit-input {
     position: absolute;
     inset: 0;
@@ -595,7 +708,7 @@
   .box[data-on]:not([data-mixed]) .check,
   .box[data-mixed] .dash { stroke-dashoffset: 0; opacity: 1; }
   .hit-input:focus-visible + .box {
-    outline: var(--border-strong) solid var(--accent-bright);
+    outline: var(--focus-width) solid var(--focus-ring);
     outline-offset: 2px;
   }
   .hit-input:active + .box { transform: scale(0.95); }
@@ -606,7 +719,7 @@
   .sort {
     display: flex;
     width: 100%;
-    height: 44px;
+    height: 32px;
     align-items: center;
     justify-content: flex-start;
     margin: 0;
@@ -621,7 +734,12 @@
   th[data-numeric] .sort { justify-content: flex-end; }
   .editable-sort { display: flex; min-height: 44px; align-items: center; padding-left: var(--space-4); }
   .sort.icon-only { width: 40px; flex: none; justify-content: center; padding: 0; }
-  th[data-numeric] .editable-sort { justify-content: flex-end; }
+  /* A number column's head ends where its values end. Its sort button is drawn once, before
+     the words on wide pages and after them on phones (staging), so Tab order follows what the
+     reader sees. */
+  .sort[data-placement="before"] { display: none; }
+  th[data-numeric] .editable-sort { justify-content: flex-end; padding-right: var(--space-4); }
+  th:last-child .editable-sort { padding-right: 0; }
   .sort-inner { display: inline-flex; align-items: center; gap: 6px; }
   th[data-numeric] .sort-inner { flex-direction: row-reverse; }
   .sort-icon {
@@ -669,7 +787,7 @@
     transform: scale(1) rotate(180deg);
   }
   .sort:focus-visible {
-    outline: var(--border-strong) solid var(--accent-bright);
+    outline: var(--focus-width) solid var(--focus-ring);
     outline-offset: -2px;
   }
   .sort:focus-visible .sort-hint { opacity: 0.6; }
@@ -677,7 +795,7 @@
   .empty {
     height: 120px;
     color: var(--chart-muted);
-    font-weight: 400;
+    font-weight: var(--weight-small);
     text-align: center;
   }
   .footer {
@@ -691,7 +809,7 @@
     border-top: var(--border-hairline) solid var(--chart-grid);
     color: var(--chart-muted);
     font-size: var(--type-sm);
-    font-weight: 400;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
   .count { margin: 0; font-variant-numeric: tabular-nums; }
@@ -707,8 +825,66 @@
     color: var(--text-strong);
     font: inherit;
     font-size: var(--type-sm);
-    font-weight: 500;
+    font-weight: var(--weight-small);
     cursor: pointer;
+  }
+  .header-copy { display: contents; }
+  /* Only user-sized columns need clipping: authored layouts retain their text treatment. */
+  table[data-resized] .header-copy {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  table[data-resized] .sort-inner { min-width: 0; max-width: 100%; }
+  table[data-resized] .header-copy :global(.ed) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  table[data-resized] .header-copy:focus-within { overflow: visible; }
+  table[data-resized] .header-copy :global(.ed:focus) { overflow-x: auto; text-overflow: clip; }
+  table[data-resized] .cell-copy > :global(.ed),
+  table[data-resized] .cell-copy > :global(span:last-child) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  table[data-resized] .cell-copy > :global(.ed:focus) { overflow-x: auto; text-overflow: clip; }
+  .resize-handle {
+    position: absolute;
+    z-index: 4;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: var(--space-3);
+    cursor: col-resize;
+    touch-action: none;
+    user-select: none;
+    outline: none;
+  }
+  .resize-handle::after {
+    content: "";
+    position: absolute;
+    right: 0;
+    top: var(--space-2);
+    bottom: var(--space-2);
+    width: var(--border-strong);
+    background: var(--accent-bright);
+    opacity: 0;
+    transition: opacity var(--motion-fast) var(--motion-ease);
+  }
+  th:hover > .resize-handle::after,
+  .resize-handle:focus-visible::after,
+  .resize-handle.resizing::after { opacity: 1; }
+  .resize-handle:focus-visible { outline: var(--border-strong) solid var(--accent-bright); outline-offset: calc(-1 * var(--border-strong)); }
+  .reduced .resize-handle::after { transition: none; }
+  @media (hover: none), (pointer: coarse) {
+    /* A trailing sort button keeps its center clear of the wider touch resize edge. */
+    .sort[data-placement="after"] { margin-right: var(--space-2); }
+    .resize-handle { width: var(--space-5); }
+    .resize-handle::after { opacity: 0.6; }
   }
   .sr {
     position: absolute;
@@ -744,48 +920,29 @@
     filter: none;
   }
   .reduced .hit-input:active + .box { transform: none; }
-  @container page (max-width: 620px) {
-    .table-block { padding: 24px 16px; border-radius: 24px; }
-    .caption { padding-inline: 8px; }
-    .scroller { overflow: visible; }
-    .band { display: none; }
-    table { display: block; width: 100%; min-width: 0; max-width: 100%; }
-    colgroup { display: none; }
-    thead { display: block; }
-    thead tr { display: flex; align-items: center; gap: 4px; padding: 4px 8px; overflow-x: auto; border-bottom: 1px solid var(--chart-grid); scrollbar-width: none; }
-    thead tr::-webkit-scrollbar { display: none; }
-    th { display: block; flex: none; height: auto; border: 0; padding: 0; background: transparent; }
-    th.select-cell { position: sticky; left: -8px; z-index: 1; width: 40px; margin-left: -8px; padding: 0 0 0 12px; background: var(--chart-surface); }
-    th.select-cell .hit { height: 32px; }
-    .editable-sort { min-height: 32px; padding-left: 10px; }
-    th .sort.icon-only { width: 32px; padding: 0; }
-    th .sort { width: auto; height: 32px; border-radius: 8px; padding: 0 10px; }
-    th[data-sorted] .sort { background: var(--chart-surface-muted); }
-    th[data-numeric] .sort-inner { flex-direction: row; }
-    .sort:focus-visible { outline-offset: -1px; }
-    tbody { display: block; width: 100%; }
-    tbody tr { --row-fill: var(--chart-surface); position: relative; display: flex; width: 100%; min-height: 64px; box-sizing: border-box; flex-wrap: wrap; align-items: baseline; align-content: center; gap: 2px 8px; padding: 10px 16px; border-bottom: 1px solid var(--row-line); background-color: var(--row-fill); }
-    tbody tr::after { order: 1; flex-basis: 100%; content: ""; }
-    table[data-selectable] tbody tr { padding-left: 44px; }
-    table[data-selectable] tbody tr[data-selected] { --row-fill: color-mix(in srgb, var(--accent-bright) 8%, var(--chart-surface)); }
-    tbody tr:last-child { border-bottom: 0; }
-    td { order: 2; display: block; min-width: 0; height: auto; border: 0; padding: 0; background: transparent; color: var(--chart-secondary); font-size: 11px; text-align: left; }
-    td[data-primary] { order: 0; flex: 1 1 0; color: var(--text-strong); font-size: 13px; font-weight: 500; }
-    td[data-numeric]:not([data-primary]) { order: 0; flex: none; margin-left: auto; padding-left: 8px; color: var(--text-strong); font-size: 13px; }
-    td[data-numeric] ~ td[data-numeric] { order: 2; margin-left: 0; padding-left: 0; color: var(--chart-secondary); font-size: 11px; }
-    td[data-sorted]:not([data-primary]):not([data-tone]) { color: var(--text-strong); }
-    td[data-tone] .cell-copy { font-size: 11px; }
-    td.select-cell { position: absolute; top: 0; bottom: 0; left: 4px; display: flex; width: 36px; align-items: center; padding: 0; }
-    td.select-cell .hit { justify-content: center; }
-    .empty { flex: 1 0 100%; height: auto; padding: 24px 0; text-align: center; }
-    table[data-selectable] tbody tr:has(.empty) { padding-left: 16px; }
-  }
-  @media (hover: hover) and (pointer: fine) {
-    @container page (max-width: 620px) {
-      tbody tr:hover { --row-fill: color-mix(in srgb, var(--text-strong) 3%, var(--chart-surface)); }
-      table[data-selectable] tbody tr[data-selected]:hover { --row-fill: color-mix(in srgb, var(--accent-bright) 11%, var(--chart-surface)); }
-      tbody tr:hover td { background: transparent; }
+  /* Aligned columns remain available at every page width. */
+  @container page (min-width: 0px) {
+    /* The sort control takes its own space inside each number column, clear of
+       the previous column's resize edge. Header labels still end above their values. */
+    th[data-numeric] .sort:not(.icon-only),
+    th[data-numeric] .editable-sort { padding: 0 var(--space-2) 0 0; }
+    td[data-numeric]:not([data-primary]) { padding: 0 var(--space-2) 0 6px; }
+    /* The sort glyph keeps clear space on both sides. */
+    th[data-numeric] :is(.sort-hint, .sort-arrow) { inset: 2px; width: 12px; height: 12px; }
+    th[data-numeric] .sort-inner { gap: 0; }
+    th[data-numeric] .sort-inner .sort-icon { margin: 0; }
+    th[data-numeric] .sort[data-placement="before"] { display: flex; width: 14px; }
+    th[data-numeric] .sort[data-placement="after"] { display: none; }
+    th[data-numeric] .sort.icon-only .sort-icon { margin: 0 -1px; }
+    /* A table too wide to fit scrolls, and its label column stays in view. */
+    table:not([data-selectable]) :is(th[data-key="0"], td[data-primary]) { position: sticky; left: 0; }
+    .scroller[data-scrolled] table:not([data-selectable]) :is(th[data-key="0"], td[data-primary]) {
+      z-index: 5;
+      box-shadow: inset calc(-1 * var(--border-hairline)) 0 var(--chart-grid);
     }
   }
-
+  @container page (max-width: 620px) {
+    .table-block { padding: var(--space-5) var(--space-4); border-radius: var(--radius-lg); }
+    .caption { padding-inline: var(--space-2); }
+  }
 </style>

@@ -1,25 +1,18 @@
-"""Authorized navigation snapshot and SSE doors, bound to the runtime workspace."""
+"""Shared response classes for scoped navigation and its existing send fence."""
 
 from __future__ import annotations
 
 import asyncio
-import json
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.types import Message, Receive, Scope, Send
 
-from planner.core.authctx import RequestContext, request_context
-from planner.core.response_compression import answers_with_an_event_stream
 from planner.navigation.delivery_authority import (
     DeliveryAccess,
     DeliveryAdmission,
     DeliveryUnavailable,
 )
-
-if TYPE_CHECKING:
-    from planner.navigation.delivery import DeliveryRuntime
 
 
 class DeadlineStreamingResponse(StreamingResponse):
@@ -109,63 +102,3 @@ class FencedJSONResponse(JSONResponse):
                 status_code=503,
                 headers={"Cache-Control": "no-store"},
             )(scope, receive, send)
-
-
-def delivery_router(runtime: DeliveryRuntime) -> APIRouter:
-    router = APIRouter()
-
-    def require_ready() -> None:
-        if not runtime.ready:
-            raise HTTPException(503, "navigation publication is not ready")
-
-    @router.get("/api/navigation/snapshot")
-    async def snapshot_route(
-        response: Response,
-        ctx: Annotated[RequestContext, Depends(request_context)],
-        fence: str | None = None,
-    ) -> Response:
-        require_ready()
-        response.headers["Cache-Control"] = "no-store"
-        proof: object = None
-        if fence is not None:
-            if len(fence.encode()) > runtime.config.proof_request_bytes:
-                raise HTTPException(413, "navigation proof request is too large")
-            try:
-                proof = json.loads(fence)
-            except (ValueError, RecursionError) as exc:
-                raise HTTPException(400, "invalid navigation fence") from exc
-        try:
-            value, read = await runtime.current_snapshot(proof)
-        except DeliveryUnavailable as exc:
-            raise HTTPException(503, "navigation publication is not ready") from exc
-        return FencedJSONResponse(
-            value,
-            admission=runtime.admission,
-            read=read,
-            headers={"Cache-Control": "no-store"},
-        )
-
-    @router.get("/api/navigation/events")
-    @answers_with_an_event_stream
-    async def events_route(
-        request: Request,
-        ctx: Annotated[RequestContext, Depends(request_context)],
-        cursor: str | None = None,
-    ) -> StreamingResponse:
-        require_ready()
-        try:
-            read, authority = runtime.current_read()
-        except DeliveryUnavailable as exc:
-            raise HTTPException(503, "navigation publication is not ready") from exc
-        # EventSource reconnect's Last-Event-ID takes precedence over the initial URL.
-        resume = request.headers.get("last-event-id") or cursor or ""
-        return DeadlineStreamingResponse(
-            runtime.stream(resume, read, authority),
-            media_type="text/event-stream",
-            send_timeout=runtime.config.send_timeout_seconds,
-            admission=runtime.admission,
-            read=read,
-            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
-        )
-
-    return router

@@ -72,7 +72,7 @@ def principal(value: object) -> Principal:
 
 
 @router.get("/measure-sources")
-async def list_sources(
+def list_sources(
     conn: DbConn,
     clk: Clk,
     project_id: str | None = None,
@@ -86,7 +86,7 @@ async def list_sources(
 
 
 @router.post("/measure-sources")
-async def create_source(
+def create_source(
     body: Annotated[
         dict[str, Any],
         CREATE,
@@ -106,25 +106,25 @@ async def create_source(
 
 
 @router.get("/measure-sources/{source_id}")
-async def get_source(source_id: str, conn: DbConn) -> JsonDict:
+def get_source(source_id: str, conn: DbConn) -> JsonDict:
     with read_transaction(conn, read_only=True):
         return asdict(data.read_source(conn, source_id))
 
 
 @router.get("/measure-sources/{source_id}/status")
-async def get_status(source_id: str, conn: DbConn, clk: Clk) -> JsonDict:
+def get_status(source_id: str, conn: DbConn, clk: Clk) -> JsonDict:
     with read_transaction(conn, read_only=True):
         return asdict(views.status(conn, source_id, now=clk.now_unix()))
 
 
 @router.delete("/measure-sources/{source_id}")
-async def delete_source(source_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
+def delete_source(source_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
     actions.delete_source(conn, source_id, principal=ctx.principal)
     return {"deleted": True}
 
 
 @router.put("/measure-sources/{source_id}/schedule")
-async def set_schedule(
+def set_schedule(
     source_id: str,
     body: dict[str, Any],
     conn: DbConn,
@@ -147,7 +147,7 @@ async def set_schedule(
 
 
 @router.put("/measure-sources/{source_id}/responsible")
-async def set_responsible(
+def set_responsible(
     source_id: str,
     body: dict[str, Any],
     conn: DbConn,
@@ -168,7 +168,7 @@ async def set_responsible(
 
 
 @router.put("/measure-sources/{source_id}/script")
-async def submit_script(
+def submit_script(
     source_id: str,
     body: Annotated[
         dict[str, Any],
@@ -190,7 +190,7 @@ async def submit_script(
 
 
 @router.get("/measure-sources/{source_id}/runs")
-async def list_runs(
+def list_runs(
     source_id: str,
     conn: DbConn,
     limit: int = DEFAULT_PAGE_LIMIT,
@@ -201,7 +201,7 @@ async def list_runs(
 
 
 @router.post("/measure-sources/{source_id}/runs")
-async def request_run(
+def request_run(
     source_id: str,
     body: Annotated[
         dict[str, Any],
@@ -237,6 +237,6 @@ async def request_run(
 
 
 @router.get("/measure-source-runs/{run_id}")
-async def get_run(run_id: str, conn: DbConn) -> JsonDict:
+def get_run(run_id: str, conn: DbConn) -> JsonDict:
     with read_transaction(conn, read_only=True):
         return asdict(data.read_run_detail(conn, run_id))

@@ -1,4 +1,4 @@
-"""Repository-scoped GitHub publication and dispatch adapter.
+"""Repository-scoped GitHub publication adapter.
 
 The operator supplies a token file. Token contents never enter process environments,
 request receipts, employee homes, or public error messages.
@@ -17,19 +17,16 @@ from typing import Any
 
 import httpx
 
-from planner.environments.update_contracts import OwnerUpdateRequest, PublishedUpdate
-from planner.environments.update_requests import parse_release
+from planner.environments.update_attempts import parse_release
+from planner.environments.update_contracts import PublishedUpdate
 
 
 class GitHubUpdateProvider:
-    def __init__(
-        self, repository: str, token_file: Path | None, *, runner_token: str | None = None
-    ) -> None:
+    def __init__(self, repository: str, token_file: Path | None) -> None:
         if re.fullmatch(r"[\w.-]+/[\w.-]+", repository) is None:
             raise ValueError("Invalid update repository")
         self.repository = repository
         self.token_file = token_file
-        self._runner_token = runner_token
         self._publication_cache: PublishedUpdate | None = None
 
     @classmethod
@@ -40,21 +37,20 @@ class GitHubUpdateProvider:
         )
         return cls(repository, Path(token_file)) if repository and token_file else None
 
-    def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        token = self._runner_token or (
-            self.token_file.read_text().strip() if self.token_file else ""
-        )
+    def _headers(self) -> dict[str, str]:
+        token = self.token_file.read_text().strip() if self.token_file else ""
         if not token:
             raise RuntimeError("The repository update credential is unavailable.")
+        return {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+
+    def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        headers = self._headers()
         try:
             with httpx.Client(timeout=30, follow_redirects=True) as client:
                 response = client.request(
                     method,
                     f"https://api.github.com/repos/{self.repository}/{path}",
-                    headers={
-                        "Authorization": f"Bearer {token}",
-                        "Accept": "application/vnd.github+json",
-                    },
+                    headers=headers,
                     **kwargs,
                 )
         except httpx.HTTPError as exc:
@@ -117,6 +113,10 @@ class GitHubUpdateProvider:
             release.publication_run_id != run_id
             or release.artifact_id != app["id"]
             or release.manifest.app_sha != run["head_sha"]
+            or (
+                release.mac is not None
+                and (by_name.get("panels-mac-runtime", {}).get("id") != release.mac.artifact_id)
+            )
         ):
             raise ValueError("Publication identity differs from trusted repository evidence.")
         if datetime.fromisoformat(release.expires_at.replace("Z", "+00:00")) <= datetime.now(UTC):
@@ -126,31 +126,25 @@ class GitHubUpdateProvider:
         self._publication_cache = release
         return release
 
-    def dispatch(self, request: OwnerUpdateRequest) -> None:
-        release = request.release
-        self._request(
-            "POST",
-            "actions/workflows/deploy.yml/dispatches",
-            json={
-                "ref": "main",
-                "inputs": {
-                    "request_id": request.request_id,
-                    "publication_run_id": str(release.publication_run_id),
-                    "artifact_id": str(release.artifact_id),
-                    "proof_artifact_id": str(release.proof_artifact_id),
-                    "commit_sha": release.manifest.app_sha,
-                    "operation": "adopt",
-                    "rehearsal": "false",
-                    "artifact_digest": release.manifest.artifact_digest,
-                    "archive_sha256": release.archive_sha256,
-                },
-            },
-        )
-
     def download_artifact(self, artifact_id: int, destination: Path) -> None:
+        """Stream the artifact ZIP to disk; a release is about 1 GB."""
         metadata = self._request("GET", f"actions/artifacts/{artifact_id}").json()
         if metadata["expired"]:
             raise ValueError("The pinned update artifact expired.")
-        destination.write_bytes(
-            self._request("GET", f"actions/artifacts/{artifact_id}/zip").content
-        )
+        try:
+            with (
+                httpx.Client(timeout=60, follow_redirects=True) as client,
+                client.stream(
+                    "GET",
+                    f"https://api.github.com/repos/{self.repository}/actions/artifacts/"
+                    f"{artifact_id}/zip",
+                    headers=self._headers(),
+                ) as response,
+            ):
+                if response.is_error:
+                    raise RuntimeError("The repository update service refused the download.")
+                with destination.open("xb") as stream:
+                    for chunk in response.iter_bytes(1024 * 1024):
+                        stream.write(chunk)
+        except httpx.HTTPError as exc:
+            raise RuntimeError("The repository update download did not complete.") from exc

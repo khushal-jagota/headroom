@@ -10,10 +10,10 @@ router = APIRouter()
 
 
 @router.get("/tickets/{ticket_id}/workspace")
-async def read_workspace_ticket(ticket_id: str, conn: DbConn) -> WorkspaceTicket:
+def read_workspace_ticket(ticket_id: str, conn: DbConn) -> WorkspaceTicket:
     return workspace_ticket(conn, ticket_id)
 
 
 @router.get("/tickets/{ticket_id}/workspace/fields/{field}")
-async def read_workspace_field(ticket_id: str, field: str, conn: DbConn) -> WorkspaceFieldBody:
+def read_workspace_field(ticket_id: str, field: str, conn: DbConn) -> WorkspaceFieldBody:
     return workspace_field(conn, ticket_id, field)

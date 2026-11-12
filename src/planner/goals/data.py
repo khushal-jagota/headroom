@@ -13,6 +13,8 @@ from planner.goals.contracts import Goal, GoalKind
 def _goal(row: sqlite3.Row) -> Goal:
     return Goal(
         id=row["id"],
+        holder_kind=row["holder_kind"],
+        holder_id=row["holder_id"],
         project_id=row["project_id"],
         title=row["title"],
         why=row["why"],
@@ -26,6 +28,11 @@ def _goal(row: sqlite3.Row) -> Goal:
         revision=row["revision"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        completion_rule=(
+            json.loads(row["completion_rule"])
+            if "completion_rule" in row.keys() and row["completion_rule"] else None
+        ),
+        completion_date=row["completion_date"] if "completion_date" in row.keys() else None,
         employee_backend=row["employee_backend"],
         employee_launch_model=row["employee_launch_model"],
         employee_launch_reasoning_effort=row["employee_launch_reasoning_effort"],
@@ -40,13 +47,18 @@ def read_goal(conn: sqlite3.Connection, goal_id: str) -> Goal:
 
 
 def list_goals(
-    conn: sqlite3.Connection, *, active: bool | None = None, project_id: str | None = None
+    conn: sqlite3.Connection,
+    *,
+    active: bool | None = None,
+    project_id: str | None = None,
+    holder_id: str | None = None,
 ) -> list[Goal]:
-    return [
-        _goal(row)
-        for row in conn.execute(
-            "SELECT * FROM goals WHERE (? IS NULL OR active=?) "
-            "AND (? IS NULL OR project_id=?) ORDER BY created_at,id",
-            (active, active, project_id, project_id),
-        )
-    ]
+    query = (
+        "SELECT * FROM goals WHERE (? IS NULL OR active=?) "
+        "AND (? IS NULL OR project_id=?)"
+    )
+    parameters: list[str | bool | None] = [active, active, project_id, project_id]
+    if holder_id is not None:
+        query += " AND holder_kind='manager' AND holder_id=?"
+        parameters.append(holder_id)
+    return [_goal(row) for row in conn.execute(query + " ORDER BY created_at,id", parameters)]

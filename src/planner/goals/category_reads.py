@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from planner.datasets import data as datasets
 from planner.datasets.contracts import Dataset, DatasetsRead, ReadDatasetsBody
 from planner.goals import configuration as limits
-from planner.goals.contracts import CategoryChartProjection, ChartBlock, Goal
+from planner.goals.contracts import CategoryChartProjection, ChartBlock, Goal, PageReadingSubject
 from planner.goals.logic.categories import (
     category_bounds,
     dataset_chart_projection,
@@ -35,7 +35,7 @@ from planner.measures.logic.dates import calendar_date, date_range, invalid
 
 def _plans(
     conn: sqlite3.Connection,
-    goal: Goal,
+    goal: Goal | PageReadingSubject,
     now: datetime,
     first_date: str | None,
     last_date: str | None,
@@ -104,7 +104,7 @@ def _measure_ranges(
 
 def category_read_ranges(
     conn: sqlite3.Connection,
-    goal: Goal,
+    goal: Goal | PageReadingSubject,
     now: datetime,
     *,
     first_date: str | None = None,
@@ -157,7 +157,7 @@ def _scalar_values(
 
 def category_projections(
     conn: sqlite3.Connection,
-    goal: Goal,
+    goal: Goal | PageReadingSubject,
     now: datetime,
     *,
     first_date: str | None = None,

@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from planner.environments.resource_versions import DeploymentResources
-from planner.feedback.resource_versions import SOURCE_TRIGGERS as FEEDBACK_SOURCES
-from planner.feedback.resource_versions import FeedbackResources
 from planner.goals.resource_versions import GoalResources
 from planner.managers.resource_versions import ManagerDocumentResources
 from planner.measure_sources.resource_versions import SOURCE_TRIGGERS as MEASURE_SOURCES
@@ -19,12 +17,11 @@ from planner.worker_types.resource_versions import WorkerTypeResources
 PROVIDERS: tuple[ResourceProvider, ...] = (
     MeasureResources(),
     GoalResources(),
-    FeedbackResources(),
     TicketWorkspaceResources(),
     ManagerDocumentResources(),
     ChiefResources(),
     WorkerTypeResources(),
     DeploymentResources(),
 )
-BOUNDED_WORKSPACE_SOURCES = (*FEEDBACK_SOURCES, *CHIEF_SOURCES, *TICKET_SOURCES)
+BOUNDED_WORKSPACE_SOURCES = (*CHIEF_SOURCES, *TICKET_SOURCES)
 SOURCE_TRIGGERS = (*BOUNDED_WORKSPACE_SOURCES, *MEASURE_SOURCES)

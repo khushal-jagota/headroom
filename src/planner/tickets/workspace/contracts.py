@@ -5,7 +5,13 @@ from __future__ import annotations
 from typing import TypedDict
 
 from planner.core.contracts import Principal
-from planner.tickets.contracts import BrokenTicketProjection, TicketFieldApproval, TicketLocale
+from planner.tickets.contracts import (
+    BrokenTicketProjection,
+    StageOwnershipMode,
+    TicketFieldApproval,
+    TicketLocale,
+)
+from planner.worker_types.contracts import WorkerTypeManifestField
 
 
 class WorkspaceProposal(TypedDict):
@@ -32,10 +38,30 @@ class WorkspaceFieldSummary(TypedDict):
     revision: str
 
 
+class WorkflowControlStage(TypedDict):
+    id: str
+    label: str
+    gating_field: str | None
+    is_terminal: bool
+    ownership_mode: StageOwnershipMode | None
+
+
+class WorkflowControlsManifest(TypedDict):
+    worker_type: str | None
+    label: str
+    stages: list[WorkflowControlStage]
+    fields: list[WorkerTypeManifestField]
+    advance: dict[str, str]
+    ceiling_range: list[str]
+    default_ceiling: str
+    worker_profile_id: str | None
+
+
 class ValidWorkspaceTicket(TypedDict):
     id: str
     title: str
-    worker_type: str
+    worker_type: str | None
+    workflow: WorkflowControlsManifest
     locale: TicketLocale
     employee_backend: str
     employee_launch_model: str | None

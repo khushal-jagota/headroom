@@ -12,7 +12,6 @@ class DeliveryConfig:
     page_bytes: int = 1024 * 1024
     frame_bytes: int = 512 * 1024
     cursor_bytes: int = 4096
-    proof_request_bytes: int = 16 * 1024
     retained_batch_count: int = 10000
     retained_bytes: int = 64 * 1024 * 1024
     retention_seconds: float = 30.0

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -60,12 +61,16 @@ def node_environment(tree: Path, package: Path, env: Mapping[str, str]) -> None:
         "global-prefix": package,
         "userconfig": Path.home() / ".npmrc",
         "globalconfig": package / "etc/npmrc",
-        "cache": Path.home() / ".npm",
         "init-module": Path.home() / ".npm-init.js",
     }
     for name in env:
         if name.lower().startswith("npm_config_"):
             key = name[len("npm_config_") :].lower().replace("_", "-")
+            if key == "cache":
+                # A cache can outlive isolated test homes. It still needs the
+                # deployment-storage check, including nested links and aliases.
+                check_paths([Path(env[name])], environment=env)
+                continue
             if key in expected_paths:
                 allowed = {expected_paths[key].absolute()}
                 if key in {"prefix", "global-prefix"}:
@@ -190,7 +195,72 @@ def npm_command(tree: Path, args: Sequence[str], env: Mapping[str, str]) -> list
     if not node:
         refuse(destination, "executable lookup", "node is absent from PATH.")
     check_paths([Path(executable), Path(node)], environment=env)
+    # Backend CLIs track current releases; they have no repository lockfile.
+    if package == "agent_backends" and operation == "ci":
+        refuse(destination, "npm command grammar", "Backend CLIs have no lockfile. Use install.")
+    if package == "agent_backends" and operation == "install":
+        tail = ["--package-lock=false", "--save=false",
+                "@anthropic-ai/claude-code@latest", "@openai/codex@latest"]
     return [str(executable), "--prefix", str(destination), operation, *tail]
+
+
+def interpreter_from_launcher(text: str) -> Path | None:
+    """Resolve the interpreter a console script launches on.
+
+    Three forms appear in ``.venv/bin``:
+
+    * ``#!/path/to/python`` — the ordinary shebang.
+    * ``#!/usr/bin/env python`` — names the finder, not the interpreter, so there is
+      no answer here.
+    * A two-line ``/bin/sh`` wrapper. pip writes this instead of a shebang whenever
+      the interpreter path is over 127 bytes or holds a space, which a long worktree
+      name reaches on its own. The real path is the second line's ``exec`` argument.
+
+    Returns ``None`` for a native binary, a relative interpreter, or anything else
+    that records no path: those carry nothing to redirect.
+    """
+    lines = text.splitlines()
+    if not lines or not lines[0].startswith("#!"):
+        return None
+    words = _split(lines[0][2:])
+    if words and Path(words[0]).name in {"sh", "bash"} and len(lines) > 1:
+        # The line reads: <quoting noise>exec' /path/to/python "$0" "$@"
+        words = _split(lines[1])
+        words = words[1:] if words and words[0].endswith("exec") else words
+    if not words:
+        return None
+    candidate = words[1] if Path(words[0]).name == "env" and len(words) > 1 else words[0]
+    if not candidate.startswith("/"):
+        return None
+    # The directory is resolved but the interpreter name is not. ``.venv/bin/python``
+    # is a symlink chain ending at the system interpreter: follow it and every healthy
+    # launcher looks foreign. Leave the directory unresolved and a tree reached through
+    # a symlink looks foreign instead. Resolving only the parent answers both.
+    named = Path(os.path.normpath(candidate))
+    try:
+        return named.parent.resolve() / named.name
+    except OSError:
+        return named
+
+
+def _split(line: str) -> list[str]:
+    try:
+        return shlex.split(line.strip())
+    except ValueError:
+        return []
+
+
+def read_launcher_interpreter(launcher: Path) -> Path | None:
+    """Read a console script's opening lines, tolerating a native binary or a missing file."""
+    try:
+        with launcher.open("rb") as handle:
+            head = b"\n".join(handle.read(4096).split(b"\n")[:2])
+    except OSError:
+        return None
+    try:
+        return interpreter_from_launcher(head.decode("utf-8"))
+    except UnicodeDecodeError:
+        return None
 
 
 def python_command(tree: Path, args: Sequence[str], env: Mapping[str, str]) -> list[str]:
@@ -206,8 +276,6 @@ def python_command(tree: Path, args: Sequence[str], env: Mapping[str, str]) -> l
         return [str(venv / "bin/python"), "-I", *tail]
     if name not in {"pytest", "mypy"}:
         refuse(venv, "Python command grammar", "Only pytest and mypy are supported.")
-    from tree_environment import read_launcher_interpreter
-
     console = venv / "bin" / name
     interpreter = read_launcher_interpreter(console)
     if interpreter is None:
@@ -291,7 +359,10 @@ def setup(tree: Path, env: Mapping[str, str]) -> int:
         subprocess.run([python, *arguments], cwd=tree, env=install_environment, check=True)
     for package in PACKAGES:
         subprocess.run(
-            npm_command(tree, ["--prefix", package, "ci"], env),
+            npm_command(
+                tree, ["--prefix", package, "install" if package == "agent_backends" else "ci"],
+                env,
+            ),
             cwd=tree,
             env=install_environment,
             check=True,
@@ -319,12 +390,23 @@ def main(args: Sequence[str] | None = None) -> int:
             if arguments[0] == "npm"
             else python_command(TREE, arguments, environment)
         )
+        # Keep original deployment evidence for the existing dependency check above.
+        # Only test commands receive replacement runtime paths, never setup or mypy.
+        is_pytest = arguments[0] != "npm" and (
+            Path(arguments[0]).name == "pytest"
+            or (len(arguments) > 2 and arguments[1:3] == ["-m", "pytest"])
+        )
+        if is_pytest:
+            from test_runtime import RuntimeIsolation
+
+            with RuntimeIsolation(environment) as runtime:
+                return subprocess.run(command, cwd=TREE, env=runtime.environment).returncode
         os.chdir(TREE)
         os.execvpe(command[0], command, environment)
     except SafetyRefusal as exc:
         print(f"Command: {' '.join(arguments)}\n{exc}", file=sys.stderr)
         return 2
-    except (OSError, subprocess.CalledProcessError) as exc:
+    except (OSError, subprocess.CalledProcessError, ValueError) as exc:
         print(f"Development command failed: {exc}", file=sys.stderr)
         return 2
     return 0

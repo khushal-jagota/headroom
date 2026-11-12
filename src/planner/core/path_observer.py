@@ -1,6 +1,6 @@
 """Bounded polling for one externally written file.
 
-Deployment state is written by the runner, outside SQLite and outside this
+The update installer writes the attempt record outside SQLite and outside this
 process.  This observer only bridges a filesystem change into Panels' existing
 payload-free change signal; readers still re-open and validate the file.
 """

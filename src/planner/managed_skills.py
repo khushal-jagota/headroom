@@ -237,15 +237,70 @@ def write_skill_source(
     source_text: str,
     *,
     now: int,
+    generated_from_workflow: bool = False,
 ) -> None:
     """Store this skill's exact text, after checking that it parses as that skill."""
     skill_description(source_text, skill_name)
+    if (
+        not generated_from_workflow
+        and conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='worker_types'"
+        ).fetchone()
+        is not None
+    ):
+        for row in conn.execute("SELECT definition_json FROM worker_types"):
+            definition = json.loads(row[0])
+            if (
+                definition.get("profile", {}).get("specialist_skill") == skill_name
+                and "guidance" in definition
+            ):
+                previous = conn.execute(
+                    "SELECT source_text FROM managed_skills WHERE skill_name=?", (skill_name,)
+                ).fetchone()
+                if (
+                    previous is None
+                    or frontmatter_bounds(str(previous[0]))[1] != frontmatter_bounds(source_text)[1]
+                ):
+                    raise PlannerError(
+                        ErrorCode.validation,
+                        "edit specialist guidance through its structured Worker preset",
+                        {"skill_name": skill_name},
+                    )
     conn.execute(
         "INSERT INTO managed_skills (skill_name, source_text, updated_at) VALUES (?, ?, ?) "
         "ON CONFLICT(skill_name) DO UPDATE SET source_text = excluded.source_text, "
         "updated_at = excluded.updated_at",
         (skill_name, source_text, now),
     )
+
+
+# Every Worker start requires panels and panels-worker, the Chief and Manager settings
+# read their role skills, and seeding refills only an empty table.
+ROLE_SKILL_NAMES: Final = frozenset(
+    {"panels", "panels-worker", "panels-manager", "panels-chief-of-staff"}
+)
+
+
+def delete_skill_source(conn: sqlite3.Connection, skill_name: str) -> None:
+    """Remove this skill's row, unless something still needs it.
+
+    A role skill stays. So does a skill that a Worker type names as its specialist,
+    because that type then fails to load. Tickets keep their own saved guide.
+    Saved version history is immutable and stays too.
+    """
+    read_skill_source(conn, skill_name)
+    if skill_name in ROLE_SKILL_NAMES:
+        raise PlannerError(
+            ErrorCode.validation, "a role skill cannot be deleted", {"skill_name": skill_name}
+        )
+    for row in conn.execute("SELECT worker_type, definition_json FROM worker_types"):
+        if json.loads(row[1]).get("profile", {}).get("specialist_skill") == skill_name:
+            raise PlannerError(
+                ErrorCode.validation,
+                "a Worker type uses this skill",
+                {"skill_name": skill_name, "worker_type": str(row[0])},
+            )
+    conn.execute("DELETE FROM managed_skills WHERE skill_name = ?", (skill_name,))
 
 
 def seed_packaged_skills(conn: sqlite3.Connection) -> None:

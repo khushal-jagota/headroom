@@ -9,6 +9,17 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
+def shared_package_caches(environment: Mapping[str, str]) -> dict[str, str]:
+    """Resolve package caches once, before a synthetic HOME replaces the launch home."""
+    home = Path(environment.get("HOME", str(Path.home())))
+    cache_home = Path(environment.get("XDG_CACHE_HOME", str(home / ".cache")))
+    defaults = {"PIP_CACHE_DIR": cache_home / "pip", "npm_config_cache": home / ".npm"}
+    return {
+        name: str(Path(environment.get(name) or default).expanduser().resolve())
+        for name, default in defaults.items()
+    }
+
+
 def validate_destination(root: Path, destination: Path) -> Path:
     """Reject lexical or existing-ancestor escapes from a freshly owned root."""
     canonical_root = root.resolve(strict=True)

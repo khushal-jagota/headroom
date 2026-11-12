@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from dataclasses import replace
 from sqlite3 import Connection
 
 import pytest
 
 from planner.core import authority
-from planner.core.authority.declarations import STANDS_ABOVE_BY_WORKER_TYPE
+from planner.core.authority import service as authority_service
+from planner.core.authority.intake import admit_command
 from planner.core.clock import Clock
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
@@ -64,7 +66,9 @@ def _park(
 def test_ticket_cannot_hold_or_decide_its_own_ceiling(tmp_db: Connection) -> None:
     ticket = _park(tmp_db, OWNER_PRINCIPAL)
     self_principal = Principal(PrincipalKind.ticket, ticket.id)
-    with pytest.raises(PlannerError, match="cannot hold its own ceiling"):
+    with pytest.raises(
+        PlannerError, match="ceiling holder must be the user or the Ticket's direct manager"
+    ):
         data.accept_proposal(
             tmp_db,
             ticket.id,
@@ -78,6 +82,10 @@ def test_ticket_cannot_hold_or_decide_its_own_ceiling(tmp_db: Connection) -> Non
     # And it could not decide one if the column somehow said it held it. Nothing is
     # below itself, so a Ticket never stands above the Ticket it is.
     with pytest.raises(PlannerError) as forbidden:
+        admit_command(
+            tmp_db, self_principal, "POST", "/api/tickets/{ticket_id}/accept/{field}",
+            {"ticket_id": ticket.id, "field": "what_changes"}, {},
+        )
         data.accept_proposal(
             tmp_db,
             ticket.id,
@@ -125,31 +133,6 @@ def test_rejection_rolls_back_feedback_proposal_and_claim_together(
     assert unchanged.pending_proposal == ticket.pending_proposal
     assert unchanged.worker_step_claim.value == "none"
     assert revision_feedback.snapshot(tmp_db, ticket.id) is None
-
-
-def test_a_ticket_holder_cannot_be_deleted_while_another_ticket_uses_it(
-    tmp_db: Connection,
-) -> None:
-    holder = data.create_ticket(
-        tmp_db,
-        title="Holder",
-        principal=OWNER_PRINCIPAL,
-        now=10,
-        title_max_chars=TITLE_MAX_CHARS,
-        worker_type="coding",
-        brief=None,
-    )
-    held = data.create_ticket(
-        tmp_db, title="Historical held", principal=OWNER_PRINCIPAL, now=11,
-        title_max_chars=TITLE_MAX_CHARS, worker_type="coding", brief=None,
-    )
-    # Old records remain readable and keep referential deletion protection.
-    tmp_db.execute(
-        "UPDATE tickets SET ceiling_holder=? WHERE id=?",
-        (json.dumps({"kind": "ticket", "id": holder.id}), held.id),
-    )
-    with pytest.raises(PlannerError, match="holds another Ticket ceiling"):
-        data.delete_ticket(tmp_db, holder.id, principal=OWNER_PRINCIPAL, now=12)
 
 
 def test_the_holder_moves_while_a_proposal_is_parked(tmp_db: Connection) -> None:
@@ -366,7 +349,15 @@ def test_declared_ticket_authority_never_admits_a_review_holder(
 ) -> None:
     reviewer = _park(tmp_db, OWNER_PRINCIPAL)
     holder = Principal(PrincipalKind.ticket, reviewer.id)
-    monkeypatch.setitem(STANDS_ABOVE_BY_WORKER_TYPE, "coding", (authority.ticket("*"),))
+    original_chain_facts = authority_service.chain_facts
+    monkeypatch.setattr(
+        authority_service,
+        "chain_facts",
+        lambda conn, caller, scope_target: replace(
+            original_chain_facts(conn, caller, scope_target),
+            caller_declared_targets=(authority.ticket("*"),),
+        ),
+    )
     target = _park(tmp_db, OWNER_PRINCIPAL, now=20)
     assert authority.is_above(tmp_db, holder, authority.ticket(target.id))
     before = tuple(tmp_db.iterdump())

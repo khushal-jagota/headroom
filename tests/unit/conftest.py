@@ -9,6 +9,7 @@ from sqlite3 import Connection
 from typing import Never
 
 import pytest
+from tests.support.fresh_schema_template import install_fresh_schema_template
 
 from planner.conversation.backends.contracts import BackendEventSink
 from planner.conversation.contracts import ConversationBackendKey, ResolvedConversationStart
@@ -16,6 +17,10 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.clock import TestClock
 from planner.core.config import Config, load_config
 from planner.core.db import connect, create_schema
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    install_fresh_schema_template()
 
 
 @pytest.fixture
@@ -70,7 +75,7 @@ def _refuse_to_make_a_real_backend_child(
             f"        conversation_system_for_test=InMemoryConversationSystem(),\n"
             f"    )\n"
             f"\n"
-            f"from planner.conversation.in_memory_conversation_system. If this test "
+            f"from tests.support.in_memory_conversation_system. If this test "
             f"genuinely means to reach a vendor CLI, it belongs with the opt-in exercises "
             f"that are gated behind a PANELS_REAL_* variable, not in the ordinary suite."
         )

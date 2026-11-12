@@ -41,7 +41,7 @@ const cases: Array<{name:string; stopped?:boolean; events: Array<[string,unknown
  ['user_input_answered',{request_id:'input-a',answers:{q:{answers:['A']}}}],
  ['permission_asked',{ask_id:'ask-b',title:'Other?',detail:'Detail',options:[]}],
  ['user_input_requested',{request_id:'input-b',questions:[]}],['turn_ended',end('interrupted')]]},
- {name:'failed-input-without-request-and-missing-reply',events:[
+ {name:'failed-input-without-request-and-retired-missing-reply',events:[
  ['prompt',prompt('Start')],['user_input_failed',{request_id:'malformed',detail:'Invalid input request'}],
  ['explicit_reply_missing',{prompt_sender:owner}],['turn_ended',{ending:'failed',error_summary:'Failed work'}]]},
  {name:'stopped-without-ending',stopped:true,events:[

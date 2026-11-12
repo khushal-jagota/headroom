@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
+from tests.support.ticket_workflows import preset_workflow_json
 from tests.unit.test_conversation_system import _Harness, _run, _start
 
 from planner.conversation.contracts import PromptDeliveryQueued
@@ -70,9 +71,10 @@ def _ticket(path: Path) -> None:
             "INSERT INTO "
             "tickets(id,title,worker_type,employee_backend,stage,ceiling,field_values,cr"
             "eated_at,updated_at,conversation_id,worker_step_claim,worker_step_claim_rev"
-            "ision) VALUES "
+            "ision,workflow_json) VALUES "
             "('t','Worker','coding','hermes','needs_implementation','needs_implementatio"
-            "n','{}',0,0,'c','out',7)"
+            "n','{}',0,0,'c','out',7,?)",
+            (preset_workflow_json(conn),),
         )
         conn.commit()
 
@@ -181,7 +183,7 @@ def test_notice_actual_wire_receipt_and_fresh_worker_link(
                 wire = backend.written_texts()[0]
                 assert "[Panels deployment interruption context]" in wire
                 if not actual_restart:
-                    assert wire.startswith("[Authenticated Panels reply requirement]")
+                    assert wire.startswith("[Panels deployment interruption context]")
                     assert wire.index("[Panels deployment interruption context]") < wire.index(
                         "Inspect current work"
                     )
@@ -279,18 +281,11 @@ def test_occurrence_mismatch_and_completed_turn_stay_historical(tmp_path: Path) 
 
 
 def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
-    import shutil
     from dataclasses import replace
 
-    from tests.unit.test_db import _migration_tree_through
-
-    from planner.core import db
-
     path = tmp_path / "legacy.db"
-    shipped = db.MIGRATIONS_DIRECTORY
-    tree = _migration_tree_through(tmp_path, monkeypatch, "rename_managers")
     conn = connect(str(path))
     create_schema(conn)
     conn.execute(
@@ -301,8 +296,10 @@ def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
     conn.execute(
         "INSERT INTO conversation_lifecycle_facts VALUES ('c','turn','1',1,'turn','intent',NULL)"
     )
-    conn.execute("CREATE TABLE signal_publication_meta(singleton INTEGER, runtime_epoch TEXT)")
-    conn.execute("INSERT INTO signal_publication_meta VALUES (1,'legacy-epoch')")
+    conn.execute(
+        "INSERT OR REPLACE INTO signal_publication_meta "
+        "(singleton,scope,runtime_epoch,sequence) VALUES (1,'fixture','legacy-epoch',0)"
+    )
     conn.commit()
     legacy = CapturedTurn(
         "c", 1, None, "legacy-epoch", "intent", "Interrupted worker", "unknown", None, None, None
@@ -330,32 +327,8 @@ def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
             turns=(),
         ),
     )
-    shutil.copy(
-        shipped / "versions/deploy_interruption_accounts.py",
-        tree / "versions/deploy_interruption_accounts.py",
-    )
-    shutil.copy(
-        shipped / "versions/notice_suppression_audit.py",
-        tree / "versions/notice_suppression_audit.py",
-    )
-    shutil.copy(
-        shipped / "versions/automatic_deployment_recovery.py",
-        tree / "versions/automatic_deployment_recovery.py",
-    )
-    create_schema(conn)
     assert conn.execute("SELECT COUNT(*) FROM conversation_turn_occurrences").fetchone()[0] == 0
     assert conn.execute("SELECT status FROM conversation_lifecycle_facts").fetchone()[0] == "intent"
-    # The historical phase above proves the legacy occurrence fallback. A current
-    # runtime requires the complete supported schema, including native execution
-    # evidence and persisted workspace policy. Upgrade before constructing it.
-    # This two-column table is legacy epoch evidence, not an initialized Signal
-    # producer. Keep it out of migrations that reinstall producer-owned triggers.
-    conn.execute("DROP TABLE signal_publication_meta")
-    conn.commit()
-    monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", shipped)
-    create_schema(conn)
-    conn.execute("CREATE TABLE signal_publication_meta(singleton INTEGER, runtime_epoch TEXT)")
-    conn.execute("INSERT INTO signal_publication_meta VALUES (1,'legacy-epoch')")
     conn.commit()
     conn.close()
 
@@ -459,7 +432,7 @@ def test_suppressed_review_preserves_interruption_context_for_next_actual_send(
             )
             assert isinstance(fate, PromptDeliveryStarted)
             wire = final.backend("c").written_texts()[0]
-            assert wire.startswith("[Authenticated Panels reply requirement]")
+            assert wire.startswith("[Panels deployment interruption context]")
             assert wire.count("[Panels deployment interruption context]") == 1
             assert wire.index("[Panels deployment interruption context]") < wire.index(
                 "Inspect current work"
@@ -501,7 +474,7 @@ def test_rebind_preserves_interruption_context_in_the_actual_backend_prompt(tmp_
             assert backend.session_starts == 2
             assert len(backend.writes) == 1
             wire = backend.writes[0].text
-            assert wire.startswith("[Authenticated Panels reply requirement]")
+            assert wire.startswith("[Panels deployment interruption context]")
             assert wire.count("[Panels deployment interruption context]") == 1
             assert wire.index("[Panels deployment interruption context]") < wire.index(
                 "Inspect after deploy"
@@ -861,8 +834,9 @@ def test_user_owned_stage_recovers_only_its_already_admitted_opener(
         _ticket(path)
         with connect(str(path)) as conn:
             conn.execute(
-                "UPDATE tickets SET worker_type='new_worker',stage=?,ceiling=? WHERE id='t'",
-                (stage, stage),
+                "UPDATE tickets SET worker_type='new_worker',stage=?,ceiling=?,workflow_json=? "
+                "WHERE id='t'",
+                (stage, stage, preset_workflow_json(conn, "new_worker")),
             )
             if opener_admitted:
                 conn.execute(
@@ -1048,3 +1022,39 @@ def test_queued_recovery_wire_failure_records_existing_uncertainty_row(
             await restarted.system.shutdown()
 
     _run(exercise)
+
+
+def test_admission_exempts_only_the_current_mac_processs_run(tmp_path: Path) -> None:
+    """Risk: a Mac-restart recovery is blocked at admission by the run of the fresh
+    child it is being bound to, or, the other way, admitted while the interrupted run
+    of the replaced Mac process is still open. Admission exempts only runs of the
+    current Mac process; selection exempts none."""
+    from tests.support.executor_presence import mac_identity, make_current
+
+    from planner.conversation.contracts import DeploymentRecoveryReference
+    from planner.conversation.deploy_interruptions.data import recovery_blocker
+
+    path = str(tmp_path / "db.sqlite")
+    conn = connect(path)
+    create_schema(conn)
+    conn.close()
+    current = mac_identity()
+    make_current(path, current)
+    owned = "native executor reconciliation owns this turn"
+    reference = DeploymentRecoveryReference("missing", None)
+
+    def blocker(incarnation: str, *, allow_restored: bool) -> str | None:
+        with connect(path) as conn:
+            conn.execute("DELETE FROM mac_runs")
+            conn.execute(
+                "INSERT INTO mac_runs VALUES ('c',?,'child','ticket','t',1,0,'open')",
+                (incarnation,),
+            )
+            conn.commit()
+            return recovery_blocker(conn, "c", reference, allow_restored=allow_restored)
+
+    # The fresh child's own run, at admission: not the run reason.
+    assert blocker(current.executor_incarnation, allow_restored=True) != owned
+    assert blocker(current.executor_incarnation, allow_restored=False) == owned
+    # The replaced process's run still blocks, at admission too.
+    assert blocker("replaced-incarnation", allow_restored=True) == owned

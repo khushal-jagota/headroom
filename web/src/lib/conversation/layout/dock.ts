@@ -1,4 +1,5 @@
 import { conversationMotion, CONVERSATION_CARD_MS } from '../surfaceMotion';
+import { observeVisibleViewport, visibleViewport } from '../../keyboardViewport';
 import { visibleHostBounds } from './geometry';
 
 /** Reserve the dock row, and retain the reader's geometry beneath full conversation. */
@@ -15,7 +16,6 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
   let mousePoint: { x: number; y: number } | null = null;
   // Remember the press before outside dismissal can return an open pane to rest.
   let backgroundPress: { id: number; x: number; y: number } | null = null;
-  const viewport = window.visualViewport;
   function outsideInput(target: EventTarget | null): target is Element {
     return target instanceof Element && target.closest('[data-conversation-box]') === null;
   }
@@ -45,21 +45,14 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
     const text = `${value}px`;
     if (host.style.getPropertyValue(name) !== text) host.style.setProperty(name, text);
   };
-  function shade(): string {
-    const previewFocused = !!layer?.querySelector('[data-conversation-rest-bar]:focus-visible');
-    return getComputedStyle(host).getPropertyValue(state === 'opened' || hovered || previewFocused ? '--surface-1' : '--surface-recessed').trim();
-  }
   function pointer(event: PointerEvent): void {
     movePress(event);
     if (!layer) return;
-    const wasHovered = hovered;
     mousePoint = event.pointerType === 'mouse' && event.type !== 'pointerleave' ? { x: event.clientX, y: event.clientY } : null;
     hovered = event.pointerType === 'mouse' && event.type !== 'pointerleave'
       && event.target instanceof Node && layer.contains(event.target)
       && outsideInput(event.target);
     host.toggleAttribute('data-conversation-dock-hover', hovered);
-    // During motion its interpolation owns the shade. A later measurement retargets it.
-    if (wasHovered !== hovered && (!pane || !conversationMotion(pane).active(layer))) layer.style.backgroundColor = shade();
   }
   function releaseReader(): void {
     if (!reader) return;
@@ -76,20 +69,24 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
     if (nextComposer !== composer) { if (composer) sizes.unobserve(composer); composer = nextComposer; if (composer) sizes.observe(composer); }
     reader = host.querySelector<HTMLElement>('.ticket-reading, .manager-reading');
     layer = pane?.closest<HTMLElement>('.conversation-layer') ?? null;
-    const rect = host.getBoundingClientRect();
-    const bounds = visibleHostBounds(rect, { top: viewport?.offsetTop ?? 0, left: viewport?.offsetLeft ?? 0, width: viewport?.width ?? window.innerWidth, height: viewport?.height ?? window.innerHeight });
-    set('--conversation-visible-top', bounds.top);
-    set('--conversation-visible-bottom', bounds.bottom);
-    set('--conversation-visible-left', bounds.left);
-    set('--conversation-visible-right', bounds.right);
-    set('--conversation-visible-height', bounds.height);
+    const menuOpen = !!pane?.querySelector('.chat-menu, .chat-add-menu, .listbox-picker-panel, .chat-overflow-menu');
+    let rect = host.getBoundingClientRect();
+    let bounds = visibleHostBounds(rect, visibleViewport(menuOpen));
+    const publish = (): void => {
+      set('--conversation-visible-top', bounds.top);
+      set('--conversation-visible-bottom', bounds.bottom);
+      set('--conversation-visible-left', bounds.left);
+      set('--conversation-visible-right', bounds.right);
+      set('--conversation-visible-height', bounds.height);
+    };
+    publish();
     if (pane && layer) {
       const nextState = pane.dataset.conversationState;
       if (nextState !== state) {
         const previousState = state;
         const motion = conversationMotion(pane);
         const from = motion.active(layer) ? layer.getBoundingClientRect().height : lastHeight;
-        const fromShade = getComputedStyle(layer).backgroundColor;
+        const fromLine = parseFloat(getComputedStyle(layer, '::before').opacity);
         motion.cancel(layer);
         if (previousState !== undefined && reader && !reader.style.height) {
           reader.style.height = `${readerHeight || reader.getBoundingClientRect().height}px`;
@@ -97,6 +94,11 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
         }
         state = nextState;
         host.dataset.conversationDockState = nextState ?? 'rest';
+        // The state can change the host's own size (a phone hides its bottom bar while the
+        // owner writes in the open conversation), so the destination is read after it.
+        rect = host.getBoundingClientRect();
+        bounds = visibleHostBounds(rect, visibleViewport(menuOpen));
+        publish();
         if (reader) {
           reader.inert = nextState === 'opened';
           if (nextState === 'opened') reader.setAttribute('aria-hidden', 'true');
@@ -109,41 +111,37 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
           hovered = !!target && layer.contains(target) && outsideInput(target);
           host.toggleAttribute('data-conversation-dock-hover', hovered);
         }
-        const toShade = shade();
         if (previousState !== undefined && from > 0) {
           // Keep it bottom anchored throughout return. Rejoining the row is the final step.
           host.setAttribute('data-conversation-dock-transition', '');
           const movingLayer = layer;
-          const startColor = fromShade.match(/[\d.]+/g)?.slice(0, 3).map(Number) ?? [13, 13, 13];
-          const colorProbe = document.createElement('span');
-          colorProbe.style.color = toShade;
-          host.append(colorProbe);
-          const endColor = getComputedStyle(colorProbe).color.match(/[\d.]+/g)?.slice(0, 3).map(Number) ?? [21, 21, 21];
-          colorProbe.remove();
+          // The hairline fades out on open and back in on return, from wherever it is.
+          const toLine = nextState === 'opened' ? 0 : 1;
           void motion.move(layer, fraction => {
             const eased = 1 - Math.pow(1 - fraction, 3);
             movingLayer.style.height = `${from + (wanted - from) * eased}px`;
-            movingLayer.style.backgroundColor = `rgb(${startColor.map((channel, index) => channel + (endColor[index] - channel) * eased).join(',')})`;
+            movingLayer.style.setProperty('--conversation-dock-line', String(fromLine + (toLine - fromLine) * eased));
           }, CONVERSATION_CARD_MS, () => {
             movingLayer.style.removeProperty('height');
-            movingLayer.style.backgroundColor = shade();
+            movingLayer.style.removeProperty('--conversation-dock-line');
             host.removeAttribute('data-conversation-dock-transition');
             if (state !== 'opened') {
               const target = mousePoint ? document.elementFromPoint(mousePoint.x, mousePoint.y) : null;
               hovered = !!target && movingLayer.contains(target) && outsideInput(target);
               host.toggleAttribute('data-conversation-dock-hover', hovered);
-              movingLayer.style.backgroundColor = shade();
             }
             if (state !== 'opened') releaseReader();
             schedule();
           });
         } else {
-          layer.style.backgroundColor = toShade;
+          layer.style.removeProperty('--conversation-dock-line');
           if (nextState !== 'opened') releaseReader();
         }
       }
       lastHeight = layer.getBoundingClientRect().height;
-      if (!conversationMotion(pane).active(layer)) layer.style.backgroundColor = shade();
+      // The page under a floating dock keeps this much room at its end, so its last line can
+      // always scroll clear of the dock however tall a draft or an unread excerpt makes it.
+      if (state !== 'opened' && !host.hasAttribute('data-conversation-dock-transition')) set('--conversation-layer-height', lastHeight);
       if (reader && state !== 'opened' && !host.hasAttribute('data-conversation-dock-transition')) readerHeight = reader.getBoundingClientRect().height;
     }
     if (composer) {
@@ -172,11 +170,7 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
   host.addEventListener('pointerover', pointer);
   host.addEventListener('pointermove', pointer);
   host.addEventListener('pointerleave', pointer);
-  host.addEventListener('focusin', schedule);
-  host.addEventListener('focusout', schedule);
-  viewport?.addEventListener('resize', schedule);
-  viewport?.addEventListener('scroll', schedule);
-  window.addEventListener('resize', schedule);
+  const stopViewport = observeVisibleViewport(schedule);
   window.addEventListener('scroll', schedule, true);
   schedule();
   return { destroy() {
@@ -192,11 +186,7 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
     host.removeEventListener('pointerover', pointer);
     host.removeEventListener('pointermove', pointer);
     host.removeEventListener('pointerleave', pointer);
-    host.removeEventListener('focusin', schedule);
-    host.removeEventListener('focusout', schedule);
-    viewport?.removeEventListener('resize', schedule);
-    viewport?.removeEventListener('scroll', schedule);
-    window.removeEventListener('resize', schedule);
+    stopViewport();
     window.removeEventListener('scroll', schedule, true);
     delete host.dataset.conversationDockState;
     host.removeAttribute('data-conversation-dock-transition');

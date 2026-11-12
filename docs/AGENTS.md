@@ -1,45 +1,50 @@
 # docs/ conventions
 
-Guidance for agents editing `docs/`. The root `AGENTS.md` always loads; root `CLAUDE.md` points at it. In this directory the same pattern holds: `docs/AGENTS.md` is these rules, and `docs/CLAUDE.md` points at that file, so Cursor and Claude read one source. It loads when the work is in this directory.
+Rules for agents who edit `docs/`. `docs/CLAUDE.md` points to this file, so Claude and Cursor read one source.
 
-`docs/` is the top-level manual for Headroom. The readers are Khushal, including his future self, and coding agents. `docs/README.md` is the map. It names the pages. This file does not.
+## What the docs are for
 
-## The shape of a focused page
+`docs/` is a top-level view of Headroom's systems. A reader with a question starts here. They learn what a system is for, what it is made of, what it can do, and roughly how. Then they go to the code for the details.
 
-Explain what the thing is in the product, how we think about creating and running it, what feeds it, what it feeds, and where a person or an operator meets it. Mechanism and product story come first. Light code or math detail comes after. A module map of files, ownership, and connections is optional garnish at the end.
+A page is detailed enough to sense-check the design, and no more. A reader never needs the code to understand a page. A page is not an explanation of the code. `docs/README.md` is the map of pages.
 
-Order:
+## What a page holds
 
-1. What it is, and why it exists.
-2. How it works, and how we think about creating and running it.
-3. What feeds it, and what it feeds.
-4. Where it shows up in the product or in operations.
-5. Light code pointers.
-6. Optional short module map or invariants, last.
+Each page covers one real system. It says:
 
-Prefer a separate focused page over a combined dump. A thin system stays thin. A thin label-and-location map (module X connects to Y) does not earn a place.
+- what the system is for;
+- what it is made of;
+- how the parts connect to each other and to other systems;
+- what it can do, and roughly how;
+- the decisions that shape it;
+- where the code lives.
 
-## Keep one source, and keep it current
+[goals.md](goals.md) is the model. Match its depth.
 
-These pages describe the system as it is now. When a feature changes or is removed, correct the page in the same change. A page that still describes deleted machinery is a bug. History belongs to git. Current judgment belongs on the Ticket that owns the work. A page is not a build log and does not narrate how a change was staged.
+## What a page leaves out
 
-Write a page when the why or the shape is not already visible in the page that owns the topic. When a fact is explained in one place, point to it. Do not restate it. Duplication rots, and the copies drift.
+Leave out field lists, request shapes, timings, limits, exact error rules, edge cases, keyboard and pointer behavior, test details, history, step-by-step procedures, and anything the code says better.
 
-`DESIGN.md` remains the visual principle list. `docs/design.md` is how those principles show up. `CONTEXT.md` remains the word list. `PRINCIPLES.md` remains the engineering rules. Do not copy them into a second essay.
+Test every sentence: does a reader need it to understand or question the design? If not, delete it.
+
+## When you change a system
+
+Update its page in the same change, at the same depth.
+
+- Trim before you add. A new feature usually changes a sentence. It rarely adds a section.
+- Do not write a page for a feature. Put the feature in the page of the system it belongs to.
+- Write a new page only for a new system.
+- If a page grows past about 1,500 words, cut it back before you finish.
+- When a system changes or goes away, correct or delete its page. A page that describes removed machinery is a bug.
+- Put history in git. Put plans, evidence, and current judgment on the Ticket.
+- Put procedures and runbooks in `ops/`, not here.
+- Say a fact once. Link to the page that owns it.
 
 ## Craft
 
-- Plain language and the product’s own words. Code names, routes, and commands appear where an operator or an agent must use them, and again as pointers at the end. They are not a substitute for the explanation.
-- An ASCII diagram when shape is the point: a flow, a ladder, who stands above whom. Do not force one into a page that is clearer without it. Do not use a call graph of function names. Mermaid does not display here.
-- Honest about what works today, including when that is thin or blocked.
-- Name the neighbor and link to its page when two systems meet.
-- A known gap binds to a condition, never to a stage number. Omit the section when the page has no known gap.
-- End with `_Last verified: <date>._` when the page was checked against the code.
+- Use plain language and the product's own words. Code names go at the end as pointers. They do not replace the explanation.
+- Use an ASCII diagram when shape is the point. Mermaid does not display here.
+- Say honestly what works today.
+- End with `_Last verified: <date>._` when you checked the page against the code.
 
-## Delete a page when
-
-- Its system was removed.
-- Its content now lives in a sharper page, and the old one would compete.
-- It duplicates a fact another page owns better.
-
-_Last verified: 2026-10-31._
+`DESIGN.md` holds the visual rules, `CONTEXT.md` the word list, and `PRINCIPLES.md` the engineering rules. Do not copy them into a page.

@@ -2,7 +2,7 @@
 
 from typing import Literal, TypedDict
 
-HistoryOwnerKind = Literal["ticket", "manager", "goal"]
+HistoryOwnerKind = Literal["ticket", "manager"]
 
 
 class ConversationHistoryEntry(TypedDict):

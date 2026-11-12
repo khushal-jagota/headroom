@@ -104,7 +104,7 @@ def inside_proof(archive_digest: str, requested_sha: str) -> None:
     start = time.monotonic()
     root = Path("/work/app")
     from planner.environments.app import validate_app_manifest
-    from planner.environments.deployment_gate import smoke_candidate
+    from planner.environments.candidate_smoke import smoke_candidate
     from planner.environments.runtime_admission import (
         NATIVE_PROBE,
         admit_runtime,
@@ -186,7 +186,7 @@ def inside_proof(archive_digest: str, requested_sha: str) -> None:
             "import sys; from pathlib import Path; "
             "from planner.environments.app import validate_app_manifest; "
             "from planner.environments.runtime_admission import admit_runtime; "
-            "from planner.environments.deployment_gate import smoke_candidate; "
+            "from planner.environments.candidate_smoke import smoke_candidate; "
             "root=Path(sys.argv[1]); sha=sys.argv[2]; "
             "manifest=validate_app_manifest(root/'manifest.json', expected_sha=sha); "
             "admit_runtime(root, manifest); smoke_candidate(root, sha); "

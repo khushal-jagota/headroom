@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from collections.abc import Callable
-from contextlib import closing
+from datetime import UTC, datetime
 from pathlib import Path
 
 from playwright.sync_api import BrowserContext, Page, expect
@@ -27,9 +27,7 @@ from tests.support.connected_rows import _bind, _conversation, _message, _post
 from tests.support.server_fixtures import rail_server as rail_server
 
 from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
-from planner.core.db import connect
 
-EVIDENCE = Path("/home/vps/Deployments/Panels/current/data/files/tickets/t_0kjtqmge/artifacts/rail")
 LONG_TITLE = "Review the entire Worker title when the adjustable rail clips this long approval row"
 
 
@@ -121,6 +119,7 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     api: ApiHelper,
+    tmp_path: Path,
 ) -> None:
     server = rail_server
     item, empty, ticket, question = _seed(server, api)
@@ -155,12 +154,17 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     ).to_have_count(0)
     expect(card.locator(".manager-eyebrow")).to_contain_text("Rail proof")
     expect(left.locator(f'[data-manager="{empty["id"]}"]')).to_be_visible()
-    api.direct_patch(server, f"/api/managers/{empty['id']}/settled", {"settled": True})
-    # The host clock is fixed. Give this older update a distinct stored timestamp.
-    with closing(connect(str(server.db_path))) as conn:
-        conn.execute("UPDATE managers SET updated_at=updated_at-1 WHERE id=?", (empty["id"],))
-        conn.commit()
-    expect(row.get_by_role("img", name="Unread message")).to_be_visible(timeout=WAIT_MS)
+    empty_settled = api.direct_patch(
+        server, f"/api/managers/{empty['id']}/settled", {"settled": True}
+    )
+    # Advance the fixed clock so the later settlement is newer through the server's write door.
+    next_update = datetime.fromtimestamp(int(empty_settled["updated_at"]) + 1, UTC)
+    api.direct_post(server, "/api/test/set-now", {"now": next_update.isoformat()})
+    # The row waits on the owner's approval, so its mark column shows the Review mark, which
+    # outranks its unread message's dot (redesign, owner). The mark stays through settle,
+    # reopen and the other conversations' reads below.
+    attention = row.get_by_role("img", name="Needs your approval")
+    expect(attention).to_be_visible(timeout=WAIT_MS)
     expect(card.locator(".item-head .stage-mark")).to_have_count(0)
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
     question_row = card.locator(f'[data-ticket-id="{question["id"]}"]')
@@ -172,6 +176,8 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     row.click()
     worker_hash = page.evaluate("location.hash")
     expect(page.locator(f'[data-screen="ticket"][data-ticket-id="{ticket["id"]}"]')).to_be_visible()
+    # Settle accepts pointer input only after the owner enters the header.
+    card.locator(".identity").hover()
     with page.expect_response(
         lambda response: (
             response.url.endswith(f"/api/managers/{item['id']}/settled")
@@ -210,7 +216,7 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
         "() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))"
     )
     expect(page.locator("[data-rail-hover-panel]")).to_have_attribute("aria-hidden", "true")
-    capture_success(page, str(EVIDENCE / "settled-lean-no-popover.png"))
+    capture_success(page, str(tmp_path / "settled-lean-no-popover.png"))
     scoped_parent = left.locator(f'[data-settled-item="{item["id"]}"]')
     expect(scoped_parent).to_be_visible(timeout=WAIT_MS)
     expect(left.locator('[data-settled-item] .settled-title > span')).to_have_text(
@@ -219,7 +225,7 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     expect(left.locator('[data-settled-scroll] [data-message-conversation]')).to_have_count(0)
     expect(left.locator('[data-settled-scroll] [data-workspace-messages]')).to_have_count(0)
     expect(scoped_parent.get_by_role("button", name=f"Reopen {item['title']}")).to_be_visible()
-    capture_success(page, str(EVIDENCE / "settled-managers-only.png"))
+    capture_success(page, str(tmp_path / "settled-managers-only.png"))
     scoped_parent.locator(".settled-title").click()
     scoped_pane = page.locator(f'[data-manager-workspace="{item["id"]}"]')
     scoped_row = scoped_pane.locator(f'[data-worker-ticket-id="{ticket["id"]}"]')
@@ -248,8 +254,8 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
             conn.execute("SELECT settled FROM managers WHERE id=?", (item["id"],)).fetchone()[0]
             == 0
         )
-    expect(row.get_by_role("img", name="Unread message")).to_be_visible()
-    capture_success(page, str(EVIDENCE / "rail-1440.png"))
+    expect(attention).to_be_visible()
+    capture_success(page, str(tmp_path / "rail-1440.png"))
     _message(server, "rail-chief", CHIEF_PRINCIPAL, "Chief own direct message")
     _message(
         server,
@@ -260,11 +266,11 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     page.reload()
     expect(card.locator(".item-head .stage-mark")).to_be_visible(timeout=WAIT_MS)
     expect(left.locator("[data-chief-destination] .stage-mark")).to_be_visible(timeout=WAIT_MS)
-    expect(row.get_by_role("img", name="Unread message")).to_be_visible()
+    expect(attention).to_be_visible()
     api.direct_post(
         server, "/api/conversation/conversations/rail-chief/owner-read", {"through_sequence": 1}
     )
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0, timeout=WAIT_MS)
     expect(card.locator(".item-head .stage-mark")).to_be_visible()
-    expect(row.get_by_role("img", name="Unread message")).to_be_visible()
-    capture_success(page, str(EVIDENCE / "own-conversation-marks.png"))
+    expect(attention).to_be_visible()
+    capture_success(page, str(tmp_path / "own-conversation-marks.png"))

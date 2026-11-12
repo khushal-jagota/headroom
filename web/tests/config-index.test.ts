@@ -88,7 +88,7 @@ describe("Config destinations", () => {
   it("retains the Usage header and routes Config destinations inside its actual tab", () => {
     setManifests({ worker_types: [manifest("coding", ["brief", "done"])] });
     const markup = render(BackendsRoute, { props: { tab: "config" } }).body;
-    expect(markup).toContain("Usage</h1>");
+    expect(markup.replace(/<!--[\s\S]*?-->/g, "")).toMatch(/<h1\b[^>]*>\s*Usage\s*<\/h1>/);
     expect(markup).toMatch(/href="#\/backends\/config"[^>]*aria-current="page"/);
     for (const suffix of ["chief-of-staff", "manager", "worker-skill", "workers/coding"]) {
       expect(markup).toContain(`href="#/backends/config/${suffix}"`);

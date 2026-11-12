@@ -94,9 +94,10 @@ def test_source_failure_reaches_real_prompt_then_reassignment_notifies_new_princ
             assert "HTTP status: 401" in chief_writes[0].text
             from tests.unit.test_goal_pages import create
 
-            from planner.goals.conversation import goal_agent_key
             from planner.runtime.conversation_start import read_agent_conversation
 
+            # The next goal belongs to Chief, whose earlier notice turn is still live.
+            await subject.complete_running_turn(chief_conversation)
             goal = create(tmp_db)
             goal_actor = Principal(PrincipalKind.goal, goal.id)
             actions.set_responsible(
@@ -108,7 +109,7 @@ def test_source_failure_reaches_real_prompt_then_reassignment_notifies_new_princ
                 now=NOW + 6,
             )
             goal_batch = wakes.claim_next_batch(tmp_db, process_token="goal-proof", now=NOW + 7)
-            assert goal_batch is not None and goal_batch.target == goal_actor
+            assert goal_batch is not None and goal_batch.target == CHIEF_PRINCIPAL
             assert await deliver_batch(
                 goal_batch,
                 connect_database=lambda: connect(str(database)),
@@ -117,11 +118,13 @@ def test_source_failure_reaches_real_prompt_then_reassignment_notifies_new_princ
                 now=lambda: NOW + 8,
             )
             await subject.settle()
-            goal_conversation = read_agent_conversation(tmp_db, goal_agent_key(goal.id))
-            assert goal_conversation is not None
-            goal_writes = await subject.backend_writes(goal_conversation)
-            assert len(goal_writes) == 1
-            assert source.id in goal_writes[0].text and "HTTP status: 401" in goal_writes[0].text
+            assert read_agent_conversation(tmp_db, "goal_" + goal.id) is None
+            holder_conversation = read_agent_conversation(tmp_db, "chief_of_staff")
+            assert holder_conversation is not None and holder_conversation == chief_conversation
+            holder_writes = await subject.backend_writes(holder_conversation)
+            assert len(holder_writes) == 2
+            assert source.id in holder_writes[-1].text
+            assert "HTTP status: 401" in holder_writes[-1].text
             rows = tmp_db.execute(
                 "SELECT closed_at FROM manager_wakes WHERE source_kind='source_failure'"
             ).fetchall()
@@ -191,4 +194,4 @@ def test_reassignment_before_delivery_discards_old_responsibility_batch(
         == 1
     )
     latest = wakes.claim_next_batch(tmp_db, process_token="current", now=NOW + 3)
-    assert latest is not None and latest.target == goal_actor
+    assert latest is not None and latest.target == CHIEF_PRINCIPAL

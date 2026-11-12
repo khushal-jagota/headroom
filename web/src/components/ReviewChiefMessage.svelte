@@ -4,7 +4,7 @@
   import {PlannerFetchError} from '../lib/api';
   import {mutateJson} from '../lib/mutate';
   import {navigationApplication} from '../lib/navigation/application.svelte';
-  import {conversationOwnerImpact} from '../lib/workspaceNavigationImpact';
+
   import {workspaceAddress} from '../lib/workspaceAddress';
   import {readComposerDraft,writeComposerDraft} from '../lib/conversation/composerDraft';
   import {mintOutgoingMessage} from '../lib/conversation/outgoing';
@@ -97,8 +97,7 @@
       await saveChiefAttempt(sending);attempt=sending;
       const effective=navigation.state.effective;
       requestSent=true;
-      const delivered=await navigation.runCommand(conversationOwnerImpact(effective?navigation.presentationFor(effective):undefined,'chief','chief'),responseMetadata=>
-        mutateJson<DeliveredMessage>('/api/chief/conversation/send',{method:'POST',responseMetadata,body:sendBodyFor({message:sending.message,current:{model:null,reasoningEffort:null},picked:{model:null,reasoningEffort:null},conversationId:sending.expectedConversationId})}),'send Chief message');
+      const delivered=await mutateJson<DeliveredMessage>('/api/chief/conversation/send',{method:'POST',body:sendBodyFor({message:sending.message,current:{model:null,reasoningEffort:null},picked:{model:null,reasoningEffort:null},conversationId:sending.expectedConversationId})});
       if(delivered.fate==='started'){await finish(sending,'Sent to Chief');}
       else if(delivered.fate==='injected'){await finish(sending,'Sent to Chief’s current turn');}
       else if(delivered.fate==='queued'){await finish(sending,'Queued for Chief');}

@@ -6,12 +6,15 @@ import argparse
 import asyncio
 import contextlib
 import json
+import os
+import signal
 import socket
 import ssl
 import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,7 +28,9 @@ from fastapi import FastAPI
 @contextlib.contextmanager
 def short_transport_root() -> Iterator[Path]:
     """Keep Unix sockets below macOS's path limit, regardless of test name."""
-    with tempfile.TemporaryDirectory(prefix="ex-", dir=Path("/tmp").resolve()) as root:
+    with tempfile.TemporaryDirectory(
+        prefix="ex-", dir=Path(tempfile.gettempdir()).resolve()
+    ) as root:
         yield Path(root)
 
 
@@ -33,6 +38,31 @@ def short_transport_root() -> Iterator[Path]:
 class HttpsProxy:
     origin: str
     ca_path: Path
+    control: str | None = None
+
+    def cut_connections(self) -> None:
+        """Abort every open connection through the proxy, as a dropped link does.
+
+        Requests in flight get no reply. Later requests connect again normally."""
+        self._control("cut")
+
+    def blackhole(self, enabled: bool = True, *, drop_held: bool = True) -> None:
+        """While on, the proxy stops reading and forwarding, as when the network silently
+        drops packets: every socket stays open, and no request in flight or new gets a
+        reply. Turning it off lets later requests pass. With drop_held the requests it
+        held are aborted; without it they stay dead, open and unanswered, until the
+        client gives up on its own timeout (a long poll on a socket that died in sleep)."""
+        if enabled:
+            self._control("blackhole/on")
+        else:
+            self._control("blackhole/off" if drop_held else "blackhole/off-keep-dead")
+
+    def _control(self, action: str) -> None:
+        if self.control is None:
+            raise RuntimeError("this proxy has no control listener")
+        request = urllib.request.Request(f"{self.control}/{action}", method="POST")
+        with urllib.request.urlopen(request, timeout=5) as response:
+            response.read()
 
     def session_factory(self) -> aiohttp.ClientSession:
         context = ssl.create_default_context(cafile=str(self.ca_path))
@@ -93,6 +123,8 @@ def isolated_https_proxy(
                 str(ready),
                 "--login",
                 login,
+                "--parent",
+                str(os.getpid()),
             ],
             stdout=log,
             stderr=subprocess.STDOUT,
@@ -103,7 +135,8 @@ def isolated_https_proxy(
             if process.poll() is not None or time.monotonic() >= deadline:
                 raise RuntimeError((root / "proxy.log").read_text())
             time.sleep(0.01)
-        yield HttpsProxy(json.loads(ready.read_text())["origin"], cert)
+        published = json.loads(ready.read_text())
+        yield HttpsProxy(published["origin"], cert, published["control"])
     finally:
         process.terminate()
         try:
@@ -143,7 +176,11 @@ async def serve_executor_app(app: FastAPI, root: Path) -> AsyncIterator[HttpsPro
     finally:
         server.should_exit = True
         try:
-            await asyncio.wait_for(task, 5)
+            done, _ = await asyncio.wait((task,), timeout=5)
+            if not done:
+                # A request still held (a long poll) must not hold the shutdown.
+                server.force_exit = True
+                await asyncio.wait_for(task, 5)
         finally:
             listener.close()
 
@@ -172,7 +209,79 @@ async def _serve(upstream: str, cert: Path, key: Path, ready: Path, login: str) 
         auto_decompress=False,
     )
 
+    # Each blackhole period has a number. A request that was in flight or arrived during
+    # one is dead: it is never answered, and its socket stays open until the period is
+    # dropped, the client gives up, or the request is very old.
+    blackhole = {"on": False, "period": 0}
+    drops: dict[int, asyncio.Event] = {}
+    runner: web.AppRunner | None = None
+
+    def cut() -> None:
+        server = runner.server if runner is not None else None
+        for handler in tuple(server.connections if server is not None else ()):
+            transport = handler.transport
+            if transport is not None:
+                transport.abort()
+
+    class Dead(Exception):
+        pass
+
+    class Life:
+        """When this request began, and so which blackhole period kills it."""
+
+        def __init__(self) -> None:
+            self.period = blackhole["period"]
+            self.began_dark = blackhole["on"]
+
+        def killer(self) -> int | None:
+            if self.began_dark:
+                return self.period
+            if blackhole["period"] != self.period:
+                return self.period + 1
+            return None
+
+        async def check(self, request: web.Request) -> None:
+            period = self.killer()
+            if period is None:
+                return
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(drops[period].wait(), 900)
+            if request.transport is not None:
+                request.transport.abort()
+            raise Dead
+
+    async def body(request: web.Request, life: Life) -> AsyncIterator[bytes]:
+        async for chunk in request.content.iter_chunked(256 * 1024):
+            await life.check(request)
+            yield chunk
+
+    async def control(request: web.Request) -> web.Response:
+        action = request.match_info["action"]
+        if action == "cut":
+            cut()
+        elif action == "blackhole/on":
+            if not blackhole["on"]:
+                blackhole["period"] += 1
+                drops[blackhole["period"]] = asyncio.Event()
+                blackhole["on"] = True
+        elif action in ("blackhole/off", "blackhole/off-keep-dead"):
+            if blackhole["on"]:
+                blackhole["on"] = False
+                if action == "blackhole/off":
+                    drops[blackhole["period"]].set()
+        else:
+            return web.Response(status=404)
+        return web.Response(text="ok")
+
     async def proxy(request: web.Request) -> web.StreamResponse:
+        life = Life()
+        try:
+            return await forward(request, life)
+        except Dead:
+            return web.Response(status=502)  # never reaches the aborted socket
+
+    async def forward(request: web.Request, life: Life) -> web.StreamResponse:
+        await life.check(request)
         connection_headers = {
             name.strip().lower() for name in request.headers.get("connection", "").split(",")
         }
@@ -230,9 +339,10 @@ async def _serve(upstream: str, cert: Path, key: Path, ready: Path, login: str) 
             request.method,
             url,
             headers=headers,
-            data=request.content.iter_chunked(256 * 1024) if request.can_read_body else None,
+            data=body(request, life) if request.can_read_body else None,
             allow_redirects=False,
         ) as remote:
+            await life.check(request)
             response = web.StreamResponse(
                 status=remote.status,
                 headers=[
@@ -243,30 +353,46 @@ async def _serve(upstream: str, cert: Path, key: Path, ready: Path, login: str) 
             )
             await response.prepare(request)
             async for chunk in remote.content.iter_chunked(256 * 1024):
+                await life.check(request)
                 await response.write(chunk)
+            await life.check(request)
             await response.write_eof()
             return response
 
     app = web.Application(client_max_size=0)
     app.router.add_route("*", "/{path:.*}", proxy)
     runner = web.AppRunner(app, access_log=None)
+    control_app = web.Application()
+    control_app.router.add_post("/{action:.*}", control)
+    control_runner = web.AppRunner(control_app, access_log=None)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert, key)
     try:
         await runner.setup()
+        await control_runner.setup()
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         listener.listen()
         site = web.SockSite(runner, listener, ssl_context=context)
         await site.start()
+        control_listener = socket.socket()
+        control_listener.bind(("127.0.0.1", 0))
+        control_listener.listen()
+        await web.SockSite(control_runner, control_listener).start()
         # Publish readiness only after the complete JSON file has been closed.
         temporary_ready = ready.with_suffix(".tmp")
         temporary_ready.write_text(
-            json.dumps({"origin": f"https://127.0.0.1:{listener.getsockname()[1]}"})
+            json.dumps(
+                {
+                    "origin": f"https://127.0.0.1:{listener.getsockname()[1]}",
+                    "control": f"http://127.0.0.1:{control_listener.getsockname()[1]}",
+                }
+            )
         )
         temporary_ready.replace(ready)
         await asyncio.Event().wait()
     finally:
+        await control_runner.cleanup()
         await runner.cleanup()
         await session.close()
 
@@ -278,5 +404,13 @@ if __name__ == "__main__":
     parser.add_argument("--key", type=Path, required=True)
     parser.add_argument("--ready", type=Path, required=True)
     parser.add_argument("--login", required=True)
+    parser.add_argument("--parent", type=int, required=True)
     args = parser.parse_args()
+    if sys.platform == "linux":
+        import ctypes
+
+        # The kernel ends this proxy with the process that started it.
+        ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGKILL, 0, 0, 0)  # PR_SET_PDEATHSIG
+    if os.getppid() != args.parent:
+        raise SystemExit(1)
     asyncio.run(_serve(args.upstream, args.cert, args.key, args.ready, args.login))

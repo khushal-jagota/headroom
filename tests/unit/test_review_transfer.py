@@ -12,11 +12,11 @@ from sqlite3 import Connection
 from unittest.mock import patch
 
 import pytest
-
-from planner.conversation.in_memory_conversation_system import (
+from tests.support.in_memory_conversation_system import (
     InMemoryConversationObservationKind,
     InMemoryConversationSystem,
 )
+
 from planner.conversation.message_content import text_message_content
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind

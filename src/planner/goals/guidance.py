@@ -31,6 +31,8 @@ _CHART = {
     "direction": "atmost",
 }
 _CHART_NOTES = (
+    "Goals belong to a holder. Set holder_kind to chief with holder_id null, or manager "
+    "with the saved Manager ID. Talk about goals through the holder conversation.",
     "A chart has type chart and a separate kind such as line. Use direction atleast or "
     "atmost (not target_direction). The example target 100 is an explicit illustrative "
     "test assumption; choose the real target from the goal's requirements.",
@@ -54,7 +56,14 @@ _NOTES = (
     "must be nonempty and unique. Sections need exactly one of blocks or views.",
     "deadline is an ISO calendar date or null. kind is binary or quantitative. A supplied "
     "page is a complete page-kit document, not a partial patch. Completion and active "
-    "state remain independent. A quantitative chart does not determine completion.",
+    "state remain independent. A quantitative chart does not determine completion. New "
+    "quantitative goals require completion_rule, separate from progress targets. Existing "
+    "legacy goals retain their state until explicitly configured.",
+    "completion_rule compares actual and target expressions with direction atleast or atmost. "
+    "first_date is the earliest permitted achievement date. Both expressions use the existing "
+    "measure formula language. Actual must reference retained measurements; constants alone "
+    "cannot complete a goal. Panels records the first supported success date automatically. "
+    "Later fluctuations preserve that milestone; corrections and rule edits reevaluate it.",
     "Checklist items accept an optional deadline as an exact YYYY-MM-DD calendar date. "
     "Omission or null means undated. Set a date, replace it, or clear it with null through "
     "the ordinary page edit. Example dates are illustrative; choose dates from the user's "
@@ -90,17 +99,24 @@ CREATE = RequestGuidance(
     examples={
         "chief_goal": {
             "project_id": "p_example",
-            "title": "Track daily activity",
-            "why": "Keep activity within the agreed daily limit",
+            "title": "Reach $10,000 MRR",
+            "why": "Establish the revenue milestone",
             "kind": "quantitative",
             "primary_chart": {
                 "type": "chart",
                 "kind": "line",
-                "title": "Daily activity",
-                "unit": "events",
+                "title": "Monthly recurring revenue",
+                "unit": "USD",
+                "measure_id": "measure_example",
+                "target": 10000,
+            },
+            "completion_rule": {
+                "actual": {"op": "reference", "measure_id": "measure_example", "day_offset": 0},
+                "target": {"op": "constant", "value": 10000},
+                "direction": "atleast",
+                "first_date": "2026-11-01",
             },
             "active": True,
-            "completed": False,
         },
         "binary_goal": {
             "project_id": "p_example",
@@ -120,14 +136,15 @@ CREATE = RequestGuidance(
         "Chief/owner creation requires title, project_id, and an explicit kind. For binary "
         "goals, include primary_checklist_block_id: null explicitly selects binary completion; "
         "a saved checklist block ID selects that checklist. For quantitative goals, include "
-        "a non-null primary_chart with an explicit chart kind. Goal kind alone does not "
+        "a non-null primary_chart with an explicit chart kind and completion_rule. "
+        "Create the input measure before the goal. Goal kind alone does not "
         "select the main display. Send the object to panels goal create on stdin.",
-        "Defaults for other fields: why empty, active true, completed false, deadline null. "
+        "Defaults for other fields: why empty, active true, deadline null. Binary completion "
+        "defaults false. Quantitative completion comes from its rule and retained evidence. "
         "Omitted page defaults to an empty headroom.page version 1 with the goal title and "
-        "empty summary. The chief_goal chart starts without observations; bind an existing "
-        "measure or supply factual chart series before it can show recorded values.",
-        "expected_revision is accepted and ignored on create for compatibility. "
-        "Use panels goal schema edit for revision-checked changes and panels goal schema "
+        "empty summary. Replace measure_example in both the chart and completion_rule "
+        "with an existing measure. Example dates and targets are illustrative.",
+        "Use panels goal schema edit for changes and panels goal schema "
         "primary-chart for chart author input.",
         *_NOTES,
         *_CHART_NOTES,
@@ -135,39 +152,48 @@ CREATE = RequestGuidance(
     optional_fields=_NORMALIZED,
     required_fields={
         BinaryGoalCreateBody: GOAL_CREATE_REQUIRED,
-        QuantitativeGoalCreateBody: GOAL_CREATE_REQUIRED,
+        QuantitativeGoalCreateBody: (*GOAL_CREATE_REQUIRED, "completion_rule"),
     },
     defaults={
-        branch: {"why": "", "active": True, "completed": False}
-        for branch in (BinaryGoalCreateBody, QuantitativeGoalCreateBody)
+        BinaryGoalCreateBody: {"why": "", "active": True, "completed": False},
+        QuantitativeGoalCreateBody: {"why": "", "active": True},
     },
 )
 EDIT = RequestGuidance(
     GoalEditBody,
     examples={
-        "primary_line_chart": {"expected_revision": 1, "primary_chart": _CHART},
-        "select_binary_display": {"expected_revision": 1, "primary_checklist_block_id": None},
-        "select_checklist": {"expected_revision": 1, "primary_checklist_block_id": "approach"},
-        "change_checklist_deadline": {
-            "expected_revision": 1, "page": _workshop_page("2026-11-09")
+        "primary_line_chart": {"primary_chart": _CHART},
+        "numeric_finish_line": {
+            "completion_rule": {
+                "actual": {"op": "reference", "measure_id": "measure_example", "day_offset": 0},
+                "target": {"op": "constant", "value": 10000},
+                "direction": "atleast", "first_date": "2026-11-01",
+            },
         },
-        "clear_checklist_deadline": {"expected_revision": 1, "page": _workshop_page(None)},
+        "select_binary_display": {"primary_checklist_block_id": None},
+        "select_checklist": {"primary_checklist_block_id": "approach"},
+        "change_checklist_deadline": {
+            "page": _workshop_page("2026-11-09")
+        },
+        "clear_checklist_deadline": {"page": _workshop_page(None)},
     },
     notes=(
-        "Read panels goal show GOAL_ID --json first. Replace expected_revision with the "
-        "current revision and send changed fields to panels goal edit GOAL_ID on stdin. "
-        "Omitted goal fields stay unchanged. Authority and stale-revision checks run before "
+        "Read panels goal show GOAL_ID --json first. "
+        "Send changed fields to panels goal edit GOAL_ID on stdin. "
+        "Omitted goal fields stay unchanged. Authority checks run before "
         "the existing document validator.",
         "A kind change requires the destination main-display choice in the same request: "
         "binary needs primary_checklist_block_id, including explicit null for binary "
-        "completion; quantitative needs a non-null primary_chart. A selected checklist "
+        "completion; quantitative needs a non-null primary_chart and completion_rule. "
+        "A configured numeric rule cannot be cleared while the goal remains quantitative. "
+        "Manual completed writes must agree with automatic completion. A selected checklist "
         "must exist in the resulting page, including nested layouts. If a page edit removes "
         "the selected checklist, explicitly select a replacement or binary completion. "
         "A quantitative goal cannot clear its main chart without an explicit valid display "
         "switch. Ordinary edits preserve existing and legacy display configurations.",
         "Before an item-date edit, copy the accepted page from goal show and keep every "
         "block, item ID, state, and unrelated field. Change only the intended item's "
-        "deadline and use the current expected_revision. The workshop examples are "
+        "deadline. The workshop examples are "
         "complete fictional pages; never replace a real page with an example page.",
         *_NOTES,
         *_CHART_NOTES,
@@ -178,7 +204,7 @@ PRIMARY_CHART = RequestGuidance(
     ChartBlock,
     examples={"primary_line_chart": _CHART},
     notes=(
-        "This schema describes the primary_chart object. Put it in the revision-checked "
+        "This schema describes the primary_chart object. Put it in the "
         "edit envelope shown by panels goal schema edit. A quantitative goal requires "
         "a non-null main chart. To switch to binary completion, send kind binary and "
         "primary_checklist_block_id null explicitly in the same edit.",

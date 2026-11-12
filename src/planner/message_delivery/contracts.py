@@ -31,7 +31,11 @@ class MessageDeliveryResult:
 
 
 class MessageAdmission(Protocol):
-    """Attachment admission under the existing destination lock, before link mutation."""
+    """Attachment admission under the existing destination lock, before link mutation.
+
+    ``finish`` and ``abort_before_dispatch`` write, so the send runs them on a worker
+    thread. They must not touch the event loop or the conversation system.
+    """
 
     async def preflight(
         self, current_conversation_id: str | None

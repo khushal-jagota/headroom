@@ -13,6 +13,7 @@ from planner.conversation.video_uploads.contracts import (
     VideoUploadStatus,
 )
 from planner.core.authctx import RequestContext, request_context, require_owner
+from planner.core.task_settlement import run_on_worker_thread
 
 
 def create_router(
@@ -26,7 +27,7 @@ def create_router(
 
     async def checked_status(upload_id: str) -> VideoUploadStatus:
         try:
-            status = service.status(upload_id)
+            status = await run_on_worker_thread(service.status, upload_id)
             await authorize_destination(status.destination)
             return status
         except VideoUploadError as exc:
@@ -36,7 +37,7 @@ def create_router(
     async def reserve(body: ReserveVideoUpload) -> VideoUploadStatus:
         await authorize_destination(body.destination)
         try:
-            return service.reserve(body)
+            return await run_on_worker_thread(service.reserve, body)
         except VideoUploadError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
 
@@ -58,7 +59,7 @@ def create_router(
     async def cancel(upload_id: str) -> Response:
         await checked_status(upload_id)
         try:
-            service.cancel(upload_id)
+            await run_on_worker_thread(service.cancel, upload_id)
         except VideoUploadError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
         return Response(status_code=204)

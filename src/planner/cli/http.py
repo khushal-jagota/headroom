@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any, NoReturn
 import httpx
 
 from planner.cli.errors import exit_with_human_error
-from planner.core.authctx import normalize_manager_identity
 
 if TYPE_CHECKING:
     from planner.executor.protocol import IpcResponse
@@ -46,17 +45,13 @@ def _headers() -> dict[str, str]:
     """
     actor = os.environ.get("PLAN_ACTOR", "").strip()
     ticket_id = os.environ.get("PLAN_TICKET_ID", "").strip()
-    manager_id = normalize_manager_identity(
-        os.environ.get("PLAN_MANAGER_ID"), os.environ.get("PLAN_SPRINT_ITEM_ID")
-    )
+    manager_id = os.environ.get("PLAN_MANAGER_ID", "").strip()
     if not actor:
         return {}
-    headers = {"X-Plan-Actor": "manager" if actor == "sprint_item_supervisor" else actor}
-    if actor == "goal" and os.environ.get("PLAN_GOAL_ID", "").strip():
-        headers["X-Plan-Goal-ID"] = os.environ["PLAN_GOAL_ID"].strip()
+    headers = {"X-Plan-Actor": actor}
     if actor == "worker" and ticket_id:
         headers["X-Plan-Ticket-ID"] = ticket_id
-    if actor in {"manager", "sprint_item_supervisor"} and manager_id:
+    if actor == "manager" and manager_id:
         headers["X-Plan-Manager-ID"] = manager_id
     conversation_id = os.environ.get("PLAN_CONVERSATION_ID", "").strip()
     if conversation_id:

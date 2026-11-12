@@ -7,13 +7,13 @@ them. Nothing here reconciles two sources, because there is only one.
 
 from __future__ import annotations
 
-import hashlib
 import re
+import shutil
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import asdict, replace
-from pathlib import Path
+from dataclasses import replace
+from pathlib import Path, PurePosixPath
 from typing import Any, Final
 
 from planner.conversation.contracts import require_conversation_backend_key
@@ -21,6 +21,7 @@ from planner.core.contracts import ErrorCode, PlannerError
 from planner.managed_skills import (
     SKILL_FILE_NAME,
     atomic_replace_text,
+    delete_skill_source,
     frontmatter_bounds,
     has_skill,
     read_all_skill_sources,
@@ -46,9 +47,15 @@ from planner.worker_settings.contracts import (
 )
 from planner.worker_settings.logic.skill_edits import normalize_skill_patch
 from planner.worker_types.configuration import load_worker_runtime_definitions
-from planner.worker_types.contracts import TicketTypeMigration, WorkerProfile, WorkerTypeDefinition
+from planner.worker_types.contracts import WorkerProfile, WorkerTypeDefinition
+from planner.worker_types.guidance import render_workflow_guide
 from planner.worker_types.registry import WorkerTypeRegistry
-from planner.worker_types.store import definition_transaction, write_definition
+from planner.worker_types.store import (
+    definition_transaction,
+    delete_definition,
+    read_definition,
+    write_definition,
+)
 
 CHIEF_SETTINGS_KEY: Final = "chief_of_staff"
 CHIEF_LABEL: Final = "Chief of Staff"
@@ -241,6 +248,72 @@ def save_skill(
     )
 
 
+def delete_skill(conn: sqlite3.Connection, skill_name: str, *, database_parent: Path | str) -> None:
+    """Remove a skill's row and its whole published folder.
+
+    The folder goes before the row commits. If the folder cannot go, the row stays, and
+    the next database open writes its file back, so the row remains the authority.
+    """
+    if conn.in_transaction:
+        raise RuntimeError("delete_skill requires a connection with no active transaction")
+    with skill_publication_lock(database_parent) as skills_home:
+        with _one_writer(conn):
+            delete_skill_source(conn, skill_name)
+            if PurePosixPath(skill_name).parts != (skill_name,) or skill_name in {".", ".."}:
+                raise PlannerError(
+                    ErrorCode.validation, "skill name is invalid", {"skill_name": skill_name}
+                )
+            folder = skills_home / skill_name
+            if folder.is_symlink() or folder.is_file():
+                folder.unlink()
+            elif folder.exists():
+                shutil.rmtree(folder)
+
+
+def write_skill_file(
+    conn: sqlite3.Connection,
+    skill_name: str,
+    payload: dict[str, Any],
+    *,
+    database_parent: Path | str,
+) -> str:
+    """Write one supporting file inside an existing skill's folder, and return its path.
+
+    The file lives only on disk: no row holds it, and republication never overwrites it.
+    The skill's own SKILL.md is the row's copy, so only the skill editor writes it.
+    """
+    if set(payload) != {"path", "content"}:
+        raise PlannerError(ErrorCode.validation, "send exactly path and content", {})
+    relative, content = payload["path"], payload["content"]
+    if not isinstance(content, str) or not content.strip():
+        raise PlannerError(ErrorCode.validation, "content must not be blank", {})
+    parts = PurePosixPath(relative).parts if isinstance(relative, str) else ()
+    if (
+        not parts
+        or relative.startswith("/")
+        or "\\" in relative
+        or any(part in {".", ".."} for part in parts)
+    ):
+        raise PlannerError(
+            ErrorCode.validation, "path must be relative and inside the skill folder", {}
+        )
+    if parts == (SKILL_FILE_NAME,):
+        raise PlannerError(
+            ErrorCode.validation, "edit SKILL.md through panels skill edit", {"path": relative}
+        )
+    with skill_publication_lock(database_parent) as skills_home:
+        read_skill_source(conn, skill_name)
+        folder = (skills_home / skill_name).resolve()
+        target = folder.joinpath(*parts)
+        resolved = target.resolve()
+        if not resolved.is_relative_to(folder) or resolved == folder / SKILL_FILE_NAME:
+            raise PlannerError(
+                ErrorCode.validation, "path must be relative and inside the skill folder", {}
+            )
+        atomic_replace_text(target, content)
+    return "/".join(parts)
+
+
 def save_worker_type_skill(
     conn: sqlite3.Connection,
     skill_name: str,
@@ -262,20 +335,45 @@ def save_worker_type_definition(
     *,
     now: int,
     database_parent: Path | str,
-) -> tuple[TicketTypeMigration, ...]:
+) -> None:
     """Commit a bundled declaration before publishing its registry or skill files."""
     if conn.in_transaction:
         raise RuntimeError("Worker type API save requires its own outer transaction")
     with skill_publication_lock(database_parent) as skills_home:
         rendered: str | None = None
         with definition_transaction(conn):
+            name = definition.worker_profile.specialist_skill
             if skill is not None:
-                name = definition.worker_profile.specialist_skill
                 patch = normalize_skill_patch(name, skill)
-                rendered = _render_skill_patch(conn, name, patch, allow_create=True)
-                parse_skill(rendered, name)
-                write_skill_source(conn, name, rendered, now=now)
-            migrations = write_definition(conn, definition, now=now)
+                if "markdown_body" in patch and patch["markdown_body"] != render_workflow_guide(
+                    definition
+                ):
+                    raise PlannerError(
+                        ErrorCode.validation,
+                        "specialist body is generated from the structured workflow",
+                        {"field": "markdown_body"},
+                    )
+                description = patch.get("description", definition.label)
+            else:
+                description = (
+                    read_skill(conn, name).description
+                    if has_skill(conn, name)
+                    else definition.label
+                )
+            body = render_workflow_guide(definition)
+            rendered = (
+                render_skill_from_existing_frontmatter(
+                    read_skill_source(conn, name),
+                    expected_skill_name=name,
+                    description=description,
+                    markdown_body=body,
+                )
+                if has_skill(conn, name)
+                else render_new_skill(name, description, body)
+            )
+            parse_skill(rendered, name)
+            write_skill_source(conn, name, rendered, now=now, generated_from_workflow=True)
+            write_definition(conn, definition, now=now)
         load_worker_runtime_definitions(conn)
         if rendered is not None:
             try:
@@ -285,14 +383,20 @@ def save_worker_type_definition(
             except PlannerError as exc:
                 if exc.code is ErrorCode.skill_save_incomplete:
                     detail = dict(exc.detail or {})
-                    detail.update(
-                        worker_type=definition.worker_type,
-                        definition_saved=True,
-                        migrations=[asdict(migration) for migration in migrations],
-                    )
+                    detail.update(worker_type=definition.worker_type, definition_saved=True)
                     raise PlannerError(exc.code, exc.message, detail) from exc
                 raise
-    return migrations
+
+
+def delete_worker_type_definition(conn: sqlite3.Connection, worker_type: str) -> None:
+    """Remove a preset and stop offering it, in one act.
+
+    Its specialist skill stays until explicitly deleted. Tickets keep their saved guide.
+    """
+    if conn.in_transaction:
+        raise RuntimeError("Worker type delete requires its own outer transaction")
+    delete_definition(conn, worker_type)
+    load_worker_runtime_definitions(conn)
 
 
 # --- Worker types -------------------------------------------------------------
@@ -308,7 +412,6 @@ def read_worker_settings(
         worker_type=worker_type,
         specialist_skill=read_skill(conn, definition.worker_profile.specialist_skill),
         launch_defaults=_launch_defaults(definition.worker_profile),
-        requires_macos=read_worker_requires_macos(conn, worker_type),
         candidate_specialist_skill=None,
     )
 
@@ -325,7 +428,6 @@ def read_worker_management_index(
                 worker_type=worker_type,
                 label=definition.label,
                 specialist_skill_name=definition.worker_profile.specialist_skill,
-                requires_macos=read_worker_requires_macos(conn, worker_type),
                 launch_defaults=_launch_defaults(definition.worker_profile),
             )
         )
@@ -366,22 +468,23 @@ def _with_launch_defaults(
 
 def update_worker_launch_defaults(
     conn: sqlite3.Connection,
-    registry: WorkerTypeRegistry,
     worker_type: str,
     payload: dict[str, Any],
     *,
     now: int,
 ) -> ManagedWorkerSettings:
-    definition = registry.require(worker_type)
     launch_defaults = validate_launch_defaults(payload)
     with _one_writer(conn):
+        # The stored record, read under the write lock, not the registry in force: a
+        # declaration committed on another thread is in the row before it is in the
+        # registry, and rewriting the registry's copy would undo it.
+        definition = read_definition(conn, worker_type)
         write_definition(conn, _with_launch_defaults(definition, launch_defaults), now=now)
     load_worker_runtime_definitions(conn)
     return ManagedWorkerSettings(
         worker_type=worker_type,
         specialist_skill=read_skill(conn, definition.worker_profile.specialist_skill),
         launch_defaults=launch_defaults,
-        requires_macos=read_worker_requires_macos(conn, worker_type),
         candidate_specialist_skill=None,
     )
 
@@ -484,33 +587,6 @@ def save_chief_skill(
     return read_chief_settings(conn)
 
 
-def read_worker_requires_macos(conn: sqlite3.Connection, worker_type: str) -> bool:
-    row = conn.execute(
-        "SELECT requires_macos FROM worker_types WHERE worker_type=?", (worker_type,)
-    ).fetchone()
-    # In-memory registries used before a Worker is registered have no managed override.
-    return bool(row["requires_macos"]) if row is not None else False
-
-
-def update_worker_requirements(
-    conn: sqlite3.Connection,
-    registry: WorkerTypeRegistry,
-    worker_type: str,
-    *,
-    requires_macos: bool,
-    now: int,
-) -> ManagedWorkerSettings:
-    registry.require(worker_type)
-    if type(requires_macos) is not bool:
-        raise PlannerError(ErrorCode.validation, "requires_macos must be a boolean", {})
-    with _one_writer(conn):
-        conn.execute(
-            "UPDATE worker_types SET requires_macos=?,updated_at=? WHERE worker_type=?",
-            (int(requires_macos), now, worker_type),
-        )
-    return read_worker_settings(conn, registry, worker_type)
-
-
 def apply_skills(
     conn: sqlite3.Connection,
     raw: dict[str, Any],
@@ -530,47 +606,27 @@ def apply_skills(
     entries: list[SkillApplication] = []
     names: set[str] = set()
     for item in raw["skills"]:
-        if not isinstance(item, dict) or set(item) != {"name", "source_text", "expected_sha256"}:
+        if not isinstance(item, dict) or set(item) != {"name", "source_text"}:
             raise PlannerError(
                 ErrorCode.validation, "skill application must be an exact object", {}
             )
-        name, text, expected = item["name"], item["source_text"], item["expected_sha256"]
+        name, text = item["name"], item["source_text"]
         if (
             not isinstance(name, str)
             or not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name)
             or name in names
         ):
             raise PlannerError(ErrorCode.validation, "skill name is invalid or duplicated", {})
-        if not isinstance(text, str) or (
-            expected is not None
-            and (not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected))
-        ):
-            raise PlannerError(ErrorCode.validation, "source text or expected hash is invalid", {})
+        if not isinstance(text, str):
+            raise PlannerError(ErrorCode.validation, "source text is invalid", {})
         parse_skill(text, name)
         names.add(name)
-        entries.append(SkillApplication(name, text, expected))
+        entries.append(SkillApplication(name, text))
     with skill_publication_lock(database_parent) as skills_home:
         with _one_writer(conn):
             current = read_all_skill_sources(conn)
             exact_retry = all(current.get(entry.name) == entry.source_text for entry in entries)
             if not exact_retry:
-                for entry in entries:
-                    source = current.get(entry.name)
-                    actual = (
-                        None
-                        if source is None
-                        else hashlib.sha256(source.encode("utf-8")).hexdigest()
-                    )
-                    if actual != entry.expected_sha256:
-                        raise PlannerError(
-                            ErrorCode.validation,
-                            "skill source hash changed",
-                            {
-                                "skill_name": entry.name,
-                                "expected_sha256": entry.expected_sha256,
-                                "actual_sha256": actual,
-                            },
-                        )
                 for entry in entries:
                     write_skill_source(conn, entry.name, entry.source_text, now=now)
         for entry in entries:

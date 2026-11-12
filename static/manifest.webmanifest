@@ -3,7 +3,7 @@
   "name": "Panels",
   "short_name": "Panels",
   "description": "Your workspace for planning and agent work.",
-  "start_url": "/#/day",
+  "start_url": "/#/workspace",
   "scope": "/",
   "display": "standalone",
   "background_color": "#11151f",

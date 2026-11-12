@@ -59,7 +59,9 @@ def validate_app_manifest(
     *,
     expected_sha: str | None = None,
     require_runtime: bool = False,
+    verify_artifact_digest: bool = True,
 ) -> AppManifest:
+    """Validate one app's manifest; skip the whole-tree digest only when a checksum covers it."""
     manifest_input = path.expanduser()
     if manifest_input.is_symlink():
         raise AppValidationError(f"app manifest must be a regular file: {manifest_input}")
@@ -89,7 +91,9 @@ def validate_app_manifest(
         HEX_DIGEST_PATTERN, artifact_digest
     ) is None:
         raise AppValidationError("app manifest has an invalid artifact digest")
-    artifact_matches = artifact_digest == digest_app_artifact(app_root)
+    artifact_matches = not verify_artifact_digest or artifact_digest == digest_app_artifact(
+        app_root
+    )
     if not artifact_matches:
         # Legacy v1 manifests included build-time caches. Ignore only caches
         # created after that manifest so existing deployments remain verifiable.
@@ -194,7 +198,8 @@ def _validate_runtime_tree(root: Path) -> None:
             raise AppValidationError(f"runtime file is not executable: {path.relative_to(root)}")
     for path in (
         root / "web" / "dist" / "index.html",
-        root / "agent_backends" / "node_modules" / ".package-lock.json",
+        root / "agent_backends/node_modules/@anthropic-ai/claude-code/package.json",
+        root / "agent_backends/node_modules/@openai/codex/package.json",
     ):
         if not path.is_file():
             raise AppValidationError(f"runtime file is missing: {path.relative_to(root)}")
@@ -283,9 +288,14 @@ def _install_app_dependencies(app_root: Path) -> None:
     if requirements.is_file():
         subprocess.run([str(python), "-m", "pip", "install", "-r", str(requirements)], check=True)
     subprocess.run([str(python), "-m", "pip", "install", str(app_root)], check=True)
-    for directory in (app_root / "web", app_root / "agent_backends"):
-        if (directory / "package-lock.json").is_file():
-            subprocess.run(["npm", "ci", "--prefix", str(directory)], check=True)
+    if (app_root / "web/package-lock.json").is_file():
+        subprocess.run(["npm", "ci", "--prefix", str(app_root / "web")], check=True)
+    if (app_root / "agent_backends/package.json").is_file():
+        subprocess.run(
+            ["npm", "install", "--prefix", str(app_root / "agent_backends"),
+             "--package-lock=false", "--save=false", "@anthropic-ai/claude-code@latest",
+             "@openai/codex@latest"], check=True,
+        )
     if (app_root / "web" / "package.json").is_file():
         subprocess.run(["npm", "run", "build", "--prefix", str(app_root / "web")], check=True)
 

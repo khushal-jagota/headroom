@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from planner.tickets.contracts import StageOwnershipMode, Ticket, TicketCreationReceipt
 from planner.tickets.logic.proposal_routing import ProposalRouteKind, route_proposal
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import WorkflowDefinition
 
 
 def supervision_receipt(
     ticket: Ticket,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
     review_recipient: str,
 ) -> TicketCreationReceipt:
     definition = worker_type_definition

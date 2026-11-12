@@ -17,9 +17,6 @@ from pathlib import Path
 
 from playwright.sync_api import Browser, Page
 from tests.support.server import (
-    BOOT_BUDGET_S as BOOT_BUDGET_S,
-)
-from tests.support.server import (
     FAKE_NOW as FAKE_NOW,
 )
 from tests.support.server import (

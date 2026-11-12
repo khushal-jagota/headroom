@@ -10,9 +10,9 @@ describe("holder role wording and identity", () => {
     ]);
     expect(holderLabelFor(parent, {kind:"manager", id:"si_parent"})).toBe("Manager");
   });
-  it("keeps foreign managers and Worker holders distinguishable", () => {
+  it("keeps foreign managers identifiable and omits Worker choices", () => {
     expect(holderLabelFor(parent, {kind:"manager", id:"si_other"})).toBe("Manager · si_other");
-    expect(holderLabelFor(parent, {kind:"ticket", id:"t_other"})).toBe("Worker · t_other");
+    expect(holderOptionsFor(parent, {kind:"ticket", id:"t_other"}).map((option) => option.value)).not.toContain("t_other");
     expect(holderOptionsFor(parent, {kind:"manager", id:"si_other"}).at(-1)).toEqual({value:"si_other", label:"Manager", detail:"si_other"});
   });
   it("omits the manager option when no manager is assigned", () => {

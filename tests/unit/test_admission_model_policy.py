@@ -31,7 +31,6 @@ def test_configuration_commit_rechecks_disables_without_catalog_evidence(
         tickets.write_employee_configuration(
             tmp_db,
             ticket.id,
-            expected_employee_configuration=expected,
             employee_backend="codex",
             employee_launch_model="gpt-6-sol",
             employee_launch_reasoning_effort="high",

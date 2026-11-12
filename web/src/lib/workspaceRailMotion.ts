@@ -1,6 +1,15 @@
 import { tick } from "svelte";
 import { refreshWorkspaceRailSignals, stabilizeWorkspaceRail, type WorkspaceRail } from "./workspaceRail";
 import type { ViewWindow } from "./navigation/contracts";
+import type {GoalResponse} from "./goals/contracts";
+import {goalRailWindowShort} from "./goals/holders";
+
+export type GoalRailStructure = {
+  owner: {kind:"chief"|"manager";id:string};
+  sole: GoalResponse | null;
+  rows: GoalResponse[];
+  window: ViewWindow | undefined;
+};
 
 // The approved Glide timing: distance changes duration, never the easing.
 export const RAIL_MOTION = {
@@ -14,7 +23,9 @@ export const railMoveDuration = (distance: number) => Math.round(Math.max(RAIL_M
 /** Rendered structure travels together, including independently discovered messages. */
 export type WorkspaceRailPresentation = {
   rail: WorkspaceRail;
+  handoffRetained?: ReadonlySet<string>;
   settledOpen: boolean;
+  goalRails?: GoalRailStructure[];
   /** Keep the closing body mounted while the header acknowledges the click. */
   settledBodyOpen?: boolean;
   /** Metadata travels with its rows through hover freeze and the structural queue. */
@@ -72,6 +83,9 @@ export function createRailMotionController(root: () => HTMLElement | null,
   capturePageRestoration: () => void = () => {}) {
   let pending: WorkspaceRailPresentation | null = null;
   let frozen = false;
+  // Hover holds structure still, except a goal window its own answer reports as short:
+  // the rows it is missing would otherwise wait for the pointer to leave.
+  const holding = () => frozen && !(read().goalRails ?? []).some((holder) => goalRailWindowShort(holder.window));
   let busy = false;
   let disposed = false;
   let manualOpen: boolean | null = null;
@@ -207,10 +221,10 @@ export function createRailMotionController(root: () => HTMLElement | null,
     });
   }
   async function drain(): Promise<void> {
-    if (busy || frozen || disposed || !pending) return;
+    if (busy || holding() || disposed || !pending) return;
     busy = true;
     const previous = read();
-    const next = withFold({...pending, rail: stabilizeWorkspaceRail(pending.rail, previous.rail)}); pending = null;
+    let next = withFold({...pending, rail: stabilizeWorkspaceRail(pending.rail, previous.rail)}); pending = null;
     const directFold = () => manualOpen !== null && activeParents(previous) === activeParents(next);
     const railRoot = root();
     markBusy();
@@ -229,6 +243,9 @@ export function createRailMotionController(root: () => HTMLElement | null,
         for (const ticket of group.cards) remaining.add(`row:${ticket.id}`);
       }
     }
+    for (const holder of next.goalRails ?? []) {
+      for (const goal of holder.sole ? [holder.sole] : holder.rows) remaining.add(`row:${goal.id}`);
+    }
     if (next.settledOpen) for (const item of next.rail.settledItems) {
       remaining.add(`settled:${item.id}`);
 
@@ -238,13 +255,16 @@ export function createRailMotionController(root: () => HTMLElement | null,
     await Promise.all(exits.map(([, part]) => animate(part.node, [{ opacity: 1 }, { opacity: 0 }], RAIL_MOTION.exit, 0, false, RAIL_MOTION.leave)));
     if (disposed) return;
     // A pointer can arrive during an exit. Restore it, and defer the whole structure.
-    if (frozen) {
+    if (holding()) {
       pending ??= next;
       present(signalsOnly(pending));
       busy = false;
       markBusy();
       return;
     }
+    // New input can supersede the destination while exits await their animations.
+    const newest = pending as WorkspaceRailPresentation | null;
+    if (newest) { next = withFold({...newest, rail:stabilizeWorkspaceRail(newest.rail, read().rail)}); pending = null; }
     // Exit fades preserve layout, but the user can scroll before they finish.
     // Measure that newer viewport before publication so FLIP does not undo it.
     const first = measure();
@@ -327,7 +347,13 @@ export function createRailMotionController(root: () => HTMLElement | null,
   }
   function signalsOnly(next: WorkspaceRailPresentation): WorkspaceRailPresentation {
     const current = read();
-    return {...current, rail:refreshWorkspaceRailSignals(current.rail, next.rail)};
+    const rail = refreshWorkspaceRailSignals(current.rail, next.rail);
+    const fresh = new Map([next.rail.chiefGroups, ...next.rail.items.map(item=>item.groups), ...next.rail.settledItems.map(item=>item.groups)]
+      .flatMap(groups=>groups.flatMap(group=>group.cards)).map(ticket=>[ticket.id,ticket]));
+    const groups = (value: typeof rail.chiefGroups) => value.map(group=>({...group,cards:group.cards.map(ticket=>
+      next.handoffRetained?.has(ticket.id) ? fresh.get(ticket.id) ?? ticket : ticket)}));
+    return {...current, handoffRetained:next.handoffRetained, rail:{...rail,chiefGroups:groups(rail.chiefGroups),
+      items:rail.items.map(item=>({...item,groups:groups(item.groups)})),settledItems:rail.settledItems.map(item=>({...item,groups:groups(item.groups)}))}};
   }
 
   async function setSettledOpen(open: boolean): Promise<void> {
@@ -378,22 +404,28 @@ export function createRailMotionController(root: () => HTMLElement | null,
   return {
     // A manual fold never waits for unrelated rail motion or a row hover.
     setSettledOpen(open: boolean) { void setSettledOpen(open); },
-    update(next: WorkspaceRailPresentation) {
+    update(next: WorkspaceRailPresentation, releasedHandoff = false) {
       if (disposed) return;
       pending = next;
+      if (next.handoffRetained?.size) present(signalsOnly(next));
+      if (releasedHandoff) {
+        // Expiry and cancellation release the grace even while hover or motion holds structure.
+        for (const animation of animations) animation.cancel();
+        present({...next,rail:stabilizeWorkspaceRail(next.rail,read().rail)});
+      }
       if (manualOpen !== null) {
         directSettled = activeParents(read()) === activeParents(next) ? next : null;
         if (closingBody) closingBody = signalsOnly(next);
         const heldSection = manualOpen && !closingBody && directSettled ? holdSection() : null;
-        present(frozen ? signalsOnly(next) : read());
+        present(holding() ? signalsOnly(next) : read());
         if (heldSection) void tick().then(() => resizeSection(heldSection));
-      } else if (frozen) present(signalsOnly(next));
+      } else if (holding()) present(signalsOnly(next));
       void drain();
     },
     freeze(value: boolean) {
       frozen = value;
-      if (value && pending && !disposed) present(signalsOnly(pending));
-      if (!value) void drain();
+      if (holding() && pending && !disposed) present(signalsOnly(pending));
+      if (!holding()) void drain();
     },
     dispose() { ++sectionGeneration; root()?.querySelector<HTMLElement>(".settled")?.style.removeProperty("height"); root()?.removeAttribute("data-rail-motion-busy"); root()?.querySelector<HTMLElement>(".settled")?.style.removeProperty("overflow"); disposed = true; ++foldGeneration; pending = null; for (const animation of animations) animation.cancel(); animations.clear(); clearCardSizes(); surfaces.clear(); media?.removeEventListener("change", motionPreferenceChanged); }
   };

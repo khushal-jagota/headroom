@@ -17,7 +17,7 @@ from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITra
 from planner.conversation.backends import claude_agent_sdk as claude
 from planner.conversation.backends import hermes_acp as hermes
 from planner.conversation.backends.codex_app_server import adapter as codex
-from planner.conversation.backends.codex_app_server import bindings_gen as bindings
+from planner.conversation.backends.codex_app_server import protocol
 from planner.conversation.backends.codex_app_server.client import CodexAppServerClient
 from planner.conversation.contracts import ConversationBackendKey
 
@@ -34,7 +34,7 @@ def install_permission_mapping(
         monkeypatch.setattr(
             codex,
             "_turn_sandbox_policy",
-            lambda access: bindings.WorkspaceWriteSandboxPolicy(type="workspaceWrite"),
+            lambda access: protocol.WorkspaceWriteSandboxPolicy(type="workspaceWrite"),
         )
         original = CodexAppServerClient.begin_request
 

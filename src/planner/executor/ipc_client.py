@@ -25,6 +25,7 @@ from planner.executor.protocol import (
     IpcRetryPayload,
     IpcWritePayload,
     JsonObject,
+    MacLocalStatus,
     UnconfirmedCliResult,
     encode_frame,
     type_adapter,
@@ -33,8 +34,6 @@ from planner.executor.protocol import (
 
 def cli_mutation(method: str, path: str, body: Any) -> tuple[str, JsonObject]:
     """Translate a supported CLI route into a registry operation, never a proxy route."""
-    if method == "POST" and path == "/api/feedback/use":
-        return "feedback.use", {"body": body}
     blocker = re.fullmatch(r"/api/collections/blockers/([^/]+)/([^/]+)", path)
     if blocker and method in ("PUT", "DELETE"):
         return "ticket.block" if method == "PUT" else "ticket.unblock", {
@@ -129,3 +128,11 @@ def request(operation: IpcOperation, payload: JsonObject) -> IpcResponse:
                 unconfirmed=UnconfirmedCliResult(request_id, submission_id, "unknown"),
             )
         raise error
+
+
+def local_status() -> MacLocalStatus:
+    """The running executor's own view of its standing with the VPS (Mac clock times)."""
+    response = request(IpcOperation.health, {})
+    if response.error is not None or response.result is None:
+        raise ValueError(str(response.error or "executor health returned nothing"))
+    return type_adapter(MacLocalStatus).validate_python(response.result)

@@ -18,7 +18,7 @@ from typing import Any, Final
 from pydantic import BaseModel, ValidationError
 
 from planner import __version__
-from planner.conversation.backends.codex_app_server import bindings_gen as bindings
+from planner.conversation.backends.codex_app_server import protocol
 from planner.conversation.backends.codex_app_server.adapter import (
     CLIENT_NAME,
     CLIENT_TITLE,
@@ -105,7 +105,7 @@ async def probe_codex_model_catalog(codex_executable: str) -> CodexModelCatalog:
 
 async def _ask_codex(codex_executable: str) -> CodexModelCatalog:
     client = CodexAppServerClient(handler=_SaysNothing(), description="model-catalog")
-    pages: list[bindings.Model1] = []
+    pages: list[protocol.CatalogModel] = []
     complete = False
     try:
         await client.start(
@@ -115,8 +115,8 @@ async def _ask_codex(codex_executable: str) -> CodexModelCatalog:
         )
         await client.request(
             "initialize",
-            bindings.InitializeParams(
-                clientInfo=bindings.ClientInfo(
+            protocol.InitializeParams(
+                clientInfo=protocol.ClientInfo(
                     name=CLIENT_NAME, title=CLIENT_TITLE, version=__version__
                 ),
                 capabilities=INITIALIZE_CAPABILITIES,
@@ -133,7 +133,7 @@ async def _ask_codex(codex_executable: str) -> CodexModelCatalog:
                     "model/list",
                     {} if cursor is None else {"cursor": cursor},
                 )
-                listed = bindings.ModelListResponse.model_validate(answered)
+                listed = protocol.ModelListResponse.model_validate(answered)
             except (CodexAppServerError, ValidationError):
                 if not pages:
                     raise
@@ -150,10 +150,10 @@ async def _ask_codex(codex_executable: str) -> CodexModelCatalog:
         raise CodexModelCatalogUnavailable(str(would_not_say)) from would_not_say
     finally:
         await client.stop()
-    return _catalog(bindings.ModelListResponse(data=pages), complete=complete)
+    return _catalog(protocol.ModelListResponse(data=pages), complete=complete)
 
 
-def _catalog(listed: bindings.ModelListResponse, *, complete: bool = True) -> CodexModelCatalog:
+def _catalog(listed: protocol.ModelListResponse, *, complete: bool = True) -> CodexModelCatalog:
     """Keep the advertised models; hidden rows are not picker choices.
 
     The efforts are collected in the order they were listed and de-duplicated, so the list

@@ -1,6 +1,7 @@
 <script lang="ts">
   /** A managed file outside an existing conversation pane belongs beside its owner's
    * current conversation. Opening the file leaves that conversation at rest. */
+  import { PlannerFetchError } from "../lib/api";
   import { createQuery } from "@tanstack/svelte-query";
   import { onMount } from "svelte";
   import ManagerFrame from "../components/ManagerFrame.svelte";
@@ -11,9 +12,9 @@
   import type { ManagedFileTarget } from "../lib/filePreview";
   import { targetFromPreviewQuery, previewHashHref } from "../lib/filePreview";
   import { mutateJson } from "../lib/mutate";
+  import { reviewReturnHref } from "../lib/review/visit";
   import { navigationApplication } from "../lib/navigation/application.svelte";
-  import { ticketCommandImpact } from "../lib/ticketNavigationImpact";
-  import { conversationOwnerImpact } from "../lib/workspaceNavigationImpact";
+
   import type { ConversationState } from "../lib/conversation/conversationState";
   import { readBackends, type BackendSnapshot, type DeliveredMessage, type OwnerSendBody } from "../lib/conversation/wire";
 
@@ -28,21 +29,22 @@
   }
   let target = $derived(suppliedTarget ?? parseTarget());
   let ticketId = $derived(target?.kind === "ticket-file" ? target.ticketId : "");
-  let managerId = $derived(target?.kind === "manager-file" ? target.managerId : "");
   let goalId = $derived(target?.kind === "goal-file" ? target.goalId : "");
+  const goal = createQuery(() => ({ ...goalQueries.detail(goalId), enabled: Boolean(goalId), retry: false }));
+  let managerId = $derived(target?.kind === "manager-file" ? target.managerId : goal.data?.holder_kind==='manager'?goal.data.holder_id!:"");
+  const chief = createQuery(() => ({ ...queries.chiefConversation(), enabled: goal.data?.holder_kind==='chief' }));
   const ticket = createQuery(() => ({ ...queries.ticket(ticketId), enabled: Boolean(ticketId), retry: false }));
   const manager = createQuery(() => ({ ...queries.managerWorkspace(managerId), enabled: Boolean(managerId), retry: false }));
-  const goal = createQuery(() => ({ ...goalQueries.detail(goalId), enabled: Boolean(goalId), retry: false }));
   const ticketStart = createQuery(() => ({ ...queries.ticketConversationStartValues(ticketId), enabled: Boolean(ticketId) }));
   const managerStart = createQuery(() => ({ ...queries.managerConversationStartValues(managerId), enabled: Boolean(managerId) }));
-  const goalStart = createQuery(() => ({ ...goalQueries.start(goalId), enabled: Boolean(goalId) }));
+  const chiefStart = createQuery(() => ({ ...queries.chiefConversationStartValues(), enabled: goal.data?.holder_kind==='chief' }));
   let owner = $derived(ticketId && ticket.data?.id === ticketId ? { kind: "ticket" as const, id: ticketId, title: ticket.data.title, conversationId: ticket.data.conversation_id, locale: ticket.data.locale }
     : managerId && manager.data?.id === managerId ? { kind: "manager" as const, id: managerId, title: manager.data.title, conversationId: manager.data.manager.conversation_id }
-    : goalId && goal.data?.id === goalId ? { kind: "goal" as const, id: goalId, title: goal.data.title, conversationId: goal.data.conversation_id }
+    : goalId && goal.data?.id === goalId && goal.data.holder_kind==='chief' && chief.data ? { kind: "chief" as const, id: "chief", title: "Chief of Staff", conversationId: chief.data.conversation_id }
     : null);
-  let ownerError = $derived(ticketId ? ticket.error : managerId ? manager.error : goal.error);
-  let ownerLoaded = $derived(ticketId ? ticket.isSuccess : managerId ? manager.isSuccess : goal.isSuccess);
-  let startValues = $derived(ticketId ? ticketStart.data : managerId ? managerStart.data : goalStart.data);
+  let ownerError = $derived(ticketId ? ticket.error : managerId ? manager.error : goal.error ?? chief.error);
+  let ownerLoaded = $derived(ticketId ? ticket.isSuccess : managerId ? manager.isSuccess : goal.isSuccess && chief.isSuccess);
+  let startValues = $derived(ticketId ? ticketStart.data : managerId ? managerStart.data : chiefStart.data);
   let shownFile = $state<ManagedFileTarget | null>(null);
   let conversationState = $state<ConversationState>("rest");
   let backends = $state<readonly BackendSnapshot[]>([]);
@@ -63,7 +65,9 @@
 
   function close(): void {
     if (onClose) onClose();
-    else window.location.hash = "#/workspace";
+    else window.location.hash = navigation && target
+      ? reviewReturnHref(navigation, previewHashHref(target)) ?? "#/workspace"
+      : "#/workspace";
   }
   function changeFile(file: ManagedFileTarget | null): void {
     if (!file) close();
@@ -73,28 +77,27 @@
     if (!owner || ownerError) throw new Error("The artifact's conversation is unavailable.");
     const recipient = owner;
     const view = navigation?.state.effective;
-    const impact = recipient.kind === "ticket"
-      ? ticketCommandImpact(view, recipient.id, "conversation")
-      : conversationOwnerImpact(view ? navigation!.presentationFor(view) : undefined, recipient.kind, recipient.id);
-    const operation = (responseMetadata?: import("../lib/api").FetchOptions["responseMetadata"]) => mutateJson<DeliveredMessage>(
-      `/api/${recipient.kind === "ticket" ? "tickets" : recipient.kind === "manager" ? "managers" : "goals"}/${encodeURIComponent(recipient.id)}/conversation/send`,
-      { method: "POST", body, responseMetadata });
-    const delivered = navigation ? await navigation.runCommand(impact, operation, "send artifact message") : await operation();
+
+    const operation = () => mutateJson<DeliveredMessage>(
+      recipient.kind === "chief" ? "/api/chief/conversation/send" : `/api/${recipient.kind === "ticket" ? "tickets" : "managers"}/${encodeURIComponent(recipient.id)}/conversation/send`,
+      { method: "POST", body });
+    const delivered = await operation();
     if (delivered.conversation_id !== null) sentConversationId = delivered.conversation_id;
     return delivered;
   }
 </script>
 
 <section class="file-preview-route" data-file-preview-route>
-  {#if target}
+  {#if goalId && goal.error instanceof PlannerFetchError && goal.error.status === 404}
+    <p>Goal not found.</p>
+  {:else if target}
     <ManagerFrame openedFile={shownFile} onOpenFile={changeFile} bind:conversationState>
       <p>{owner?.title ?? "Artifact"}</p>
       {#snippet conversation()}
         {#if owner && !ownerError}
-          <div class="artifact-recipient" data-artifact-recipient>Message {owner.title}</div>
           {#key identity}
             <LiveConversation bind:conversationState conversationId={sentConversationId ?? owner.conversationId}
-              persistenceKey={`owner:${owner.kind}:${owner.id}`} uploadOwner={owner.kind === "goal" ? null : {kind: owner.kind, id: owner.id}}
+              persistenceKey={`owner:${owner.kind}:${owner.id}`} uploadOwner={{kind: owner.kind, id: owner.id}}
               label={owner.title} locale={"locale" in owner ? owner.locale : undefined}
               composerPlaceholder={`Message ${owner.title}...`} {backends} startValues={startValues ?? null}
               senderLabel="owner" {sendMessage} />
@@ -110,5 +113,4 @@
 
 <style>
   .file-preview-route { flex:1; width:100%; height:100%; min-height:0; display:flex; flex-direction:column; }
-  .artifact-recipient { flex:none; color:var(--text-muted); font-size:var(--type-xs); padding:var(--space-2) var(--space-3); }
 </style>

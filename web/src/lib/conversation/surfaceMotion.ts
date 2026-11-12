@@ -25,13 +25,14 @@ function createSurfaceMotion(pane: HTMLElement) {
     if (moves.size) frame = requestAnimationFrame(step);
   }
   return {
-    move(key: object, apply: (fraction: number) => void, duration = CONVERSATION_MOVE_MS, done?: () => void, position = false) {
+    /** `start` may lie in the past: a move that continues another keeps its clock. */
+    move(key: object, apply: (fraction: number) => void, duration = CONVERSATION_MOVE_MS, done?: () => void, position = false, start = performance.now()) {
       moves.get(key)?.finish(false);
       moves.delete(key);
       if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
         apply(1); for (const follow of followers) follow([key]); done?.(); return Promise.resolve(true);
       }
-      const result = new Promise<boolean>(finish => moves.set(key, { position, start: performance.now(), duration, apply, done, finish }));
+      const result = new Promise<boolean>(finish => moves.set(key, { position, start, duration, apply, done, finish }));
       mark();
       apply(0);
       if (!frame) frame = requestAnimationFrame(step);
