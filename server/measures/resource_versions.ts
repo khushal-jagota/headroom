@@ -1,4 +1,5 @@
 import type { FastifyRequest } from 'fastify';
+import { capture_source_resource } from '../measure_sources/resource_versions.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { Clock } from '../core/clock.ts';
 import type { ReadSql } from '../core/database/contracts.ts';
@@ -13,7 +14,15 @@ export function configure_measure_resources(value: Clock): void {
 export class MeasureResources implements ResourceProvider {
   capture(sql: ReadSql, _request: FastifyRequest, key: string): ResourceSnapshot | null {
     const url = new URL(key, 'http://comparison.invalid');
-    if (!url.pathname.startsWith('/api/measures')) return null;
+    if (
+      ![
+        '/api/measures',
+        '/api/measure-sources',
+        '/api/measure-source-runs/',
+        '/api/credentials',
+      ].some((prefix) => url.pathname.startsWith(prefix))
+    )
+      return null;
     const q = url.searchParams;
     if ([...q.keys()].some((k) => q.getAll(k).length !== 1)) return null;
     const parts = url.pathname.slice('/api/'.length).split('/');
@@ -23,6 +32,8 @@ export class MeasureResources implements ResourceProvider {
         ['automatic-measures', 'all'],
       )?.revision ?? 0,
     );
+    if (!url.pathname.startsWith('/api/measures'))
+      return capture_source_resource(sql, url, clock.nowUnix(), revision);
     if (parts.length === 3 && parts[0] === 'measures' && parts[2] === 'manual-state') {
       if ([...q.keys()].some((k) => k !== 'date')) return null;
       const now = clock.nowUnix(),

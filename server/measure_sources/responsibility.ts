@@ -15,6 +15,23 @@ const failure_messages: Record<string, string> = {
   budget_exhausted: 'The run exceeded its execution timeout.',
   interrupted: 'The collection stopped before completion.',
 };
+export function failure_message(
+  f: {
+    code: string;
+    budget: string | null;
+    http_status: number | null;
+    exception_type?: string | null;
+    source_line?: number | null;
+  } | null,
+): string | null {
+  if (!f) return null;
+  let message = failure_messages[f.code]!;
+  if (f.budget !== null) message += ` Limit: ${f.budget}.`;
+  if (f.http_status !== null) message += ` HTTP status: ${f.http_status}.`;
+  if (f.exception_type != null) message += ` ${f.exception_type}.`;
+  if (f.source_line != null) message += ` Source line: ${f.source_line}.`;
+  return message;
+}
 function repr(value: string): string {
   const quote = value.includes("'") && !value.includes('"') ? '"' : "'";
   let result = quote;
@@ -35,7 +52,11 @@ function repr(value: string): string {
   }
   return result + quote;
 }
-function notify_episode(sql: TransactionSql, source: Record<string, unknown>, now: number): void {
+export function notify_episode(
+  sql: TransactionSql,
+  source: Record<string, unknown>,
+  now: number,
+): void {
   const episode = sql.get<{ episode: number; latest_run_id: string }>(
     'SELECT episode,latest_run_id FROM measure_source_failure_episodes WHERE source_id=? AND closed_at IS NULL',
     [String(source.id)],
@@ -57,15 +78,7 @@ function notify_episode(sql: TransactionSql, source: Record<string, unknown>, no
       "SELECT finished_at FROM measure_source_runs WHERE source_id=? AND mode='collection' AND status='succeeded' ORDER BY finished_at DESC,rowid DESC LIMIT 1",
       [String(source.id)],
     );
-  let message = 'None';
-  if (run.failure) {
-    const f = JSON.parse(run.failure) as Record<string, unknown>;
-    message = failure_messages[String(f.code)]!;
-    if (f.budget !== null) message += ` Limit: ${f.budget}.`;
-    if (f.http_status !== null) message += ` HTTP status: ${f.http_status}.`;
-    if (f.exception_type != null) message += ` ${f.exception_type}.`;
-    if (f.source_line != null) message += ` Source line: ${f.source_line}.`;
-  }
+  const message = failure_message(run.failure ? JSON.parse(run.failure) : null) ?? 'None';
   const dates = [
     ...(JSON.parse(run.required_outputs) as { required_date: string }[]).slice(0, 5),
     ...(JSON.parse(run.dataset_outputs) as { required_date: string }[]).slice(0, 5),

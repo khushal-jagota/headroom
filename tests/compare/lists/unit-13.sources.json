@@ -1,0 +1,628 @@
+{
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/measure_sources/"
+  ],
+  "seed_requests": [
+    {
+      "area": "measure-sources",
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Source holder",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "holder": "id"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Other source holder",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "other": "id"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Source worker caller",
+        "worker_type": "coding",
+        "brief": "Synthetic source caller",
+        "project_id": "project_other",
+        "manager": {
+          "kind": "manager",
+          "id": "${other}"
+        }
+      },
+      "capture": {
+        "worker": "id"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 200,
+      "json": {
+        "title": "Source goal holder",
+        "kind": "binary",
+        "project_id": "project_other",
+        "primary_checklist_block_id": null,
+        "holder_kind": "manager",
+        "holder_id": "${holder}"
+      },
+      "capture": {
+        "goal": "id"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "POST",
+      "path": "/api/credentials",
+      "status": 200,
+      "json": {
+        "scheme": "local",
+        "name": "unit13-synthetic",
+        "auth_kind": "bearer",
+        "secret": {
+          "token": "synthetic-unit13-only"
+        }
+      }
+    }
+  ],
+  "requests": [
+    {
+      "area": "measure-sources",
+      "method": "POST",
+      "path": "/api/measure-sources",
+      "status": 200,
+      "json": {
+        "name": "Chief source",
+        "project_id": "project_other",
+        "account": "unit13-account",
+        "responsible": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "chief_source": "id"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "DELETE",
+      "path": "/api/measure-sources/${chief_source}",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "POST",
+      "path": "/api/measure-sources",
+      "status": 200,
+      "json": {
+        "name": "Goal source",
+        "project_id": "project_other",
+        "account": "unit13-account",
+        "responsible": {
+          "kind": "goal",
+          "id": "${goal}"
+        }
+      },
+      "capture": {
+        "goal_source": "id"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "DELETE",
+      "path": "/api/measure-sources/${goal_source}",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/measure-sources/${goal_source}",
+      "status": 404
+    },
+    {
+      "area": "measure-sources",
+      "method": "POST",
+      "path": "/api/measure-sources",
+      "status": 200,
+      "json": {
+        "name": "Primary source",
+        "project_id": "project_other",
+        "account": "unit13-account",
+        "responsible": {
+          "kind": "manager",
+          "id": "${holder}"
+        }
+      },
+      "capture": {
+        "source": "id",
+        "revision": "source_revision"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/measure-sources",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/measure-sources?project_id=project_other&limit=1&offset=1",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/measure-sources?limit=0",
+      "status": 400
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/measure-sources?offset=-1",
+      "status": 400
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/measure-sources?limit=invalid",
+      "status": 422
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/measure-sources/${source}",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/measure-sources/${source}/status",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "PUT",
+      "path": "/api/measure-sources/${source}/schedule",
+      "status": 400,
+      "json": {
+        "expected_revision": "${revision}",
+        "enabled": true,
+        "local_time": "08:30"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "PUT",
+      "path": "/api/measure-sources/${source}/script",
+      "status": 200,
+      "json": {
+        "expected_revision": "${revision}",
+        "text": "// Unit 13 Part 1: stored text only, never executed.\n"
+      },
+      "capture": {
+        "revision": "source_revision",
+        "script_revision": "active_script.revision"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "PUT",
+      "path": "/api/measure-sources/${source}/script",
+      "status": 409,
+      "json": {
+        "expected_revision": 1,
+        "text": "stale text"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "PUT",
+      "path": "/api/measure-sources/${source}/schedule",
+      "status": 400,
+      "json": {
+        "expected_revision": "${revision}",
+        "enabled": true,
+        "local_time": "25:00"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "PUT",
+      "path": "/api/measure-sources/${source}/schedule",
+      "status": 200,
+      "json": {
+        "expected_revision": "${revision}",
+        "enabled": true,
+        "local_time": "08:30"
+      },
+      "capture": {
+        "revision": "source_revision"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "PUT",
+      "path": "/api/measure-sources/${source}/schedule",
+      "status": 409,
+      "json": {
+        "expected_revision": 1,
+        "enabled": false,
+        "local_time": null
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "POST",
+      "path": "/api/measures",
+      "status": 200,
+      "json": {
+        "project_id": "project_other",
+        "source_id": "${source}",
+        "name": "Collected scalar",
+        "timezone": "Europe/Berlin",
+        "unit": "units",
+        "origin": "taken",
+        "kind": "reading"
+      },
+      "capture": {
+        "measure": "id"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "POST",
+      "path": "/api/datasets",
+      "status": 200,
+      "json": {
+        "project_id": "project_other",
+        "source_id": "${source}",
+        "name": "Collected dataset",
+        "timezone": "Europe/Berlin",
+        "dimensions": [
+          {
+            "name": "region",
+            "label": "Region"
+          }
+        ],
+        "fields": [
+          {
+            "name": "value",
+            "label": "Value",
+            "unit": "units",
+            "kind": "amount"
+          }
+        ]
+      },
+      "capture": {
+        "dataset": "id"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "POST",
+      "path": "/api/measure-sources/${source}/runs",
+      "status": 409,
+      "json": {
+        "mode": "test",
+        "history": null,
+        "expected_script_revision": 999
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "POST",
+      "path": "/api/measure-sources/${source}/runs",
+      "status": 400,
+      "json": {
+        "mode": "test",
+        "history": {
+          "first_date": "2026-02-02",
+          "last_date": "2026-02-01"
+        },
+        "expected_script_revision": "${script_revision}"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "POST",
+      "path": "/api/measure-sources/${source}/runs",
+      "status": 200,
+      "json": {
+        "mode": "test",
+        "history": {
+          "first_date": "2026-01-30",
+          "last_date": "2026-02-01"
+        },
+        "expected_script_revision": "${script_revision}"
+      },
+      "capture": {
+        "test_run": "id"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "POST",
+      "path": "/api/measure-sources/${source}/runs",
+      "status": 200,
+      "json": {
+        "mode": "collection",
+        "history": null,
+        "expected_script_revision": "${script_revision}"
+      },
+      "capture": {
+        "collection_run": "id"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/measure-source-runs/${test_run}",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/measure-source-runs/${collection_run}",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/measure-sources/${source}/runs?limit=1&offset=0",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/measure-sources/${source}/runs?limit=1&offset=1",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/measure-sources/${source}/status",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/resource-versions?keys=[\"/api/measure-sources\",\"/api/measure-sources/${source}\",\"/api/measure-sources/${source}/status\",\"/api/measure-sources/${source}/runs\",\"/api/measure-source-runs/${test_run}\",\"/api/credentials\"]",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/measure-sources",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/measure-sources/${source}",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/measure-sources/${source}/status",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/measure-sources/${source}/runs",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/measure-source-runs/${test_run}",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/credentials",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "PUT",
+      "path": "/api/measure-sources/${source}/responsible",
+      "status": 200,
+      "json": {
+        "expected_responsibility_revision": 1,
+        "responsible": {
+          "kind": "goal",
+          "id": "${goal}"
+        }
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "PUT",
+      "path": "/api/measure-sources/${source}/responsible",
+      "status": 409,
+      "json": {
+        "expected_responsibility_revision": 1,
+        "responsible": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "PUT",
+      "path": "/api/measure-sources/${source}/responsible",
+      "status": 200,
+      "json": {
+        "expected_responsibility_revision": 2,
+        "responsible": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "PUT",
+      "path": "/api/measure-sources/${source}/script",
+      "status": 400,
+      "json": {
+        "expected_revision": "${revision}",
+        "text": "// Unit 13 Part 1: stored text only, never executed.\n"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${worker}"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "PUT",
+      "path": "/api/measure-sources/${source}/script",
+      "status": 400,
+      "json": {
+        "expected_revision": "${revision}",
+        "text": "// Unit 13 Part 1: stored text only, never executed.\n"
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${other}"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "PUT",
+      "path": "/api/measure-sources/${source}/responsible",
+      "status": 409,
+      "json": {
+        "expected_responsibility_revision": 1,
+        "responsible": {
+          "kind": "manager",
+          "id": "${holder}"
+        }
+      },
+      "headers": {
+        "X-Plan-Actor": "chief"
+      },
+      "note": "Chief is authorized; a stale responsibility revision refuses the write."
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/measure-sources/${source}",
+      "status": 200,
+      "capture": {
+        "revision": "source_revision"
+      },
+      "note": "Measure and dataset creation advance the source revision. Read the current source before script replacement."
+    },
+    {
+      "area": "measure-sources",
+      "method": "PUT",
+      "path": "/api/measure-sources/${source}/script",
+      "status": 200,
+      "json": {
+        "expected_revision": "${revision}",
+        "text": "// Unit 13 Part 1: stored text only, never executed.\n// revision two\n"
+      },
+      "capture": {
+        "revision": "source_revision"
+      },
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "area": "measure-sources",
+      "method": "DELETE",
+      "path": "/api/measure-sources/${source}",
+      "status": 400
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/measure-source-runs/${collection_run}",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/resource-versions?keys=[\"/api/measure-sources\",\"/api/measure-sources/${source}\",\"/api/measure-sources/${source}/status\",\"/api/measure-sources/${source}/runs\",\"/api/measure-source-runs/${test_run}\",\"/api/credentials\"]",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/measure-sources",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/measure-sources/${source}",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/measure-sources/${source}/status",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/measure-sources/${source}/runs",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/measure-source-runs/${test_run}",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/credentials",
+      "status": 200
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/measure-source-runs/absent",
+      "status": 404
+    },
+    {
+      "area": "measure-sources",
+      "method": "GET",
+      "path": "/api/measure-sources/absent/status",
+      "status": 404
+    }
+  ],
+  "probes": [
+    "/api/measure-sources",
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D"
+  ],
+  "candidate": "typescript"
+}
