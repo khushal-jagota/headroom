@@ -121,6 +121,8 @@ struct ConversationSend: Codable, Sendable {
     var backendKey: String? = nil
     var model: String? = nil
     var reasoningEffort: String? = nil
+    // Presence distinguishes an explicit reset from an unchanged omitted effort.
+    var reasoningEffortIsSet = false
     let senderMessageId: String
     let sentAtUnixMilliseconds: Int64
     var ownerReadThroughSequence: Int? = nil
@@ -132,6 +134,39 @@ struct ConversationSend: Codable, Sendable {
         var fileName: String? = nil
     }
 }
+extension ConversationSend {
+    enum CodingKeys: String, CodingKey {
+        case conversationId, content, senderLabel, mode, backendKey, model, reasoningEffort
+        case senderMessageId, sentAtUnixMilliseconds, ownerReadThroughSequence
+    }
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        conversationId = try c.decodeIfPresent(String.self, forKey: .conversationId)
+        content = try c.decode([Piece].self, forKey: .content)
+        senderLabel = try c.decodeIfPresent(String.self, forKey: .senderLabel) ?? "You"
+        mode = try c.decodeIfPresent(String.self, forKey: .mode) ?? "steer"
+        backendKey = try c.decodeIfPresent(String.self, forKey: .backendKey)
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+        reasoningEffort = try c.decodeIfPresent(String.self, forKey: .reasoningEffort)
+        reasoningEffortIsSet = c.contains(.reasoningEffort)
+        senderMessageId = try c.decode(String.self, forKey: .senderMessageId)
+        sentAtUnixMilliseconds = try c.decode(Int64.self, forKey: .sentAtUnixMilliseconds)
+        ownerReadThroughSequence = try c.decodeIfPresent(Int.self, forKey: .ownerReadThroughSequence)
+    }
+    func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(conversationId, forKey: .conversationId)
+        try c.encode(content, forKey: .content); try c.encode(senderLabel, forKey: .senderLabel)
+        try c.encode(mode, forKey: .mode); try c.encodeIfPresent(backendKey, forKey: .backendKey)
+        try c.encodeIfPresent(model, forKey: .model)
+        if let reasoningEffort { try c.encode(reasoningEffort, forKey: .reasoningEffort) }
+        else if reasoningEffortIsSet { try c.encodeNil(forKey: .reasoningEffort) }
+        try c.encode(senderMessageId, forKey: .senderMessageId)
+        try c.encode(sentAtUnixMilliseconds, forKey: .sentAtUnixMilliseconds)
+        try c.encodeIfPresent(ownerReadThroughSequence, forKey: .ownerReadThroughSequence)
+    }
+}
+
 struct ConversationDelivery: Decodable, Sendable {
     let conversationId: String?
     let fate: String

@@ -61,22 +61,51 @@ keeping the draft for that ask. Swipe-to-skip is disabled while it is open. The
 mic records AAC locally after permission, then calls the existing conversation
 voice-transcription endpoint. Words append to typed guidance. Failed transcription
 retains audio on disk for retry after reconnect or relaunch. Closing the composer
-preserves the recording; only explicit discard removes it. Sending requires nonempty
+preserves the recording. Explicit discard and the documented expiry policy remove
+owned audio only after committed ownership checks. Sending requires nonempty
 text and locks the field until the response. Failure keeps the words available.
 
-Review and its tab badge share one server-specific snapshot of outgoing work.
-The snapshot reads the store once after an outgoing payload changes or a row is
-removed. Queue evaluation and message-attempt presentation use memory. Draft edits,
-cache writes, and unchanged outgoing saves do not refresh the snapshot. A different
-server replaces it. Review pauses store reads while its root is hidden or the app
-is not active. On return, it restores changed proposals and saved voice drafts.
-This preserves the existing decision matching and outgoing retention policy.
+Review and its tab badge share a server-specific snapshot of decision metadata
+summaries. An outgoing fact change or removal refreshes that indexed query. Queue
+evaluation reads memory. A reply selects metadata for its conversation and read
+boundary, then decodes only the latest relevant and accepted work. Message-attempt
+presentation uses its selected memory snapshot. Voice restoration selects its draft
+or exact operation. Draft edits, cache writes and unchanged outgoing saves do not
+refresh the decision snapshot. A different server replaces it. Review pauses store
+reads while its root is hidden or the app is not active. On return, it restores
+changed proposals, selected reply status and saved voice drafts.
 
 A decision is saved before its ask leaves the screen. Like desktop, Review shows no
-receipt or status row for a saved decision. Both queued writes first check that
-the proposal is still current. Both send the displayed revision to the server,
-which checks it in the same transaction as the decision. If it changed after the
-last read, the ask returns to the queue.
+receipt or status row for a saved decision. A new decision freezes its canonical
+command, operation identity and proposal identity once. It first looks up the
+original operation receipt, even if the Ticket already advanced. Only supported
+explicit receipt absence permits a POST with the same ID and exact frozen bytes.
+The server commits the decision and receipt together. A lost response recovers the
+receipt instead of a new decision. The receipt confirms the decision, not delivery
+to an agent's prompt.
+
+Proposal part identities include the known canonical revision as well as field
+and timestamp. Saved decisions mask only that exact known revision; a replacement
+created in the same second stays visible, and unknown revisions grant no masking.
+Cached and live proposal loads reject a different known item revision. Badge
+subtraction likewise requires an exact known proposal in the current Review
+window; unknown or unloaded identities stay counted.
+
+The live Ticket proposal card uses this same durable decision path. Opening its
+Approve or Send back sheet captures the displayed proposal, revision, timestamp,
+server and chosen text; a later page update cannot change that command. Proposal
+edits are saved as exact-proposal drafts while typing, and guidance is saved before
+enqueue. The sheet returns after durable enqueue; it does not wait behind other
+outgoing lanes. Exact pending decisions disable duplicate actions, and a refusal
+appears inside the existing proposal card. New native actions do not call the
+legacy Ticket decision adapters.
+
+A server refusal restores only its exact field, revision and proposal time. Its
+note uses the existing error surface, and saved edits and guidance remain. Before
+any possible POST, an unsupported server restores the card with a compatible
+server note. After an attempt, an ambiguous response remains uncertain. Bodyless
+legacy decisions never upgrade or replay, and there is no legacy endpoint fallback.
+A newer proposal on the same Ticket does not inherit an older refusal note.
 
 A proposal title opens its ticket in Workspace. Cross-tab navigation sets the destination without an
 intermediate Workspace-root animation. Every pushed route hides the tab bar;
@@ -86,9 +115,11 @@ Conversation. Its draft is separate from the full conversation's draft and survi
 Skip and relaunch. A reply is saved in the outbox with its conversation ID, message
 identity and the last displayed message sequence. Accepted and server-queued replies
 acknowledge only that sequence. A later message stays unread and returns to Review.
-A refused or uncertain reply keeps its words and attachments. Receipt reconciliation
-and held-prompt checks avoid sending an accepted reply twice. An explicit retry after
-a terminal refusal receives a new identity while retaining the original read boundary.
+A refused or uncertain reply keeps its words and attachments. Attempted and queued
+replies check only their exact receipts. An absent receipt never permits an automatic
+POST. Confirmed server queue acceptance releases a later submission without a wait
+for the eventual prompt receipt. An explicit retry after a terminal refusal receives
+a new identity while retaining the original read boundary.
 
 Mark read acknowledges only the displayed run and does not send a reply. Both
 Mark read and Open conversation use the existing secondary action style. Open

@@ -145,7 +145,7 @@ private struct ConversationSurface: View {
                 do { try await Task.sleep(for: wait) } catch { return }
             }
         }
-        .onChange(of: LocalStore.shared.workRevision) { _, _ in
+        .onChange(of: LocalStore.shared.outgoingRevision(LocalStore.server(store.baseURL))) { _, _ in
             let before = model.outgoing
             model.syncOutbox()
             // A saved message can be held by the server; its queue lives in the configuration.
@@ -293,6 +293,7 @@ private struct ConversationSurface: View {
 }
 
 struct ConversationThread: View {
+    @State private var recoveryID: String?
     @Bindable var model: ConversationModel
     let owner: ConversationOwner
     var readOnly = false
@@ -334,11 +335,21 @@ struct ConversationThread: View {
                                         if note == "Waiting for connection" { Image(systemName: "clock").foregroundStyle(PanelsTheme.faint) }
                                         Text(note).foregroundStyle(note.hasPrefix("Not sent") ? PanelsTheme.error : PanelsTheme.faint)
                                         if let id = row.retryID, !readOnly {
-                                            Button { Task { await model.retry(id, to: owner, using: store.client) } } label: {
-                                                Text("Retry").padding(.horizontal, 8).padding(.vertical, 4)
+                                            Button {
+                                                if model.recoveries[id] == nil || model.recoveries[id] == .retry { Task { await model.retry(id, to: owner, using: store.client) } }
+                                                else { recoveryID = id }
+                                            } label: {
+                                                Text(model.recoveryLabel(id)).padding(.horizontal, 8).padding(.vertical, 4)
                                                     .background(PanelsTheme.accentSurface, in: Capsule())
                                                     .contentShape(Rectangle().inset(by: -8))
                                             }.disabled(model.sending)
+                                            .confirmationDialog("The earlier result is unknown. Another attempt can send this message twice.", isPresented: Binding(get: { recoveryID == id }, set: { if !$0 { recoveryID = nil } }), titleVisibility: .visible) {
+                                                Button(model.recoveries[id]?.unknownDestination == true ? "Start a new conversation with this message" : model.recoveryLabel(id)) {
+                                                    model.recover(id, using: store.client, startNew: model.recoveries[id]?.unknownDestination == true)
+                                                    recoveryID = nil
+                                                }
+                                                Button("Keep waiting", role: .cancel) { recoveryID = nil }
+                                            }
                                         }
                                     }.font(PanelsTheme.TypeScale.small).frame(minHeight: 28)
                                 }

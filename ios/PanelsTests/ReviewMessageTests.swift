@@ -3,7 +3,7 @@ import XCTest
 @testable import Panels
 
 @MainActor final class ReviewMessageTests: XCTestCase {
-    func testRetainedMessagePresentationReadsOnlyTheSharedSnapshot() async throws {
+    func testRetainedMessagePresentationReadsOnlyTheSelectedSnapshot() async throws {
         let api = makeAPI()
         ReviewMessageProtocol.state.reset()
         defer { clean(api) }
@@ -15,9 +15,15 @@ import XCTest
         var work = PendingWork(id: "saved-reply", created: .now, kind: .message, state: .uncertain, owner: .chief, message: message)
         try outbox.save(work, server: server)
         var reads = 0
-        let snapshot = ReviewSavedWork(outbox: outbox) { server in reads += 1; return outbox.entries(server) }
-        snapshot.refresh(server)
-        let decision = ReviewMessageDecision(savedWork: snapshot.entries, refreshSavedWork: snapshot.refresh)
+        var selected: [PendingWork] = []
+        var revision: Int?
+        let refresh: (String) -> Void = { server in
+            let current = outbox.store.outgoingRevision(server)
+            guard revision != current else { return }
+            reads += 1; selected = outbox.entries(server, conversationID: "c"); revision = current
+        }
+        refresh(server)
+        let decision = ReviewMessageDecision(savedWork: { _ in selected }, refreshSavedWork: refresh)
         await decision.load(item: item(), api: api)
         XCTAssertNil(decision.error)
         XCTAssertEqual(decision.attempt?.id, work.id)
@@ -32,7 +38,7 @@ import XCTest
         XCTAssertEqual(reads, 1)
         work.state = .sent
         try outbox.save(work, server: server)
-        snapshot.refresh(server)
+        refresh(server); decision.refreshAttempt()
         XCTAssertEqual(reads, 2)
         XCTAssertTrue(decision.accepted)
         XCTAssertFalse(decision.pending)
@@ -111,7 +117,7 @@ import XCTest
         await Outbox.shared.drain(api: api)
         XCTAssertEqual(ReviewMessageProtocol.state.bodies.filter { $0["sender_message_id"] != nil }.count, 2)
     }
-    func testLostQueuedReplyReconcilesHeldIdentityWithoutAnotherSend() async throws {
+    func testLostQueuedReplyWithoutReceiptStaysUncertainWithoutAnotherSend() async throws {
         let api = makeAPI()
         ReviewMessageProtocol.state.reset()
         ReviewMessageProtocol.state.loseResponse = true
@@ -127,7 +133,8 @@ import XCTest
         await restored.load(item: item(), api: api)
         XCTAssertEqual(restored.attemptID, original)
         await Outbox.shared.drain(api: api)
-        XCTAssertEqual(restored.attempt?.state, .serverQueued)
+        restored.refreshAttempt()
+        XCTAssertEqual(restored.attempt?.state, .uncertain)
         XCTAssertEqual(restored.attempt?.message?.ownerReadThroughSequence, 66)
         XCTAssertEqual(ReviewMessageProtocol.state.bodies.count, 1)
     }

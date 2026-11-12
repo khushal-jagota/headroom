@@ -132,7 +132,7 @@ extension NavigationPresentation {
             switch card {
             case .message(let message): return ReviewCard(id: message.item.id, parts: [message.item])
             case .ticket(let id, _, _, let proposal, let messages):
-                let parts = (proposal.map { [ReviewItem(reviewItemType: "proposal", ticketId: $0.ticketId, field: $0.field, title: $0.title, waitingSince: $0.waitingSince)] } ?? [])
+                let parts = (proposal.map { [ReviewItem(reviewItemType: "proposal", ticketId: $0.ticketId, field: $0.field, title: $0.title, waitingSince: $0.waitingSince, proposalRevision: $0.proposalRevision)] } ?? [])
                     + messages.map(\.item)
                 return ReviewCard(id: "ticket:\(id)", ticketId: id, parts: parts)
             }

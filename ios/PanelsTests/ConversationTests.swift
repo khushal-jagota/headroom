@@ -395,6 +395,30 @@ import XCTest
         message = try XCTUnwrap(second)
         XCTAssertEqual(message.model, "sonnet")
         XCTAssertNil(message.reasoningEffort)
+        XCTAssertNil(message.backendKey)
+        let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+        let unchanged = try JSONSerialization.jsonObject(with: encoder.encode(message)) as! [String: Any]
+        XCTAssertNil(unchanged["reasoning_effort"])
+        XCTAssertNil(unchanged["backend_key"])
+        model.reasoningEffort = nil
+        model.draft = "Reset effort"
+        _ = await model.send(to: .chief, using: service)
+        let resetMessage = await service.lastMessage
+        let reset = try XCTUnwrap(resetMessage)
+        let resetBody = try JSONSerialization.jsonObject(with: encoder.encode(reset)) as! [String: Any]
+        XCTAssertTrue(resetBody["reasoning_effort"] is NSNull)
+        let restored = try JSONDecoder().decode(ConversationSend.self, from: JSONEncoder().encode(reset))
+        XCTAssertTrue(restored.reasoningEffortIsSet)
+        XCTAssertTrue((try JSONSerialization.jsonObject(with: encoder.encode(restored)) as! [String: Any])["reasoning_effort"] is NSNull)
+        let creation = ConversationModel()
+        creation.applyConfiguration(try configuration("opus"))
+        creation.draft = "Start"
+        _ = await creation.send(to: .chief, using: service)
+        let creationMessage = await service.lastMessage
+        let start = try XCTUnwrap(creationMessage)
+        XCTAssertEqual(start.backendKey, "claude")
+        XCTAssertEqual(start.model, "opus")
+        XCTAssertEqual(start.reasoningEffort, "medium")
     }
 
     func testRetryKeepsAttachmentBytesWithoutDuplicatingFilenameInText() async throws {

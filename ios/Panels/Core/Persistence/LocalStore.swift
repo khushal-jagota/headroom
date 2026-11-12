@@ -24,24 +24,34 @@ import SwiftData
     nonisolated static let cacheByteLimit = 16 * 1024 * 1024
     private var container: ModelContainer?
     private var cacheWriter: ResponseCacheWriter?
+    private var outgoingStorage: OutgoingStore?
     private var startupError: Error?
+    private let beforeSave: (() throws -> Void)?
+    private let onPayloadDecode: (() -> Void)?
     // Cached GET responses are handed to their screen by the caller. Only durable
     // user work needs to wake draft restoration and outgoing-work observers.
     private(set) var workRevision = 0
     private var outgoingRevisions: [String: Int] = [:]
     func outgoingRevision(_ server: String) -> Int { outgoingRevisions[server, default: 0] }
     var saveError: String?
+    private(set) var outgoingError: String?
     private(set) var cacheErrors: [String: String] = [:]
     private var cacheWriteGenerations: [String: Int] = [:]
 
-    init(url: URL? = nil, cacheWrite: (@Sendable () throws -> Void)? = nil) {
+    init(url: URL? = nil, cacheWrite: (@Sendable () throws -> Void)? = nil, beforeSave: (() throws -> Void)? = nil, onPayloadDecode: (() -> Void)? = nil) {
+        self.beforeSave = beforeSave
+        self.onPayloadDecode = onPayloadDecode
         do {
             let location = url ?? Self.directory.appendingPathComponent("phone.store")
             try FileManager.default.createDirectory(at: location.deletingLastPathComponent(), withIntermediateDirectories: true)
-            container = try ModelContainer(for: LocalRecord.self, configurations: ModelConfiguration(url: location))
+            container = try ModelContainer(for: Schema(versionedSchema: PhoneOutgoingSchema.self), migrationPlan: PhoneStoreMigration.self, configurations: [ModelConfiguration(url: location)])
             container?.mainContext.autosaveEnabled = false
-            if let container { cacheWriter = ResponseCacheWriter(container: container, beforeWrite: cacheWrite) }
-        } catch { startupError = error; saveError = "Couldn’t open saved work: \(error.localizedDescription)" }
+            if let container {
+                saveError = try OutgoingStoreMigration.backfill(container.mainContext, beforeSave: beforeSave)
+                outgoingError = saveError
+                cacheWriter = ResponseCacheWriter(container: container, beforeWrite: cacheWrite)
+            }
+        } catch { container = nil; startupError = error; saveError = "Couldn’t open saved work: \(error.localizedDescription)" }
     }
     static var directory: URL {
         if let path = ProcessInfo.processInfo.environment["PANELS_STORE_DIRECTORY"] { return URL(fileURLWithPath: path) }
@@ -58,6 +68,26 @@ import SwiftData
         get throws {
             guard let container else { throw startupError ?? CocoaError(.fileWriteUnknown) }
             return container.mainContext
+        }
+    }
+    var outgoing: OutgoingStore {
+        get throws {
+            if let outgoingStorage { return outgoingStorage }
+            let storage = OutgoingStore(context: try context, beforeSave: beforeSave, onPayloadDecode: onPayloadDecode) { [weak self] server in
+                self?.outgoingRevisions[server, default: 0] += 1
+                self?.workRevision += 1
+                guard let self else { return }
+                let previous = self.outgoingError
+                // Successful durable work clears a transient outgoing fault, but retains corrupt rows.
+                do { self.outgoingError = try self.outgoingStorage?.storageFailure() }
+                catch { self.outgoingError = "Couldn’t read outgoing work: \(error.localizedDescription)" }
+                if self.saveError == previous { self.saveError = self.outgoingError }
+            } failed: { [weak self] error in
+                self?.outgoingError = "Couldn’t save outgoing work: \(error.localizedDescription)"
+                self?.saveError = self?.outgoingError
+            }
+            outgoingStorage = storage
+            return storage
         }
     }
     func records(server: String, kind: String) throws -> [LocalRecord] {
@@ -109,6 +139,7 @@ import SwiftData
     func flushCache() async { await cacheWriter?.flush() }
 
     func put(server: String, kind: String, id: String, data: Data, draft: (String, String)? = nil) throws {
+        if kind == "outbox" { try outgoing.saveEncoded(data, server: server, id: id, draft: draft); return }
         guard kind != "cache" || data.count <= Self.cacheByteLimit else { return }
         let context = try context
         do {
@@ -143,6 +174,7 @@ import SwiftData
     /// One save and one observer wake for the whole batch.
     func remove(server: String, kind: String, ids: [String]) throws {
         guard !ids.isEmpty else { return }
+        if kind == "outbox" { try outgoing.remove(server: server, ids: ids); return }
         let context = try context
         do {
             let keys = ids.map { Self.key(server, kind, $0) }

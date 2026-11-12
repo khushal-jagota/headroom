@@ -78,10 +78,9 @@ from planner.runtime.worker_step_readiness_loop import (
 )
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
+from planner.tickets import decision_operations, worker_restart
 from planner.tickets import views as tickets_views
-from planner.tickets import worker_restart
 from planner.tickets.contracts import (
-    NO_FURTHER,
     TITLE_MAX_CHARS,
     AcceptBody,
     CreateTicketBody,
@@ -493,17 +492,20 @@ def _parse_required_principal(raw: object, field: str) -> Principal:
 # --- scope marshallers ---------------------------------------------------------
 
 
-def _parse_next_ceiling(raw: str | None, worker_type_definition: WorkflowDefinition) -> str | None:
-    if raw is None:
-        return None
-    if raw == NO_FURTHER:
-        return NO_FURTHER
-    try:
-        return worker_type_definition.resolve_ceiling(raw)
-    except PlannerError as exc:
-        raise PlannerError(
-            ErrorCode.scope_invalid, "unknown next_ceiling", {"next_ceiling": raw}
-        ) from exc
+@router.post("/tickets/{ticket_id}/decision-operations/{operation_id}")
+def apply_decision_operation(
+    ticket_id: str, operation_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk,
+) -> JsonDict:
+    return dict(decision_operations.apply(
+        conn, ticket_id, operation_id, raw, actor=ctx.principal, now=clk.now_unix(),
+    ))
+
+
+@router.get("/tickets/{ticket_id}/decision-operations/{operation_id}")
+def lookup_decision_operation(
+    ticket_id: str, operation_id: str, conn: DbConn, ctx: Ctx,
+) -> JsonDict:
+    return dict(decision_operations.lookup(conn, ticket_id, operation_id, actor=ctx.principal))
 
 
 # --- ticket routes -------------------------------------------------------------
@@ -1057,7 +1059,7 @@ def accept_field(
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
-    next_ceiling = _parse_next_ceiling(body["next_ceiling"], worker_type_definition)
+    next_ceiling = admission.parse_next_ceiling(body["next_ceiling"], worker_type_definition)
     ticket = tickets_data.accept_proposal(
         conn,
         ticket_id,

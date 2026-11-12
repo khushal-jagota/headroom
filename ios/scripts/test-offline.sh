@@ -16,7 +16,7 @@ cp -R ios/PanelsTests/Fixtures "$build/Tests/PanelsTests/"
 cat > "$build/Package.swift" <<'SWIFT'
 // swift-tools-version: 6.0
 import PackageDescription
-let package = Package(name: "PanelsOfflineTests", platforms: [.macOS(.v14)], products: [.library(name: "Panels", targets: ["Panels"])], targets: [.target(name: "Panels"), .testTarget(name: "PanelsTests", dependencies: ["Panels"], resources: [.copy("Fixtures")])])
+let package = Package(name: "PanelsOfflineTests", platforms: [.macOS(.v15)], products: [.library(name: "Panels", targets: ["Panels"])], targets: [.target(name: "Panels"), .testTarget(name: "PanelsTests", dependencies: ["Panels"], resources: [.copy("Fixtures")])])
 SWIFT
 node ios/scripts/goal-parity.cjs "$build/goal-parity.json"
 PANELS_GOAL_PARITY_PATH="$build/goal-parity.json" PANELS_STORE_DIRECTORY="$build/store" swift test --package-path "$build" --scratch-path "$build/.build" --jobs 4 "$@"

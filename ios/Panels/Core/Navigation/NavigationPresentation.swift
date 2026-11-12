@@ -121,8 +121,8 @@ enum NavigationReviewCard: Equatable, Sendable {
 extension NavigationPresentation {
     /// The Review badge: the view's card count, less the cards that a decision not yet
     /// sent will clear. A Ticket card that also holds a message stays in Review after its
-    /// proposal is decided, so it stays counted. A card outside the view is not known to
-    /// hold a message, so its decision clears it.
+    /// proposal is decided, so it stays counted. Callers supply only exact known
+    /// proposal identities in the current Review window; outside cards stay counted.
     func reviewBadge(count: Int, pendingDecisionTickets: Set<String>) -> Int {
         let staying = Set(review.compactMap { card -> String? in
             if case .ticket(let id, _, _, _, let messages) = card, !messages.isEmpty { return id }
