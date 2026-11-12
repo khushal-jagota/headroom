@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import type { Database, ReadSql } from '../core/database/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
+import { pythonRepr } from '../core/config.ts';
 import { PlannerError } from '../core/contracts.ts';
 import {
   ConversationRoleMaterials,
@@ -535,6 +536,69 @@ export function read_agent_conversation(database: Database, agent_key: string): 
       null,
   );
 }
+/** Read the current links for the caller's roster. Missing links are omitted. */
+export function read_agent_conversations(
+  database: Database,
+  agent_keys: Iterable<string>,
+): Record<string, string> {
+  const keys = [...new Set(agent_keys)];
+  if (keys.length === 0) return {};
+  return database.read((sql) =>
+    Object.fromEntries(
+      sql
+        .all<{ agent_key: string; conversation_id: string }>(
+          `SELECT agent_key, conversation_id
+         FROM agents
+         WHERE agent_key IN (${keys.map(() => '?').join(',')})
+           AND conversation_id IS NOT NULL`,
+          keys,
+        )
+        .map((row) => [row.agent_key, row.conversation_id]),
+    ),
+  );
+}
+
+/** Find durable transcripts by their original Manager identity, in creation order. */
+export function read_manager_conversation_history(
+  database: Database,
+  manager_id: string,
+): { conversation_id: string; created_at: number }[] {
+  return database.read((sql) => {
+    const rows = sql.all<{
+      conversation_id: string;
+      identity_environment_variables: string;
+      created_at: number;
+    }>(`SELECT conversation_id, identity_environment_variables, created_at
+        FROM conversations
+        ORDER BY created_at, conversation_id`);
+    const history: { conversation_id: string; created_at: number }[] = [];
+    for (const row of rows) {
+      let identity: unknown;
+      try {
+        identity = JSON.parse(row.identity_environment_variables);
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(identity)) continue;
+      const values = new Map(
+        identity
+          .filter((pair): pair is [unknown, unknown] => Array.isArray(pair) && pair.length === 2)
+          .map(
+            ([key, value]) =>
+              [
+                typeof key === 'string' ? key : pythonRepr(key),
+                typeof value === 'string' ? value : pythonRepr(value),
+              ] as const,
+          ),
+      );
+      if (values.get('PLAN_ACTOR') !== 'manager' || values.get('PLAN_MANAGER_ID') !== manager_id)
+        continue;
+      history.push({ conversation_id: row.conversation_id, created_at: row.created_at });
+    }
+    return history;
+  });
+}
+
 export async function start_agent_conversation(
   system: ConversationSystem,
   database: Database,
