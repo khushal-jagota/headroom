@@ -17,18 +17,19 @@ The generated contract in `web/src/lib/catalogs/history.ts` remains authoritativ
 Python supports Ticket and Manager owners. The earlier proposal's Chief history
 line is corrected to the same unsupported-kind answer as Python.
 
-`format.ts` calls the system ICU C date formatter through the existing `koffi`
-dependency. It uses medium dates and short times, like PyICU. ICU supplies locale
-fallback, custom GMT offsets, unknown-zone behavior, and all label code points.
-Each read closes its native formatter, including failed reads. The server's Debian
-runtime must install `libicu-dev` and provide its unversioned `libicui18n.so`
-link in the multiarch library directory. This is the same development library
-that its PyICU build requires. Node's bundled ICU is not used. The native binding
-targets this Linux runtime. No other platform is claimed by this proof.
-The direct proof compares exact labels and code points in en-US and de-DE, over
-UTC and Berlin instants. Focused requests also exercise GMT+05:30, an unknown
-locale and time zone, and empty locale and time zone values. This proof samples
-these boundaries. It does not claim that two locale samples prove all locale data.
+`format.ts` uses `Intl.DateTimeFormat` with medium dates and short times.
+It uses Node's bundled locale and timezone data and requires no system ICU library.
+Unknown or malformed locale names fall back to en-US. Unknown and empty time zones
+fall back to UTC. Custom GMT offsets that Intl refuses use a shifted UTC instant.
+An explicitly empty locale retains the PyICU root pattern through Intl date parts.
+The formatter interface retains a no-op `close` method.
+
+The Manager accepts locale-data differences from Python's system ICU. Label
+punctuation or spacing can therefore differ while the underlying date, time, and
+conversation identity stay the same. The direct proof retains raw labels and
+code points and names its narrow accepted comparison rule. It samples en-US and
+de-DE over UTC and Berlin instants, plus GMT+05:30, unknown names, and empty names.
+These samples do not establish parity for every locale or timezone-data release.
 
 The direct HTTP proof reuses ordinary app adapters and one tiny synthetic database.
 It covers populated pages, current exclusion, selection, prefix wrap, timestamps,

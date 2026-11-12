@@ -246,3 +246,19 @@ TypeScript bounds ask withdrawal before shutdown to two seconds. When that bound
 client stop breaks the wire and stops and joins the owned child. Python waits for the
 withdrawal without this bound. The bound prevents a parked ask or blocked write from
 holding process cleanup open.
+
+## Conversation history locale data
+
+The migration Manager accepted Node's bundled locale data for history labels in
+place of Python's system ICU on November 12, 2026. TypeScript uses
+`Intl.DateTimeFormat` with medium dates and short times and loads no native ICU
+library. Locale-data releases can differ in punctuation, spacing, or date patterns.
+The recorded Python en-US labels use U+202F before AM/PM. Intl can use an ordinary
+space there. For example, Python returns `Sep 22, 2026, 12:00 AM` while
+Intl returns `Sep 22, 2026, 12:00 AM`. The direct comparison names this exact
+separator difference and
+retains both raw labels and code points. It does not normalize dates, times,
+conversation IDs, ranks, revisions, or arbitrary label text. Prefix search remains
+case-folded against the actual label that each runtime displays, so a prefix that
+includes different locale-data text can select a different entry. Unknown locale
+and zone inputs retain the documented fallback behavior.

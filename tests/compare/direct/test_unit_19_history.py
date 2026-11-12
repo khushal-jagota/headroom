@@ -1,7 +1,7 @@
-"""History HTTP paging and ICU labels agree on a tiny synthetic indexed database.
+"""History HTTP paging and locale labels compare on a tiny synthetic database.
 
 Existing workspace tests prove Python's reader alone. This case covers the new
-ordinary TS route, rank and wrap, UTF-8 byte admission, and exact ICU codepoints.
+ordinary TS route, rank and wrap, UTF-8 byte admission, and raw locale codepoints.
 It reuses native homes and one schema seed, without a listener or conversation core.
 """
 
@@ -12,6 +12,7 @@ import sqlite3
 import subprocess
 import time
 from contextlib import closing
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -32,6 +33,69 @@ from planner.core.server import handle_planner_error
 from planner.tickets.data import create_ticket
 
 ROOT = Path(__file__).resolve().parents[3]
+
+# Only these requests use en-US (explicitly or by the recorded fallback).
+# German (15/16) and empty-locale root formatting (19) remain byte-exact.
+EN_US_LABEL_REQUESTS = frozenset((0, 1, 2, 11, 13, 14, 17, 18, 20, 21))
+LABEL_RULE = "history_icu_day_period_separator"
+
+
+def compare_history(
+    expected: dict[str, Any], actual: dict[str, Any]
+) -> tuple[bool, list[dict[str, Any]]]:
+    """Admit one known ICU-data difference at explicit date-label paths only."""
+    compared = deepcopy(actual)
+    captures: list[dict[str, Any]] = []
+    for answer_index in sorted(EN_US_LABEL_REQUESTS):
+        left = expected["answers"][answer_index]
+        right = actual["answers"][answer_index]
+        for entry_index, (python_entry, ts_entry) in enumerate(
+            zip(
+                left["body"].get("entries", []),
+                right["body"].get("entries", []),
+                strict=False,
+            )
+        ):
+            python_label = python_entry["label"]
+            ts_label = ts_entry["label"]
+            if python_label == ts_label:
+                continue
+            python_date, separator, python_id = python_label.rpartition(" · ")
+            ts_date, ts_separator, ts_id = ts_label.rpartition(" · ")
+            if separator != " · " or ts_separator != separator or python_id != ts_id:
+                continue
+            # The full date/time and ID must agree. Exactly one separator code
+            # point before the terminal AM/PM differs. No regex rewrites labels.
+            suffix = python_date[-2:]
+            if (
+                suffix not in ("AM", "PM")
+                or ts_date[-2:] != suffix
+                or python_date[:-3] != ts_date[:-3]
+                or {python_date[-3:-2], ts_date[-3:-2]} != {" ", "\u202f"}
+            ):
+                continue
+            python_points = [ord(char) for char in python_date]
+            ts_points = [ord(char) for char in ts_date]
+            if (
+                left["codepoints"][entry_index] != python_points
+                or right["codepoints"][entry_index] != ts_points
+            ):
+                continue
+            path = f"answers[{answer_index}].body.entries[{entry_index}].label"
+            captures.append(
+                {
+                    "path": path,
+                    "python_original": python_label,
+                    "typescript_original": ts_label,
+                    "python_date_codepoints": python_points,
+                    "typescript_date_codepoints": ts_points,
+                }
+            )
+            compared["answers"][answer_index]["body"]["entries"][entry_index][
+                "label"
+            ] = python_label
+            compared["answers"][answer_index]["codepoints"][entry_index] = python_points
+    return compared == expected, captures
 
 
 def seed_rows(conn: sqlite3.Connection) -> str:
@@ -169,7 +233,9 @@ def test_unit19_history(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     with synthetic_home_environment(homes):
         # Derive the real localized search text from Python, then exercise the same wire input.
         preview = python_answers(paths[0], [url("ticket", ticket, limit=2)])
-        prefix = preview["answers"][0]["body"]["entries"][0]["label"].split(" · ")[0]
+        date_time = preview["answers"][0]["body"]["entries"][0]["label"].split(" · ")[0]
+        # Keep the identical request meaningful across the accepted AM/PM space drift.
+        prefix = date_time.rsplit(", ", 1)[0]
         urls += [
             url(
                 "ticket",
@@ -200,10 +266,21 @@ def test_unit19_history(tmp_path: Path, request: pytest.FixtureRequest) -> None:
                 text=True,
             )
         )
+    equal, captures = compare_history(expected, actual)
     report = {
         "kind": "direct",
         "case": "unit19-history",
-        "equal": actual == expected,
+        "equal": equal,
+        "exact_equal": actual == expected,
+        "comparison_rules": [
+            {
+                "name": LABEL_RULE,
+                "request_indices": sorted(EN_US_LABEL_REQUESTS),
+                "difference": "one U+202F versus U+0020 immediately before terminal AM or PM",
+                "captures": captures,
+            }
+        ],
+        "requests": urls,
         "python": expected,
         "typescript": actual,
         "seconds": time.perf_counter() - started,
@@ -225,6 +302,7 @@ def test_unit19_history(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     assert answers[12]["status"] == 400
     assert answers[-2]["body"]["active_index"] == 0
     assert answers[-1]["body"]["active_index"] is None
-    assert any(0x202F in label for label in answers[13]["codepoints"])
+    assert any("AM" in row["label"] for row in answers[13]["body"]["entries"])
+    assert any("PM" in row["label"] for row in answers[13]["body"]["entries"])
     assert expected["unchanged"]
-    assert actual == expected
+    assert equal
