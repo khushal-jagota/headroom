@@ -15,21 +15,34 @@ import { combine_coverage } from './coverage.ts';
 import { calendar_date, date_range, invalid, offset_date, period_interval } from './dates.ts';
 import { number } from './formulas.ts';
 import { python_sum } from './sum.ts';
-// Provisional until the fresh Python boundary proof selects the final limit.
-export const EVALUATION_DEPTH_LIMIT = 240;
+import {
+  EVALUATION_DEPTH_LIMIT,
+  GOAL_ACTUAL_ENTRY_WEIGHT,
+  DEMAND_DEPTH_LIMIT,
+  EVALUATION_REFERENCE_WEIGHT,
+  EXPRESSION_EDGE_WEIGHT,
+} from '../configuration.ts';
 export class ArithmeticDepthLimit extends Error {}
 export function expression_references(
   n: FormulaExpression,
   day: string,
   zone: string,
   now: number,
+  weight = 0,
 ): MeasureDate[] {
+  if (weight > DEMAND_DEPTH_LIMIT) throw new ArithmeticDepthLimit();
   if (n.op === 'constant' || n.op === 'elapsed_days') return [];
   if (n.op === 'reference')
     return [{ measure_id: n.measure_id, date: offset_date(day, n.day_offset) }];
   if (n.op === 'reference_at') return [{ measure_id: n.measure_id, date: n.date }];
   if (n.op === 'if_before')
-    return expression_references(day < n.date ? n.before : n.otherwise, day, zone, now);
+    return expression_references(
+      day < n.date ? n.before : n.otherwise,
+      day,
+      zone,
+      now,
+      weight + EXPRESSION_EDGE_WEIGHT,
+    );
   if (n.op === 'sum_daily') {
     const interval = period_interval(day, n.period);
     return date_range(interval.start_date, offset_date(interval.end_date_exclusive, -1)).map(
@@ -37,8 +50,8 @@ export function expression_references(
     );
   }
   return [
-    ...expression_references(n.left, day, zone, now),
-    ...expression_references(n.right, day, zone, now),
+    ...expression_references(n.left, day, zone, now, weight + EXPRESSION_EDGE_WEIGHT),
+    ...expression_references(n.right, day, zone, now, weight + EXPRESSION_EDGE_WEIGHT),
   ];
 }
 export function demanded_pairs(
@@ -52,7 +65,7 @@ export function demanded_pairs(
   const visit = (pair: MeasureDate, depth: number) => {
     const key = pair_key(pair);
     if (result.has(key)) return;
-    if (depth > EVALUATION_DEPTH_LIMIT) throw new ArithmeticDepthLimit();
+    if (depth > DEMAND_DEPTH_LIMIT) throw new ArithmeticDepthLimit();
     if (limit !== null && result.size >= limit)
       throw invalid(`measure date demand exceeds ${limit} pairs; request a narrower range`);
     result.set(key, pair);
@@ -62,7 +75,7 @@ export function demanded_pairs(
     if (!measure.formula) return;
     let children: MeasureDate[];
     try {
-      children = expression_references(measure.formula, pair.date, measure.timezone, now);
+      children = expression_references(measure.formula, pair.date, measure.timezone, now, depth);
     } catch (e) {
       if (e instanceof PlannerError) return;
       throw e;
@@ -100,7 +113,8 @@ export class Evaluation {
   }
   measure(pair: MeasureDate): MeasureValue {
     try {
-      return this._measure(pair);
+      // Goal actuals use their explicit entry weight; batch reads start at zero.
+      return this._measure(pair, GOAL_ACTUAL_ENTRY_WEIGHT);
     } catch (e) {
       if (e instanceof ArithmeticDepthLimit) return this._unavailable(pair, 'arithmetic_limit');
       throw e;
@@ -181,9 +195,9 @@ export class Evaluation {
     const inputs = new Map<string, InputObservation>(),
       missing = new Map<string, MeasureDate>(),
       coverage: [Coverage, string[]][] = [];
-    const reference = (child: MeasureDate): number | null => {
+    const reference = (child: MeasureDate, weight: number): number | null => {
       const key = pair_key(child),
-        resolved = this._measure(child, depth + 1);
+        resolved = this._measure(child, weight + EVALUATION_REFERENCE_WEIGHT);
       coverage.push([resolved.coverage_status, resolved.coverage_reasons]);
       const stored = this.observations.get(key);
       if (this.definitions.has(child.measure_id)) {
@@ -206,22 +220,28 @@ export class Evaluation {
       return resolved.value;
     };
     const expression = (n: FormulaExpression, nesting = 0): number | null => {
-      if (nesting > EVALUATION_DEPTH_LIMIT) throw new ArithmeticDepthLimit();
+      if (depth + nesting > EVALUATION_DEPTH_LIMIT) throw new ArithmeticDepthLimit();
       if (n.op === 'constant') return number(n.value);
       if (n.op === 'elapsed_days')
         return (calendar_date(day).getTime() - calendar_date(n.start).getTime()) / 86400000;
       if (n.op === 'reference')
-        return reference({ measure_id: n.measure_id, date: offset_date(day, n.day_offset) });
-      if (n.op === 'reference_at') return reference({ measure_id: n.measure_id, date: n.date });
+        return reference(
+          { measure_id: n.measure_id, date: offset_date(day, n.day_offset) },
+          depth + nesting,
+        );
+      if (n.op === 'reference_at')
+        return reference({ measure_id: n.measure_id, date: n.date }, depth + nesting);
       if (n.op === 'if_before')
-        return expression(day < n.date ? n.before : n.otherwise, nesting + 1);
+        return expression(day < n.date ? n.before : n.otherwise, nesting + EXPRESSION_EDGE_WEIGHT);
       if (n.op === 'sum_daily') {
-        const values = expression_references(n, day, zone, this.now).map(reference);
+        const values = expression_references(n, day, zone, this.now).map((child) =>
+          reference(child, depth + nesting),
+        );
         if (values.some((v) => v === null)) return null;
         return number(python_sum(values as number[]));
       }
-      const l = expression(n.left, nesting + 1),
-        r = expression(n.right, nesting + 1);
+      const l = expression(n.left, nesting + EXPRESSION_EDGE_WEIGHT),
+        r = expression(n.right, nesting + EXPRESSION_EDGE_WEIGHT);
       if (l === null || r === null) return null;
       if (n.op === 'divide' && r === 0) {
         status = 'division_by_zero';

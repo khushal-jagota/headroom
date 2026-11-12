@@ -1,4 +1,5 @@
 import type { FastifyRequest } from 'fastify';
+import { PlannerError } from '../core/contracts.ts';
 import type { Clock } from '../core/clock.ts';
 import type { ReadSql } from '../core/database/contracts.ts';
 import type { ResourceProvider, ResourceSnapshot } from '../resource_versions/contracts.ts';
@@ -42,6 +43,8 @@ export class MeasureResources implements ResourceProvider {
     const limit = parse(q.get('limit'), 25),
       offset = parse(q.get('offset'), 0);
     if (!Number.isFinite(limit) || !Number.isFinite(offset)) return null;
+    if (limit < 1 || limit > 100 || offset < 0)
+      throw new PlannerError('validation', 'invalid bounded source list');
     if (url.pathname === '/api/measures')
       return {
         revision,

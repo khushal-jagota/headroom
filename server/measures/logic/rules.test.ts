@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { realpathSync } from 'node:fs';
 import type {
   CountPeriod,
   Definitions,
@@ -12,6 +13,7 @@ import type {
 import { pair_key } from '../contracts.ts';
 import { combine_coverage, observation_coverage, validate_coverage } from './coverage.ts';
 import { dependencies, parse_formula, validate_graph } from './formulas.ts';
+import { local_date } from './dates.ts';
 import {
   Evaluation,
   demanded_pairs,
@@ -223,10 +225,7 @@ describe('ported Python measure rules', () => {
       };
     const defs = definitions(daily, weekly);
     validate_graph('week', defs);
-    const rows = observations(
-      ...Array.from({ length: 7 }, (_, i) => observation('day', `2026-10-${26 + i}`, i + 1)),
-    ); // replace invalid November labels with actual calendar dates below
-    rows.clear();
+    const rows = observations();
     for (const [date, value] of [
       ['2026-10-26', 1],
       ['2026-10-27', 2],
@@ -242,6 +241,12 @@ describe('ported Python measure rules', () => {
     expect(evaluate([{ measure_id: 'week', date: day }], defs, rows, NOW)[0]!.status).toBe(
       'missing_input',
     );
+    // Python 3.12+ sum preserves a small contribution between canceling large values.
+    const values = [1e16, 1, -1e16, 0, 0, 0, 0];
+    const dates = expression_references(weekly.formula!, day, 'UTC', NOW);
+    for (const [index, pair] of dates.entries())
+      rows.set(pair_key(pair), observation(pair.measure_id, pair.date, values[index]!));
+    expect(evaluate([{ measure_id: 'week', date: day }], defs, rows, NOW)[0]!.value).toBe(1);
   });
   it('graph integrity does not police numeric kinds', () => {
     const a = assembled('a', ref('b', -1)),
@@ -386,6 +391,12 @@ describe('ported Python measure rules', () => {
   });
   it('signed calendar days cross DST and strict ISO dates reject malformed values', () => {
     const c = new Evaluation(new Map(), new Map(), NOW);
+    const nearMidnight = Date.parse('2026-01-01T23:30:00Z') / 1000;
+    expect(local_date(nearMidnight, 'Factory')).toBe('2026-01-01');
+    const localZone = realpathSync('/usr/share/zoneinfo/localtime').slice(
+      '/usr/share/zoneinfo/'.length,
+    );
+    expect(local_date(nearMidnight, 'localtime')).toBe(local_date(nearMidnight, localZone));
     for (const [first, last] of [
       ['2026-03-28', '2026-03-30'],
       ['2026-10-24', '2026-10-26'],

@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { numeric_value } from '../../core/http/numeric_json.ts';
 import { PlannerError } from '../../core/contracts.ts';
 import type { CountPeriod, PeriodInterval } from '../contracts.ts';
@@ -53,7 +53,14 @@ export function timezone(value: string): string {
       !existsSync('/usr/share/zoneinfo/' + value)
     )
       throw Error();
-    const compatible = value.replace(/^(?:right|posix)\//, '');
+    let compatible = value.replace(/^(?:right|posix)\//, '');
+    // The IANA Factory file contains one fixed zero-offset type and no transitions.
+    if (compatible === 'Factory') compatible = 'Etc/UTC';
+    if (compatible === 'localtime') {
+      const canonical = realpathSync('/usr/share/zoneinfo/' + value);
+      if (!canonical.startsWith('/usr/share/zoneinfo/')) throw Error();
+      compatible = canonical.slice('/usr/share/zoneinfo/'.length).replace(/^(?:right|posix)\//, '');
+    }
     new Intl.DateTimeFormat('en', { timeZone: compatible }).format();
     return compatible;
   } catch {
