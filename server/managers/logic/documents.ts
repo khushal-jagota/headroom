@@ -1,3 +1,4 @@
+import { calendar_date } from '../../measures/logic/dates.ts';
 import {
   JsonNumber,
   clone_numeric_json,
@@ -91,10 +92,18 @@ const definitions: Record<string, Record<string, Schema>> = {
     ],
   },
 };
-function validate(value: unknown, schema: Schema, path: string): void {
+type ChartValidator = (chart: ObjectValue, path: string) => void;
+function validate(
+  value: unknown,
+  schema: Schema,
+  path: string,
+  chartValidator?: ChartValidator,
+): void {
   if (Array.isArray(schema)) {
     if (!Array.isArray(value)) fail(`${path}: expected a list`);
-    (value as unknown[]).forEach((item, index) => validate(item, schema[0]!, `${path}[${index}]`));
+    (value as unknown[]).forEach((item, index) =>
+      validate(item, schema[0]!, `${path}[${index}]`, chartValidator),
+    );
     return;
   }
   if (typeof schema !== 'string') {
@@ -116,14 +125,18 @@ function validate(value: unknown, schema: Schema, path: string): void {
         if (raw.endsWith('?')) continue;
         fail(`${path}.${key}: required`);
       }
-      validate((value as ObjectValue)[key], kind, `${path}.${key}`);
+      validate((value as ObjectValue)[key], kind, `${path}.${key}`, chartValidator);
     }
     return;
   }
   if (schema === 'block') {
+    if (chartValidator && object(value) && value.type === 'chart') {
+      chartValidator(value, path);
+      return;
+    }
     if (!object(value) || typeof value.type !== 'string' || !definitions[value.type])
       fail(`${path}: invalid value or block shape`);
-    validate(value, definitions[(value as ObjectValue).type as string]!, path);
+    validate(value, definitions[(value as ObjectValue).type as string]!, path, chartValidator);
   } else if (schema === 'nullable-string') {
     if (value !== null && typeof value !== 'string') fail(`${path}: invalid value or block shape`);
   } else if (schema === 'nullable-tone') {
@@ -158,7 +171,11 @@ export function has_chart(value: unknown): boolean {
     (Array.isArray(value.views) && value.views.some(has_chart))
   );
 }
-export function prepare_plain_document(value: unknown, identity: () => string): PageDocument {
+export function prepare_plain_document(
+  value: unknown,
+  identity: () => string,
+  chartValidation?: { shape: ChartValidator; semantics: (chart: ObjectValue) => void },
+): PageDocument {
   const document = clone_numeric_json(value);
   if (!object(document) || !Array.isArray(document.blocks))
     fail('page: expected a page-kit document');
@@ -166,6 +183,8 @@ export function prepare_plain_document(value: unknown, identity: () => string): 
     for (const item of items) {
       if (!object(item)) continue;
       if (!('id' in item)) item.id = identity();
+      if (chartValidation && item.type === 'chart' && !('placement' in item))
+        item.placement = 'supporting';
       if (item.type === 'checklist' && Array.isArray(item.items)) {
         for (const check of item.items)
           if (object(check) && !('id' in check)) check.id = identity();
@@ -187,6 +206,7 @@ export function prepare_plain_document(value: unknown, identity: () => string): 
       blocks: ['block'],
     },
     '$',
+    chartValidation?.shape,
   );
   const identities = new Set<string>();
   const visit = (items: ObjectValue[]): void => {
@@ -200,14 +220,13 @@ export function prepare_plain_document(value: unknown, identity: () => string): 
           if (!check.trim() || identities.has(check))
             fail('page: checklist IDs must be nonempty and unique');
           identities.add(check);
-          if (
-            item.deadline !== undefined &&
-            item.deadline !== null &&
-            (!/^\d{4}-\d{2}-\d{2}$/.test(item.deadline as string) ||
-              !Number.isFinite(new Date(item.deadline as string).getTime()) ||
-              new Date(item.deadline as string).toISOString().slice(0, 10) !== item.deadline)
-          )
-            fail('checklist item deadline must be an ISO calendar date or null');
+          if (item.deadline !== undefined && item.deadline !== null) {
+            try {
+              calendar_date(item.deadline);
+            } catch {
+              fail('checklist item deadline must be an ISO calendar date or null');
+            }
+          }
         }
       if (block.type === 'section' && 'blocks' in block === 'views' in block)
         fail('section needs either blocks or views');
@@ -231,6 +250,7 @@ export function prepare_plain_document(value: unknown, identity: () => string): 
             fail('table column widths must be positive percentages totaling 100');
         }
       }
+      if (block.type === 'chart') chartValidation?.semantics(block);
       if (Array.isArray(block.blocks)) visit(block.blocks as ObjectValue[]);
       if (Array.isArray(block.views))
         for (const view of block.views as ObjectValue[]) visit(view.blocks as ObjectValue[]);

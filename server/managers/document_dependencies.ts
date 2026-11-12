@@ -3,7 +3,12 @@ import type { ReadSql } from '../core/database/contracts.ts';
 import type { ManagerPageDocument as PageDocument } from './contracts.ts';
 export interface ManagerDocumentDependencies {
   /** Python list_goals(holder_id) followed by goal_json at the same snapshot/date. */
-  manager_goals(sql: ReadSql, manager_id: string, now: Date): Record<string, unknown>[];
+  manager_goals(
+    sql: ReadSql,
+    manager_id: string,
+    now: Date,
+    calendar_iso?: string,
+  ): Record<string, unknown>[];
   /** Python prepare_document for charts, including category/formula validation. */
   prepare_rich_document(document: unknown): PageDocument;
   /** Python validate_page_bindings: measures, formula graph, datasets, manual origin. */
@@ -13,6 +18,7 @@ export interface ManagerDocumentDependencies {
     sql: ReadSql,
     subject: { id: string; page: PageDocument; revision: number },
     now: Date,
+    calendar_iso?: string,
   ): Record<string, unknown>;
 }
 let dependencies: ManagerDocumentDependencies | undefined;

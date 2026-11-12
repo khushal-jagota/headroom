@@ -126,7 +126,12 @@ export function manager_tickets(sql: ReadSql, id: string): Record<string, unknow
       };
     });
 }
-export function manager_workspace_document(sql: ReadSql, id: string, now: Date) {
+export function manager_workspace_document(
+  sql: ReadSql,
+  id: string,
+  now: Date,
+  calendar_iso?: string,
+) {
   const row = sql.get<{ goal: string; recap: string }>(
     'SELECT goal,recap FROM managers WHERE id=?',
     [id],
@@ -138,7 +143,7 @@ export function manager_workspace_document(sql: ReadSql, id: string, now: Date) 
   );
   const goals =
     hasGoals || has_manager_document_dependencies()
-      ? manager_document_dependencies().manager_goals(sql, id, now)
+      ? manager_document_dependencies().manager_goals(sql, id, now, calendar_iso)
       : [];
   return { ...row, goals };
 }

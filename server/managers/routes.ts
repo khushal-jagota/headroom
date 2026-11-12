@@ -32,6 +32,8 @@ import { video_send_admission } from '../conversation/video_send_admission.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import { send_message } from '../message_delivery/service.ts';
 import { read_page, write_page, page_readings } from './pages.ts';
+import { calendar_now } from '../goals/calendar.ts';
+import { stringify_numeric_response } from '../core/http/numeric_intake.ts';
 import type { ConversationSystem } from '../conversation/contracts.ts';
 function conversations(services: AreaServices): ConversationSystem {
   if (!services.conversationSystem) throw new Error('conversation system is unavailable');
@@ -208,7 +210,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     async (request, reply) => {
       reply.header('Cache-Control', 'no-store');
       return database.read((sql) =>
-        views.manager_workspace_document(sql, request.params.item_id, clock.now()),
+        views.manager_workspace_document(sql, request.params.item_id, calendar_now(clock)),
       );
     },
   );
@@ -216,7 +218,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     const id = request.params.item_id;
     const result = database.read((sql) => ({
       ...views.manager_detail(sql, id),
-      ...views.manager_workspace_document(sql, id, clock.now()),
+      ...views.manager_workspace_document(sql, id, calendar_now(clock)),
       tickets: views.manager_tickets(sql, id),
     }));
     const conversation_history = conversation_start.read_manager_conversation_history(database, id);
@@ -366,6 +368,9 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
   );
   // Only holder page intake retains numeric token kinds. Ordinary JSON routes stay unchanged.
   await app.register(async (pageApp) => {
+    pageApp.setReplySerializer((payload, statusCode) =>
+      stringify_numeric_response(payload, statusCode >= 200 && statusCode < 300),
+    );
     pageApp.removeAllContentTypeParsers();
     const pageParser = (
       _request: FastifyRequest,
@@ -425,7 +430,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
           page_readings(
             sql,
             kind === 'chief' ? null : request.params.item_id!,
-            clock.now(),
+            calendar_now(clock),
             clock instanceof TestClock ? clock.isoformat() : undefined,
           ),
         ),

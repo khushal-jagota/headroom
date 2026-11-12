@@ -5,6 +5,7 @@ import type { ReadSql } from '../core/database/contracts.ts';
 import type { ResourceProvider, ResourceSnapshot } from '../resource_versions/contracts.ts';
 import { manager_workspace_document } from './views.ts';
 import { read_page } from './pages.ts';
+import { calendar_now } from '../goals/calendar.ts';
 let clock: Clock;
 export function configure_manager_resources(value: Clock): void {
   clock = value;
@@ -29,7 +30,7 @@ export class ManagerDocumentResources implements ResourceProvider {
     const match = /^\/api\/managers\/([^/?]+)\/workspace-content$/.exec(key);
     if (!match) return null;
     const id = decodeURIComponent(match[1]);
-    const now = clock.now();
+    const now = calendar_now(clock);
     const date = clock.isoformat().slice(0, 10);
     return {
       revision: [revision(sql, 'workspace-manager', id), revision(sql, 'goals', 'all'), date].join(

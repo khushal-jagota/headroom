@@ -6,10 +6,14 @@ import { requiredQuery, scalarQueries } from '../list_reads/http.ts';
 import type { ResourceProvider } from './contracts.ts';
 import { checkedKey, parseKeys } from './logic/index.ts';
 import { capture, providers } from './registry.ts';
+import { stringify_numeric_response } from '../core/http/numeric_intake.ts';
 export function createRoutes(
   providers: readonly ResourceProvider[],
 ): FastifyPluginAsync<AreaServices> {
   return async (app, services) => {
+    app.setReplySerializer((payload, statusCode) =>
+      stringify_numeric_response(payload, statusCode >= 200 && statusCode < 300),
+    );
     const epoch = randomUUID();
     app.get<{ Querystring: { keys?: string } }>('/resource-versions', async (request, reply) => {
       const query = scalarQueries(request.query);
