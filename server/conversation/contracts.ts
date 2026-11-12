@@ -172,14 +172,17 @@ export class PromptDispatchDecision {
   readonly sender_message_id: string | null;
   readonly suppression_reason: string | null;
   readonly is_manager_notice: boolean;
+  readonly is_memory_notice: boolean;
   constructor(values: {
     sender_message_id: string | null;
     suppression_reason?: string | null;
     is_manager_notice?: boolean;
+    is_memory_notice?: boolean;
   }) {
     this.sender_message_id = values.sender_message_id;
     this.suppression_reason =
       values.suppression_reason === undefined ? null : values.suppression_reason;
+    this.is_memory_notice = values.is_memory_notice ?? false;
     this.is_manager_notice =
       values.is_manager_notice === undefined ? false : values.is_manager_notice;
   }

@@ -36,7 +36,10 @@ from planner.conversation.contracts import (
     WorkspacePathPolicy,
 )
 from planner.conversation.events import AgentMessageDeltaFrame, UserInputAnswer
-from planner.conversation.live_tail import ConversationLiveTail
+from planner.conversation.live_tail import (
+    ConversationLiveTail,
+    ConversationTailSubscription,
+)
 from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
@@ -216,7 +219,9 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
     )
     live_tail = ConversationLiveTail()
     subscription = live_tail.subscribe("unit18-claude")
+    resume_subscription: ConversationTailSubscription | None = None
     plain_live_text: list[dict[str, str]] = []
+    resume_live_text: list[dict[str, str]] = []
     core = SqliteProcessConversationSystem(
         store=store,
         backend_child_factories={key: factory for key in ConversationBackendKey},
@@ -330,8 +335,15 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
         await capture("interrupt", [interruption])
         resume_started = time.perf_counter()
         await core.kill(identity)
+        resume_subscription = live_tail.subscribe(identity)
         successful_resume = await send("resume-success")
         await ended(7)
+        resume_subscription.close()
+        async for item in resume_subscription:
+            if isinstance(item, AgentMessageDeltaFrame):
+                resume_live_text.append(
+                    {"type": "agent_message_delta", "text_delta": item.text_delta}
+                )
         await capture("successful-resume", [successful_resume])
         successful_resume_seconds = time.perf_counter() - resume_started
         malformed_started = time.perf_counter()
@@ -471,11 +483,14 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
                 crash_seconds = time.perf_counter() - extra_started
     finally:
         subscription.close()
+        if resume_subscription is not None:
+            resume_subscription.close()
         await core.shutdown()
     return {
         "checkpoints": checkpoints,
         "node_executable": str(Path(shutil.which("node") or "").resolve()),
         "plain_live_text": plain_live_text,
+        "resume_live_text": resume_live_text,
         "malformed_cancel_seconds": malformed_cancel_seconds,
         "malformed_assistant_seconds": malformed_assistant_seconds,
         "successful_resume_seconds": successful_resume_seconds,
@@ -598,10 +613,243 @@ def comparison(result: dict[str, Any], language: str) -> dict[str, Any]:
             {
                 "checkpoints": result["checkpoints"],
                 "plain_live_text": result["plain_live_text"],
+                "resume_live_text": result["resume_live_text"],
                 "native_observations": native_observations,
             }
         ),
     )
+
+
+def observed_native_patterns(result: dict[str, Any]) -> dict[str, Any]:
+    """Keep the observed CLI outer order and optional types inside existing cases."""
+    trace = result["trace"]
+
+    def kind(value: Any) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "boolean"
+        if isinstance(value, (int, float)):
+            return "number"
+        if isinstance(value, str):
+            return "string"
+        if isinstance(value, list):
+            return "array"
+        assert isinstance(value, dict)
+        return "object"
+
+    def fields(message: dict[str, Any], expected: dict[str, str]) -> dict[str, str]:
+        actual = {name: kind(message[name]) for name in expected}
+        assert actual == expected
+        return actual
+
+    evidence = {}
+    for scenario, label, before_assistant, chunks in (
+        ("plain", "plain", 4, ["plain live ", "text"]),
+        ("resume-success", "resume", 7, ["unit18-", "memory", "-", "to", "ken"]),
+    ):
+        start = next(
+            index
+            for index, row in enumerate(trace)
+            if row["kind"] == "prompt" and row["scenario"] == scenario
+        )
+        end = next(
+            (
+                index
+                for index in range(start + 1, len(trace))
+                if trace[index]["kind"] == "prompt"
+            ),
+            len(trace),
+        )
+        emitted = [row for row in trace[start + 1 : end] if row["kind"] == "wire-out"]
+        messages = [row["message"] for row in emitted]
+        uuid = trace[start]["uuid"]
+        names = [
+            (
+                f"command_lifecycle:{message['state']}"
+                if message["type"] == "command_lifecycle"
+                else (
+                    f"{message['type']}:{message['subtype']}"
+                    if "subtype" in message
+                    else message["type"]
+                )
+            )
+            for message in messages
+        ]
+        expected_order = [
+            "command_lifecycle:queued",
+            "command_lifecycle:started",
+            "system:init",
+            "system:status",
+        ]
+        if label == "plain":
+            expected_order.append("rate_limit_event")
+        expected_order += (
+            ["stream_event"] * before_assistant + ["assistant"] + ["stream_event"] * 3
+        )
+        if label == "resume":
+            expected_order.append("rate_limit_event")
+        expected_order += ["result:success", "command_lifecycle:completed"]
+        assert names == expected_order
+        initialization = next(
+            message for message in messages if message.get("subtype") == "init"
+        )
+        init_types = fields(
+            initialization,
+            {
+                "terminal_slash_commands": "array",
+                "apiKeySource": "string",
+                "claude_code_version": "string",
+                "output_style": "string",
+                "agents": "array",
+                "skills": "array",
+                "plugins": "array",
+                "analytics_disabled": "boolean",
+                "product_feedback_disabled": "boolean",
+                "memory_paths": "object",
+                "original_cwd": "string",
+                "additional_directories": "array",
+                "messaging_socket_path": "string",
+                "fast_mode_state": "string",
+                "fast_mode_disabled_reason": "string",
+                "per_turn_effort_active": "boolean",
+                "ultrathink_available": "boolean",
+                "ultrathink_typed_raises": "boolean",
+                "view_mode": "string",
+                "user_message_uuids": "array",
+            },
+        )
+        assert initialization["user_message_uuids"] == [uuid]
+        assistant = next(
+            message for message in messages if message["type"] == "assistant"
+        )
+        assistant_types = fields(
+            assistant,
+            {
+                "timestamp": "string",
+                "request_id": "string",
+                "user_message_uuid": "string",
+                "user_message_uuids": "array",
+            },
+        )
+        body_types = fields(
+            assistant["message"],
+            {
+                "type": "string",
+                "container": "null",
+                "stop_reason": "null",
+                "stop_sequence": "null",
+                "stop_details": "null",
+                "usage": "object",
+                "input_transformations": "array",
+                "context_management": "null",
+                "diagnostics": "null" if label == "plain" else "object",
+            },
+        )
+        assert assistant["user_message_uuid"] == uuid and assistant[
+            "user_message_uuids"
+        ] == [uuid]
+        assert assistant["message"]["content"] == [
+            {"type": "text", "text": "".join(chunks)}
+        ]
+        streams = [message for message in messages if message["type"] == "stream_event"]
+        stream_types = fields(
+            streams[0],
+            {
+                "api_message_id": "string",
+                "ttft_ms": "number",
+                "thinking_display": "string",
+                "user_message_uuid": "string",
+                "user_message_uuids": "array",
+            },
+        )
+        assert streams[0]["user_message_uuid"] == uuid and streams[0][
+            "user_message_uuids"
+        ] == [uuid]
+        assert all(isinstance(message["api_message_id"], str) for message in streams)
+        deltas = [
+            message["event"]["delta"]["text"]
+            for message in streams
+            if message["event"].get("type") == "content_block_delta"
+        ]
+        assert deltas == chunks
+        rate = next(
+            message for message in messages if message["type"] == "rate_limit_event"
+        )
+        assert fields(
+            rate,
+            {"rate_limit_info": "object", "session_id": "string", "uuid": "string"},
+        )
+        assert rate["session_id"] == initialization["session_id"]
+        status = next(
+            message for message in messages if message.get("subtype") == "status"
+        )
+        assert fields(
+            status,
+            {
+                "status": "string",
+                "session_id": "string",
+                "uuid": "string",
+                "user_message_uuids": "array",
+            },
+        )
+        assert status["user_message_uuids"] == [uuid]
+        assert status["session_id"] == initialization["session_id"]
+        final = next(message for message in messages if message["type"] == "result")
+        result_types = fields(
+            final,
+            {
+                "api_error_status": "null",
+                "credential_expires_at": "string",
+                "fast_mode_disabled_reason": "string",
+                "fast_mode_state": "string",
+                "first_content_frame_ms": "number",
+                "first_request_cache_read_input_tokens": "number",
+                "first_request_input_tokens": "number",
+                "modelUsage": "object",
+                "model_usage_since_last_result": "object",
+                "permission_denials": "array",
+                "queued_turn_count": "number",
+                "request_sent_wall_ms": "number",
+                "result_index": "number",
+                "safety_stops": "number",
+                "stop_reason": "string",
+                "subagent_stats": "object",
+                "time_to_request_ms": "number",
+                "ttft_ms": "number",
+                "ttft_stream_ms": "number",
+                "user_message_uuid": "string",
+            },
+        )
+        assert final["user_message_uuid"] == uuid and final["user_message_uuids"] == [
+            uuid
+        ]
+        assert all(
+            isinstance(message["uuid"], str)
+            for message in messages
+            if message["type"] == "command_lifecycle"
+        )
+        assert all(
+            message["command_uuid"] == uuid
+            for message in messages
+            if message["type"] == "command_lifecycle"
+        )
+        if label == "plain":
+            raw = next(
+                row["raw_json"] for row in emitted if row["message"]["type"] == "result"
+            )
+            assert '"input_tokens":5.0' in raw
+        evidence[label] = {
+            "order": names,
+            "stream_count": len(streams),
+            "text_chunks": deltas,
+            "init_optional_types": init_types,
+            "assistant_optional_types": assistant_types,
+            "assistant_body_optional_types": body_types,
+            "stream_optional_types": stream_types,
+            "result_optional_types": result_types,
+        }
+    return evidence
 
 
 def launch_environments(
@@ -897,6 +1145,7 @@ def test_unit18_adapter_real_core_parity(
             "delivery fates",
             "native prompt/lifecycle/cancel/question/permission observations",
             "plain text delta through Python live-tail subscription and TS publish_frame seam",
+            "chunked successful-resume deltas through the same public seams",
         ],
         "ts_only": [
             "TS SDK option wiring and public process spawn hook; Python uses its native transport",
@@ -913,6 +1162,8 @@ def test_unit18_adapter_real_core_parity(
             "real provider turn or resume",
             "systemd containment (part 1 owns policy/byte proof)",
             "browser or HTTP routes",
+            "Actual inner stream discriminators and nested rate/quota values were not retained "
+            "in real evidence; those fixture contents are representative synthetic inputs.",
         ],
     }
     destination = request.config.getoption("--compare-report-dir")
@@ -922,6 +1173,16 @@ def test_unit18_adapter_real_core_parity(
         (path / "unit18-adapter-real-core.json").write_text(
             json.dumps(report, indent=2) + "\n"
         )
+    patterns = {
+        "python": observed_native_patterns(python),
+        "typescript": observed_native_patterns(typescript),
+    }
+    assert patterns["python"] == patterns["typescript"]
+    report["observed_native_patterns"] = patterns
+    if destination:
+        (Path(destination) / "unit18-adapter-real-core.json").write_text(
+            json.dumps(report, indent=2) + "\n"
+        )
     assert actual == expected
     environments = launch_environments(python, typescript)
     python_arguments = launch_arguments(python, "python", str(executable))
@@ -929,9 +1190,29 @@ def test_unit18_adapter_real_core_parity(
     assert normalize(python_arguments) == normalize(typescript_arguments)
     containment = containment_evidence(python, typescript)
     for result in (python, typescript):
+        assert [item["name"] for item in result["checkpoints"]] == [
+            "plain",
+            "steer",
+            "queued-and-cancelled",
+            "permission",
+            "question",
+            "interrupt",
+            "successful-resume",
+            "malformed-cancel-receipt",
+            "failed-resume",
+            "malformed-assistant",
+            "stop-before-system-init",
+            "worker-containment",
+            "process-exit7",
+        ]
         assert result["server_environment_after"] == result["server_environment_before"]
         assert result["plain_live_text"] == [
-            {"type": "agent_message_delta", "text_delta": "plain live text"}
+            {"type": "agent_message_delta", "text_delta": "plain live "},
+            {"type": "agent_message_delta", "text_delta": "text"},
+        ]
+        assert result["resume_live_text"] == [
+            {"type": "agent_message_delta", "text_delta": piece}
+            for piece in ("unit18-", "memory", "-", "to", "ken")
         ]
         failed_resume = next(
             item for item in result["checkpoints"] if item["name"] == "failed-resume"

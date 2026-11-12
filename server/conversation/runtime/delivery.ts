@@ -1,3 +1,4 @@
+import { is_memory_notice_sender_message_id } from '../../runtime/worker_memory.ts';
 /** A local prompt crosses the provider boundary once, then settles only its record. */
 import {
   BackendPromptRejected,
@@ -28,6 +29,7 @@ function result(values: Partial<DeliveryAttempt> = {}): DeliveryAttempt {
     composed_content_delivered: true,
     messages: [],
     automatic_notice: false,
+    memory_notice_only: false,
     ...values,
   };
 }
@@ -158,22 +160,6 @@ export async function deliver_prompt(
       identities.size === 0 ? null : identities,
     ),
   );
-  const had_child = state.child !== null;
-  let child: BackendChild;
-  try {
-    child = await ensure_child(host, state, reservation, first);
-  } catch (error) {
-    if (error instanceof BackendSpawnFailed) {
-      return result({
-        refusal_reason: R.backend_did_not_start,
-        refusal_detail: error.message,
-        record_refusal: true,
-      });
-    }
-    if (error instanceof SessionLoadFailed)
-      return result({ refusal_reason: R.session_did_not_load });
-    throw error;
-  }
   const decide = () =>
     state.lock.run(async () => {
       const decisions = await host.persist(state, () =>
@@ -181,6 +167,7 @@ export async function deliver_prompt(
           state.record.conversation_id,
           batch.map((message) => new PromptDiscardedEventPayload({ ...message })),
           {
+            automatic_compaction: reservation.automatic_compaction,
             lifecycle_if_all_suppressed: [
               {
                 kind: 'turn',
@@ -211,6 +198,36 @@ export async function deliver_prompt(
       );
       return decisions;
     });
+  if (
+    batch.length > 0 &&
+    (reservation.automatic_compaction ||
+      batch.every((message) => is_memory_notice_sender_message_id(message.sender_message_id)))
+  ) {
+    const before_preparation = await decide();
+    if (before_preparation.every((decision) => decision.suppression_reason !== null)) {
+      return result({
+        suppression_reason:
+          before_preparation.find((decision) => decision.suppression_reason)?.suppression_reason ??
+          null,
+      });
+    }
+  }
+  const had_child = state.child !== null;
+  let child: BackendChild;
+  try {
+    child = await ensure_child(host, state, reservation, first);
+  } catch (error) {
+    if (error instanceof BackendSpawnFailed) {
+      return result({
+        refusal_reason: R.backend_did_not_start,
+        refusal_detail: error.message,
+        record_refusal: true,
+      });
+    }
+    if (error instanceof SessionLoadFailed)
+      return result({ refusal_reason: R.session_did_not_load });
+    throw error;
+  }
   const decisions = await decide();
   let survivors = batch.filter((_message, index) => decisions[index].suppression_reason === null);
   if (survivors.length === 0) {
@@ -223,6 +240,9 @@ export async function deliver_prompt(
   let automatic_notice = decisions
     .filter((decision) => decision.suppression_reason === null)
     .every((decision) => decision.is_manager_notice);
+  let memory_notice_only = decisions
+    .filter((decision) => decision.suppression_reason === null)
+    .every((decision) => decision.is_memory_notice);
   let sender_content = one_prompt_from(survivors);
   let wire_content = await compose(host, state, sender_content);
   if (interruption_notice !== null)
@@ -244,6 +264,7 @@ export async function deliver_prompt(
     return result({
       messages: survivors,
       automatic_notice,
+      memory_notice_only,
       composed_content_delivered: accepted.composed_content_delivered,
     });
   };
@@ -285,6 +306,9 @@ export async function deliver_prompt(
       automatic_notice = repeated
         .filter((decision) => decision.suppression_reason === null)
         .every((decision) => decision.is_manager_notice);
+      memory_notice_only = repeated
+        .filter((decision) => decision.suppression_reason === null)
+        .every((decision) => decision.is_memory_notice);
       sender_content = one_prompt_from(survivors);
       wire_content = await compose(host, state, sender_content);
       if (interruption_notice !== null)

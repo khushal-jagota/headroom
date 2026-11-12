@@ -101,7 +101,7 @@ export function adopted_running_turn(
   token: TurnToken,
   facts: readonly LifecycleFact[],
   user_input_questions: ReadonlyMap<string, readonly UserInputQuestion[]>,
-  options: { executor_process_current: boolean },
+  options: { executor_process_current: boolean; memory_notice_only?: boolean },
 ): RunningTurn | null {
   const turn = fact(facts, K.turn, token.turn_number, O.turn);
   if (turn === undefined || (turn.status !== S.intent && turn.status !== S.running)) return null;
@@ -114,6 +114,7 @@ export function adopted_running_turn(
     user_input_provider_ids: new Map(),
     pending_user_input_questions: new Map(),
     automatic_notice: false,
+    memory_notice_only: options.memory_notice_only ?? false,
     ended: false,
     ending_is_the_cores: false,
     callbacks_revoked:

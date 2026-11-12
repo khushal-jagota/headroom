@@ -51,6 +51,8 @@ export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
     ],
   });
   const plainLiveText: { type: string; text_delta: string }[] = [];
+  const resumeLiveText: { type: string; text_delta: string }[] = [];
+  let liveTarget: 'plain' | 'resume' | null = 'plain';
   const core = new SqliteProcessConversationSystem({
     store,
     backend_child_factories: { claude: factory, codex: factory, hermes: factory },
@@ -58,7 +60,10 @@ export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
     unix_time_now: () => 100,
     publish_frame: (_id, frame) => {
       if (frame instanceof AgentMessageDeltaFrame) {
-        plainLiveText.push({ type: 'agent_message_delta', text_delta: frame.text_delta });
+        if (liveTarget === 'plain')
+          plainLiveText.push({ type: 'agent_message_delta', text_delta: frame.text_delta });
+        if (liveTarget === 'resume')
+          resumeLiveText.push({ type: 'agent_message_delta', text_delta: frame.text_delta });
       }
     },
   });
@@ -131,6 +136,7 @@ export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
       throw new Error(`The plain SDK turn did not start: ${JSON.stringify(plain)}`);
     await ended(1);
     await capture('plain', [plain]);
+    liveTarget = null;
     const steerBase = await send('steer-base');
     const steer = await send('steer', 'steer');
     await ended(2);
@@ -160,9 +166,11 @@ export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
     await capture('interrupt', [interrupt]);
     const resumeStarted = performance.now();
     await core.kill(id);
+    liveTarget = 'resume';
     const successfulResume = await send('resume-success');
     await ended(7);
     await capture('successful-resume', [successfulResume]);
+    liveTarget = null;
     successfulResumeSeconds = (performance.now() - resumeStarted) / 1000;
     const malformedStarted = performance.now();
     const malformed = await send('malformed-cancel-base');
@@ -303,6 +311,7 @@ export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
     server_environment_before: serverEnvironmentBefore,
     server_environment_after: { ...process.env },
     plain_live_text: plainLiveText,
+    resume_live_text: resumeLiveText,
     malformed_cancel_seconds: malformedCancelSeconds,
     malformed_assistant_seconds: malformedAssistantSeconds,
     successful_resume_seconds: successfulResumeSeconds,
