@@ -1,12 +1,12 @@
 /** The real Codex implementations of the fixed snapshot and usage boundaries. */
 import type { Database } from '../../../core/database/contracts.ts';
 import type { BackendProviders } from '../../snapshot/composition.ts';
-import type { CodexLoginStanding } from '../../snapshot/contracts.ts';
+import type { BackendSnapshot, CodexLoginStanding } from '../../snapshot/contracts.ts';
 import type {
   CodexLoginRejectionMemory,
   SavedCodexLoginSource,
 } from '../../snapshot/provider_contracts.ts';
-import { DurableCodexLoginRejection } from '../../backend_state.ts';
+import { create_durable_codex_login_rejection } from '../../backend_state.ts';
 import {
   SubprocessBackendProbeEnvironment,
   backend_io_is_test,
@@ -49,18 +49,21 @@ export const saved_codex_login_source: SavedCodexLoginSource = {
 export interface CodexProviderContext {
   database: Database;
   now(): Date;
+  read_codex_snapshot(): Promise<Pick<BackendSnapshot, 'executable_path'>>;
 }
 export function create_codex_providers(
   context: CodexProviderContext,
 ): Pick<BackendProviders, 'codex' | 'saved_codex_login' | 'codex_sign_in' | 'usage'> {
   // Production composition calls this only after its independent test-mode refusal.
   const environment = new SubprocessBackendProbeEnvironment();
-  const rejection = new DurableCodexLoginRejection(context.database, context.now);
+  const rejection = create_durable_codex_login_rejection(context.database, context.now);
+  const probes = new Map<AbortController, Promise<unknown>>();
+  let closed = false;
   const sign_in = new CodexSignInService({
     resolve_argv: async () => {
       if (backend_io_is_test())
         throw new CodexSignInUnavailable('Production sign-in is unavailable in tests.');
-      const executable = environment.executable_path('codex');
+      const executable = (await context.read_codex_snapshot()).executable_path;
       return executable === null ? null : [executable, 'app-server'];
     },
     remembered_login_rejection: rejection,
@@ -73,11 +76,19 @@ export function create_codex_providers(
   });
   return {
     codex: async (executable) => {
+      if (closed) throw new CodexModelCatalogUnavailable('Codex model discovery is shut down.');
       if (backend_io_is_test())
         throw new CodexModelCatalogUnavailable(
           'Production catalog reads are unavailable in tests.',
         );
-      return probe_codex_model_catalog(executable);
+      const controller = new AbortController();
+      const operation = probe_codex_model_catalog(executable, { signal: controller.signal });
+      probes.set(controller, operation);
+      try {
+        return await operation;
+      } finally {
+        probes.delete(controller);
+      }
     },
     saved_codex_login: {
       read_stored_codex_login(home) {
@@ -91,15 +102,48 @@ export function create_codex_providers(
         return saved_codex_login_source.read_codex_login_standing(memory);
       },
     },
-    codex_sign_in: sign_in,
+    codex_sign_in: {
+      read: () => sign_in.read(),
+      start: () => sign_in.start(),
+      cancel: (session_id) => sign_in.cancel(session_id),
+      async shutdown() {
+        closed = true;
+        const stopped = new CodexModelCatalogUnavailable('Codex providers stopped at shutdown.');
+        for (const controller of probes.keys()) controller.abort(stopped);
+        const settled = await Promise.allSettled([
+          sign_in.shutdown(),
+          environment.shutdown(),
+          ...probes.values(),
+        ]);
+        const failed = settled
+          .filter((result) => result.status === 'rejected')
+          .filter((result) => result.reason !== stopped);
+        if (failed.length)
+          throw new AggregateError(
+            failed.map((result) => result.reason),
+            'Codex provider shutdown failed',
+          );
+      },
+    },
     usage: {
       codex: new CodexUsageAdapter({
         executable_path: (name) => environment.executable_path(name),
         now: context.now,
         read_codex_rate_limits: async (executable, options) => {
+          if (closed) throw new Error('Codex usage is shut down.');
           if (backend_io_is_test())
             throw new Error('Production usage reads are unavailable in tests.');
-          return read_codex_rate_limits(executable, options);
+          const controller = new AbortController();
+          const signal = options.signal
+            ? AbortSignal.any([options.signal, controller.signal])
+            : controller.signal;
+          const operation = read_codex_rate_limits(executable, { ...options, signal });
+          probes.set(controller, operation);
+          try {
+            return await operation;
+          } finally {
+            probes.delete(controller);
+          }
         },
       }),
     },

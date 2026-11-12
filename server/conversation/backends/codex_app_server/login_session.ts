@@ -90,7 +90,7 @@ function timestamp(value: Date | string): Timestamp {
   const offset_minutes =
     (offset[0] === '-' ? -1 : 1) * (Number(offset.slice(1, 3)) * 60 + Number(offset.slice(4, 6)));
   return {
-    text: `${match[1]}.${fraction}${offset}`,
+    text: `${match[1]}${fraction === '000000' ? '' : '.' + fraction}${offset}`,
     microseconds: BigInt(milliseconds) * 1000n + BigInt(fraction),
     offset_minutes,
   };
@@ -100,7 +100,8 @@ function deadline(start: Timestamp, seconds: number): string {
   const fraction = ((microseconds % 1_000_000n) + 1_000_000n) % 1_000_000n;
   const whole_seconds = (microseconds - fraction) / 1_000_000n;
   const local = new Date(Number(whole_seconds * 1000n) + start.offset_minutes * 60_000);
-  return `${local.toISOString().slice(0, 19)}.${String(fraction).padStart(6, '0')}${start.text.slice(-6)}`;
+  const decimal = fraction === 0n ? '' : '.' + String(fraction).padStart(6, '0');
+  return `${local.toISOString().slice(0, 19)}${decimal}${start.text.slice(-6)}`;
 }
 async function bounded<T>(operation: Promise<T>, seconds: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -146,6 +147,7 @@ export class CodexSignInService implements SignInServiceContract {
   private readonly now: () => Date | string;
   private session: Session | null = null;
   private sequence = 0;
+  private closed = false;
   private lock: Promise<void> = Promise.resolve();
 
   constructor(options: CodexSignInOptions) {
@@ -169,6 +171,7 @@ export class CodexSignInService implements SignInServiceContract {
 
   start(): Promise<CodexSignIn> {
     return this.with_lock(async () => {
+      if (this.closed) throw new CodexSignInUnavailable('Codex sign-in is shut down.');
       if (this.session?.state === 'pending') return view(this.session);
       return this.start_session();
     });
@@ -186,6 +189,7 @@ export class CodexSignInService implements SignInServiceContract {
   }
 
   shutdown(): Promise<void> {
+    this.closed = true;
     return this.with_lock(async () => {
       const session = this.session;
       if (session === null) return;

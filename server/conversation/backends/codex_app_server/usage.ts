@@ -83,7 +83,10 @@ export async function read_codex_rate_limits(
   } finally {
     clearTimeout(timeout);
     options.signal?.removeEventListener('abort', abort);
-    await client.stop();
-    await operation.catch(() => {});
+    try {
+      await client.stop();
+    } finally {
+      await operation.catch(() => {});
+    }
   }
 }

@@ -234,6 +234,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         providers: production_backend_providers(config.test_mode, {
           database,
           now: () => clock.now(),
+          read_codex_snapshot: () => backendServices!.backend_snapshots.snapshot('codex'),
         }),
       });
     const conversationSystem = options.conversationSystem ?? core;

@@ -15,6 +15,7 @@ export { CodexModelCatalogUnavailable } from '../../snapshot/provider_contracts.
 export const MODEL_CATALOG_TIMEOUT_SECONDS = 30;
 type CatalogClient = Pick<CodexAppServerClient, 'start' | 'stop' | 'request' | 'notify'>;
 export interface ModelCatalogOptions {
+  signal?: AbortSignal;
   client_factory?: (
     options: ConstructorParameters<typeof CodexAppServerClient>[0],
   ) => CatalogClient;
@@ -23,6 +24,7 @@ export async function probe_codex_model_catalog(
   executable: string,
   options: ModelCatalogOptions = {},
 ): Promise<CodexModelCatalog> {
+  options.signal?.throwIfAborted();
   const client = (options.client_factory ?? ((config) => new CodexAppServerClient(config)))({
     description: 'model-catalog',
     handler: {
@@ -32,6 +34,9 @@ export async function probe_codex_model_catalog(
     },
   });
   const cancel = new AbortController();
+  const abort = () => cancel.abort(options.signal!.reason);
+  options.signal?.addEventListener('abort', abort, { once: true });
+  if (options.signal?.aborted) abort();
   let timed_out = false;
   const timeout = setTimeout(() => {
     timed_out = true;
@@ -42,11 +47,14 @@ export async function probe_codex_model_catalog(
     );
   }, MODEL_CATALOG_TIMEOUT_SECONDS * 1000);
   const canceled = new Promise<never>((_, reject) => {
-    cancel.signal.addEventListener('abort', () => reject(cancel.signal.reason), { once: true });
+    if (cancel.signal.aborted) reject(cancel.signal.reason);
+    else
+      cancel.signal.addEventListener('abort', () => reject(cancel.signal.reason), { once: true });
   });
   const operation = (async () => {
     const pages: P.CatalogModel[] = [];
     let complete = false;
+    cancel.signal.throwIfAborted();
     await client.start({
       argv: [executable, 'app-server'],
       environment: child_environment(),
@@ -105,8 +113,12 @@ export async function probe_codex_model_catalog(
     throw error;
   } finally {
     clearTimeout(timeout);
-    await client.stop();
-    await operation.catch(() => {});
+    options.signal?.removeEventListener('abort', abort);
+    try {
+      await client.stop();
+    } finally {
+      await operation.catch(() => {});
+    }
   }
 }
 export function codex_model_catalog(

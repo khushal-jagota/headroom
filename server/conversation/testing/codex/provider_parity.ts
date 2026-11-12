@@ -4,9 +4,16 @@ import type { ChildProcess } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createDatabase } from '../../../core/database/index.ts';
+import { create_durable_codex_login_rejection } from '../../backend_state.ts';
+import type {
+  CodexLoginRejectionMemory,
+  SavedCodexLoginSource,
+} from '../../snapshot/provider_contracts.ts';
 
 export interface ProviderParitySpec {
   executable: string;
+  database: string;
   trace: string;
   control: string;
   login: Record<string, unknown>;
@@ -65,7 +72,8 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
   const { probe_codex_model_catalog } =
     await import('../../backends/codex_app_server/model_catalog.ts');
   const { read_codex_rate_limits } = await import('../../backends/codex_app_server/usage.ts');
-  const { saved_codex_login_source } = await import('../../backends/codex_app_server/providers.ts');
+  const { saved_codex_login_source, create_codex_providers } =
+    await import('../../backends/codex_app_server/providers.ts');
   const { RememberedCodexLoginRejection } =
     await import('../../backends/codex_app_server/login.ts');
   const { CodexSignInService, UnknownSignInSession } =
@@ -83,8 +91,11 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
     if (existsSync(spec.control)) unlinkSync(spec.control);
     writeFileSync(loginPath, JSON.stringify(spec.login));
   };
-  const saved = () => {
-    const standing = saved_codex_login_source.read_codex_login_standing(memory);
+  const saved = (
+    source: SavedCodexLoginSource = saved_codex_login_source,
+    rejection: CodexLoginRejectionMemory = memory,
+  ) => {
+    const standing = source.read_codex_login_standing(rejection);
     const stored = standing.stored;
     return {
       present: stored.present,
@@ -128,16 +139,29 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
       'signin-child-success',
     ]) {
       mode(name);
-      const service = new CodexSignInService({
-        resolve_argv: async () => [spec.executable, 'app-server'],
-        remembered_login_rejection: memory,
-        now: () => instant,
-        bounds: {
-          child_startup_seconds: 3,
-          session_seconds: name === 'signin-deadline' ? 0.06 : 2,
-          cancel_seconds: 0.5,
-        },
-      });
+      const database = name === 'signin-shutdown' ? createDatabase(spec.database) : null;
+      const clock = () => new Date('2026-11-12T12:34:56Z');
+      const durable = database && create_durable_codex_login_rejection(database, clock);
+      durable?.remember(saved_codex_login_source.read_stored_codex_login().generation);
+      const providers =
+        database &&
+        create_codex_providers({
+          database,
+          now: clock,
+          read_codex_snapshot: async () => ({ executable_path: spec.executable }),
+        });
+      const service =
+        providers?.codex_sign_in ??
+        new CodexSignInService({
+          resolve_argv: async () => [spec.executable, 'app-server'],
+          remembered_login_rejection: memory,
+          now: () => instant,
+          bounds: {
+            child_startup_seconds: 3,
+            session_seconds: name === 'signin-deadline' ? 0.06 : 2,
+            cancel_seconds: 0.5,
+          },
+        });
       try {
         let pending: Awaited<ReturnType<typeof service.start>>;
         if (name === 'signin-cancel') {
@@ -170,19 +194,14 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
           pending,
           terminal,
           joined: joined(),
-          login: saved(),
+          login: providers && durable ? saved(providers.saved_codex_login!, durable) : saved(),
         });
       } finally {
         await service.shutdown();
+        database?.close();
       }
     }
-    for (const name of [
-      'usage-valid',
-      'usage-float',
-      'usage-rejected',
-      'usage-timeout',
-      'usage-cancel',
-    ]) {
+    for (const name of ['usage-float', 'usage-rejected', 'usage-timeout', 'usage-cancel']) {
       mode(name);
       const adapter = new CodexUsageAdapter({
         executable_path: () => spec.executable,

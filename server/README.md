@@ -196,6 +196,10 @@ ownership. `adapter.ts` exports `create_codex_backend_child_factory` for the rea
 `providers.ts` supplies the fixed model, saved-login, sign-in, and usage bindings.
 Production snapshot composition receives its database and clock from `core/start.ts`.
 The sign-in service and snapshot reads share the durable login-rejection state.
+The lifecycle composition must supply `remembered_login_rejection` to the Codex child
+factory. Use `create_durable_codex_login_rejection(database, now)` from `backend_state.ts`,
+with the same database and clock as the cards and sign-in. No factory default substitutes
+in-memory rejection state. Sign-in resolves its executable from the current Codex snapshot.
 
 The client checks the selected CLI version before it starts the app-server. Unknown
 notifications and item kinds remain unconsumed. A malformed consumed notification warns
@@ -263,3 +267,7 @@ text and joins its child before completion. Sign-in preserves microseconds in it
 timestamps. Tests keep production probes unavailable in test context, including a context
 change after provider construction. These scripted checks do not establish real login or
 provider entitlement.
+Provider shutdown refuses new sign-in and probe work, aborts active catalog and usage
+reads, and joins them before the database closes. Both snapshot environment and sign-in
+cleanup run even if either fails. Exact-second sign-in timestamps omit the fractional
+part, as Python does. Nonzero microseconds retain six digits.

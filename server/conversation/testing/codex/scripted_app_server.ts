@@ -493,7 +493,7 @@ function providerMessage(message: Record<string, unknown>): boolean {
       send({ id: message.id, error: { code: 401, message: 'not logged in' } });
     } else
       process.stdout.write(
-        `{"id":${JSON.stringify(message.id)},"result":{"rateLimits":{"primary":{"usedPercent":${providerMode === 'usage-float' ? '25.0' : '25'},"windowDurationMins":300,"resetsAt":2000000000}}}}\n`,
+        `{"id":${JSON.stringify(message.id)},"result":{"rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":300,"resetsAt":2000000000},"secondary":{"usedPercent":25.0,"windowDurationMins":10080,"resetsAt":2000000000}}}}\n`,
       );
   } else throw new Error(`Unsupported provider proof method ${String(message.method)}`);
   return true;
