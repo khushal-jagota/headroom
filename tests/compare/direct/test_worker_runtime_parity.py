@@ -1,7 +1,7 @@
 """Regenerate Python answers and compare actual TS functions on SQLite copies.
 
 Run after every staging merge from the Ticket worktree:
-  scripts/dev pytest -q -s server/tests/worker_runtime_parity.py
+  scripts/dev pytest tests/compare/direct --compare-report-dir /tmp/worker-direct-proof
 Requires that worktree's isolated Python and server dependencies. No saved oracle.
 """
 from __future__ import annotations
@@ -15,8 +15,9 @@ import json
 from pathlib import Path
 import sqlite3
 import subprocess
-import tempfile
 import time
+
+import pytest
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -38,7 +39,7 @@ from planner.tickets.contracts import Ticket
 from planner.runtime.logic.conversation_start_resolution import ConversationStartValues
 from planner.conversation.contracts import PromptDeliveryFate
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 NOW = 1783159200
 WALL = NOW * 1000
@@ -70,7 +71,15 @@ def compare(conn: sqlite3.Connection, root: Path, spec: dict[str, Any], python: 
     input_path=root/'input.json'
     input_path.write_text(json.dumps(spec,default=str))
     expected=python()
-    actual=json.loads(subprocess.check_output(['node',str(ROOT/'server/tests/worker_runtime_parity.ts'),str(input_path)],cwd=ROOT,text=True))
+    actual=json.loads(subprocess.check_output([
+        'node', '--input-type=module', '-e',
+        "import {readFileSync} from 'node:fs'; "
+        "import {pathToFileURL} from 'node:url'; "
+        "const {run_worker_runtime_parity}=await import(pathToFileURL(process.argv[2]).href); "
+        "const result=await run_worker_runtime_parity(JSON.parse(readFileSync(process.argv[1],'utf8'))); "
+        "process.stdout.write(JSON.stringify(result));",
+        str(input_path), str(ROOT/'server/tests/worker_runtime_parity.ts'),
+    ],cwd=ROOT,text=True))
     if actual!=expected:
         (root/'difference.json').write_text(json.dumps({'python':expected,'typescript':actual},indent=2,default=str))
         def differences(a: Any,b: Any,path: str='') -> list[tuple[str, Any, Any]]:
@@ -185,27 +194,30 @@ def check_abort(conn: sqlite3.Connection,root: Path,kind: str,existing: bool) ->
     result=compare(conn,root,spec,lambda:asyncio.run(python_abort(conn,root,spec,values)))
     return {'aborted':result['aborted'],'killed':result['killed'],'rows':result['rows']}
 
-def main() -> None:
+def run_worker_runtime_parity(storage: Path) -> dict[str, Any]:
     started=time.monotonic()
     results=[]
     cases=[('readiness',name,False) for name in ('ready','backlogged','absent','incompatible','refused','present','expired','asleep','terminal','out','user_opened','disabled','fieldless')]
     cases += [('abort',kind,existing) for kind in ('ticket','chief','manager') for existing in (False,True)]
-    with tempfile.TemporaryDirectory(prefix='worker-python-ts-') as temporary:
-        storage=Path(temporary)
-        with synthetic_home_environment(create_synthetic_homes(storage)):
-            for mode,name,existing in cases:
-                root=storage/(mode+'-'+name+('-existing' if existing else ''))
-                root.mkdir()
-                conn=connect(str(root/'python.sqlite'))
-                try:
-                    create_schema(conn)
-                    with register_workspace_root(str(root/'python.sqlite'),root):
-                        result=check_readiness(conn,root,name) if mode=='readiness' else check_abort(conn,root,name,existing)
-                    results.append({'mode':mode,'case':name,'existing':existing,'answer':result})
-                finally:conn.close()
-    print(json.dumps({'match':True,'seconds':round(time.monotonic()-started,3),'cases':results},indent=2,default=str))
+    with synthetic_home_environment(create_synthetic_homes(storage)):
+        for mode,name,existing in cases:
+            root=storage/(mode+'-'+name+('-existing' if existing else ''))
+            root.mkdir()
+            conn=connect(str(root/'python.sqlite'))
+            try:
+                create_schema(conn)
+                with register_workspace_root(str(root/'python.sqlite'),root):
+                    result=check_readiness(conn,root,name) if mode=='readiness' else check_abort(conn,root,name,existing)
+                results.append({'mode':mode,'case':name,'existing':existing,'answer':result})
+            finally:conn.close()
+    return {'match':True,'seconds':round(time.monotonic()-started,3),'cases':results}
 
-def test_worker_runtime_parity() -> None:
-    main()
 
-if __name__=='__main__':main()
+def test_worker_runtime_parity(tmp_path: Path, request: pytest.FixtureRequest) -> None:
+    report = run_worker_runtime_parity(tmp_path)
+    directory = request.config.getoption('--compare-report-dir')
+    if directory:
+        destination = Path(directory)
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination/'unit-09.direct.json').write_text(json.dumps(report,indent=2)+'\n')
+    print(json.dumps({'match':report['match'],'seconds':report['seconds'],'cases':len(report['cases'])}))

@@ -49,6 +49,8 @@ jobs:
           .venv/bin/python scripts/generate_navigation_browser_contracts.py --check
           .venv/bin/python scripts/generate_ticket_workspace_contracts.py --check
           .venv/bin/python scripts/generate_goal_browser_contracts.py --check
+      - name: Compare direct runtime checks against Python
+        run: scripts/dev pytest tests/compare/direct --compare-report-dir "$RUNNER_TEMP/comparison"
       - name: Compare affected areas or every area after branch updates
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -77,10 +79,10 @@ jobs:
           done
           status=0
           if [[ ${#python_arguments[@]} -gt 0 ]]; then
-            scripts/dev pytest tests/compare "${python_arguments[@]}" --compare-right-module tests.compare.host --compare-report-dir "$RUNNER_TEMP/comparison" || status=$?
+            scripts/dev pytest tests/compare --ignore=tests/compare/direct "${python_arguments[@]}" --compare-right-module tests.compare.host --compare-report-dir "$RUNNER_TEMP/comparison" || status=$?
           fi
           if [[ ${#typescript_arguments[@]} -gt 0 ]]; then
-            scripts/dev pytest tests/compare "${typescript_arguments[@]}" --compare-right-module tests.compare.ts_launcher --compare-report-dir "$RUNNER_TEMP/comparison" || status=$?
+            scripts/dev pytest tests/compare --ignore=tests/compare/direct "${typescript_arguments[@]}" --compare-right-module tests.compare.ts_launcher --compare-report-dir "$RUNNER_TEMP/comparison" || status=$?
           fi
           exit "$status"
       - name: Preserve comparison evidence
