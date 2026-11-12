@@ -2,9 +2,19 @@
  * Reuses Ticket SQLite fixtures and the existing in-memory contract. No provider adapter.
  */
 import { afterEach, expect, test, vi } from 'vitest';
-import { fixture, fixture_path, create, edit, read, now, claim } from './ticket_fixture.ts';
+import {
+  fixture,
+  fixture_path,
+  create,
+  edit,
+  read,
+  now,
+  claim,
+  propose,
+} from './ticket_fixture.ts';
 import * as data from '../tickets/data/index.ts';
 import * as feedback from '../tickets/revision_feedback.ts';
+import { restart_worker } from '../tickets/worker_restart.ts';
 import { OWNER } from '../core/contracts.ts';
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import { InMemoryConversationSystem } from '../conversation/in_memory_conversation_system.ts';
@@ -42,6 +52,157 @@ function setup() {
   };
   return { db, system, options };
 }
+
+// Python restart ports: the existing sequential HTTP list cannot interleave a
+// Worker proposal or replacement claim with an awaited kill, or race the link lock.
+test('restart keeps a worker completion that lands during kill', async () => {
+  const { db, system, options } = setup();
+  const ticket = create(db);
+  await start_ready_worker_step(ticket.id, options);
+  const old_id = read(db, ticket.id).conversation_id!;
+  const kill = system.kill.bind(system);
+  vi.spyOn(system, 'kill').mockImplementation(async (id) => {
+    propose(db, read(db, ticket.id), 'Completed while restart waited.');
+    await kill(id);
+  });
+  const result = await restart_worker(system, db, OWNER, ticket.id, {
+    now: options.now,
+    start_worker_step: () => start_ready_worker_step(ticket.id, options),
+  });
+  expect(result.started).toBe(false);
+  expect(result.not_started_because).toContain('awaiting_approval');
+  expect(read(db, ticket.id)).toMatchObject({
+    worker_step_claim: 'none',
+    conversation_id: null,
+    pending_proposal: { body: 'Completed while restart waited.' },
+  });
+  expect(system.backend_prompt_writes(old_id)).toHaveLength(1);
+});
+
+test('restart releases the current errored claim generation after kill', async () => {
+  const { db, system, options } = setup();
+  const ticket = create(db);
+  await start_ready_worker_step(ticket.id, options);
+  const claimed = read(db, ticket.id);
+  db.write((tx) =>
+    data.mark_worker_step_claim_errored(tx, ticket.id, {
+      expected_claim: claimed.worker_step_claim,
+      expected_claim_revision: claimed.worker_step_claim_revision,
+      now,
+      error_reason: 'delivery uncertain',
+    }),
+  );
+  const admitted = read(db, ticket.id);
+  const kill = system.kill.bind(system);
+  vi.spyOn(system, 'kill').mockImplementation(async (id) => {
+    db.write((tx) => {
+      expect(
+        data.release_worker_step_claim(tx, ticket.id, {
+          expected_claim: admitted.worker_step_claim,
+          expected_claim_revision: admitted.worker_step_claim_revision,
+          now,
+        }),
+      ).toBe(true);
+      data.mark_ticket_errored(tx, ticket.id, { now, error_reason: 'delivery uncertain' });
+    });
+    await kill(id);
+  });
+  const result = await restart_worker(system, db, OWNER, ticket.id, {
+    now: options.now,
+    start_worker_step: () => start_ready_worker_step(ticket.id, options),
+  });
+  expect(result.started).toBe(true);
+  const restarted = read(db, ticket.id);
+  expect(restarted.worker_step_claim).toBe('out');
+  expect(restarted.worker_step_claim_revision).toBeGreaterThan(admitted.worker_step_claim_revision);
+  expect(restarted.conversation_id).not.toBe(claimed.conversation_id);
+});
+
+test('the next opener waits for restart and only one starts a fresh conversation', async () => {
+  const { db, system, options } = setup();
+  const ticket = edit(db, create(db), { ceiling: 'needs_implementation' });
+  await start_ready_worker_step(ticket.id, options);
+  const old_id = read(db, ticket.id).conversation_id!;
+  let announce_kill!: () => void;
+  const kill_started = new Promise<void>((resolve) => (announce_kill = resolve));
+  let release_kill!: () => void;
+  const may_kill = new Promise<void>((resolve) => (release_kill = resolve));
+  const kill = system.kill.bind(system);
+  vi.spyOn(system, 'kill').mockImplementation(async (id) => {
+    announce_kill();
+    await may_kill;
+    await kill(id);
+  });
+  const restarting = restart_worker(system, db, OWNER, ticket.id, {
+    now: options.now,
+    start_worker_step: () => start_ready_worker_step(ticket.id, options),
+  });
+  await kill_started;
+  try {
+    propose(db, read(db, ticket.id), 'Advance before the next opener.');
+    let next_settled = false;
+    const next_step = start_ready_worker_step(ticket.id, options).then((result) => {
+      next_settled = true;
+      return result;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(next_settled).toBe(false);
+    expect(system.backend_prompt_writes(old_id)).toHaveLength(1);
+    release_kill();
+    const [restarted, next] = await Promise.all([restarting, next_step]);
+    expect([restarted.started, next.started].filter(Boolean)).toHaveLength(1);
+    const current = read(db, ticket.id);
+    expect(current.stage).toBe('needs_implementation');
+    expect(current.worker_step_claim).toBe('out');
+    expect(current.conversation_id).not.toBeNull();
+    expect(current.conversation_id).not.toBe(old_id);
+    expect(system.backend_prompt_writes(old_id)).toHaveLength(1);
+  } finally {
+    release_kill();
+    await restarting;
+  }
+});
+
+// The HTTP restart list never reaches an absent Mac. Admission must not kill,
+// start, edit launch configuration, or change its already-owned claim/link.
+test('restart refuses a Mac ticket while the Mac is away without changing it', async () => {
+  const { db, system, options } = setup();
+  const ticket = create(db);
+  await start_ready_worker_step(ticket.id, options);
+  db.write((tx) => {
+    // The minimal Ticket fixture omits executor migrations. Use the actual empty
+    // presence table from executor_mailboxes, so the real reader finds no Mac.
+    tx.run(`CREATE TABLE mac_executor_presence (
+      singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+      executor_incarnation TEXT, identity_json TEXT,
+      last_contact_at_ms INTEGER,
+      last_lease_at_ms INTEGER,
+      continuous_since_ms INTEGER,
+      going_to_sleep_at_ms INTEGER,
+      lease_json TEXT,
+      refusal_json TEXT)`);
+    tx.run("UPDATE tickets SET locale='macos' WHERE id=?", [ticket.id]);
+  });
+  const before = read(db, ticket.id);
+  const kill = vi.spyOn(system, 'kill');
+  const start = vi.fn(() => start_ready_worker_step(ticket.id, options));
+  const configure = vi.fn();
+  await expect(
+    restart_worker(system, db, OWNER, ticket.id, {
+      now: options.now,
+      start_worker_step: start,
+      write_employee_configuration: configure,
+    }),
+  ).rejects.toMatchObject({
+    code: 'validation',
+    message: 'Waiting for the Mac: restart this Ticket once it is back',
+    detail: { ticket_id: ticket.id },
+  });
+  expect(kill).not.toHaveBeenCalled();
+  expect(start).not.toHaveBeenCalled();
+  expect(configure).not.toHaveBeenCalled();
+  expect(read(db, ticket.id)).toEqual(before);
+});
 test.each([
   ['refused', () => new PromptDeliveryRefused({ refusal_reason: 'session_did_not_load' }), 'none'],
   ['suppressed', () => new PromptDeliverySuppressed({ reason: 'test suppression' }), 'none'],

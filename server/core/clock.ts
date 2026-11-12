@@ -79,6 +79,10 @@ function parseNow(raw: string): {
     : `${n(date.getFullYear(), 4)}-${n(date.getMonth() + 1)}-${n(date.getDate())}T${n(date.getHours())}:${n(date.getMinutes())}:${n(date.getSeconds())}${micros}`;
   return { date, iso: normalizedLocal + (offset ?? localOffset(date)) };
 }
+/** Shared Python-compatible ISO validation, also used by provider timestamp readers. */
+export function parse_iso_datetime(raw: string): Date {
+  return parseNow(raw).date;
+}
 function localOffset(date: Date): string {
   const m = -date.getTimezoneOffset();
   return `${m < 0 ? '-' : '+'}${String(Math.floor(Math.abs(m) / 60)).padStart(2, '0')}:${String(Math.abs(m) % 60).padStart(2, '0')}`;
