@@ -28,6 +28,7 @@ from planner.conversation.backends.codex_app_server.login_session import (
     CodexSignIn,
     CodexSignInService,
     SignInBounds,
+    UnknownSignInSession,
 )
 from planner.conversation.backends.codex_app_server.model_catalog import (
     probe_codex_model_catalog,
@@ -153,7 +154,15 @@ async def python_exercise(spec: dict[str, Any], children: list[Any]) -> dict[str
             ),
         )
         try:
-            pending = await service.start()
+            if name == "signin-cancel":
+                pending, concurrent = await asyncio.gather(
+                    service.start(), service.start()
+                )
+                assert concurrent.session_id == pending.session_id
+                with pytest.raises(UnknownSignInSession):
+                    await service.cancel("stale-session")
+            else:
+                pending = await service.start()
             terminal: CodexSignIn | None
             if name in ("signin-cancel", "signin-race"):
                 terminal = await service.cancel(pending.session_id)
@@ -352,14 +361,6 @@ def test_unit17_provider_parity(tmp_path: Path, request: pytest.FixtureRequest) 
         "python": python,
         "typescript": typescript,
         "seconds": time.perf_counter() - started,
-        "compared": [
-            "models/pages/partial/defaults/effort order",
-            "saved generation standing",
-            "sign-in public state/cancel/deadline/shutdown/completion races",
-            "usage results/strict integers/timeout/cancel",
-            "ordered native requests",
-            "joined direct children",
-        ],
         "typescript_only": ["raw usage JSON retains 25.0 lexical token"],
         "clock_rule": (
             "Both sign-in clocks are fixed .123456+00:00; "
@@ -368,18 +369,12 @@ def test_unit17_provider_parity(tmp_path: Path, request: pytest.FixtureRequest) 
         "session_rule": (
             "One generated public session ID maps bijectively per flow, "
             "after exact pending-to-terminal identity checks. "
-            "Stale/concurrent cases use focused unit coverage."
+            "The cancel checkpoint also checks concurrent start and stale-session refusal."
         ),
         "timeout_rule": (
             "Real timeout runs at 0.3 seconds on both sides; "
             "TS also asserts caller supplies production 30-second bound."
         ),
-        "not_proven": [
-            "real provider/network/login",
-            "process groups here (Part1 owns containment)",
-            "HTTP/browser",
-            "remote provider",
-        ],
     }
     destination = request.config.getoption("--compare-report-dir")
     if destination:

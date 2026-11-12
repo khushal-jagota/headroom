@@ -68,7 +68,8 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
   const { saved_codex_login_source } = await import('../../backends/codex_app_server/providers.ts');
   const { RememberedCodexLoginRejection } =
     await import('../../backends/codex_app_server/login.ts');
-  const { CodexSignInService } = await import('../../backends/codex_app_server/login_session.ts');
+  const { CodexSignInService, UnknownSignInSession } =
+    await import('../../backends/codex_app_server/login_session.ts');
   const { CodexUsageAdapter } = await import('../../backend_usage/codex.ts');
   const home = process.env.CODEX_HOME!;
   const loginPath = join(home, 'auth.json');
@@ -138,7 +139,21 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
         },
       });
       try {
-        const pending = await service.start();
+        let pending: Awaited<ReturnType<typeof service.start>>;
+        if (name === 'signin-cancel') {
+          const [first, concurrent] = await Promise.all([service.start(), service.start()]);
+          pending = first;
+          if (concurrent.session_id !== pending.session_id)
+            throw new Error('Concurrent starts created different sessions');
+          let stale: unknown;
+          try {
+            await service.cancel('stale-session');
+          } catch (error) {
+            stale = error;
+          }
+          if (!(stale instanceof UnknownSignInSession))
+            throw new Error('A stale cancellation was not refused');
+        } else pending = await service.start();
         let terminal;
         if (name === 'signin-cancel' || name === 'signin-race')
           terminal = await service.cancel(pending.session_id);
