@@ -268,11 +268,19 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
     /// Selected destination and its active provisional start, plus independently retained originals.
     func conversationSummaries(server: String, owner: ConversationOwner, conversationID: String?) throws -> [Summary] {
         let ownerKey = OutgoingMetadata.ownerKey(owner)
-        let hasDestination = conversationID != nil
-        var rows = try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate {
-            $0.server == server && $0.ownerKey == ownerKey && $0.kind == "message" &&
-            (($0.conversationID == conversationID && (hasDestination || $0.scheduled)) || ($0.conversationID == nil && $0.scheduled))
-        }, sortBy: [SortDescriptor(\.sequence)]))
+        var rows: [OutgoingMetadata] = []
+        if conversationID != nil {
+            let destinationQuery = FetchDescriptor<OutgoingMetadata>(predicate: #Predicate {
+                $0.server == server && $0.ownerKey == ownerKey && $0.conversationID == conversationID
+            })
+            rows = try context.fetch(destinationQuery).filter { $0.kind == "message" }
+        }
+        let provisionalQuery = FetchDescriptor<OutgoingMetadata>(predicate: #Predicate {
+            ($0.server == server && $0.ownerKey == ownerKey) && ($0.conversationID == nil && $0.scheduled)
+        })
+        let provisional = try context.fetch(provisionalQuery).filter { $0.kind == "message" }
+        var selectedKeys = Set(rows.map(\.key))
+        rows.append(contentsOf: provisional.filter { selectedKeys.insert($0.key).inserted })
         // One metadata-only query selects retired links in this owner/destination scope.
         // Walking those links in memory avoids a fetch for every retained sent message.
         let ancestorPredicate = #Predicate<OutgoingMetadata> {
