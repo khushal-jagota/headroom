@@ -252,7 +252,7 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
     async def delayed_notification(
         handler: Any, method: str, notification: Any
     ) -> None:
-        if method == "skills/changed":
+        if method == "item/agentMessage/delta" and notification.itemId == "provisional":
             backlog_order.append("handler-start")
             await asyncio.sleep(0.02)
             backlog_order.append("handler-end")
