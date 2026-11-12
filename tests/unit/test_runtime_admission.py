@@ -16,13 +16,14 @@ from tests.support.update_apps import build_app as _app
 
 from planner.environments import runtime_admission as admission
 from planner.environments.app import AppValidationError, digest_app_artifact, validate_app_manifest
+from planner.environments.runtime_contracts import RuntimeContract
 from planner.environments.update_attempts import parse_release
 
 
 def test_contract_binding_and_legacy_reads(tmp_path: Path) -> None:
     root = _app(tmp_path / "app", SHA_B, "new")
     manifest = validate_app_manifest(root / "manifest.json")
-    assert manifest.runtime_contract is not None
+    assert isinstance(manifest.runtime_contract, RuntimeContract)
     payload = json.loads((root / "manifest.json").read_text())
     payload["runtime_contract"]["python_version"] = "3.12.13"
     (root / "manifest.json").write_text(json.dumps(payload))
@@ -46,7 +47,7 @@ def test_contract_survives_receipt_and_pinned_request_roundtrip() -> None:
     publication = release()
     decoded = parse_release(json.loads(json.dumps(asdict(publication))))
     assert decoded == publication
-    assert decoded.manifest.runtime_contract is not None
+    assert isinstance(decoded.manifest.runtime_contract, RuntimeContract)
     changed = replace(decoded.manifest.runtime_contract, python_version="3.12.13")
     assert (
         replace(decoded, manifest=replace(decoded.manifest, runtime_contract=changed))
@@ -73,7 +74,7 @@ def test_host_refusal_precedes_payload_and_probe_failures_close(
     monkeypatch.setattr(
         platform, "libc_ver", lambda: ("glibc", "2.1" if failure == "libc" else "2.41")
     )
-    assert manifest.runtime_contract is not None
+    assert isinstance(manifest.runtime_contract, RuntimeContract)
     cpuinfo = "flags: " + " ".join(manifest.runtime_contract.cpu_features)
     read_text = Path.read_text
 

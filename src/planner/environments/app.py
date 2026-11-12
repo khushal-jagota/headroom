@@ -17,10 +17,10 @@ from re import fullmatch
 from planner.environments.runtime_contracts import (
     RUNTIME_CONTRACT_PATH,
     RUNTIME_INVENTORY_PATH,
-    RuntimeContract,
     parse_optional_runtime_contract,
     runtime_bytes_digest,
 )
+from planner.platform_runtime.contracts import RuntimeRequirements
 
 APP_FORMAT = "panels-app-v1"
 FULL_SHA_PATTERN = r"[0-9a-f]{40}"
@@ -36,7 +36,7 @@ class AppManifest:
     app_sha: str
     source_digest: str
     artifact_digest: str
-    runtime_contract: RuntimeContract | None = None
+    runtime_contract: RuntimeRequirements | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -241,9 +241,10 @@ def build_exported_app(
         runtime_contract = None
         if install_dependencies:
             _install_app_dependencies(staging)
-            from planner.environments.runtime_packaging import complete_private_runtime
+            from planner.platform_runtime.selection import select_home_runtime
+            from planner.platform_runtime.targets import LINUX_HOME
 
-            runtime_contract = complete_private_runtime(staging)
+            runtime_contract = select_home_runtime(LINUX_HOME).complete_private_runtime(staging)
         _write_app_entrypoints(staging, app_sha=requested_sha)
         manifest = AppManifest(
             requested_sha,

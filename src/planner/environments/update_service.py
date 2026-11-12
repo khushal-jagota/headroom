@@ -13,7 +13,6 @@ import asyncio
 import concurrent.futures
 import logging
 import sqlite3
-import subprocess
 import threading
 import time
 from collections.abc import Callable
@@ -54,6 +53,7 @@ from planner.environments.update_install import (
 )
 from planner.environments.update_prefetch import stage_release, staged_app_path
 from planner.managed_skills import skill_names
+from planner.platform_runtime.selection import get_platform_adapter
 from planner.tickets.data import audit_ticket_registry_integrity
 from planner.worker_types.configuration import build_worker_runtime_definitions
 from planner.worker_types.store import read_definitions
@@ -67,12 +67,7 @@ RESTARTED_DETAIL = "Panels restarted before the update began, so nothing changed
 
 
 def launch_transient_unit(attempt_id: str, command: list[str]) -> None:
-    """Start the installer in its own user unit, so it outlives this service."""
-    subprocess.run(
-        ["systemd-run", "--user", "--collect", "--quiet",
-         f"--unit=panels-update-{attempt_id}", *command],
-        check=True, shell=False, capture_output=True, timeout=30,
-    )
+    get_platform_adapter().launch_installer(attempt_id, command)
 
 
 class UpdateService:
@@ -89,6 +84,7 @@ class UpdateService:
         current_app_sha: str | None,
         health_url: str,
         service_unit: str,
+        unavailable_reason: str | None = None,
         prepare_mac_update: Callable[[PublishedUpdate], None] = lambda release: None,
         mac_phase: Callable[[str], str | None] = lambda mac_attempt_id: None,
         mac_reported_at: Callable[[str], float | None] = lambda mac_attempt_id: None,
@@ -105,6 +101,7 @@ class UpdateService:
         self.current_app_sha = current_app_sha
         self._health_url = health_url
         self._service_unit = service_unit
+        self._unavailable_reason = unavailable_reason
         self._prepare_mac_update, self._mac_phase = prepare_mac_update, mac_phase
         self._mac_reported_at = mac_reported_at
         self._mac_configured = mac_configured
@@ -135,7 +132,7 @@ class UpdateService:
 
     def refresh_available(self, *, force: bool = False) -> None:
         """Start one background check and prefetch on the readiness-loop cadence."""
-        if self.provider is None or not self._can_refresh():
+        if self._unavailable_reason is not None or self.provider is None or not self._can_refresh():
             return
         current = self.attempts.read()
         if current is not None and current.state not in {"done", "failed"}:
@@ -161,6 +158,8 @@ class UpdateService:
             self._prefetch_lock.release()
 
     def prefetch(self) -> None:
+        if self._unavailable_reason is not None:
+            return
         assert self.provider is not None
         release = self.provider.available()
         if release is None or release.manifest.app_sha == self.current_app_sha:
@@ -194,6 +193,11 @@ class UpdateService:
             return self.attempts.read()
 
     def status(self) -> UpdateStatus:
+        if self._unavailable_reason is not None:
+            return UpdateStatus(
+                "failed", (), "unknown", None, None, self.current_app_sha,
+                self._unavailable_reason, None,
+            )
         self.refresh_available()
         attempt = self._settled()
         self._reopen_after_unstarted(attempt)
@@ -250,6 +254,8 @@ class UpdateService:
     # --- owner actions -------------------------------------------------------------
 
     def install(self, app_sha: str, mode: UpdateMode, *, confirm_activity: bool) -> UpdateAttempt:
+        if self._unavailable_reason is not None:
+            raise UpdateConflict(self._unavailable_reason)
         release = self.ready_release()
         if release is None or release.manifest.app_sha != app_sha:
             raise UpdateConflict("This update is no longer ready. Refresh and try again.")
@@ -279,6 +285,8 @@ class UpdateService:
         self.attempts.remove(attempt_id, frozenset({"waiting"}))
 
     def update_now(self, attempt_id: str, *, confirm_activity: bool) -> UpdateAttempt:
+        if self._unavailable_reason is not None:
+            raise UpdateConflict(self._unavailable_reason)
         if not confirm_activity:
             raise UpdateConflict("Confirm active work before Update now.")
         attempt = self.attempts.change(
@@ -299,6 +307,8 @@ class UpdateService:
 
     def retry_mac(self, attempt_id: str) -> UpdateAttempt:
         """A fresh Mac target for the same release; the Mac controller sees it as new."""
+        if self._unavailable_reason is not None:
+            raise UpdateConflict(self._unavailable_reason)
         return self.attempts.change(
             attempt_id, frozenset({"done"}),
             lambda current: replace(
@@ -311,6 +321,8 @@ class UpdateService:
 
     def start(self, event_loop: asyncio.AbstractEventLoop) -> None:
         """Begin owning updates on this event loop; a `preparing` record is from a dead process."""
+        if self._unavailable_reason is not None:
+            return
         self._event_loop = event_loop
         attempt = self.attempts.read()
         if attempt is not None and attempt.state == "preparing":
@@ -364,6 +376,8 @@ class UpdateService:
             self._advancing = False
 
     async def _advance(self) -> None:
+        if self._unavailable_reason is not None:
+            return
         attempt = self.attempts.read()
         system = self.conversation()
         if attempt is None or attempt.state != "waiting" or system is None:
