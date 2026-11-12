@@ -1,7 +1,7 @@
 /** Shared owner-send intake and delivery envelopes from conversation/api.py. */
 import type { FastifyReply } from 'fastify';
-import type { Principal } from '../core/contracts.ts';
 import { HttpError } from '../core/http/errors.ts';
+import type { VideoSendAdmission } from './video_send_admission.ts';
 import type { ConversationMessageFiles } from './message_files.ts';
 import { MessageText, MessageImage, MessageFile, type MessageContent } from './message_content.ts';
 import {
@@ -261,24 +261,13 @@ function decoded(data: string, maximum: number, too_large: string): Buffer {
     throw new HttpError(422, "a piece's data is not base64");
   return Buffer.from(data, 'base64');
 }
-export function video_send_admission(
-  sent: SentPiece[],
-  sender_message_id: string | null,
-  principal: Principal,
-): void {
-  const count = sent.filter((p) => p.piece === 'video_upload').length;
-  if (!count) return;
-  if (principal.kind !== 'owner') throw new HttpError(403, 'only the owner can attach video');
-  if (count > 1) throw new HttpError(422, 'a message permits only one video');
-  if (!sender_message_id) throw new HttpError(422, 'video requires sender_message_id');
-  throw new HttpError(503, 'video uploads are unavailable');
-}
 export async function conversation_message_content(
   files: ConversationMessageFiles,
   conversation_id: string,
   sent: SentPiece[],
   options: {
     sender_message_id?: string | null;
+    video_admission?: Pick<VideoSendAdmission, 'adopt'>;
   } = {},
 ): Promise<MessageContent> {
   const validated = new Map<
@@ -292,7 +281,8 @@ export async function conversation_message_content(
     file_bytes = 0;
   const video_count = sent.filter((p) => p.piece === 'video_upload').length;
   if (video_count > 1) throw new HttpError(422, 'a message permits only one video');
-  if (video_count) throw new HttpError(422, 'video upload requires send admission');
+  if (video_count && !options.video_admission)
+    throw new HttpError(422, 'video upload requires send admission');
   for (const [index, piece] of sent.entries()) {
     if (piece.piece !== 'image' && piece.piece !== 'file') continue;
     const bytes = decoded(
@@ -326,8 +316,10 @@ export async function conversation_message_content(
       pieces.push(new MessageText({ text: piece.text }));
       continue;
     }
-    if (piece.piece === 'video_upload')
-      throw new HttpError(422, 'video upload requires send admission');
+    if (piece.piece === 'video_upload') {
+      pieces.push(options.video_admission!.adopt(conversation_id));
+      continue;
+    }
     const value = validated.get(index)!;
     const kept = await files.keep(conversation_id, value.bytes, {
       media_type: value.media_type,

@@ -9,9 +9,9 @@ import {
   parse_owner_send_body,
   conversation_message_content,
   delivery_fate_json,
-  video_send_admission,
 } from '../conversation/http.ts';
 import type { OwnerSendBody } from '../conversation/http.ts';
+import { video_send_admission } from '../conversation/video_send_admission.ts';
 import { ConversationMessageFiles as FileConversationMessageFiles } from '../conversation/record/message_files.ts';
 import * as conversation_start from '../runtime/conversation_start.ts';
 import type {
@@ -253,21 +253,33 @@ export const conversation_routes: FastifyPluginAsync<AreaServices> = async (app,
       // Python resolves Chief launch overrides before attachment admission.
       const chief_overrides = kind === 'chief' ? runs_under(body) : null;
       const principal = services.identity(request).principal;
-      video_send_admission(body.content, body.sender_message_id, principal);
       const target =
         kind === 'chief' ? CHIEF : { kind: 'ticket' as const, id: request.params.ticket_id! };
+      const admission = video_send_admission(
+        services.database,
+        services.config.db_path,
+        files,
+        body.content,
+        body.sender_message_id,
+        { kind, id: target.id, expected_conversation_id: body.conversation_id },
+        target,
+        principal,
+      );
       const delivered = await send_message(
         conversations(services),
         services.database,
         services.clock,
         services.identity(request),
         target,
-        (id) =>
-          conversation_message_content(files, id, body.content, {
-            sender_message_id: body.sender_message_id,
-          }),
+        admission !== null
+          ? (id) => admission.content(id)
+          : (id) =>
+              conversation_message_content(files, id, body.content, {
+                sender_message_id: body.sender_message_id,
+              }),
         body.mode,
         {
+          admission,
           conversation_id: body.conversation_id,
           created_conversation_id,
           runs_under: chief_overrides ?? runs_under(body),

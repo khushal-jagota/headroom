@@ -63,6 +63,14 @@ const databases: Database[] = [];
 afterEach(() => {
   for (const db of databases.splice(0)) db.close();
 });
+const databasePaths = new WeakMap<Database, string>();
+
+export function fixture_path(database: Database): string {
+  const path = databasePaths.get(database);
+  if (path === undefined) throw new Error('database does not belong to the Ticket fixture');
+  return path;
+}
+
 let serial = 0;
 export function fixture(): Database {
   const path = join(root, `test-${serial++}.sqlite`);
@@ -70,6 +78,7 @@ export function fixture(): Database {
   const db = createDatabase(path);
   db.read(load_worker_runtime_definitions);
   databases.push(db);
+  databasePaths.set(db, path);
   return db;
 }
 export const now = 1783166400;

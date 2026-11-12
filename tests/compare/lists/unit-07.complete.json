@@ -275,6 +275,22 @@
       "json": {}
     },
     {
+      "area": "video-admission",
+      "method": "POST",
+      "path": "/api/chief/conversation/send",
+      "status": 404,
+      "json": {
+        "sender_label": "Owner",
+        "sender_message_id": "missing-video-message",
+        "content": [
+          {
+            "piece": "video_upload",
+            "upload_id": "missing_ready_video"
+          }
+        ]
+      }
+    },
+    {
       "area": "ticket-media",
       "method": "POST",
       "path": "/api/chief/conversation/send",
