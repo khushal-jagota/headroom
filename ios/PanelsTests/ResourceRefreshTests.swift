@@ -63,6 +63,10 @@ import XCTest
         await handle.refresh()
         XCTAssertEqual(handle.value?.label, "Chief 1")
         XCTAssertEqual(RefreshProtocol.state.withLock { $0.paths }, ["/api/resource-body", "/api/workers/chief-of-staff/settings"], "Only explicit unsupported endpoints use fallback")
+        RefreshProtocol.state.withLock { $0.paths = []; $0.supportsVersions = true }
+        let body = try await ResourceTransport.live.read(api, ChiefResources.settings.key, true)
+        let object = try JSONSerialization.jsonObject(with: body.data)
+        XCTAssertEqual(body.data, try JSONSerialization.data(withJSONObject: object, options: [.fragmentsAllowed, .sortedKeys]))
         shared.stop()
     }
 
@@ -386,8 +390,8 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
 /// These cases exercise shared admission, not a second HTTP host. The controlled
 /// transport deliberately completes a canceled read to prove the generation fence.
 @MainActor final class ResourceOwnerTests: XCTestCase {
-    private func owner(_ fixture: OwnerTransport, cacheStore: LocalStore? = nil) -> ResourceOwner {
-        ResourceOwner(api: APIClient(baseURL: URL(string: "https://owner.invalid")!), transport: ResourceTransport(
+    private func owner(_ fixture: OwnerTransport, cacheStore: LocalStore? = nil, api: APIClient? = nil) -> ResourceOwner {
+        ResourceOwner(api: api ?? APIClient(baseURL: URL(string: "https://owner.invalid")!), transport: ResourceTransport(
             versions: { _, keys in await fixture.probe(keys) },
             read: { api, key, _ in try await fixture.read(api.baseURL.absoluteString, key) }),
             cacheStore: cacheStore ?? LocalStore(url: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("owner.store")))
@@ -399,6 +403,116 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
         }
         XCTFail("Controlled transport did not reach its boundary")
     }
+    func testForegroundAndNetworkReturnResetOnlyActiveReadBackoff() async throws {
+        let transport = OwnerTransport(); await transport.failReads()
+        let api = APIClient(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let shared = owner(transport, api: api)
+        let active = shared.handle(ResourceRegistration<String>(key: "/api/recovery"))
+        let inactive = shared.handle(ResourceRegistration<String>(key: "/api/inactive-recovery"))
+        active.acquire(); defer { active.release(); shared.stop() }
+        await active.refresh(); await inactive.refresh()
+        let inactiveRetry = inactive.entry.retryAt
+        shared.start()
+        try await until { active.entry.retryAt > Date() }
+        await transport.recover()
+        shared.start() // The previous foreground run may still be unwinding.
+        XCTAssertLessThan(active.entry.retryAt, Date())
+        try await until { active.value == "1" && active.error == nil }
+        XCTAssertEqual(inactive.entry.retryAt, inactiveRetry)
+        await transport.failReads(); await active.refresh()
+        XCTAssertGreaterThan(active.entry.retryAt.timeIntervalSinceNow, 25)
+        await transport.recover(); shared.resumeActiveReads()
+        XCTAssertLessThan(active.entry.retryAt, Date())
+        try await until { active.error == nil }
+        XCTAssertLessThan(active.entry.retryAt, Date())
+    }
+
+    func testStartRestoresCacheForDemandWhoseRestoreWasCancelledByStop() async throws {
+        let cache = LocalStore(url: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("owner.store"))
+        let key = "/api/cancelled-restore", server = "https://refresh.invalid"
+        let saved = ResourceCacheEnvelope(schemaIdentity: ResourceCacheEnvelope.schema, server: server,
+                                          key: key, data: Data("\"Saved display\"".utf8), epoch: "e", revision: "1")
+        try await cache.cacheResponse(server: server, id: ResourceCacheEnvelope.identity(key), data: JSONEncoder().encode(saved))
+        let transport = OwnerTransport(); await transport.failReads()
+        let shared = owner(transport, cacheStore: cache, api: APIClient(baseURL: URL(string: server)!, session: RefreshProtocol.session))
+        let handle = shared.handle(ResourceRegistration<String>(key: key))
+        handle.acquire(); let cancelled = handle.entry.restoring
+        shared.stop(); await cancelled?.value
+        XCTAssertNil(handle.value)
+        shared.start(); await handle.entry.restoring?.value
+        XCTAssertEqual(handle.value, "Saved display")
+        XCTAssertTrue(handle.isStale)
+        handle.release(); shared.stop()
+    }
+
+    func testBodyNewerThanEarlierProbeIsConfirmedAndAcceptedWithoutAnotherBodyRead() async throws {
+        let transport = OwnerTransport(); await transport.holdFirst()
+        let shared = owner(transport)
+        let lookup = Task { try await shared.read(ResourceRegistration<String>(key: "/api/newer-body")) }
+        try await until { await transport.count == 1 }
+        await transport.setRevision("2"); await shared.reconcile(waitForReads: false)
+        await transport.setRevision("3"); await transport.finishFirst(revision: "3")
+        let value = try await lookup.value
+        XCTAssertEqual(value, "3")
+        let count = await transport.count
+        XCTAssertEqual(count, 1, "A coherent body newer than the earlier probe needs confirmation, not another body")
+        shared.stop()
+    }
+
+    func testNewerBodySurvivesLateOlderProbeDuringConfirmation() async throws {
+        let transport = OwnerTransport(); await transport.holdFirst()
+        let shared = owner(transport)
+        let lookup = Task { try await shared.read(ResourceRegistration<String>(key: "/api/newer-confirmation")) }
+        try await until { await transport.count == 1 }
+        await transport.setRevision("2"); await shared.reconcile(waitForReads: false)
+        await transport.setRevision("4"); await transport.holdProbe()
+        await transport.finishFirst(revision: "4")
+        try await until { await transport.probeHeld }
+        await transport.overrideNextProbeRevision("3")
+        await shared.reconcile(waitForReads: false)
+        await transport.finishProbe()
+        let value = try await lookup.value
+        XCTAssertEqual(value, "4")
+        let count = await transport.count
+        XCTAssertEqual(count, 1, "A late older probe cannot reject a coherently confirmed newer body")
+        shared.stop()
+    }
+
+    func testQueuedRecoveryDoesNotIssueReadsAfterStop() async throws {
+        let transport = OwnerTransport()
+        let shared = owner(transport, api: APIClient(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session))
+        let handle = shared.handle(ResourceRegistration<String>(key: "/api/stopped-recovery"))
+        handle.acquire(); await handle.refresh()
+        let reads = await transport.count, probes = await transport.probeBatches.count
+        shared.start(); shared.resumeActiveReads(); shared.stop()
+        for _ in 0..<10 { await Task.yield() }
+        let stoppedReads = await transport.count, stoppedProbes = await transport.probeBatches.count
+        XCTAssertEqual(stoppedReads, reads)
+        XCTAssertEqual(stoppedProbes, probes)
+        handle.release()
+    }
+
+    func testBothReadAttemptsObsoletedByProbesDoNotStartOutageBackoff() async throws {
+        let transport = OwnerTransport(); await transport.holdFirst()
+        let shared = owner(transport)
+        let registration = ResourceRegistration<String>(key: "/api/changing-body")
+        let handle = shared.handle(registration)
+        let lookup = Task { try await shared.read(registration) }
+        try await until { await transport.count == 1 }
+        await transport.setRevision("2"); await shared.reconcile(waitForReads: false)
+        await transport.holdFirst(); await transport.finishFirst()
+        try await until { await transport.count == 2 }
+        await transport.setRevision("3"); await shared.reconcile(waitForReads: false)
+        await transport.finishFirst()
+        do { _ = try await lookup.value; XCTFail("Both obsolete attempts require a fresh read") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("changed during refresh")) }
+        XCTAssertLessThan(handle.entry.retryAt, Date())
+        XCTAssertEqual(handle.entry.failures, 0)
+        await handle.refresh()
+        XCTAssertEqual(handle.value, "3", "A fresh retry is immediately available")
+        shared.stop()
+    }
+
     func testSharedDemandRejectsStaleBodyAndDoesNotReadInactiveKeys() async throws {
         let transport = OwnerTransport(); await transport.holdFirst()
         let owner = owner(transport)
@@ -670,6 +784,11 @@ private actor OwnerTransport {
     private var active = 0
     var maxConcurrent = 0
     var probeBatches: [[String]] = []
+    private var holdNextProbe = false
+    var probeHeld = false
+    private var probeOverride: String?
+    private var pendingProbe: CheckedContinuation<ResourceVersions, Never>?
+    private var savedProbe: ResourceVersions?
     private var first: CheckedContinuation<ResourceRead, Never>?
     private var saved: ResourceRead?
     func holdFirst() { hold = true }
@@ -682,9 +801,18 @@ private actor OwnerTransport {
     func setBody(_ value: String) { body = value }
     func setRevision(_ value: String, keys: [String]) { for key in keys { revisions[key] = value } }
     func clearReads() { readKeys = [] }
-    func probe(_ keys: [String]) -> ResourceVersions {
+    func holdProbe() { holdNextProbe = true }
+    func overrideNextProbeRevision(_ revision: String) { probeOverride = revision }
+    func finishProbe() { if let savedProbe { pendingProbe?.resume(returning: savedProbe) }; pendingProbe = nil; savedProbe = nil; probeHeld = false }
+    func probe(_ keys: [String]) async -> ResourceVersions {
         probeBatches.append(keys)
-        return ResourceVersions(epoch: "epoch", resources: keys.map { .init(key: $0, revision: revisions[$0] ?? revision) })
+        let snapshot = ResourceVersions(epoch: "epoch", resources: keys.map { .init(key: $0, revision: probeOverride ?? revisions[$0] ?? revision) })
+        probeOverride = nil
+        if holdNextProbe {
+            holdNextProbe = false; savedProbe = snapshot; probeHeld = true
+            return await withCheckedContinuation { pendingProbe = $0 }
+        }
+        return snapshot
     }
     func read(_ server: String, _ key: String) async throws -> ResourceRead {
         count += 1; readKeys.append(key)
@@ -698,5 +826,9 @@ private actor OwnerTransport {
         if hold { hold = false; saved = result; return await withCheckedContinuation { first = $0 } }
         return result
     }
-    func finishFirst() { if let saved { first?.resume(returning: saved) }; first = nil; saved = nil }
+    func finishFirst(revision: String? = nil) {
+        if let revision { first?.resume(returning: ResourceRead(data: Data("\"\(revision)\"".utf8), epoch: "epoch", revision: revision)) }
+        else if let saved { first?.resume(returning: saved) }
+        first = nil; saved = nil
+    }
 }

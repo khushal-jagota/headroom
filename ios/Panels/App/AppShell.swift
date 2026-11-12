@@ -68,7 +68,10 @@ struct AppShell: View {
             if let error = LocalStore.shared.saveError { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error).padding(8) }
         }
         .onChange(of: Outbox.shared.networkAvailable) { _, available in
-            if available, scenePhase == .active { Task { await store.refresh() } }
+            if available, scenePhase == .active {
+                store.resources.resumeActiveReads()
+                Task { await store.refresh() }
+            }
         }
         .task(id: "outbox:\(store.baseURL):\(scenePhase == .active)") {
             if scenePhase == .active { await Outbox.shared.run(api: store.client) }

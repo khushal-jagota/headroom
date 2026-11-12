@@ -678,28 +678,63 @@ import XCTest
         XCTAssertEqual(visibleExpansion.items.last?.key, "row-26")
     }
 
-    func testOversizedDeferredExpansionKeepsItsRowAndEarlierHistory() async throws {
+    func testOneVisibleOversizedDeferredExpansionKeepsHistoryAndReleasesOffscreen() async throws {
         let service = ConversationStub(fate: "started")
-        var referenceRow: [String: Any] = ["kind": "row", "key": "large", "source_sequence": 9,
-            "body": ["kind": "deferred", "reference": ["body_id": "large", "version": "v1", "byte_count": 700_000, "media_type": "application/json"]]]
-        referenceRow["order"] = ["sequence": 9, "slot": 0]
-        await service.setSnapshot(Self.snapshot([Self.item("earlier", kind: "agent_message", text: "Earlier words"), referenceRow]))
+        func deferred(_ key: String) -> [String: Any] {
+            ["kind": "row", "key": key, "body": ["kind": "deferred", "reference":
+                ["body_id": key, "version": "v1", "byte_count": 700_000, "media_type": "application/json"]]]
+        }
+        await service.setSnapshot(Self.snapshot([Self.item("earlier", kind: "agent_message", text: "Earlier words"), deferred("large"), deferred("second")]))
         let model = ConversationModel(); model.conversationID = "conv_1"
         await model.refresh(using: service, transcript: true)
-        model.setVisibleRows(["large"])
-        let target = try XCTUnwrap(model.items.last)
+        model.setVisibleRows(["large", "second"])
         let body = try APIClient.decoder().decode(ConversationBody.self, from: JSONSerialization.data(withJSONObject:
             ["kind": "agent_message", "content": [["piece": "text", "text": String(repeating: "x", count: 700_000)]]]))
         await service.setBody(body)
-        await model.loadBody(target, using: service)
-        XCTAssertEqual(model.items.map(\.key), ["earlier", "large"])
+        await model.loadBody(try XCTUnwrap(model.items.first { $0.key == "large" }), using: service)
+        XCTAssertEqual(model.expandedBodies["large"]?.text.count, 700_000)
+        XCTAssertEqual(model.rows.first { $0.id == "large" }?.text.count, 700_000)
+        XCTAssertEqual(model.items.map(\.key), ["earlier", "large", "second"])
+        XCTAssertNil(model.error)
+        await model.loadBody(try XCTUnwrap(model.items.last), using: service)
+        XCTAssertEqual(Set(model.expandedBodies.keys), ["second"], "Only one oversized expansion remains decoded")
+        XCTAssertEqual(model.expandedBodies["second"]?.text.count, 700_000)
+        model.setVisibleRows(["earlier"])
+        XCTAssertTrue(model.expandedBodies.isEmpty)
+        XCTAssertEqual(model.rows.last?.text, "Read message")
+        XCTAssertEqual(model.items.map(\.key), ["earlier", "large", "second"])
         XCTAssertNotNil(model.items.last?.body?.reference)
-        XCTAssertNil(model.expandedBodies["large"])
-        XCTAssertEqual(model.error, "Message is too large. Open it on the web.")
-        XCTAssertEqual(model.bodyErrors["large"], model.error)
-        let retained = ConversationRetention.retain(model.items, bodies: ["large": body], visible: ["large"], preferOlder: false)
-        XCTAssertEqual(retained.items.map(\.key), ["earlier", "large"])
-        XCTAssertNil(retained.bodies["large"])
+        let retained = ConversationRetention.retain(model.items, bodies: ["large": body, "second": body], visible: ["large", "second"], preferOlder: false, oversizedKey: "second")
+        XCTAssertEqual(retained.items.map(\.key), ["earlier", "large", "second"])
+        XCTAssertEqual(Set(retained.bodies.keys), ["second"])
+        let overCap = ConversationRetention.retain(model.items, bodies: ["second": body], visible: ["second"], preferOlder: false, oversizedKey: "second") { key, _ in
+            key.hasPrefix("expanded:") ? ConversationRetention.oversizedBodyLimit + 1 : 100
+        }
+        XCTAssertTrue(overCap.bodies.isEmpty, "The visible exception still enforces the 2 MB cap")
+        XCTAssertEqual(overCap.items.map(\.key), ["earlier", "large", "second"])
+    }
+
+    func testLateOlderPageCannotBridgeAReplacedSnapshotAfterReconnect() async throws {
+        let service = ConversationStub(fate: "started")
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        await service.setSnapshot("{\"page\":" + Self.page + ",\"status\":{\"authority\":\"current\",\"rest\":{\"plan_progress\":{}}}}")
+        await model.refresh(using: service, transcript: true)
+        let oldRow = try APIClient.decoder().decode(ConversationItem.self, from: JSONSerialization.data(withJSONObject: Self.item("obsolete-older", kind: "agent_message", text: "Old range")))
+        await service.setPage(ConversationPage(items: [oldRow], older: nil))
+        await service.holdPage()
+        let read = Task { await model.loadOlder(using: service) }
+        while !(await service.pageHeld) { await Task.yield() }
+        let previous = model.beginTail(); model.endTail(generation: previous)
+        let generation = model.beginTail()
+        let currentRow = try APIClient.decoder().decode(ConversationItem.self, from: JSONSerialization.data(withJSONObject: Self.item("new-window", kind: "agent_message", text: "Current range")))
+        let cursor = ConversationCursor(projectionVersion: 4, lens: "focus", scope: .init(kind: "timeline", key: nil), order: .init(sequence: 100, slot: 0))
+        let status = try APIClient.decoder().decode(ConversationSnapshot.self, from: Data(Self.snapshot([]).utf8)).status
+        let applied = await model.applyTail(.snapshot(.init(page: .init(items: [currentRow], older: cursor), status: status)), generation: generation, using: service)
+        XCTAssertTrue(applied)
+        await service.releasePage(); await read.value
+        XCTAssertEqual(model.items.map(\.key), ["new-window"])
+        XCTAssertEqual(model.older?.order.sequence, 100, "A discarded page cannot overwrite the new window cursor")
+        XCTAssertFalse(model.loadingOlder)
     }
 
     func testTailReconnectPreservesPendingHistoryAndBodyReads() async throws {

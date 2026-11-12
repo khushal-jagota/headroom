@@ -103,6 +103,8 @@ fileprivate struct ResourceDecoder: Sendable {
         await owner?.refresh(entry)
     }
     /// Used only for accepted mutation results. It never attaches a probed revision.
+    /// Mutation acceptance is limited to keys with one registered decoded type. A
+    /// shared key with multiple types must refresh its canonical body instead.
     func accept(_ value: Value) where Value: Encodable {
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
         entry.generation += 1; entry.task?.cancel(); entry.task = nil
@@ -132,7 +134,7 @@ struct ResourceTransport: Sendable {
                 guard envelope?["key"] as? String == key,
                       let epoch = envelope?["epoch"] as? String, let revision = envelope?["revision"] as? String,
                       let body = envelope?["body"] else { throw URLError(.badServerResponse) }
-                return ResourceRead(data: try JSONSerialization.data(withJSONObject: body, options: .fragmentsAllowed), epoch: epoch, revision: revision)
+                return ResourceRead(data: try JSONSerialization.data(withJSONObject: body, options: [.fragmentsAllowed, .sortedKeys]), epoch: epoch, revision: revision)
             } catch {
                 // Only an unsupported resource endpoint permits an ordinary fallback.
                 // Network, auth, update-gate and malformed-success failures get one request.
@@ -143,6 +145,11 @@ struct ResourceTransport: Sendable {
         guard let parts = URLComponents(string: key) else { throw URLError(.badURL) }
         return ResourceRead(data: try await api.responseData(parts.path, query: parts.queryItems ?? []).0)
     })
+}
+
+private enum ResourceAdmissionError: LocalizedError {
+    case changedDuringRefresh
+    var errorDescription: String? { "The response changed during refresh. Try again." }
 }
 
 /// Only admitted display data enters this schema. Restoration never grants freshness.
@@ -255,21 +262,44 @@ struct ResourceCacheEnvelope: Codable {
         // Even an A → B → A switch receives a new generation.
         for entry in entries.values { entry.isStale = true }
     }
+    /// Foreground and network recovery reset only active demand. The retained error
+    /// stays visible until a successful read; recovery does not wait for a probe.
+    func resumeActiveReads() {
+        probeFailures = 0; probeRetryAt = .distantPast
+        let expected = generation
+        for entry in entries.values where entry.server == server && entry.demands > 0 {
+            entry.failures = 0; entry.retryAt = .distantPast; entry.lastAttempt = .distantPast
+            entry.fallback?.cancel(); entry.fallback = nil
+            guard running else { continue }
+            if entry.data == nil, entry.restoring == nil { restore(entry) }
+            Task {
+                guard self.running, self.generation == expected, entry.demands > 0, !Task.isCancelled else { return }
+                await self.refresh(entry, automatic: true)
+            }
+        }
+        if running {
+            Task {
+                guard self.running, self.generation == expected, !Task.isCancelled else { return }
+                await self.reconcile(includeUnversioned: true, waitForReads: false)
+            }
+        }
+    }
     func start() {
-        guard !running else { return }
+        let alreadyRunning = running
         running = true
+        resumeActiveReads()
+        guard !alreadyRunning else { return }
         evict()
         let expected = generation, api = api
         changes = Task { [weak self] in
-            guard let self else { return }
-            await reconcile(includeUnversioned: true, waitForReads: false)
+            guard let self, generation == expected, running, !Task.isCancelled else { return }
             var failures = 0
             while !Task.isCancelled, generation == expected {
                 do {
                     var first = true
                     for try await _ in api.changes() {
                         guard generation == expected, !Task.isCancelled else { return }
-                        if first { first = false; failures = 0; await reconcile(includeUnversioned: true, waitForReads: false) }
+                        if first { first = false; failures = 0; resumeActiveReads() }
                         else { signal() }
                     }
                 } catch { if Task.isCancelled { return } }
@@ -376,6 +406,7 @@ struct ResourceCacheEnvelope: Codable {
                 guard Date() >= entry.retryAt else { scheduleFallback(entry, after: entry.retryAt); continue }
                 if scheduledReads[entry.key] == nil {
                     scheduledReads[entry.key] = Task {
+                        guard self.generation == expected, entry.demands > 0, !Task.isCancelled else { return }
                         await self.refresh(entry, automatic: true)
                         if expected == self.generation { self.scheduledReads[entry.key] = nil }
                     }
@@ -407,7 +438,11 @@ struct ResourceCacheEnvelope: Codable {
     fileprivate func mounted(_ entry: ResourceEntry) {
         guard entry.server == server else { return }
         if entry.data == nil, entry.restoring == nil { restore(entry) }
-        Task { await self.refresh(entry) }
+        let expected = generation
+        Task {
+            guard self.generation == expected, entry.demands > 0, !Task.isCancelled else { return }
+            await self.refresh(entry)
+        }
     }
     fileprivate func release(_ entry: ResourceEntry) {
         entry.demands = max(0, entry.demands - 1); entry.lastUsed = Date()
@@ -432,11 +467,10 @@ struct ResourceCacheEnvelope: Codable {
                     let probeGeneration = entry.probeGeneration
                     let result = try await transport.read(api, entry.key, entry.versioned && entry.supportsVersionedRead)
                     guard expected == generation, readGeneration == entry.generation, entry.server == server, !Task.isCancelled else { return }
-                    if probeGeneration != entry.probeGeneration,
-                       let target = entry.targetStamp, let epoch = result.epoch, let revision = result.revision,
-                       (target.0 != epoch || target.1 != revision) {
+                    if try await obsolete(result, for: entry, since: probeGeneration, api: api,
+                                          ownerGeneration: expected, readGeneration: readGeneration) {
                         if attempt == 0 { continue }
-                        throw APIError(status: 0, message: "The response changed during refresh. Try again.")
+                        throw ResourceAdmissionError.changedDuringRefresh
                     }
                     let data = result.data, epoch = result.epoch, revision = result.revision
                     let changed = entry.data != data
@@ -449,11 +483,17 @@ struct ResourceCacheEnvelope: Codable {
                         return (values, try? JSONEncoder().encode(envelope))
                     }.value
                     guard expected == generation, readGeneration == entry.generation, entry.server == server, !Task.isCancelled else { return }
+                    if try await obsolete(result, for: entry, since: probeGeneration, api: api,
+                                          ownerGeneration: expected, readGeneration: readGeneration) {
+                        if attempt == 0 { continue }
+                        throw ResourceAdmissionError.changedDuringRefresh
+                    }
+                    guard expected == generation, readGeneration == entry.generation, entry.server == server, !Task.isCancelled else { return }
                     if probeGeneration != entry.probeGeneration,
                        let target = entry.targetStamp, let epoch, let revision,
-                       (target.0 != epoch || target.1 != revision) {
+                       target.0 != epoch || target.1 != revision {
                         if attempt == 0 { continue }
-                        throw APIError(status: 0, message: "The response changed during refresh. Try again.")
+                        throw ResourceAdmissionError.changedDuringRefresh
                     }
                     entry.restoring?.cancel(); entry.restoring = nil
                     entry.terminallyDiscarded = false
@@ -480,8 +520,12 @@ struct ResourceCacheEnvelope: Codable {
                     return
                 } catch {
                     guard expected == generation, readGeneration == entry.generation, !Task.isCancelled else { return }
-                    entry.failures += 1
-                    entry.retryAt = Date().addingTimeInterval(ResourceLimits.retrySeconds(entry.failures))
+                    if error is ResourceAdmissionError {
+                        entry.failures = 0; entry.retryAt = .distantPast
+                    } else {
+                        entry.failures += 1
+                        entry.retryAt = Date().addingTimeInterval(ResourceLimits.retrySeconds(entry.failures))
+                    }
                     if entry.discardOnFailure?(error) == true {
                         entry.terminallyDiscarded = true
                         entry.data = nil; entry.decoded = [:]; entry.decodeErrors = [:]; entry.publication += 1
@@ -496,6 +540,25 @@ struct ResourceCacheEnvelope: Codable {
         if expected == generation, readGeneration == entry.generation {
             entry.task = nil
         }
+    }
+    /// Revisions are opaque (including JSON dependency tokens). A confirmation probe
+    /// distinguishes a body newer than the earlier probe from an obsolete body.
+    private func obsolete(_ result: ResourceRead, for entry: ResourceEntry, since probe: Int,
+                          api: APIClient, ownerGeneration: Int, readGeneration: Int) async throws -> Bool {
+        guard probe != entry.probeGeneration, let epoch = result.epoch, let revision = result.revision,
+              let target = entry.targetStamp, target.0 != epoch || target.1 != revision else { return false }
+        for _ in 0..<2 {
+            let observed = entry.probeGeneration
+            let confirmed = try await transport.versions(api, [entry.key])
+            guard ownerGeneration == generation, readGeneration == entry.generation, !Task.isCancelled else { throw CancellationError() }
+            // An overlapping probe may itself have captured an older snapshot. Confirm
+            // once more after it, instead of assuming its opaque token is newer.
+            if observed != entry.probeGeneration { continue }
+            guard let current = confirmed.resources.first(where: { $0.key == entry.key }), let currentRevision = current.revision else { return true }
+            entry.targetStamp = (confirmed.epoch, currentRevision); entry.probeGeneration += 1
+            return confirmed.epoch != epoch || currentRevision != revision
+        }
+        return true
     }
     fileprivate func schedule(_ entry: ResourceEntry, at timestamp: Double) {
         guard entry.demands > 0, timestamp > Date().timeIntervalSince1970, entry.nextRefreshAt != timestamp else { return }

@@ -208,7 +208,20 @@ enum UsagePresentation {
 
 enum UsageResources {
     static let backends = ResourceRegistration<UsageBackends>(key: "/api/conversation/backends", versioned: false)
-    static func summary(days: Int, now: Date = .now, timeZone: TimeZone = .current) -> ResourceRegistration<RecordedUsageSummary> {
+    // Only the current selection is retained. A local day can be 23 or 25 hours.
+    final class CachedSummary {
+        let days: Int
+        let timeZone: TimeZone
+        let day: DateInterval
+        let registration: ResourceRegistration<RecordedUsageSummary>
+        init(days: Int, timeZone: TimeZone, day: DateInterval, registration: ResourceRegistration<RecordedUsageSummary>) {
+            self.days = days; self.timeZone = timeZone; self.day = day; self.registration = registration
+        }
+    }
+    @MainActor private(set) static var cachedSummary: CachedSummary?
+    @MainActor static func summary(days: Int, now: Date = .now, timeZone: TimeZone = .current) -> ResourceRegistration<RecordedUsageSummary> {
+        if let cached = cachedSummary, cached.days == days, cached.timeZone == timeZone,
+           now >= cached.day.start, now < cached.day.end { return cached.registration }
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = timeZone
         func day(_ date: Date) -> String {
             let parts = calendar.dateComponents([.year, .month, .day], from: date)
@@ -220,10 +233,13 @@ enum UsageResources {
         parts.queryItems = [.init(name: "sinceDay", value: day(start)),
                             .init(name: "untilDay", value: day(now)),
                             .init(name: "timeZone", value: timeZone.identifier), .init(name: "resolution", value: "day")]
-        return ResourceRegistration(key: parts.string!, versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds, decode: { data in
+        let registration = ResourceRegistration<RecordedUsageSummary>(key: parts.string!, versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds, decode: { data in
             let wire = try APIClient.decoder().decode(RecordedUsageSummary.self, from: data)
             guard wire.contractVersion == 5 else { throw APIError(status: 0, message: "Usage format changed. Update the app to read it.") }
             return wire
         })
+        cachedSummary = CachedSummary(days: days, timeZone: timeZone,
+                                      day: calendar.dateInterval(of: .day, for: now)!, registration: registration)
+        return registration
     }
 }

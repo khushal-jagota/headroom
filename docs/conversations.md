@@ -53,7 +53,7 @@ Every send returns a fate. The fate is about delivery, not about whether the mod
 
 What happens to a Worker step after each fate belongs to [Worker steps](worker-steps.md).
 
-The phone keeps at most 300 transcript items and 512 KiB of inline and expanded bodies. The reader preserves the visible neighborhood. Older ranges remain available through Earlier messages, and Latest returns to the newest window. Native history uses one timeline scope, below the design limit of 20 scopes.
+The phone keeps at most 300 transcript items and 512 KiB of inline and ordinary expanded bodies. One visible deferred expansion can exceed that budget, up to 2 MB. Another oversized expansion replaces it, and it leaves decoded memory when it leaves view. The reader preserves the visible neighborhood. Older ranges remain available through Earlier messages, and Latest returns to the newest window. The reader retains at most 20 server history scopes. A late older page survives reconnect only while its history window remains valid. A replacement snapshot invalidates the pending page and supplies the current Earlier messages cursor.
 
 The collapsed phone dock requests status only. The full conversation acquires transcript demand and a fresh stream snapshot. The reader saves bounded display through the background cache writer. Saved rows start stale and supply neither stream coverage nor read credit. Only visible decoded remote rows from the current reader can mark messages read. Drafts and audio keep their separate owners.
 

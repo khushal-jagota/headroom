@@ -43,6 +43,8 @@ import UniformTypeIdentifiers
     }
     private var readerGeneration = 0
     private var tailGeneration = 0
+    private var historyGeneration = 0
+    private var oversizedBodyKey: String?
     private var historyScopes = ConversationHistoryScopes()
     private struct DisplayWrite: Sendable {
         let snapshot: ConversationDisplaySnapshot
@@ -63,6 +65,8 @@ import UniformTypeIdentifiers
 
     private func invalidateReader() {
         readerGeneration += 1
+        historyGeneration += 1
+        releaseOversizedBody()
         tailGeneration += 1
         pendingDisplayWrite = nil
         bodyErrors = [:]
@@ -71,8 +75,19 @@ import UniformTypeIdentifiers
         if let current = status { status = ConversationStatus(authority: "stale", turnRunning: nil, liveOutput: nil, rest: current.rest) }
     }
     private func displayID(_ id: String) -> String { "conversation-display:v1:" + id + ":" + lens.rawValue }
+    private func releaseOversizedBody() {
+        guard let key = oversizedBodyKey else { return }
+        expandedBodies[key] = nil
+        displayByteSizes["expanded:" + key] = nil
+        oversizedBodyKey = nil
+        // The cached row text shares this large string too.
+        projectedRows = []; projectedRevision = -1
+    }
     func setVisibleRows(_ ids: Set<String>) {
         visibleRows = ids.union(items.filter { ids.contains(retryAliases[$0.id] ?? $0.id) }.map(\.key))
+        if let key = oversizedBodyKey, !visibleRows.contains(key) {
+            releaseOversizedBody()
+        }
     }
     func returnToLatest(using service: any ConversationServing) async {
         replaceHistoryOnSnapshot = true
@@ -100,7 +115,7 @@ import UniformTypeIdentifiers
         }.value
     }
     private func retainDisplay(preferOlder: Bool = false) {
-        let retained = ConversationRetention.retain(items, bodies: expandedBodies, visible: visibleRows, preferOlder: preferOlder) { [self] key, body in
+        let retained = ConversationRetention.retain(items, bodies: expandedBodies, visible: visibleRows, preferOlder: preferOlder, oversizedKey: oversizedBodyKey) { [self] key, body in
             if let previous = displayByteSizes[key], previous.body == body { return previous.count }
             let count = (try? displayByteEncoder.encode(body).count) ?? 0
             displayByteSizes[key] = (body, count)
@@ -112,6 +127,7 @@ import UniformTypeIdentifiers
         }
         if retained.removedNewest { hasNewerHistory = true }
         items = retained.items; expandedBodies = retained.bodies
+        if let key = oversizedBodyKey, retained.bodies[key] == nil { releaseOversizedBody() }
         let keys = Set(items.map(\.key))
         currentRemoteKeys.formIntersection(keys)
         bodyErrors = bodyErrors.filter { keys.contains($0.key) }
@@ -510,14 +526,17 @@ import UniformTypeIdentifiers
         if transcript {
             pageProjectionVersion = snapshot.page.projectionVersion ?? snapshot.page.older?.projectionVersion
             if replaceHistoryOnSnapshot { visibleRows = [] }
-            if replaceHistoryOnSnapshot || loadedConversationID != id || loadedLens != requestedLens { items = []; expandedBodies = [:]; hasNewerHistory = false; replaceHistoryOnSnapshot = false; loadedConversationID = id; loadedLens = requestedLens; older = snapshot.page.older; liveRow = nil; liveTurnKey = nil }
+            if replaceHistoryOnSnapshot || loadedConversationID != id || loadedLens != requestedLens { historyGeneration += 1; releaseOversizedBody(); items = []; expandedBodies = [:]; hasNewerHistory = false; replaceHistoryOnSnapshot = false; loadedConversationID = id; loadedLens = requestedLens; older = snapshot.page.older; liveRow = nil; liveTurnKey = nil }
             settleLiveRow(candidates: snapshot.page.items, output: snapshot.status.liveOutput)
             // Replace the current window; retain explicitly loaded history before it.
             let keys = Set(snapshot.page.items.map(\.key))
             let nextItems: [ConversationItem]
             if let first = snapshot.page.items.first, let at = items.firstIndex(where: { $0.key == first.key }) {
                 nextItems = Array(items.prefix(at)).filter { !keys.contains($0.key) } + snapshot.page.items
-            } else { nextItems = snapshot.page.items; older = snapshot.page.older }
+            } else {
+                if !items.isEmpty { historyGeneration += 1 }
+                nextItems = snapshot.page.items; older = snapshot.page.older
+            }
             if items != nextItems { items = nextItems }
             currentRemoteKeys.formUnion(snapshot.page.items.map(\.key))
             admitHistoryScope(snapshot.page.scope ?? .init(kind: "timeline", key: nil), keys: Set(snapshot.page.items.map(\.key)))
@@ -598,13 +617,14 @@ import UniformTypeIdentifiers
     func loadOlder(using service: any ConversationServing) async {
         guard !loadingOlder, let id = conversationID, let cursor = older else { return }
         let generation = readerGeneration
+        let history = historyGeneration
         loadingOlder = true
         defer { loadingOlder = false }
         do {
             let page = try await service.conversationPage(id, cursor: cursor)
             let sizes = await bodySizes(for: page.items)
             try Task.checkCancellation()
-            guard generation == readerGeneration, cursor.lens == lens.rawValue, id == conversationID else { return }
+            guard generation == readerGeneration, history == historyGeneration, cursor.lens == lens.rawValue, id == conversationID else { return }
             displayByteSizes.merge(sizes) { _, new in new }
             let keys = Set(items.map(\.key))
             let earlier = page.items.filter { !keys.contains($0.key) }
@@ -617,7 +637,7 @@ import UniformTypeIdentifiers
             admitHistoryScope(page.scope ?? cursor.scope, keys: Set(page.items.map(\.key)))
             retainDisplay(preferOlder: true)
             saveDisplay()
-        } catch { if !Task.isCancelled, generation == readerGeneration { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled, generation == readerGeneration, history == historyGeneration { self.error = error.localizedDescription } }
     }
     func loadBody(_ item: ConversationItem, using service: any ConversationServing) async {
         guard let id = conversationID, let reference = item.body?.reference else { return }
@@ -630,11 +650,18 @@ import UniformTypeIdentifiers
             let bytes = await Task.detached(priority: .utility) { try? JSONEncoder().encode(body).count }.value
             guard !Task.isCancelled, generation == readerGeneration, id == conversationID, requestedLens == lens,
                   items.contains(where: { $0.key == item.key && $0.body?.reference == reference }) else { return }
-            guard let bytes, bytes <= ConversationRetention.inlineByteLimit else {
+            guard let bytes, bytes <= ConversationRetention.oversizedBodyLimit else {
                 let message = "Message is too large. Open it on the web."
                 bodyErrors[item.key] = message
                 error = message
                 return
+            }
+            if bytes > ConversationRetention.inlineByteLimit {
+                guard visibleRows.contains(item.key) else { return }
+                if let previous = oversizedBodyKey, previous != item.key {
+                    releaseOversizedBody()
+                }
+                oversizedBodyKey = item.key
             }
             bodyErrors[item.key] = nil
             displayByteSizes["expanded:" + item.key] = (body, bytes)

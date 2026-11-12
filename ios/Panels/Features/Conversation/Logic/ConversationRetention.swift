@@ -4,6 +4,7 @@ enum ConversationRetention {
     static let itemLimit = 300
     static let inlineByteLimit = 512 * 1024
     static let historyScopeLimit = 20
+    static let oversizedBodyLimit = 2_000_000
 
     struct Result {
         let items: [ConversationItem]
@@ -14,7 +15,7 @@ enum ConversationRetention {
 
     /// Keep the visible neighborhood. Older paging trims the opposite edge so that
     /// a long transcript can be read with bounded storage.
-    static func retain(_ items: [ConversationItem], bodies: [String: ConversationBody], visible: Set<String>, preferOlder: Bool, bodyBytes: ((String, ConversationBody) -> Int)? = nil) -> Result {
+    static func retain(_ items: [ConversationItem], bodies: [String: ConversationBody], visible: Set<String>, preferOlder: Bool, oversizedKey: String? = nil, bodyBytes: ((String, ConversationBody) -> Int)? = nil) -> Result {
         let encoder = JSONEncoder()
         func count(_ key: String, _ body: ConversationBody) -> Int { bodyBytes?(key, body) ?? ((try? encoder.encode(body).count) ?? 0) }
         var kept = items
@@ -27,8 +28,9 @@ enum ConversationRetention {
         // Nonvisible expansions use only the remaining budget.
         for key in expanded.keys.sorted(by: { visible.contains($0) && !visible.contains($1) }) {
             let size = expanded[key].map { count("expanded:" + key, $0) } ?? 0
-            // A deferred body can exceed the reader budget. Reject that decoded
-            // expansion without charging it or evicting its row and neighbors.
+            // One visible deferred expansion has its own bounded allowance.
+            if size > inlineByteLimit, size <= oversizedBodyLimit, key == oversizedKey,
+               visible.contains(key), items.contains(where: { $0.key == key && $0.body?.reference != nil }) { continue }
             if size > inlineByteLimit || (!visible.contains(key) && bytes + size > inlineByteLimit) { expanded[key] = nil }
             else { bytes += size; sizes[key, default: 0] += size }
         }
