@@ -2,6 +2,8 @@
 
 The runner sends one request list to Python and a candidate server on separate copies of one database. It compares responses, read probes, and source rows. Python is the reference.
 
+Source-row sort keys retain known normalized identities and use generic placeholders for unknown IDs, so independent rows remain aligned across insertion orders.
+
 ## Add an area
 
 Add two files with the same name:
@@ -82,7 +84,7 @@ Repeat `--compare-list` to select several lists. Without that option, pytest dis
 The source sort-key tokens are `navigation_view_memberships.title_key` and `navigation_view_memberships.id_key`.
 A list can carry the two sort-key tokens only if it also compares the ordered members of the same windows in both locales.
 
-For the Unit15 route, closure and session lists, the full en-US/de-DE windows compare exact member IDs, order, totals, records, window IDs and content hashes. Only the two source operand representations and the public comparator-generation label differ; no table, hash, content or continuation exception applies.
+For the Unit15 route, closure, session and notice lists, the full en-US/de-DE windows compare exact member IDs, order, totals, records, window IDs and content hashes. Only the two source operand representations and the public comparator-generation label differ; no table, hash, content or continuation exception applies.
 
 ## Candidate selection in branch CI
 

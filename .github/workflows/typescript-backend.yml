@@ -94,3 +94,91 @@ jobs:
           name: comparison-evidence-node-${{ matrix.node }}
           path: ${{ runner.temp }}/comparison
           if-no-files-found: ignore
+
+  browser:
+    name: Browser gates (${{ matrix.backend }}, Node 22)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [python, typescript]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Set up and run isolated browser gates
+        env:
+          BROWSER_BACKEND: ${{ matrix.backend }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          browser_root="$RUNNER_TEMP/browser-$BROWSER_BACKEND"
+          browser_evidence="$RUNNER_TEMP/browser-evidence-$BROWSER_BACKEND"
+          mkdir -p "$browser_root"/{home,tmp,config,cache,data,state,runtime,ms-playwright} \
+            "$browser_evidence"/{success,html,failure}
+          browser_environment=()
+          for browser_env_key in $(compgen -e); do
+            case "$browser_env_key" in
+              PLAN_*|PANELS_*|CODEX_*|HERMES_*|CLAUDE_*|ANTHROPIC_*|OPENAI_*|AZURE_OPENAI_*|GEMINI_*|GOOGLE_APPLICATION_CREDENTIALS|*_HOME|*_CONFIG_DIR|*_DATA_DIR|*_STATE_DIR|*_CACHE_DIR|XDG_*|HUGGINGFACE_HUB_CACHE|TRANSFORMERS_CACHE|PLAYWRIGHT_*|PYTEST_*|PYTHONHOME|PYTHONPATH|NODE_OPTIONS|NODE_PATH|PIP_*|npm_config_*|NPM_CONFIG_*|BASH_ENV|ENV|CDPATH|VIRTUAL_ENV|HOME|TMPDIR|TMP|TEMP)
+                browser_environment+=(-u "$browser_env_key")
+                ;;
+            esac
+          done
+          env "${browser_environment[@]}" \
+            HOME="$browser_root/home" \
+            TMPDIR="$browser_root/tmp" TMP="$browser_root/tmp" TEMP="$browser_root/tmp" \
+            XDG_CONFIG_HOME="$browser_root/config" XDG_CACHE_HOME="$browser_root/cache" \
+            XDG_DATA_HOME="$browser_root/data" XDG_STATE_HOME="$browser_root/state" \
+            XDG_RUNTIME_DIR="$browser_root/runtime" \
+            PLAYWRIGHT_BROWSERS_PATH="$browser_root/ms-playwright" \
+            PANELS_TEST_SERVER_BACKEND="$BROWSER_BACKEND" \
+            PANELS_UI_PROOF_DIR="$browser_evidence/success" \
+            PANELS_TICKET_EVIDENCE_DIR="$browser_evidence/html" \
+            PANELS_E2E_FAILURE_DIR="$browser_evidence/failure" \
+            BROWSER_EVIDENCE_DIR="$browser_evidence" \
+            bash --noprofile --norc -euo pipefail <<'BROWSER' 2>&1 | tee "$browser_evidence/job.log"
+          sudo apt-get update
+          sudo apt-get install -y libicu-dev pkg-config build-essential
+          scripts/dev setup
+          scripts/dev check-node web
+          (cd web && node node_modules/vite/bin/vite.js build)
+          .venv/bin/python -m playwright install --with-deps chromium
+
+          # The Goal-owned conversation case requires Unit 13 Part 2 / PR751:
+          # SourceDispatcher must execute queued source runs. Both Goal-holder
+          # cases below remain in this gate; no selected test is skipped.
+          browser_cases=(
+            'tests/e2e/test_conversation_video_upload.py::test_video_upload_early_send_and_native_range_playback[chromium]'
+            'tests/e2e/test_conversation_signals.py::test_exact_conversation_signals_cross_runtime_stream_and_surfaces[chromium-desktop]'
+            'tests/e2e/test_conversation_signals.py::test_combined_review_approval_reply_and_bounded_read_reach_canonical_writers[chromium]'
+            'tests/e2e/test_conversation_signals.py::test_history_refused_row_keeps_unread_credit_until_latest_delivery[chromium]'
+            'tests/e2e/test_ticket_conversation_shared_behaviors.py::test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers[chromium]'
+            'tests/e2e/test_ticket_conversation_shared_behaviors.py::test_canonical_queue_writes_refresh_the_mounted_pane[chromium]'
+            'tests/e2e/test_ticket_conversation_shared_behaviors.py::test_owner_send_lands_at_the_end_of_the_conversation_not_the_retained_window[chromium]'
+            'tests/e2e/test_compact_approval.py::test_shared_compact_card_real_transaction_and_stale_revision[chromium-ticket]'
+            'tests/e2e/test_ticket_lifecycle_browser.py::test_ticket_backlog_resume_and_settled_discovery[chromium]'
+            'tests/e2e/test_ticket_list_first_draw.py::test_ticket_lists_arrive_settled_when_switching_pages[chromium]'
+            'tests/e2e/test_orchestrator_rail.py::test_settle_reopen_keeps_outstanding_work_and_worker_address[chromium]'
+            'tests/e2e/test_ticket_file_previews.py::test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place[chromium]'
+            'tests/e2e/test_goal_holders_browser.py::test_goal_promotion_and_stable_url_share_manager_name[chromium]'
+            'tests/e2e/test_goal_holders_browser.py::test_leaving_a_goal_manager_with_text_blocks_opens_each_next_page[chromium]'
+          )
+          scripts/dev pytest "${browser_cases[@]}" --browser chromium \
+            --basetemp "$TMPDIR/pytest" --junitxml "$BROWSER_EVIDENCE_DIR/results.xml"
+          BROWSER
+      - name: Preserve browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: browser-evidence-${{ matrix.backend }}-node-22
+          path: ${{ runner.temp }}/browser-evidence-${{ matrix.backend }}
+          if-no-files-found: warn

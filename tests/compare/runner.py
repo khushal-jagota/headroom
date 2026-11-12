@@ -375,7 +375,10 @@ def rows(path: Path, normalizer: Normalizer) -> dict[str, list[Any]]:
                     if f"{table_name}.{k}" not in normalizer.rules.get("ignore", {})
                     and f"{table_name}.{k}" not in normalizer.rules.get("tokens", {})
                 }
-                return ID.sub("<id>", json.dumps(stable, sort_keys=True, default=str))
+                return ID.sub(
+                    lambda match: normalizer.ids.get(match.group(), "<id>"),
+                    json.dumps(stable, sort_keys=True, default=str),
+                )
 
             raw.sort(key=semantic_order)
             primary = [r[1] for r in conn.execute(f"PRAGMA table_info({quoted})") if r[5]]
