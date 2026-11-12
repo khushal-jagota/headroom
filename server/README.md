@@ -173,3 +173,21 @@ It matches Uvicorn's default trusted local peer (`127.0.0.1`) and validated
 this helper's current contract.
 
 `panels` CLI calls keep the Worker's own `PLAN_ACTOR`, `PLAN_TICKET_ID`, `PLAN_MANAGER_ID`, and `PLAN_CONVERSATION_ID` values; only repository code runs with inherited `PLAN_*` removed.
+
+## Codex app-server transport
+
+`conversation/backends/codex_app_server/` supplies the small consumed wire contracts,
+JSONL client, saved-login reader, inherited child environment, and bounded process-group
+ownership. This is the first part of the Codex port. It does not yet supply a configured
+Codex backend child or the model/sign-in/usage provider bindings.
+
+The client checks the selected CLI version before it starts the app-server. Unknown
+notifications and item kinds remain unconsumed. A malformed consumed notification warns
+and drops. Session, turn, outcome, permission, and numeric-kind checks remain strict.
+Raw response text is retained for usage reads that must preserve numeric token spelling.
+
+The direct Unit 17 checks compare fresh Python answers and the same scripted TypeScript
+executable. The startup check intercepts all provider and service-manager launches and
+compares complete environments, command arguments, and working directories exactly.
+On Linux, Codex retains `src/planner/conversation/tool_shell_startup.bash` as `BASH_ENV`
+for that equality. The cutover unit must move this retained-source dependency.
