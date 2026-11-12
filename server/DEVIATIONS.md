@@ -270,3 +270,9 @@ The migration Manager fixed the repr reference to installed Python 3.12.16 and U
 The shared string repr escapes those code points. The direct repr proof checks the Node Unicode version so that upgrades require regeneration.
 Local Python 3.13 uses Unicode 15.1.0 and prints U+2EBF0. This documented local exception does not change the CI reference.
 Regenerate the ranges with `tests/compare/direct/generate_repr_unicode.py` and the two official UnicodeData files named in its header.
+
+## Codex sign-in admission after shutdown
+
+The migration Manager required this safety difference in the Part 3 source review. TypeScript closes sign-in admission when shutdown begins. Later or queued starts fail with `CodexSignInUnavailable`. Python permits a later start on the same service instance.
+
+The production provider set also closes catalog and usage admission, aborts its owned probes, and joins them before shutdown completes. Snapshot environment cleanup and sign-in cleanup both run even if either fails. An aggregate error retains their failures. These ownership requirements come from the Ticket Brief and Manager review.

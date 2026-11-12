@@ -13,6 +13,7 @@ import {
 } from '../conversation/snapshot/environment.ts';
 import { http_get_usage } from '../conversation/backend_usage/http.ts';
 import { production_backend_providers } from '../conversation/snapshot/production.ts';
+import type { CodexProviderContext } from '../conversation/backends/codex_app_server/providers.ts';
 import {
   definition_from_json,
   definition_to_json,
@@ -102,7 +103,12 @@ if (mode === 'repr') {
   await assert.rejects(door.run(['nonexistent-cross-area'], { timeout_seconds: 1 }), refusal);
   await assert.rejects(door.latest_released_version('synthetic', { timeout_seconds: 1 }), refusal);
   await assert.rejects(http_get_usage('https://synthetic.invalid', {}, 1), refusal);
-  assert.equal(production_backend_providers().claude, null);
+  const unusedContext = new Proxy({} as CodexProviderContext, {
+    get() {
+      throw new Error('Test mode must not read production provider context');
+    },
+  });
+  assert.equal(production_backend_providers(false, unusedContext).claude, null);
   assert.throws(
     () => assert_test_database_path('/outside-synthetic-root/database.sqlite'),
     /Tests can only use databases/,
