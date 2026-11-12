@@ -117,8 +117,14 @@ Lists for units 7 through 10 select both in-memory systems with `"conversation_s
 
 The shared `startServer` lifecycle accepts `createSignalAuthority(database)` for the real coordinator or an isolated test source. Its default factory, `createIdlePublicationAuthority`, reuses the persisted source scope and creates fresh runtime, installation, and delivery identities. The lifecycle invokes the factory only after runtime ownership and database access are ready. Factories return the structural public authority interface, so replacement coordinators do not inherit the idle class.
 
+Vitest removes all `PLAN_*`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and `HERMES_HOME` variables before test files load.
+Each test file starts with a fresh temporary `HOME`, which tests can override explicitly.
+Vitest and `PLAN_TEST_MODE=1` hosts can only open databases inside the OS temp folder or an explicitly registered test root.
+
 Use `requestOrigin(request)` from `core/http/origin.ts` for public URL construction.
 It matches Uvicorn's default trusted local peer (`127.0.0.1`) and validated
 `X-Forwarded-Proto` schemes. It keeps the actual Host and does not trust
 `X-Forwarded-Host`. Nondefault `FORWARDED_ALLOW_IPS` configuration is not part of
 this helper's current contract.
+
+`panels` CLI calls keep the Worker's own `PLAN_ACTOR`, `PLAN_TICKET_ID`, `PLAN_MANAGER_ID`, and `PLAN_CONVERSATION_ID` values; only repository code runs with inherited `PLAN_*` removed.
