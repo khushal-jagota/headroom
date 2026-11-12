@@ -6,6 +6,7 @@ from datetime import date
 from typing import Final
 
 from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
+from planner.tickets.contracts import NO_FURTHER
 from planner.worker_types.contracts import RETIRED_WORKER_TYPES, WorkflowDefinition
 
 REVISION_GUIDANCE_MAX_CHARACTERS: Final = 10_000
@@ -120,3 +121,16 @@ def validate_revision_guidance(message: str) -> None:
             f"revision guidance must be at most {REVISION_GUIDANCE_MAX_CHARACTERS} characters",
             {"maximum_characters": REVISION_GUIDANCE_MAX_CHARACTERS},
         )
+
+
+def parse_next_ceiling(raw: str | None, worker_type_definition: WorkflowDefinition) -> str | None:
+    if raw is None:
+        return None
+    if raw == NO_FURTHER:
+        return NO_FURTHER
+    try:
+        return worker_type_definition.resolve_ceiling(raw)
+    except PlannerError as exc:
+        raise PlannerError(
+            ErrorCode.scope_invalid, "unknown next_ceiling", {"next_ceiling": raw}
+        ) from exc

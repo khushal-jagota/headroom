@@ -17,7 +17,7 @@ The proposal on a card is the same approval surface as on the Ticket page. Both 
 
 An approval note must reach the Worker before approval proceeds. The browser keeps its message identity for that exact proposal across revisits and reloads. If delivery is uncertain, another Approve checks the same message without duplicate delivery. A confirmed note stays confirmed if approval itself fails.
 
-Protected decision operations retain the exact command and its outcome with the Ticket transition. A lost response can be recovered without a second decision. A receipt proves the transition, not delivery of a note or guidance into a conversation.
+Protected decision operations retain the exact command and its outcome with the Ticket transition. A lost response can be recovered without a second decision. A receipt proves the transition, not delivery of a note or guidance into a conversation. Send-back guidance must fit the canonical limit before any receipt stores it. Receipt lookup reveals only the caller’s own operations. Unknown and other actors’ operations return the same supported absence.
 
 If the index is not yet trustworthy, Review says it is unavailable instead of showing an empty queue that might be wrong.
 

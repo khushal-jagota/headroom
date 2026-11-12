@@ -21,6 +21,7 @@ def upgrade() -> None:
         "PRIMARY KEY(operation_id))"
     )
 
+    conn.execute("CREATE INDEX ticket_decision_operations_ticket ON ticket_decision_operations(ticket_id)")
 
 def downgrade() -> None:
     raise NotImplementedError("Panels migrations are forward-only. Restore the matching backup.")

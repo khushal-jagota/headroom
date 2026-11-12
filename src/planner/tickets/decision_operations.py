@@ -23,6 +23,8 @@ from planner.tickets.contracts import (
     Ticket,
 )
 from planner.tickets.integrity import TicketIntegrityError
+from planner.tickets.logic import admission
+from planner.worker_types.contracts import WorkflowDefinition
 
 # Only these canonical decision refusals become terminal receipts. Operational,
 # authority, integrity, and unknown failures propagate and roll back the entire write.
@@ -75,6 +77,8 @@ def parse_command(raw: dict[str, Any]) -> DecisionCommand:
     for name in ("edited_body", "next_ceiling", "message"):
         if name in raw and raw[name] is not None and not isinstance(raw[name], str):
             raise _validation(f"{name} must be text or null")
+    if isinstance(raw.get("message"), str):
+        admission.validate_revision_guidance(raw["message"])
     if "next_holder" in raw:
         _holder(raw["next_holder"])
     return cast(DecisionCommand, dict(raw))
@@ -112,7 +116,11 @@ def lookup(
     # A receipt is private to its actor even when another actor can read the Ticket.
     _require_ticket(conn, ticket_id)
     authority.require_above(conn, actor, authority.ticket(ticket_id))
-    row = _saved(conn, ticket_id, operation_id, actor)
+    row = conn.execute(
+        "SELECT receipt_json FROM ticket_decision_operations "
+        "WHERE operation_id=? AND ticket_id=? AND actor_kind=? AND actor_id=?",
+        (operation_id, ticket_id, actor.kind.value, actor.id),
+    ).fetchone()
     return DecisionOperationResponse(
         receipt_contract=1,
         receipt=None if row is None else cast(DecisionReceipt, json.loads(row["receipt_json"])),
@@ -121,7 +129,7 @@ def lookup(
 
 def _apply(
     conn: sqlite3.Connection, ticket_id: str, command: DecisionCommand,
-    *, current_ticket: Ticket, actor: Principal, now: int,
+    *, current_ticket: Ticket, definition: WorkflowDefinition, actor: Principal, now: int,
 ) -> DecisionTransition:
     field = command["field"]
     if command["decision"] == "approve":
@@ -133,7 +141,8 @@ def _apply(
             )
         ticket = data.accept_proposal(
             conn, ticket_id, field=field, principal=actor, now=now,
-            edited_body=command.get("edited_body"), next_ceiling=command.get("next_ceiling"),
+            edited_body=command.get("edited_body"),
+            next_ceiling=admission.parse_next_ceiling(command.get("next_ceiling"), definition),
             next_holder=holder, expected_proposal_revision=command["expected_proposal_revision"],
         )
     else:
@@ -173,7 +182,7 @@ def apply(
             )
         # Structural stored-state failures are not terminal decision refusals.
         # This remains after duplicate recovery, which needs no current workflow.
-        current_ticket, _definition = data._load_ticket_and_worker_type_definition_for_write(
+        current_ticket, definition = data._load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id,
         )
         error: DecisionError | None = None
@@ -182,7 +191,8 @@ def apply(
             # Roll back partial canonical work before retaining an expected refusal.
             with data._txn(conn):
                 transition = _apply(
-                    conn, ticket_id, command, current_ticket=current_ticket, actor=actor, now=now,
+                    conn, ticket_id, command, current_ticket=current_ticket, definition=definition,
+                    actor=actor, now=now,
                 )
         except PlannerError as exc:
             if isinstance(exc, TicketIntegrityError) or exc.code not in _BUSINESS_REFUSALS:
