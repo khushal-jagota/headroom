@@ -63,7 +63,8 @@ See the repository README for provider prerequisites. Select the provider in Pan
 
 ```sh
 launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.plist"
-curl --fail --retry 20 --retry-connrefused --retry-delay 1 \
+curl --fail --connect-timeout 1 --max-time 2 --retry-max-time 30 \
+  --retry 20 --retry-connrefused --retry-delay 1 \
   "http://127.0.0.1:$PANELS_PORT/api/health?expected_sha=$(git rev-parse HEAD)"
 launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.backup.plist"
 ```
