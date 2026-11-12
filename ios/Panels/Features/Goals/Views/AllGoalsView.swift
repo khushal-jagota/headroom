@@ -12,12 +12,24 @@ struct AllGoalsView: View {
     @State private var sessions = PageSessionCollection()
     @State private var filters = GoalFilters()
     @State private var draft = GoalFilters()
-    @State private var selectedFilter: Int?
-    @State private var sheet = false
+    private enum FilterColumn: Int, CaseIterable, Identifiable {
+        case goal, current, target, project, due, state
+        var id: Int { rawValue }
+        var title: String {
+            switch self {
+            case .goal: "Goal"
+            case .current: "Current"
+            case .target: "Target"
+            case .project: "Project"
+            case .due: "Due"
+            case .state: "State"
+            }
+        }
+    }
+    @State private var selectedFilter: FilterColumn?
     private var loaded: Bool { goalsHandle?.value != nil }
     private var nextRefreshAt: Double? { goalsHandle?.value?.nextRefreshAt }
     private var error: String? { goalsHandle?.error ?? managersHandle?.error ?? projectsHandle?.error }
-    private let columns = ["Goal", "Current", "Target", "Project", "Due", "State"]
     private func readings(_ goal: GoalRecord) -> (Double?, Double?) {
         if let checklist = GoalPresentation.primaryChecklist(goal) { return (Double(checklist["items"].array.filter { $0["state"].text == "done" }.count), Double(checklist["items"].array.count)) }
         guard let session = sessions.session(goal.id, server: store.baseURL), let block = GoalPresentation.primaryChart(goal), block.kind != "binary" else { return (nil, nil) }
@@ -31,12 +43,12 @@ struct AllGoalsView: View {
             VStack(alignment: .leading, spacing: 24) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(columns.indices, id: \.self) { column in
-                            Button { draft = filters; selectedFilter = column; sheet = true } label: {
-                                HStack(spacing: 6) { Text(columns[column]); Image(systemName: "line.3.horizontal.decrease").font(.system(size: 10)) }
+                        ForEach(FilterColumn.allCases) { column in
+                            Button { draft = filters; selectedFilter = column } label: {
+                                HStack(spacing: 6) { Text(column.title); Image(systemName: "line.3.horizontal.decrease").font(.system(size: 10)) }
                                     .font(.footnote).padding(.horizontal, 12).frame(minHeight: 36)
-                                    .background(filters.active(column) ? PanelsTheme.accentSurface : PanelsTheme.raised, in: Capsule())
-                            }.buttonStyle(.plain).foregroundStyle(filters.active(column) ? PanelsTheme.accentText : PanelsTheme.muted)
+                                    .background(filters.active(column.rawValue) ? PanelsTheme.accentSurface : PanelsTheme.raised, in: Capsule())
+                            }.buttonStyle(.plain).foregroundStyle(filters.active(column.rawValue) ? PanelsTheme.accentText : PanelsTheme.muted)
                         }
                     }
                 }
@@ -55,7 +67,7 @@ struct AllGoalsView: View {
             .task(id: "\(store.baseURL):\(scenePhase == .active)") { if scenePhase == .active { await follow() } }
             .task(id: "\(store.baseURL):\(goals.map(\.id)):\(scenePhase == .active)") { if scenePhase == .active { await followReadings() } }
             .onChange(of: sessions.unfinishedKeys) { _, _ in sessions.prune() }
-            .sheet(isPresented: $sheet) { filterSheet }
+            .sheet(item: $selectedFilter) { column in filterSheet(column) }
             .accessibilityIdentifier("all-goals-screen")
     }
     private func row(_ goal: GoalRecord) -> some View {
@@ -86,29 +98,29 @@ struct AllGoalsView: View {
         if let block = GoalPresentation.primaryChart(goal), block.kind != "binary" { return GoalChartPresentation.format(block, value) }
         return value.map { GoalChartPresentation.number($0) } ?? "—"
     }
-    private var filterSheet: some View {
+    private func filterSheet(_ column: FilterColumn) -> some View {
         NavigationStack {
             Form {
-                switch selectedFilter {
-                case 0: TextField("Goal contains", text: $draft.goal)
-                case 1: numberFilter($draft.current)
-                case 2: numberFilter($draft.target)
-                case 3:
+                switch column {
+                case .goal: TextField("Goal contains", text: $draft.goal)
+                case .current: numberFilter($draft.current)
+                case .target: numberFilter($draft.target)
+                case .project:
                     Picker("Project", selection: $draft.project) {
                         Text("All projects").tag("all")
                         ForEach(projects, id: \.id) { Text($0["name"].text).tag($0.id) }
                     }.pickerStyle(.inline)
-                case 4:
+                case .due:
                     filterDate("From", value: $draft.dueFrom)
                     filterDate("To", value: $draft.dueTo)
-                default:
+                case .state:
                     Picker("State", selection: $draft.state) { Text("All").tag("all"); Text("Active").tag("active"); Text("Inactive").tag("inactive") }
                     Picker("Completion", selection: $draft.completion) { Text("All").tag("all"); Text("Done").tag("done"); Text("Not done").tag("open") }
                 }
-            }.panelsScreen().navigationTitle(columns[selectedFilter ?? 0]).navigationBarTitleDisplayMode(.inline)
+            }.panelsScreen().navigationTitle(column.title).navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Clear") { clear() } }
-                    ToolbarItem(placement: .confirmationAction) { Button("Apply") { filters = draft; sheet = false } }
+                    ToolbarItem(placement: .cancellationAction) { Button("Clear") { clear(column) } }
+                    ToolbarItem(placement: .confirmationAction) { Button("Apply") { filters = draft; selectedFilter = nil } }
                 }
         }.presentationDetents([.medium, .large]).preferredColorScheme(.dark)
     }
@@ -129,14 +141,14 @@ struct AllGoalsView: View {
             }
         }
     }
-    private func clear() {
-        switch selectedFilter {
-        case 0: draft.goal = ""
-        case 1: draft.current = .init()
-        case 2: draft.target = .init()
-        case 3: draft.project = "all"
-        case 4: draft.dueFrom = ""; draft.dueTo = ""
-        default: draft.state = "all"; draft.completion = "all"
+    private func clear(_ column: FilterColumn) {
+        switch column {
+        case .goal: draft.goal = ""
+        case .current: draft.current = .init()
+        case .target: draft.target = .init()
+        case .project: draft.project = "all"
+        case .due: draft.dueFrom = ""; draft.dueTo = ""
+        case .state: draft.state = "all"; draft.completion = "all"
         }
     }
     private func follow() async {
