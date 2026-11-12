@@ -7,7 +7,7 @@ import type { HermesModelCatalogSource } from '../../snapshot/provider_contracts
 import { MODEL_CATALOG_PROBE_TIMEOUT_SECONDS } from '../../snapshot/configuration.ts';
 import { BackendAdapterError } from '../contracts.ts';
 import { CodexChildWouldNotStart } from '../codex_app_server/errors.ts';
-import { python_repr } from '../claude_agent_sdk/failure_summary.ts';
+import { python_string_repr as python_repr } from '../../../core/python_repr.ts';
 import { spawn_codex_process } from '../codex_app_server/process.ts';
 import type { OwnedCodexProcess } from '../codex_app_server/process.ts';
 import type { AcpChildLaunch } from './launch.ts';

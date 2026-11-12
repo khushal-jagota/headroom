@@ -1,3 +1,4 @@
+import { python_string_repr } from '../../core/python_repr.ts';
 /** Python-compatible persisted JSON decoding and canonical encoding. */
 import type {
   PublishedUpdate,
@@ -79,8 +80,7 @@ function repr(value: unknown): string {
   if (value === null || value === undefined) return 'None';
   if (value === true) return 'True';
   if (value === false) return 'False';
-  if (typeof value === 'string')
-    return `'${value.replaceAll('\\', '\\\\').replaceAll("'", "\\'")}'`;
+  if (typeof value === 'string') return python_string_repr(value);
   if (Array.isArray(value)) return '[' + value.map(repr).join(', ') + ']';
   if (is_object(value))
     return (
