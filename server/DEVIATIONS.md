@@ -2,6 +2,30 @@
 
 This file records intentional differences that the migration Manager accepted. No new difference enters this file without that acceptance. Close an entry when Python adopts the same behavior.
 
+## Backend discovery in test mode
+
+The migration Manager accepted this safer rule during Unit 19's backend review.
+With `PLAN_TEST_MODE=1`, Python's default backend service still probes the machine.
+TypeScript composes an empty recording environment and no production providers.
+Without explicit recording fixtures, each backend card therefore reports not installed.
+Production subprocess and HTTP doors also refuse test contexts before external I/O.
+The focused backend composition check proves this refusal. Scripted comparison hosts
+inject their declared catalogs and recording actions explicitly.
+
+## Provider allowance scopes with an empty model display name
+
+The migration Manager accepted this difference during review of Unit 19's backend package.
+Python's `backend_state._catalogue_model_id` indexes the first word of each display name
+after an exact match fails. If a display name is empty or absent, that lookup raises
+`IndexError`. The explicit allowance refresh then returns HTTP 500 before it can replace
+the cached observation.
+
+TypeScript treats an empty display name as no display-family match. It can still resolve
+a unique model-ID family. It drops an unresolved or ambiguous scoped window and retains
+the account-wide windows, then commits a successful observation through the usual short
+transaction. It does not reproduce Python's exception. This difference concerns only the
+empty-display fallback. Nonempty model names and ordinary ambiguity retain the Python rules.
+
 ## Closed: accepted held prompts survive a secondary Ticket-model error
 
 The migration Manager accepted this difference during review of PR 712 on November 12, 2026.
