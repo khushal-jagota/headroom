@@ -3737,6 +3737,37 @@ def test_automatic_queue_releases_slots_and_coalesces_one_dispatch_permit(
         assert all(identity in backend.writes[-1].text for identity in identities[2:])
         assert await harness.system.held_prompts("supervisor") == ()
 
+        # A supervisor held while Kill proves the old source is also ineligible.
+        # Otherwise its rank can block an unrelated Worker despite free capacity.
+        stopped, release_kill = asyncio.Event(), asyncio.Event()
+        kill_owned = harness.system._kill_owned
+
+        async def pause_after_stop(state):  # type: ignore[no-untyped-def]
+            await kill_owned(state)
+            stopped.set()
+            await release_kill.wait()
+
+        monkeypatch.setattr(harness.system, "_kill_owned", pause_after_stop)
+        killing = asyncio.create_task(harness.system.kill("supervisor"))
+        try:
+            await asyncio.wait_for(stopped.wait(), 2)
+            now[0] += 1.0
+            identity = "supervisor-during-kill"
+            assert gate.try_start(StartRequest(identity, "supervisor", HOME_MACHINE_ID))
+            assert isinstance(await harness.system.send(
+                "supervisor", text_message_content(identity), sender_label="Panels",
+                sender_message_id=identity,
+            ), PromptDeliveryQueued)
+            now[0] += 1.0
+            worker = "worker-during-kill"
+            assert gate.try_start(StartRequest(worker, "worker", HOME_MACHINE_ID))
+            gate.finish(worker)
+            now[0] += 1.0
+        finally:
+            release_kill.set()
+            await killing
+        assert backend.sender_written_texts()[-1] == identity
+
     _run(exercise)
 
 

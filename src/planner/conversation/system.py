@@ -6028,6 +6028,7 @@ class SqliteProcessConversationSystem:
     def _mark_eligible_held(self, state: _ConversationState) -> None:
         if (
             state.phase not in (_ConversationPhase.idle, _ConversationPhase.draining)
+            or state.being_killed
             or state.child_is_quarantined
             or not state.held_prompts
             or state.late_steers
@@ -6052,6 +6053,7 @@ class SqliteProcessConversationSystem:
         state.phase = phase
         if (
             phase not in (_ConversationPhase.idle, _ConversationPhase.draining)
+            or state.being_killed
             or state.child_is_quarantined
         ):
             self._deprioritize_held(state)

@@ -867,7 +867,8 @@ class ConversationSystem(Protocol):
         an outcome. Shutdown suppresses a provably untransmitted prompt; possible
         transmission retains uncertain delivery. Success requires proof that the old
         child ended or never started. If cleanup remains uncertain, kill raises
-        retry_later and asks for a Worker cleanup recheck. The original child stays
+        retry_later and asks for a Worker cleanup recheck. Callers retain the old
+        ownership and conversation link after refusal. The original child stays
         quarantined until its ordinary stop succeeds. No later prompt runs beside it.
         Cancellation does not undo effects that an accepted operation already produced.
         """
