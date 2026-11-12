@@ -2220,6 +2220,92 @@ def test_failure_after_receipt_commit_finishes_turn_without_duplicate_append(
     _run(exercise)
 
 
+def test_ticket_model_write_failure_keeps_accepted_held_delivery_live(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.tickets import data as tickets_data
+
+    async def exercise() -> None:
+        await _start(harness)
+        _link_test_ticket_to_conversation(harness.db_path, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        content = text_message_content("selected")
+        assert isinstance(
+            await harness.system.send(
+                "c",
+                content,
+                sender_label="owner",
+                sender_message_id="selected-id",
+                model_change="selected-model",
+                reasoning_effort_change="high",
+            ),
+            PromptDeliveryQueued,
+        )
+        selected = (await harness.system.held_prompts("c"))[0]
+        failure = RuntimeError("Ticket model write unavailable")
+        calls = 0
+
+        def failed_ticket_write(*args, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal calls
+            calls += 1
+            raise failure
+
+        monkeypatch.setattr(
+            tickets_data, "write_ticket_last_chosen_configuration", failed_ticket_write
+        )
+        with pytest.raises(RuntimeError) as raised:
+            await harness.system.promote_held_prompt(
+                "c", selected.held_prompt_id, HeldPromptPromotionMode.send_now
+            )
+        assert raised.value is failure
+        backend = harness.backend("c")
+        token = backend.live_turn_token
+        assert token is not None
+        accepted = await asyncio.wait_for(
+            harness.system.take_backend_event(
+                token,
+                ToolCallStarted(tool_call_id="after-error", title="Read a file", tool_kind="read"),
+            ),
+            timeout=1,
+        )
+        assert accepted.taken
+        assert (
+            await asyncio.wait_for(
+                harness.system.send(
+                    "c",
+                    content,
+                    sender_label="owner",
+                    sender_message_id="selected-id",
+                    model_change="selected-model",
+                    reasoning_effort_change="high",
+                ),
+                timeout=1,
+            )
+            == PromptDeliveryStarted()
+        )
+        record = await harness.store.read_conversation("c")
+        assert record is not None
+        assert (record.model, record.reasoning_effort) == ("selected-model", "high")
+        state = harness.system._conversations["c"]
+        assert (state.record.model, state.record.reasoning_effort) == ("selected-model", "high")
+        assert calls == 1
+        assert backend.written_texts() == ("incumbent", "selected")
+        prompts = [
+            event.payload
+            for event in await harness.events("c")
+            if isinstance(event.payload, PromptEventPayload)
+        ]
+        assert [message_content_text(prompt.content) for prompt in prompts] == [
+            "incumbent",
+            "selected",
+        ]
+        await harness.complete_turn("c")
+        assert not await harness.system.is_running("c")
+
+    _run(exercise)
+
+
 @pytest.mark.parametrize("cancel_at", ["backend", "sqlite"])
 def test_cancelled_exchange_or_sqlite_call_finishes_one_owned_settlement(
     harness: _Harness,

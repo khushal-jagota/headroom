@@ -27,8 +27,19 @@ SCRIPT_PATH_ENVIRONMENT_NAME = "PANELS_CODEX_SIGN_IN_DOUBLE_SCRIPT"
 
 def sign_in_double_launch(script_path: Path) -> tuple[tuple[str, ...], dict[str, str]]:
     """The argv and the one environment name that run this file as a sign-in app-server."""
+    executable = script_path.with_name("codex-sign-in-double")
+    executable.write_text(
+        f"#!{sys.executable}\n"
+        "import runpy, sys\n"
+        "if sys.argv[1:] == ['--version']:\n"
+        "    print('codex-cli 0.148.0')\n"
+        "else:\n"
+        f"    runpy.run_path({str(Path(__file__).resolve())!r}, run_name='__main__')\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
     return (
-        (sys.executable, str(Path(__file__).resolve())),
+        (str(executable),),
         {SCRIPT_PATH_ENVIRONMENT_NAME: str(script_path)},
     )
 
