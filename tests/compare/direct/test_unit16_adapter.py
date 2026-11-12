@@ -15,7 +15,7 @@ import sqlite3
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -144,7 +144,6 @@ async def python_exercise(spec: dict[str, Any]) -> dict[str, Any]:
             raise MessageFileMissing(file)
         return await original_read(identity, file)
 
-    files.read = read
     backend_events: list[dict[str, Any]] = []
     kept: list[dict[str, Any]] = []
     base = HermesAcpBackendChildFactory(
@@ -212,140 +211,141 @@ async def python_exercise(spec: dict[str, Any]) -> dict[str, Any]:
             await asyncio.sleep(0.005)
         await core.wait_until_quiescent()
 
-    try:
-        for item in spec["cases"]:
-            # Keep prior conversations outside the maintenance lookback.
-            now += 10000
-            started = time.perf_counter()
-            identity = "unit16-" + item["name"]
-            event_start, file_start = len(backend_events), len(kept)
-            subscription = tail.subscribe(identity)
-            fates = []
-            await core.start_conversation(
-                ConversationStartRequest(
-                    conversation_id=identity,
-                    backend_key=ConversationBackendKey.hermes,
-                    model="synthetic-model",
-                    workspace_folder=Path(spec["workspace"]),
-                    workspace_path_policy=WorkspacePathPolicy.absolute,
-                    role_materials=ConversationRoleMaterials(
-                        "Synthetic owner",
-                        (
-                            ("PLAN_ACTOR", "owner"),
-                            ("PLAN_CONVERSATION_ID", identity),
-                            ("UNIT16_CASE", item["name"]),
+    with patch.object(files, "read", read):
+        try:
+            for item in spec["cases"]:
+                # Keep prior conversations outside the maintenance lookback.
+                now += 10000
+                started = time.perf_counter()
+                identity = "unit16-" + item["name"]
+                event_start, file_start = len(backend_events), len(kept)
+                subscription = tail.subscribe(identity)
+                fates = []
+                await core.start_conversation(
+                    ConversationStartRequest(
+                        conversation_id=identity,
+                        backend_key=ConversationBackendKey.hermes,
+                        model="synthetic-model",
+                        workspace_folder=Path(spec["workspace"]),
+                        workspace_path_policy=WorkspacePathPolicy.absolute,
+                        role_materials=ConversationRoleMaterials(
+                            "Synthetic owner",
+                            (
+                                ("PLAN_ACTOR", "owner"),
+                                ("PLAN_CONVERSATION_ID", identity),
+                                ("UNIT16_CASE", item["name"]),
+                            ),
                         ),
-                    ),
+                    )
                 )
-            )
-            sender = 0
-            for action in item["actions"]:
-                operation = action["operation"]
-                if operation == "send":
-                    sender += 1
-                    content = text_message_content(action["text"])
-                    if action.get("image"):
-                        image = await files.keep(
-                            identity,
-                            b"synthetic-image",
-                            media_type="image/png",
-                            sender_message_id="seed-image",
-                            piece_index=0,
-                        )
-                        content = (*content, MessageImage(image.stored_file_id, "image/png"))
-                    if action.get("fail_read"):
-                        fail_reads = 1
-                    fates.append(
-                        delivery_fate_json(
-                            await core.send(
+                sender = 0
+                for action in item["actions"]:
+                    operation = action["operation"]
+                    if operation == "send":
+                        sender += 1
+                        content = text_message_content(action["text"])
+                        if action.get("image"):
+                            image = await files.keep(
                                 identity,
-                                content,
-                                sender_label="Owner",
-                                sender_message_id=f"{item['name']}-sender-{sender}",
-                                mode=PromptDeliveryMode(action.get("mode", "queue")),
-                                reasoning_effort_change=action.get("effort"),
+                                b"synthetic-image",
+                                media_type="image/png",
+                                sender_message_id="seed-image",
+                                piece_index=0,
+                            )
+                            content = (*content, MessageImage(image.stored_file_id, "image/png"))
+                        if action.get("fail_read"):
+                            fail_reads = 1
+                        fates.append(
+                            delivery_fate_json(
+                                await core.send(
+                                    identity,
+                                    content,
+                                    sender_label="Owner",
+                                    sender_message_id=f"{item['name']}-sender-{sender}",
+                                    mode=PromptDeliveryMode(action.get("mode", "queue")),
+                                    reasoning_effort_change=action.get("effort"),
+                                )
                             )
                         )
-                    )
-                elif operation == "ended":
+                    elif operation == "ended":
 
-                    async def complete(
-                        identity: str = identity, count: int = action["count"]
-                    ) -> bool:
-                        rows = snapshot(spec["database"])["conversation_events"]
-                        return sum(
-                            row["conversation_id"] == identity and row["kind"] == "turn_ended"
-                            for row in rows
-                        ) >= count and not await core.is_running(identity)
+                        async def complete(
+                            identity: str = identity, count: int = action["count"]
+                        ) -> bool:
+                            rows = snapshot(spec["database"])["conversation_events"]
+                            return sum(
+                                row["conversation_id"] == identity and row["kind"] == "turn_ended"
+                                for row in rows
+                            ) >= count and not await core.is_running(identity)
 
-                    await wait(complete, identity + " ended " + str(action["count"]))
-                elif operation == "answer":
-                    await wait(
-                        lambda identity=identity: core.has_pending_permission_ask(identity),
-                        identity + " permission"
-                    )
-                    ask = next(iter(await core.pending_permission_ask_ids(identity)))
-                    fates.append(
-                        {
-                            "answer_fate": str(
-                                await core.answer_permission_ask(identity, ask, "allow")
-                            )
-                        }
-                    )
-                elif operation == "interrupt":
-                    await core.interrupt(identity)
-                elif operation == "kill":
-                    await core.kill(identity)
-                elif operation == "sweep":
-                    now += action.get("seconds", 3000)
-                    await core._sweep_idle_children()
-                elif operation == "finish":
-                    serial += 1
-                    temporary = Path(spec["control"] + ".new")
-                    temporary.write_text(
-                        json.dumps(
+                        await wait(complete, identity + " ended " + str(action["count"]))
+                    elif operation == "answer":
+                        await wait(
+                            lambda identity=identity: core.has_pending_permission_ask(identity),
+                            identity + " permission",
+                        )
+                        ask = next(iter(await core.pending_permission_ask_ids(identity)))
+                        fates.append(
                             {
-                                "serial": serial,
-                                "scenario": item["name"],
-                                "command": "finish",
-                                "text": action["text"],
+                                "answer_fate": str(
+                                    await core.answer_permission_ask(identity, ask, "allow")
+                                )
                             }
                         )
-                    )
-                    temporary.replace(spec["control"])
-            await core.wait_until_quiescent()
-            subscription.close()
-            frames = []
-            async for frame in subscription:
-                if isinstance(
-                    frame, (AgentMessageDeltaFrame, ModelThinkingFrame, ToolCallProgressFrame)
-                ):
-                    frames.append(
-                        {
-                            "conversation_id": identity,
-                            "frame": type(frame).__name__,
-                            "value": dataclasses.asdict(frame),
-                        }
-                    )
-            rows = {
-                table: [row for row in values if row["conversation_id"] == identity]
-                for table, values in snapshot(spec["database"]).items()
-            }
-            checkpoints.append(
-                {
-                    "name": item["name"],
-                    "fates": fates,
-                    "rows": rows,
-                    "backend_events": backend_events[event_start:],
-                    "frames": frames,
-                    "kept": kept[file_start:],
-                    "running": await core.is_running(identity),
-                    "seconds": time.perf_counter() - started,
+                    elif operation == "interrupt":
+                        await core.interrupt(identity)
+                    elif operation == "kill":
+                        await core.kill(identity)
+                    elif operation == "sweep":
+                        now += action.get("seconds", 3000)
+                        await core._sweep_idle_children()
+                    elif operation == "finish":
+                        serial += 1
+                        temporary = Path(spec["control"] + ".new")
+                        temporary.write_text(
+                            json.dumps(
+                                {
+                                    "serial": serial,
+                                    "scenario": item["name"],
+                                    "command": "finish",
+                                    "text": action["text"],
+                                }
+                            )
+                        )
+                        temporary.replace(spec["control"])
+                await core.wait_until_quiescent()
+                subscription.close()
+                frames = []
+                async for frame in subscription:
+                    if isinstance(
+                        frame, (AgentMessageDeltaFrame, ModelThinkingFrame, ToolCallProgressFrame)
+                    ):
+                        frames.append(
+                            {
+                                "conversation_id": identity,
+                                "frame": type(frame).__name__,
+                                "value": dataclasses.asdict(frame),
+                            }
+                        )
+                rows = {
+                    table: [row for row in values if row["conversation_id"] == identity]
+                    for table, values in snapshot(spec["database"]).items()
                 }
-            )
-            await core.kill(identity)
-    finally:
-        await core.shutdown()
+                checkpoints.append(
+                    {
+                        "name": item["name"],
+                        "fates": fates,
+                        "rows": rows,
+                        "backend_events": backend_events[event_start:],
+                        "frames": frames,
+                        "kept": kept[file_start:],
+                        "running": await core.is_running(identity),
+                        "seconds": time.perf_counter() - started,
+                    }
+                )
+                await core.kill(identity)
+        finally:
+            await core.shutdown()
     return {
         "checkpoints": checkpoints,
         "failed_reads": failed_reads,
@@ -363,10 +363,16 @@ def compared(result: dict[str, Any]) -> dict[str, Any]:
             grouped.setdefault(event["event"], []).append(
                 {"turn": event["turn"], "value": event["value"]}
             )
-        checkpoints.append({
-            **{key: value for key, value in item.items() if key not in {"seconds", "backend_events"}},
-            "backend_events_by_type": grouped,
-        })
+        checkpoints.append(
+            {
+                **{
+                    key: value
+                    for key, value in item.items()
+                    if key not in {"seconds", "backend_events"}
+                },
+                "backend_events_by_type": grouped,
+            }
+        )
     # SDK request IDs are private correlation identities, matched by request order.
     requests = []
     next_id: dict[str, int] = {}
@@ -397,20 +403,20 @@ def compared(result: dict[str, Any]) -> dict[str, Any]:
             return files.setdefault(item, "received-file-" + str(len(files) + 1))
         return item
 
-    return walk(value)
+    return cast(dict[str, Any], walk(value))
 
 
 def test_unit16_adapter_real_core_parity(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """Protect adapter semantics through actual ACP bytes and both durable cores."""
     started = time.perf_counter()
-    selected = environment(tmp_path)
+    selected = {**environment(tmp_path), "PLAN_SERVER_URL": "http://127.0.0.1:0"}
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     py_db, ts_db = tmp_path / "python.sqlite", tmp_path / "typescript.sqlite"
     node = subprocess.check_output(
         ["node", "-p", "process.execPath"], env=selected, text=True
     ).strip()
-    spec = {
+    spec: dict[str, Any] = {
         "database": str(py_db),
         "workspace": str(workspace),
         "node": node,
@@ -497,40 +503,60 @@ def test_unit16_adapter_real_core_parity(tmp_path: Path, request: pytest.Fixture
         )
     cases = {item["name"]: item for item in left["checkpoints"]}
     assert list(cases) == [item["name"] for item in CASES]
-    assert [item["value"]["text_delta"] for item in cases["plain"]["frames"]
-            if item["frame"] == "AgentMessageDeltaFrame"] == [
-        "one ", "two ", "three", "next message"
-    ]
+    assert [
+        item["value"]["text_delta"]
+        for item in cases["plain"]["frames"]
+        if item["frame"] == "AgentMessageDeltaFrame"
+    ] == ["one ", "two ", "three", "next message"]
     assert len(cases["plain"]["backend_events_by_type"]["ModelThinkingHappened"]) == 1
-    assert {"ToolCallStarted", "ToolCallProgress", "ToolCallFinished", "PlanUpdated",
-            "ContextCompacted", "TokenUsageReported"} <= set(cases["tools"]["backend_events_by_type"])
+    assert {
+        "ToolCallStarted",
+        "ToolCallProgress",
+        "ToolCallFinished",
+        "PlanUpdated",
+        "ContextCompacted",
+        "TokenUsageReported",
+    } <= set(cases["tools"]["backend_events_by_type"])
     assert cases["permission"]["fates"][-1] == {"answer_fate": "applied"}
-    for name, fate in {"steer": "injected", "steer-refused": "queued",
-                       "steer-uncertain": "uncertain", "refused-load": "refused"}.items():
+    for name, fate in {
+        "steer": "injected",
+        "steer-refused": "queued",
+        "steer-uncertain": "uncertain",
+        "refused-load": "refused",
+    }.items():
         assert cases[name]["fates"][-1]["fate"] == fate
     assert cases["missing-interpreter"]["fates"] == [
         {"fate": "refused", "refusal_reason": "backend_did_not_start"}
     ]
     for name, endings in {
-        "cancel": ["interrupted"], "send-now": ["interrupted", "completed"],
-        "provider-error": ["completed"], "crash": ["failed"],
+        "cancel": ["interrupted"],
+        "send-now": ["interrupted", "completed"],
+        "provider-error": ["completed"],
+        "crash": ["failed"],
     }.items():
-        assert [row["payload"]["ending"] for row in cases[name]["rows"]["conversation_events"]
-                if row["kind"] == "turn_ended"] == endings
+        assert [
+            row["payload"]["ending"]
+            for row in cases[name]["rows"]["conversation_events"]
+            if row["kind"] == "turn_ended"
+        ] == endings
     assert cases["media"]["kept"][0]["sha256"] == hashlib.sha256(b"synthetic-image").hexdigest()
     assert cases["config-rebind"]["rows"]["conversations"][0]["reasoning_effort"] == "low"
     for name in ("resume", "refused-load", "config-rebind"):
-        methods = [row["message"].get("method") for row in left["requests"]
-                   if row["scenario"] == name]
+        methods = [
+            row["message"].get("method") for row in left["requests"] if row["scenario"] == name
+        ]
         assert methods.count("session/new") == methods.count("session/load") == 1
     for name, confirmed in (("compact-confirmed", True), ("compact-unconfirmed", False)):
         record = cases[name]["rows"]["conversations"][0]
         assert (record["automatically_compacted_through_sequence"] > 0) is confirmed
         assert record["automatic_compaction_attempted_through_sequence"] > 0
-        prompts = [row for row in python["trace"] if row["kind"] == "prompt"
-                   and row["scenario"] == name]
+        prompts = [
+            row for row in python["trace"] if row["kind"] == "prompt" and row["scenario"] == name
+        ]
         assert [row["name"] for row in prompts] == [
-            "plain", "compact", "released-after-maintenance"
+            "plain",
+            "compact",
+            "released-after-maintenance",
         ]
     assert python["failed_reads"] == typescript["failed_reads"] == 1
     assert "PRIVATE_THOUGHT_MUST_NEVER_ESCAPE" not in json.dumps(left["checkpoints"])

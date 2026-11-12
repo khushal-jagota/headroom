@@ -257,16 +257,18 @@ bound in the Part 2 review. The difference is recorded in `DEVIATIONS.md`.
 ## Hermes ACP transport
 
 `conversation/backends/hermes_acp/` supplies the first part of the Hermes port:
-launch values, ordered ACP transport, and process ownership. The backend child and
-catalog binding remain later parts. Hermes retains Python's exact child environment,
+the backend child, launch values, ordered ACP transport, and process ownership.
+`create_hermes_backend_child_factory` is exported from `adapter.ts`. The catalog
+binding and production selection remain separate work. Hermes retains Python's exact child environment,
 including the absence of an automatic `BASH_ENV` override.
 
 The adapter pins `@agentclientprotocol/sdk` to `2.6.0` and uses its ACP v1
 `/unstable` entrypoint to retain prompt usage fields. The public `ClientApp` dispatches
 handlers concurrently, so the adapter uses the SDK's lower-level `Connection` and
 generated validators behind an admission gate. Notifications and request admission
-finish before the next frame reaches the SDK. Permission answers remain outside
-that gate. Notification admission has no timeout; the permission response-write
+finish before the next frame reaches the SDK. Prompt-ending and session-binding
+effects also finish before a later frame proceeds. Raw SDK responses stay independent
+from that effect barrier. Permission answers remain outside that gate. Notification admission has no timeout; the permission response-write
 confirmation retains Python's 15-second bound. Close and wire failure release the gate.
 
 The package exports no subpath for `Connection` or the generated validators.

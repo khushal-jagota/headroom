@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import type { AnyMessage } from '@agentclientprotocol/sdk/unstable';
+import type { AnyMessage, PromptResponse } from '@agentclientprotocol/sdk/unstable';
 import type { ConversationMessageFiles } from '../../message_files.ts';
 import { HermesAcpClient } from './client.ts';
 import { Deferred, HermesEvents } from './events.ts';
@@ -41,7 +41,7 @@ test('a later notification cannot overtake asynchronous prompt-reply effects', a
   );
   let turn!: HermesTurn;
   try {
-    const request = client.begin_request(
+    const request = client.begin_request<PromptResponse>(
       'session/prompt',
       { sessionId: 'synthetic', prompt: [] },
       {
@@ -50,11 +50,7 @@ test('a later notification cannot overtake asynchronous prompt-reply effects', a
         },
       },
     );
-    turn = events.begin(
-      { conversation_id: 'synthetic', turn_number: 1 },
-      request.response,
-      false,
-    );
+    turn = events.begin({ conversation_id: 'synthetic', turn_number: 1 }, request.response, false);
     turn.ending_reporter = events.report_ending(turn, () => null);
     await request.written;
     const written = writes[0]!;
