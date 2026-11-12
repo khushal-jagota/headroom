@@ -27,6 +27,7 @@ export function production_backend_providers(
   if (context === undefined)
     throw new Error('Production backend providers require database and clock context.');
   const children = context.one_shot_children;
+  if (!children) throw new Error('Production catalogs require a server-owned child lifetime');
   const codex = create_codex_providers(context);
   return {
     ...providers,
