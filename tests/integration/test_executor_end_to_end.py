@@ -1400,7 +1400,7 @@ def test_kill_withdraws_a_stalled_delivery_without_a_round_trip(
             release.set()
             fate = await asyncio.wait_for(sending, 5)
             # Withdrawal proves no prompt delivery, but not native process retirement.
-            with pytest.raises(PlannerError, match="previous agent did not stop"):
+            with pytest.raises(PlannerError, match="Recheck Worker cleanup"):
                 await asyncio.wait_for(killing, 5)
             assert isinstance(fate, PromptDeliverySuppressed), repr(fate)
             # Withdrawn on the VPS while the Mac's poll was still held on the Mac.
