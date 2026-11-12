@@ -3,6 +3,40 @@ import XCTest
 @testable import Panels
 
 @MainActor final class ReviewMessageTests: XCTestCase {
+    func testRetainedMessagePresentationReadsOnlyTheSharedSnapshot() async throws {
+        let api = makeAPI()
+        ReviewMessageProtocol.state.reset()
+        defer { clean(api) }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outbox = Outbox(store: LocalStore(url: directory.appendingPathComponent("review.store")))
+        let server = LocalStore.server(api.baseURL)
+        let message = ConversationSend(conversationId: "c", content: [.init(text: "Saved reply")], senderMessageId: "saved-reply", sentAtUnixMilliseconds: 1, ownerReadThroughSequence: 66)
+        var work = PendingWork(id: "saved-reply", created: .now, kind: .message, state: .uncertain, owner: .chief, message: message)
+        try outbox.save(work, server: server)
+        var reads = 0
+        let snapshot = ReviewSavedWork(outbox: outbox) { server in reads += 1; return outbox.entries(server) }
+        snapshot.refresh(server)
+        let decision = ReviewMessageDecision(savedWork: snapshot.entries, refreshSavedWork: snapshot.refresh)
+        await decision.load(item: item(), api: api)
+        XCTAssertNil(decision.error)
+        XCTAssertEqual(decision.attempt?.id, work.id)
+        XCTAssertEqual(decision.composer.outgoing.first?.id, work.id)
+        XCTAssertEqual(reads, 1)
+        // These getters also run when SwiftUI retains the hidden Review subtree.
+        for _ in 0..<100 {
+            XCTAssertEqual(decision.attempt?.state, .uncertain)
+            XCTAssertTrue(decision.pending)
+            XCTAssertFalse(decision.accepted)
+        }
+        XCTAssertEqual(reads, 1)
+        work.state = .sent
+        try outbox.save(work, server: server)
+        snapshot.refresh(server)
+        XCTAssertEqual(reads, 2)
+        XCTAssertTrue(decision.accepted)
+        XCTAssertFalse(decision.pending)
+    }
     func testAutomaticRecoveryRetainsSenderInsteadOfBecomingOwnerWords() throws {
         let body = try APIClient.decoder().decode(ConversationBody.self, from: Data(#"{"kind":"prompt","sender_label":"Panels deployment recovery","content":[{"piece":"text","text":"Inspect interrupted work"}]}"#.utf8))
         let model = ConversationModel()

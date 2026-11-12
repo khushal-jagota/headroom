@@ -28,6 +28,8 @@ import SwiftData
     // Cached GET responses are handed to their screen by the caller. Only durable
     // user work needs to wake draft restoration and outgoing-work observers.
     private(set) var workRevision = 0
+    private var outgoingRevisions: [String: Int] = [:]
+    func outgoingRevision(_ server: String) -> Int { outgoingRevisions[server, default: 0] }
     var saveError: String?
 
     init(url: URL? = nil) {
@@ -89,7 +91,9 @@ import SwiftData
         let context = try context
         do {
             let key = Self.key(server, kind, id)
-            if let record = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == key })).first { record.payload = data; record.updatedAt = .now }
+            let existing = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == key })).first
+            let outgoingChanged = kind == "outbox" && existing?.payload != data
+            if let record = existing { record.payload = data; record.updatedAt = .now }
             else { context.insert(LocalRecord(key: Self.key(server, kind, id), server: server, kind: kind, payload: data, updated: .now)) }
             if let (id, text) = draft {
                 if let row = try record(server: server, kind: "draft", id: id) { row.payload = Data(text.utf8); row.updatedAt = .now }
@@ -106,6 +110,7 @@ import SwiftData
             try context.save()
             // A plain draft save is read back only by its own composer. Waking every
             // saved-work observer on each key press made typing lag.
+            if outgoingChanged { outgoingRevisions[server, default: 0] += 1 }
             if (kind != "cache" && kind != "draft") || draft != nil { workRevision += 1 }
             saveError = nil
         } catch { context.rollback(); saveError = "Couldn’t save on this phone: \(error.localizedDescription)"; throw error }
@@ -119,8 +124,10 @@ import SwiftData
         let context = try context
         do {
             let keys = ids.map { Self.key(server, kind, $0) }
-            for row in try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { keys.contains($0.key) })) { context.delete(row) }
+            let rows = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { keys.contains($0.key) }))
+            for row in rows { context.delete(row) }
             try context.save()
+            if kind == "outbox", !rows.isEmpty { outgoingRevisions[server, default: 0] += 1 }
             if kind != "cache" { workRevision += 1 }
         } catch { context.rollback(); throw error }
     }
