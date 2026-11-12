@@ -23,6 +23,7 @@ from planner.measure_sources.contracts import (
     SourceRun,
     SourceRunDetail,
 )
+from planner.measure_sources.local_time import latest_due_slot
 from planner.measure_sources.notices import record_failure
 from planner.measure_sources.records import (
     encode_candidates,
@@ -153,12 +154,13 @@ def _fail(
     *,
     now: int,
     status: RunStatus = RunStatus.failed,
+    notify: bool = True,
 ) -> None:
     conn.execute(
         "UPDATE measure_source_runs SET status=?,failure=?,finished_at=? WHERE id=?",
         (status.value, json.dumps(asdict(failure)), now, run.id),
     )
-    if run.mode is RunMode.collection:
+    if notify and run.mode is RunMode.collection:
         record_failure(conn, data.read_run(conn, run.id), now=now)
 
 
@@ -167,6 +169,24 @@ def claim_run(conn: sqlite3.Connection, run_id: str, *, now: int) -> SourceRun |
         run = data.read_run(conn, run_id)
         if run.status is not RunStatus.pending:
             return None
+        if run.trigger is RunTrigger.scheduled:
+            source = data.read_source(conn, run.source_id)
+            slot = (
+                latest_due_slot(
+                    source.local_time, datetime.fromtimestamp(now).astimezone(), system_local=True
+                )
+                if source.enabled and source.local_time is not None
+                else None
+            )
+            if slot is None or (run.schedule_date, run.schedule_time) != (
+                slot.date().isoformat(), slot.strftime("%H:%M")
+            ):
+                # This queued occurrence is intentionally skipped, not a script failure.
+                _fail(
+                    conn, run, RunFailure(FailureCode.interrupted), now=now,
+                    status=RunStatus.interrupted, notify=False,
+                )
+                return None
         if (
             conn.execute(
                 "SELECT 1 FROM measure_source_runs WHERE source_id=? AND status='running'",

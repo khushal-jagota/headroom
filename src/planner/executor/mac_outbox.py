@@ -29,6 +29,7 @@ from planner.executor.configuration import (
     MAX_ITEM_BATCH_BYTES,
     MAX_ITEM_BATCH_ITEMS,
     MAX_LEASE_WAITING_CONVERSATIONS,
+    MAX_OUTBOX_SENDERS,
     OUTBOX_RETRY_INITIAL_SECONDS,
     OUTBOX_RETRY_MAX_SECONDS,
     ExecutorPaths,
@@ -98,6 +99,9 @@ class _RetryLater(Exception):
 class _ConversationSending:
     """One conversation's send state between attempts."""
 
+    retry_at: float = 0.0
+    delay: float = field(default_factory=lambda: OUTBOX_RETRY_INITIAL_SECONDS)
+    attempt: int = 0
     refusals: dict[str, str] = field(default_factory=dict)
     uploaded: dict[str, set[FileManifest]] = field(default_factory=dict)
 
@@ -641,57 +645,63 @@ class MacOutbox:
                 return
             uploaded.add(manifest)
 
-    async def _send_conversation(
-        self, client: MacHttpClient, files: MacFilesApi, conversation_id: str
+    async def _send_batch(
+        self,
+        client: MacHttpClient,
+        files: MacFilesApi,
+        conversation_id: str,
+        state: _ConversationSending,
     ) -> None:
-        """Send one conversation's items in order, one batch in flight, until none wait.
-
-        A failure of this conversation's batch, including reading it from the outbox,
-        backs off and retries it alone.
-        """
-        delay = OUTBOX_RETRY_INITIAL_SECONDS
-        attempt = 0
-        state = _ConversationSending()
-        while not self._closed:
-            batch: ItemBatch | None = None
-            try:
-                batch = await asyncio.to_thread(self._batch, conversation_id, state)
-                if batch is None:
-                    return
-                reply = await client.post_items(conversation_id, batch)
-                await self._apply_reply(files, batch, reply, state)
-            except Exception as error:
-                if self._closed:
-                    return  # Sending is ending; the item stays queued.
-                attempt += 1
-                logging.getLogger(__name__).warning(
-                    "outbox send failed conversation=%s sequence=%s attempt=%s"
-                    " retry_in=%gs error=%s",
-                    conversation_id,
-                    None if batch is None else batch.items[0].envelope.sequence,
-                    attempt,
-                    delay,
-                    "retry_later" if isinstance(error, _RetryLater) else failure_name(error),
-                )
-                await asyncio.sleep(delay)
-                if isinstance(error, _RetryLater):
-                    # The VPS took its own time limit to answer, so the resend need not
-                    # wait longer each time.
-                    delay = OUTBOX_RETRY_INITIAL_SECONDS
-                else:
-                    delay = min(delay * 2, OUTBOX_RETRY_MAX_SECONDS)
+        """Attempt one ordered batch. Backoff retains state, never a sender slot."""
+        batch: ItemBatch | None = None
+        try:
+            batch = await asyncio.to_thread(self._batch, conversation_id, state)
+            if batch is None:
+                return
+            reply = await client.post_items(conversation_id, batch)
+            await self._apply_reply(files, batch, reply, state)
+        except Exception as error:
+            if self._closed:
+                return  # Sending is ending; the item stays queued.
+            state.attempt += 1
+            logging.getLogger(__name__).warning(
+                "outbox send failed conversation=%s sequence=%s attempt=%s retry_in=%gs error=%s",
+                conversation_id,
+                None if batch is None else batch.items[0].envelope.sequence,
+                state.attempt,
+                state.delay,
+                "retry_later" if isinstance(error, _RetryLater) else failure_name(error),
+            )
+            state.retry_at = asyncio.get_running_loop().time() + state.delay
+            if isinstance(error, _RetryLater):
+                # The VPS already took its answer budget, so backoff does not grow.
+                state.delay = OUTBOX_RETRY_INITIAL_SECONDS
             else:
-                delay, attempt = OUTBOX_RETRY_INITIAL_SECONDS, 0
+                state.delay = min(state.delay * 2, OUTBOX_RETRY_MAX_SECONDS)
+        else:
+            state.delay, state.attempt = OUTBOX_RETRY_INITIAL_SECONDS, 0
+            state.retry_at = 0.0
 
     async def send_pending(self, client: MacHttpClient, files: MacFilesApi) -> None:
-        """Send until the outbox closes, each conversation in its own task."""
+        """Rotate bounded batch senders across conversations, skipping retry waits."""
         self._loop = asyncio.get_running_loop()
         async with self._sending:
             senders: dict[str, asyncio.Task[None]] = {}
+            states: dict[str, _ConversationSending] = {}
             wake: asyncio.Task[bool] | None = None
             try:
                 while not self._closed:
                     self._wake.clear()
+                    for conversation_id, sender in tuple(senders.items()):
+                        if sender.done():
+                            del senders[conversation_id]
+                            states[conversation_id] = states.pop(conversation_id)
+                            if not sender.cancelled() and sender.exception() is not None:
+                                logging.getLogger(__name__).warning(
+                                    "outbox sender ended conversation=%s error=%s",
+                                    conversation_id,
+                                    failure_name(sender.exception() or Exception()),
+                                )
                     try:
                         waiting = await asyncio.to_thread(self.pending_conversations)
                     except (OSError, sqlite3.Error) as error:
@@ -700,26 +710,38 @@ class MacOutbox:
                         )
                         await asyncio.sleep(OUTBOX_RETRY_INITIAL_SECONDS)
                         continue
+                    waiting_set = set(waiting)
+                    for conversation_id in tuple(states):
+                        if conversation_id not in waiting_set and conversation_id not in senders:
+                            del states[conversation_id]
                     for conversation_id in waiting:
-                        if conversation_id not in senders:
-                            senders[conversation_id] = asyncio.create_task(
-                                self._send_conversation(client, files, conversation_id)
-                            )
+                        states.setdefault(conversation_id, _ConversationSending())
+                    now = self._loop.time()
+                    for conversation_id, state in tuple(states.items()):
+                        if len(senders) >= MAX_OUTBOX_SENDERS:
+                            break
+                        if conversation_id in senders or state.retry_at > now:
+                            continue
+                        # Move the next eligible conversation behind everyone else after
+                        # its one bounded batch. No conversation drains ahead of peers.
+                        states[conversation_id] = states.pop(conversation_id)
+                        senders[conversation_id] = asyncio.create_task(
+                            self._send_batch(client, files, conversation_id, state)
+                        )
+                    deadlines = [
+                        state.retry_at
+                        for conversation_id, state in states.items()
+                        if conversation_id not in senders and state.retry_at > now
+                    ]
+                    timeout = max(0.0, min(deadlines) - now) if deadlines else None
                     wake = asyncio.create_task(self._wake.wait())
                     await asyncio.wait(
-                        (*senders.values(), wake), return_when=asyncio.FIRST_COMPLETED
+                        (*senders.values(), wake),
+                        timeout=timeout,
+                        return_when=asyncio.FIRST_COMPLETED,
                     )
                     wake.cancel()
                     await asyncio.gather(wake, return_exceptions=True)
-                    for conversation_id, sender in tuple(senders.items()):
-                        if sender.done():
-                            del senders[conversation_id]
-                            if not sender.cancelled() and sender.exception() is not None:
-                                logging.getLogger(__name__).warning(
-                                    "outbox sender ended conversation=%s error=%s",
-                                    conversation_id,
-                                    failure_name(sender.exception() or Exception()),
-                                )
             finally:
                 if wake is not None:
                     wake.cancel()

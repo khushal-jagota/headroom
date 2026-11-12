@@ -278,18 +278,21 @@ async def stop_sending(task: asyncio.Task[None]) -> None:
     await asyncio.gather(task, return_exceptions=True)
 
 
-def test_send_wakes_after_commit_and_stuck_conversations_hold_back_no_other(
+def test_send_wakes_with_bounded_senders_and_rotates_after_each_batch(
     tmp_path: Path,
 ) -> None:
-    # 7 November: four conversations whose items never got a reply filled every
-    # send slot, so no other conversation's items were sent.
+    # Risk: a return flood creates unbounded sender tasks, or a large conversation
+    # drains ahead of peers. Existing receipt tests do not prove bounded rotation.
     async def run() -> None:
         outbox = MacOutbox(tmp_path / "outbox")
         active: set[str] = set()
-        release = asyncio.Event()
+        release = {name: asyncio.Event() for name in ("c_a", "c_b", "c_c", "c_d")}
+        full = asyncio.Event()
+        peak = 0
         stuck = ("c_a", "c_b", "c_c", "c_d")
 
         async def answer(conversation_id: str, batch: ItemBatch) -> ItemBatchReply:
+            nonlocal peak
             # The row is readable from another connection before sending starts.
             with sqlite3.connect(outbox.root / DATABASE_NAME) as connection:
                 assert connection.execute(
@@ -298,8 +301,11 @@ def test_send_wakes_after_commit_and_stuck_conversations_hold_back_no_other(
                 ).fetchone()
             assert conversation_id not in active
             active.add(conversation_id)
+            peak = max(peak, len(active))
+            if len(active) == 4:
+                full.set()
             if conversation_id in stuck:
-                await release.wait()
+                await release[conversation_id].wait()
             active.remove(conversation_id)
             return accepted(batch)
 
@@ -311,12 +317,16 @@ def test_send_wakes_after_commit_and_stuck_conversations_hold_back_no_other(
                     await asyncio.to_thread(
                         outbox.add, entry(f"{conversation}_{number}", conversation)
                     )
-            assert await outbox.wait_confirmed("c_e_1", 2) is not None
+            await asyncio.wait_for(full.wait(), 2)
+            assert len(vps.batches) == 4
             sent = [item.envelope for batch in vps.batches for item in batch.items]
             assert {e.submission_id for e in sent if e.conversation_id in stuck} == {
                 f"{conversation}_0" for conversation in stuck
             }
-            release.set()
+            release["c_a"].set()
+            assert await outbox.wait_confirmed("c_e_1", 2) is not None
+            for event in release.values():
+                event.set()
             for conversation in stuck:
                 assert await outbox.wait_confirmed(f"{conversation}_1", 2) is not None
             sent = [item.envelope for batch in vps.batches for item in batch.items]
@@ -325,13 +335,19 @@ def test_send_wakes_after_commit_and_stuck_conversations_hold_back_no_other(
                     f"{conversation}_0",
                     f"{conversation}_1",
                 ]
+            assert peak == 4
+            assert {b.items[0].envelope.conversation_id for b in vps.batches[:4]} == set(stuck)
+            assert vps.batches[4].items[0].envelope.conversation_id == "c_e"
             assert outbox.pending_count() == 0
         finally:
-            release.set()
+            for event in release.values():
+                event.set()
             await stop_sending(sender)
             outbox.close()
 
     asyncio.run(run())
+
+
 
 
 def test_failing_conversation_backs_off_alone(

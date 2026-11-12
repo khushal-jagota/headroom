@@ -891,6 +891,7 @@ class MacRunner:
         return {
             "kind": "prompt_accepted",
             "composed_content_delivered": result.composed_content_delivered,
+            "agent_acceptance_proven": result.agent_acceptance_proven,
         }
 
     async def _steer(self, child: RunningChild, command: ChildCommand, args: Steer) -> JsonObject:

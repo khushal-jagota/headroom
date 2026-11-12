@@ -168,7 +168,11 @@ def test_crash_gap_is_unknown_and_never_resends(
             await restarted.system.send("c", text_message_content("new"), sender_label="owner")
             token = restarted.backend("c").live_turn_token
             assert token is not None and token.turn_number == 2
-            assert restarted.backend("c").written_texts() == ("new",)
+            writes = restarted.backend("c").writes
+            assert len(writes) == 1
+            assert writes[0].sender_content == text_message_content("new")
+            assert writes[0].text.endswith("\n\nnew")
+            assert "Do not replay unknown prompts" in writes[0].text
         finally:
             await restarted.system.shutdown()
 

@@ -134,6 +134,8 @@ class BackendPromptAccepted:
     """
 
     composed_content_delivered: bool
+    # True only for a provider acknowledgement, never a generic wire write.
+    agent_acceptance_proven: bool = False
 
 
 @dataclass(frozen=True, slots=True)

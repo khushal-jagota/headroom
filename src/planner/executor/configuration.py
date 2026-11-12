@@ -71,6 +71,7 @@ STEER_DELIVERY_LIMIT_SECONDS: Final = 10.0
 MODEL_LIST_LIMIT_SECONDS: Final = 35.0
 # Item batches: one conversation's items, at most 32 and 4 MiB of body. The VPS's one
 # budget for a whole batch is core.config.MAC_ITEM_RETRY_LATER_SECONDS (20 s).
+MAX_OUTBOX_SENDERS: Final = 4
 MAX_ITEM_BATCH_ITEMS: Final = 32
 MAX_ITEM_BATCH_BYTES: Final = 4 * 1024 * 1024
 ITEM_BATCH_TIMEOUT_SECONDS: Final = 30.0

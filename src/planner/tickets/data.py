@@ -1264,7 +1264,31 @@ def claim_ticket_for_worker_step(
                 (ticket_id, ticket.stage, now),
             )
         _write_worker_step_claim(conn, ticket_id, WorkerStepClaim.out, now)
-        return _load_ticket_for_write(conn, ticket_id)
+        claimed = _load_ticket_for_write(conn, ticket_id)
+        from planner.runtime.worker_memory import worker_step_message_id_for_claim
+
+        sender_message_id = worker_step_message_id_for_claim(
+            ticket_id, claimed.worker_step_claim_revision
+        )
+        conn.execute(
+            "INSERT INTO worker_step_dispatch_intents VALUES (?,?,?,'prepared')",
+            (ticket_id, claimed.worker_step_claim_revision, sender_message_id),
+        )
+        return claimed
+
+
+def mark_worker_step_dispatch_started(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    claim_revision: int,
+) -> None:
+    """Commit uncertainty before any prompt dispatch can cross the conversation boundary."""
+    with _txn(conn):
+        conn.execute(
+            "UPDATE worker_step_dispatch_intents SET state='dispatch_started' "
+            "WHERE ticket_id=? AND claim_revision=? AND state='prepared'",
+            (ticket_id, claim_revision),
+        )
 
 
 def forget_user_stage_opener(

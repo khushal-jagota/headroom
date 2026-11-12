@@ -325,6 +325,19 @@ class MacRuns:
         child_command = command.child_command
         outcome = result.child_outcome
         if (
+            child_command is not None
+            and outcome is not None
+            and child_command.operation is ChildOperation.write_prompt
+            and child_command.turn is not None
+            and outcome.disposition is CommandDisposition.succeeded
+            and outcome.child == child_command.child
+            and outcome.result.get("agent_acceptance_proven") is True
+            and hasattr(self, "conversations")
+        ):
+            accepted = getattr(self.conversations, "confirm_remote_prompt_accepted", None)
+            if accepted is not None:
+                self._own(accepted(child_command.child, child_command.turn))
+        if (
             child_command is None
             or outcome is None
             or child_command.operation is not ChildOperation.cancel_running_turn

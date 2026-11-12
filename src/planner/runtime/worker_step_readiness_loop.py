@@ -41,6 +41,8 @@ from planner.conversation.contracts import (
     PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import text_message_content
+from planner.conversation.start_admission import manual_start_exempt
+from planner.conversation.start_admission.contracts import StartRequest
 from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
@@ -162,6 +164,11 @@ async def _admitted_start_ready_worker_step(
     conn = await run_on_worker_thread(connect_database)
     link_lock = conversation_start.conversation_link_lock(f"ticket:{ticket_id}")
     link_acquired = False
+    starts = (
+        None if manual_start_exempt.get() else getattr(conversation_system, "start_admission", None)
+    )
+    automatic_identity: str | None = None
+    automatic_sent = False
     try:
         await link_lock.acquire()
         link_acquired = True
@@ -179,6 +186,17 @@ async def _admitted_start_ready_worker_step(
             worker_type_definition=worker_type_definition,
         ):
             return WorkerStepStartResult(started=False)
+        if starts is not None:
+            automatic_identity = f"worker-preparation:{ticket.id}"
+            if not starts.try_start(
+                StartRequest(
+                    automatic_identity,
+                    "worker",
+                    "macos" if ticket.locale.value == "macos" else "home",
+                )
+            ):
+                automatic_identity = None
+                return WorkerStepStartResult(started=False)
         claimed = await run_on_worker_thread(
             tickets_data.claim_ticket_for_worker_step,
             conn,
@@ -197,7 +215,20 @@ async def _admitted_start_ready_worker_step(
             ).fetchone()
             is not None
         )
-        sender_message_id = worker_memory.new_worker_step_message_id()
+        sender_message_id = worker_memory.worker_step_message_id_for_claim(
+            ticket.id, taken_claim_revision
+        )
+        dispatch_admitted = True
+        if starts is not None and automatic_identity is not None:
+            dispatch_admitted = starts.transfer(
+                automatic_identity,
+                StartRequest(
+                    sender_message_id,
+                    "worker",
+                    "macos" if claimed.locale.value == "macos" else "home",
+                ),
+            )
+            automatic_identity = sender_message_id
 
         def release_the_claim(*, opener_succeeded: bool, released_at: int) -> None:
             released = tickets_data.release_worker_step_claim(
@@ -219,6 +250,10 @@ async def _admitted_start_ready_worker_step(
                 release_the_claim, opener_succeeded=opener_succeeded, released_at=now()
             )
 
+        if not dispatch_admitted:
+            await give_the_claim_back()
+            return WorkerStepStartResult(started=False)
+
         try:
             # Inside the guard: a lookup that raises must give the claim back, or the
             # Ticket sits out of `empty` with nothing running and nothing to re-claim it.
@@ -236,6 +271,12 @@ async def _admitted_start_ready_worker_step(
                     conn, conversation_id
                 ),
             )
+            await run_on_worker_thread(
+                tickets_data.mark_worker_step_dispatch_started,
+                conn,
+                ticket_id,
+                taken_claim_revision,
+            )
             delivered = await conversation_start.send_to_ticket_conversation(
                 conversation_system,
                 conn,
@@ -252,6 +293,7 @@ async def _admitted_start_ready_worker_step(
             )
             conversation_id = delivered.conversation_id
             fate = delivered.fate
+            automatic_sent = True
         except Exception:
             _log.exception(
                 "worker step could not be started (ticket=%s conversation=%s)",
@@ -261,6 +303,11 @@ async def _admitted_start_ready_worker_step(
             await give_the_claim_back()
             return WorkerStepStartResult(started=False)
 
+        if starts is not None and automatic_identity is not None:
+            if isinstance(fate, (PromptDeliveryRefused, PromptDeliverySuppressed)):
+                starts.finish(automatic_identity)
+            elif isinstance(fate, PromptDeliveryUncertain):
+                starts.uncertain(automatic_identity)
         if isinstance(fate, PromptDeliveryRefused):
             # The refusal is on the record before the claim changes, so a release
             # that itself fails cannot swallow the one line that says why nothing ran.
@@ -333,6 +380,8 @@ async def _admitted_start_ready_worker_step(
                 )
         return WorkerStepStartResult.from_delivery_fate(fate)
     finally:
+        if starts is not None and automatic_identity is not None and not automatic_sent:
+            starts.finish_unbound(automatic_identity)
         if link_acquired:
             link_lock.release()
         await run_on_worker_thread(conn.close)
@@ -465,6 +514,7 @@ class WorkerStepReadinessLoop:
         try:
             rows = conn.execute(_CANDIDATE_SQL).fetchall()
             ready_ticket_ids: list[str] = []
+            ready_start_ids: set[str] = set()
             for row in rows:
                 try:
                     ticket = tickets_data.read_ticket(conn, str(row["id"]))
@@ -483,6 +533,10 @@ class WorkerStepReadinessLoop:
                 ):
                     continue
                 ready_ticket_ids.append(ticket.id)
+                ready_start_ids.add(f"worker-preparation:{ticket.id}")
+            starts = getattr(self._conversation_system, "start_admission", None)
+            if starts is not None:
+                starts.retain_deferred("worker-preparation:", ready_start_ids)
             return ready_ticket_ids
         finally:
             conn.close()
@@ -513,6 +567,9 @@ class WorkerStepReadinessLoop:
         with self._in_flight_lock:
             if self._stop.is_set():
                 return False
+            starts = getattr(self._conversation_system, "start_admission", None)
+            if starts is not None and len(self._in_flight) >= starts.limit:
+                return False
             if ticket_id in self._in_flight.values():
                 # The previous pass is still sending this Ticket's notice. Two would
                 # answer one boundary twice.
@@ -537,6 +594,9 @@ class WorkerStepReadinessLoop:
             if self._stop.is_set():
                 return False
             if ticket_id in self._in_flight.values():
+                return False
+            starts = getattr(self._conversation_system, "start_admission", None)
+            if starts is not None and len(self._in_flight) >= starts.limit:
                 return False
         future = asyncio.run_coroutine_threadsafe(
             start_ready_worker_step(
@@ -618,7 +678,8 @@ class WorkerStepReadinessLoop:
                 self.poll_once()
             except Exception:
                 _log.exception("worker-step readiness poll failed")
-            self._wake.wait(interval)
+            starts = getattr(self._conversation_system, "start_admission", None)
+            self._wake.wait(starts.poll_delay(interval) if starts is not None else interval)
             self._wake.clear()
 
 

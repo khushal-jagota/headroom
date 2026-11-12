@@ -418,6 +418,12 @@ class CodexAppServerBackendChild:
             raise BackendSpawnFailed(str(would_not_spawn)) from would_not_spawn
         try:
             await self._shake_hands()
+            reporter = getattr(self._sink, "record_local_child_custody", None)
+            identity_reader = getattr(self._client, "local_child_identity", None)
+            if reporter is not None and identity_reader is not None:
+                identity = identity_reader()
+                if identity is not None:
+                    await reporter(identity)
             if vendor_session_cursor is None:
                 await self._start_thread(resolved_start)
             else:
@@ -530,6 +536,7 @@ class CodexAppServerBackendChild:
             self._reasoning_effort = reasoning_effort
         return BackendPromptAccepted(
             composed_content_delivered=not native_command,
+            agent_acceptance_proven=True,
         )
 
     async def steer(
@@ -1645,8 +1652,7 @@ class CodexAppServerBackendChild:
                 ending=ConversationTurnEnding.failed,
                 error_summary=self._read_the_login_in(
                     turn,
-                    self._client.end_reason
-                    or "the codex process ended while the turn was running",
+                    self._client.end_reason or "the codex process ended while the turn was running",
                 ),
                 standard_error_tail=self._client.standard_error_tail(),
             ),

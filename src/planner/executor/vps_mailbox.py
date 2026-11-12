@@ -25,16 +25,17 @@ import asyncio
 import json
 import sqlite3
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Final
 
 from planner.conversation.contracts import ResolvedConversationStart
 from planner.conversation.lifecycle import LifecycleFact
 from planner.conversation.lifecycle_storage import read_facts
+from planner.conversation.start_admission import AutomaticStartAdmission
 from planner.core.db import commit_without_change_signal, connect
 from planner.core.sse import register_open_stream_closer
 from planner.core.task_settlement import run_on_worker_thread
-from planner.execution_identity import ChildReference, ExecutorIdentity
+from planner.execution_identity import ChildReference, ExecutorIdentity, TurnToken
 from planner.executor.clock import now_ms
 from planner.executor.configuration import (
     LEASE_INTERVAL_SECONDS,
@@ -151,6 +152,7 @@ class SqliteCommandMailbox:
     """executor_commands, with in-memory waiters over its rows."""
 
     def __init__(self, db_path: str, *, clock: Callable[[], int] = now_ms) -> None:
+        self.start_admission: AutomaticStartAdmission | None = None
         self.db_path = db_path
         self._clock = clock
         self._waiters: dict[str, list[asyncio.Future[CommandResult]]] = {}
@@ -333,7 +335,8 @@ class SqliteCommandMailbox:
 
             forget = register_open_stream_closer(release_from_signal)
             try:
-                await asyncio.wait_for(put.wait(), remaining)
+                pause = min(remaining, 1.0) if self.start_admission is not None else remaining
+                await asyncio.wait_for(put.wait(), pause)
             except TimeoutError:
                 pass
             finally:
@@ -365,9 +368,12 @@ class SqliteCommandMailbox:
             ).fetchall()
             facts: dict[str, tuple[LifecycleFact, ...]] = {}
             answered: list[MailboxCommand] = []
+            moved_conversations: set[str] = set()
             budget = MAX_MAILBOX_POLL_BYTES - _POLL_REPLY_OVERHEAD_BYTES
             for sequence, text, state, conversation_id in rows:
                 command = _mailbox_command(text)
+                if conversation_id in moved_conversations:
+                    continue
                 if state == MailboxCommandState.waiting.value:
                     if conversation_id is not None and conversation_id not in facts:
                         facts[conversation_id] = read_facts(connection, conversation_id)
@@ -380,6 +386,50 @@ class SqliteCommandMailbox:
                             (_json(result), now, sequence),
                         )
                         settled.append((command, result))
+                        continue
+                child_command = command.child_command
+                start_turn = None if child_command is None else child_command.turn
+                if child_command is not None and isinstance(child_command.arguments, StartRun):
+                    bound = connection.execute(
+                        "SELECT turn_number FROM automatic_start_bindings WHERE conversation_id=? "
+                        "AND executor_incarnation=? AND child_id=?",
+                        (
+                            child_command.child.conversation_id,
+                            child_command.child.executor_incarnation,
+                            child_command.child.child_id,
+                        ),
+                    ).fetchone()
+                    if bound is not None:
+                        start_turn = TurnToken(child_command.child.conversation_id, int(bound[0]))
+                if (
+                    state == MailboxCommandState.waiting.value
+                    and self.start_admission is not None
+                    and child_command is not None
+                    and isinstance(child_command.arguments, (StartRun, WritePrompt))
+                    and start_turn is not None
+                ):
+                    self.start_admission.restore_bindings(connection, start_turn)
+                    if not self.start_admission.allow_dispatch(start_turn):
+                        if isinstance(
+                            child_command.arguments, WritePrompt
+                        ) and self._later_control_stops_prompt(connection, command):
+                            result = settlement_result(
+                                command,
+                                CommandDisposition.refused,
+                                CommandSettlementReason.delivery_withdrawn,
+                            )
+                            connection.execute(
+                                "UPDATE executor_commands SET state='withdrawn',outcome_json=?,"
+                                "finished_at_ms=? WHERE command_id=? AND state='waiting'",
+                                (_json(result), now, command.command_id),
+                            )
+                            settled.append((command, result))
+                            continue
+                        if not self._has_later_control(connection, command):
+                            break
+                        if not self._defer_waiting_conversation(connection, command):
+                            break
+                        moved_conversations.add(conversation_id)
                         continue
                 size = len(text.encode()) + 1
                 if answered and size > budget:
@@ -400,6 +450,101 @@ class SqliteCommandMailbox:
             raise
         finally:
             connection.close()
+
+    @staticmethod
+    def _later_control_stops_prompt(connection: sqlite3.Connection, prompt: MailboxCommand) -> bool:
+        child = prompt.child_command
+        assert child is not None
+        for (text,) in connection.execute(
+            "SELECT command_json FROM executor_commands WHERE conversation_id=? "
+            "AND command_sequence>? "
+            "AND state='waiting' AND operation IN ('stop','cancel_running_turn')",
+            (child.child.conversation_id, prompt.command_sequence),
+        ):
+            control = _mailbox_command(text).child_command
+            if (
+                control is not None
+                and control.child == child.child
+                and (control.operation is ChildOperation.stop or control.turn == child.turn)
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _has_later_control(connection: sqlite3.Connection, prompt: MailboxCommand) -> bool:
+        child = prompt.child_command
+        assert child is not None
+        # Scan beyond the poll's first 32 rows. A long old backlog must not hide control.
+        for (text,) in connection.execute(
+            "SELECT command_json FROM executor_commands WHERE command_sequence>? "
+            "AND conversation_id IS NOT ? "
+            "AND state IN ('waiting','delivered') ORDER BY command_sequence",
+            (prompt.command_sequence, child.child.conversation_id),
+        ):
+            command = _mailbox_command(text).child_command
+            if command is None or command.operation not in {
+                ChildOperation.start,
+                ChildOperation.write_prompt,
+            }:
+                return True
+            if command.operation is ChildOperation.start:
+                bound = connection.execute(
+                    "SELECT work_class FROM automatic_start_bindings WHERE conversation_id=? "
+                    "AND executor_incarnation=? AND child_id=?",
+                    (
+                        command.child.conversation_id,
+                        command.child.executor_incarnation,
+                        command.child.child_id,
+                    ),
+                ).fetchall()
+                if not bound or any(row[0] == "supervisor" for row in bound):
+                    return True
+            if command.operation is ChildOperation.write_prompt and command.turn is not None:
+                bound = connection.execute(
+                    "SELECT work_class FROM automatic_start_bindings "
+                    "WHERE conversation_id=? AND turn_number=?",
+                    (command.turn.conversation_id, command.turn.turn_number),
+                ).fetchall()
+                if not bound or any(row[0] == "supervisor" for row in bound):
+                    return True
+        return False
+
+    def _defer_waiting_conversation(
+        self, connection: sqlite3.Connection, prompt: MailboxCommand
+    ) -> bool:
+        """Move an unfetched conversation suffix together, retaining exact command IDs.
+
+        Only transport positions change. No executor saw these waiting positions.
+        Fetched or uncertain rows never move and never pass through admission again.
+        """
+        child = prompt.child_command
+        assert child is not None
+        rows = connection.execute(
+            "SELECT command_sequence,command_json,state FROM executor_commands "
+            "WHERE conversation_id=? AND command_sequence>=? ORDER BY command_sequence",
+            (child.child.conversation_id, prompt.command_sequence),
+        ).fetchall()
+        if any(row[2] != MailboxCommandState.waiting.value for row in rows):
+            # A previously fetched suffix cannot be rewritten. It is factual evidence.
+            return False
+        high = int(
+            connection.execute(
+                "SELECT COALESCE(MAX(command_sequence),0) FROM executor_commands"
+            ).fetchone()[0]
+        )
+        for old_sequence, text, _state in rows:
+            high += 1
+            command = replace(_mailbox_command(text), command_sequence=high)
+            connection.execute(
+                "UPDATE executor_commands SET command_sequence=?,command_json=? "
+                "WHERE command_sequence=?",
+                (high, _json(command), old_sequence),
+            )
+        connection.execute(
+            "UPDATE sqlite_sequence SET seq=MAX(seq,?) WHERE name='executor_commands'", (high,)
+        )
+        self._high_sequence = max(self._high_sequence or 0, high)
+        return True
 
     @staticmethod
     def _settle_replaced_deliveries(

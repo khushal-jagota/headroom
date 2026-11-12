@@ -356,6 +356,9 @@ def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
                 )
                 wire = current.backend("c").written_texts()[0]
                 assert ("[Panels deployment interruption context]" in wire) == (boot == 0)
+                # Finish this new turn so this historical-attribution case does not
+                # create an unrelated custody-backed interruption on its next boot.
+                await current.complete_turn("c")
             finally:
                 await current.system.shutdown()
 
@@ -991,6 +994,11 @@ def test_queued_recovery_wire_failure_records_existing_uncertainty_row(
         await original.store.reserve_turn("c")
         manifest = _capture(path)
         await original.system.shutdown()
+        # This case models a late capture after the old turn already settled.
+        # Otherwise generic crash recovery now admits that turn at startup itself.
+        with connect(str(path)) as conn:
+            conn.execute("UPDATE conversation_lifecycle_facts SET status='unavailable'")
+            conn.commit()
         restarted = _Harness(path)
         try:
             await restarted.system.send(
@@ -1058,3 +1066,164 @@ def test_admission_exempts_only_the_current_mac_processs_run(tmp_path: Path) -> 
     assert blocker(current.executor_incarnation, allow_restored=False) == owned
     # The replaced process's run still blocks, at admission too.
     assert blocker("replaced-incarnation", allow_restored=True) == owned
+
+
+def test_live_source_keeps_exact_claim_and_prevents_replacement(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    from planner.conversation.child_custody import process_identity, write_pending, write_started
+    from planner.conversation.deploy_interruptions.coordinator import run_automatic_recovery
+
+    if sys.platform != "linux":
+        pytest.skip("Linux process birth evidence")
+    path = tmp_path / "home.db"
+    conn = connect(str(path))
+    create_schema(conn)
+    conn.close()
+    original = _Harness(path)
+
+    async def exercise() -> None:
+        await _start(original)
+        await original.store.reserve_turn("c")
+        _ticket(path)
+        # Only this test owns the source process. Its exact identity models a
+        # protocol-confirmed child that survives the home runtime.
+        source = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            identity = process_identity(source.pid)
+            assert identity is not None
+            with connect(str(path)) as db:
+                write_pending(db, "c", "source")
+                write_started(db, "c", "source", identity)
+                db.commit()
+            await original.system.shutdown()
+            restarted = _Harness(path)
+            try:
+                await run_automatic_recovery(restarted.system, restarted.store)
+                await restarted.system.send(
+                    "c", text_message_content("new work"), sender_label="owner"
+                )
+                assert source.poll() is None
+                assert restarted.spawned_conversation_ids == []
+                assert restarted.system.workspace_activity() == "unknown"
+                with connect(str(path)) as db:
+                    assert tuple(db.execute(
+                        "SELECT worker_step_claim,worker_step_claim_revision "
+                        "FROM tickets WHERE id='t'"
+                    ).fetchone()) == ("out", 7)
+                # The same ordinary Stop action can now end only this exact
+                # recorded source after the no-false-release assertion above.
+                await restarted.system.kill("c")
+                source.wait(timeout=5)
+                assert source.returncode is not None
+                assert await restarted.system.retirement_is_confirmed("c")
+            finally:
+                await restarted.system.shutdown()
+        finally:
+            if source.poll() is None:
+                source.terminate()
+                source.wait(timeout=5)
+            await original.system.shutdown()
+
+    _run(exercise)
+
+
+def test_ordinary_home_crash_recovers_once_with_durable_identity(tmp_path: Path) -> None:
+    from planner.conversation.deploy_interruptions.coordinator import run_automatic_recovery
+
+    path = tmp_path / "home.db"
+    conn = connect(str(path))
+    create_schema(conn)
+    conn.close()
+    original = _Harness(path)
+
+    async def exercise() -> None:
+        await _start(original)
+        _ticket(path)
+        await original.system.send("c", text_message_content("work"), sender_label="owner")
+        # The existing harness stop proves that its child ended. No deployment
+        # manifest supplies the interruption, so startup must capture this turn.
+        await original.system.shutdown()
+        restarted = _Harness(path)
+        try:
+            await run_automatic_recovery(restarted.system, restarted.store)
+            writes = restarted.backend("c").written_texts()
+            assert len(writes) == 1
+            assert "Inspect the interrupted work" in writes[0]
+            with connect(str(path)) as db:
+                interruption_ids = tuple(db.execute(
+                    "SELECT interruption_id FROM deploy_interruptions"
+                ))
+                assert len(interruption_ids) == 1
+            await run_automatic_recovery(restarted.system, restarted.store)
+            assert len(restarted.backend("c").writes) == 1
+            await restarted.complete_turn("c")
+        finally:
+            await restarted.system.shutdown()
+        final = _Harness(path)
+        try:
+            await run_automatic_recovery(final.system, final.store)
+            assert final.spawned_conversation_ids == []
+            with connect(str(path)) as db:
+                assert tuple(db.execute(
+                    "SELECT interruption_id FROM deploy_interruptions"
+                )) == interruption_ids
+        finally:
+            await final.system.shutdown()
+
+    _run(exercise)
+
+
+def test_legacy_upgrade_keeps_existing_update_recovery(tmp_path: Path) -> None:
+    from planner.conversation.deploy_interruptions.coordinator import run_automatic_recovery
+
+    path = tmp_path / "upgrade.db"
+    conn = connect(str(path))
+    create_schema(conn)
+    conn.close()
+    original = _Harness(path)
+
+    async def exercise() -> None:
+        await _start(original, "idle")
+        await _start(original)
+        _ticket(path)
+        await original.system.send("c", text_message_content("old work"), sender_label="owner")
+        captured = _capture(path, owner_id="t")
+        await original.system.shutdown()
+        # The previous schema contains the live turn and its Update Now capture,
+        # but no child custody records. Upgrade it without adding ownership proof.
+        with connect(str(path)) as db:
+            db.execute("DROP TABLE conversation_child_custody")
+            db.execute("DROP TABLE worker_step_dispatch_intents")
+            db.execute("DROP TABLE automatic_start_bindings")
+            db.execute(
+                "UPDATE alembic_version SET version_num='ticket_workspace_lifecycle'"
+            )
+            db.commit()
+        upgrade = connect(str(path))
+        create_schema(upgrade)
+        upgrade.close()
+        write_manifest(path, captured)
+        restarted = _Harness(path)
+        try:
+            assert not restarted.store.blocked_local_conversations
+            with connect(str(path)) as db:
+                assert db.execute(
+                    "SELECT count(*) FROM conversation_child_custody"
+                ).fetchone()[0] == 0
+                assert db.execute(
+                    "SELECT status FROM conversation_lifecycle_facts "
+                    "WHERE conversation_id='c' AND kind='turn'"
+                ).fetchone()[0] == "unavailable"
+            await run_automatic_recovery(restarted.system, restarted.store)
+            writes = restarted.backend("c").written_texts()
+            assert len(writes) == 1
+            assert "Inspect the interrupted work" in writes[0]
+            assert restarted.backend("idle").writes == []
+            await run_automatic_recovery(restarted.system, restarted.store)
+            assert len(restarted.backend("c").writes) == 1
+        finally:
+            await restarted.system.shutdown()
+
+    _run(exercise)

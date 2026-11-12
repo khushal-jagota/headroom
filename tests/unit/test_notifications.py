@@ -119,7 +119,7 @@ def test_the_loop_sends_one_edge_to_the_registered_device_and_records_it(
 
     loop = NotificationLoop(
         str(db_path),
-        MutableClock(parse_fake_now("2026-09-20T05:00:00+01:00")),
+        MutableClock(parse_fake_now("1970-01-01T00:00:01+00:00")),
         canonical_origin="https://panels.example",
         adapter=RecordingAdapter(),
     )
@@ -511,7 +511,7 @@ def test_failed_notification_delivery_retains_one_edge_and_retry(tmp_path: Path)
 
     loop = NotificationLoop(
         str(db_path),
-        MutableClock(parse_fake_now("2026-09-20T05:00:00+01:00")),
+        MutableClock(parse_fake_now("1970-01-01T00:00:01+00:00")),
         canonical_origin="https://panels.example",
         adapter=FailedAdapter(),
     )
@@ -530,3 +530,27 @@ def test_failed_notification_delivery_retains_one_edge_and_retry(tmp_path: Path)
             ).fetchone()[0]
             == 1
         )
+
+
+def test_notification_freshness_expires_both_channels_without_clearing_attention(
+    tmp_db: Connection,
+) -> None:
+    from planner.notifications import apns_data
+
+    _subscribe(tmp_db, now=1000)
+    apns_data.register_device(
+        tmp_db, device_token="aabb", bundle_id="app.panels.ios",
+        environment="development", now=1000,
+    )
+    stale = _ticket(tmp_db, 1000)
+    notifications_data.queue_deliveries(tmp_db, 1299)
+    assert len(notifications_data.pending_deliveries(tmp_db, 1299)) == 1
+    assert len(apns_data.pending_deliveries(tmp_db, 1299)) == 1
+    assert notifications_data.pending_deliveries(tmp_db, 1300) == ()
+    assert apns_data.pending_deliveries(tmp_db, 1300) == ()
+    for table in ("notification_deliveries", "notification_apns_deliveries"):
+        assert [row[0] for row in tmp_db.execute(f"SELECT status FROM {table}")] == ["expired"]
+    assert tmp_db.execute(
+        "SELECT active FROM notification_attention_state WHERE subject_id=? "
+        "AND notification_type='awaiting_approval'", (stale.id,),
+    ).fetchone()[0] == 1

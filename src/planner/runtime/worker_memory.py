@@ -28,6 +28,10 @@ MEMORY_NOTICE_MESSAGE_PREFIX: Final = "worker_step_memory_notice_"
 ANSWERING_SENDER_MESSAGE_PREFIX: Final = "worker_step_"
 
 
+def worker_step_message_id_for_claim(ticket_id: str, claim_revision: int) -> str:
+    return f"{WORKER_STEP_MESSAGE_PREFIX}{ticket_id}:{claim_revision}"
+
+
 def new_worker_step_message_id() -> str:
     return f"{WORKER_STEP_MESSAGE_PREFIX}{uuid4().hex}"
 

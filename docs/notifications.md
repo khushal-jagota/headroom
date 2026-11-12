@@ -27,7 +27,7 @@ A notification is a phone or desktop push for a kind of attention Khushal opted 
 
 ## How it works
 
-The writer records the flag and the edge in the same transaction as the change that caused them. A background pass later turns edges into deliveries, so several commits stay distinct even when one pass sends them. Each device gets its own delivery, retried with backoff. An expired subscription disables that device.
+The writer records the flag and the edge in the same transaction as the change that caused them. A background pass later turns edges into deliveries, so several commits stay distinct even when one pass sends them. Each device gets its own delivery, retried with backoff. An expired subscription disables that device. Before each send, Headroom checks that the attention is still current and fresh. Stale deliveries expire without clearing the attention that they describe.
 
 The flags are separate because the events are separate. Held as one flag, a message and an ask that arrived second would raise no edge and reach nobody. An ask awaits an answer only while its turn is open. When the turn ends, its unanswered asks clear, so the next ask can raise a new edge.
 
@@ -40,7 +40,7 @@ Headroom can be installed from the browser. Pushes need HTTPS outside localhost,
 ## Decisions that shape it
 
 - Only edges notify. A flag that stays true does not keep pushing, and a correction never pushes.
-- Every push passes the one policy door. Sources never call delivery, and delivery never reads source state.
+- Every push passes the one policy door. Sources never call delivery. Delivery checks the retained attention flags.
 - The push payload is privacy-safe. What was said stays in Headroom.
 - Preferences are by class, not by item, so a new Manager needs no setup.
 
@@ -50,7 +50,7 @@ Headroom can be installed from the browser. Pushes need HTTPS outside localhost,
 - `static/service-worker.js`: the service worker.
 - `web/src/routes/NotificationsRoute.svelte`: the settings section.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-11._
 
 
 ## Native iOS push

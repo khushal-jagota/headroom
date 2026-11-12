@@ -40,6 +40,10 @@ The ceiling is not a readiness question. It decides what a finished proposal doe
 
 One more question goes to the conversation itself: is a turn already running? A busy conversation is left alone this pass, so automation never steers into an unrelated turn.
 
+Automatic starts share a launch gate with Manager wakes and recovery notices. The gate permits one new start per second and four starts awaiting acceptance. Workers use at most three slots, so Chief and Managers retain capacity. A slot ends on positive agent activity or definite refusal. A wire write or a local queue position alone does not prove acceptance. Messages that wait behind a turn or quarantine hold no start slot. At dequeue, a combined prompt takes one slot. Running turns have no limit from this gate. Explicit restart requests bypass automatic launch pacing.
+
+An absent executor holds no shared slot. Its pending starts retain their claims and command identities until receipts and ownership evidence settle them. On return, pending starts pass through the gate again. Durable bindings preserve this rule across a home restart. Control commands can pass unfetched deferred work without a new prompt or a change to conversation order.
+
 ## How a step is sent
 
 One guarded write takes the claim, re-running every readiness check inside it, so two passes cannot both win. On a user-owned stage the same write records the opener fact. The loop then starts or reuses the Ticket's conversation and sends an opener built from the current Ticket and its saved workflow, any revision guidance from a sent-back proposal, and a memory-loss note when the Worker was compacted mid-step. It sends in Queue mode, which waits for a free turn.
@@ -75,4 +79,4 @@ A running turn or a running background task shows a working mark, and that mark 
 - `src/planner/tickets/data.py`: the claim writers.
 - `src/planner/runtime/conversation_start.py`: starting the conversation and sending.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-12._

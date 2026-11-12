@@ -32,6 +32,7 @@ from uuid import uuid4
 
 from pydantic import JsonValue
 
+from planner.conversation import child_custody
 from planner.conversation.backend_event_contracts import AcceptedEvent, CommitParticipant
 from planner.conversation.backends.contracts import BackendSpawnFailed
 from planner.conversation.contracts import (
@@ -80,6 +81,7 @@ from planner.conversation.lifecycle_storage import (
     read_facts,
     validate_runtime_ownership,
 )
+from planner.conversation.local_child_contracts import LocalChildIdentity, RecordedSourceSettlement
 from planner.conversation.logic.conversation_start_resolution import bind_conversation_origin
 from planner.conversation.logic.retained_turn import OpenRunTurn, facts_after_restart
 from planner.conversation.publication.coordinator import (
@@ -99,6 +101,7 @@ from planner.core.db import (
     connect,
     transaction_control_guard,
 )
+from planner.execution_identity import TurnToken
 from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import (
     ConversationAttentionSnapshot,
@@ -254,6 +257,9 @@ class ConversationStore:
         self._integer_now = integer_now
         self._busy_timeout_ms = busy_timeout_ms
         self._write_operations: set[asyncio.Task[object]] = set()
+        self.blocked_local_conversations: set[str] = set()
+        self._startup_source_proofs: dict[str, tuple[object, ...]] = {}
+        self._settled_recorded_turns: dict[str, TurnToken] = {}
         # Loop time after which _write stops retrying SQLite contention, for a write a
         # sender will send again. None retries contention for as long as it lasts.
         self._contention_retry_until: ContextVar[float | None] = ContextVar(
@@ -301,14 +307,135 @@ class ConversationStore:
     def _reconcile_runtime(
         self, conn: sqlite3.Connection, open_runs: Mapping[str, OpenRunTurn]
     ) -> None:
+        from planner.environments.interruption_capture import read_unresolved_turns
+
+        # Process and service inspections never hold SQLite's writer lock. The
+        # writer accepts a proof only if the entire recorded source still matches.
+        proofs: dict[str, tuple[object, ...]] = {}
+        for candidate in read_unresolved_turns(conn, include_custody_unavailable=True):
+            if candidate.conversation_id in open_runs:
+                continue
+            snapshot = conn.execute(
+                "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
+                (candidate.conversation_id,),
+            ).fetchone()
+            if snapshot is not None and child_custody.retirement_row_proven(snapshot):
+                proofs[candidate.conversation_id] = tuple(snapshot)
         conn.execute("BEGIN IMMEDIATE")
-        interruption_data.reconcile(conn, read_manifests(Path(self._db_path)), self._integer_now())
+        from planner.conversation.deploy_interruptions.contracts import (
+            CapturedTurn,
+            CaptureManifest,
+        )
+        from planner.tickets import data as tickets_data
+        from planner.tickets.contracts import WorkerStepClaim
+
+        # A prepared journal row commits with its exact claim revision. The dispatch
+        # boundary changes it before any send, so this is positive non-delivery proof.
+        for pending in conn.execute(
+            "SELECT d.ticket_id,d.claim_revision FROM worker_step_dispatch_intents d "
+            "JOIN tickets t ON t.id=d.ticket_id WHERE d.state='prepared' "
+            "AND t.worker_step_claim='out' AND t.worker_step_claim_revision=d.claim_revision"
+        ).fetchall():
+            tickets_data.release_worker_step_claim(
+                conn,
+                str(pending[0]),
+                expected_claim=WorkerStepClaim.out,
+                expected_claim_revision=int(pending[1]),
+                now=self._integer_now(),
+            )
+        manifests = read_manifests(Path(self._db_path))
+        # A pre-upgrade turn without custody keeps the existing restart rule.
+        # Every child launched by this version records custody before it starts.
+        unresolved = tuple(
+            turn for turn in read_unresolved_turns(conn, include_custody_unavailable=True)
+            if turn.conversation_id not in open_runs
+            and conn.execute(
+                "SELECT 1 FROM conversation_child_custody WHERE conversation_id=?",
+                (turn.conversation_id,),
+            ).fetchone() is not None
+        )
+        self.blocked_local_conversations = {
+            turn.conversation_id
+            for turn in unresolved
+            if turn.conversation_id not in proofs
+            or tuple(conn.execute(
+                "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
+                (turn.conversation_id,),
+            ).fetchone()) != proofs[turn.conversation_id]
+            or not child_custody.occurrence_matches(
+                conn, turn.conversation_id, turn.occurrence_id, turn.runtime_epoch
+            )
+        }
+        self._startup_source_proofs = {
+            identity: snapshot for identity, snapshot in proofs.items()
+            if identity not in self.blocked_local_conversations
+        }
+        # Capture before restart destroys the old live facts. Missing identity is not
+        # proof of termination, even after the previous runtime released its lock.
+        for turn in unresolved:
+            if turn.conversation_id in self.blocked_local_conversations:
+                continue
+            if not child_custody.occurrence_matches(
+                conn, turn.conversation_id, turn.occurrence_id, turn.runtime_epoch
+            ):
+                continue
+            if any(
+                captured.conversation_id == turn.conversation_id
+                and captured.turn_number == turn.turn_number
+                and (
+                    captured.occurrence_id == turn.occurrence_id
+                    or (
+                        captured.occurrence_id is None
+                        and captured.runtime_epoch == turn.runtime_epoch
+                    )
+                )
+                for manifest in manifests for captured in manifest.turns
+            ):
+                continue
+            already = conn.execute(
+                "SELECT 1 FROM deploy_interruptions WHERE source_conversation_id=? "
+                "AND turn_number=? AND occurrence_id IS ?",
+                (turn.conversation_id, turn.turn_number, turn.occurrence_id),
+            ).fetchone()
+            if already is not None:
+                continue
+            identity = f"crash:{turn.runtime_epoch}:{turn.conversation_id}:{turn.turn_number}"
+            interruption_data.import_captured_turns(
+                conn,
+                CaptureManifest(identity, identity, self._integer_now(), "captured", None, (turn,)),
+                self._integer_now(),
+                claim_error_reason="interrupted by a home crash",
+                ended_by="The home process interruption",
+            )
+        # A deployment snapshot does not prove that an independently hosted local
+        # child stopped. Keep those immutable captures for the next proven recovery.
+        def capture_needs_proof(captured: CapturedTurn) -> bool:
+            return any(
+                source.conversation_id == captured.conversation_id
+                and source.turn_number == captured.turn_number
+                and (
+                    source.occurrence_id == captured.occurrence_id
+                    if captured.occurrence_id is not None
+                    else source.runtime_epoch == captured.runtime_epoch
+                )
+                for source in unresolved
+                if source.conversation_id in self.blocked_local_conversations
+            )
+
+        admitted_manifests = tuple(
+            replace(manifest, turns=tuple(
+                turn for turn in manifest.turns if not capture_needs_proof(turn)
+            )) for manifest in manifests
+        )
+        interruption_data.reconcile(conn, admitted_manifests, self._integer_now())
         ids = conn.execute(
             "SELECT DISTINCT conversation_id FROM conversation_lifecycle_facts "
             "WHERE status IN ('intent','running','pending','answering')"
         ).fetchall()
         for row in ids:
             conversation_id = str(row[0])
+            if conversation_id in self.blocked_local_conversations:
+                continue
             facts = facts_after_restart(
                 read_facts(conn, conversation_id), open_runs.get(conversation_id)
             )
@@ -328,6 +455,175 @@ class ConversationStore:
             for conversation_id, payloads in recovered_events.items():
                 self._insert_rows(conn, conversation_id, payloads)
         commit_without_change_signal(conn)
+
+    async def has_recorded_source(self, conversation_id: str) -> bool:
+        def read() -> bool:
+            conn = self._connect()
+            try:
+                return conn.execute(
+                    "SELECT 1 FROM conversation_child_custody WHERE conversation_id=?",
+                    (conversation_id,),
+                ).fetchone() is not None
+            finally:
+                conn.close()
+        return await asyncio.to_thread(read)
+
+    async def recorded_source_retirement_proven(self, conversation_id: str) -> bool:
+        def read() -> bool:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
+                    (conversation_id,),
+                ).fetchone()
+                return row is not None and (
+                    row["state"] == "retired"
+                    or tuple(row) == self._startup_source_proofs.get(conversation_id)
+                )
+            finally:
+                conn.close()
+        return await asyncio.to_thread(read)
+
+    def settled_recorded_turn(self, conversation_id: str) -> TurnToken | None:
+        return self._settled_recorded_turns.get(conversation_id)
+
+    async def check_local_child_started(
+        self, conversation_id: str, generation: str, turn_number: int,
+    ) -> bool:
+        def read() -> bool:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT 1 FROM conversation_child_custody c "
+                    "JOIN conversation_turn_occurrences o ON o.conversation_id=c.conversation_id "
+                    "AND o.occurrence_id=c.occurrence_id AND o.runtime_epoch=c.runtime_epoch "
+                    "WHERE c.conversation_id=? AND c.generation=? AND c.state='started' "
+                    "AND c.host IS NOT NULL AND c.host!='' AND c.pid>0 "
+                    "AND c.birth IS NOT NULL AND c.birth!='' AND c.boot IS NOT NULL AND c.boot!='' "
+                    "AND o.turn_number=?", (conversation_id, generation, turn_number),
+                ).fetchone()
+                return row is not None
+            finally:
+                conn.close()
+        return await asyncio.to_thread(read)
+
+    async def settle_recorded_source(self, conversation_id: str) -> RecordedSourceSettlement | None:
+        settled = await self._write(self._settle_recorded_source_sync, conversation_id)
+        if settled is None:
+            return None
+        result, token = settled
+        self._settled_recorded_turns[conversation_id] = token
+        self.blocked_local_conversations.discard(conversation_id)
+        return result
+
+    def _settle_recorded_source_sync(
+        self, conversation_id: str,
+    ) -> tuple[RecordedSourceSettlement, TurnToken] | None:
+        conn = self._connect()
+        try:
+            source = conn.execute(
+                "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if source is None:
+            return None
+        result: RecordedSourceSettlement
+        if source["state"] == "launch_pending":
+            result = "undelivered"
+        elif source["state"] == "retired":
+            result = "retired"
+        else:
+            identity = LocalChildIdentity(
+                int(source["pid"]), str(source["birth"]), str(source["boot"]), source["unit"]
+            )
+            if not child_custody.stop_recorded_child(identity, source["host"]):
+                return None
+            result = "retired"
+        with self._publication_connection() as (conn, admission):
+            conn.execute("BEGIN IMMEDIATE")
+            current = conn.execute(
+                "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+            if current is None or tuple(current) != tuple(source):
+                conn.rollback()
+                return None
+            occurrence = conn.execute(
+                "SELECT turn_number FROM conversation_turn_occurrences WHERE conversation_id=? "
+                "AND occurrence_id=? AND runtime_epoch=?",
+                (conversation_id, source["occurrence_id"], source["runtime_epoch"]),
+            ).fetchone()
+            if occurrence is None:
+                conn.rollback()
+                return None
+            number = int(occurrence[0])
+            facts = read_facts(conn, conversation_id)
+            if result == "undelivered":
+                turn = next((fact for fact in facts if fact.kind is LifecycleKind.turn
+                             and fact.turn_number == number), None)
+                prompt = next((fact for fact in facts if fact.kind is LifecycleKind.attempt
+                               and fact.identity == f"prompt:{number}"), None)
+                if (turn is None or prompt is None
+                    or turn.status not in {LifecycleStatus.intent, LifecycleStatus.unavailable}
+                    or prompt.status not in {LifecycleStatus.intent, LifecycleStatus.suppressed}):
+                    conn.rollback()
+                    return None
+                settled = tuple(replace(fact, status=(LifecycleStatus.unavailable
+                                if fact is turn else LifecycleStatus.suppressed))
+                                for fact in (turn, prompt))
+            else:
+                child_custody.write_retired(conn, conversation_id, str(source["generation"]))
+                settled = facts_after_restart(facts, None)
+            cancelled = LifecycleFact(
+                LifecycleKind.attempt, f"cancel:recorded:{number}:{source['generation']}",
+                number, LifecycleOperation.cancel, LifecycleStatus.accepted,
+            )
+            self._apply_signal_mutation(conn, admission)
+            apply_facts(conn, conversation_id, (*settled, cancelled))
+            participate(
+                conn, self._transaction_participant,
+                LifecycleTransition(conversation_id, read_facts(conn, conversation_id)),
+                guard=self._transaction_control_guard,
+            )
+            conn.execute(
+                "DELETE FROM automatic_start_bindings WHERE conversation_id=? AND turn_number=?",
+                (conversation_id, number),
+            )
+            self._commit_rows(conn, ())
+        return result, TurnToken(conversation_id, number)
+
+    async def record_child_custody(
+        self,
+        conversation_id: str,
+        generation: str,
+        identity: LocalChildIdentity | None = None,
+        *,
+        retired: bool = False,
+    ) -> None:
+        await self._write(
+            self._record_child_custody_sync, conversation_id, generation, identity, retired
+        )
+
+    def _record_child_custody_sync(
+        self,
+        conversation_id: str,
+        generation: str,
+        identity: LocalChildIdentity | None,
+        retired: bool,
+    ) -> None:
+        conn = self._connect()
+        try:
+            if retired:
+                child_custody.write_retired(conn, conversation_id, generation)
+            elif identity is None:
+                child_custody.write_pending(conn, conversation_id, generation)
+            else:
+                child_custody.write_started(conn, conversation_id, generation, identity)
+            commit_without_change_signal(conn)
+        finally:
+            conn.close()
 
     async def bind_interruption_delivery(
         self,
@@ -465,6 +761,8 @@ class ConversationStore:
                 "INSERT INTO conversation_turn_occurrences VALUES (?,?,?,?)",
                 (conversation_id, turn_number, uuid4().hex, str(epoch[0])),
             )
+            if conversation_id not in self.blocked_local_conversations:
+                child_custody.bind_current_turn(conn, conversation_id)
             apply_facts(
                 conn,
                 conversation_id,
@@ -1256,6 +1554,10 @@ class ConversationStore:
                         record.created_at,
                     ),
                 )
+                # A new conversation has no source process. The pre-spawn boundary
+                # replaces this receipt with launch_pending before a child can start.
+                child_custody.write_pending(conn, record.conversation_id, "never-started")
+                child_custody.write_retired(conn, record.conversation_id, "never-started")
                 if self.signal_coordinator is not None:
                     conn.commit()
             except sqlite3.IntegrityError as already_there:

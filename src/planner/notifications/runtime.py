@@ -67,7 +67,13 @@ class NotificationLoop:
                 data.queue_deliveries(conn, now)
                 identity = data.read_web_push_identity(conn)
                 deliveries = data.pending_deliveries(conn, now)
+                sent = 0
                 for delivery in deliveries:
+                    now = self._clock.now_unix()
+                    if not data.delivery_is_current(conn, delivery.edge, now):
+                        data.expire_stale_deliveries(conn, now)
+                        continue
+                    sent += 1
                     result = self._adapter.send(
                         delivery.subscription,
                         delivery.intent,
@@ -85,12 +91,17 @@ class NotificationLoop:
                 native_deliveries = apns_data.pending_deliveries(conn, now)
                 if self._apns is not None and self._apns_origin is not None:
                     for native_delivery in native_deliveries:
+                        now = self._clock.now_unix()
+                        if not data.delivery_is_current(conn, native_delivery.edge, now):
+                            data.expire_stale_deliveries(conn, now, native=True)
+                            continue
+                        sent += 1
                         result_native = self._apns.send(
                             native_delivery, server_url=self._apns_origin, now=now
                         )
                         apns_data.record_result(conn, native_delivery, result_native, now)
-                    return len(deliveries) + len(native_deliveries)
-                return len(deliveries)
+                    return sent
+                return sent
             finally:
                 conn.close()
 

@@ -59,7 +59,7 @@ def test_a_manager_wake_crosses_the_codex_adapter_with_its_sender_label(
         async with _scripted_child(tmp_path, script={"turns": [{"actions": []}]}) as scripted:
             await scripted.start(cursor=None)
             content = text_message_content("Review the manager wake.")
-            await scripted.child.write_prompt(
+            outcome = await scripted.child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
                 content,
                 sender_content=content,
@@ -68,6 +68,7 @@ def test_a_manager_wake_crosses_the_codex_adapter_with_its_sender_label(
                 model_change=None,
                 reasoning_effort_change=None,
             )
+            assert outcome.agent_acceptance_proven is True
             wire = json.dumps(scripted.sent("turn/start"))
             assert "Panels" in wire
             assert "Review the manager wake." in wire

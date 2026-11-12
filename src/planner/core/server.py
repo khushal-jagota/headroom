@@ -335,6 +335,11 @@ def create_app(
                     executor_endpoint.configure(
                         conversation.system, app, update_check=app.state.mac_updates.check
                     )
+                    remote_presence = executor_endpoint.presence
+                    conversation.system.start_admission.configure_destinations(
+                        lambda destination: destination == "home" or remote_presence.is_present()
+                    )
+                    executor_endpoint.mailbox.start_admission = conversation.system.start_admission
                     await executor_endpoint.start()
                 conversation.system.configure_machine_catalog(
                     None if executor_endpoint is None else executor_endpoint.catalog

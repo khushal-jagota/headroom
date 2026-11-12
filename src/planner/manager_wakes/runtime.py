@@ -20,6 +20,7 @@ from planner.conversation.contracts import (
     PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import text_message_content
+from planner.conversation.start_admission.contracts import StartRequest
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.clock import Clock
 from planner.core.contracts import PrincipalKind
@@ -117,6 +118,9 @@ async def _admitted_deliver_batch(
     """Deliver one immutable batch through its principal's ordinary conversation door."""
     conn = connect_database()
     intended_conversation_id: str | None = None
+    starts = getattr(conversation_system, "start_admission", None)
+    offered = False
+    admitted_start = False
     try:
         target = batch.target
         lifecycle = (
@@ -159,8 +163,25 @@ async def _admitted_deliver_batch(
                 else:
                     current = conversation_start.read_agent_conversation(conn, agent_key)
                 if current is not None and await conversation_system.is_running(current):
+                    if starts is not None:
+                        starts.finish_unbound(batch.sender_message_id)
                     data.release_pending_batch(conn, batch.id, process_token=process_token)
                     return False
+                if starts is not None:
+                    destination = "home"
+                    if agent_key is None:
+                        ticket = tickets_data.read_ticket(conn, target.id)
+                        destination = "macos" if ticket.locale.value == "macos" else "home"
+                    if not starts.try_start(
+                        StartRequest(
+                            batch.sender_message_id,
+                            "worker" if agent_key is None else "supervisor",
+                            destination,
+                        )
+                    ):
+                        data.release_pending_batch(conn, batch.id, process_token=process_token)
+                        return False
+                    admitted_start = True
                 created = conversation_start.new_conversation_id()
                 intended_conversation_id = current or created
                 data.record_batch_offering(
@@ -207,6 +228,14 @@ async def _admitted_deliver_batch(
                         now=now(),
                     )
                     raise
+                offered = True
+                if starts is not None:
+                    if isinstance(
+                        delivered.fate, (PromptDeliveryRefused, PromptDeliverySuppressed)
+                    ):
+                        starts.finish(batch.sender_message_id)
+                    elif isinstance(delivered.fate, PromptDeliveryUncertain):
+                        starts.uncertain(batch.sender_message_id)
                 if isinstance(delivered.fate, PromptDeliveryRefused):
                     data.record_batch_failure(
                         conn,
@@ -247,6 +276,8 @@ async def _admitted_deliver_batch(
                 )
 
     finally:
+        if starts is not None and admitted_start and not offered:
+            starts.finish_unbound(batch.sender_message_id)
         conn.close()
 
 
@@ -283,8 +314,8 @@ class ManagerWakeLoop:
         with (
             self._workspace_admission.operation()
             if self._workspace_admission
-            else nullcontext(True) as admitted
-        ):
+            else nullcontext(True)
+        ) as admitted:
             if not admitted:
                 return []
             conn = connect(self._db_path, self._busy_timeout_ms)
@@ -309,11 +340,19 @@ class ManagerWakeLoop:
                     batches.append(batch)
             finally:
                 conn.close()
+            starts = getattr(self._conversation_system, "start_admission", None)
+            if starts is not None:
+                starts.retain_deferred(
+                    "manager_delivery_wake_", {b.sender_message_id for b in batches}
+                )
             return [batch.id for batch in batches if self._schedule(batch)]
 
     def _schedule(self, batch: WakeBatch) -> bool:
         with self._in_flight_lock:
             if self._stop.is_set() or batch.id in self._in_flight.values():
+                return False
+            starts = getattr(self._conversation_system, "start_admission", None)
+            if starts is not None and len(self._in_flight) >= starts.limit:
                 return False
         future = asyncio.run_coroutine_threadsafe(
             deliver_batch(
@@ -378,5 +417,6 @@ class ManagerWakeLoop:
                 self.poll_once()
             except Exception:
                 _LOG.exception("manager wake poll failed")
-            self._wake.wait(interval)
+            starts = getattr(self._conversation_system, "start_admission", None)
+            self._wake.wait(starts.poll_delay(interval) if starts is not None else interval)
             self._wake.clear()
