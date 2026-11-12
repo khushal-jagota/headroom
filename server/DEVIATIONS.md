@@ -2,6 +2,24 @@
 
 This file records intentional differences that the migration Manager accepted. No new difference enters this file without that acceptance. Close an entry when Python adopts the same behavior.
 
+## Unidentified callers from the TypeScript service
+
+The migration Manager accepted the exact cgroup component `panels-typescript.service`
+as an additional agent process boundary. The opt-in unidentified-caller rule retains
+`panels-live.service` and `panels-workers.slice` and also refuses holders under that
+new component. Similar service names do not match. Packaging and the predicate share
+`lifecycle/service_identity.ts`. Packaging must import that same constant when its TS unit assets land.
+The installed unit name remains an owner cutover decision.
+
+The single direct source comparison records the old Python answer for the new name
+separately from this accepted extension. If rollback keeps the new unit name, Python
+must recognize that same name through the owner/Chief staging-change route before cutover.
+
+The HTTP gate is wired after trusted-owner normalization. This base has no generic
+application WebSocket transport. The pure close-1008 decision is source-compared;
+Unit 22 must wire the shared admission boundary after trusted ingress when its raw
+transport lands. Existing preview upgrades already require trusted-owner ingress.
+
 ## Unknown managed root in a verified backup
 
 The migration Manager accepted this difference during Unit 21 Part 3 source review.
@@ -304,8 +322,38 @@ The shared string repr escapes those code points. The direct repr proof checks t
 Local Python 3.13 uses Unicode 15.1.0 and prints U+2EBF0. This documented local exception does not change the CI reference.
 Regenerate the ranges with `tests/compare/direct/generate_repr_unicode.py` and the two official UnicodeData files named in its header.
 
+## Conversation history locale data
+
+The migration Manager accepted Node's bundled locale data for history labels in
+place of Python's system ICU on November 12, 2026. TypeScript uses
+`Intl.DateTimeFormat` with medium dates and short times and loads no native ICU
+library. Locale-data releases can differ in punctuation, spacing, or date patterns.
+The recorded Python en-US labels use U+202F before AM/PM. Intl can use an ordinary
+space there. For example, Python returns `Sep 22, 2026, 12:00 AM` while
+Intl returns `Sep 22, 2026, 12:00 AM`. The direct comparison names this exact
+separator difference and
+retains both raw labels and code points. It does not normalize dates, times,
+conversation IDs, ranks, revisions, or arbitrary label text. Prefix search remains
+case-folded against the actual label that each runtime displays, so a prefix that
+includes different locale-data text can select a different entry. Unknown locale
+and zone inputs retain the documented fallback behavior.
+
 ## Codex sign-in admission after shutdown
 
 The migration Manager required this safety difference in the Part 3 source review. TypeScript closes sign-in admission when shutdown begins. Later or queued starts fail with `CodexSignInUnavailable`. Python permits a later start on the same service instance.
 
 The production provider set also closes catalog and usage admission, aborts its owned probes, and joins them before shutdown completes. Snapshot environment cleanup and sign-in cleanup both run even if either fails. An aggregate error retains their failures. These ownership requirements come from the Ticket Brief and Manager review.
+
+## Hermes ACP ordering and bounded retirement
+
+The Manager accepted strict read-order handling for Hermes in the Hermes Brief and Part2 review. Python's ACP dispatcher starts separate callback tasks and handles replies directly. TS finishes each notification, request admission, and asynchronous reply effect before it admits the next frame. This includes managed-image persistence. Normal sink callbacks have no deadline, so a slow database does not break a healthy wire.
+
+The Manager also accepted a 15-second drain bound after the direct child exits while a descendant retains stdout. Python waits without that bound. TS fails the remaining wire operations after the bound. The reused process owner never signals a group after its leader was reaped.
+
+The Manager accepted the following control-deadline rule on November 12, 2026: steer and configuration RPCs each have a 15-second reply deadline. A hung earlier persistence callback can therefore delay those callers only until their own deadline. The official SDK then sends `$/cancel_request` and stops waiting for that RPC only. Steer returns uncertain. Configuration raises `NeedsRebind`, because the applied value is unknown, and the core retires that child before another prompt. During startup, cleanup precedes `SessionLoadFailed`. Other pending requests and the wire stay intact. Python awaits these control replies without this deadline. Regular turns and image persistence gain no deadline, and TS discards no valid content to release the queue.
+
+Whole-update validation uses the official SDK JSON schema before its best-effort deserializer. Python coerces some out-of-schema numeric strings, including usage occupancy and stated cost. TS rejects those updates whole instead of coercing them. Fresh parser observations show that the original SDK already rejects string occupancy or drops string cost. The Manager accepted this strict-wire policy on November 12, 2026. Real Hermes serializes numeric model fields as numbers. The side-by-side gate must confirm that actual usage and cost events arrive and are recorded. Fresh parser evidence stays with the Hermes ticket.
+
+Notifications during a prompt write follow Python's existing current-turn/no-turn guard. A successful actual prompt write remains accepted if stop races its continuation. Stderr retains whole lines with Python's final character cap. Fresh direct traces compare initialization exactly: the Python serializer uses `exclude_defaults=True`, so its empty default `clientCapabilities` does not appear on the wire. These are parity fixes, not additional deviations.
+
+The raw backend callback diagnostics compare exact payloads, turn attribution, counts, and order within each event type. Their cross-type order is not a parity claim. Canonical core events, lifecycle/view rows, live frames, and ACP requests keep exact ordered comparison.

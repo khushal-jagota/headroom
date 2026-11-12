@@ -30,6 +30,26 @@ node node_modules/vitest/vitest.mjs run
 
 Launch `node server/main.ts` from the repository root with isolated `PLAN_*` settings. The listener comes from `PLAN_SERVER_LISTENER_FD` when present. Otherwise the server binds loopback at `PLAN_PORT`. The database must exist. The process takes the same owner lock as Python before it opens the database. The dispatcher lock remains separate.
 
+`PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS` enables the existing opt-in identity refusal;
+it defaults to false and cannot be enabled by YAML. The application consumes the
+variable when loading its actual process environment, before agents inherit it.
+A supervisor must load configuration from an environment copy and preserve the flag
+for its application child. Unidentified loopback callers need same-user socket-holder
+evidence outside the exact agent cgroups. Trusted owners, identified actors and
+non-loopback callers keep the source bypass rules. The accepted TypeScript service
+name and rollback prerequisite are recorded in [DEVIATIONS.md](DEVIATIONS.md).
+
+The default peer resolver refuses before constructing its proc context or doing I/O
+when `VITEST=true`, `PYTEST_CURRENT_TEST` is present, or `PLAN_TEST_MODE` is a truthy
+test-mode value. Tests can supply an explicit private `PeerLookupContext` to exercise
+the resolver. The current raw WebSocket preview upgrade requires Tailscale-owner
+ingress. There is no general application WebSocket route: the exported close-1008
+decision is source-compared, with transport wiring reserved for Unit 22.
+
+One direct comparison reuses Python's synthetic proc fixtures and Fastify injection, without a listener or database.
+It covers peer evidence, bypasses, refusal values, config consumption and the default test I/O guard. Its body takes 0.51 seconds, with zero skill-tree guard receipts.
+TypeScript, Ruff and mypy pass. Added helpers total 423 lines against 426 product lines (99.3%).
+
 ## How an area adds itself
 
 Create `server/<area>/contracts.ts`, `logic/`, `data/`, and `routes.ts` as needed. Keep pure rules in `logic/`. Import the existing generated frontend contracts with `import type` until cutover.
@@ -256,6 +276,14 @@ delayed interruption, file and MCP items, retryable and final errors, and child 
 before and after admission. Request timeout and write-failure transport checks use
 injected clients rather than this paired core run.
 
+The real Codex 0.167.2 proof completed a fresh TypeScript turn and an exact recall
+through TypeScript on a Python-created thread. Its manual driver, complete replies,
+request evidence, and restore instructions remain Ticket artifacts outside source control.
+The existing pair also covers native bookkeeping notifications between replies, both
+turn-start orderings, historical usage on resume, and multiple agent-text fragments.
+Unknown notification payloads stay synthetic where only native method names were retained.
+Real sign-in timing, approvals, tools, and interruption remain side-by-side gate checks.
+
 The adapter bounds ask withdrawal before child shutdown, then always invokes client cleanup.
 The existing Python withdrawal wait is unbounded. The Manager accepted the two-second
 bound in the Part 2 review. The difference is recorded in `DEVIATIONS.md`.
@@ -274,17 +302,19 @@ part, as Python does. Nonzero microseconds retain six digits.
 
 ## Hermes ACP transport
 
-`conversation/backends/hermes_acp/` supplies the first part of the Hermes port:
-launch values, ordered ACP transport, and process ownership. The backend child and
-catalog binding remain later parts. Hermes retains Python's exact child environment,
+`conversation/backends/hermes_acp/` supplies the Hermes backend:
+the backend child, launch values, ordered ACP transport, and process ownership.
+`create_hermes_backend_child_factory` is exported from `adapter.ts`. The catalog
+binding and production selection remain separate work. Hermes retains Python's exact child environment,
 including the absence of an automatic `BASH_ENV` override.
 
 The adapter pins `@agentclientprotocol/sdk` to `2.6.0` and uses its ACP v1
 `/unstable` entrypoint to retain prompt usage fields. The public `ClientApp` dispatches
 handlers concurrently, so the adapter uses the SDK's lower-level `Connection` and
 generated validators behind an admission gate. Notifications and request admission
-finish before the next frame reaches the SDK. Permission answers remain outside
-that gate. Notification admission has no timeout; the permission response-write
+finish before the next frame reaches the SDK. Prompt-ending and session-binding
+effects also finish before a later frame proceeds. Raw SDK responses stay independent
+from that effect barrier. Permission answers remain outside that gate. Notification admission has no timeout; the permission response-write
 confirmation retains Python's 15-second bound. Close and wire failure release the gate.
 
 The package exports no subpath for `Connection` or the generated validators.

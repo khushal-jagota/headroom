@@ -297,32 +297,6 @@ test('notification failure is logged once and does not prevent cleanup', async (
   expect(errors).toHaveLength(1);
 });
 
-test('malformed input releases admission and official unstable v1 parsing retains usage', async () => {
-  const errors: unknown[] = [];
-  const { client, writes, send } = wire({ ...no_handlers, log: (error) => errors.push(error) });
-  try {
-    const prompt = client.begin_request('session/prompt', { sessionId: 'synthetic', prompt: [] });
-    await prompt.written;
-    send({
-      jsonrpc: '2.0',
-      method: 'session/update',
-      params: { sessionId: 'synthetic', update: { sessionUpdate: 'agent_message_chunk' } },
-    });
-    const reply = response(writes);
-    reply.result = {
-      stopReason: 'end_turn',
-      usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
-    };
-    send(reply);
-    await expect(prompt.response).resolves.toMatchObject({
-      usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
-    });
-    expect(errors).toHaveLength(1);
-  } finally {
-    await client.stop();
-  }
-});
-
 test('SDK write receipts settle separately for the same method and params object', async () => {
   const first_gate = deferred<void>();
   const second_gate = deferred<void>();

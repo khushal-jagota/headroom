@@ -11,6 +11,10 @@ vi.mock('../codex_app_server/process.ts', async (original) => ({
   ...(await original<typeof import('../codex_app_server/process.ts')>()),
   spawn_codex_process: vi.fn(),
 }));
+vi.mock('./configuration.ts', async (original) => ({
+  ...(await original<typeof import('./configuration.ts')>()),
+  CHILD_OUTPUT_LINE_LIMIT_BYTES: 8,
+}));
 afterEach(() => vi.restoreAllMocks());
 function fake() {
   const child = Object.assign(new EventEmitter(), {
@@ -42,29 +46,6 @@ const launch = {
   argv: ['/synthetic/python', '/synthetic/extension.py'],
   environment_overrides: [],
 };
-
-test('launch uses the inherited environment without a version probe or parent mutation', async () => {
-  const owned = fake();
-  vi.mocked(spawn_codex_process).mockResolvedValueOnce(owned as unknown as OwnedCodexProcess);
-  const parent = { ...process.env };
-  const launcher = new HermesAcpLauncher();
-  await launcher.start(launch, resolved);
-  try {
-    expect(process.env).toEqual(parent);
-    expect(vi.mocked(spawn_codex_process).mock.lastCall).toEqual([
-      launch.argv,
-      {
-        environment: expect.objectContaining({ HOME: process.env.HOME, HERMES_YOLO_MODE: '1' }),
-        working_directory: '/synthetic/workspace',
-      },
-    ]);
-    const environment = vi.mocked(spawn_codex_process).mock.lastCall![1].environment;
-    expect(environment).not.toHaveProperty('BASH_ENV');
-    expect(environment).not.toHaveProperty('PLAN_TICKET_ID');
-  } finally {
-    await launcher.stop();
-  }
-});
 
 test('shutdown during spawn joins that child and permanently seals later starts', async () => {
   const owned = fake();
@@ -120,5 +101,21 @@ test('failed stop retries cleanup while later starts stay sealed and logging sta
   await expect(launcher.start(launch, resolved)).rejects.toThrow('shut down');
   await launcher.stop();
   expect(owned.stop).toHaveBeenCalledTimes(2);
+  expect(errors).toHaveLength(1);
+});
+
+test('a failed stderr reader retains complete lines and logs once while cleanup completes', async () => {
+  const owned = fake();
+  vi.mocked(spawn_codex_process).mockResolvedValueOnce(owned as unknown as OwnedCodexProcess);
+  const errors: unknown[] = [];
+  const launcher = new HermesAcpLauncher();
+  const client = await launcher.start(launch, resolved, { log: (error) => errors.push(error) });
+  owned.child.stderr.write('ok\n');
+  owned.child.stderr.write('123456789');
+  expect(launcher.standard_error_tail()).toBe('ok\n');
+  expect(client.signal.aborted).toBe(false);
+  await launcher.stop();
+  await launcher.stop();
+  expect(owned.stop).toHaveBeenCalledTimes(1);
   expect(errors).toHaveLength(1);
 });

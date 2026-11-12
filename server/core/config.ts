@@ -6,6 +6,7 @@ import { isAbsolute, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { parse } from 'yaml';
 import { PlannerError } from './contracts.ts';
+import { strip } from './unidentified_agent_calls/logic.ts';
 export const HOST = '127.0.0.1';
 export const SSE_HEARTBEAT_MS = 15000;
 export const DB_BUSY_TIMEOUT_MS = 5000;
@@ -20,6 +21,7 @@ export interface Config {
   dispatcher_lock_path: string;
   logs_dir: string;
   backup_dir: string;
+  refuse_unidentified_agent_calls: boolean;
   trusted_ingress_provider: string | null;
   trusted_ingress_allowed_login: string | null;
   trusted_ingress_canonical_origin: string | null;
@@ -42,9 +44,13 @@ export function pythonRepr(value: unknown): string {
   if (typeof value === 'string') return python_string_repr(value);
   return String(value);
 }
-export function parseConfigBoolean(value: unknown, key: string): boolean {
+export function parseConfigBoolean(
+  value: unknown,
+  key: string,
+  source = String(value).trim(),
+): boolean {
   if (typeof value === 'boolean') return value;
-  const text = String(value).trim().toLowerCase();
+  const text = source.toLowerCase();
   if (['1', 'true', 'yes', 'on'].includes(text)) return true;
   if (['0', 'false', 'no', 'off'].includes(text)) return false;
   throw new PlannerError('validation', `invalid boolean for ${key}: ${pythonRepr(value)}`);
@@ -57,6 +63,13 @@ export function loadConfig(
   path: string | undefined = undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): Config {
+  const refusalFlag = env.PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS ?? '0';
+  const refuse_unidentified_agent_calls = parseConfigBoolean(
+    refusalFlag,
+    'refuse_unidentified_agent_calls',
+    strip(refusalFlag),
+  );
+  if (env === process.env) delete process.env.PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS;
   path ??= env.PLAN_CONFIG_PATH ?? 'config.yaml';
   const file: unknown = existsSync(path) ? parse(readFileSync(path, 'utf8')) : {};
   if (file !== null && (typeof file !== 'object' || Array.isArray(file)))
@@ -181,6 +194,7 @@ export function loadConfig(
     ),
     logs_dir: text('logs_dir', 'PLAN_LOGS_DIR', 'data/logs'),
     backup_dir: text('backup_dir', 'PLAN_BACKUP_DIR', 'data/backups'),
+    refuse_unidentified_agent_calls,
     trusted_ingress_provider: provider,
     trusted_ingress_allowed_login: login,
     trusted_ingress_canonical_origin: origin,
