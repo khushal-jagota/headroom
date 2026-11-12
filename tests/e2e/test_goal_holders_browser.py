@@ -50,17 +50,14 @@ def test_goal_promotion_and_stable_url_share_manager_name(
     manager = api.get(server, f"/api/managers/{manager_id}/workspace")["manager"]
     assert manager["conversation_id"] is None
 
-    # The retained Goal URL edits the Manager name while its stored goal title stays hidden.
+    # The retained Goal URL opens the Manager page, whose name is read-only there. A rename
+    # reaches the page and the rail through the Manager API, while the goal title stays hidden.
     page.goto(f"{server.base}/{goal_route}")
     name = "Launch team"
-    name_editor = host.get_by_role("textbox", name="Manager name", exact=True)
-    name_editor.fill(name)
-    name_editor.press("Tab")
+    api.direct_patch(server, f"/api/managers/{manager_id}", {"title": name})
     rail_title = page.locator(f'.manager-card[data-manager="{manager_id}"] .item-title')
-    # The rail reflects the accepted save before refreshing the page.
-    expect(rail_title).to_have_text(name)
     page.reload()
-    expect(name_editor).to_have_text(name)
+    expect(host.locator("h1")).to_have_text(name)
     expect(rail_title).to_have_text(name)
 
     expect(page.get_by_text("Previous goal conversation", exact=True)).to_have_count(0)
@@ -125,9 +122,6 @@ def test_leaving_a_goal_manager_with_text_blocks_opens_each_next_page(
             },
         },
     )
-    goal_manager_id = api.direct_post(server, f"/api/goals/{goal['id']}/make-manager", {})[
-        "manager_id"
-    ]
     other = api.direct_post(
         server, "/api/managers", {"title": "Other manager", "project_id": "project_other"}
     )
@@ -141,13 +135,14 @@ def test_leaving_a_goal_manager_with_text_blocks_opens_each_next_page(
             "manager": {"kind": "manager", "id": other["id"]},
         },
     )
-    goal_manager_route = f"#/workspace/manager/{goal_manager_id}"
-    goal_manager = f'[data-manager-view="{goal_manager_id}"]'
-    page = open_page(context_factory(), server, goal_manager_route, goal_manager)
+    # Text blocks are editable only on a standalone Goal page, so the goal stays unpromoted.
+    goal_route = f"#/workspace/goal/{goal['id']}"
+    goal_page = f'[data-goal-page="{goal["id"]}"]'
+    page = open_page(context_factory(), server, goal_route, goal_page)
     page_errors: list[str] = []
     page.on("pageerror", lambda error: page_errors.append(str(error)))
     # The goal's text block is mounted as an inline editor: the teardown under test.
-    text_editor = page.locator(goal_manager).get_by_role("textbox", name="Text", exact=True)
+    text_editor = page.locator(goal_page).get_by_role("textbox", name="Text", exact=True)
 
     def navigate(route: str) -> None:
         # In-app hash navigation: the old page is torn down by the client, not a reload.
@@ -174,7 +169,7 @@ def test_leaving_a_goal_manager_with_text_blocks_opens_each_next_page(
         ),
     ]
     for route, request_path, content, title in destinations:
-        navigate(goal_manager_route)
+        navigate(goal_route)
         expect(text_editor).to_contain_text("Draft every chapter.")
 
         # Some reads travel as resource-body?key=<path>, so match the decoded URL.
