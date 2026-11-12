@@ -71,6 +71,7 @@ export interface ResolveEnvironmentRequest extends Omit<EnvironmentRequest, 'rep
 export interface MaterializationOperations {
   build_fixture(database: string, now: number): void | Promise<void>;
   rename(source: string, destination: string): Promise<void>;
+  remove(path: string, options: { recursive: true }): Promise<void>;
 }
 export interface EnvironmentRunOptions {
   readonly credentials: Readonly<Record<string, string>>;

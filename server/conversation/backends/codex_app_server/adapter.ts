@@ -1,5 +1,6 @@
 /** Codex behind the fixed backend seam: one child, one thread, one native turn. */
 import { isDeepStrictEqual } from 'node:util';
+import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import { JsonNumber } from '../../../core/http/numeric_json.ts';
 import * as B from '../contracts.ts';
 import type {
@@ -104,6 +105,7 @@ type ClientFactory = (
   options: ConstructorParameters<typeof CodexAppServerClient>[0],
 ) => CodexClient;
 interface ChildOptions {
+  child_processes: OwnedChildProcesses;
   launch: CodexChildLaunch;
   resolved_start: ResolvedConversationStart;
   event_sink: B.BackendEventSink;
@@ -177,6 +179,7 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     this.model = options.resolved_start.model;
     this.reasoning_effort = options.resolved_start.reasoning_effort;
     this.client = (options.client_factory ?? ((config) => new CodexAppServerClient(config)))({
+      child_processes: options.child_processes,
       description: options.resolved_start.conversation_id,
       handler: {
         on_notification: (method, notification) =>
@@ -1154,6 +1157,7 @@ function steer_rejection_reason(rejected: CodexRequestRejected): R {
 export function create_codex_backend_child_factory(
   launch: CodexChildLaunch,
   options: {
+    child_processes: OwnedChildProcesses;
     remembered_login_rejection: CodexLoginRejectionMemory;
     client_factory?: ClientFactory;
   },
@@ -1163,6 +1167,7 @@ export function create_codex_backend_child_factory(
     new CodexAppServerBackendChild({
       ...values,
       launch,
+      child_processes: options.child_processes,
       remembered_login_rejection,
       client_factory: options.client_factory,
     });

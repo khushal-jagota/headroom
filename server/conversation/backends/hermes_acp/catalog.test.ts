@@ -1,3 +1,4 @@
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -58,7 +59,8 @@ test('catalog inherits the full environment, appends refresh, and leaves parent 
     return owned(child);
   });
   const before = { ...globalThis.process.env };
-  const owner = new HermesModelCatalogOwner(launch);
+  const child_processes = new ChildProcesses();
+  const owner = new HermesModelCatalogOwner(launch, { child_processes });
   await expect(owner.source({ refresh: true })).resolves.toEqual({
     exit_code: 0,
     standard_output: '{not-json',
@@ -67,6 +69,7 @@ test('catalog inherits the full environment, appends refresh, and leaves parent 
   expect(vi.mocked(spawn_codex_process).mock.lastCall).toEqual([
     [...launch.argv, '--refresh'],
     {
+      child_processes,
       environment: { ...before, HERMES_HOME: '/synthetic/home' },
       working_directory: globalThis.process.cwd(),
       close_stdin: true,
@@ -85,7 +88,7 @@ test('cancel joins its current child and permits a later fresh catalog read', as
       setImmediate(() => second.finish('fresh'));
       return owned(second);
     });
-  const owner = new HermesModelCatalogOwner(launch);
+  const owner = new HermesModelCatalogOwner(launch, { child_processes: new ChildProcesses() });
   const pending = owner.source({ refresh: false });
   const rejected = expect(pending).rejects.toThrow('cancelled');
   await owner.cancel();
@@ -106,7 +109,7 @@ test('shutdown seals a pending spawn and joins it before completion', async () =
         release = resolve;
       }),
   );
-  const owner = new HermesModelCatalogOwner(launch);
+  const owner = new HermesModelCatalogOwner(launch, { child_processes: new ChildProcesses() });
   const pending = owner.source({ refresh: false });
   const rejected = expect(pending).rejects.toThrow('cancelled');
   const stopping = owner.shutdown();
@@ -124,7 +127,10 @@ test('failed cleanup stays retryable and logs once', async () => {
   child.stop.mockRejectedValueOnce(new Error('synthetic cleanup failure'));
   vi.mocked(spawn_codex_process).mockResolvedValueOnce(owned(child));
   const errors: unknown[] = [];
-  const owner = new HermesModelCatalogOwner(launch, { log: (error) => errors.push(error) });
+  const owner = new HermesModelCatalogOwner(launch, {
+    child_processes: new ChildProcesses(),
+    log: (error) => errors.push(error),
+  });
   const pending = owner.source({ refresh: false });
   const rejected = expect(pending).rejects.toThrow('catalog process did not stop');
   await expect(owner.shutdown()).rejects.toThrow('catalog process did not stop');

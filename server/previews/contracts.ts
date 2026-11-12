@@ -38,3 +38,5 @@ export function port(record: PreviewRecord): number {
   return record.process.port;
 }
 export type Header = [string, string];
+
+export type PreviewSessionKind = 'http' | 'websocket';

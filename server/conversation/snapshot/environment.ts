@@ -1,5 +1,6 @@
 /** Production machine I/O stays outside card and route policy. */
 import { BackendCommands } from './commands.ts';
+import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import type { BackendCommandOptions } from './commands.ts';
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -43,12 +44,13 @@ function which(name: string): string | null {
   return null;
 }
 export class SubprocessBackendProbeEnvironment implements BackendProbeEnvironment {
-  private readonly commands = new BackendCommands();
+  private readonly commands: BackendCommands;
   async shutdown(): Promise<void> {
     await this.commands.shutdown();
   }
-  constructor() {
+  constructor(children: OwnedOneShotChildren) {
     require_production_io();
+    this.commands = new BackendCommands(children);
   }
   executable_path(name: string): string | null {
     require_production_io();

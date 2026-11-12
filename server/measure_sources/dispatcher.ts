@@ -6,6 +6,8 @@ import { failure } from './contracts.ts';
 import { DEFAULT_LIMITS, MAX_CONCURRENT_RUNS } from './configuration.ts';
 import { prepare_admission } from './admission.ts';
 import { claim_run, complete_run, interrupt_abandoned_runs } from './run_actions.ts';
+import { observe_shutdown } from '../lifecycle/deadline.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../core/config.ts';
 export interface SourceDispatcherOptions {
   context: OwnedAreaContext;
   runtime: SourceRuntime;
@@ -18,6 +20,8 @@ export class SourceDispatcher {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private unsubscribe: (() => void) | undefined;
   private readonly runs = new Map<string, Promise<void>>();
+  private closing: Promise<void> | undefined;
+  private shutdown_settlement: Promise<void> | undefined;
   constructor(options: SourceDispatcherOptions) {
     this.options = options;
   }
@@ -149,28 +153,51 @@ export class SourceDispatcher {
       if (!(error instanceof PlannerError) || error.code !== 'stale_claim') throw error;
     }
   }
-  async stop(options: { deadline?: number } = {}): Promise<void> {
+  private async drain(): Promise<void> {
+    const failures: unknown[] = [];
+    while (this.runs.size) {
+      const results = await Promise.allSettled([...this.runs.values()]);
+      for (const result of results) if (result.status === 'rejected') failures.push(result.reason);
+    }
+    if (failures.length)
+      throw new AggregateError(failures, 'Source runtimes did not settle cleanly');
+  }
+  settled(): Promise<void> {
+    return this.shutdown_settlement ?? this.drain();
+  }
+  stop(options: { deadline?: number } = {}): Promise<void> {
+    if (this.closing) return this.closing;
     this.stopped = true;
     if (this.timer !== undefined) clearTimeout(this.timer);
-    this.unsubscribe?.();
-    this.unsubscribe = undefined;
-    for (const id of this.runs.keys()) this.options.runtime.cancel(id);
-    const deadline = options.deadline ?? performance.now() / 1000 + 30;
-    // Runtime cancellation owns child-group reap and final writes. A failed drain
-    // makes the lifecycle retain database and dispatcher ownership, as in Python.
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    const failures: unknown[] = [];
+    this.shutdown_settlement = Promise.resolve().then(async () => {
+      try {
+        await this.drain();
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length) throw new AggregateError(failures, 'Source shutdown failed');
+    });
+    this.closing = observe_shutdown(
+      this.shutdown_settlement,
+      {
+        deadline: options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS,
+      },
+      'source runtimes',
+    );
     try {
-      await Promise.race([
-        Promise.allSettled(this.runs.values()),
-        new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(
-            () => reject(new Error('source runtimes remain active; polling lock is retained')),
-            Math.max(0, deadline * 1000 - performance.now()),
-          );
-        }),
-      ]);
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
+      this.unsubscribe?.();
+    } catch (error) {
+      failures.push(error);
     }
+    this.unsubscribe = undefined;
+    for (const id of this.runs.keys()) {
+      try {
+        this.options.runtime.cancel(id);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    return this.closing;
   }
 }

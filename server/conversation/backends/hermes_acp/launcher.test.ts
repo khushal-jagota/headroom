@@ -1,3 +1,4 @@
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -56,7 +57,7 @@ test('shutdown during spawn joins that child and permanently seals later starts'
         release = resolve;
       }),
   );
-  const launcher = new HermesAcpLauncher();
+  const launcher = new HermesAcpLauncher(new ChildProcesses());
   const errors: unknown[] = [];
   owned.stop.mockRejectedValueOnce(new Error('synthetic cleanup failure'));
   const started = launcher.start(launch, resolved, { log: (error) => errors.push(error) });
@@ -76,7 +77,7 @@ test('stdin error settles a write whose callback never returns', async () => {
   const owned = fake();
   vi.mocked(spawn_codex_process).mockResolvedValueOnce(owned as unknown as OwnedCodexProcess);
   vi.spyOn(owned.child.stdin, 'write').mockImplementation(() => true);
-  const launcher = new HermesAcpLauncher();
+  const launcher = new HermesAcpLauncher(new ChildProcesses());
   try {
     const client = await launcher.start(launch, resolved);
     const request = client.begin_request('pending-write', {});
@@ -95,7 +96,7 @@ test('failed stop retries cleanup while later starts stay sealed and logging sta
   owned.stop.mockRejectedValueOnce(new Error('synthetic failed stop'));
   vi.mocked(spawn_codex_process).mockResolvedValueOnce(owned as unknown as OwnedCodexProcess);
   const errors: unknown[] = [];
-  const launcher = new HermesAcpLauncher();
+  const launcher = new HermesAcpLauncher(new ChildProcesses());
   await launcher.start(launch, resolved, { log: (error) => errors.push(error) });
   await expect(launcher.stop()).rejects.toThrow('the Hermes process did not stop');
   await expect(launcher.start(launch, resolved)).rejects.toThrow('shut down');
@@ -108,7 +109,7 @@ test('a failed stderr reader retains complete lines and logs once while cleanup 
   const owned = fake();
   vi.mocked(spawn_codex_process).mockResolvedValueOnce(owned as unknown as OwnedCodexProcess);
   const errors: unknown[] = [];
-  const launcher = new HermesAcpLauncher();
+  const launcher = new HermesAcpLauncher(new ChildProcesses());
   const client = await launcher.start(launch, resolved, { log: (error) => errors.push(error) });
   owned.child.stderr.write('ok\n');
   owned.child.stderr.write('123456789');
