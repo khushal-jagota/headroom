@@ -102,6 +102,9 @@ def run(browser, urls):
     def respond(route):
         parts = urlsplit(route.request.url)
         path = parts.path
+        if path == "/api/machines":
+            route.fulfill(json=fixture["MACHINE_CATALOG"])
+            return
         if backend_updates["enabled"] and path == "/api/conversation/backends":
             if backend_updates["fail_discovery"] and parse_qs(parts.query).get("refresh") == ["true"]:
                 route.fulfill(status=503, json={"detail": "Registry discovery failed"})
@@ -188,6 +191,7 @@ def run(browser, urls):
                 route.fulfill(status=503, json={"error": {"code": "fixture", "message": "Rail selection proof only"}})
                 return
             inner = {
+                "/api/machines": fixture["MACHINE_CATALOG"],
                 "/api/goals": {"goals": card_fixture.get("goals", []), "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
                 "/api/worker-types?supported=true": {"worker_types": manifests},
                 "/api/worker-types": {"worker_types": manifests},
@@ -1499,6 +1503,7 @@ def verify_conversation_overlay(browser, url):
             return
         key = parse_qs(parts.query).get("key", [path])[0] if path == "/api/resource-body" else path
         values = {
+            "/api/machines": fixture["MACHINE_CATALOG"],
             "/api/goals": {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
             "/api/workers/chief-of-staff/settings": {"employee_id": "chief", "label": "Chief", "recap": "The document keeps its full height beneath the conversation.", "skill": None, "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}},
             "/api/chief/conversation/start-values": {"backend_key": "codex", "model": None, "reasoning_effort": None},
@@ -1974,6 +1979,7 @@ def verify_owner_updates(browser, url):
             return
         key = parse_qs(parts.query).get("key", [path])[0] if path == "/api/resource-body" else path
         values = {
+            "/api/machines": navigation["MACHINE_CATALOG"],
             "/api/goals": {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
             "/api/workers/chief-of-staff/settings": {"employee_id": "chief", "label": "Chief", "recap": "Owner updates", "skill": None, "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}},
             "/api/chief/conversation/start-values": {"backend_key": "codex", "model": None, "reasoning_effort": None},
