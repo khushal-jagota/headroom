@@ -50,7 +50,9 @@ jobs:
           .venv/bin/python scripts/generate_ticket_workspace_contracts.py --check
           .venv/bin/python scripts/generate_goal_browser_contracts.py --check
       - name: Compare direct runtime checks against Python
-        run: scripts/dev pytest tests/compare/direct --compare-report-dir "$RUNNER_TEMP/comparison"
+        run: |
+          scripts/dev pytest tests/compare/direct --compare-report-dir "$RUNNER_TEMP/comparison"
+          .venv/bin/python tests/compare/tools/generate_fixture_oracle.py --check
       - name: Compare affected areas or every area after branch updates
         env:
           EVENT_NAME: ${{ github.event_name }}
