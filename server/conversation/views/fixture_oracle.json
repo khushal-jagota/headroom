@@ -1,0 +1,4709 @@
+{
+  "source_sha256": "a3985c30f777cfc739384ac135a28d3c8f202fab99408d09e58fd13910dca604",
+  "fixtures": [
+    {
+      "name": "owner-visible-turn-work-and-final-answer",
+      "projection": {
+        "state": [
+          {
+            "conversation_id": "fixture",
+            "projection_version": 4,
+            "through_sequence": 7,
+            "current_turn_key": null,
+            "current_group_key": null,
+            "plan_sequence": null,
+            "segment_start_sequence": 7,
+            "plan_summary": null,
+            "plan_body_bytes": 0,
+            "latest_full_happened_sequence": 6,
+            "latest_focus_happened_sequence": 6
+          }
+        ],
+        "rows": [
+          {
+            "conversation_id": "fixture",
+            "sequence": 1,
+            "row_kind": "prompt",
+            "created_at": 100,
+            "settlement_sequence": null,
+            "changed_sequence": 1,
+            "sender_message_id": null,
+            "turn_key": null,
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 2,
+            "row_kind": "agent_message",
+            "created_at": 101,
+            "settlement_sequence": null,
+            "changed_sequence": 2,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 3,
+            "row_kind": "tool_call",
+            "created_at": 102,
+            "settlement_sequence": 4,
+            "changed_sequence": 4,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": "work:e3",
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 5,
+            "row_kind": "agent_message",
+            "created_at": 104,
+            "settlement_sequence": null,
+            "changed_sequence": 5,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 6,
+            "row_kind": "agent_message",
+            "created_at": 105,
+            "settlement_sequence": null,
+            "changed_sequence": 6,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": "{\"kind\":\"agent_message\",\"sender_label\":null,\"excerpt\":\"Final answer\",\"_owner_message_preview\":\"Final answer\"}",
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 7,
+            "row_kind": "turn_ended",
+            "created_at": 106,
+            "settlement_sequence": null,
+            "changed_sequence": 7,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          }
+        ],
+        "turns": [
+          {
+            "conversation_id": "fixture",
+            "turn_key": "turn:e1",
+            "source_sequence": 1,
+            "created_at": 100,
+            "started_at_milliseconds": 100000,
+            "focus_head": 1,
+            "ending_sequence": 7,
+            "ending": "completed",
+            "ended_at": 106,
+            "full_message_count": 3,
+            "focus_message_count": 2,
+            "latest_full_message_sequence": 6,
+            "latest_focus_message_sequence": 6,
+            "tool_call_count": 1,
+            "changed_sequence": 7
+          }
+        ],
+        "groups": [
+          {
+            "conversation_id": "fixture",
+            "group_key": "work:e3",
+            "source_sequence": 3,
+            "turn_key": "turn:e1",
+            "entry_count": 1,
+            "latest_entry_sequence": 3,
+            "ending_sequence": 7,
+            "changed_sequence": 7
+          }
+        ],
+        "lookups": [
+          {
+            "conversation_id": "fixture",
+            "lookup_kind": "tool",
+            "lookup_id": "tool-a",
+            "source_sequence": 3,
+            "turn_key": "turn:e1"
+          }
+        ]
+      },
+      "pages": {
+        "focus": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "focus",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e1",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 1,
+                "slot": 0
+              },
+              "source_sequence": 1,
+              "sender_message_id": null,
+              "changed_through_sequence": 1,
+              "created_at": 100,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Please work"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 100000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e1",
+              "order": {
+                "sequence": 1,
+                "slot": 1
+              },
+              "changed_through_sequence": 7,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 100000,
+              "ending": "completed",
+              "duration_seconds": 6,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": "e6",
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e5",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 5,
+                "slot": 0
+              },
+              "source_sequence": 5,
+              "sender_message_id": null,
+              "changed_through_sequence": 5,
+              "created_at": 104,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "First message"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e6",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 6,
+                "slot": 0
+              },
+              "source_sequence": 6,
+              "sender_message_id": null,
+              "changed_through_sequence": 6,
+              "created_at": 105,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Final answer"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            }
+          ],
+          "body_bytes": 323,
+          "older": null,
+          "newer": null
+        },
+        "full": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "full",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e1",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 1,
+                "slot": 0
+              },
+              "source_sequence": 1,
+              "sender_message_id": null,
+              "changed_through_sequence": 1,
+              "created_at": 100,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Please work"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 100000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e1",
+              "order": {
+                "sequence": 1,
+                "slot": 1
+              },
+              "changed_through_sequence": 7,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 100000,
+              "ending": "completed",
+              "duration_seconds": 6,
+              "tool_call_count": 1,
+              "folded_message_count": 1,
+              "latest_message_key": "e6",
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e5",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 5,
+                "slot": 0
+              },
+              "source_sequence": 5,
+              "sender_message_id": null,
+              "changed_through_sequence": 5,
+              "created_at": 104,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "First message"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e6",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 6,
+                "slot": 0
+              },
+              "source_sequence": 6,
+              "sender_message_id": null,
+              "changed_through_sequence": 6,
+              "created_at": 105,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Final answer"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e7",
+              "row_kind": "turn_ended",
+              "order": {
+                "sequence": 7,
+                "slot": 0
+              },
+              "source_sequence": 7,
+              "sender_message_id": null,
+              "changed_through_sequence": 7,
+              "created_at": 106,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "turn_ended",
+                  "ending": "completed",
+                  "error_summary": null,
+                  "automatic_compaction_result": null
+                }
+              }
+            }
+          ],
+          "body_bytes": 421,
+          "older": null,
+          "newer": null
+        }
+      }
+    },
+    {
+      "name": "hidden-prompt-turn-and-owner-steer",
+      "projection": {
+        "state": [
+          {
+            "conversation_id": "fixture",
+            "projection_version": 4,
+            "through_sequence": 8,
+            "current_turn_key": null,
+            "current_group_key": null,
+            "plan_sequence": null,
+            "segment_start_sequence": 8,
+            "plan_summary": null,
+            "plan_body_bytes": 0,
+            "latest_full_happened_sequence": 7,
+            "latest_focus_happened_sequence": 7
+          }
+        ],
+        "rows": [
+          {
+            "conversation_id": "fixture",
+            "sequence": 1,
+            "row_kind": "prompt",
+            "created_at": 100,
+            "settlement_sequence": null,
+            "changed_sequence": 1,
+            "sender_message_id": null,
+            "turn_key": null,
+            "work_group_key": null,
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 2,
+            "row_kind": "agent_message",
+            "created_at": 101,
+            "settlement_sequence": null,
+            "changed_sequence": 2,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 3,
+            "row_kind": "prompt",
+            "created_at": 102,
+            "settlement_sequence": null,
+            "changed_sequence": 3,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 4,
+            "row_kind": "agent_message",
+            "created_at": 103,
+            "settlement_sequence": null,
+            "changed_sequence": 4,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 5,
+            "row_kind": "turn_ended",
+            "created_at": 104,
+            "settlement_sequence": null,
+            "changed_sequence": 5,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 6,
+            "row_kind": "prompt",
+            "created_at": 105,
+            "settlement_sequence": null,
+            "changed_sequence": 6,
+            "sender_message_id": null,
+            "turn_key": null,
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 7,
+            "row_kind": "agent_message",
+            "created_at": 106,
+            "settlement_sequence": null,
+            "changed_sequence": 7,
+            "sender_message_id": null,
+            "turn_key": "turn:e6",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": "{\"kind\":\"agent_message\",\"sender_label\":null,\"excerpt\":\"Next reply\",\"_owner_message_preview\":\"Next reply\"}",
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 8,
+            "row_kind": "turn_ended",
+            "created_at": 107,
+            "settlement_sequence": null,
+            "changed_sequence": 8,
+            "sender_message_id": null,
+            "turn_key": "turn:e6",
+            "work_group_key": null,
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          }
+        ],
+        "turns": [
+          {
+            "conversation_id": "fixture",
+            "turn_key": "turn:e1",
+            "source_sequence": 1,
+            "created_at": 100,
+            "started_at_milliseconds": 100000,
+            "focus_head": 1,
+            "ending_sequence": 5,
+            "ending": "completed",
+            "ended_at": 104,
+            "full_message_count": 2,
+            "focus_message_count": 2,
+            "latest_full_message_sequence": 4,
+            "latest_focus_message_sequence": 4,
+            "tool_call_count": 0,
+            "changed_sequence": 5
+          },
+          {
+            "conversation_id": "fixture",
+            "turn_key": "turn:e6",
+            "source_sequence": 6,
+            "created_at": 105,
+            "started_at_milliseconds": 105000,
+            "focus_head": 1,
+            "ending_sequence": 8,
+            "ending": "completed",
+            "ended_at": 107,
+            "full_message_count": 1,
+            "focus_message_count": 1,
+            "latest_full_message_sequence": 7,
+            "latest_focus_message_sequence": 7,
+            "tool_call_count": 0,
+            "changed_sequence": 8
+          }
+        ],
+        "groups": [],
+        "lookups": []
+      },
+      "pages": {
+        "focus": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "focus",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "turn",
+              "key": "turn:e1",
+              "order": {
+                "sequence": 1,
+                "slot": 1
+              },
+              "changed_through_sequence": 5,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 100000,
+              "ending": "completed",
+              "duration_seconds": 4,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": "e4",
+              "is_latest": false
+            },
+            {
+              "kind": "row",
+              "key": "e2",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 2,
+                "slot": 0
+              },
+              "source_sequence": 2,
+              "sender_message_id": null,
+              "changed_through_sequence": 2,
+              "created_at": 101,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "An owner message from a hidden turn"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e3",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 3,
+                "slot": 0
+              },
+              "source_sequence": 3,
+              "sender_message_id": null,
+              "changed_through_sequence": 3,
+              "created_at": 102,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "owner steer"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "steer",
+                  "sent_at_unix_milliseconds": 102000
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e4",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 4,
+                "slot": 0
+              },
+              "source_sequence": 4,
+              "sender_message_id": null,
+              "changed_through_sequence": 4,
+              "created_at": 103,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "The final answer"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e6",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 6,
+                "slot": 0
+              },
+              "source_sequence": 6,
+              "sender_message_id": null,
+              "changed_through_sequence": 6,
+              "created_at": 105,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Next owner turn"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 105000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e6",
+              "order": {
+                "sequence": 6,
+                "slot": 1
+              },
+              "changed_through_sequence": 8,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 105000,
+              "ending": "completed",
+              "duration_seconds": 2,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": "e7",
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e7",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 7,
+                "slot": 0
+              },
+              "source_sequence": 7,
+              "sender_message_id": null,
+              "changed_through_sequence": 7,
+              "created_at": 106,
+              "turn_key": "turn:e6",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Next reply"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            }
+          ],
+          "body_bytes": 582,
+          "older": null,
+          "newer": null
+        },
+        "full": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "full",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e1",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 1,
+                "slot": 0
+              },
+              "source_sequence": 1,
+              "sender_message_id": null,
+              "changed_through_sequence": 1,
+              "created_at": 100,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "worker instruction"
+                    }
+                  ],
+                  "sender_label": "worker",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 100000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e1",
+              "order": {
+                "sequence": 1,
+                "slot": 1
+              },
+              "changed_through_sequence": 5,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 100000,
+              "ending": "completed",
+              "duration_seconds": 4,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": "e4",
+              "is_latest": false
+            },
+            {
+              "kind": "row",
+              "key": "e2",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 2,
+                "slot": 0
+              },
+              "source_sequence": 2,
+              "sender_message_id": null,
+              "changed_through_sequence": 2,
+              "created_at": 101,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "An owner message from a hidden turn"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e3",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 3,
+                "slot": 0
+              },
+              "source_sequence": 3,
+              "sender_message_id": null,
+              "changed_through_sequence": 3,
+              "created_at": 102,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "owner steer"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "steer",
+                  "sent_at_unix_milliseconds": 102000
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e4",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 4,
+                "slot": 0
+              },
+              "source_sequence": 4,
+              "sender_message_id": null,
+              "changed_through_sequence": 4,
+              "created_at": 103,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "The final answer"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e5",
+              "row_kind": "turn_ended",
+              "order": {
+                "sequence": 5,
+                "slot": 0
+              },
+              "source_sequence": 5,
+              "sender_message_id": null,
+              "changed_through_sequence": 5,
+              "created_at": 104,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "turn_ended",
+                  "ending": "completed",
+                  "error_summary": null,
+                  "automatic_compaction_result": null
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e6",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 6,
+                "slot": 0
+              },
+              "source_sequence": 6,
+              "sender_message_id": null,
+              "changed_through_sequence": 6,
+              "created_at": 105,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Next owner turn"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 105000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e6",
+              "order": {
+                "sequence": 6,
+                "slot": 1
+              },
+              "changed_through_sequence": 8,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 105000,
+              "ending": "completed",
+              "duration_seconds": 2,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": "e7",
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e7",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 7,
+                "slot": 0
+              },
+              "source_sequence": 7,
+              "sender_message_id": null,
+              "changed_through_sequence": 7,
+              "created_at": 106,
+              "turn_key": "turn:e6",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Next reply"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e8",
+              "row_kind": "turn_ended",
+              "order": {
+                "sequence": 8,
+                "slot": 0
+              },
+              "source_sequence": 8,
+              "sender_message_id": null,
+              "changed_through_sequence": 8,
+              "created_at": 107,
+              "turn_key": "turn:e6",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "turn_ended",
+                  "ending": "completed",
+                  "error_summary": null,
+                  "automatic_compaction_result": null
+                }
+              }
+            }
+          ],
+          "body_bytes": 926,
+          "older": null,
+          "newer": null
+        }
+      }
+    },
+    {
+      "name": "legacy-owner-and-forged-label",
+      "projection": {
+        "state": [
+          {
+            "conversation_id": "fixture",
+            "projection_version": 4,
+            "through_sequence": 6,
+            "current_turn_key": null,
+            "current_group_key": null,
+            "plan_sequence": null,
+            "segment_start_sequence": 6,
+            "plan_summary": null,
+            "plan_body_bytes": 0,
+            "latest_full_happened_sequence": 5,
+            "latest_focus_happened_sequence": 4
+          }
+        ],
+        "rows": [
+          {
+            "conversation_id": "fixture",
+            "sequence": 1,
+            "row_kind": "prompt",
+            "created_at": 100,
+            "settlement_sequence": null,
+            "changed_sequence": 1,
+            "sender_message_id": null,
+            "turn_key": null,
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 2,
+            "row_kind": "turn_ended",
+            "created_at": 101,
+            "settlement_sequence": null,
+            "changed_sequence": 2,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 3,
+            "row_kind": "prompt",
+            "created_at": 102,
+            "settlement_sequence": null,
+            "changed_sequence": 3,
+            "sender_message_id": null,
+            "turn_key": null,
+            "work_group_key": null,
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 4,
+            "row_kind": "turn_ended",
+            "created_at": 103,
+            "settlement_sequence": null,
+            "changed_sequence": 4,
+            "sender_message_id": null,
+            "turn_key": "turn:e3",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": "{\"kind\":\"turn_ended\",\"ending\":\"failed\",\"error_summary\":null,\"automatic_compaction_result\":null}",
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 5,
+            "row_kind": "prompt",
+            "created_at": 104,
+            "settlement_sequence": null,
+            "changed_sequence": 5,
+            "sender_message_id": null,
+            "turn_key": null,
+            "work_group_key": null,
+            "focus_visible": 0,
+            "rest_summary": "{\"kind\":\"prompt\",\"sender_label\":\"owner\",\"excerpt\":\"Explicit recipient is not legacy\"}",
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 6,
+            "row_kind": "turn_ended",
+            "created_at": 105,
+            "settlement_sequence": null,
+            "changed_sequence": 6,
+            "sender_message_id": null,
+            "turn_key": "turn:e5",
+            "work_group_key": null,
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          }
+        ],
+        "turns": [
+          {
+            "conversation_id": "fixture",
+            "turn_key": "turn:e1",
+            "source_sequence": 1,
+            "created_at": 100,
+            "started_at_milliseconds": 100000,
+            "focus_head": 1,
+            "ending_sequence": 2,
+            "ending": "completed",
+            "ended_at": 101,
+            "full_message_count": 0,
+            "focus_message_count": 0,
+            "latest_full_message_sequence": null,
+            "latest_focus_message_sequence": null,
+            "tool_call_count": 0,
+            "changed_sequence": 2
+          },
+          {
+            "conversation_id": "fixture",
+            "turn_key": "turn:e3",
+            "source_sequence": 3,
+            "created_at": 102,
+            "started_at_milliseconds": 102000,
+            "focus_head": 0,
+            "ending_sequence": 4,
+            "ending": "failed",
+            "ended_at": 103,
+            "full_message_count": 0,
+            "focus_message_count": 0,
+            "latest_full_message_sequence": null,
+            "latest_focus_message_sequence": null,
+            "tool_call_count": 0,
+            "changed_sequence": 4
+          },
+          {
+            "conversation_id": "fixture",
+            "turn_key": "turn:e5",
+            "source_sequence": 5,
+            "created_at": 104,
+            "started_at_milliseconds": 104000,
+            "focus_head": 0,
+            "ending_sequence": 6,
+            "ending": "completed",
+            "ended_at": 105,
+            "full_message_count": 0,
+            "focus_message_count": 0,
+            "latest_full_message_sequence": null,
+            "latest_focus_message_sequence": null,
+            "tool_call_count": 0,
+            "changed_sequence": 6
+          }
+        ],
+        "groups": [],
+        "lookups": []
+      },
+      "pages": {
+        "focus": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "focus",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e1",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 1,
+                "slot": 0
+              },
+              "source_sequence": 1,
+              "sender_message_id": null,
+              "changed_through_sequence": 1,
+              "created_at": 100,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Legacy owner"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 100000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e1",
+              "order": {
+                "sequence": 1,
+                "slot": 1
+              },
+              "changed_through_sequence": 2,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 100000,
+              "ending": "completed",
+              "duration_seconds": 1,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": null,
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e4",
+              "row_kind": "turn_ended",
+              "order": {
+                "sequence": 4,
+                "slot": 0
+              },
+              "source_sequence": 4,
+              "sender_message_id": null,
+              "changed_through_sequence": 4,
+              "created_at": 103,
+              "turn_key": "turn:e3",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "turn_ended",
+                  "ending": "failed",
+                  "error_summary": null,
+                  "automatic_compaction_result": null
+                }
+              }
+            }
+          ],
+          "body_bytes": 236,
+          "older": null,
+          "newer": null
+        },
+        "full": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "full",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e1",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 1,
+                "slot": 0
+              },
+              "source_sequence": 1,
+              "sender_message_id": null,
+              "changed_through_sequence": 1,
+              "created_at": 100,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Legacy owner"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 100000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e1",
+              "order": {
+                "sequence": 1,
+                "slot": 1
+              },
+              "changed_through_sequence": 2,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 100000,
+              "ending": "completed",
+              "duration_seconds": 1,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": null,
+              "is_latest": false
+            },
+            {
+              "kind": "row",
+              "key": "e2",
+              "row_kind": "turn_ended",
+              "order": {
+                "sequence": 2,
+                "slot": 0
+              },
+              "source_sequence": 2,
+              "sender_message_id": null,
+              "changed_through_sequence": 2,
+              "created_at": 101,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "turn_ended",
+                  "ending": "completed",
+                  "error_summary": null,
+                  "automatic_compaction_result": null
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e3",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 3,
+                "slot": 0
+              },
+              "source_sequence": 3,
+              "sender_message_id": null,
+              "changed_through_sequence": 3,
+              "created_at": 102,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Not owner"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 102000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e3",
+              "order": {
+                "sequence": 3,
+                "slot": 1
+              },
+              "changed_through_sequence": 4,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 102000,
+              "ending": "failed",
+              "duration_seconds": 1,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": null,
+              "is_latest": false
+            },
+            {
+              "kind": "row",
+              "key": "e4",
+              "row_kind": "turn_ended",
+              "order": {
+                "sequence": 4,
+                "slot": 0
+              },
+              "source_sequence": 4,
+              "sender_message_id": null,
+              "changed_through_sequence": 4,
+              "created_at": 103,
+              "turn_key": "turn:e3",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "turn_ended",
+                  "ending": "failed",
+                  "error_summary": null,
+                  "automatic_compaction_result": null
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e5",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 5,
+                "slot": 0
+              },
+              "source_sequence": 5,
+              "sender_message_id": null,
+              "changed_through_sequence": 5,
+              "created_at": 104,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Explicit recipient is not legacy"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 104000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e5",
+              "order": {
+                "sequence": 5,
+                "slot": 1
+              },
+              "changed_through_sequence": 6,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 104000,
+              "ending": "completed",
+              "duration_seconds": 1,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": null,
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e6",
+              "row_kind": "turn_ended",
+              "order": {
+                "sequence": 6,
+                "slot": 0
+              },
+              "source_sequence": 6,
+              "sender_message_id": null,
+              "changed_through_sequence": 6,
+              "created_at": 105,
+              "turn_key": "turn:e5",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "turn_ended",
+                  "ending": "completed",
+                  "error_summary": null,
+                  "automatic_compaction_result": null
+                }
+              }
+            }
+          ],
+          "body_bytes": 731,
+          "older": null,
+          "newer": null
+        }
+      }
+    },
+    {
+      "name": "settlement-and-reconciliation",
+      "projection": {
+        "state": [
+          {
+            "conversation_id": "fixture",
+            "projection_version": 4,
+            "through_sequence": 7,
+            "current_turn_key": null,
+            "current_group_key": null,
+            "plan_sequence": null,
+            "segment_start_sequence": 7,
+            "plan_summary": null,
+            "plan_body_bytes": 0,
+            "latest_full_happened_sequence": 6,
+            "latest_focus_happened_sequence": 6
+          }
+        ],
+        "rows": [
+          {
+            "conversation_id": "fixture",
+            "sequence": 1,
+            "row_kind": "prompt_uncertain",
+            "created_at": 100,
+            "settlement_sequence": null,
+            "changed_sequence": 3,
+            "sender_message_id": "same",
+            "turn_key": null,
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 1
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 2,
+            "row_kind": "prompt_uncertain",
+            "created_at": 101,
+            "settlement_sequence": null,
+            "changed_sequence": 4,
+            "sender_message_id": null,
+            "turn_key": null,
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 1
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 3,
+            "row_kind": "prompt",
+            "created_at": 102,
+            "settlement_sequence": null,
+            "changed_sequence": 6,
+            "sender_message_id": "same",
+            "turn_key": null,
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 4,
+            "row_kind": "prompt",
+            "created_at": 103,
+            "settlement_sequence": null,
+            "changed_sequence": 6,
+            "sender_message_id": null,
+            "turn_key": "turn:e3",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 5,
+            "row_kind": "prompt_refused",
+            "created_at": 104,
+            "settlement_sequence": null,
+            "changed_sequence": 6,
+            "sender_message_id": "refused",
+            "turn_key": "turn:e3",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 1
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 6,
+            "row_kind": "prompt_discarded",
+            "created_at": 105,
+            "settlement_sequence": null,
+            "changed_sequence": 6,
+            "sender_message_id": "refused",
+            "turn_key": "turn:e3",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": "{\"kind\":\"prompt_discarded\",\"sender_label\":\"owner\",\"refusal_reason\":null,\"refusal_detail_excerpt\":null}",
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 7,
+            "row_kind": "turn_ended",
+            "created_at": 106,
+            "settlement_sequence": null,
+            "changed_sequence": 7,
+            "sender_message_id": null,
+            "turn_key": "turn:e3",
+            "work_group_key": null,
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          }
+        ],
+        "turns": [
+          {
+            "conversation_id": "fixture",
+            "turn_key": "turn:e3",
+            "source_sequence": 3,
+            "created_at": 102,
+            "started_at_milliseconds": 102000,
+            "focus_head": 1,
+            "ending_sequence": 7,
+            "ending": "completed",
+            "ended_at": 106,
+            "full_message_count": 0,
+            "focus_message_count": 0,
+            "latest_full_message_sequence": null,
+            "latest_focus_message_sequence": null,
+            "tool_call_count": 0,
+            "changed_sequence": 7
+          }
+        ],
+        "groups": [],
+        "lookups": [
+          {
+            "conversation_id": "fixture",
+            "lookup_kind": "sender_message",
+            "lookup_id": "refused",
+            "source_sequence": 6,
+            "turn_key": "turn:e3"
+          },
+          {
+            "conversation_id": "fixture",
+            "lookup_kind": "sender_message",
+            "lookup_id": "same",
+            "source_sequence": 3,
+            "turn_key": null
+          }
+        ]
+      },
+      "pages": {
+        "focus": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "focus",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e3",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 3,
+                "slot": 0
+              },
+              "source_sequence": 3,
+              "sender_message_id": "same",
+              "changed_through_sequence": 6,
+              "created_at": 102,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Delivered"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 102000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e3",
+              "order": {
+                "sequence": 3,
+                "slot": 1
+              },
+              "changed_through_sequence": 7,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 102000,
+              "ending": "completed",
+              "duration_seconds": 4,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": null,
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e4",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 4,
+                "slot": 0
+              },
+              "source_sequence": 4,
+              "sender_message_id": null,
+              "changed_through_sequence": 6,
+              "created_at": 103,
+              "turn_key": "turn:e3",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Reconciled unminted"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "steer",
+                  "sent_at_unix_milliseconds": 103000
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e6",
+              "row_kind": "prompt_discarded",
+              "order": {
+                "sequence": 6,
+                "slot": 0
+              },
+              "source_sequence": 6,
+              "sender_message_id": "refused",
+              "changed_through_sequence": 6,
+              "created_at": 105,
+              "turn_key": "turn:e3",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt_discarded",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Discarded"
+                    }
+                  ],
+                  "sender_label": "owner"
+                }
+              }
+            }
+          ],
+          "body_bytes": 384,
+          "older": null,
+          "newer": null
+        },
+        "full": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "full",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e3",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 3,
+                "slot": 0
+              },
+              "source_sequence": 3,
+              "sender_message_id": "same",
+              "changed_through_sequence": 6,
+              "created_at": 102,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Delivered"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 102000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e3",
+              "order": {
+                "sequence": 3,
+                "slot": 1
+              },
+              "changed_through_sequence": 7,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 102000,
+              "ending": "completed",
+              "duration_seconds": 4,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": null,
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e4",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 4,
+                "slot": 0
+              },
+              "source_sequence": 4,
+              "sender_message_id": null,
+              "changed_through_sequence": 6,
+              "created_at": 103,
+              "turn_key": "turn:e3",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Reconciled unminted"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "steer",
+                  "sent_at_unix_milliseconds": 103000
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e6",
+              "row_kind": "prompt_discarded",
+              "order": {
+                "sequence": 6,
+                "slot": 0
+              },
+              "source_sequence": 6,
+              "sender_message_id": "refused",
+              "changed_through_sequence": 6,
+              "created_at": 105,
+              "turn_key": "turn:e3",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt_discarded",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Discarded"
+                    }
+                  ],
+                  "sender_label": "owner"
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e7",
+              "row_kind": "turn_ended",
+              "order": {
+                "sequence": 7,
+                "slot": 0
+              },
+              "source_sequence": 7,
+              "sender_message_id": null,
+              "changed_through_sequence": 7,
+              "created_at": 106,
+              "turn_key": "turn:e3",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "turn_ended",
+                  "ending": "completed",
+                  "error_summary": null,
+                  "automatic_compaction_result": null
+                }
+              }
+            }
+          ],
+          "body_bytes": 482,
+          "older": null,
+          "newer": null
+        }
+      }
+    },
+    {
+      "name": "asks-answer-and-turn-expiry",
+      "projection": {
+        "state": [
+          {
+            "conversation_id": "fixture",
+            "projection_version": 4,
+            "through_sequence": 8,
+            "current_turn_key": null,
+            "current_group_key": null,
+            "plan_sequence": null,
+            "segment_start_sequence": 8,
+            "plan_summary": null,
+            "plan_body_bytes": 0,
+            "latest_full_happened_sequence": 8,
+            "latest_focus_happened_sequence": 8
+          }
+        ],
+        "rows": [
+          {
+            "conversation_id": "fixture",
+            "sequence": 1,
+            "row_kind": "prompt",
+            "created_at": 100,
+            "settlement_sequence": null,
+            "changed_sequence": 1,
+            "sender_message_id": null,
+            "turn_key": null,
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 2,
+            "row_kind": "permission_ask",
+            "created_at": 101,
+            "settlement_sequence": 3,
+            "changed_sequence": 3,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": "Continue?",
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 4,
+            "row_kind": "user_input",
+            "created_at": 103,
+            "settlement_sequence": 5,
+            "changed_sequence": 5,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 6,
+            "row_kind": "permission_ask",
+            "created_at": 105,
+            "settlement_sequence": null,
+            "changed_sequence": 6,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": "Other?",
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 7,
+            "row_kind": "user_input",
+            "created_at": 106,
+            "settlement_sequence": null,
+            "changed_sequence": 7,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 8,
+            "row_kind": "turn_ended",
+            "created_at": 107,
+            "settlement_sequence": null,
+            "changed_sequence": 8,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": "{\"kind\":\"turn_ended\",\"ending\":\"interrupted\",\"error_summary\":null,\"automatic_compaction_result\":null}",
+            "permission_title_excerpt": null,
+            "removed": 0
+          }
+        ],
+        "turns": [
+          {
+            "conversation_id": "fixture",
+            "turn_key": "turn:e1",
+            "source_sequence": 1,
+            "created_at": 100,
+            "started_at_milliseconds": 100000,
+            "focus_head": 1,
+            "ending_sequence": 8,
+            "ending": "interrupted",
+            "ended_at": 107,
+            "full_message_count": 0,
+            "focus_message_count": 0,
+            "latest_full_message_sequence": null,
+            "latest_focus_message_sequence": null,
+            "tool_call_count": 0,
+            "changed_sequence": 8
+          }
+        ],
+        "groups": [],
+        "lookups": []
+      },
+      "pages": {
+        "focus": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "focus",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e1",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 1,
+                "slot": 0
+              },
+              "source_sequence": 1,
+              "sender_message_id": null,
+              "changed_through_sequence": 1,
+              "created_at": 100,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Work"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 100000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e1",
+              "order": {
+                "sequence": 1,
+                "slot": 1
+              },
+              "changed_through_sequence": 8,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 100000,
+              "ending": "interrupted",
+              "duration_seconds": 7,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": null,
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e2",
+              "row_kind": "permission_ask",
+              "order": {
+                "sequence": 2,
+                "slot": 0
+              },
+              "source_sequence": 2,
+              "sender_message_id": null,
+              "changed_through_sequence": 3,
+              "created_at": 101,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "permission_ask",
+                  "ask_id": "ask-a",
+                  "title": "Continue?",
+                  "detail": null,
+                  "options": [
+                    {
+                      "option_id": "yes",
+                      "label": "Yes",
+                      "option_kind": "allow_once"
+                    }
+                  ],
+                  "state": "answered",
+                  "dead_reason": null,
+                  "answered_option_label": "Yes"
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e4",
+              "row_kind": "user_input",
+              "order": {
+                "sequence": 4,
+                "slot": 0
+              },
+              "source_sequence": 4,
+              "sender_message_id": null,
+              "changed_through_sequence": 5,
+              "created_at": 103,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "user_input",
+                  "request_id": "input-a",
+                  "questions": [
+                    {
+                      "question_id": "q",
+                      "header": "Pick",
+                      "question": "Which?",
+                      "options": [
+                        {
+                          "label": "A",
+                          "description": "A option"
+                        }
+                      ],
+                      "multi_select": false,
+                      "allow_other": true
+                    }
+                  ],
+                  "state": "answered",
+                  "dead_reason": null,
+                  "answers": [
+                    {
+                      "question_id": "q",
+                      "answers": [
+                        "A"
+                      ]
+                    }
+                  ],
+                  "failure_detail": null
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e6",
+              "row_kind": "permission_ask",
+              "order": {
+                "sequence": 6,
+                "slot": 0
+              },
+              "source_sequence": 6,
+              "sender_message_id": null,
+              "changed_through_sequence": 6,
+              "created_at": 105,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "permission_ask",
+                  "ask_id": "ask-b",
+                  "title": "Other?",
+                  "detail": "Detail",
+                  "options": [],
+                  "state": "dead",
+                  "dead_reason": "turn_ended",
+                  "answered_option_label": null
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e7",
+              "row_kind": "user_input",
+              "order": {
+                "sequence": 7,
+                "slot": 0
+              },
+              "source_sequence": 7,
+              "sender_message_id": null,
+              "changed_through_sequence": 7,
+              "created_at": 106,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "user_input",
+                  "request_id": "input-b",
+                  "questions": [],
+                  "state": "dead",
+                  "dead_reason": "turn_ended",
+                  "answers": null,
+                  "failure_detail": null
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e8",
+              "row_kind": "turn_ended",
+              "order": {
+                "sequence": 8,
+                "slot": 0
+              },
+              "source_sequence": 8,
+              "sender_message_id": null,
+              "changed_through_sequence": 8,
+              "created_at": 107,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "turn_ended",
+                  "ending": "interrupted",
+                  "error_summary": null,
+                  "automatic_compaction_result": null
+                }
+              }
+            }
+          ],
+          "body_bytes": 1062,
+          "older": null,
+          "newer": null
+        },
+        "full": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "full",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e1",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 1,
+                "slot": 0
+              },
+              "source_sequence": 1,
+              "sender_message_id": null,
+              "changed_through_sequence": 1,
+              "created_at": 100,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Work"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 100000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e1",
+              "order": {
+                "sequence": 1,
+                "slot": 1
+              },
+              "changed_through_sequence": 8,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 100000,
+              "ending": "interrupted",
+              "duration_seconds": 7,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": null,
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e2",
+              "row_kind": "permission_ask",
+              "order": {
+                "sequence": 2,
+                "slot": 0
+              },
+              "source_sequence": 2,
+              "sender_message_id": null,
+              "changed_through_sequence": 3,
+              "created_at": 101,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "permission_ask",
+                  "ask_id": "ask-a",
+                  "title": "Continue?",
+                  "detail": null,
+                  "options": [
+                    {
+                      "option_id": "yes",
+                      "label": "Yes",
+                      "option_kind": "allow_once"
+                    }
+                  ],
+                  "state": "answered",
+                  "dead_reason": null,
+                  "answered_option_label": "Yes"
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e4",
+              "row_kind": "user_input",
+              "order": {
+                "sequence": 4,
+                "slot": 0
+              },
+              "source_sequence": 4,
+              "sender_message_id": null,
+              "changed_through_sequence": 5,
+              "created_at": 103,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "user_input",
+                  "request_id": "input-a",
+                  "questions": [
+                    {
+                      "question_id": "q",
+                      "header": "Pick",
+                      "question": "Which?",
+                      "options": [
+                        {
+                          "label": "A",
+                          "description": "A option"
+                        }
+                      ],
+                      "multi_select": false,
+                      "allow_other": true
+                    }
+                  ],
+                  "state": "answered",
+                  "dead_reason": null,
+                  "answers": [
+                    {
+                      "question_id": "q",
+                      "answers": [
+                        "A"
+                      ]
+                    }
+                  ],
+                  "failure_detail": null
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e6",
+              "row_kind": "permission_ask",
+              "order": {
+                "sequence": 6,
+                "slot": 0
+              },
+              "source_sequence": 6,
+              "sender_message_id": null,
+              "changed_through_sequence": 6,
+              "created_at": 105,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "permission_ask",
+                  "ask_id": "ask-b",
+                  "title": "Other?",
+                  "detail": "Detail",
+                  "options": [],
+                  "state": "dead",
+                  "dead_reason": "turn_ended",
+                  "answered_option_label": null
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e7",
+              "row_kind": "user_input",
+              "order": {
+                "sequence": 7,
+                "slot": 0
+              },
+              "source_sequence": 7,
+              "sender_message_id": null,
+              "changed_through_sequence": 7,
+              "created_at": 106,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "user_input",
+                  "request_id": "input-b",
+                  "questions": [],
+                  "state": "dead",
+                  "dead_reason": "turn_ended",
+                  "answers": null,
+                  "failure_detail": null
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e8",
+              "row_kind": "turn_ended",
+              "order": {
+                "sequence": 8,
+                "slot": 0
+              },
+              "source_sequence": 8,
+              "sender_message_id": null,
+              "changed_through_sequence": 8,
+              "created_at": 107,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "turn_ended",
+                  "ending": "interrupted",
+                  "error_summary": null,
+                  "automatic_compaction_result": null
+                }
+              }
+            }
+          ],
+          "body_bytes": 1062,
+          "older": null,
+          "newer": null
+        }
+      }
+    },
+    {
+      "name": "failed-input-without-request-and-retired-missing-reply",
+      "projection": {
+        "state": [
+          {
+            "conversation_id": "fixture",
+            "projection_version": 4,
+            "through_sequence": 4,
+            "current_turn_key": null,
+            "current_group_key": null,
+            "plan_sequence": null,
+            "segment_start_sequence": 4,
+            "plan_summary": null,
+            "plan_body_bytes": 0,
+            "latest_full_happened_sequence": 4,
+            "latest_focus_happened_sequence": 4
+          }
+        ],
+        "rows": [
+          {
+            "conversation_id": "fixture",
+            "sequence": 1,
+            "row_kind": "prompt",
+            "created_at": 100,
+            "settlement_sequence": null,
+            "changed_sequence": 1,
+            "sender_message_id": null,
+            "turn_key": null,
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 2,
+            "row_kind": "user_input",
+            "created_at": 101,
+            "settlement_sequence": null,
+            "changed_sequence": 2,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 4,
+            "row_kind": "turn_ended",
+            "created_at": 103,
+            "settlement_sequence": null,
+            "changed_sequence": 4,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": "{\"kind\":\"turn_ended\",\"ending\":\"failed\",\"error_summary\":\"Failed work\",\"automatic_compaction_result\":null}",
+            "permission_title_excerpt": null,
+            "removed": 0
+          }
+        ],
+        "turns": [
+          {
+            "conversation_id": "fixture",
+            "turn_key": "turn:e1",
+            "source_sequence": 1,
+            "created_at": 100,
+            "started_at_milliseconds": 100000,
+            "focus_head": 1,
+            "ending_sequence": 4,
+            "ending": "failed",
+            "ended_at": 103,
+            "full_message_count": 0,
+            "focus_message_count": 0,
+            "latest_full_message_sequence": null,
+            "latest_focus_message_sequence": null,
+            "tool_call_count": 0,
+            "changed_sequence": 4
+          }
+        ],
+        "groups": [],
+        "lookups": []
+      },
+      "pages": {
+        "focus": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "focus",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e1",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 1,
+                "slot": 0
+              },
+              "source_sequence": 1,
+              "sender_message_id": null,
+              "changed_through_sequence": 1,
+              "created_at": 100,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Start"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 100000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e1",
+              "order": {
+                "sequence": 1,
+                "slot": 1
+              },
+              "changed_through_sequence": 4,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 100000,
+              "ending": "failed",
+              "duration_seconds": 3,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": null,
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e2",
+              "row_kind": "user_input",
+              "order": {
+                "sequence": 2,
+                "slot": 0
+              },
+              "source_sequence": 2,
+              "sender_message_id": null,
+              "changed_through_sequence": 2,
+              "created_at": 101,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "user_input",
+                  "request_id": "malformed",
+                  "questions": [],
+                  "state": "failed",
+                  "dead_reason": null,
+                  "answers": null,
+                  "failure_detail": "Invalid input request"
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e4",
+              "row_kind": "turn_ended",
+              "order": {
+                "sequence": 4,
+                "slot": 0
+              },
+              "source_sequence": 4,
+              "sender_message_id": null,
+              "changed_through_sequence": 4,
+              "created_at": 103,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "turn_ended",
+                  "ending": "failed",
+                  "error_summary": "Failed work",
+                  "automatic_compaction_result": null
+                }
+              }
+            }
+          ],
+          "body_bytes": 391,
+          "older": null,
+          "newer": null
+        },
+        "full": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "full",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e1",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 1,
+                "slot": 0
+              },
+              "source_sequence": 1,
+              "sender_message_id": null,
+              "changed_through_sequence": 1,
+              "created_at": 100,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Start"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 100000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e1",
+              "order": {
+                "sequence": 1,
+                "slot": 1
+              },
+              "changed_through_sequence": 4,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 100000,
+              "ending": "failed",
+              "duration_seconds": 3,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": null,
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e2",
+              "row_kind": "user_input",
+              "order": {
+                "sequence": 2,
+                "slot": 0
+              },
+              "source_sequence": 2,
+              "sender_message_id": null,
+              "changed_through_sequence": 2,
+              "created_at": 101,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "user_input",
+                  "request_id": "malformed",
+                  "questions": [],
+                  "state": "failed",
+                  "dead_reason": null,
+                  "answers": null,
+                  "failure_detail": "Invalid input request"
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e4",
+              "row_kind": "turn_ended",
+              "order": {
+                "sequence": 4,
+                "slot": 0
+              },
+              "source_sequence": 4,
+              "sender_message_id": null,
+              "changed_through_sequence": 4,
+              "created_at": 103,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "turn_ended",
+                  "ending": "failed",
+                  "error_summary": "Failed work",
+                  "automatic_compaction_result": null
+                }
+              }
+            }
+          ],
+          "body_bytes": 391,
+          "older": null,
+          "newer": null
+        }
+      }
+    },
+    {
+      "name": "stopped-without-ending",
+      "projection": {
+        "state": [
+          {
+            "conversation_id": "fixture",
+            "projection_version": 4,
+            "through_sequence": 4,
+            "current_turn_key": "turn:e1",
+            "current_group_key": null,
+            "plan_sequence": null,
+            "segment_start_sequence": 1,
+            "plan_summary": null,
+            "plan_body_bytes": 0,
+            "latest_full_happened_sequence": 4,
+            "latest_focus_happened_sequence": 4
+          }
+        ],
+        "rows": [
+          {
+            "conversation_id": "fixture",
+            "sequence": 1,
+            "row_kind": "prompt",
+            "created_at": 100,
+            "settlement_sequence": null,
+            "changed_sequence": 1,
+            "sender_message_id": null,
+            "turn_key": null,
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 2,
+            "row_kind": "permission_ask",
+            "created_at": 101,
+            "settlement_sequence": null,
+            "changed_sequence": 2,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": "Permission",
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 3,
+            "row_kind": "user_input",
+            "created_at": 102,
+            "settlement_sequence": null,
+            "changed_sequence": 3,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 4,
+            "row_kind": "agent_message",
+            "created_at": 103,
+            "settlement_sequence": null,
+            "changed_sequence": 4,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": "{\"kind\":\"agent_message\",\"sender_label\":null,\"excerpt\":\"Before stop\",\"_owner_message_preview\":\"Before stop\"}",
+            "permission_title_excerpt": null,
+            "removed": 0
+          }
+        ],
+        "turns": [
+          {
+            "conversation_id": "fixture",
+            "turn_key": "turn:e1",
+            "source_sequence": 1,
+            "created_at": 100,
+            "started_at_milliseconds": 100000,
+            "focus_head": 1,
+            "ending_sequence": null,
+            "ending": null,
+            "ended_at": null,
+            "full_message_count": 1,
+            "focus_message_count": 1,
+            "latest_full_message_sequence": 4,
+            "latest_focus_message_sequence": 4,
+            "tool_call_count": 0,
+            "changed_sequence": 4
+          }
+        ],
+        "groups": [],
+        "lookups": [
+          {
+            "conversation_id": "fixture",
+            "lookup_kind": "permission",
+            "lookup_id": "pending",
+            "source_sequence": 2,
+            "turn_key": "turn:e1"
+          },
+          {
+            "conversation_id": "fixture",
+            "lookup_kind": "user_input",
+            "lookup_id": "pending-input",
+            "source_sequence": 3,
+            "turn_key": "turn:e1"
+          }
+        ]
+      },
+      "pages": {
+        "focus": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "focus",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e1",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 1,
+                "slot": 0
+              },
+              "source_sequence": 1,
+              "sender_message_id": null,
+              "changed_through_sequence": 1,
+              "created_at": 100,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Start"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 100000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e1",
+              "order": {
+                "sequence": 1,
+                "slot": 1
+              },
+              "changed_through_sequence": 4,
+              "settled": true,
+              "stopped": true,
+              "started_at_unix_milliseconds": 100000,
+              "ending": null,
+              "duration_seconds": null,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": "e4",
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e2",
+              "row_kind": "permission_ask",
+              "order": {
+                "sequence": 2,
+                "slot": 0
+              },
+              "source_sequence": 2,
+              "sender_message_id": null,
+              "changed_through_sequence": 2,
+              "created_at": 101,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "permission_ask",
+                  "ask_id": "pending",
+                  "title": "Permission",
+                  "detail": null,
+                  "options": [],
+                  "state": "dead",
+                  "dead_reason": "no_ending_recorded",
+                  "answered_option_label": null
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e3",
+              "row_kind": "user_input",
+              "order": {
+                "sequence": 3,
+                "slot": 0
+              },
+              "source_sequence": 3,
+              "sender_message_id": null,
+              "changed_through_sequence": 3,
+              "created_at": 102,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "user_input",
+                  "request_id": "pending-input",
+                  "questions": [],
+                  "state": "dead",
+                  "dead_reason": "no_ending_recorded",
+                  "answers": null,
+                  "failure_detail": null
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e4",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 4,
+                "slot": 0
+              },
+              "source_sequence": 4,
+              "sender_message_id": null,
+              "changed_through_sequence": 4,
+              "created_at": 103,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Before stop"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            }
+          ],
+          "body_bytes": 547,
+          "older": null,
+          "newer": null
+        },
+        "full": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "full",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e1",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 1,
+                "slot": 0
+              },
+              "source_sequence": 1,
+              "sender_message_id": null,
+              "changed_through_sequence": 1,
+              "created_at": 100,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Start"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 100000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e1",
+              "order": {
+                "sequence": 1,
+                "slot": 1
+              },
+              "changed_through_sequence": 4,
+              "settled": true,
+              "stopped": true,
+              "started_at_unix_milliseconds": 100000,
+              "ending": null,
+              "duration_seconds": null,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": "e4",
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e2",
+              "row_kind": "permission_ask",
+              "order": {
+                "sequence": 2,
+                "slot": 0
+              },
+              "source_sequence": 2,
+              "sender_message_id": null,
+              "changed_through_sequence": 2,
+              "created_at": 101,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "permission_ask",
+                  "ask_id": "pending",
+                  "title": "Permission",
+                  "detail": null,
+                  "options": [],
+                  "state": "dead",
+                  "dead_reason": "no_ending_recorded",
+                  "answered_option_label": null
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e3",
+              "row_kind": "user_input",
+              "order": {
+                "sequence": 3,
+                "slot": 0
+              },
+              "source_sequence": 3,
+              "sender_message_id": null,
+              "changed_through_sequence": 3,
+              "created_at": 102,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "user_input",
+                  "request_id": "pending-input",
+                  "questions": [],
+                  "state": "dead",
+                  "dead_reason": "no_ending_recorded",
+                  "answers": null,
+                  "failure_detail": null
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e4",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 4,
+                "slot": 0
+              },
+              "source_sequence": 4,
+              "sender_message_id": null,
+              "changed_through_sequence": 4,
+              "created_at": 103,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Before stop"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            }
+          ],
+          "body_bytes": 547,
+          "older": null,
+          "newer": null
+        }
+      }
+    },
+    {
+      "name": "tool-orphans-plan-and-work-run-boundaries",
+      "projection": {
+        "state": [
+          {
+            "conversation_id": "fixture",
+            "projection_version": 4,
+            "through_sequence": 13,
+            "current_turn_key": null,
+            "current_group_key": null,
+            "plan_sequence": 4,
+            "segment_start_sequence": 13,
+            "plan_summary": "{\"total_count\": 2, \"completed_count\": 1, \"current_position\": 2, \"current_text_excerpt\": \"B\", \"has_unfinished_entry\": true}",
+            "plan_body_bytes": 83,
+            "latest_full_happened_sequence": 12,
+            "latest_focus_happened_sequence": 12
+          }
+        ],
+        "rows": [
+          {
+            "conversation_id": "fixture",
+            "sequence": 1,
+            "row_kind": "tool_call",
+            "created_at": 100,
+            "settlement_sequence": null,
+            "changed_sequence": 1,
+            "sender_message_id": null,
+            "turn_key": null,
+            "work_group_key": "work:e1",
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 2,
+            "row_kind": "prompt",
+            "created_at": 101,
+            "settlement_sequence": null,
+            "changed_sequence": 2,
+            "sender_message_id": null,
+            "turn_key": null,
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 3,
+            "row_kind": "tool_call",
+            "created_at": 102,
+            "settlement_sequence": 9,
+            "changed_sequence": 9,
+            "sender_message_id": null,
+            "turn_key": "turn:e2",
+            "work_group_key": "work:e3",
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 5,
+            "row_kind": "token_usage",
+            "created_at": 104,
+            "settlement_sequence": null,
+            "changed_sequence": 5,
+            "sender_message_id": null,
+            "turn_key": "turn:e2",
+            "work_group_key": null,
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 6,
+            "row_kind": "tool_call",
+            "created_at": 105,
+            "settlement_sequence": null,
+            "changed_sequence": 6,
+            "sender_message_id": null,
+            "turn_key": "turn:e2",
+            "work_group_key": "work:e3",
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 7,
+            "row_kind": "agent_message",
+            "created_at": 106,
+            "settlement_sequence": null,
+            "changed_sequence": 7,
+            "sender_message_id": null,
+            "turn_key": "turn:e2",
+            "work_group_key": null,
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 8,
+            "row_kind": "tool_call",
+            "created_at": 107,
+            "settlement_sequence": null,
+            "changed_sequence": 8,
+            "sender_message_id": null,
+            "turn_key": "turn:e2",
+            "work_group_key": "work:e8",
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 10,
+            "row_kind": "context_compacted",
+            "created_at": 109,
+            "settlement_sequence": null,
+            "changed_sequence": 10,
+            "sender_message_id": null,
+            "turn_key": "turn:e2",
+            "work_group_key": null,
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 11,
+            "row_kind": "model_changed",
+            "created_at": 110,
+            "settlement_sequence": null,
+            "changed_sequence": 11,
+            "sender_message_id": null,
+            "turn_key": "turn:e2",
+            "work_group_key": null,
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 12,
+            "row_kind": "agent_message",
+            "created_at": 111,
+            "settlement_sequence": null,
+            "changed_sequence": 12,
+            "sender_message_id": null,
+            "turn_key": "turn:e2",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": "{\"kind\":\"agent_message\",\"sender_label\":null,\"excerpt\":\"Answer\",\"_owner_message_preview\":\"Answer\"}",
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 13,
+            "row_kind": "turn_ended",
+            "created_at": 112,
+            "settlement_sequence": null,
+            "changed_sequence": 13,
+            "sender_message_id": null,
+            "turn_key": "turn:e2",
+            "work_group_key": null,
+            "focus_visible": 0,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          }
+        ],
+        "turns": [
+          {
+            "conversation_id": "fixture",
+            "turn_key": "turn:e2",
+            "source_sequence": 2,
+            "created_at": 101,
+            "started_at_milliseconds": 101000,
+            "focus_head": 1,
+            "ending_sequence": 13,
+            "ending": "completed",
+            "ended_at": 112,
+            "full_message_count": 2,
+            "focus_message_count": 1,
+            "latest_full_message_sequence": 12,
+            "latest_focus_message_sequence": 12,
+            "tool_call_count": 3,
+            "changed_sequence": 13
+          }
+        ],
+        "groups": [
+          {
+            "conversation_id": "fixture",
+            "group_key": "work:e1",
+            "source_sequence": 1,
+            "turn_key": null,
+            "entry_count": 1,
+            "latest_entry_sequence": 1,
+            "ending_sequence": null,
+            "changed_sequence": 1
+          },
+          {
+            "conversation_id": "fixture",
+            "group_key": "work:e3",
+            "source_sequence": 3,
+            "turn_key": "turn:e2",
+            "entry_count": 2,
+            "latest_entry_sequence": 6,
+            "ending_sequence": 13,
+            "changed_sequence": 13
+          },
+          {
+            "conversation_id": "fixture",
+            "group_key": "work:e8",
+            "source_sequence": 8,
+            "turn_key": "turn:e2",
+            "entry_count": 1,
+            "latest_entry_sequence": 8,
+            "ending_sequence": 13,
+            "changed_sequence": 13
+          }
+        ],
+        "lookups": [
+          {
+            "conversation_id": "fixture",
+            "lookup_kind": "tool",
+            "lookup_id": "one",
+            "source_sequence": 3,
+            "turn_key": "turn:e2"
+          },
+          {
+            "conversation_id": "fixture",
+            "lookup_kind": "tool",
+            "lookup_id": "three",
+            "source_sequence": 8,
+            "turn_key": "turn:e2"
+          },
+          {
+            "conversation_id": "fixture",
+            "lookup_kind": "tool",
+            "lookup_id": "two",
+            "source_sequence": 6,
+            "turn_key": "turn:e2"
+          }
+        ]
+      },
+      "pages": {
+        "focus": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "focus",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e2",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 2,
+                "slot": 0
+              },
+              "source_sequence": 2,
+              "sender_message_id": null,
+              "changed_through_sequence": 2,
+              "created_at": 101,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Start"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 101000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e2",
+              "order": {
+                "sequence": 2,
+                "slot": 1
+              },
+              "changed_through_sequence": 13,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 101000,
+              "ending": "completed",
+              "duration_seconds": 11,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": "e12",
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e12",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 12,
+                "slot": 0
+              },
+              "source_sequence": 12,
+              "sender_message_id": null,
+              "changed_through_sequence": 12,
+              "created_at": 111,
+              "turn_key": "turn:e2",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Answer"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            }
+          ],
+          "body_bytes": 219,
+          "older": null,
+          "newer": null
+        },
+        "full": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "full",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "work_group",
+              "key": "work:e1",
+              "order": {
+                "sequence": 1,
+                "slot": 0
+              },
+              "changed_through_sequence": 1,
+              "turn_key": null,
+              "entry_count": 1,
+              "latest_entry_key": "e1",
+              "settled": false
+            },
+            {
+              "kind": "row",
+              "key": "e1",
+              "row_kind": "tool_call",
+              "order": {
+                "sequence": 1,
+                "slot": 1
+              },
+              "source_sequence": 1,
+              "sender_message_id": null,
+              "changed_through_sequence": 1,
+              "created_at": 100,
+              "turn_key": null,
+              "work_group_key": "work:e1",
+              "fold_rule": "work",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "tool_call",
+                  "tool_call_id": "orphan",
+                  "title": "orphan",
+                  "tool_kind": "other",
+                  "detail": "No start",
+                  "started_detail": null,
+                  "capped_detail_sequence": null,
+                  "status": "failed"
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e2",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 2,
+                "slot": 0
+              },
+              "source_sequence": 2,
+              "sender_message_id": null,
+              "changed_through_sequence": 2,
+              "created_at": 101,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Start"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 101000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e2",
+              "order": {
+                "sequence": 2,
+                "slot": 1
+              },
+              "changed_through_sequence": 13,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 101000,
+              "ending": "completed",
+              "duration_seconds": 11,
+              "tool_call_count": 3,
+              "folded_message_count": 1,
+              "latest_message_key": "e12",
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e5",
+              "row_kind": "token_usage",
+              "order": {
+                "sequence": 5,
+                "slot": 0
+              },
+              "source_sequence": 5,
+              "sender_message_id": null,
+              "changed_through_sequence": 5,
+              "created_at": 104,
+              "turn_key": "turn:e2",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "token_usage",
+                  "input_tokens": 10,
+                  "output_tokens": 5,
+                  "cached_input_tokens": 2,
+                  "cost_usd": 0.01
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e10",
+              "row_kind": "context_compacted",
+              "order": {
+                "sequence": 10,
+                "slot": 0
+              },
+              "source_sequence": 10,
+              "sender_message_id": null,
+              "changed_through_sequence": 10,
+              "created_at": 109,
+              "turn_key": "turn:e2",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "context_compacted"
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e11",
+              "row_kind": "model_changed",
+              "order": {
+                "sequence": 11,
+                "slot": 0
+              },
+              "source_sequence": 11,
+              "sender_message_id": null,
+              "changed_through_sequence": 11,
+              "created_at": 110,
+              "turn_key": "turn:e2",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "model_changed",
+                  "model": "model",
+                  "reasoning_effort": "high"
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e12",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 12,
+                "slot": 0
+              },
+              "source_sequence": 12,
+              "sender_message_id": null,
+              "changed_through_sequence": 12,
+              "created_at": 111,
+              "turn_key": "turn:e2",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Answer"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e13",
+              "row_kind": "turn_ended",
+              "order": {
+                "sequence": 13,
+                "slot": 0
+              },
+              "source_sequence": 13,
+              "sender_message_id": null,
+              "changed_through_sequence": 13,
+              "created_at": 112,
+              "turn_key": "turn:e2",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "turn_ended",
+                  "ending": "completed",
+                  "error_summary": null,
+                  "automatic_compaction_result": null
+                }
+              }
+            }
+          ],
+          "body_bytes": 680,
+          "older": null,
+          "newer": null
+        }
+      }
+    },
+    {
+      "name": "simultaneous-pending-permission-and-input",
+      "projection": {
+        "state": [
+          {
+            "conversation_id": "fixture",
+            "projection_version": 4,
+            "through_sequence": 3,
+            "current_turn_key": "turn:e1",
+            "current_group_key": null,
+            "plan_sequence": null,
+            "segment_start_sequence": 1,
+            "plan_summary": null,
+            "plan_body_bytes": 0,
+            "latest_full_happened_sequence": 1,
+            "latest_focus_happened_sequence": 1
+          }
+        ],
+        "rows": [
+          {
+            "conversation_id": "fixture",
+            "sequence": 1,
+            "row_kind": "prompt",
+            "created_at": 100,
+            "settlement_sequence": null,
+            "changed_sequence": 1,
+            "sender_message_id": null,
+            "turn_key": null,
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": "{\"kind\":\"prompt\",\"sender_label\":\"owner\",\"excerpt\":\"Work\"}",
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 2,
+            "row_kind": "permission_ask",
+            "created_at": 101,
+            "settlement_sequence": null,
+            "changed_sequence": 2,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": "Continue?",
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 3,
+            "row_kind": "user_input",
+            "created_at": 102,
+            "settlement_sequence": null,
+            "changed_sequence": 3,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          }
+        ],
+        "turns": [
+          {
+            "conversation_id": "fixture",
+            "turn_key": "turn:e1",
+            "source_sequence": 1,
+            "created_at": 100,
+            "started_at_milliseconds": 100000,
+            "focus_head": 1,
+            "ending_sequence": null,
+            "ending": null,
+            "ended_at": null,
+            "full_message_count": 0,
+            "focus_message_count": 0,
+            "latest_full_message_sequence": null,
+            "latest_focus_message_sequence": null,
+            "tool_call_count": 0,
+            "changed_sequence": 1
+          }
+        ],
+        "groups": [],
+        "lookups": [
+          {
+            "conversation_id": "fixture",
+            "lookup_kind": "permission",
+            "lookup_id": "permission",
+            "source_sequence": 2,
+            "turn_key": "turn:e1"
+          },
+          {
+            "conversation_id": "fixture",
+            "lookup_kind": "user_input",
+            "lookup_id": "question",
+            "source_sequence": 3,
+            "turn_key": "turn:e1"
+          }
+        ]
+      },
+      "pages": {
+        "focus": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "focus",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e1",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 1,
+                "slot": 0
+              },
+              "source_sequence": 1,
+              "sender_message_id": null,
+              "changed_through_sequence": 1,
+              "created_at": 100,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Work"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 100000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e1",
+              "order": {
+                "sequence": 1,
+                "slot": 1
+              },
+              "changed_through_sequence": 1,
+              "settled": false,
+              "stopped": false,
+              "started_at_unix_milliseconds": 100000,
+              "ending": null,
+              "duration_seconds": null,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": null,
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e2",
+              "row_kind": "permission_ask",
+              "order": {
+                "sequence": 2,
+                "slot": 0
+              },
+              "source_sequence": 2,
+              "sender_message_id": null,
+              "changed_through_sequence": 2,
+              "created_at": 101,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "permission_ask",
+                  "ask_id": "permission",
+                  "title": "Continue?",
+                  "detail": null,
+                  "options": [],
+                  "state": "live",
+                  "dead_reason": null,
+                  "answered_option_label": null
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e3",
+              "row_kind": "user_input",
+              "order": {
+                "sequence": 3,
+                "slot": 0
+              },
+              "source_sequence": 3,
+              "sender_message_id": null,
+              "changed_through_sequence": 3,
+              "created_at": 102,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "user_input",
+                  "request_id": "question",
+                  "questions": [],
+                  "state": "live",
+                  "dead_reason": null,
+                  "answers": null,
+                  "failure_detail": null
+                }
+              }
+            }
+          ],
+          "body_bytes": 421,
+          "older": null,
+          "newer": null
+        },
+        "full": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "full",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e1",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 1,
+                "slot": 0
+              },
+              "source_sequence": 1,
+              "sender_message_id": null,
+              "changed_through_sequence": 1,
+              "created_at": 100,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Work"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 100000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e1",
+              "order": {
+                "sequence": 1,
+                "slot": 1
+              },
+              "changed_through_sequence": 1,
+              "settled": false,
+              "stopped": false,
+              "started_at_unix_milliseconds": 100000,
+              "ending": null,
+              "duration_seconds": null,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": null,
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e2",
+              "row_kind": "permission_ask",
+              "order": {
+                "sequence": 2,
+                "slot": 0
+              },
+              "source_sequence": 2,
+              "sender_message_id": null,
+              "changed_through_sequence": 2,
+              "created_at": 101,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "permission_ask",
+                  "ask_id": "permission",
+                  "title": "Continue?",
+                  "detail": null,
+                  "options": [],
+                  "state": "live",
+                  "dead_reason": null,
+                  "answered_option_label": null
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e3",
+              "row_kind": "user_input",
+              "order": {
+                "sequence": 3,
+                "slot": 0
+              },
+              "source_sequence": 3,
+              "sender_message_id": null,
+              "changed_through_sequence": 3,
+              "created_at": 102,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "user_input",
+                  "request_id": "question",
+                  "questions": [],
+                  "state": "live",
+                  "dead_reason": null,
+                  "answers": null,
+                  "failure_detail": null
+                }
+              }
+            }
+          ],
+          "body_bytes": 421,
+          "older": null,
+          "newer": null
+        }
+      }
+    },
+    {
+      "name": "running-multiple-owner-messages-and-time-skew",
+      "projection": {
+        "state": [
+          {
+            "conversation_id": "fixture",
+            "projection_version": 4,
+            "through_sequence": 4,
+            "current_turn_key": "turn:e1",
+            "current_group_key": null,
+            "plan_sequence": null,
+            "segment_start_sequence": 1,
+            "plan_summary": null,
+            "plan_body_bytes": 0,
+            "latest_full_happened_sequence": 4,
+            "latest_focus_happened_sequence": 4
+          }
+        ],
+        "rows": [
+          {
+            "conversation_id": "fixture",
+            "sequence": 1,
+            "row_kind": "prompt",
+            "created_at": 100,
+            "settlement_sequence": null,
+            "changed_sequence": 1,
+            "sender_message_id": null,
+            "turn_key": null,
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 2,
+            "row_kind": "agent_message",
+            "created_at": 101,
+            "settlement_sequence": null,
+            "changed_sequence": 2,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": null,
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 3,
+            "row_kind": "agent_message",
+            "created_at": 102,
+            "settlement_sequence": null,
+            "changed_sequence": 3,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": "{\"kind\":\"agent_message\",\"sender_label\":null,\"excerpt\":\"Second\",\"_owner_message_preview\":\"Second\"}",
+            "permission_title_excerpt": null,
+            "removed": 0
+          },
+          {
+            "conversation_id": "fixture",
+            "sequence": 4,
+            "row_kind": "prompt",
+            "created_at": 103,
+            "settlement_sequence": null,
+            "changed_sequence": 4,
+            "sender_message_id": null,
+            "turn_key": "turn:e1",
+            "work_group_key": null,
+            "focus_visible": 1,
+            "rest_summary": "{\"kind\":\"prompt\",\"sender_label\":\"owner\",\"excerpt\":\"Steer\"}",
+            "permission_title_excerpt": null,
+            "removed": 0
+          }
+        ],
+        "turns": [
+          {
+            "conversation_id": "fixture",
+            "turn_key": "turn:e1",
+            "source_sequence": 1,
+            "created_at": 100,
+            "started_at_milliseconds": 100000,
+            "focus_head": 1,
+            "ending_sequence": null,
+            "ending": null,
+            "ended_at": null,
+            "full_message_count": 2,
+            "focus_message_count": 2,
+            "latest_full_message_sequence": 3,
+            "latest_focus_message_sequence": 3,
+            "tool_call_count": 0,
+            "changed_sequence": 3
+          }
+        ],
+        "groups": [],
+        "lookups": []
+      },
+      "pages": {
+        "focus": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "focus",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e1",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 1,
+                "slot": 0
+              },
+              "source_sequence": 1,
+              "sender_message_id": null,
+              "changed_through_sequence": 1,
+              "created_at": 100,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Start"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 100000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e1",
+              "order": {
+                "sequence": 1,
+                "slot": 1
+              },
+              "changed_through_sequence": 3,
+              "settled": false,
+              "stopped": false,
+              "started_at_unix_milliseconds": 100000,
+              "ending": null,
+              "duration_seconds": null,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": "e3",
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e2",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 2,
+                "slot": 0
+              },
+              "source_sequence": 2,
+              "sender_message_id": null,
+              "changed_through_sequence": 2,
+              "created_at": 101,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "First"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e3",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 3,
+                "slot": 0
+              },
+              "source_sequence": 3,
+              "sender_message_id": null,
+              "changed_through_sequence": 3,
+              "created_at": 102,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Second"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e4",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 4,
+                "slot": 0
+              },
+              "source_sequence": 4,
+              "sender_message_id": null,
+              "changed_through_sequence": 4,
+              "created_at": 103,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Steer"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "steer",
+                  "sent_at_unix_milliseconds": 0
+                }
+              }
+            }
+          ],
+          "body_bytes": 432,
+          "older": null,
+          "newer": null
+        },
+        "full": {
+          "conversation_id": "fixture",
+          "protocol_version": 1,
+          "projection_version": 4,
+          "lens": "full",
+          "scope": {
+            "kind": "timeline",
+            "key": null
+          },
+          "items": [
+            {
+              "kind": "row",
+              "key": "e1",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 1,
+                "slot": 0
+              },
+              "source_sequence": 1,
+              "sender_message_id": null,
+              "changed_through_sequence": 1,
+              "created_at": 100,
+              "turn_key": null,
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Start"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "queue",
+                  "sent_at_unix_milliseconds": 100000
+                }
+              }
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e1",
+              "order": {
+                "sequence": 1,
+                "slot": 1
+              },
+              "changed_through_sequence": 3,
+              "settled": false,
+              "stopped": false,
+              "started_at_unix_milliseconds": 100000,
+              "ending": null,
+              "duration_seconds": null,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": "e3",
+              "is_latest": true
+            },
+            {
+              "kind": "row",
+              "key": "e2",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 2,
+                "slot": 0
+              },
+              "source_sequence": 2,
+              "sender_message_id": null,
+              "changed_through_sequence": 2,
+              "created_at": 101,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "First"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e3",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 3,
+                "slot": 0
+              },
+              "source_sequence": 3,
+              "sender_message_id": null,
+              "changed_through_sequence": 3,
+              "created_at": 102,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Second"
+                    }
+                  ],
+                  "to_owner": true
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e4",
+              "row_kind": "prompt",
+              "order": {
+                "sequence": 4,
+                "slot": 0
+              },
+              "source_sequence": 4,
+              "sender_message_id": null,
+              "changed_through_sequence": 4,
+              "created_at": 103,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "never",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "prompt",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Steer"
+                    }
+                  ],
+                  "sender_label": "owner",
+                  "mode": "steer",
+                  "sent_at_unix_milliseconds": 0
+                }
+              }
+            }
+          ],
+          "body_bytes": 432,
+          "older": null,
+          "newer": null
+        }
+      }
+    }
+  ]
+}
