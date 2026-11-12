@@ -1,7 +1,7 @@
 /** Shared scripted Codex child behind the actual TS conversation core and records. */
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createDatabase } from '../../../core/database/index.ts';
 import { ConversationStore } from '../../record/data/store.ts';
 import { SqliteProcessConversationSystem } from '../../system.ts';
@@ -122,11 +122,21 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
   let sender = 0;
   const send = async (scenario: string, mode: 'queue' | 'steer' = 'queue', native = false) =>
     delivery_fate_json(
-      await core.send(id, text_message_content(native ? scenario : `[CASE:${scenario}]`), {
-        sender_label: 'Owner',
-        sender_message_id: `sender-${++sender}`,
-        mode,
-      }),
+      await core.send(
+        id,
+        text_message_content(
+          native
+            ? scenario
+            : scenario === 'malformed'
+              ? '@synthetic-calendar [CASE:malformed]'
+              : `[CASE:${scenario}]`,
+        ),
+        {
+          sender_label: 'Owner',
+          sender_message_id: `sender-${++sender}`,
+          mode,
+        },
+      ),
     );
   const wait = async (condition: () => boolean | Promise<boolean>, description: string) => {
     const deadline = performance.now() + 10000;
@@ -184,10 +194,23 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
     );
     let count = 0;
     const plain = await send('plain');
-    await wait(
-      () => existsSync(spec.trace) && readFileSync(spec.trace, 'utf8').includes('app/installed'),
-      'initial catalog reads',
-    );
+    const catalog_ready = () =>
+      database.read((sql) => {
+        const row = sql.get<{ composer_catalog: string }>(
+          'SELECT composer_catalog FROM conversations WHERE conversation_id=?',
+          [id],
+        );
+        const entries = row?.composer_catalog
+          ? (JSON.parse(row.composer_catalog) as { insertion_text: string }[])
+          : [];
+        const tokens = new Set(entries.map((entry) => entry.insertion_text));
+        return [
+          '$synthetic-skill ',
+          '@synthetic-tools@synthetic-market ',
+          '@synthetic-calendar ',
+        ].every((token) => tokens.has(token));
+      });
+    await wait(catalog_ready, 'populated catalog sources and app metadata');
     await ended(++count);
     await capture('plain', [plain]);
     const steerBase = await send('steer-base');
@@ -225,6 +248,7 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
     await capture('interrupt', [interrupt]);
     await core.kill(id);
     const resumed = await send('resume-success');
+    await wait(catalog_ready, 'resumed child populated catalog');
     await ended(++count);
     await capture('successful-resume', [resumed]);
     for (const scenario of ['auth-failure', 'malformed', 'auth-refresh']) {

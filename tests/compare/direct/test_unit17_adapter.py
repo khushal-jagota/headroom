@@ -169,7 +169,15 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
         return delivery_fate_json(
             await core.send(
                 identity,
-                text_message_content(scenario if native else f"[CASE:{scenario}]"),
+                text_message_content(
+                    scenario
+                    if native
+                    else (
+                        "@synthetic-calendar [CASE:malformed]"
+                        if scenario == "malformed"
+                        else f"[CASE:{scenario}]"
+                    )
+                ),
                 sender_label="Owner",
                 sender_message_id=f"sender-{sender}",
                 mode=mode,
@@ -242,12 +250,20 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
         )
 
         async def catalog_read() -> bool:
-            trace = Path(spec["trace"])
-            return trace.exists() and "app/installed" in trace.read_text()
+            row = snapshot(spec["database"])["conversations"][0]
+            entries = (
+                json.loads(row["composer_catalog"]) if row["composer_catalog"] else []
+            )
+            tokens = {entry["insertion_text"] for entry in entries}
+            return {
+                "$synthetic-skill ",
+                "@synthetic-tools@synthetic-market ",
+                "@synthetic-calendar ",
+            } <= tokens
 
         count = 0
         plain = await send("plain")
-        await wait(catalog_read, "initial catalog reads")
+        await wait(catalog_read, "populated catalog sources and app metadata")
         count += 1
         await ended(count)
         await capture("plain", [plain])
@@ -290,6 +306,7 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
         await capture("interrupt", [interruption])
         await core.kill(identity)
         resumed = await send("resume-success")
+        await wait(catalog_read, "resumed child populated catalog")
         count += 1
         await ended(count)
         await capture("successful-resume", [resumed])
@@ -503,6 +520,22 @@ def test_unit17_adapter_real_core_parity(
         output = Path(destination) / "unit-17-adapter-real-core.json"
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(report, indent=2) + "\n")
+    if actual["trace"] != expected["trace"]:
+        for index, (left, right) in enumerate(
+            zip(expected["trace"], actual["trace"], strict=False)
+        ):
+            if left != right:
+                pytest.fail(
+                    f"Ordered native trace differs at index {index}: "
+                    f"Python={left!r}, TS={right!r}. "
+                    "Complete expected/actual values remain in the comparison report.",
+                    pytrace=False,
+                )
+        pytest.fail(
+            f"Native trace lengths differ: Python={len(expected['trace'])}, "
+            f"TS={len(actual['trace'])}",
+            pytrace=False,
+        )
     assert actual == expected
     for result in (python, typescript):
         checkpoints = {item["name"]: item for item in result["checkpoints"]}
@@ -517,6 +550,68 @@ def test_unit17_adapter_real_core_parity(
         assert all(
             plain[table] for table in TABLES if table.startswith("conversation_view_")
         )
+        entries = json.loads(plain["conversations"][0]["composer_catalog"])
+        by_kind = {
+            entry["kind"]: entry
+            for entry in entries
+            if entry["kind"] in {"skill", "plugin", "app"}
+        }
+        assert by_kind["skill"]["insertion_text"] == "$synthetic-skill "
+        assert by_kind["skill"]["description"] == "Synthetic skill description"
+        assert (
+            by_kind["plugin"]["insertion_text"] == "@synthetic-tools@synthetic-market "
+        )
+        assert by_kind["app"]["insertion_text"] == "@synthetic-calendar "
+        assert by_kind["app"]["description"] == "Synthetic calendar description"
+        metadata_reads = [
+            frame for frame in result["trace"] if frame.get("method") == "app/read"
+        ]
+        assert len(metadata_reads) == 2
+        assert all(
+            frame["params"]
+            == {
+                "appIds": ["calendar.synthetic"],
+                "threadId": "unit17-thread",
+                "includeTools": False,
+            }
+            for frame in metadata_reads
+        )
+        installed_indices = [
+            index
+            for index, frame in enumerate(result["trace"])
+            if frame.get("method") == "app/installed"
+        ]
+        metadata_indices = [
+            index
+            for index, frame in enumerate(result["trace"])
+            if frame.get("method") == "app/read"
+        ]
+        assert all(
+            installed < metadata
+            for installed, metadata in zip(
+                installed_indices, metadata_indices, strict=True
+            )
+        )
+        assert all(
+            any(
+                installed < index < metadata and frame.get("method") == "turn/start"
+                for index, frame in enumerate(result["trace"])
+            )
+            for installed, metadata in zip(
+                installed_indices, metadata_indices, strict=True
+            )
+        )
+        mention_turn = next(
+            frame
+            for frame in result["trace"]
+            if frame.get("method") == "turn/start"
+            and "[CASE:malformed]" in json.dumps(frame)
+        )
+        assert {
+            "type": "mention",
+            "name": "Synthetic Calendar",
+            "path": "app://calendar.synthetic",
+        } in mention_turn["params"]["input"]
         assert checkpoints["queued-and-cancelled"]["fates"][-1] == {"discarded": True}
         assert not any(
             "[CASE:queued]" in json.dumps(frame) for frame in result["trace"]

@@ -52,6 +52,27 @@ const saveNative = () => writeFileSync(statePath, JSON.stringify(nativeState));
 const nativeThread = 'unit17-thread';
 let nativeTurn = '';
 let pendingAsk: number | null = null;
+let initial_catalog_ready = false;
+let installed_replied = false;
+let pending_installed: Record<string, unknown> | null = null;
+let pending_initial_turn: Record<string, unknown> | null = null;
+const installed_result = {
+  apps: [
+    {
+      id: 'calendar.synthetic',
+      enabled: true,
+      callable: true,
+      runtimeName: 'Runtime Calendar',
+    },
+  ],
+};
+function release_initial_inventory(): void {
+  if (!installed_replied && pending_installed !== null && pending_initial_turn !== null) {
+    installed_replied = true;
+    send({ id: pending_installed.id, result: installed_result });
+    pending_installed = null;
+  }
+}
 const note = (kind: string) =>
   appendFileSync(
     `${trace}.children`,
@@ -102,10 +123,69 @@ function coreMessage(message: Record<string, unknown>): boolean {
         ephemeral: false,
       },
     });
-  } else if (message.method === 'skills/list') answer({ data: [{ skills: [] }] });
-  else if (message.method === 'plugin/installed') answer({ marketplaces: [] });
-  else if (message.method === 'app/installed') answer({ apps: [] });
-  else if (message.method === 'thread/goal/get')
+  } else if (message.method === 'skills/list')
+    answer({
+      data: [
+        {
+          skills: [
+            {
+              name: 'synthetic-skill',
+              path: '/synthetic/skills/review/SKILL.md',
+              enabled: true,
+              description: 'Review synthetic input',
+              interface: {
+                displayName: 'Synthetic Skill',
+                shortDescription: 'Synthetic skill description',
+              },
+            },
+          ],
+        },
+      ],
+    });
+  else if (message.method === 'plugin/installed')
+    answer({
+      marketplaces: [
+        {
+          name: 'synthetic-market',
+          plugins: [
+            {
+              name: 'synthetic-tools',
+              installed: true,
+              enabled: true,
+              interface: {
+                displayName: 'Synthetic Tools',
+                shortDescription: 'Synthetic plugin description',
+              },
+            },
+          ],
+        },
+      ],
+    });
+  else if (message.method === 'app/installed') {
+    if (initial_catalog_ready) answer(installed_result);
+    else {
+      pending_installed = message;
+      release_initial_inventory();
+    }
+  } else if (message.method === 'app/read') {
+    answer({
+      apps: [
+        {
+          id: 'calendar.synthetic',
+          name: 'Synthetic Calendar',
+          description: 'Synthetic calendar description',
+        },
+      ],
+    });
+    if (!initial_catalog_ready && pending_initial_turn !== null) {
+      // The same native response barrier fixes the order on both event loops.
+      // Prompt submission must proceed while app inventory is still unanswered.
+      initial_catalog_ready = true;
+      const turn = pending_initial_turn;
+      pending_initial_turn = null;
+      coreMessage(turn);
+    }
+  } else if (message.method === 'thread/goal/get')
     answer({
       goal: {
         objective: 'Synthetic objective',
@@ -139,6 +219,11 @@ function coreMessage(message: Record<string, unknown>): boolean {
     else nativeText('review output');
     nativeEnded();
   } else if (message.method === 'turn/start') {
+    if (!initial_catalog_ready) {
+      pending_initial_turn = message;
+      release_initial_inventory();
+      return true;
+    }
     nativeTurn = `turn-${++nativeState.nextTurn}`;
     saveNative();
     const content = (params.input as { type: string; text?: string }[])
