@@ -1,7 +1,7 @@
 /** Ports the two named Python readiness tests using the existing SQLite fixture. */
 import { expect, test } from 'vitest';
 import { fixture, create, read, edit, propose, now, advance } from './ticket_fixture.ts';
-import { worker_step_blocker, is_ready_for_worker_step } from '../runtime/worker_step_readiness.ts';
+import { is_ready_for_worker_step } from '../runtime/worker_step_readiness.ts';
 function ready(db: ReturnType<typeof fixture>, id: string): boolean {
   const ticket = read(db, id);
   return db.read((sql) =>
