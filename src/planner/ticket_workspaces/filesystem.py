@@ -24,6 +24,7 @@ from planner.ticket_workspaces.contracts import (
 
 _TICKET_ID = re.compile(r"^(t_[0-9abcdefghjkmnpqrstuvwxyz]{8})(?:-|$)")
 _SKIP_DIRECTORIES = frozenset({".git", ".venv", "node_modules"})
+_CHECKOUT_TIMEOUT_SECONDS = 30 * 60
 
 
 def _git(repository: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -35,7 +36,7 @@ def _git(repository: Path, *args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         capture_output=True,
         check=False,
-        timeout=60,
+        timeout=_CHECKOUT_TIMEOUT_SECONDS if args[:2] == ("worktree", "add") else 60,
         env=environment,
     )
 
@@ -137,6 +138,35 @@ def _validate_checkout(repository: Path, destination: Path, branch: str | None =
         raise RuntimeError("Ticket workspace belongs to another repository or path")
 
 
+def _prove_checkout_complete(destination: Path) -> None:
+    """A registered worktree can still lack its index or part of its checkout."""
+    metadata = _git(destination, "rev-parse", "--absolute-git-dir")
+    if metadata.returncode:
+        raise RuntimeError("Cannot verify the interrupted Ticket Git metadata")
+    # Git holds this lock across checkout, including file contents. An abrupt stop
+    # can leave every path present but a partially written file. Do not unlock it.
+    if os.path.lexists(Path(metadata.stdout.strip()) / "locked"):
+        raise RuntimeError(
+            "Interrupted Ticket checkout is incomplete (Git initialization lock remains)"
+        )
+    head = _git(destination, "ls-tree", "-r", "-z", "HEAD")
+    index = _git(destination, "ls-files", "-z")
+    if head.returncode or index.returncode:
+        raise RuntimeError("Cannot verify the interrupted Ticket checkout")
+    required = {
+        entry.split("\t", 1)[1]
+        for entry in head.stdout.split("\0")
+        if entry and not entry.startswith("160000 ")
+    }
+    indexed = set(index.stdout.split("\0"))
+    if not required.issubset(indexed) or any(
+        not os.path.lexists(destination / path) for path in required
+    ):
+        raise RuntimeError(
+            "Interrupted Ticket checkout is incomplete; complete the checkout before retry"
+        )
+
+
 def _repair_previous_worktree(ticket_root: Path, repository: Path, ticket_id: str) -> None:
     """Repair only recorded retired checkouts before their former path is reused."""
     retired_root = ticket_root.parent.parent / ".ticket-retired"
@@ -158,9 +188,11 @@ def _repair_previous_worktree(ticket_root: Path, repository: Path, ticket_id: st
         if marker_path.is_symlink() or not marker_path.is_file():
             raise RuntimeError("Retired checkout ownership is unavailable")
         marker = json.loads(marker_path.read_text())
-        if marker.get("ticket_id") != ticket_id or marker.get("worktree") != str(
-            ticket_root / WORKTREE_DIRECTORY
-        ):
+        if marker.get("ticket_id") != ticket_id:
+            raise RuntimeError("Retired checkout ownership does not match")
+        if "worktree" not in marker:
+            continue  # Artifact-only and older session folders have no Git backlink to repair.
+        if marker["worktree"] != str(ticket_root / WORKTREE_DIRECTORY):
             raise RuntimeError("Retired checkout ownership does not match")
         if marker.get("repository") != str(repository):
             continue
@@ -236,6 +268,7 @@ def prepare_workspace(
         destination.mkdir(exist_ok=True)
     elif destination.exists():
         _validate_checkout(selected, destination, marker["branch"])
+        _prove_checkout_complete(destination)
     else:
         _repair_previous_worktree(ticket_root, selected, ticket_id)
         branch = marker["branch"]
