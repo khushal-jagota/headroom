@@ -290,3 +290,9 @@ selected headers (also Content-Length), and exact body bytes. ETag headers remai
 literal digests, rather than random IDs. Change-token rules support SQLite BLOBs
 through the existing hex encoding. Skills filenames remain exact; only managed
 record IDs in managed filenames use the identity map.
+
+## Direct checks
+
+Add a `test_*.py` driver under `tests/compare/direct/` that compares current Python with an export-only TS companion under `server/`.
+Build synthetic state, copy it before each side writes, compare answers and rows, and save evidence through `--compare-report-dir`.
+The comparison workflow runs this directory once on both Node versions, before list selection, so every staging merge regenerates Python answers.
