@@ -68,3 +68,33 @@ Required proof, not yet completed:
 - Packaged supervisor: clean Node-only startup and relocation without a compiler or Python.
 
 See [the accepted design](lifecycle/SUPERVISOR_DESIGN.md) for the protocol and failure limits.
+
+## VPS metrics integer configuration
+
+The migration Manager accepted this admission boundary for Unit 21 Part 2.
+It applies to these ten integer environment overrides:
+
+- `PLAN_VPS_METRICS_METRICS_PAYLOAD_BYTES`
+- `PLAN_VPS_METRICS_PROCESS_PAYLOAD_BYTES`
+- `PLAN_VPS_METRICS_PROCESS_SNAPSHOT_BYTES`
+- `PLAN_VPS_METRICS_TRANSACTION_PAYLOAD_BYTES`
+- `PLAN_VPS_METRICS_DATABASE_BYTES`
+- `PLAN_VPS_METRICS_WAL_BYTES`
+- `PLAN_VPS_METRICS_READ_WORKERS`
+- `PLAN_VPS_METRICS_PROCESS_PAGE_ROWS`
+- `PLAN_VPS_METRICS_HISTORY_POINTS`
+- `PLAN_VPS_METRICS_SERVICE_OUTPUT_BYTES`
+
+Python parses these overrides with `int()` and can preserve values beyond JavaScript's exact integer range, subject to existing configuration checks.
+For example, Python accepts and retains `9007199254740993` for `history_points`.
+TS explicitly refuses values outside ±9,007,199,254,740,991 with `ValueError: <field> exceeds the supported exact integer range`.
+It does not silently round the example to `9007199254740992`.
+
+The boundary exceeds realistic worker/page counts and memory/database budgets.
+Explicit refusal keeps operational limits exact without spreading BigInt configuration through number-based runtime APIs.
+Existing positive-value and consistency checks still apply.
+
+The existing [configuration proof](../tests/compare/direct/test_unit21_metrics_config.py),
+`test_unit21_metrics_configuration_and_sidecar_paths`, asserts the TS refusal as a gating result.
+It records Python's different answer as informational evidence. The ten keys share the same admission predicate.
+This policy acceptance does not approve the remaining Part 2 source or its merge.

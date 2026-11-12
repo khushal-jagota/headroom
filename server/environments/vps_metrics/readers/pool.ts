@@ -1,5 +1,5 @@
 import { fork } from 'node:child_process';
-import type { ChildProcess } from 'node:child_process';
+import type { ChildProcess, ForkOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { Duplex } from 'node:stream';
 import type { MetricsConfig } from '../configuration.ts';
@@ -30,6 +30,7 @@ const unavailable = (): MetricsOperationalError =>
   new MetricsOperationalError('VPS metrics storage is unavailable');
 const expired = (): MetricsOperationalError =>
   new MetricsOperationalError('VPS metrics read deadline exceeded');
+type ReaderProcessFactory = (entry: URL, options: ForkOptions) => ChildProcess;
 
 /** Queue deadlines start on admission, after the pool's cold-start READY boundary. */
 export class MetricsReaders {
@@ -38,11 +39,21 @@ export class MetricsReaders {
   private closing = false;
   private started = false;
   private starting?: Promise<void>;
+  private replacing?: Promise<void>;
+  private retry_after = 0n;
+  private retry_timer?: ReturnType<typeof setTimeout>;
+  private retry_wake?: () => void;
+  private readonly spawn_reader: ReaderProcessFactory;
   readonly path: string;
   readonly config: MetricsConfig;
-  constructor(path: string, config: MetricsConfig) {
+  constructor(
+    path: string,
+    config: MetricsConfig,
+    spawn_reader: ReaderProcessFactory = (entry, options) => fork(entry, [], options),
+  ) {
     this.path = path;
     this.config = config;
+    this.spawn_reader = spawn_reader;
   }
   start(): Promise<void> {
     if (this.closing) return Promise.reject(unavailable());
@@ -53,6 +64,7 @@ export class MetricsReaders {
       .then(() => {
         if (this.closing) throw unavailable();
         this.started = true;
+        this.fill_deficit();
       })
       .catch(async (error) => {
         await this.close();
@@ -64,7 +76,7 @@ export class MetricsReaders {
     if (this.closing) return Promise.reject(unavailable());
     const incarnation = randomUUID();
     // fd4 is a dedicated liveness pipe. Only this APP keeps its writer endpoint.
-    const child = fork(new URL('./child.ts', import.meta.url), [], {
+    const child = this.spawn_reader(new URL('./child.ts', import.meta.url), {
       stdio: ['ignore', 'ignore', 'pipe', 'ipc', 'pipe'],
     });
     child.stderr?.on('data', (chunk: Buffer) => console.error(chunk.toString()));
@@ -92,7 +104,7 @@ export class MetricsReaders {
         if (!admitted) reject(unavailable());
         if (!reader.retiring) {
           if (reader.active) this.settle(reader.active, undefined, unavailable());
-          if (admitted && !this.closing) void this.replace();
+          if (admitted) queueMicrotask(() => this.fill_deficit());
         }
       });
       child.on('message', (message: ReaderReply) => {
@@ -126,10 +138,35 @@ export class MetricsReaders {
       child.send({ incarnation, path: this.path, config: this.config });
     });
   }
+  private fill_deficit(): void {
+    if (
+      !this.started ||
+      this.closing ||
+      this.replacing ||
+      this.readers.size >= this.config.read_workers
+    )
+      return;
+    this.replacing = this.replace().finally(() => {
+      this.replacing = undefined;
+      // A new read may arrive from a rejected request's continuation before this finalizer.
+      if (this.queue.length) this.fill_deficit();
+    });
+  }
   private async replace(): Promise<void> {
+    const remaining = this.retry_after - process.hrtime.bigint();
+    if (remaining > 0n) {
+      await new Promise<void>((resolve) => {
+        this.retry_wake = resolve;
+        this.retry_timer = setTimeout(resolve, Math.ceil(Number(remaining) / 1e6));
+      });
+      this.retry_timer = undefined;
+      this.retry_wake = undefined;
+    }
     try {
-      await this.spawn();
+      while (!this.closing && this.readers.size < this.config.read_workers) await this.spawn();
+      this.retry_after = 0n;
     } catch {
+      this.retry_after = process.hrtime.bigint() + 50_000_000n;
       if (!this.closing) this.fail_queue();
     }
   }
@@ -148,7 +185,8 @@ export class MetricsReaders {
       await reader.reaped;
       if (reader.active) this.settle(reader.active, undefined, expired());
       reader.active = undefined;
-      if (!this.closing) await this.replace();
+      // Reaping and request settlement never wait for another reader's cold boot or backoff.
+      queueMicrotask(() => this.fill_deficit());
     })();
     return reader.retiring;
   }
@@ -208,6 +246,7 @@ export class MetricsReaders {
       };
       this.queue.push(job);
       this.dispatch();
+      this.fill_deficit();
     });
   }
   private fail_queue(): void {
@@ -217,6 +256,8 @@ export class MetricsReaders {
     this.closing = true;
     this.started = false;
     this.fail_queue();
-    await Promise.all([...this.readers].map((reader) => this.retire(reader)));
+    if (this.retry_timer) clearTimeout(this.retry_timer);
+    this.retry_wake?.();
+    await Promise.all([...[...this.readers].map((reader) => this.retire(reader)), this.replacing]);
   }
 }

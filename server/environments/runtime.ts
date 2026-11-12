@@ -117,7 +117,7 @@ export async function createEnvironmentRuntime(
       };
       const drains = [
         begin(() => metrics.stop(options)),
-        begin(() => updates.stop()),
+        begin(() => updates.stop(options)),
         starting?.catch(() => {}),
       ];
       closing = Promise.allSettled(drains).then((results) => {

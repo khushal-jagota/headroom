@@ -24,13 +24,11 @@ Navigation initialization takes 89.729 ms on this same event fixture with curren
 
 Fresh TS replay and Python produce the same exact digest across the five projection tables. Every completed mode preserves the canonical event digest. Initial Python attempts failed because the literal-schema fixture omitted migration singleton rows. The successful copies add only those declared prerequisites before timing. Failed-attempt summaries remain in the evidence below.
 
-[Raw reports](evidence/rebuild-profile/) include the Python baseline, TS phase profile, reuse check, navigation sequence, stale-route answers, and failed-attempt summaries. The measurement drivers are explicit-only and add no default CI case. Independent review found no material timing or isolation error.
-
-Reproduction requires a **fresh, empty `--compare-report-dir`**. The cases share their prepared data through that directory. A bare invocation uses separate temporary directories and is unsupported. An existing result directory refuses overwrite. Use scrubbed configuration and private provider homes before repository execution.
-
-```sh
-scripts/dev pytest tests/compare/direct/unit21_rebuild_profile.py -s --compare-report-dir /absolute/private/new-profile
-```
+The [historical source and raw reports](/files/tickets/t_3ud37ykx/artifacts/part2-evidence/historical-profile-and-browser.zip) now live with this Ticket's artifacts.
+The [checksum manifest](/files/tickets/t_3ud37ykx/artifacts/part2-evidence/manifest.json) records their source commit and bytes.
+The measurement helpers and reports no longer ship in the repository or run in branch CI.
+These measurements predate the Chief's current machine rule. Browser/E2E and full comparison runs now belong on hosted runners.
+Independent review found no material timing or isolation error in the recorded run.
 
 <details>
 <summary>Full methods, route behavior, setup correction, and limits</summary>
@@ -74,7 +72,7 @@ The completed Python baseline uses the production `rebuild_out_of_date_views` co
 
 The runtime is Python 3.13.5 and SQLite 3.46.1 on the same VPS. The prior plain TS result uses Node 22.23.1 and SQLite 3.54.1. The new TS phase profile adds clocks and SQL bookkeeping, so its instrumented wall time is not a clean speed ratio against uninstrumented Python.
 
-The original schema-only fixture extracted table statements but omitted migration-owned singleton rows. Production Python commit participants require `navigation_meta`; the initial Python attempts could not install views. The corrected measurement copies add the exact `chief_page` and `navigation_meta` initialization from the baseline migration before timing. The original event source stays unchanged. Both failed attempts, their databases, and the concrete exception trace remain in the report directory.
+The original schema-only fixture extracted table statements but omitted migration-owned singleton rows. Production Python commit participants require `navigation_meta`; the initial Python attempts could not install views. The corrected measurement copies add the exact `chief_page` and `navigation_meta` initialization from the baseline migration before timing. The original event source stays unchanged. The linked artifact archive retains both failed-attempt JSON summaries. It does not retain the failed databases or full exception traces.
 
 The canonical event digest is `0fba82ebd75a85717f05cc3a9425df8b78c5627cafa142ecd6a6cd11b3de16db` before and after all completed modes. The event input contains 20 conversations, 40,000 turns, and 200,000 events. Every completed projection contains 20 states, 160,000 rows, and 40,000 turns, groups, and lookups each.
 

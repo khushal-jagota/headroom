@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.support.synthetic_homes import create_synthetic_homes
 from tests.support.update_apps import release
 
 from planner.core import change_signal
@@ -59,12 +60,8 @@ def _environment(root: Path) -> dict[str, str]:
         if not key.startswith("PLAN_")
         and key not in {"HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "HERMES_HOME"}
     }
+    env.update(create_synthetic_homes(root))
     for key, name in {
-        "HOME": "home",
-        "CODEX_HOME": "codex",
-        "CLAUDE_CONFIG_DIR": "claude",
-        "HERMES_HOME": "hermes",
-        "PLAN_HERMES_HOME": "plan-hermes",
         "PLAN_LOGS_DIR": "logs",
         "PLAN_BACKUP_DIR": "backups",
         "PLAN_WORKSPACE_ROOT": "workspace",
@@ -184,6 +181,18 @@ def _report(request: pytest.FixtureRequest, name: str, result: dict[str, Any]) -
         (destination / name).write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
 
 
+def _compare_store(
+    root: Path, paths: tuple[Path, Path], operations: list[dict[str, Any]]
+) -> dict[str, Any]:
+    expected = _python_store(paths[0], operations)
+    actual: dict[str, Any] = _node(
+        root, {"path": str(paths[1]), "now": NOW, "operations": operations}, "probe_store"
+    )
+    # Compare canonical bytes too: NaN equality and float/int equality hide metadata loss.
+    assert json.dumps(actual, sort_keys=True) == json.dumps(expected, sort_keys=True)
+    return actual
+
+
 def test_attempt_store_preserves_versions_and_compare_and_swap(
     tmp_path: Path,
     request: pytest.FixtureRequest,
@@ -238,19 +247,8 @@ def test_attempt_store_preserves_versions_and_compare_and_swap(
                 r'"\u005f\u005fpanels_update_constant__0"',
             )
         )
-    expected = json.loads(json.dumps(_python_store(python_path, operations)))
-    actual = _node(
-        tmp_path, {"path": str(node_path), "now": NOW, "operations": operations}, "probe_store"
-    )
-    assert json.dumps(actual, sort_keys=True) == json.dumps(expected, sort_keys=True)
-    assert actual["file_mode"] == 0o600
-    retained = json.loads(actual["file_text"])
-    assert json.dumps(retained["future"], sort_keys=True) == json.dumps(
-        initial["future"], sort_keys=True
-    )
-    assert json.dumps(retained["release"], sort_keys=True) == json.dumps(
-        initial["release"], sort_keys=True
-    )
+    paths = (python_path, node_path)
+    actual = _compare_store(tmp_path, paths, operations)
     fresh = {**_attempt("fresh"), "future": numeric_edges}
     more: list[dict[str, Any]] = [
         {
@@ -264,11 +262,7 @@ def test_attempt_store_preserves_versions_and_compare_and_swap(
         {"kind": "remove", "attempt_id": "fresh", "expected": ["waiting"]},
         {"kind": "read"},
     ]
-    expected_more = json.loads(json.dumps(_python_store(python_path, more)))
-    actual_more = _node(
-        tmp_path, {"path": str(node_path), "now": NOW, "operations": more}, "probe_store"
-    )
-    assert json.dumps(actual_more, sort_keys=True) == json.dumps(expected_more, sort_keys=True)
+    actual_more = _compare_store(tmp_path, paths, more)
     for path in (python_path, node_path):
         path.write_text("{broken")
     recovery: list[dict[str, Any]] = [
@@ -276,11 +270,7 @@ def test_attempt_store_preserves_versions_and_compare_and_swap(
         {"kind": "create", "attempt": _attempt("recovered")},
         {"kind": "read"},
     ]
-    expected_recovery = json.loads(json.dumps(_python_store(python_path, recovery)))
-    actual_recovery = _node(
-        tmp_path, {"path": str(node_path), "now": NOW, "operations": recovery}, "probe_store"
-    )
-    assert actual_recovery == expected_recovery
+    actual_recovery = _compare_store(tmp_path, paths, recovery)
     encoding_results = []
     for encoding in ("invalid_utf8", "utf8_bom"):
         unreadable = _attempt("encoding-recovery")
@@ -298,15 +288,7 @@ def test_attempt_store_preserves_versions_and_compare_and_swap(
             {"kind": "create", "attempt": _attempt("encoding-recovery")},
             {"kind": "read"},
         ]
-        expected_encoding = json.loads(json.dumps(_python_store(python_path, recover_encoding)))
-        actual_encoding = _node(
-            tmp_path,
-            {"path": str(node_path), "now": NOW, "operations": recover_encoding},
-            "probe_store",
-        )
-        assert actual_encoding == expected_encoding
-        assert actual_encoding["answers"][0]["result"] is None
-        assert "future_release" not in json.loads(actual_encoding["file_text"])["release"]
+        actual_encoding = _compare_store(tmp_path, paths, recover_encoding)
         encoding_results.append({"encoding": encoding, "result": actual_encoding})
     # A previous server's request must reactivate its Mac without replacing any
     # existing attempt file, even an unreadable one. Reuse this store proof host.
@@ -346,19 +328,7 @@ def test_attempt_store_preserves_versions_and_compare_and_swap(
         adoption = [
             {"kind": "import_legacy", "data_directory": str(legacy_root), "running_sha": sha}
         ]
-        expected_legacy = json.loads(json.dumps(_python_store(python_path, adoption)))
-        actual_legacy = _node(
-            tmp_path, {"path": str(node_path), "now": NOW, "operations": adoption}, "probe_store"
-        )
-        assert actual_legacy == expected_legacy
-        legacy_results.append(actual_legacy)
-    adopted = legacy_results[-1]["answers"][0]["result"]
-    assert adopted["state"] == "done"
-    assert adopted["attempt_id"] == adopted["mac_attempt_id"] == "42"
-    assert legacy_results[-2]["answers"][0]["result"]["from_sha"] == "c" * 40
-    assert adopted["from_sha"] == ""
-    assert adopted["created_at"] == NOW and adopted["mode"] == "now"
-    assert legacy_results[-1]["emitted"] == 1
+        legacy_results.append(_compare_store(tmp_path, paths, adoption))
     _report(
         request,
         "unit-21-attempt-store.json",
@@ -503,10 +473,6 @@ def test_update_experience_and_microsecond_boundaries_match_python(
         )
 
     case(None, offered=None)
-    case(None)
-    case("waiting", mode="idle")
-    case("waiting", mode="now", deadline_at="2026-11-05T12:15:00+00:00")
-    case("preparing", deadline_at="2026-11-05T12:15:00+00:00")
     for timestamp in ("2026-11-05T12:15:00+00:00", "2026-11-05T12:15:00.000001+00:00"):
         case("installing", now=timestamp, deadline_at="2026-11-05T12:15:00+00:00")
     case(
@@ -515,7 +481,6 @@ def test_update_experience_and_microsecond_boundaries_match_python(
         running="a" * 40,
         deadline_at="2026-11-05T12:15:00+00:00",
     )
-    case("failed", detail="no")
     case("failed", detail="no", offered=None)
     case("failed", detail="no", offered=newer)
     case("done", mac=False)
@@ -834,14 +799,17 @@ def test_service_continuations_fence_stop_and_observe_external_attempts(
     ]
     actual = _node(tmp_path, value, "probe_continuations")
     assert actual["installed_roots"] == [str(installed.resolve()), None, None, None]
-    assert actual["stage_stop_waited"] and actual["backup_stop_waited"]
+    assert actual["old_finally_preserves_new_flight"]
+    assert 15 <= actual["stage_stop_ms"] < 500
+    assert 15 <= actual["backup_stop_ms"] < 500
     assert actual["stage_flight"] == {
-        "provider": 1,
-        "stage": 1,
+        "provider": 2,
+        "stage": 2,
         "backup": 0,
         "prepare": 0,
         "launch": 0,
         "ready": None,
+        "trace": ["stage", "stage"],
     }
     assert actual["backup_fence"] == {
         "provider": 1,
@@ -852,6 +820,15 @@ def test_service_continuations_fence_stop_and_observe_external_attempts(
         "state": "preparing",
         "closed": True,
         "poll": False,
+        "unchanged_after_ownership": True,
+    }
+    launch = actual["launch_fence"]
+    assert 15 <= launch["elapsed_ms"] < 500
+    assert {key: value for key, value in launch.items() if key != "elapsed_ms"} == {
+        "launches": 1,
+        "closed": True,
+        "state": "installing",
+        "unchanged_after_ownership": True,
     }
     assert actual["audit_refusal"]["state"] == "failed"
     assert actual["audit_refusal"]["detail"].startswith("The Ticket integrity check refused")
@@ -878,7 +855,9 @@ def test_service_continuations_fence_stop_and_observe_external_attempts(
             "boundary": (
                 "Real database and admission barrier with scripted stage/backup/launch. "
                 "File observation emits changes; readiness poll advances waiting work. "
-                "Real provider/core shutdown remains open."
+                "Held stage, backup, and installer refusal settle after the absolute stop "
+                "deadline and database ownership ends, without later publication or writes. "
+                "Real provider and production adapter shutdown remain open."
             ),
         },
     )
@@ -925,42 +904,24 @@ def test_owner_routes_populated_mac_reads_and_deployment_snapshot_match_python(
     async def planner_error(_request: Any, error: Any) -> JSONResponse:
         return JSONResponse(error.to_payload(), status_code=400)
 
-    operations: list[dict[str, Any]] = [
-        {"method": "GET", "path": "/api/updates"},
-        {
-            "method": "POST",
-            "path": "/api/updates/install",
-            "payload": {"app_sha": "b" * 40, "mode": "idle"},
-        },
-        {"method": "GET", "path": "/api/updates"},
-        {"method": "POST", "path": "/api/updates/attempts/@attempt/now", "payload": {}},
-        {"method": "POST", "path": "/api/updates/attempts/@attempt/cancel"},
-        {
-            "method": "POST",
-            "path": "/api/updates/install",
-            "payload": {"app_sha": "b" * 40, "mode": "bad"},
-        },
-        {
-            "method": "POST",
-            "path": "/api/updates/install",
-            "payload": {"app_sha": "b" * 40, "mode": "idle"},
-        },
-        {
-            "method": "POST",
-            "path": "/api/updates/attempts/@attempt/now",
-            "payload": {"confirm_activity": True},
-        },
-        {
-            "method": "POST",
-            "path": "/api/updates/attempts/@attempt/retry",
-            "seed": {"state": "failed"},
-        },
-        {
-            "method": "POST",
-            "path": "/api/updates/attempts/@attempt/retry-mac",
-            "seed": {"state": "done"},
-        },
-        {"method": "GET", "path": "/api/updates"},
+    def door(method: str, path: str = "", payload: Any = None, **extra: Any) -> dict[str, Any]:
+        item = {"method": method, "path": "/api/updates" + path, **extra}
+        if payload is not None:
+            item["payload"] = payload
+        return item
+
+    operations = [
+        door("GET"),
+        door("POST", "/install", {"app_sha": "b" * 40, "mode": "idle"}),
+        door("GET"),
+        door("POST", "/attempts/@attempt/now", {}),
+        door("POST", "/attempts/@attempt/cancel"),
+        door("POST", "/install", {"app_sha": "b" * 40, "mode": "bad"}),
+        door("POST", "/install", {"app_sha": "b" * 40, "mode": "idle"}),
+        door("POST", "/attempts/@attempt/now", {"confirm_activity": True}),
+        door("POST", "/attempts/@attempt/retry", seed={"state": "failed"}),
+        door("POST", "/attempts/@attempt/retry-mac", seed={"state": "done"}),
+        door("GET"),
     ]
     protected_requests = [
         ("GET", "/api/updates", None),
@@ -970,16 +931,27 @@ def test_owner_routes_populated_mac_reads_and_deployment_snapshot_match_python(
         ("POST", "/api/updates/attempts/@attempt/retry", None),
         ("POST", "/api/updates/attempts/@attempt/retry-mac", None),
     ]
-    for headers in [
-        {"x-plan-actor": "chief"},
-        {"x-plan-actor": "manager", "x-plan-manager-id": value["callers"]["manager"]},
-        {"x-plan-actor": "worker", "x-plan-ticket-id": value["callers"]["ticket"]},
-    ]:
-        for method, path, payload in protected_requests:
-            item = {"method": method, "path": path, "headers": headers}
-            if payload is not None:
-                item["payload"] = payload
-            operations.append(item)
+    denied = [
+        (
+            method,
+            path,
+            payload,
+            {"x-plan-actor": "worker", "x-plan-ticket-id": value["callers"]["ticket"]},
+        )
+        for method, path, payload in protected_requests
+    ]
+    denied.extend(
+        ("GET", "/api/updates", None, headers)
+        for headers in [
+            {"x-plan-actor": "chief"},
+            {"x-plan-actor": "manager", "x-plan-manager-id": value["callers"]["manager"]},
+        ]
+    )
+    for method, path, payload, headers in denied:
+        item = {"method": method, "path": path, "headers": headers}
+        if payload is not None:
+            item["payload"] = payload
+        operations.append(item)
     expected = []
     with TestClient(app) as client:
         for operation in operations:
@@ -1064,6 +1036,19 @@ def test_provider_trust_evidence_and_streamed_download_match_python(
         {"name": "panels-mac-runtime", "id": 9, "expired": False},
     ]
     cases: list[dict[str, Any]] = []
+    proof_archives: dict[str, Path] = {}
+
+    def transport_case(name: str, action: str, responses: dict[str, Any], **extra: Any) -> None:
+        cases.append(
+            {
+                "name": name,
+                "action": action,
+                "run_id": 1,
+                "artifact_id": 2,
+                "responses": responses,
+                **extra,
+            }
+        )
 
     def add(
         name: str,
@@ -1073,24 +1058,23 @@ def test_provider_trust_evidence_and_streamed_download_match_python(
         artifact_rows: list[dict[str, Any]] | None = None,
     ) -> None:
         payload = {**deepcopy(published), **(release_patch or {})}
-        archive = root / f"{name}.zip"
-        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zipped:
-            zipped.writestr("publication.json", json.dumps(payload))
-        cases.append(
+        encoded = json.dumps(payload)
+        if encoded not in proof_archives:
+            archive = root / f"{name}.zip"
+            with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zipped:
+                zipped.writestr("publication.json", encoded)
+            proof_archives[encoded] = archive
+        transport_case(
+            name,
+            "available",
             {
-                "name": name,
-                "action": "available",
-                "run_id": 1,
-                "artifact_id": 2,
-                "responses": {
-                    "actions/workflows/deploy.yml/runs": {"json": {"workflow_runs": [{"id": 1}]}},
-                    "actions/runs/1": {"json": {**run, **(run_patch or {})}},
-                    "actions/runs/1/artifacts": {
-                        "json": {"artifacts": artifacts if artifact_rows is None else artifact_rows}
-                    },
-                    "actions/artifacts/3/zip": {"file": str(archive)},
+                "actions/workflows/deploy.yml/runs": {"json": {"workflow_runs": [{"id": 1}]}},
+                "actions/runs/1": {"json": {**run, **(run_patch or {})}},
+                "actions/runs/1/artifacts": {
+                    "json": {"artifacts": artifacts if artifact_rows is None else artifact_rows}
                 },
-            }
+                "actions/artifacts/3/zip": {"file": str(proof_archives[encoded])},
+            },
         )
 
     add("trusted")
@@ -1125,63 +1109,89 @@ def test_provider_trust_evidence_and_streamed_download_match_python(
         "no_runtime",
         release_patch={"manifest": {**published["manifest"], "runtime_contract": None}},
     )
+    runtime = published["manifest"]["runtime_contract"]
+    runtime_edges: list[tuple[str, dict[str, Any]]] = [
+        ("inventory_newline", {"inventory_sha256": "a" * 64 + "\n"}),
+        ("feature_newline", {"cpu_features": [*runtime["cpu_features"], "extra\n"]}),
+        ("version_newline", {"python_version": "3.12.12\n"}),
+        ("unicode_patch", {"python_version": "3.12.１２"}),
+    ]
+    for name, patch in runtime_edges:
+        add(
+            name,
+            release_patch={
+                "manifest": {
+                    **published["manifest"],
+                    "runtime_contract": {**runtime, **patch},
+                }
+            },
+        )
     source = root / "large-artifact.zip"
-    digest = hashlib.sha256()
     with source.open("wb") as stream:
         for _ in range(128):
             chunk = b"unit21-streamed-artifact\n" * 2048
             stream.write(chunk)
-            digest.update(chunk)
-    cases.extend(
-        [
-            {
-                "name": "download",
-                "action": "download",
-                "run_id": 1,
-                "artifact_id": 2,
-                "responses": {
-                    "actions/artifacts/2": {"json": {"expired": False}},
-                    "actions/artifacts/2/zip": {"file": str(source)},
-                },
-            },
-            {
-                "name": "download_expired",
-                "action": "download",
-                "run_id": 1,
-                "artifact_id": 2,
-                "responses": {"actions/artifacts/2": {"json": {"expired": True}}},
-            },
-            {
-                "name": "transport_redaction",
-                "action": "publication",
-                "run_id": 1,
-                "artifact_id": 2,
-                "responses": {"actions/runs/1": {"failure": True}},
-            },
-            {
-                "name": "stream_redaction",
-                "action": "download",
-                "run_id": 1,
-                "artifact_id": 2,
-                "responses": {
-                    "actions/artifacts/2": {"json": {"expired": False}},
-                    "actions/artifacts/2/zip": {"body_failure": True},
-                },
-            },
-        ]
+    transport_case(
+        "download",
+        "download",
+        {
+            "actions/artifacts/2": {"json": {"expired": False}},
+            "actions/artifacts/2/zip": {"file": str(source)},
+        },
     )
+    transport_case(
+        "download_expired",
+        "download",
+        {
+            "actions/artifacts/2": {"json": {"expired": True}},
+        },
+    )
+    transport_case("transport_redaction", "publication", {"actions/runs/1": {"failure": True}})
+    transport_case(
+        "stream_redaction",
+        "download",
+        {
+            "actions/artifacts/2": {"json": {"expired": False}},
+            "actions/artifacts/2/zip": {"body_failure": True},
+        },
+    )
+    for name, chunks, stall in [
+        ("slow_steady", ["first", "second", "third", "fourth"], False),
+        ("stalled_read", ["first"], True),
+    ]:
+        transport_case(
+            name,
+            "download",
+            {
+                "actions/artifacts/2": {"json": {"expired": False}},
+                "actions/artifacts/2/zip": {"chunks": chunks, "chunk_ms": 30, "stall": stall},
+            },
+            inactivity_ms=70,
+        )
     expected = []
     original_client = httpx.Client
     for index, case in enumerate(cases):
         seen: list[dict[str, Any]] = []
 
         class Body(httpx.SyncByteStream):
-            def __init__(self, reply: dict[str, Any], http_request: httpx.Request) -> None:
+            def __init__(
+                self, reply: dict[str, Any], http_request: httpx.Request, inactivity_ms: int
+            ) -> None:
                 self.reply, self.request = reply, http_request
+                self.inactivity_ms = inactivity_ms
 
             def __iter__(self) -> Any:
                 if self.reply.get("body_failure"):
                     raise httpx.ReadError(token.read_text(), request=self.request)
+                if "chunks" in self.reply:
+                    assert self.request.extensions["timeout"]["read"] == 60
+                    for chunk in self.reply["chunks"]:
+                        time.sleep(self.reply["chunk_ms"] / 1000)
+                        yield chunk.encode()
+                    if self.reply["stall"]:
+                        time.sleep(self.inactivity_ms / 1000)
+                        raise httpx.ReadTimeout("scripted stalled read", request=self.request)
+                    return
                 with Path(self.reply["file"]).open("rb") as stream:
                     while chunk := stream.read(65536):
                         yield chunk
@@ -1203,8 +1213,9 @@ def test_provider_trust_evidence_and_streamed_download_match_python(
             reply = case["responses"][path]
             if reply.get("failure"):
                 raise httpx.ConnectError(token.read_text(), request=http_request)
-            if "file" in reply or reply.get("body_failure"):
-                return httpx.Response(reply.get("status", 200), stream=Body(reply, http_request))
+            if "file" in reply or "chunks" in reply or reply.get("body_failure"):
+                body = Body(reply, http_request, case.get("inactivity_ms", 0))
+                return httpx.Response(reply.get("status", 200), stream=body)
             return httpx.Response(reply.get("status", 200), json=reply.get("json"))
 
         def client(*args: Any, **kwargs: Any) -> httpx.Client:
@@ -1238,10 +1249,12 @@ def test_provider_trust_evidence_and_streamed_download_match_python(
         {"root": str(root), "token_file": str(token), "cases": cases},
         "probe_update_provider",
     )
+    timing = {item["name"]: item.pop("timing") for item in actual if "timing" in item}
     assert actual == json.loads(json.dumps(expected))
-    assert actual[0]["result"] is not None
-    download = next(item for item in actual if item["name"] == "download")
-    assert download["result"] == {"sha256": digest.hexdigest(), "bytes": source.stat().st_size}
+    assert timing["slow_steady"]["elapsed_ms"] > 70
+    assert timing["slow_steady"]["aborted"] is False
+    assert timing["stalled_read"]["aborted"] is True
+    assert {item["production_timeout"] for item in timing.values()} == {60_000}
     assert token.read_text().strip() not in json.dumps(actual)
     _report(
         request,
@@ -1250,6 +1263,7 @@ def test_provider_trust_evidence_and_streamed_download_match_python(
             "complete": True,
             "seconds": time.perf_counter() - started,
             "result": actual,
+            "inactivity": timing,
             "download_bytes": source.stat().st_size,
             "boundary": (
                 "Real GitHub adapters and scripted HTTP transports. "

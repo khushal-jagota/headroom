@@ -37,6 +37,9 @@ export class RuntimeContractError extends Error {}
 function fail(message: string): never {
   throw new RuntimeContractError(message);
 }
+function fullmatch(pattern: RegExp, value: string): boolean {
+  return pattern.exec(value)?.[0] === value;
+}
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 function equal(a: unknown, b: unknown): boolean {
@@ -89,9 +92,9 @@ export function parse_optional_runtime_contract(value: unknown): RuntimeContract
   if (value.system !== 'linux' || value.architecture !== 'x86_64')
     fail('unsupported runtime operating system or architecture');
   if (numeric_value(value.node_major) !== 22) fail('runtime requires host Node major 22');
-  if (!/^3\.12\.\d+$/.test(value.python_version as string))
+  if (!fullmatch(/^3\.12\.\p{Decimal_Number}+$/u, value.python_version as string))
     fail('runtime requires a concrete CPython 3.12 patch version');
-  if (!/^[0-9a-f]{64}$/.test(value.inventory_sha256 as string))
+  if (!fullmatch(/^[0-9a-f]{64}$/, value.inventory_sha256 as string))
     fail('invalid runtime inventory SHA256');
   if (!equal(value.external_libraries, GLIBC_LIBRARIES))
     fail('non-glibc runtime libraries must be bundled');
@@ -101,7 +104,7 @@ export function parse_optional_runtime_contract(value: unknown): RuntimeContract
   if (
     !SUPPORTED_CPU_FEATURES.every((feature) => features.includes(feature)) ||
     new Set(features).size !== features.length ||
-    features.some((feature) => !/^[a-z0-9_]+$/.test(feature))
+    features.some((feature) => !fullmatch(/^[a-z0-9_]+$/, feature))
   )
     fail('invalid required CPU features');
   return {

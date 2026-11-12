@@ -2,15 +2,17 @@
   "reports": [
     {
       "mode": "main_blocked",
-      "observed_after_ms": 601.1510910466313,
+      "observed_after_ms": 600.8463250473142,
       "native_query_reader_dead": true,
-      "wal_clear": true
+      "wal_clear": true,
+      "pidfd_cleanup": true
     },
     {
       "mode": "parent_killed",
-      "observed_after_ms": 616.924773901701,
+      "observed_after_ms": 616.5744317695498,
       "native_query_reader_dead": true,
-      "wal_clear": true
+      "wal_clear": true,
+      "pidfd_cleanup": true
     }
   ]
 }

@@ -28,5 +28,16 @@
     "2608751": 126349312
   },
   "summed_rss_bytes_includes_shared_pages": 381149184,
-  "all_owned_readers_reaped_and_wal_clear": true
+  "all_owned_readers_reaped_and_wal_clear": true,
+  "replacement_recovery_review_run": {
+    "expired_during_backoff": true,
+    "replacement_failed_before_ready": true,
+    "successful_sequences": [
+      2,
+      2
+    ],
+    "boot_count": 5,
+    "restored_readers": 2,
+    "recovery_ms": 800.08197
+  }
 }
