@@ -3,6 +3,9 @@ import { Transform, Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Config } from '../config.ts';
 import { MAX_CONVERSATION_SEND_REQUEST_BYTES } from '../config.ts';
+import { admit_unidentified_call, http_refusal } from '../unidentified_agent_calls/admission.ts';
+import type { Endpoint, PeerLookup } from '../unidentified_agent_calls/contracts.ts';
+import { resolve_loopback_peer } from '../unidentified_agent_calls/peer.ts';
 export interface WorkspaceAdmission {
   operation(): {
     admitted: boolean;
@@ -33,6 +36,7 @@ export function installMiddleware(
   app: FastifyInstance,
   config: Config,
   workspace?: WorkspaceAdmission,
+  unidentifiedLookup: PeerLookup = resolve_loopback_peer,
 ): void {
   app.addHook('onRequest', async (request, reply) => {
     const path = new URL(request.url, 'http://localhost').pathname;
@@ -124,6 +128,36 @@ export function installMiddleware(
             delete request.headers[name];
         }
       }
+    }
+    const socket = request.raw.socket;
+    const endpoint = (host: string | undefined, port: number | undefined): Endpoint | null =>
+      typeof host === 'string' && typeof port === 'number' ? [host, port] : null;
+    const admission = await admit_unidentified_call(
+      config.refuse_unidentified_agent_calls,
+      {
+        kind: 'http',
+        authenticated_owner:
+          (request as FastifyRequest & { authenticatedOwner?: boolean }).authenticatedOwner ===
+          true,
+        headers: Array.from(
+          { length: request.raw.rawHeaders.length / 2 },
+          (_, index) =>
+            [request.raw.rawHeaders[index * 2]!, request.raw.rawHeaders[index * 2 + 1]!] as const,
+        ),
+        client: endpoint(socket.remoteAddress, socket.remotePort),
+        server: endpoint(socket.localAddress, socket.localPort),
+      },
+      unidentifiedLookup,
+    );
+    if (admission.peer_lookup !== null)
+      request.log.debug({ ...admission.peer_lookup }, 'Unidentified loopback caller');
+    if (!admission.admitted) {
+      const refused = http_refusal(admission.peer_lookup!.skipped_unreadable_processes);
+      reply
+        .code(refused.status)
+        .header('content-type', 'application/json')
+        .send(Buffer.from(JSON.stringify(refused.body), 'utf8'));
+      return;
     }
     if (request.method === 'POST' && SEND_PATHS.some((pattern) => pattern.test(path))) {
       const length = request.headers['content-length'];

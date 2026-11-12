@@ -13,10 +13,13 @@ import type {
 import type * as Rpc from '../../../node_modules/@agentclientprotocol/sdk/dist/core/jsonrpc.js';
 import type * as Validators from '../../../node_modules/@agentclientprotocol/sdk/dist/v1/unstable/schema/zod.gen.js';
 import { BackendAdapterError, BackendSpawnFailed } from '../contracts.ts';
+import { CodexChildWouldNotStart } from '../codex_app_server/errors.ts';
+import { python_repr } from '../claude_agent_sdk/failure_summary.ts';
 import { spawn_codex_process, within } from '../codex_app_server/process.ts';
 import type { OwnedCodexProcess } from '../codex_app_server/process.ts';
 import type { ResolvedConversationStart } from '../../contracts.ts';
 import { child_environment } from './launch.ts';
+import { require_strict_session_notification } from './strict_updates.ts';
 import type { AcpChildLaunch } from './launch.ts';
 import {
   CHILD_OUTPUT_LINE_LIMIT_BYTES,
@@ -72,18 +75,27 @@ export interface AcpRequest<T> {
 export interface AcpRequestOptions {
   timeout_ms?: number;
   signal?: AbortSignal;
+  /** Complete caller-owned reply effects before the next inbound frame. Raw response stays independent. */
+  after_response?: () => Promise<void>;
 }
 interface WriteReceipt {
   method: string;
   params: unknown;
   request: boolean;
   pending: Pending<void>;
+  effect: ResponseEffect;
+}
+interface ResponseEffect {
+  readonly pending: Pending<void>;
+  completed: boolean;
+  id?: JsonRpcId;
 }
 
 export class HermesAcpClient {
   readonly closed: Promise<void>;
   private readonly connection: Rpc.Connection;
   private readonly receipts = new Set<WriteReceipt>();
+  private readonly response_effects = new Map<JsonRpcId, ResponseEffect>();
   private readonly response_receipts = new Map<JsonRpcId, Pending<void>>();
   private readonly active_answers = new Set<Pending<never>>();
   private failure: unknown = null;
@@ -112,7 +124,9 @@ export class HermesAcpClient {
               const message = next.value;
               if (rpc.isRequestMessage(message) || rpc.isNotificationMessage(message))
                 this.gate = new Pending<void>();
-              else this.gate = null;
+              else
+                this.gate =
+                  'id' in message ? (this.response_effects.get(message.id)?.pending ?? null) : null;
               controller.enqueue(message);
             } catch (error) {
               controller.error(error);
@@ -131,20 +145,27 @@ export class HermesAcpClient {
         write: async (message) => {
           this.require_wire();
           try {
-            await writer.write(message);
+            let receipt: WriteReceipt | undefined;
             if ('method' in message) {
-              for (const receipt of this.receipts) {
-                if (
-                  receipt.method === message.method &&
-                  receipt.params === message.params &&
-                  receipt.request === 'id' in message
-                ) {
-                  this.receipts.delete(receipt);
-                  receipt.pending.resolve();
-                  break;
-                }
+              receipt = [...this.receipts].find(
+                (candidate) =>
+                  candidate.method === message.method &&
+                  candidate.params === message.params &&
+                  candidate.request === 'id' in message,
+              );
+              if (receipt && 'id' in message && !receipt.effect.completed) {
+                // Observe only the official SDK-generated id. The SDK still owns
+                // correlation and response parsing. The write receipt remains later.
+                receipt.effect.id = message.id;
+                this.response_effects.set(message.id, receipt.effect);
               }
-            } else {
+            }
+            await writer.write(message);
+            if (receipt) {
+              this.receipts.delete(receipt);
+              receipt.pending.resolve();
+            }
+            if (!('method' in message)) {
               this.response_receipts.get(message.id)?.resolve();
               this.response_receipts.delete(message.id);
             }
@@ -165,6 +186,7 @@ export class HermesAcpClient {
         try {
           if (message.kind === 'notification') {
             if (message.method === 'session/update') {
+              require_strict_session_notification(message.params);
               const params = validators.zSessionNotification.parse(message.params);
               await this.handlers.session_update?.(params);
             }
@@ -233,6 +255,8 @@ export class HermesAcpClient {
     this.failure = error ?? new Error('the ACP wire ended');
     for (const receipt of this.receipts) receipt.pending.reject(this.failure);
     this.receipts.clear();
+    for (const effect of this.response_effects.values()) effect.pending.resolve();
+    this.response_effects.clear();
     for (const receipt of this.response_receipts.values()) receipt.reject(this.failure);
     this.response_receipts.clear();
     for (const answer of this.active_answers) answer.reject(this.failure);
@@ -246,7 +270,8 @@ export class HermesAcpClient {
     options: AcpRequestOptions = {},
   ): AcpRequest<T> {
     const written = new Pending<void>();
-    const receipt = { method, params, request: true, pending: written };
+    const effect: ResponseEffect = { pending: new Pending<void>(), completed: false };
+    const receipt = { method, params, request: true, pending: written, effect };
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const cancel = (reason?: unknown) => controller.abort(reason);
@@ -284,7 +309,19 @@ export class HermesAcpClient {
         });
       // A cancellation can precede the actual request write. Keep its write
       // receipt independent: the SDK still sends that request and its cancellation.
-      void response.catch(() => {});
+      // Do not put effects behind response itself: turn ending awaits that raw
+      // promise, while this separate barrier awaits the completed ending.
+      const finish_effect = () => options.after_response?.();
+      void response
+        .then(finish_effect, finish_effect)
+        .catch((error) => {
+          if (!this.stopped) this.log(error);
+        })
+        .finally(() => {
+          effect.completed = true;
+          effect.pending.resolve();
+          if (effect.id !== undefined) this.response_effects.delete(effect.id);
+        });
       return { written: written.promise, response, cancel };
     } catch (error) {
       written.reject(error);
@@ -329,7 +366,12 @@ export class HermesAcpLauncher {
   private client: HermesAcpClient | null = null;
   private starting: Promise<HermesAcpClient> | null = null;
   private stopping: Promise<void> | null = null;
-  private error_tail = '';
+  private readonly error_lines: string[] = [];
+  private error_line_characters = 0;
+  private error_partial = '';
+  private error_line_bytes = 0;
+  private stderr_reader_failure: unknown = null;
+  private stderr_failure_reported = false;
   private cleanup_log: HermesAcpHandlers['log'];
   private cleanup_failure_reported = false;
   start(
@@ -356,13 +398,60 @@ export class HermesAcpLauncher {
       this.owned = owned;
       if (this.sealed) throw new Error('this child is being shut down');
       const decoder = new StringDecoder('utf8');
-      const keep_stderr = (text: string) => {
-        this.error_tail = Array.from(this.error_tail + text)
-          .slice(-STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS)
-          .join('');
+      const keep_stderr = (text: string, ended = false) => {
+        this.error_partial += text;
+        let newline: number;
+        while ((newline = this.error_partial.indexOf('\n')) !== -1) {
+          this.keep_error_line(this.error_partial.slice(0, newline + 1));
+          this.error_partial = this.error_partial.slice(newline + 1);
+        }
+        if (ended && this.error_partial) {
+          this.keep_error_line(this.error_partial);
+          this.error_partial = '';
+        }
       };
-      owned.child.stderr.on('data', (chunk: Buffer) => keep_stderr(decoder.write(chunk)));
-      owned.child.stderr.on('end', () => keep_stderr(decoder.end()));
+      const fail_stderr_reader = (error: unknown) => {
+        if (this.stderr_reader_failure !== null) return;
+        this.stderr_reader_failure = error;
+        this.error_partial = '';
+        this.error_line_bytes = 0;
+        owned.child.stderr.pause();
+      };
+      owned.child.stderr.on('data', (chunk: Buffer) => {
+        if (this.stderr_reader_failure !== null) return;
+        try {
+          let cursor = 0;
+          while (cursor < chunk.length) {
+            const newline = chunk.indexOf(10, cursor);
+            const end = newline === -1 ? chunk.length : newline;
+            const bytes = end - cursor;
+            if (this.error_line_bytes + bytes > CHILD_OUTPUT_LINE_LIMIT_BYTES) {
+              fail_stderr_reader(
+                new Error(
+                  newline === -1
+                    ? 'Separator is not found, and chunk exceed the limit'
+                    : 'Separator is found, but chunk is longer than limit',
+                ),
+              );
+              return;
+            }
+            this.error_line_bytes = newline === -1 ? this.error_line_bytes + bytes : 0;
+            const through = newline === -1 ? end : end + 1;
+            keep_stderr(decoder.write(chunk.subarray(cursor, through)));
+            cursor = through;
+          }
+        } catch (error) {
+          fail_stderr_reader(error);
+        }
+      });
+      owned.child.stderr.on('end', () => {
+        if (this.stderr_reader_failure !== null) return;
+        try {
+          keep_stderr(decoder.end(), true);
+        } catch (error) {
+          fail_stderr_reader(error);
+        }
+      });
       const output = new WritableStream<Uint8Array>({
         write: (chunk) =>
           new Promise<void>((resolve, reject) => {
@@ -405,11 +494,36 @@ export class HermesAcpLauncher {
       } catch {
         // Cleanup reports its own failure. Startup preserves its original failure.
       }
-      throw new BackendSpawnFailed(error instanceof Error ? error.message : String(error));
+      const executable = launch.argv[0];
+      // The shared process helper retains Node's exact spawn message, not errno.
+      // Translate this one observed missing-executable failure, without a pattern
+      // that can rewrite provider errors or unrelated operating-system failures.
+      const detail =
+        error instanceof CodexChildWouldNotStart &&
+        executable !== undefined &&
+        error.message === `spawn ${executable} ENOENT`
+          ? `[Errno 2] No such file or directory: ${python_repr(executable)}`
+          : error instanceof Error
+            ? error.message
+            : String(error);
+      throw new BackendSpawnFailed(detail);
+    }
+  }
+  private keep_error_line(line: string): void {
+    this.error_lines.push(line);
+    this.error_line_characters += Array.from(line).length;
+    while (
+      this.error_line_characters > STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS &&
+      this.error_lines.length > 1
+    ) {
+      this.error_line_characters -= Array.from(this.error_lines.shift()!).length;
     }
   }
   standard_error_tail(): string | null {
-    return this.error_tail || null;
+    if (!this.error_lines.length) return null;
+    return Array.from(this.error_lines.join(''))
+      .slice(-STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS)
+      .join('');
   }
   stop(): Promise<void> {
     this.sealed = true;
@@ -433,6 +547,14 @@ export class HermesAcpLauncher {
     await this.stop_owned();
   }
   private async stop_owned(): Promise<void> {
+    if (this.stderr_reader_failure !== null && !this.stderr_failure_reported) {
+      this.stderr_failure_reported = true;
+      try {
+        this.cleanup_log?.(this.stderr_reader_failure);
+      } catch {
+        /* A failed diagnostic cannot block process cleanup. */
+      }
+    }
     try {
       await this.owned?.stop();
     } catch (error) {
