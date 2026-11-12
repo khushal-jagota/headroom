@@ -48,15 +48,16 @@ it('pins actual SDK catalog metadata despite inherited Python SDK markers', asyn
   vi.stubEnv('CLAUDECODE', '1');
   vi.stubEnv('NODE_OPTIONS', '--sdk-environment-probe');
   vi.stubEnv('DEBUG', 'sdk-environment-probe');
+  vi.stubEnv('NoDefaultCurrentDirectoryInExePath', undefined);
   try {
     // Builtin process entry points are fail-closed before the real SDK loads.
-    const { probe_claude_model_catalog } = await import('./claude_model_catalog.ts');
     const expected_environment: NodeJS.ProcessEnv = {
       ...process.env,
       CLAUDE_CODE_ENTRYPOINT: 'sdk-ts',
       CLAUDE_AGENT_SDK_VERSION: '0.3.316',
     };
     delete expected_environment.CLAUDECODE;
+    const { probe_claude_model_catalog } = await import('./claude_model_catalog.ts');
     await expect(probe_claude_model_catalog('/synthetic/claude-metadata-probe')).rejects.toThrow(
       sentinel.message,
     );
@@ -70,6 +71,8 @@ it('pins actual SDK catalog metadata despite inherited Python SDK markers', asyn
     expect(captured!.options.env!.NODE_OPTIONS).toBe('--sdk-environment-probe');
     expect(captured!.options.env!.DEBUG).toBe('sdk-environment-probe');
     expect(captured!.options.env).not.toHaveProperty('CLAUDECODE');
+    expect(captured!.options.env).not.toHaveProperty('NoDefaultCurrentDirectoryInExePath');
+    expect(process.env).not.toHaveProperty('NoDefaultCurrentDirectoryInExePath');
     expect(captured!.options.env!.CLAUDE_CODE_ENTRYPOINT).toBe('sdk-ts');
     expect(captured!.options.env!.CLAUDE_AGENT_SDK_VERSION).toBe('0.3.316');
     expect(captured!.options.env!.SDK_INHERITED_TEST_VALUE).toBe('inherited');
