@@ -538,7 +538,7 @@ def run_list(
                                 "status": response.status_code,
                                 "headers": {
                                     h: response.headers[h]
-                                    for h in (*HEADERS, *(("content-length", "content-encoding", "vary") if resolved.get("response_bytes") is True else ())) if h in response.headers
+                                    for h in (*HEADERS, *(("content-length", "content-encoding", "vary", "location") if resolved.get("response_bytes") is True else ())) if h in response.headers
                                 },
                                 "body": body,
                             }

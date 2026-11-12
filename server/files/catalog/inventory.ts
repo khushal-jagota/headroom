@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { dirname } from 'node:path';
-import { foldDirectory } from '../logic/listing.ts';
+import { comparePythonText, foldDirectory } from '../logic/listing.ts';
 import { symlink } from '../logic/paths.ts';
 import type { ArtifactEntry, Inventory } from '../contracts.ts';
 import * as config from './config.ts';
@@ -10,7 +10,7 @@ export function pythonJson(value: unknown, sorted = false): string {
   if (Array.isArray(value)) return '[' + value.map((v) => pythonJson(v, sorted)).join(', ') + ']';
   if (value !== null && typeof value === 'object') {
     const entries = Object.entries(value);
-    if (sorted) entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    if (sorted) entries.sort(([a], [b]) => comparePythonText(a, b));
     return (
       '{' +
       entries.map(([k, v]) => JSON.stringify(k) + ': ' + pythonJson(v, sorted)).join(', ') +

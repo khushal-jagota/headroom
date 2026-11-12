@@ -112,3 +112,9 @@ scripts/dev pytest tests/compare/test_compare.py --compare-list tests/compare/li
 Lists for units 7 through 10 select both in-memory systems with `"conversation_system": "in_memory"`. Omit that setting when unit 15 supplies the real core. The comparison fixture passes the selection to both processes explicitly, rather than through ambient `PLAN_*` variables. The runner's default candidate remains Python for its reference calibration and existing CI job; `--compare-right-module tests.compare.ts_launcher` selects the TS comparison.
 
 The shared `startServer` lifecycle accepts `createSignalAuthority(database)` for the real coordinator or an isolated test source. Its default factory, `createIdlePublicationAuthority`, reuses the persisted source scope and creates fresh runtime, installation, and delivery identities. The lifecycle invokes the factory only after runtime ownership and database access are ready. Factories return the structural public authority interface, so replacement coordinators do not inherit the idle class.
+
+Use `requestOrigin(request)` from `core/http/origin.ts` for public URL construction.
+It matches Uvicorn's default trusted local peer (`127.0.0.1`) and validated
+`X-Forwarded-Proto` schemes. It keeps the actual Host and does not trust
+`X-Forwarded-Host`. Nondefault `FORWARDED_ALLOW_IPS` configuration is not part of
+this helper's current contract.

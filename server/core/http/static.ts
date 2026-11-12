@@ -1,3 +1,4 @@
+import { requestOrigin } from './origin.ts';
 import { open, readFile, stat, realpath } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { resolve, sep, extname, join } from 'node:path';
@@ -239,7 +240,7 @@ export async function mountStatic(
             return;
           }
           if (!request.url.split('?')[0]!.endsWith('/')) {
-            const url = new URL(request.url, `${request.protocol}://${request.host}`);
+            const url = new URL(request.url, requestOrigin(request));
             url.pathname += '/';
             reply.code(307).header('location', url.href).send('');
             return;
