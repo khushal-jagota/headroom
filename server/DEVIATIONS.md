@@ -195,7 +195,8 @@ this accepted policy.
 ## Credential request UUID text
 
 Python's `UUID()` accepts additional integer-text forms, including a `0x` prefix,
-signs, and underscores between digits. Credential requests in TS accept canonical
+a leading plus sign, and underscores when the resulting text has the required
+length. Credential requests in TS accept canonical
 hexadecimal UUID text and the ordinary UUID wrappers, but refuse those lenient
 integer-text forms. The Manager accepts this narrower rule as Python leniency
 that TS does not reproduce. The focused credential-request check pins refusal of
