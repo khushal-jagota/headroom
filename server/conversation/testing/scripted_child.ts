@@ -49,6 +49,7 @@ export class ScriptedChild implements BackendChild {
   readonly #exit: Promise<void>;
   #next_id = 0;
   #closed = false;
+  last_observation: ScriptedSnapshot | null = null;
   #stderr = '';
 
   constructor(sink: BackendEventSink) {
@@ -209,6 +210,7 @@ export class ScriptedChild implements BackendChild {
 
   async detach(): Promise<void> {
     await this.#request('detach');
+    await this.inspect().catch(() => {});
     await this.#close();
   }
 
@@ -218,6 +220,7 @@ export class ScriptedChild implements BackendChild {
       return;
     }
     await this.#request('stop');
+    await this.inspect().catch(() => {});
     await this.#close();
   }
 
@@ -237,7 +240,9 @@ export class ScriptedChild implements BackendChild {
   }
 
   async inspect(): Promise<ScriptedSnapshot> {
-    return await this.#request('inspect');
+    const snapshot = await this.#request<ScriptedSnapshot>('inspect');
+    this.last_observation = snapshot;
+    return snapshot;
   }
 
   async wait_for_barrier(name: string): Promise<void> {

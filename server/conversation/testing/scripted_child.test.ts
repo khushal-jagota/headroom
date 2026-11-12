@@ -105,6 +105,8 @@ test('early news cannot block receipt parsing and complete inputs cross the shar
     );
     await child.finish();
     expect((await child.inspect()).token).toBeNull();
+    await child.detach();
+    expect(child.last_observation?.calls.at(-1)?.command).toBe('detach');
   } finally {
     release_report();
     await child.terminate();
@@ -145,6 +147,7 @@ test('transport preserves definite refusal, possible emission, and rebind identi
     expect(snapshot.calls.filter((call) => call.command === 'write_prompt')).toHaveLength(4);
     expect(snapshot.delivered_text).toEqual(['sender']);
     await child.stop();
+    expect(child.last_observation?.calls.at(-1)?.command).toBe('stop');
   } finally {
     await child.terminate();
   }

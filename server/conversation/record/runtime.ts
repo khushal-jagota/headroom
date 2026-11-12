@@ -22,12 +22,16 @@ export function createConversationRuntime() {
   return {
     getRuntime,
     routes: createConversationViewRoutes(getRuntime),
-    initialize(database: Database, config: Config): void {
+    initialize(
+      database: Database,
+      config: Config,
+      options: { integer_now?: () => number } = {},
+    ): void {
       if (runtime !== undefined) {
         throw new Error('Conversation record runtime is already initialized');
       }
       // startServer owns the canonical conversation lock before any area initializes.
-      const store = new ConversationStore(database);
+      const store = new ConversationStore(database, { integer_now: options.integer_now });
       database.write((tx) => store.reconcile_in_transaction(tx, new Map()), {
         changeSignal: 'silent',
       });
@@ -48,6 +52,9 @@ export function createConversationRuntime() {
       };
       rebuilder = new ConversationViewRebuilder();
       rebuilder.start(database);
+    },
+    bind_runtime_facts(facts: ConversationViewRuntime['runtime_facts']): void {
+      getRuntime().runtime_facts = facts;
     },
     async close(): Promise<void> {
       rebuilder?.close();
