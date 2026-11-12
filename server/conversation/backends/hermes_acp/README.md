@@ -12,7 +12,7 @@ The public SDK app starts asynchronous handlers without awaiting their completio
 
 `HermesAcpLauncher` seals new starts before shutdown. It reuses Codex's process-group owner without a shared-helper change. Its bounded TERM/KILL cleanup follows that helper. A direct-child exit allows buffered ACP output to drain in order, within 15 seconds. Stop does not wait for descendant-held output pipes before it observes direct-child exit. Launch and cleanup errors use backend exception types rather than exposing Codex exceptions.
 
-Strict whole-update validation uses the SDK's exported JSON schema before best-effort parsing. The proposed 15-second control-request deadlines and invalid-wire coercion policy require Manager acceptance in `server/DEVIATIONS.md`. Regular persistence callbacks have no deadline. A control timeout settles that request only: steer becomes uncertain, configuration needs a fresh child, and startup reports session load failure.
+Strict whole-update validation uses the SDK's exported JSON schema before best-effort parsing. The Manager accepted the 15-second control-request deadlines and strict numeric-field validation on November 12, 2026, as recorded in `server/DEVIATIONS.md`. Regular persistence callbacks have no deadline. A control timeout settles that request only: steer becomes uncertain, configuration needs a fresh child, and startup reports session load failure.
 
 ## Evidence and remaining scope
 
@@ -24,4 +24,8 @@ The focused connection tests prove ordered split-frame handling, parked permissi
 
 The configuration-rebind case injects one managed-image read failure after model and effort changes, before prompt bytes reach the wire. This deterministic fault proves rollback and child replacement without a timing race against OS exit. Each scenario advances the synthetic clock beyond earlier scenarios before its maintenance sweep. No prior scenario can enter its compaction window.
 
-The catalog binding, production lifecycle injection, and separately authorized real-provider proof remain open. No real Hermes code runs in these tests.
+`HermesModelCatalogOwner.source` supplies the unchanged catalog interface. `hermes_model_catalog_launch` retains the Python inventory script path. The owner copies the complete parent environment, applies Python's overrides, and returns raw command outcomes. The lifecycle owner must retain the object and call `shutdown()`, because the source interface stores only its callable. Cancellation stops current probes and permits a later read. Shutdown seals new reads before cleanup.
+
+`tests/compare/direct/test_unit16_catalog.py` compares fresh Python launch values and command outcomes for success, failure, timeout, and malformed output. Four synthetic commands per language prove actual stdout, stderr, exit, and timeout behavior. Focused catalog tests cover cancellation, shutdown during spawn, and retry after failed cleanup.
+
+Production lifecycle injection and separately authorized real-provider proof remain open. The side-by-side gate must confirm that real Hermes usage and cost events arrive and enter the records under strict validation. No real Hermes code runs in these tests.
