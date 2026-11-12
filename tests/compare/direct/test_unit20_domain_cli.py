@@ -7,15 +7,27 @@ No provider, script runtime, additional host type or raw seed SQL enters this pr
 
 from __future__ import annotations
 
+import base64
 import json
 import os
+import subprocess
 import time
 from contextlib import closing
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
-from tests.compare.direct.unit20_cli import ROOT, CliHost, comparable, run_cli
+from tests.compare.direct.unit20_cli import (
+    PYTHON,
+    ROOT,
+    TYPESCRIPT,
+    CliHost,
+    comparable,
+    environment,
+    run_cli,
+)
+from tests.compare.direct.unit20_wire import compare_wire, wire_view
 from tests.compare.runner import Normalizer, backup_database, substitute
 from tests.support.measure_sources import NOW, configured_source
 from tests.support.server import ServerHandle
@@ -114,6 +126,52 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
             }
             assert comparable(python_cli) == comparable(ts_cli_reference), evidence
             assert comparable(python_cli) == comparable(ts_cli_candidate), evidence
+            wire_rules = json.loads((LIST.parent.parent / "rules" / LIST.name).read_text())
+            for other, handle in (
+                (ts_cli_reference, reference),
+                (ts_cli_candidate, candidate_host),
+            ):
+                compare_wire(
+                    python_cli,
+                    other,
+                    Normalizer(wire_rules, reference.db_path.parent),
+                    Normalizer(wire_rules, handle.db_path.parent),
+                )
+        # One existing-host physical crosscheck isolates interception from CLI behavior.
+        env = environment(CliHost(reference, tmp_path), step["identity"], tmp_path / "python-input")
+        transparency_started = time.perf_counter()
+        CliHost(reference, tmp_path).check()
+        with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
+            oracle = client.post(
+                reference.base + "/api/datasets/read", json=json.loads(step["stdin"])
+            )
+        assert oracle.status_code == 200
+        evidence["wire_oracle"] = {
+            "status": oracle.status_code,
+            "body_base64": base64.b64encode(oracle.content).decode(),
+        }
+        evidence["wire_transparency"] = []
+        for command, observed in ((PYTHON, python_cli), (TYPESCRIPT, ts_cli_reference)):
+            CliHost(reference, tmp_path).check()
+            plain = subprocess.run(
+                [*command, *step["argv"]],
+                cwd=ROOT,
+                env=env,
+                input=step.get("stdin", "").encode(),
+                capture_output=True,
+                timeout=40,
+                check=False,
+            )
+            actual = {
+                "exit_code": plain.returncode,
+                "stdout": plain.stdout.decode(),
+                "stderr": plain.stderr.decode(),
+            }
+            assert actual == comparable(observed)
+            assert len(observed["wire"]) == 1
+            assert base64.b64decode(observed["wire"][0]["body_base64"]) == oracle.content
+            evidence["wire_transparency"].append(actual)
+        evidence["wire_transparency_seconds"] = time.perf_counter() - transparency_started
         evidence["runtime_guidance"] = _runtime_proof(reference, candidate_host, tmp_path)
     finally:
         for handle in reversed(handles):
@@ -203,7 +261,14 @@ def test_unit20_attention_setup_cli(tmp_path: Path, request: pytest.FixtureReque
     started = time.perf_counter()
     step = fixtures.direct_steps("attention")[0]
     handles: list[ServerHandle] = []
-    evidence: dict[str, Any] = {"list": LIST.name, "implementations": []}
+    evidence: dict[str, Any] = {
+        "list": LIST.name,
+        "implementations": [],
+        "source_row_scope": (
+            "Inherits runner.SHARED_DERIVED_TABLES navigation_view_ordered domain exclusion; "
+            "strict Unit15 publication/route/notice proofs retain their independent boundary."
+        ),
+    }
     baseline = tmp_path / "baseline.db"
     try:
         reference = _start_server(tmp_path / "python", server_module="tests.compare.host")
@@ -277,6 +342,39 @@ process.stdout.write(JSON.stringify(collection_script(value.path,value.datasets,
             outputs.append(
                 [normalizer.normalize(comparable(answer)), normalizer.normalize(comparable(human))]
             )
+        left, right = evidence["implementations"][1:]
+        wire_rules = json.loads(fixtures.RULES.read_text())
+        normalizers = [Normalizer(wire_rules, reference.db_path.parent) for _ in range(2)]
+        assert len(left["json"]["wire"]) == len(right["json"]["wire"]) == 13
+        for index in range(13):
+            replies = [item["json"]["wire"][index] for item in (left, right)]
+            if index in (11, 12):
+                for item, reply, normalizer in zip(
+                    (left, right), replies, normalizers, strict=True
+                ):
+                    source = json.loads(item["json"]["stdout"])["source_id"]
+                    suffix = "script" if index == 11 else "schedule"
+                    assert reply["method"] == "PUT" and reply["status"] == 200
+                    assert reply["path"] == f"/api/measure-sources/{source}/{suffix}"
+                    body = json.loads(base64.b64decode(reply["body_base64"]))
+                    assert body["active_script"]["sha256"] == item["state"]["sha256"]
+                    normalizer.rules = {
+                        **wire_rules,
+                        "response_tokens": {
+                            **wire_rules["response_tokens"],
+                            "body.active_script.sha256": "Verified attention script SHA alias",
+                        },
+                    }
+            try:
+                compare_wire({"wire": [replies[0]]}, {"wire": [replies[1]]}, *normalizers)
+            finally:
+                for normalizer in normalizers:
+                    normalizer.rules = wire_rules
+        evidence["wire_scope"] = (
+            "All 13 fresh JSON replies compared. Both digests match factory text and SQL. "
+            "Idempotent human raw traces retain their own ID order."
+        )
+        evidence["wire_aliases"] = fixtures.rule("attention_scripts")["wire_aliases"]
         assert states[0] == states[1] == states[2], evidence
         assert outputs[0] == outputs[1] == outputs[2], evidence
     finally:
@@ -296,7 +394,6 @@ def _domain_report(request: pytest.FixtureRequest, name: str, evidence: Any) -> 
 
 def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """One owned socket and real Git worktree prove registration without a browser."""
-    import subprocess
     import sys
     from dataclasses import asdict
     from unittest.mock import patch
@@ -419,6 +516,9 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
                         )
                         if not first:
                             assert current["process"] == actual_process
+                        answer["wire_compared"] = wire_view(
+                            answer, normalizer, preview_created_at=current["created_at"]
+                        )
                         answers.append(
                             fixtures.preview_answer(
                                 answer, current, handle, interval, normalizer, mode, first=first
@@ -434,7 +534,14 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
                                 "interval": interval,
                             }
                         )
-                    modes[mode] = answers
+                    modes[mode] = {
+                        "output": answers,
+                        "wire": [
+                            item["raw"]["wire_compared"]
+                            for item in evidence["implementations"]
+                            if item["implementation"] == name and item["mode"] == mode
+                        ],
+                    }
                 results.append(modes)
                 assert child.poll() is None
         assert results[0] == results[1] == results[2], evidence
@@ -504,7 +611,7 @@ def test_unit20_domain_same_python_host(tmp_path: Path, request: pytest.FixtureR
     }
     physical_driver = driver.run_cli
     for mode in ("json", "text"):
-        results = []
+        results: list[dict[str, Any]] = []
         for candidate in (False, True):
             # The previous fixture-owned process stopped before its files change.
             shutil.rmtree(host_root)
@@ -523,7 +630,9 @@ def test_unit20_domain_same_python_host(tmp_path: Path, request: pytest.FixtureR
             saved = dict(seed_captures)
             raw: list[dict[str, Any]] = []
 
-            def capture_run(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            def capture_run(
+                *args: Any, raw: list[dict[str, Any]] = raw, **kwargs: Any
+            ) -> dict[str, Any]:
                 # Record the real driver, without substituting its result or checks.
                 outcome = physical_driver(*args, **kwargs)
                 raw.append({"argv": args[1]["argv"], "proof": args[1]["proof"], "outcome": outcome})
@@ -541,4 +650,7 @@ def test_unit20_domain_same_python_host(tmp_path: Path, request: pytest.FixtureR
                 evidence["comparisons"][mode] = results
                 evidence["seconds"] = time.perf_counter() - started
                 _domain_report(request, "unit20-domain-same-host", evidence)
+        wire_normalizers = [Normalizer(rules, host_root), Normalizer(rules, host_root)]
+        for left, right in zip(results[0]["raw"], results[1]["raw"], strict=True):
+            compare_wire(left["outcome"], right["outcome"], *wire_normalizers)
         assert results[0]["normalized"] == results[1]["normalized"], evidence

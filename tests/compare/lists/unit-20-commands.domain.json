@@ -1,4 +1,5 @@
 {
+  "candidate": "typescript",
   "source_roots": [
     "src/planner/goals/",
     "src/planner/managers/page_cli.py",
@@ -11,6 +12,19 @@
   ],
   "open_commands": [],
   "seed_requests": [
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/projects",
+      "status": 200,
+      "json": {
+        "name": "CLI source project",
+        "summary": "Isolated populated source-list scope."
+      },
+      "capture": {
+        "source_project": "id"
+      }
+    },
     {
       "area": "cli-domain-fixture",
       "method": "POST",
@@ -57,23 +71,6 @@
             }
           ]
         }
-      }
-    },
-    {
-      "area": "cli-domain-fixture",
-      "method": "POST",
-      "path": "/api/credentials",
-      "status": 200,
-      "json": {
-        "scheme": "local",
-        "name": "CLI seeded credential",
-        "auth_kind": "bearer",
-        "secret": {
-          "token": "synthetic-unit20-domain-only"
-        }
-      },
-      "capture": {
-        "credential": "id"
       }
     },
     {
@@ -330,7 +327,7 @@
       },
       "exit_code": 0,
       "proof": "Creates a disposable manual definition from stdin.",
-      "stdin": "{\"project_id\":\"project_other\",\"name\":\"CLI disposable manual\",\"unit\":\"units\",\"origin\":\"manual\",\"kind\":\"reading\",\"timezone\":\"UTC\"}",
+      "stdin": "{\"project_id\":\"${source_project}\",\"name\":\"CLI disposable manual\",\"unit\":\"units\",\"origin\":\"manual\",\"kind\":\"reading\",\"timezone\":\"UTC\"}",
       "capture": {
         "created_measure": "id"
       },
@@ -348,17 +345,20 @@
         "measure",
         "list",
         "--project-id",
-        "project_other"
+        "${source_project}"
       ],
       "identity": {
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Lists both seeded and CLI-created real measure definitions.",
+      "proof": "Lists the real CLI-created disposable manual definition in its dedicated project; the retained seeded manual measure belongs to a different project.",
       "assert_text": [
-        "CLI seeded manual",
         "CLI disposable manual"
-      ]
+      ],
+      "assert_json": {
+        "page.match_count": 1,
+        "page.return_count": 1
+      }
     },
     {
       "kind": "cli",
@@ -687,6 +687,23 @@
       "proof": "Deletes the real promoted goal through the holder authority chain."
     },
     {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/credentials",
+      "status": 200,
+      "json": {
+        "scheme": "local",
+        "name": "CLI seeded credential",
+        "auth_kind": "bearer",
+        "secret": {
+          "token": "synthetic-unit20-domain-only"
+        }
+      },
+      "capture": {
+        "credential": "id"
+      }
+    },
+    {
       "kind": "cli",
       "area": "cli-credential",
       "argv": [
@@ -697,7 +714,7 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Lists populated names-only credential metadata.",
+      "proof": "Lists names-only metadata of a real credential canonically created on this fixture-owned host.",
       "assert_text": [
         "CLI seeded credential"
       ]
@@ -718,7 +735,7 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Renames the real credential without revealing its secret.",
+      "proof": "Renames and re-encrypts the real fixture credential using this host’s private key, without revealing its secret.",
       "assert_text": [
         "CLI renamed credential"
       ]
@@ -753,6 +770,12 @@
       "assert_json": {
         "request_id": "20000000-0000-4000-8000-000000000002"
       }
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "DELETE",
+      "path": "/api/credentials/${credential}",
+      "status": 200
     },
     {
       "kind": "cli",
@@ -802,7 +825,7 @@
       },
       "exit_code": 0,
       "proof": "Creates a separate source with no retained-output dependencies.",
-      "stdin": "{\"name\":\"CLI test source\",\"project_id\":\"project_other\",\"account\":\"unit20-test\",\"responsible\":{\"kind\":\"chief\",\"id\":\"chief\"}}",
+      "stdin": "{\"name\":\"CLI test source\",\"project_id\":\"${source_project}\",\"account\":\"unit20-test\",\"responsible\":{\"kind\":\"chief\",\"id\":\"chief\"}}",
       "capture": {
         "source": "id"
       },
@@ -874,17 +897,20 @@
         "measure-source",
         "list",
         "--project-id",
-        "project_other"
+        "${source_project}"
       ],
       "identity": {
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Lists both real source records and collection-health metadata.",
+      "proof": "Lists the real scripted source in its dedicated project and collection-health metadata; the retained dataset source belongs to a different project.",
       "assert_text": [
-        "CLI dataset source",
         "CLI test source"
-      ]
+      ],
+      "assert_json": {
+        "page.match_count": 1,
+        "page.return_count": 1
+      }
     },
     {
       "kind": "cli",

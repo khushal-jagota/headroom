@@ -281,12 +281,28 @@ def run_cli(
         argv.append("--json")
     elif mode not in ("text", "json"):
         raise ValueError("unsupported CLI output mode")
+    from tests.compare.direct.unit20_wire import python_capture, read_capture
+
+    with tempfile.NamedTemporaryFile(dir=root, prefix="wire-", delete=False) as private:
+        wire_file = Path(private.name)
     started = time.perf_counter()
     if python_in_process:
-        answer = _python_library(argv, step.get("stdin", "").encode("utf-8"), env)
+        with python_capture(wire_file, host.handle.base):
+            answer = _python_library(argv, step.get("stdin", "").encode("utf-8"), env)
     else:
+        command = (
+            [
+                "node",
+                "--import",
+                str(ROOT / "tests/compare/direct/unit20_wire.mjs"),
+                str(ROOT / "server/cli/main.ts"),
+                str(wire_file),
+            ]
+            if candidate
+            else [sys.executable, str(ROOT / "tests/compare/direct/unit20_wire.py"), str(wire_file)]
+        )
         completed = subprocess.run(
-            [*(TYPESCRIPT if candidate else PYTHON), *argv],
+            [*command, *argv],
             cwd=ROOT,
             env=env,
             input=step.get("stdin", "").encode("utf-8"),
@@ -300,9 +316,22 @@ def run_cli(
             "stderr": completed.stderr.decode("utf-8"),
         }
     elapsed = time.perf_counter() - started
+    wire = read_capture(wire_file)
+    offline = tuple(argv[:2]) in {
+        ("goal", "schema"),
+        ("page", "schema"),
+        ("measure", "schema"),
+        ("measure-source", "schema"),
+        ("measure-source", "runtime"),
+    }
+    if offline or "--help" in argv:
+        assert not wire, (argv, wire)
+    elif answer["exit_code"] == 0:
+        assert wire, ("successful HTTP command had no captured response", argv)
     _check_output(answer, step, argv, mode, candidate=candidate)
     return {
         **answer,
+        "wire": wire,
         "seconds": elapsed,
         "strategy": "CliRunner.invoke" if python_in_process else "subprocess",
     }

@@ -51,6 +51,11 @@ loopback address, private temporary database, live-address exclusions, running
 process and test-mode metadata before a CLI subprocess starts.
 It also verifies that the listener belongs to the fixture's exact process ID.
 
+The test driver captures content-decoded HTTP document bytes before CLI formatting.
+It keeps the original compressed response bytes too. The comparisons retain JSON key
+order and number spelling, with named ID and bounded opaque-value rules only.
+The accepted attention digest and goal catalog aliases appear explicitly in the rule file.
+
 The client keeps Node's default TLS roots and honors `SSL_CERT_FILE`,
 `SSL_CERT_DIR`, and Node's startup `NODE_EXTRA_CA_CERTS` behavior. Hash-directory
 lookup requires `openssl`. Connection, header progress, and body-read gaps each

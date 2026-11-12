@@ -28,13 +28,17 @@ export async function run(
       case 'page':
         return await (await import('../managers/page_cli/index.ts')).run_page_command(invocation);
       case 'credential':
-        return await (await import('../credentials/cli/index.ts')).run_credential_command(invocation);
+        return await (
+          await import('../credentials/cli/index.ts')
+        ).run_credential_command(invocation);
       case 'measure':
         return await (await import('../measures/cli/index.ts')).run_measure_command(invocation);
       case 'attention':
         return await (await import('../attention/cli/index.ts')).run_attention_command(invocation);
       case 'measure-source':
-        return await (await import('../measure_sources/cli/index.ts')).run_measure_source_command(invocation);
+        return await (
+          await import('../measure_sources/cli/index.ts')
+        ).run_measure_source_command(invocation);
       case 'preview':
         return await (await import('../previews/cli/index.ts')).run_preview_command(invocation);
       case 'dataset':
