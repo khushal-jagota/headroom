@@ -18,6 +18,12 @@ import { configure_goal_manager_documents } from './goals/manager_documents.ts';
 import { routes as credentials } from './credentials/routes.ts';
 import { observe_events as observe_credential_requests, reconcile_deliveries as reconcile_credential_requests } from './credentials/requests/data.ts';
 import { ManagerWakeLoop } from './manager_wakes/runtime.ts';
+import {
+  all_sender_messages_are_manager_notices,
+  admit_notice_batch,
+  create_ticket_failure_notice,
+} from './manager_wakes/data.ts';
+import { PromptDispatchDecision } from './conversation/contracts.ts';
 import type { OwnedAreaContext } from './core/authority/register.ts';
 import { routes as managers } from './managers/routes.ts';
 import { routes as messageDelivery } from './message_delivery/routes.ts';
@@ -45,14 +51,18 @@ import type { Area } from './core/authority/register.ts';
 import type { Database, CommitStep } from './core/database/index.ts';
 import { routes as projects } from './projects/routes.ts';
 import { routes as ideas } from './ideas/routes.ts';
-import { routes as resourceVersions } from './resource_versions/routes.ts';
+import { createRoutes as createResourceRoutes } from './resource_versions/routes.ts';
+import { providers as resourceProviders } from './resource_versions/registry.ts';
+import type { ResourceProvider } from './resource_versions/contracts.ts';
 import { createSignalNavigationRuntime } from './navigation/index.ts';
 import { createConversationRuntime } from './conversation/record/runtime.ts';
 import { deployment_participants } from './conversation/deploy_interruptions/participants.ts';
 import type { SignalPublicationCoordinator } from './conversation/publication/coordinator.ts';
 
 /** Each server owns one reconciled record and its publication attachment. */
-export function createAreasRuntime() {
+export function createAreasRuntime(
+  additionalResourceProviders: () => readonly ResourceProvider[] = () => [],
+) {
   const conversation = createConversationRuntime();
   let publication: SignalPublicationCoordinator | undefined;
   let navigation: ReturnType<typeof createSignalNavigationRuntime> | undefined;
@@ -95,6 +105,20 @@ export function createAreasRuntime() {
         event_participant: observe_credential_requests,
         startup_participant: reconcile_credential_requests,
         integer_now: () => clock.nowUnix(),
+        all_are_notices: all_sender_messages_are_manager_notices,
+        failure_notice: create_ticket_failure_notice,
+        admit_notice(tx, conversation_id, sender_message_id, now) {
+          const [is_manager_notice, suppression_reason] = admit_notice_batch(tx, {
+            conversation_id,
+            sender_message_id,
+            now,
+          });
+          return new PromptDispatchDecision({
+            sender_message_id,
+            is_manager_notice,
+            suppression_reason,
+          });
+        },
         prepare_attention(tx, conversation_id) {
           const snapshot = conversation_attention_snapshot(tx, conversation_id);
           if (snapshot === null) return null;
@@ -140,7 +164,10 @@ export function createAreasRuntime() {
         { prefix: '/api', routes: projects },
         { prefix: '/api', routes: ideas },
         { prefix: '/api', routes: workerSettings },
-        { prefix: '/api', routes: resourceVersions },
+        {
+          prefix: '/api',
+          routes: createResourceRoutes([...resourceProviders, ...additionalResourceProviders()]),
+        },
         { prefix: '/api/navigation/view', routes: navigation!.routes },
         { prefix: '/api/conversation', routes: conversation.routes },
       ];

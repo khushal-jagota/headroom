@@ -15,6 +15,7 @@ import { ScriptedTicketChoiceFault } from './conversation/testing/scripted_ticke
 import { InMemoryConversationSystem } from './conversation/in_memory_conversation_system.ts';
 import { inMemoryConversationRoutes } from './conversation/testing/routes.ts';
 import { rebuild_conversation_view } from './conversation/views/data/writer.ts';
+import { create_test_environment_runtime } from './environments/testing/composition.ts';
 import {
   create_backend_runtime,
   unavailable_backend_providers,
@@ -31,6 +32,7 @@ const registry = new ScriptedBackendRegistry();
 const ticket_choice_fault = new ScriptedTicketChoiceFault();
 
 await startServer({
+  createEnvironments: create_test_environment_runtime,
   createBackendServices(context) {
     const runtime = create_backend_runtime({
       database: context.database,

@@ -1,0 +1,43 @@
+{
+  "equal_python_responses": true,
+  "collector_none_does_no_host_work": true,
+  "startup_ms": 349.372066,
+  "cold_ms": 4.499973000000011,
+  "warm_ms": [
+    1.1550780000000032,
+    0.9242889999999875,
+    0.9370089999999891,
+    0.798731000000032,
+    0.8008219999999824,
+    1.4450669999999946,
+    0.8869339999999966,
+    0.9721020000000067,
+    0.8363969999999767,
+    0.5927679999999782,
+    0.543611999999996,
+    0.5947009999999864,
+    0.5590159999999855,
+    0.5849759999999833,
+    0.4994360000000029
+  ],
+  "activity_ms": 1.9683399999999551,
+  "stop_ms": 22.41838200000001,
+  "rss_bytes_by_owned_pid": {
+    "2608742": 131760128,
+    "2608750": 123039744,
+    "2608751": 126349312
+  },
+  "summed_rss_bytes_includes_shared_pages": 381149184,
+  "all_owned_readers_reaped_and_wal_clear": true,
+  "replacement_recovery_review_run": {
+    "expired_during_backoff": true,
+    "replacement_failed_before_ready": true,
+    "successful_sequences": [
+      2,
+      2
+    ],
+    "boot_count": 5,
+    "restored_readers": 2,
+    "recovery_ms": 800.08197
+  }
+}

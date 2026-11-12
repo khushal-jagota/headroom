@@ -1,0 +1,105 @@
+{
+  "candidate": "typescript",
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/environments/",
+    "src/planner/server_lifecycle/"
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/updates",
+      "status": 200,
+      "area": "environment-composition"
+    },
+    {
+      "method": "GET",
+      "path": "/api/deployment-status",
+      "status": 200,
+      "area": "environment-composition"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fdeployment-status",
+      "status": 200,
+      "area": "environment-composition"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-versions?keys=%5B%22%2Fapi%2Fdeployment-status%22%5D",
+      "status": 200,
+      "area": "environment-composition"
+    },
+    {
+      "method": "POST",
+      "path": "/api/updates/install",
+      "status": 409,
+      "area": "environment-composition",
+      "json": {
+        "app_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "mode": "idle"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/updates/attempts/missing/cancel",
+      "status": 409,
+      "area": "environment-composition"
+    },
+    {
+      "method": "POST",
+      "path": "/api/updates/attempts/missing/now",
+      "status": 409,
+      "area": "environment-composition",
+      "json": {}
+    },
+    {
+      "method": "POST",
+      "path": "/api/updates/attempts/missing/retry",
+      "status": 409,
+      "area": "environment-composition"
+    },
+    {
+      "method": "POST",
+      "path": "/api/updates/attempts/missing/retry-mac",
+      "status": 409,
+      "area": "environment-composition"
+    },
+    {
+      "method": "GET",
+      "path": "/api/updates",
+      "status": 400,
+      "area": "environment-composition",
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/vps-metrics/latest",
+      "status": 200,
+      "area": "environment-composition"
+    },
+    {
+      "method": "GET",
+      "path": "/api/vps-metrics/processes",
+      "status": 200,
+      "area": "environment-composition"
+    },
+    {
+      "method": "GET",
+      "path": "/api/vps-metrics/history?signal=cpu&start=0&end=60&resolution=raw",
+      "status": 200,
+      "area": "environment-composition"
+    },
+    {
+      "method": "POST",
+      "path": "/api/vps-metrics/activity",
+      "status": 200,
+      "area": "environment-composition"
+    }
+  ],
+  "probes": [
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D"
+  ]
+}
