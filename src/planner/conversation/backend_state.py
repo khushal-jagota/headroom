@@ -69,6 +69,12 @@ class DurableCodexLoginRejection:
             return
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
+            found = conn.execute(
+                "SELECT 1 FROM codex_login_rejection WHERE account_id = ? AND last_refresh = ?",
+                (generation.account_id, generation.last_refresh),
+            ).fetchone()
+            if found is None:
+                return
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "DELETE FROM codex_login_rejection WHERE account_id = ? AND last_refresh = ?",

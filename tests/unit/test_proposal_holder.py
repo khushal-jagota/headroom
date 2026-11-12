@@ -408,3 +408,105 @@ def test_implicit_creator_holder_is_validated_against_assignment(
     )
     assert created.manager_id == manager_id
     assert created.ceiling_holder == manager
+
+
+def test_proposal_waits_only_before_effects_and_saves_once(
+    tmp_db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    from planner.core.db import connect
+    from planner.tickets import config
+
+    ticket = data.create_ticket(
+        tmp_db,
+        title="Contended proposal",
+        principal=CHIEF_PRINCIPAL,
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        brief="Agreed",
+        stated_ceiling="needs_what_changes",
+    )
+    database = tmp_db.execute("PRAGMA database_list").fetchone()[2]
+    holder = connect(database)
+    holder.execute("BEGIN IMMEDIATE")
+    statements: list[str] = []
+    tmp_db.set_trace_callback(statements.append)
+    monkeypatch.setattr(config, "PROPOSAL_WRITER_ATTEMPT_MS", 5)
+    released = threading.Timer(0.05, holder.rollback)
+    released.start()
+    try:
+        result = data.file_current_proposal(
+            tmp_db,
+            ticket.id,
+            body="One answer",
+            now=2,
+            principal=Principal(PrincipalKind.ticket, ticket.id),
+        )
+    finally:
+        released.join()
+        holder.close()
+        tmp_db.set_trace_callback(None)
+    assert statements.count("BEGIN IMMEDIATE") > 1
+    assert result.pending_proposal is not None
+    assert result.pending_proposal.body == "One answer"
+    assert result.pending_proposal_revision == 1
+    assert tmp_db.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+    assert (
+        tmp_db.execute(
+            "SELECT COUNT(*) FROM manager_wakes WHERE ticket_id=?", (ticket.id,)
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_proposal_busy_deadline_returns_retryable_503_without_partial_effects(
+    tmp_db: Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_clock: Clock,
+) -> None:
+    from fastapi.responses import JSONResponse
+
+    from planner.core.authctx import RequestContext
+    from planner.core.db import connect
+    from planner.tickets import api, config
+
+    ticket = data.create_ticket(
+        tmp_db,
+        title="Busy proposal",
+        principal=CHIEF_PRINCIPAL,
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        brief="Agreed",
+        stated_ceiling="needs_what_changes",
+    )
+    database = tmp_db.execute("PRAGMA database_list").fetchone()[2]
+    holder = connect(database)
+    holder.execute("BEGIN IMMEDIATE")
+    monkeypatch.setattr(config, "PROPOSAL_WRITER_WAIT_SECONDS", 0.03)
+    monkeypatch.setattr(config, "PROPOSAL_WRITER_ATTEMPT_MS", 5)
+    try:
+        result = api.propose_current_field(
+            ticket.id,
+            {"body": "Unwritten answer"},
+            tmp_db,
+            RequestContext(Principal(PrincipalKind.ticket, ticket.id)),
+            fake_clock,
+        )
+    finally:
+        holder.rollback()
+        holder.close()
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 503
+    assert json.loads(result.body)["error"]["code"] == "retry_later"
+    assert not tmp_db.in_transaction
+    assert data.read_ticket(tmp_db, ticket.id).pending_proposal is None
+    assert tmp_db.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+    assert (
+        tmp_db.execute(
+            "SELECT COUNT(*) FROM manager_wakes WHERE ticket_id=?", (ticket.id,)
+        ).fetchone()[0]
+        == 0
+    )

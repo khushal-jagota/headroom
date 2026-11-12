@@ -636,3 +636,27 @@ def test_deleted_specialist_keeps_saved_guide_on_start_restart_and_continue(
             previous_id = current_id
 
     asyncio.run(exercise())
+
+
+def test_workspace_registration_failure_rolls_back_ticket_link_and_record(
+    tmp_db: Connection, ticket: Ticket, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.ticket_workspaces import data as workspace_data
+    from planner.ticket_workspaces.contracts import WorkspaceIdentity
+
+    original = workspace_data.register_workspace
+
+    def fail_after_registration(
+        conn: Connection, ticket_id: str, conversation_id: str, identity: WorkspaceIdentity,
+    ) -> None:
+        original(conn, ticket_id, conversation_id, identity)
+        raise RuntimeError("registration failed")
+
+    monkeypatch.setattr(workspace_data, "register_workspace", fail_after_registration)
+    system = InMemoryConversationSystem()
+    with pytest.raises(RuntimeError, match="registration failed"):
+        asyncio.run(_started(system, tmp_db, ticket, _values(ticket.id), now=2))
+    assert read_ticket(tmp_db, ticket.id) == ticket
+    assert _history(tmp_db, ticket.id) == []
+    assert tmp_db.execute("SELECT 1 FROM conversations").fetchone() is None
+    assert tmp_db.execute("SELECT 1 FROM ticket_workspace_conversations").fetchone() is None

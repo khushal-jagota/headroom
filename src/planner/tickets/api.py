@@ -24,7 +24,7 @@ from functools import partial
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from planner.conversation.api import (
     OwnerSendBody,
@@ -1037,14 +1037,14 @@ async def patch_ticket(
     return result
 
 
-@router.post("/tickets/{ticket_id}/propose")
+@router.post("/tickets/{ticket_id}/propose", response_model=None)
 def propose_current_field(
     ticket_id: str,
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-) -> JsonDict:
+) -> JsonDict | JSONResponse:
     if ctx.principal != Principal(PrincipalKind.ticket, ticket_id):
         raise PlannerError(
             ErrorCode.agent_forbidden,
@@ -1052,13 +1052,18 @@ def propose_current_field(
             {"ticket_id": ticket_id},
         )
     body = ProposalBody(body=body_str(raw, "body"))
-    ticket = tickets_actions.file_current_proposal(
-        conn,
-        ticket_id,
-        body=body["body"],
-        ctx=ctx,
-        clock=clk,
-    )
+    try:
+        ticket = tickets_actions.file_current_proposal(
+            conn,
+            ticket_id,
+            body=body["body"],
+            ctx=ctx,
+            clock=clk,
+        )
+    except PlannerError as error:
+        if error.code is not ErrorCode.retry_later:
+            raise
+        return JSONResponse(status_code=503, content=error.to_payload())
     return tickets_views.ticket_json(ticket, clk.now_unix())
 
 

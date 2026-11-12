@@ -1803,7 +1803,9 @@ class SqliteProcessConversationSystem:
                 self._begin_held_deliveries(state, (held,))
                 del state.held_prompts[position]
                 self._publish_held_prompts_changed(state)
-                reservation = await self._reserve_turn(state)
+                reservation = await self._reserve_turn(
+                    state, sender_message_ids=(held.sender_message_id,)
+                )
             else:
                 # A deliberate model identity choice needs a new admitted turn.
                 # Steering bypasses launch admission, so keep its exact queue entry.
@@ -2413,7 +2415,9 @@ class SqliteProcessConversationSystem:
                     )
                     self._defer_start_drain(state)
                     return fate
-                reservation = await self._reserve_turn(state)
+                reservation = await self._reserve_turn(
+                    state, sender_message_ids=(message.sender_message_id,)
+                )
 
         if automatic_reservation is not None:
             await self._deliver_automatic_compaction(state, automatic_reservation)
@@ -2545,7 +2549,9 @@ class SqliteProcessConversationSystem:
                         state, automatic_compaction=True
                     )
                 else:
-                    reservation = await self._reserve_turn(state)
+                    reservation = await self._reserve_turn(
+                        state, sender_message_ids=(message.sender_message_id,)
+                    )
             finally:
                 state.lock.release()
         except asyncio.CancelledError:
@@ -2629,7 +2635,9 @@ class SqliteProcessConversationSystem:
                 and not state.late_steers
             ):
                 if self.start_admission.begin_queued((message.sender_message_id,)):
-                    reservation = await self._reserve_turn(state)
+                    reservation = await self._reserve_turn(
+                        state, sender_message_ids=(message.sender_message_id,)
+                    )
                 else:
                     queued = self._hold_prompt(state=state, message=message)
                     self._defer_start_drain(state)
@@ -3135,9 +3143,11 @@ class SqliteProcessConversationSystem:
                 self.start_admission.persist_bindings, self._store._db_path, turn_token
             )
             requested_model = model_change or state.record.model
-            if requested_model is not None and not BackendStateStore(
-                self._store._db_path
-            ).model_is_enabled(state.record.backend_key, requested_model):
+            if requested_model is not None and not await run_on_worker_thread(
+                BackendStateStore(self._store._db_path).model_is_enabled,
+                state.record.backend_key,
+                requested_model,
+            ):
                 await run_on_worker_thread(
                     self.start_admission.reject, self._store._db_path, turn_token
                 )
@@ -3672,23 +3682,26 @@ class SqliteProcessConversationSystem:
                     from planner.core.db import connect
                     from planner.tickets.data import write_ticket_last_chosen_configuration
 
-                    conn = connect(self._store._db_path)
-                    try:
-                        row = conn.execute(
-                            "SELECT id FROM tickets WHERE conversation_id=?",
-                            (state.record.conversation_id,),
-                        ).fetchone()
-                        if row is not None:
-                            write_ticket_last_chosen_configuration(
-                                conn,
-                                row[0],
-                                expected_conversation_id=state.record.conversation_id,
-                                model=carried_change.model,
-                                reasoning_effort=carried_change.reasoning_effort,
-                                now=int(self._unix_time_now()),
-                            )
-                    finally:
-                        conn.close()
+                    def keep_configuration() -> None:
+                        conn = connect(self._store._db_path)
+                        try:
+                            row = conn.execute(
+                                "SELECT id FROM tickets WHERE conversation_id=?",
+                                (state.record.conversation_id,),
+                            ).fetchone()
+                            if row is not None:
+                                write_ticket_last_chosen_configuration(
+                                    conn,
+                                    row[0],
+                                    expected_conversation_id=state.record.conversation_id,
+                                    model=carried_change.model,
+                                    reasoning_effort=carried_change.reasoning_effort,
+                                    now=int(self._unix_time_now()),
+                                )
+                        finally:
+                            conn.close()
+
+                    await run_on_worker_thread(keep_configuration)
                 return True
             finally:
                 if state.phase is not _ConversationPhase.starting:
@@ -3895,7 +3908,9 @@ class SqliteProcessConversationSystem:
                     held = batch[0]
                     rest = batch[1:]
                     self._publish_held_prompts_changed(state)
-                    reservation = await self._reserve_turn(state)
+                    reservation = await self._reserve_turn(
+                        state, sender_message_ids=tuple(m.sender_message_id for m in batch)
+                    )
                     reservation.messages = batch
                 except BaseException:
                     self._settle_held_deliveries(state, batch)
@@ -4296,10 +4311,18 @@ class SqliteProcessConversationSystem:
     # --- turns --------------------------------------------------------------------------
 
     async def _reserve_turn(
-        self, state: _ConversationState, *, automatic_compaction: bool = False
+        self,
+        state: _ConversationState,
+        *,
+        automatic_compaction: bool = False,
+        sender_message_ids: tuple[str | None, ...] = (),
     ) -> _ReservedTurn:
         """Name the turn that is about to be written. The lock must be held."""
-        turn_number = await self._store.reserve_turn(state.record.conversation_id)
+        requests = self.start_admission.requests_for(sender_message_ids)
+        turn_number = await self._store.reserve_turn(state.record.conversation_id, requests)
+        self.start_admission.bind(
+            sender_message_ids, TurnToken(state.record.conversation_id, turn_number)
+        )
         reservation = _ReservedTurn(
             token=TurnToken(
                 conversation_id=state.record.conversation_id,

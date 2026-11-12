@@ -219,22 +219,24 @@ def test_failure_notices_use_the_chief_and_ticket_conversation_doors(
     database_path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
     system = _DurableStartedConversationSystem(database_path)
 
-    assert asyncio.run(
-        deliver_batch(
-            batch,
-            connect_database=lambda: connect(str(database_path)),
-            conversation_system=system,  # type: ignore[arg-type]
-            process_token="process",
-            now=lambda: 50,
+    from tests.support.sql_threads import sql_must_run_off_event_loop
+
+    with sql_must_run_off_event_loop():
+        delivered = asyncio.run(
+            deliver_batch(
+                batch,
+                connect_database=lambda: connect(str(database_path)),
+                conversation_system=system,  # type: ignore[arg-type]
+                process_token="process",
+                now=lambda: 50,
+            )
         )
-    )
+    assert delivered
     assert system.started is not None
     prompts = tmp_db.execute(
         "SELECT payload FROM conversation_events WHERE kind='prompt'"
     ).fetchall()
     assert any("provider unavailable" in str(row["payload"]) for row in prompts)
-
-
 
 
 def test_ticket_reset_between_resolution_and_link_lock_uses_the_new_door(
@@ -1086,15 +1088,18 @@ def test_delivery_uses_the_supervisor_boundary_and_closes_on_its_prompt(
     database_path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
     system = _DurableStartedConversationSystem(database_path)
 
-    delivered = asyncio.run(
-        deliver_batch(
-            batch,
-            connect_database=lambda: connect(str(database_path)),
-            conversation_system=system,  # type: ignore[arg-type]
-            process_token="process",
-            now=lambda: 50,
+    from tests.support.sql_threads import sql_must_run_off_event_loop
+
+    with sql_must_run_off_event_loop():
+        delivered = asyncio.run(
+            deliver_batch(
+                batch,
+                connect_database=lambda: connect(str(database_path)),
+                conversation_system=system,  # type: ignore[arg-type]
+                process_token="process",
+                now=lambda: 50,
+            )
         )
-    )
 
     assert delivered is True
     assert system.started is not None

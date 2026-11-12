@@ -47,7 +47,10 @@ def ensure_workspace_activity(
             "WHERE ticket_id=? AND ended_at IS NOT NULL AND deleted=0",
             (now, ticket_id),
         )
-    return read_workspace_states(conn)[ticket_id]
+    states = read_workspace_states_for_tickets(conn, (ticket_id,))
+    if not states:
+        raise KeyError(ticket_id)
+    return states[0]
 
 
 def register_workspace(

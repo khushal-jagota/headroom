@@ -368,3 +368,62 @@ def test_a_rejection_a_turn_found_survives_a_restart(tmp_path: Path) -> None:
 
     after_a_restart.forget(was_rejected)
     assert not after_a_restart.applies_to(was_rejected)
+
+
+@pytest.mark.parametrize("ending", ["completed", "failed", "process_exit"])
+def test_turn_completion_keeps_durable_login_sql_off_event_loop(
+    tmp_path: Path,
+    ending: str,
+) -> None:
+    from tests.support.sql_threads import sql_must_run_off_event_loop
+
+    failed = ending != "completed"
+    home = tmp_path / "codex-home"
+    _write_login(home)
+    database = tmp_path / "planner.db"
+    connection = connect(str(database))
+    create_schema(connection)
+    connection.close()
+    remembered = DurableCodexLoginRejection(str(database))
+    generation = CodexLoginGeneration(account_id=ACCOUNT_ID, last_refresh=REFRESH_STAMP)
+    if not failed:
+        remembered.remember(generation)
+    action = {"do": "complete", "status": "completed"}
+    if failed:
+        action = {
+            "do": "complete",
+            "status": "failed",
+            "error": {
+                "message": "Your refresh token was already used. Please log out and sign in again."
+            },
+        }
+
+    actions = [action]
+    if ending == "process_exit":
+        actions = [{"do": "say_on_stderr", "text": REFRESH_REJECTED_ON_STDERR}, {"do": "die"}]
+
+    async def exercise() -> None:
+        async with _scripted_child(
+            tmp_path,
+            script={"turns": [{"actions": actions}]},
+            remembered_login_rejection=remembered,  # type: ignore[arg-type]
+            codex_home=home,
+        ) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("run"))
+            await scripted.sink.wait_for_the_turn_to_end()
+
+    with sql_must_run_off_event_loop():
+        _run(exercise)
+    assert remembered.applies_to(generation) is failed
+
+
+def test_login_cleanup_without_matching_rejection_never_takes_writer_lock(tmp_db: Any) -> None:
+    database = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    generation = CodexLoginGeneration(account_id=ACCOUNT_ID, last_refresh=REFRESH_STAMP)
+    tmp_db.execute("BEGIN IMMEDIATE")
+    try:
+        # A no-op cleanup must finish even while another connection owns the writer.
+        DurableCodexLoginRejection(database, busy_timeout_ms=1).forget(generation)
+    finally:
+        tmp_db.rollback()

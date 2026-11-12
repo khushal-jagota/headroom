@@ -403,3 +403,72 @@ def test_cancelled_shutdown_retains_lease_until_all_local_writers_stop(durable: 
             await restarted.system.shutdown()
 
     _run(exercise)
+
+
+def test_reservation_failure_rolls_back_automatic_binding(durable: _Harness) -> None:
+    """A failed turn intent must not retain an admission identity after restart.
+
+    Existing intent rollback does not cover the durable automatic-start binding.
+    Reuse its store and fake backend, with no additional process host.
+    """
+    from planner.conversation.start_admission.contracts import StartRequest
+    from planner.machines.contracts import HOME_MACHINE_ID
+
+    async def exercise() -> None:
+        await _start(durable, "c")
+        gate = durable.system.start_admission
+        assert gate.try_start(StartRequest("atomic-worker", "worker", HOME_MACHINE_ID))
+
+        def fail(conn: sqlite3.Connection, candidate: LifecycleTransition) -> None:
+            assert conn.execute(
+                "SELECT conversation_id,turn_number FROM automatic_start_bindings "
+                "WHERE identity='atomic-worker'"
+            ).fetchone() is not None
+            raise RuntimeError("reject bound intent")
+
+        durable.store._transaction_participant = fail
+        with pytest.raises(RuntimeError, match="reject bound intent"):
+            await durable.system.send(
+                "c", text_message_content("work"), sender_label="Panels",
+                sender_message_id="atomic-worker",
+            )
+        assert gate.snapshots() == ()
+        assert durable.spawned_conversation_ids == []
+
+    _run(exercise)
+    conn = connect(str(durable.db_path))
+    try:
+        assert conn.execute("SELECT 1 FROM automatic_start_bindings").fetchone() is None
+        assert conn.execute("SELECT 1 FROM conversation_turn_occurrences").fetchone() is None
+    finally:
+        conn.close()
+
+
+def test_pending_custody_rolls_back_if_occurrence_binding_fails(
+    durable: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed occurrence write must not leave half of a new launch identity."""
+    from planner.conversation import child_custody
+
+    async def prepare() -> None:
+        await _start(durable, "c")
+
+    _run(prepare)
+    conn = connect(str(durable.db_path))
+    try:
+        before = tuple(conn.execute(
+            "SELECT * FROM conversation_child_custody WHERE conversation_id='c'"
+        ).fetchone())
+
+        def reject_binding(conn: sqlite3.Connection, conversation_id: str) -> None:
+            raise RuntimeError("occurrence unavailable")
+
+        monkeypatch.setattr(child_custody, "bind_current_turn", reject_binding)
+        with pytest.raises(RuntimeError, match="occurrence unavailable"):
+            child_custody.write_pending(conn, "c", "next-generation")
+        assert not conn.in_transaction
+        assert tuple(conn.execute(
+            "SELECT * FROM conversation_child_custody WHERE conversation_id='c'"
+        ).fetchone()) == before
+    finally:
+        conn.close()

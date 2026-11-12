@@ -49,6 +49,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.task_settlement import run_on_worker_thread
 from planner.runtime import conversation_start, worker_memory, worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import (
+    WorkerStepPrompt,
     compose_worker_step_prompt,
     mid_step_memory_loss_prompt,
 )
@@ -172,7 +173,7 @@ async def _admitted_start_ready_worker_step(
     try:
         await link_lock.acquire()
         link_acquired = True
-        ticket = tickets_data.read_ticket(conn, ticket_id)
+        ticket = await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
         conversation_id = ticket.conversation_id
         if conversation_id is not None and await conversation_system.is_running(conversation_id):
             # An occupied worker is left alone for this pass. Queueing stays the answer
@@ -183,7 +184,8 @@ async def _admitted_start_ready_worker_step(
             return WorkerStepStartResult(started=False)
 
         worker_type_definition = ticket.workflow
-        if not worker_step_readiness.is_ready_for_worker_step(
+        if not await run_on_worker_thread(
+            worker_step_readiness.is_ready_for_worker_step,
             conn,
             ticket,
             worker_type_definition=worker_type_definition,
@@ -211,13 +213,17 @@ async def _admitted_start_ready_worker_step(
             return WorkerStepStartResult(started=False)
         taken_claim = claimed.worker_step_claim
         taken_claim_revision = claimed.worker_step_claim_revision
-        paired_opener = (
-            conn.execute(
-                "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
-                (ticket_id, claimed.stage),
-            ).fetchone()
-            is not None
-        )
+
+        def has_paired_opener() -> bool:
+            return (
+                conn.execute(
+                    "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
+                    (ticket_id, claimed.stage),
+                ).fetchone()
+                is not None
+            )
+
+        paired_opener = await run_on_worker_thread(has_paired_opener)
         sender_message_id = worker_memory.worker_step_message_id_for_claim(
             ticket.id, taken_claim_revision
         )
@@ -262,24 +268,36 @@ async def _admitted_start_ready_worker_step(
             # Ticket sits out of `empty` with nothing running and nothing to re-claim it.
             worker_type_definition = claimed.workflow
             conversation_id = claimed.conversation_id
+
             # Composed before anything is made: a failure here must not leave a conversation
             # behind, and the opener is what would have brought one into being.
-            current_ticket = tickets_data.read_ticket(conn, ticket_id)
-            pending_revision_feedback = revision_feedback.snapshot(conn, ticket_id)
-            prompt = compose_worker_step_prompt(
-                current_ticket,
-                worker_type_definition=worker_type_definition,
-                revision_feedback=pending_revision_feedback,
-                memory_was_lost=worker_memory.conversation_holds_an_unanswered_memory_loss(
-                    conn, conversation_id
-                ),
-            )
-            await run_on_worker_thread(
-                tickets_data.mark_worker_step_dispatch_started,
-                conn,
-                ticket_id,
-                taken_claim_revision,
-            )
+            def prepare_prompt() -> tuple[
+                WorkerStepPrompt, revision_feedback.PendingRevisionFeedback | None
+            ]:
+                current_ticket = tickets_data.read_ticket(conn, ticket_id)
+                feedback = revision_feedback.snapshot(conn, ticket_id)
+                prompt = compose_worker_step_prompt(
+                    current_ticket,
+                    worker_type_definition=worker_type_definition,
+                    revision_feedback=feedback,
+                    memory_was_lost=worker_memory.conversation_holds_an_unanswered_memory_loss(
+                        conn, conversation_id
+                    ),
+                )
+                return prompt, feedback
+
+            prompt, pending_revision_feedback = await run_on_worker_thread(prepare_prompt)
+
+            def record_dispatch() -> None:
+                from planner.ticket_workspaces.data import ensure_workspace_activity
+
+                with conn:
+                    tickets_data.mark_worker_step_dispatch_started(
+                        conn, ticket_id, taken_claim_revision
+                    )
+                    ensure_workspace_activity(conn, ticket_id, now())
+
+            await run_on_worker_thread(record_dispatch)
             delivered = await conversation_start.send_to_ticket_conversation(
                 conversation_system,
                 conn,
@@ -292,6 +310,7 @@ async def _admitted_start_ready_worker_step(
                 sender_message_id=sender_message_id,
                 worker_type_registry=worker_type_registry,
                 retain_backend_start_failure=not paired_opener,
+                workspace_activity_recorded=True,
                 now=now(),
             )
             conversation_id = delivered.conversation_id
@@ -429,13 +448,15 @@ async def _admitted_tell_a_worker_it_lost_its_memory(
     automatic attempt, while a definite refusal or send exception can retry.
     """
     async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
-        conn = connect_database()
+        conn = await run_on_worker_thread(connect_database)
         try:
-            ticket = tickets_data.read_ticket(conn, ticket_id)
+            ticket = await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
             conversation_id = ticket.conversation_id
             if conversation_id is None:
                 return False
-            if not worker_memory.ticket_needs_memory_notice(conn, ticket_id):
+            if not await run_on_worker_thread(
+                worker_memory.ticket_needs_memory_notice, conn, ticket_id
+            ):
                 # Something answered the boundary between the scan and here. That is the
                 # normal end of a race, not a failure.
                 return False
@@ -447,7 +468,9 @@ async def _admitted_tell_a_worker_it_lost_its_memory(
                 return False
             try:
                 # Admission or the boundary may change while held prompts are read.
-                if not worker_memory.ticket_needs_memory_notice(conn, ticket_id):
+                if not await run_on_worker_thread(
+                    worker_memory.ticket_needs_memory_notice, conn, ticket_id
+                ):
                     return False
                 delivered = await conversation_start.send_to_ticket_conversation(
                     conversation_system,
@@ -480,7 +503,7 @@ async def _admitted_tell_a_worker_it_lost_its_memory(
                 return False
             return True
         finally:
-            conn.close()
+            await run_on_worker_thread(conn.close)
 
 
 class WorkerStepReadinessLoop:
