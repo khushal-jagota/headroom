@@ -3,7 +3,8 @@ import { Worker } from 'node:worker_threads';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
-import { FILE_CHUNK_BYTES } from '../configuration.ts';
+import { FILE_CHUNK_BYTES, MAX_MAILBOX_POLL_BYTES } from '../configuration.ts';
+import { JOURNAL_OPERATIONS, JOURNAL_INPUT_BYTES } from './journal_limits.ts';
 import { failure_name } from '../failure_name.ts';
 import { journal_error, journal_error_properties } from './journal_worker_contracts.ts';
 import type {
@@ -21,7 +22,7 @@ import type {
   JournalDependencies,
   JournalSpoolOwner,
   SidecarOpenScope,
-  FreshJournalCommand,
+  FreshCommandCursor,
   UnpublishedJournalCommand,
   UnreportedJournalResult,
 } from './journal_contracts.ts';
@@ -33,10 +34,30 @@ class Reader implements CanonicalReader {
   private readonly id: number;
   private ended = false;
   private busy = false;
-  constructor(service: CommandJournal, descriptor: ReaderDescriptor) {
+  private received = 0;
+  private remote_close: Promise<void> | undefined;
+  private readonly released: () => void;
+  constructor(
+    service: CommandJournal,
+    descriptor: ReaderDescriptor,
+    private_delivery = false,
+    released = () => {},
+  ) {
     this.service = service;
     this.id = descriptor.reader;
     this.byte_count = descriptor.byte_count;
+    this.critical = private_delivery;
+    this.released = released;
+    if (!Number.isSafeInteger(this.byte_count) || this.byte_count < 0)
+      throw service.delivery_failure('Journal reader has an invalid byte count.');
+  }
+  private readonly critical: boolean;
+  get incomplete(): boolean {
+    return this.received !== this.byte_count;
+  }
+  release(): void {
+    this.ended = true;
+    this.released();
   }
   async *[Symbol.asyncIterator](): AsyncGenerator<Uint8Array> {
     let complete = false;
@@ -51,12 +72,31 @@ class Reader implements CanonicalReader {
           this.busy = false;
         }
         if (value === null) {
+          if (this.incomplete)
+            throw this.service.delivery_failure('Journal reader ended before its byte count.');
           this.ended = true;
+          this.released();
           break;
+        }
+        if (
+          !(value instanceof ArrayBuffer) ||
+          value.byteLength === 0 ||
+          value.byteLength > FILE_CHUNK_BYTES ||
+          this.received + value.byteLength > this.byte_count
+        )
+          throw this.service.delivery_failure('Journal reader exceeded its chunk or byte count.');
+        this.received += value.byteLength;
+        if (!this.incomplete) {
+          this.ended = true;
+          this.released();
         }
         yield new Uint8Array(value);
       }
       complete = true;
+    } catch (error) {
+      if (this.critical)
+        throw this.service.delivery_failure('Fresh journal command delivery failed.', error);
+      throw error;
     } finally {
       if (!complete) await this.close();
     }
@@ -64,21 +104,54 @@ class Reader implements CanonicalReader {
   async close(): Promise<void> {
     if (!this.ended) {
       this.ended = true;
-      await this.service.close_reference('reader_close', this.id);
+      this.released();
+      if (this.critical && this.incomplete)
+        this.service.delivery_failure('Fresh journal command delivery was abandoned.');
+    }
+    const task = this.remote_close ?? this.service.close_reference('reader_close', this.id);
+    this.remote_close = task;
+    try {
+      await task;
+    } catch (error) {
+      if (this.remote_close === task) this.remote_close = undefined;
+      throw error;
     }
   }
 }
 class Cursor<T> implements JournalCursor<T> {
   private readonly service: CommandJournal;
   private readonly id: number;
-  private readonly map: (row: CursorRowDescriptor) => T;
+  private readonly map: (
+    row: CursorRowDescriptor,
+    reader: (value: ReaderDescriptor) => Reader,
+  ) => T;
+  readonly command_count: number;
+  private readonly readers = new Set<Reader>();
+  private issued = 0;
+  private readonly fresh_count: number | undefined;
+  private untrack = () => {};
+  private get incomplete(): boolean {
+    return (
+      this.fresh_count !== undefined &&
+      (this.issued < this.fresh_count || [...this.readers].some((reader) => reader.incomplete))
+    );
+  }
   private exhausted = false;
   private closed = false;
+  private remote_close: Promise<void> | undefined;
   private busy = false;
-  constructor(service: CommandJournal, id: number, map: (row: CursorRowDescriptor) => T) {
+  constructor(
+    service: CommandJournal,
+    id: number,
+    map: (row: CursorRowDescriptor, reader: (value: ReaderDescriptor) => Reader) => T,
+    fresh?: { command_count: number; fresh_count: number },
+  ) {
     this.service = service;
     this.id = id;
     this.map = map;
+    this.command_count = fresh?.command_count ?? 0;
+    this.fresh_count = fresh?.fresh_count;
+    if (this.fresh_count) this.untrack = service.track_delivery(() => this.incomplete);
   }
   async *[Symbol.asyncIterator](): AsyncGenerator<T> {
     let complete = false;
@@ -93,12 +166,35 @@ class Cursor<T> implements JournalCursor<T> {
           this.busy = false;
         }
         if (value === null) {
+          if (this.fresh_count !== undefined && this.issued !== this.fresh_count)
+            throw this.service.delivery_failure(
+              'Fresh journal batch ended before its command count.',
+            );
           this.exhausted = true;
           break;
         }
-        yield this.map(value);
+        this.issued++;
+        if (this.fresh_count !== undefined && this.issued > this.fresh_count)
+          throw this.service.delivery_failure('Fresh journal batch exceeded its command count.');
+        yield this.map(value, (descriptor) => {
+          const reader = new Reader(
+            this.service,
+            descriptor,
+            this.fresh_count !== undefined,
+            () => {
+              this.readers.delete(reader);
+              if (!this.incomplete) this.untrack();
+            },
+          );
+          this.readers.add(reader);
+          return reader;
+        });
       }
       complete = true;
+    } catch (error) {
+      if (this.fresh_count !== undefined)
+        throw this.service.delivery_failure('Fresh journal batch delivery failed.', error);
+      throw error;
     } finally {
       if (!complete) await this.close();
     }
@@ -106,7 +202,19 @@ class Cursor<T> implements JournalCursor<T> {
   async close(): Promise<void> {
     if (!this.closed) {
       this.closed = true;
-      await this.service.close_reference('cursor_close', this.id);
+      if (this.incomplete)
+        this.service.delivery_failure('Fresh journal batch delivery was abandoned.');
+      this.untrack();
+      for (const reader of this.readers) reader.release();
+      this.readers.clear();
+    }
+    const task = this.remote_close ?? this.service.close_reference('cursor_close', this.id);
+    this.remote_close = task;
+    try {
+      await task;
+    } catch (error) {
+      if (this.remote_close === task) this.remote_close = undefined;
+      throw error;
     }
   }
 }
@@ -118,13 +226,16 @@ export class CommandJournal implements AsyncCommandJournal {
   private worker: Worker | undefined;
   private exit: Promise<void> = Promise.resolve();
   private closed = false;
+  private stop_acknowledged = false;
   private failure: Error | undefined;
   private readonly listeners = new Set<(error: Error) => void>();
   private readonly operations = new Set<Promise<unknown>>();
+  private tail: Promise<void> = Promise.resolve();
+  private readonly deliveries = new Set<() => boolean>();
   private readonly callbacks = new Set<Promise<unknown>>();
   private readonly pending = new Map<
     number,
-    { resolve(value: unknown): void; reject(error: Error): void }
+    { resolve(value: unknown): void; reject(error: Error): void; reply_error?(error: Error): void }
   >();
   private sequence = 0;
   private ready_resolve!: () => void;
@@ -151,8 +262,8 @@ export class CommandJournal implements AsyncCommandJournal {
         throw new TypeError('journal dependencies must be trusted file module URLs');
   }
   assert_healthy(): void {
-    if (!this.closed && this.worker?.threadId === -1)
-      this.fail(new ServerLifecycleError('Journal worker is unavailable.'));
+    if (!this.stop_acknowledged && this.worker?.threadId === -1)
+      this.fail(new ServerLifecycleError('Journal worker is unavailable.'), true);
     if (this.failure) throw this.failure;
   }
   on_failure(listener: (error: Error) => void): () => void {
@@ -160,17 +271,39 @@ export class CommandJournal implements AsyncCommandJournal {
     if (this.failure) listener(this.failure);
     return () => this.listeners.delete(listener);
   }
-  private fail(error: Error): void {
+  private fail(error: Error, worker_lost = false): void {
     const first = this.failure === undefined;
     this.failure ??= error;
     this.closed = true;
     this.ready_reject?.(error);
-    for (const value of this.pending.values()) value.reject(error);
-    this.pending.clear();
-    if (first) for (const listener of this.listeners) listener(error);
+    for (const [id, value] of this.pending) {
+      // A delivery refusal does not cancel an in-flight native close response.
+      if (worker_lost || !value.reply_error) {
+        value.reject(error);
+        this.pending.delete(id);
+      }
+    }
+    if (first) {
+      for (const listener of this.listeners) listener(error);
+      try {
+        this.dependencies.on_failure(error);
+      } catch (error) {
+        console.warn('Mac journal failure callback failed:', failure_name(error));
+      }
+    }
+  }
+  delivery_failure(message: string, cause?: unknown): Error {
+    const error = new ServerLifecycleError(message);
+    if (cause !== undefined) Object.assign(error, { cause });
+    this.fail(error);
+    return this.failure!;
+  }
+  track_delivery(incomplete: () => boolean): () => void {
+    this.deliveries.add(incomplete);
+    return () => this.deliveries.delete(incomplete);
   }
   private transport_failure(worker: Worker, error: unknown): void {
-    this.fail(error instanceof Error ? error : new Error(String(error)));
+    this.fail(error instanceof Error ? error : new Error(String(error)), true);
     // A broken callback transport cannot drain its waiter. This is a fatal transport
     // failure, not normal close: native addon cleanup runs before actual worker exit.
     void worker.terminate().catch(() => {});
@@ -224,10 +357,10 @@ export class CommandJournal implements AsyncCommandJournal {
         this.worker = worker;
         this.exit = new Promise((resolve) => worker.once('exit', () => resolve()));
         worker.on('message', (message: JournalWorkerMessage) => this.receive(worker, message));
-        worker.on('error', (error) => this.fail(error));
+        worker.on('error', (error) => this.fail(error, true));
         worker.on('exit', (code) => {
-          if (!this.closed || this.pending.size)
-            this.fail(new Error(`Journal worker exited (${code}).`));
+          if (!this.stop_acknowledged || this.pending.size)
+            this.fail(new ServerLifecycleError(`Journal worker exited (${code}).`), true);
           this.worker = undefined;
           this.join_actual();
         });
@@ -252,8 +385,11 @@ export class CommandJournal implements AsyncCommandJournal {
     if (message.kind === 'reply') {
       const request = this.pending.get(message.id);
       this.pending.delete(message.id);
-      if (message.error) request?.reject(this.restore(message.error));
-      else request?.resolve(message.value);
+      if (message.error) {
+        const error = this.restore(message.error);
+        if (request?.reply_error) request.reply_error(error);
+        else request?.reject(error);
+      } else request?.resolve(message.value);
       return;
     }
     const task = Promise.resolve().then<bigint | void>(() => {
@@ -287,9 +423,19 @@ export class CommandJournal implements AsyncCommandJournal {
   }
   private raw(action: JournalAction): Promise<unknown> {
     return new Promise((resolve, reject) => {
+      try {
+        this.assert_healthy();
+      } catch (error) {
+        reject(error);
+        return;
+      }
       const worker = this.worker;
       if (!worker || worker.threadId === -1) {
         reject(this.failure ?? new ServerLifecycleError('Journal worker is unavailable.'));
+        return;
+      }
+      if (this.pending.size >= JOURNAL_OPERATIONS) {
+        reject(new ServerLifecycleError('Journal request capacity reached.'));
         return;
       }
       const id = ++this.sequence;
@@ -314,9 +460,22 @@ export class CommandJournal implements AsyncCommandJournal {
     this.owner.assert_admission();
   }
   private call<T>(action: JournalAction): Promise<T> {
+    return this.enqueue(() => this.raw(action) as Promise<T>);
+  }
+  private enqueue<T>(work: () => Promise<T>): Promise<T> {
     try {
       this.admit();
-      return this.hold(this.raw(action) as Promise<T>);
+      if (this.operations.size >= JOURNAL_OPERATIONS)
+        throw new ServerLifecycleError('Journal operation capacity reached.');
+      const task = this.tail.then(() => {
+        this.assert_healthy();
+        return work();
+      });
+      this.tail = task.then(
+        () => {},
+        () => {},
+      );
+      return this.hold(task);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -325,38 +484,29 @@ export class CommandJournal implements AsyncCommandJournal {
     value: Uint8Array | string,
     work: (input: number) => Promise<T>,
   ): Promise<T> {
-    try {
-      this.admit();
-    } catch (error) {
-      return Promise.reject(error);
-    }
-    return this.hold(
-      (async () => {
-        const input = (await this.raw({
-          operation: 'input_start',
-          text: typeof value === 'string',
-        })) as number;
-        try {
-          const length = value.length,
-            stride =
-              typeof value === 'string' ? Math.floor(FILE_CHUNK_BYTES / 3) : FILE_CHUNK_BYTES;
-          for (let offset = 0; offset < length; offset += stride) {
-            this.admit();
-            const chunk =
-              typeof value === 'string'
-                ? value.slice(offset, offset + stride)
-                : Uint8Array.from(value.subarray(offset, offset + stride)).buffer;
-            await this.raw({ operation: 'input_push', input, chunk });
-          }
-          this.admit();
-          await this.raw({ operation: 'input_end', input });
-          this.admit();
-          return await work(input);
-        } finally {
-          if (!this.closed) await this.raw({ operation: 'input_drop', input });
+    if (value.length > JOURNAL_INPUT_BYTES)
+      return Promise.reject(new RangeError('Journal input exceeds the native byte limit.'));
+    return this.enqueue(async () => {
+      const input = (await this.raw({
+        operation: 'input_start',
+        text: typeof value === 'string',
+      })) as number;
+      try {
+        const length = value.length,
+          stride = typeof value === 'string' ? Math.floor(FILE_CHUNK_BYTES / 3) : FILE_CHUNK_BYTES;
+        for (let offset = 0; offset < length; offset += stride) {
+          const chunk =
+            typeof value === 'string'
+              ? value.slice(offset, offset + stride)
+              : Uint8Array.from(value.subarray(offset, offset + stride)).buffer;
+          await this.raw({ operation: 'input_push', input, chunk });
         }
-      })(),
-    );
+        await this.raw({ operation: 'input_end', input });
+        return await work(input);
+      } finally {
+        if (!this.failure) await this.raw({ operation: 'input_drop', input });
+      }
+    });
   }
   poll_cursor(): Promise<bigint> {
     return this.call({ operation: 'poll_cursor' });
@@ -368,14 +518,29 @@ export class CommandJournal implements AsyncCommandJournal {
     bytes: Uint8Array | string,
     incarnation: string,
     polled_after: bigint,
-  ): Promise<JournalCursor<FreshJournalCommand>> {
-    const value = (await this.with_input(bytes, (input) =>
-      this.raw({ operation: 'record_poll_reply', input, incarnation, after: polled_after }),
-    )) as { cursor: number };
-    return new Cursor(this, value.cursor, (row) => ({
-      command_id: row.command_id,
-      command: new Reader(this, row.command!),
-    }));
+  ): Promise<FreshCommandCursor> {
+    if (
+      bytes.length > MAX_MAILBOX_POLL_BYTES ||
+      (typeof bytes === 'string' && Buffer.byteLength(bytes) > MAX_MAILBOX_POLL_BYTES)
+    )
+      throw new RangeError('Mailbox poll reply exceeds its body limit.');
+    return this.with_input(bytes, async (input) => {
+      const value = (await this.raw({
+        operation: 'record_poll_reply',
+        input,
+        incarnation,
+        after: polled_after,
+      })) as { cursor: number; command_count: number; fresh_count: number };
+      return new Cursor(
+        this,
+        value.cursor,
+        (row, reader) => ({
+          command_id: row.command_id,
+          command: reader(row.command!),
+        }),
+        value,
+      );
+    });
   }
   async result_of(command_id: string): Promise<CanonicalReader | null> {
     const value = await this.call<ReaderDescriptor | null>({ operation: 'result_of', command_id });
@@ -393,17 +558,17 @@ export class CommandJournal implements AsyncCommandJournal {
   }
   async unpublished(): Promise<JournalCursor<UnpublishedJournalCommand>> {
     const value = await this.call<{ cursor: number }>({ operation: 'unpublished' });
-    return new Cursor(this, value.cursor, (row) => ({
+    return new Cursor(this, value.cursor, (row, reader) => ({
       command_id: row.command_id,
-      command: new Reader(this, row.command!),
-      result: new Reader(this, row.result!),
+      command: reader(row.command!),
+      result: reader(row.result!),
     }));
   }
   async unreported(limit: number): Promise<JournalCursor<UnreportedJournalResult>> {
     const value = await this.call<{ cursor: number }>({ operation: 'unreported', limit });
-    return new Cursor(this, value.cursor, (row) => ({
+    return new Cursor(this, value.cursor, (row, reader) => ({
       command_id: row.command_id,
-      result: new Reader(this, row.result!),
+      result: reader(row.result!),
     }));
   }
   mark_reported(command_ids: readonly string[]): Promise<void> {
@@ -420,7 +585,7 @@ export class CommandJournal implements AsyncCommandJournal {
   }
   async close_reference(operation: 'reader_close' | 'cursor_close', id: number): Promise<void> {
     if (this.closed) return;
-    await this.raw(
+    await this.call(
       operation === 'reader_close' ? { operation, reader: id } : { operation, cursor: id },
     );
   }
@@ -435,24 +600,60 @@ export class CommandJournal implements AsyncCommandJournal {
   }
   stop(options: StopOptions): Promise<void> {
     this.closed = true;
-    if (this.worker && !this.stop_request) {
-      const id = ++this.sequence;
-      const request = new Promise<unknown>((resolve, reject) => {
-        this.pending.set(id, { resolve, reject });
-        try {
-          this.worker!.postMessage({ kind: 'stop', id } satisfies JournalMainMessage);
-        } catch (error) {
-          this.pending.delete(id);
-          reject(error);
+    if (!this.stop_request) {
+      const request = (async () => {
+        // Admission is sealed, but complete uploads and their final transaction keep
+        // their reservation. A stop frame cannot split an admitted operation.
+        while (this.operations.size) await Promise.allSettled([...this.operations]);
+        if ([...this.deliveries].some((incomplete) => incomplete()))
+          this.delivery_failure('Shutdown abandoned a committed fresh journal batch.');
+        this.deliveries.clear();
+        const worker = this.worker;
+        if (worker && worker.threadId !== -1) {
+          const id = ++this.sequence;
+          let close_error: Error | undefined;
+          try {
+            close_error = await new Promise<Error | undefined>((resolve, reject) => {
+              this.pending.set(id, {
+                resolve: () => {
+                  this.stop_acknowledged = true;
+                  resolve(undefined);
+                },
+                reject,
+                reply_error: resolve,
+              });
+              try {
+                worker.postMessage({ kind: 'stop', id } satisfies JournalMainMessage);
+              } catch (error) {
+                this.pending.delete(id);
+                this.transport_failure(worker, error);
+                reject(error);
+              }
+            });
+          } catch (error) {
+            // Worker loss rejects pending requests and must join actual exit.
+            if (!this.failure) throw error;
+          }
+          // A real close-error reply proves a live retry port, even after an
+          // earlier delivery fault. Keep it distinct from fail() rejection.
+          if (close_error) throw close_error;
+        } else if (worker)
+          this.fail(new ServerLifecycleError('Journal worker is unavailable.'), true);
+        await this.join_actual();
+        if (this.failure) {
+          const error = new ServerLifecycleError(
+            'Journal stopped after an owned resource failure.',
+          );
+          throw Object.assign(error, { cause: this.failure });
         }
-      });
+      })();
       this.stop_request = request;
       void request.catch(() => {
         if (this.stop_request === request) this.stop_request = undefined;
       });
     }
     return observe_shutdown(
-      Promise.all([this.stop_request, this.join_actual()]).then(() => undefined),
+      this.stop_request.then(() => undefined),
       options,
       'Journal resources remain unfinished at the shutdown deadline.',
     );

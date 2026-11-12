@@ -1,6 +1,12 @@
 /** Own SQLite, codecs, full snapshots, and one ordered operation chain. */
 import { parentPort, workerData } from 'node:worker_threads';
-import { FILE_CHUNK_BYTES } from '../configuration.ts';
+import { FILE_CHUNK_BYTES, MAX_MAILBOX_POLL_BYTES } from '../configuration.ts';
+import {
+  JOURNAL_OPERATIONS,
+  JOURNAL_CURSORS,
+  JOURNAL_READERS,
+  JOURNAL_INPUT_BYTES,
+} from './journal_limits.ts';
 import { JournalEngine } from './journal_engine.ts';
 import type { EncodedJournalRow } from './journal_engine.ts';
 import { journal_error, journal_error_properties } from './journal_worker_contracts.ts';
@@ -22,7 +28,7 @@ let engine: JournalEngine | undefined,
 const callbacks = new Map<number, { resolve(value?: bigint): void; reject(error: Error): void }>();
 const inputs = new Map<
   number,
-  { text: boolean; chunks: (ArrayBuffer | string)[]; value?: Buffer | string }
+  { text: boolean; chunks: (ArrayBuffer | string)[]; bytes: number; value?: Buffer | string }
 >();
 const readers = new Map<number, { bytes: Buffer; offset: number; cursor?: number }>();
 const cursors = new Map<
@@ -38,6 +44,7 @@ function callback(callback: 'permission' | 'flush' | 'clock'): Promise<bigint | 
   return task;
 }
 function reader(bytes: Buffer, cursor?: number): ReaderDescriptor {
+  if (readers.size >= JOURNAL_READERS) throw new Error('journal reader capacity reached');
   const id = ++sequence;
   readers.set(id, { bytes, offset: 0, cursor });
   if (cursor !== undefined) cursors.get(cursor)!.children.add(id);
@@ -60,9 +67,13 @@ function close_cursor(id: number): void {
   cursors.delete(id);
 }
 function cursor(rows: EncodedJournalRow[]): { cursor: number } {
+  require_cursor();
   const id = ++sequence;
   cursors.set(id, { rows, offset: 0, children: new Set() });
   return { cursor: id };
+}
+function require_cursor(): void {
+  if (cursors.size >= JOURNAL_CURSORS) throw new Error('journal cursor capacity reached');
 }
 function take_input(id: number): Buffer | string {
   const input = inputs.get(id);
@@ -112,11 +123,20 @@ async function execute(action: JournalAction): Promise<unknown> {
     case 'lower_poll_cursor':
       return engine!.lower_poll_cursor(action.high, action.cursor_at_lease);
     case 'record_poll_reply': {
-      const raw = take_input(action.input),
-        now = await callback('clock');
-      return cursor(engine!.record_poll_reply(raw, action.incarnation, action.after, now!));
+      require_cursor();
+      const raw = take_input(action.input);
+      if ((typeof raw === 'string' ? Buffer.byteLength(raw) : raw.length) > MAX_MAILBOX_POLL_BYTES)
+        throw new RangeError('Mailbox poll reply exceeds its body limit.');
+      const now = await callback('clock');
+      const result = engine!.record_poll_reply(raw, action.incarnation, action.after, now!);
+      return {
+        ...cursor(result.rows),
+        command_count: result.command_count,
+        fresh_count: result.rows.length,
+      };
     }
     case 'result_of': {
+      if (readers.size >= JOURNAL_READERS) throw new Error('journal reader capacity reached');
       const result = engine!.result_of(action.command_id);
       return result === null ? null : reader(result);
     }
@@ -127,8 +147,10 @@ async function execute(action: JournalAction): Promise<unknown> {
       engine!.mark_outputs_published(action.command_id);
       return;
     case 'unpublished':
+      require_cursor();
       return cursor(engine!.unpublished());
     case 'unreported':
+      require_cursor();
       return cursor(engine!.unreported(action.limit));
     case 'mark_reported':
       engine!.mark_reported(action.command_ids);
@@ -137,13 +159,21 @@ async function execute(action: JournalAction): Promise<unknown> {
       engine!.shrink_to_tombstones();
       return;
     case 'input_start': {
+      if (inputs.size) throw new Error('journal already has a partial input');
       const id = ++sequence;
-      inputs.set(id, { text: action.text, chunks: [] });
+      inputs.set(id, { text: action.text, chunks: [], bytes: 0 });
       return id;
     }
     case 'input_push': {
       const input = inputs.get(action.input);
       if (!input) throw new Error('journal input is closed');
+      const size =
+        typeof action.chunk === 'string'
+          ? Buffer.byteLength(action.chunk)
+          : action.chunk.byteLength;
+      if (!size || size > FILE_CHUNK_BYTES || input.bytes + size > JOURNAL_INPUT_BYTES)
+        throw new Error('journal input exceeds its chunk or native byte limit');
+      input.bytes += size;
       input.chunks.push(action.chunk);
       return;
     }
@@ -171,6 +201,8 @@ async function execute(action: JournalAction): Promise<unknown> {
         if (item.children.size === 0) cursors.delete(action.cursor);
         return null;
       }
+      if (readers.size + Number(!!row.command) + Number(!!row.result) > JOURNAL_READERS)
+        throw new Error('journal reader capacity reached');
       item.rows[item.offset++] = undefined;
       const value: CursorRowDescriptor = { command_id: row.command_id };
       if (row.command) value.command = reader(row.command, action.cursor);
@@ -191,17 +223,25 @@ async function execute(action: JournalAction): Promise<unknown> {
       const copy = new Uint8Array(count);
       copy.set(item.bytes.subarray(item.offset, item.offset + count));
       item.offset += count;
+      if (item.offset === item.bytes.length) close_reader(action.reader);
       return copy.buffer;
     }
   }
 }
 let chain = ready.catch(() => {});
+let queued = 0;
 function reply(id: number, value?: unknown, error?: unknown): void {
   const message: JournalWorkerMessage =
     error === undefined
       ? { kind: 'reply', id, value }
       : { kind: 'reply', id, error: journal_error(error) };
-  port.postMessage(message, value instanceof ArrayBuffer ? [value] : []);
+  try {
+    port.postMessage(message, value instanceof ArrayBuffer ? [value] : []);
+  } catch (error) {
+    queueMicrotask(() => {
+      throw error;
+    });
+  }
 }
 port.on('message', (message: JournalMainMessage) => {
   if (message.kind === 'callback_result') {
@@ -238,12 +278,24 @@ port.on('message', (message: JournalMainMessage) => {
     reply(message.id, undefined, new Error('journal is stopped'));
     return;
   }
+  if (queued >= JOURNAL_OPERATIONS) {
+    reply(message.id, undefined, new Error('journal operation capacity reached'));
+    return;
+  }
+  queued++;
   chain = chain.then(async () => {
+    let value: unknown;
     try {
       await ready;
-      reply(message.id, await execute(message.action));
+      value = await execute(message.action);
     } catch (error) {
       reply(message.id, undefined, error);
+      return;
+    } finally {
+      queued--;
     }
+    // A failed successful-response transfer can hide a committed command. Let that
+    // fatal transport error exit the worker instead of returning an ordinary error.
+    reply(message.id, value);
   });
 });

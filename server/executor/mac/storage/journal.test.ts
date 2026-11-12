@@ -16,6 +16,7 @@ import { parse_numeric_json, stringify_python_json } from '../../../core/http/nu
 import { createReadAccess } from '../../../core/database/index.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { FilesService } from '../files.ts';
+import { FILE_CHUNK_BYTES } from '../configuration.ts';
 import { acquire_process_lock } from '../platform.ts';
 import { OutboxStore } from './outbox.ts';
 import { open_command_journal } from './journal.ts';
@@ -31,6 +32,10 @@ const reply = '{"commands":[' + command + ']}';
 const result = '{"command_id":"stop","child_outcome":null,"model_list":null}';
 const duplicate = command.replace('"command_sequence":1', '"command_sequence":2');
 const repeated = '{"commands":[' + duplicate + ']}';
+const large_result = result.replace(
+  '"model_list":null',
+  '"model_list":{"text":"' + 'x'.repeat(FILE_CHUNK_BYTES + 1) + '"}',
+);
 async function fixture(gated = false) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'mac-journal-'))),
     record = { root } as { root: string; owner?: OutboxStore };
@@ -45,11 +50,23 @@ async function fixture(gated = false) {
     workers.add(this);
     return post.call(this, ...args);
   });
+  const root_fault = vi.fn(),
+    journal_fault = vi.fn(),
+    shutdown: Promise<unknown>[] = [];
+  let host: OutboxStore | undefined;
+  const stop_host = () => {
+    if (host) shutdown.push(host.stop(deadline()).catch((error) => error));
+  };
   const owner = await OutboxStore.open(
     spool,
     { monotonic: () => performance.now() / 1000, now_ns: () => BigInt(Date.now()) * 1_000_000n },
     deadline(),
+    (error) => {
+      root_fault(error);
+      stop_host();
+    },
   );
+  host = owner;
   record.owner = owner;
   const existing = new Set(workers),
     database = join(spool, JOURNAL_NAME);
@@ -57,6 +74,7 @@ async function fixture(gated = false) {
     release = join(root, 'release'),
     fail_close = join(root, 'fail-close'),
     crash = join(root, 'crash');
+  const truncate = join(root, 'truncate');
   const block_policy = join(root, 'block-policy'),
     policy_entered = join(root, 'policy-entered'),
     policy_release = join(root, 'policy-release');
@@ -72,6 +90,7 @@ async function fixture(gated = false) {
         ['CommandResult', result],
         ['MailboxCommand', duplicate],
         ['MailboxPollReply', repeated],
+        ['CommandResult', large_result],
       ].map(([root, text]) => ({
         root,
         hex: Buffer.from(text!).toString('hex'),
@@ -87,11 +106,19 @@ async function fixture(gated = false) {
     wrapper,
     `export * from ${JSON.stringify(source.href)};
 import {command_owes_outputs as original_owed} from ${JSON.stringify(source.href)};
-import {isMainThread} from 'node:worker_threads';
+import {isMainThread, parentPort} from 'node:worker_threads';
 let pause_policy;
 export function command_owes_outputs(...args) { if (pause_policy) pause_policy(); return original_owed(...args); }
 if (!isMainThread) {
   const fs = await import('node:fs');
+  const post = parentPort.postMessage.bind(parentPort);
+  parentPort.postMessage = (message, ...args) => {
+    if (message.kind === 'reply' && message.value instanceof ArrayBuffer && fs.existsSync(${JSON.stringify(truncate)})) {
+      fs.unlinkSync(${JSON.stringify(truncate)});
+      return post({...message, value: null});
+    }
+    return post(message, ...args);
+  };
   const {default: Database} = await import(${JSON.stringify(new URL('../../../node_modules/better-sqlite3/lib/index.js', import.meta.url).href)});
   const close = Database.prototype.close;
   Database.prototype.close = function() {
@@ -124,6 +151,10 @@ if (!isMainThread) {
     protocol_module: url,
     outputs_module: url,
     now_ms: () => 1n,
+    on_failure: (error) => {
+      journal_fault(error);
+      stop_host();
+    },
   };
   const worker = () => [...workers].find((value) => !existing.has(value))!;
   return {
@@ -141,6 +172,10 @@ if (!isMainThread) {
     block_policy,
     policy_entered,
     policy_release,
+    root_fault,
+    journal_fault,
+    shutdown,
+    truncate,
   };
 }
 async function read(reader: CanonicalReader): Promise<Buffer> {
@@ -155,8 +190,10 @@ afterEach(async () => {
     writeFileSync(join(root, 'policy-release'), 'release');
     rmSync(join(root, 'fail-close'), { force: true });
     if (owner) {
-      await owner.stop(deadline());
-      await owner.settled();
+      await owner
+        .stop(deadline())
+        .catch((error) => expect(error).toMatchObject({ name: 'ServerLifecycleError' }));
+      await observe_shutdown(owner.settled(), deadline(), 'owned journal cleanup stalled');
     }
     rmSync(root, { recursive: true, force: true });
   }
@@ -204,11 +241,45 @@ test('failed startup flush retains a live cleanup continuation while journal clo
   lease.close();
 });
 
-test('live close failure keeps the main lock until a retry joins native journal closure', async () => {
+test('shutdown drains one admitted multi-chunk finish and retains the lock across a failed native close', async () => {
   const f = await fixture();
-  await open_command_journal(f.owner, 'inc', f.dependencies, deadline());
+  const journal = await open_command_journal(f.owner, 'inc', f.dependencies, deadline());
+  const fresh = await journal.record_poll_reply(Buffer.from(reply), 'inc', 0n);
+  const item = await fresh[Symbol.asyncIterator]().next();
+  const delivery = item.value!.command[Symbol.asyncIterator]();
+  expect(Buffer.from((await delivery.next()).value!)).toEqual(Buffer.from(command));
+  await fresh.close();
+  // Issued cursors have their own bound and explicit close returns their capacity.
+  const cursors = [];
+  for (let i = 0; i < 32; i++) cursors.push(await journal.unreported(1));
+  await expect(journal.unreported(1)).rejects.toThrow('cursor capacity');
+  const occupying = Array.from({ length: 32 }, () => journal.poll_cursor());
+  await expect(cursors[0]!.close()).rejects.toThrow('operation capacity');
+  await Promise.all(occupying);
+  await cursors[0]!.close();
+  await (await journal.unreported(1)).close();
+  await Promise.all(cursors.map((cursor) => cursor.close()));
   writeFileSync(f.fail_close, 'hold');
-  await expect(f.owner.stop(deadline())).rejects.toThrow('journal close blocked');
+  const finishing = journal.finish('stop', Buffer.from(large_result), false);
+  const queued = Array.from({ length: 31 }, () => journal.poll_cursor());
+  const excess = expect(journal.poll_cursor()).rejects.toThrow('operation capacity');
+  const stopping = expect(f.owner.stop(deadline())).rejects.toThrow('journal close blocked');
+  await Promise.all([finishing, ...queued, excess, stopping]);
+  // Every advertised byte arrived before stop. EOF needs no further admission.
+  expect((await delivery.next()).done).toBe(true);
+  expect(f.journal_fault).not.toHaveBeenCalled();
+  const snapshot = createReadAccess(f.database);
+  try {
+    expect(
+      snapshot.read((sql) =>
+        sql.get('SELECT phase,length(result_json) AS bytes FROM commands WHERE command_id=?', [
+          'stop',
+        ]),
+      ),
+    ).toEqual({ phase: 'finished', bytes: Buffer.byteLength(large_result) });
+  } finally {
+    snapshot.close();
+  }
   expect(f.worker().threadId).not.toBe(-1);
   expect(() => acquire_process_lock(f.spool)).toThrow('outbox is already owned');
   rmSync(f.fail_close);
@@ -222,11 +293,19 @@ test('an observed resource fault rolls back a blocked journal transaction before
   const f = await fixture(),
     journal = await open_command_journal(f.owner, 'inc', f.dependencies, deadline());
   const cursor = await journal.record_poll_reply(Buffer.from(reply), 'inc', 0n);
-  const item = await cursor[Symbol.asyncIterator]().next();
+  const iterator = cursor[Symbol.asyncIterator](),
+    item = await iterator.next();
   expect(item.done).toBe(false);
+  // Cursor EOF does not cancel an issued reader whose bytes are still owed.
+  expect((await iterator.next()).done).toBe(true);
+  expect(await read(item.value!.command)).toEqual(Buffer.from(command));
   await cursor.close();
-  expect(await read(item.value!.command)).toHaveLength(0);
   await journal.finish('stop', Buffer.from(result), false);
+  const snapshot_cursor = await journal.unreported(1);
+  const snapshot_item = await snapshot_cursor[Symbol.asyncIterator]().next();
+  await snapshot_cursor.close();
+  expect(await read(snapshot_item.value!.result)).toHaveLength(0);
+  writeFileSync(f.fail_close, 'hold');
   writeFileSync(f.block_policy, 'hold');
   const updating = journal.record_poll_reply(Buffer.from(repeated), 'inc', 1n);
   void updating.catch(() => {});
@@ -251,9 +330,13 @@ test('an observed resource fault rolls back a blocked journal transaction before
   } finally {
     writeFileSync(f.policy_release, 'release');
   }
+  await Promise.all(f.shutdown);
+  expect(f.root_fault).toHaveBeenCalledTimes(1);
   const worker = f.worker();
   let held_at_error = false;
+  let racing_stop: Promise<unknown> | undefined;
   worker.once('error', () => {
+    racing_stop = journal.stop(deadline()).catch((error) => error);
     try {
       const lease = acquire_process_lock(f.spool);
       lease.close();
@@ -265,8 +348,10 @@ test('an observed resource fault rolls back a blocked journal transaction before
   writeFileSync(f.crash, 'exit');
   await exited;
   expect(held_at_error).toBe(true);
+  expect(await racing_stop).toMatchObject({ name: 'ServerLifecycleError' });
+  expect(f.journal_fault).toHaveBeenCalledTimes(1);
+  expect(f.root_fault).toHaveBeenCalledTimes(1);
   await journal.settled();
-  expect(() => acquire_process_lock(f.spool)).toThrow('outbox is already owned');
   expect(() =>
     f.owner.append(
       { submission_id: 'late', conversation_id: 'c', child_id: 'child', kind: 'cli_write' },
@@ -277,8 +362,31 @@ test('an observed resource fault rolls back a blocked journal transaction before
     ),
   ).toThrow();
   expect(readFileSync(f.database).byteLength).toBeGreaterThan(0);
-  await f.owner.stop(deadline());
+  await Promise.all(f.shutdown);
   await f.owner.settled();
+  const lease = acquire_process_lock(f.spool);
+  lease.close();
+});
+
+test('truncated committed fresh delivery faults the host and joins actual cleanup', async () => {
+  const f = await fixture();
+  const journal = await open_command_journal(f.owner, 'inc', f.dependencies, deadline());
+  const cursor = await journal.record_poll_reply(Buffer.from(reply), 'inc', 0n);
+  const item = await cursor[Symbol.asyncIterator]().next();
+  expect(item.done).toBe(false);
+  writeFileSync(f.fail_close, 'hold');
+  writeFileSync(f.truncate, 'truncate');
+  await expect(read(item.value!.command)).rejects.toThrow('byte count');
+  expect(f.journal_fault).toHaveBeenCalledTimes(1);
+  expect(f.root_fault).toHaveBeenCalledTimes(1);
+  for (const error of await Promise.all(f.shutdown))
+    expect(error).toMatchObject({ message: 'journal close blocked' });
+  expect(f.worker().threadId).not.toBe(-1);
+  expect(() => acquire_process_lock(f.spool)).toThrow('outbox is already owned');
+  rmSync(f.fail_close);
+  await expect(journal.stop(deadline())).rejects.toMatchObject({ name: 'ServerLifecycleError' });
+  await f.owner.settled();
+  expect(f.worker().threadId).toBe(-1);
   const lease = acquire_process_lock(f.spool);
   lease.close();
 });

@@ -4,7 +4,8 @@
 It does not validate complete wire shapes, construct delivery batches, or send HTTP.
 The shared generated types own the wire contract. The later host still needs runtime codecs.
 
-Open with `OutboxStore.open(root, clock, shared_cleanup_options)`.
+Open with `OutboxStore.open(root, clock, shared_cleanup_options, on_failure)`.
+The required fault callback must initiate owned host shutdown. It runs once per root fault.
 `monotonic()` returns seconds. `now_ns()` returns wall-clock nanoseconds.
 The caller supplies the cleanup deadline. This seam chooses no new production clock policy.
 

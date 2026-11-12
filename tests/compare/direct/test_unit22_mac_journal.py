@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -230,6 +231,7 @@ def _node(
     oracle: Oracle,
     homes: dict[str, str],
     exit_code: int = 0,
+    gate: Path | None = None,
 ) -> Any:
     specification = root.parent / "journal-input.json"
     specification.write_text(
@@ -240,6 +242,8 @@ def _node(
                 incarnation=INCARNATION,
                 now_ms=str(NOW),
                 steps=steps,
+                gate=None if gate is None else str(gate),
+                gate_command_id="stop" if gate else None,
             )
         )
     )
@@ -273,9 +277,19 @@ def _node(
         start_new_session=True,
     )
     try:
+        if gate is not None:
+            deadline = time.monotonic() + 15
+            while not gate.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.005)
+            assert gate.exists(), "owned child did not enter the transaction gate"
+            assert process.poll() is None, "owned child exited before SIGKILL"
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         stdout, stderr = process.communicate(timeout=35)
-    except subprocess.TimeoutExpired:
-        if process.returncode is None:
+    except (subprocess.TimeoutExpired, AssertionError):
+        if process.poll() is None:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
@@ -345,6 +359,7 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
         return dict(
             op="poll",
             hex=oracle.remember(MailboxPollReply, MailboxPollReply(commands)).hex(),
+            expected_command_count=len(commands),
             **extra,
         )
 
@@ -379,6 +394,11 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
             },
         )
         assert len(oracle.remember(CommandResult, large)) > 1024 * 1024
+        assert stop.child_command is not None
+        stopped = CommandResult(
+            "stop",
+            CommandOutcome("stop", stop.child_command.child, CommandDisposition.succeeded, {}),
+        )
         # Both roots start absent. TS creates and populates its own two databases.
         paired(
             [
@@ -386,9 +406,44 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
                 poll(stale, incarnation="old-incarnation"),
                 poll(model, stop),
                 finish(model, large),
+                finish(stop, stopped),
                 dict(op="inspect", ids=ids),
             ]
         )
+        seed = tmp_path / "python-populated" / "spool"
+        shutil.copytree(py, seed)
+        mixed = _snapshot(py)
+        states = {row[0]: (row[4], row[6], row[7]) for row in mixed["commands"]}
+        assert states["own"][0] == states["stale"][0] == "recorded"
+        assert states["stop"] == ("finished", 0, 0)
+        assert states["models"] == ("finished", 0, 1)
+        # Python opens the independently TS-created root and WRITES restart settlement.
+        rollback = _reference(ts, [dict(op="inspect", ids=ids)], oracle, monkeypatch)
+        assert rollback == _reference(py, [dict(op="inspect", ids=ids)], oracle, monkeypatch)
+        assert _snapshot(ts) == _snapshot(py)
+        assert all(row[4] == "finished" for row in _snapshot(ts)["commands"])
+        reverse_summary = _summary(_snapshot(ts))
+        # TS next opens the Python-populated mixed-state store, rather than its own rows.
+        for root in (py, ts):
+            shutil.rmtree(root)
+            shutil.copytree(seed, root)
+        _reference(py, [], oracle, monkeypatch)
+        gated_stop = replace(stop, command_sequence=HIGH + 1)
+        gate_poll = poll(gated_stop)
+        oracle.policy(gated_stop, stopped)
+        oracle.save()
+        # The duplicate first UPDATEs sequence, then its policy callback holds the write.
+        # Kill this owned process group before COMMIT, and prove that UPDATE rolled back.
+        _node(
+            ts,
+            [gate_poll],
+            oracle,
+            homes,
+            exit_code=-signal.SIGKILL,
+            gate=ts.parent / "transaction-entered",
+        )
+        assert _snapshot(ts) == _snapshot(py)
+        killed_summary = _summary(_snapshot(ts))
         # Opening settles own and stale incarnations; own prompt output blocks its report.
         restarted = paired(
             [
@@ -402,11 +457,6 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
             ]
         )
         assert restarted[0]["results"][0][1] is not None
-        # The actual Python implementation opens a TS-created populated root and reads it.
-        before = _snapshot(ts)
-        reverse = _reference(ts, [dict(op="inspect", ids=ids)], oracle, monkeypatch)
-        assert reverse == [restarted[-1]]
-        assert _snapshot(ts) == before
         paired(
             [dict(op="published", id=i) for i in ids[:-1]]
             + [
@@ -416,7 +466,7 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
                 dict(op="inspect", ids=ids),
             ]
         )
-        # A genuinely new stop finishes durably, then the process exits before publication.
+        # An orderly exit after durable finish separately checks the publication boundary.
         crash = _command("crash-stop", 8)
         assert crash.child_command is not None
         outcome = CommandOutcome(
@@ -452,7 +502,10 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
         [
             ("paired_snapshots", len(snapshots)),
             ("elapsed_seconds", round(time.perf_counter() - started, 3)),
-            ("test_boundary", "fresh Python journal + TS worker + SQLite + actual process crash"),
+            (
+                "test_boundary",
+                "populated Python/TS handoff + SIGKILL rollback + orderly publication exit",
+            ),
         ]
     )
     report = request.config.getoption("--compare-report-dir")
@@ -467,13 +520,21 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
                     canonical_snapshots=snapshots,
                     blob_summary="Exact BLOB check before byte/SHA256 summary",
                     recovered=recovered,
-                    crash_exit_code=73,
+                    finish_before_publication_exit_code=73,
+                    midtransaction_signal="SIGKILL",
+                    midtransaction_recovered=killed_summary,
+                    python_to_typescript_mixed_states=_summary(mixed),
+                    python_restart_settlement_on_typescript_store=reverse_summary,
                     typescript_created=True,
                     python_reverse_opens=2,
                     large_result_bytes=len(oracle.remember(CommandResult, large)),
                     elapsed_seconds=time.perf_counter() - started,
                     stats=oracle.stats,
                     fixture_entries=len(oracle.entries),
+                    codec_evidence=(
+                        "Finite Python oracle: SQL, column types and number formatting. "
+                        "Actual shared-codec output pending."
+                    ),
                     measurement_scope="Journal open/ops/close; outbox opening excluded",
                 ),
                 indent=2,

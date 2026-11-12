@@ -29,6 +29,8 @@ export interface JournalDependencies {
   protocol_module: URL;
   outputs_module: URL;
   now_ms(): bigint;
+  /** The host must initiate shutdown. This notification occurs once per service fault. */
+  on_failure(error: Error): void;
 }
 export interface SidecarOpenScope {
   readonly root: string;
@@ -56,6 +58,10 @@ export interface FreshJournalCommand {
   command_id: string;
   command: CanonicalReader;
 }
+export interface FreshCommandCursor extends JournalCursor<FreshJournalCommand> {
+  /** Original reply command count, including duplicates. */
+  readonly command_count: number;
+}
 export interface UnpublishedJournalCommand extends FreshJournalCommand {
   result: CanonicalReader;
 }
@@ -70,7 +76,7 @@ export interface AsyncCommandJournal extends OutboxCleanup {
     bytes: Uint8Array | string,
     incarnation: string,
     polled_after: bigint,
-  ): Promise<JournalCursor<FreshJournalCommand>>;
+  ): Promise<FreshCommandCursor>;
   result_of(command_id: string): Promise<CanonicalReader | null>;
   finish(command_id: string, result: Uint8Array | string, outputs_owed: boolean): Promise<void>;
   mark_outputs_published(command_id: string): Promise<void>;

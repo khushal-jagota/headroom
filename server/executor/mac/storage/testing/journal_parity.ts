@@ -25,6 +25,7 @@ interface Step {
   owed?: boolean;
   columns?: ItemColumns;
   payload_hex?: string;
+  expected_command_count?: number;
 }
 interface Input {
   root: string;
@@ -32,6 +33,8 @@ interface Input {
   incarnation: string;
   now_ms: string;
   steps: Step[];
+  gate?: string;
+  gate_command_id?: string;
 }
 interface StreamStats {
   max_chunk_bytes: number;
@@ -90,6 +93,11 @@ async function inspect(
 }
 export async function journal_parity(input: Input): Promise<unknown> {
   const options = { deadline: performance.now() / 1000 + 25 };
+  let owner: OutboxStore | undefined, fault: Error | undefined;
+  const on_failure = (error: Error) => {
+    fault ??= error;
+    if (owner) void owner.stop(options).catch(() => {});
+  };
   const store = await OutboxStore.open(
     input.root,
     {
@@ -97,7 +105,10 @@ export async function journal_parity(input: Input): Promise<unknown> {
       now_ns: () => BigInt(input.now_ms) * 1_000_000n,
     },
     options,
+    on_failure,
   );
+  owner = store;
+  if (fault) on_failure(fault);
   const observations: unknown[] = [];
   const stream: StreamStats = { max_chunk_bytes: 0, streamed_bytes: 0, readers: 0 };
   const started = performance.now(),
@@ -112,8 +123,13 @@ export async function journal_parity(input: Input): Promise<unknown> {
     max_rss_bytes = Math.max(max_rss_bytes, process.memoryUsage().rss);
   }, interval_ms);
   try {
+    if (fault) throw fault;
     const fixture = new URL('./journal_fixture.ts', import.meta.url);
     fixture.searchParams.set('fixture', input.fixture);
+    if (input.gate) {
+      fixture.searchParams.set('gate', input.gate);
+      fixture.searchParams.set('gate_command_id', input.gate_command_id!);
+    }
     const journal = await open_command_journal(
       store,
       input.incarnation,
@@ -121,23 +137,23 @@ export async function journal_parity(input: Input): Promise<unknown> {
         protocol_module: fixture,
         outputs_module: fixture,
         now_ms: () => BigInt(input.now_ms),
+        on_failure,
       },
       options,
     );
     for (const step of input.steps) {
       switch (step.op) {
-        case 'poll':
-          observations.push(
-            await inventory(
-              await journal.record_poll_reply(
-                Buffer.from(step.hex!, 'hex'),
-                step.incarnation ?? input.incarnation,
-                BigInt(step.after ?? '0'),
-              ),
-              stream,
-            ),
+        case 'poll': {
+          const cursor = await journal.record_poll_reply(
+            Buffer.from(step.hex!, 'hex'),
+            step.incarnation ?? input.incarnation,
+            BigInt(step.after ?? '0'),
           );
+          if (cursor.command_count !== step.expected_command_count)
+            throw new Error('Fresh cursor lost the original poll reply command count');
+          observations.push(await inventory(cursor, stream));
           break;
+        }
         case 'finish':
           await journal.finish(step.id!, Buffer.from(step.hex!, 'hex'), step.owed!);
           break;
@@ -184,6 +200,7 @@ export async function journal_parity(input: Input): Promise<unknown> {
       max_rss_bytes = Math.max(max_rss_bytes, process.memoryUsage().rss);
     }
   }
+  if (fault) throw fault;
   lateness.sort((a, b) => a - b);
   return {
     observations,

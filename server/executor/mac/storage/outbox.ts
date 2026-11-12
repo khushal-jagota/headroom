@@ -69,6 +69,8 @@ export class OutboxStore {
   private readonly blobs: DirectoryHandle;
   private readonly clock: OutboxClock;
   private readonly resources: OutboxResources;
+  private readonly on_failure: (error: Error) => void;
+  private faulted = false;
   private closed = false;
   private callback_scope = 0;
   private capturing = 0;
@@ -84,6 +86,7 @@ export class OutboxStore {
     blobs: DirectoryHandle,
     clock: OutboxClock,
     resources: OutboxResources,
+    on_failure: (error: Error) => void,
   ) {
     this.root = root;
     this.database = database;
@@ -91,14 +94,20 @@ export class OutboxStore {
     this.blobs = blobs;
     this.clock = clock;
     this.resources = resources;
-    files.on_failure(() => this.failed());
+    this.on_failure = on_failure;
+    files.on_failure((error) => this.failed(error));
     const sender = database.read((sql) =>
       sql.get<{ sender_id: string }>('SELECT sender_id FROM sender WHERE singleton=1'),
     );
     if (sender === undefined) throw new Error('outbox sender is absent');
     this.sender_id = sender.sender_id;
   }
-  static async open(root: string, clock: OutboxClock, options: StopOptions): Promise<OutboxStore> {
+  static async open(
+    root: string,
+    clock: OutboxClock,
+    options: StopOptions,
+    on_failure: (error: Error) => void,
+  ): Promise<OutboxStore> {
     const path = join(root, DATABASE_NAME);
     const existed = assertDatabaseVersion(path, SPOOL_FORMAT_VERSION, FORMAT_REFUSAL);
     if (!existed && (await exists(root)) && (await readdir(root)).some((name) => name !== 'lock'))
@@ -125,7 +134,7 @@ export class OutboxStore {
       if (!existed) await files.fsync_directory(root);
       const blobs = await files.open_directory(join(root, 'blobs'), { create: true });
       await files.fsync_directory(root);
-      const store = new OutboxStore(root, database, files, blobs, clock, resources);
+      const store = new OutboxStore(root, database, files, blobs, clock, resources, on_failure);
       files.assert_healthy();
       database.write((tx) => {
         tx.run('DELETE FROM items WHERE receipt_json IS NOT NULL');
@@ -162,9 +171,17 @@ export class OutboxStore {
       throw new ServerLifecycleError('outbox is closed');
     this.assert_healthy();
   }
-  private failed(): void {
+  private failed(error: Error): void {
     this.closed = true;
     Atomics.store(new Int32Array(this.health_fence), 0, 1);
+    if (!this.faulted) {
+      this.faulted = true;
+      try {
+        this.on_failure(error);
+      } catch (error) {
+        console.warn('Mac spool failure callback failed:', failure_name(error));
+      }
+    }
   }
   assert_admission(): void {
     this.admit();
@@ -176,7 +193,7 @@ export class OutboxStore {
       this.files.assert_healthy();
       this.resources.assert_healthy();
     } catch (error) {
-      if (!this.closed) this.failed();
+      if (!this.faulted) this.failed(error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
@@ -200,7 +217,7 @@ export class OutboxStore {
       register: (service) => {
         require_scope();
         this.resources.register(service);
-        service.on_failure(() => this.failed());
+        service.on_failure((error) => this.failed(error));
       },
       flush_spool: () => {
         require_scope();

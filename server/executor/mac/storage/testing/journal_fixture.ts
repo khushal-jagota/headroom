@@ -1,5 +1,5 @@
 /** Finite Python oracle table. Unknown inputs fail; this is not a wire decoder. */
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { isMainThread } from 'node:worker_threads';
 import { register_test_root } from '../../../../core/test_paths.ts';
 import {
@@ -59,5 +59,14 @@ export const command_owes_outputs: JournalOutputPolicy['command_owes_outputs'] =
     owed = records().owed;
   if (!owed.has(key))
     throw new Error('Output policy pair is absent from the finite Python oracle table');
+  const parameters = new URL(import.meta.url).searchParams;
+  if (!isMainThread && command.command_id === parameters.get('gate_command_id')) {
+    const gate = parameters.get('gate');
+    if (!gate) throw new Error('The finite transaction gate requires its owned marker path');
+    // The comparison parent owns this child and kills it after this transaction callback.
+    writeFileSync(gate, command.command_id, { flag: 'wx' });
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20_000);
+    throw new Error('The owned comparison child did not receive SIGKILL at its transaction gate');
+  }
   return owed.get(key)!;
 };

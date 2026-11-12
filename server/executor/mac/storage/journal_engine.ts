@@ -120,7 +120,6 @@ export class JournalEngine {
           child = command.child_command;
         const result: NumericJSON<CommandResult> = {
           command_id: command.command_id,
-          model_list: null,
           child_outcome:
             child == null
               ? null
@@ -130,6 +129,7 @@ export class JournalEngine {
                   disposition: 'uncertain',
                   result: { reason: 'executor_process_restarted' },
                 },
+          model_list: null,
         };
         const own = row.executor_incarnation === this.incarnation;
         tx.run(
@@ -165,9 +165,9 @@ export class JournalEngine {
     incarnation: string,
     after: bigint,
     recorded_at: bigint,
-  ): EncodedJournalRow[] {
+  ): { rows: EncodedJournalRow[]; command_count: number } {
     const reply = this.protocol.decode_json(raw, 'MailboxPollReply');
-    return this.write((tx) => {
+    const rows = this.write((tx) => {
       const cursor = tx.get<{ value: bigint }>(
         'SELECT COALESCE(MAX(command_sequence),0) AS value FROM commands',
       )!.value;
@@ -212,6 +212,7 @@ export class JournalEngine {
       }
       return fresh;
     });
+    return { rows, command_count: reply.commands.length };
   }
   result_of(id: string): Buffer | null {
     const row = this.db().read((sql) =>

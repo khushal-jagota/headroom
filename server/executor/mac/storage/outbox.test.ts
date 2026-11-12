@@ -70,9 +70,10 @@ async function fixture() {
     spool = join(root, 'spool'),
     artifacts = join(root, 'artifacts', 'tickets', 'ticket');
   mkdirSync(artifacts, { recursive: true });
-  const store = await OutboxStore.open(spool, clock, deadline());
+  const on_failure = vi.fn();
+  const store = await OutboxStore.open(spool, clock, deadline(), on_failure);
   stores.push(store);
-  return { root, spool, artifacts, store };
+  return { root, spool, artifacts, store, on_failure };
 }
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -89,7 +90,7 @@ test('an incompatible version-zero store refuses before a lock, WAL, or byte mut
   const path = join(spool, DATABASE_NAME);
   writeFileSync(path, '');
   const before = readFileSync(path);
-  await expect(OutboxStore.open(spool, clock, deadline())).rejects.toThrow(
+  await expect(OutboxStore.open(spool, clock, deadline(), () => {})).rejects.toThrow(
     'unsupported outbox format',
   );
   expect(readFileSync(path)).toEqual(before);
@@ -119,7 +120,7 @@ test('failed reader initialization retains both unreturned connections and their
     }
     return close.call(this);
   });
-  const failure = await OutboxStore.open(spool, clock, deadline()).then(
+  const failure = await OutboxStore.open(spool, clock, deadline(), () => {}).then(
     (store) => {
       stores.push(store);
       throw new Error('startup unexpectedly succeeded');
@@ -249,7 +250,7 @@ test('capture yields the writer and shutdown drains its reservation despite a fa
     expect(stop_attempts).toBe(2);
     stop.mockRestore();
     capture.mockRestore();
-    const reopened = await OutboxStore.open(spool, clock, deadline());
+    const reopened = await OutboxStore.open(spool, clock, deadline(), () => {});
     stores.push(reopened);
     expect(reopened.pending().map((row) => row.submission_id)).toEqual(['other', 'captured']);
   } finally {
@@ -290,7 +291,7 @@ test('real file-worker loss seals writes and a failed database close retains the
     worker ??= this;
     return post.call(this, ...args);
   });
-  const { spool, store } = await fixture();
+  const { spool, store, on_failure } = await fixture();
   observe.mockRestore();
   store.append(columns('before_loss'), payload, [], [], () => {});
   expect(worker).toBeDefined();
@@ -298,11 +299,12 @@ test('real file-worker loss seals writes and a failed database close retains the
   worker!.postMessage({ operation: 'stop' }); // Unexpected real exit, with the worker's own descriptor cleanup.
   await exited;
   expect(() => store.append(columns('after_loss'), payload, [], [], () => {})).toThrow();
+  expect(on_failure).toHaveBeenCalledTimes(1);
   expect(() =>
     store.acknowledge('before_loss', store.sender_id, Buffer.from('{}'), true, [], () => {}),
   ).toThrow();
   expect(() => store.with_capture('ticket', () => null)).toThrow();
-  await expect(OutboxStore.open(spool, clock, deadline())).rejects.toThrow(
+  await expect(OutboxStore.open(spool, clock, deadline(), () => {})).rejects.toThrow(
     'outbox is already owned',
   );
   const close = BetterSqlite3.prototype.close;
@@ -317,13 +319,13 @@ test('real file-worker loss seals writes and a failed database close retains the
     return close.call(this);
   });
   await expect(store.stop(deadline())).rejects.toThrow('database close failed');
-  await expect(OutboxStore.open(spool, clock, deadline())).rejects.toThrow(
+  await expect(OutboxStore.open(spool, clock, deadline(), () => {})).rejects.toThrow(
     'outbox is already owned',
   );
   closing.mockRestore();
   await store.stop(deadline());
   await store.settled();
-  const reopened = await OutboxStore.open(spool, clock, deadline());
+  const reopened = await OutboxStore.open(spool, clock, deadline(), () => {});
   stores.push(reopened);
   expect(reopened.pending().map((row) => row.submission_id)).toEqual(['before_loss']);
 });
