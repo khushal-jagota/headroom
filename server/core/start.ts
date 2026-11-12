@@ -19,6 +19,7 @@ import type { ConversationViewRuntime } from '../conversation/views/routes.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import { createConversationRoutes } from '../conversation/routes.ts';
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
+import type { EnvironmentRuntime } from '../environments/contracts.ts';
 
 import {
   compose_background_services,
@@ -56,6 +57,10 @@ export interface ServerOptions {
   enableWorkerReadiness?: boolean;
   /** Unit 21 supplies UpdateService.poll. True suppresses this poll. */
   beforeWorkerReadinessPoll?: () => boolean;
+  /** Construction is side-effect free or cleans up before throwing. */
+  createEnvironments?: (
+    context: TestCompositionContext,
+  ) => EnvironmentRuntime | Promise<EnvironmentRuntime>;
   testAreas?: readonly Area[] | ((context: TestCompositionContext) => readonly Area[]);
   /** Lifecycle composition opts in explicitly. Ordinary startup never polls wakes. */
   areaLoops?: AreaLoopOptions;
@@ -77,7 +82,9 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   const config = loadConfig();
   config.db_path = assert_test_database_path(config.db_path);
   const ownership = acquireRuntimeOwnership(config.db_path);
-  const areas = createAreasRuntime();
+  let environments: EnvironmentRuntime | undefined;
+  let environmentsStarting: Promise<void> | undefined;
+  const areas = createAreasRuntime(() => environments?.resourceProviders ?? []);
   let dispatcher: ReturnType<typeof acquireLock> = null;
   let database: ReturnType<typeof createDatabase> | undefined;
   let background: ComposedBackgroundService | undefined;
@@ -115,7 +122,13 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       }
     };
     closing = (async () => {
-      await attempt(() => background?.close({ deadline }));
+      // Fence every producer before awaiting either drain. Ownership also covers
+      // environment setup that was already pending when shutdown began.
+      await Promise.all([
+        attempt(() => background?.close({ deadline })),
+        attempt(() => environments?.close({ deadline })),
+        attempt(() => environmentsStarting?.catch(() => {})),
+      ]);
       // Loop cancellation shares one deadline. Core and record settlement have
       // no deadline contract, so retain ownership through their final writes.
       await attempt(() => core?.shutdown());
@@ -179,6 +192,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     publication.initialize();
     areas.attachNavigation();
     const testContext: TestCompositionContext = { ...context, core, conversationSystem };
+    environments = await options.createEnvironments?.(testContext);
     const testAreas =
       typeof options.testAreas === 'function'
         ? options.testAreas(testContext)
@@ -195,7 +209,13 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     background = compose_background_services(ownedContext, {
       dispatcher_owned: dispatcher !== null,
       enable_worker_readiness: options.enableWorkerReadiness,
-      before_poll: options.beforeWorkerReadinessPoll,
+      before_poll: environments
+        ? () => {
+            const environmentHold = environments!.before_worker_readiness_poll();
+            const explicitHold = options.beforeWorkerReadinessPoll?.() ?? false;
+            return environmentHold || explicitHold;
+          }
+        : options.beforeWorkerReadinessPoll,
       areaLoops: options.areaLoops,
       notificationDelivery: options.notificationDelivery,
       stallChecker: options.stallChecker,
@@ -205,6 +225,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       changes,
       areas: [
         ...areas.areas,
+        ...(environments?.areas ?? []),
         ...(core
           ? [
               {
@@ -222,6 +243,15 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     });
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       process.once(signal, onSignal);
+    }
+    // Publish the owned flight before setup can synchronously request shutdown.
+    environmentsStarting = Promise.resolve().then(() => {
+      if (!closing) return environments?.start();
+    });
+    await environmentsStarting;
+    if (closing) {
+      await closing;
+      throw new Error('Server closed during startup');
     }
     await background.start();
     if (closing) {

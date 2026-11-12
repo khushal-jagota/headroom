@@ -11,6 +11,7 @@ import { scriptedConversationControls } from './conversation/testing/scripted_co
 import { InMemoryConversationSystem } from './conversation/in_memory_conversation_system.ts';
 import { inMemoryConversationRoutes } from './conversation/testing/routes.ts';
 import { rebuild_conversation_view } from './conversation/views/data/writer.ts';
+import { create_test_environment_runtime } from './environments/testing/composition.ts';
 
 if (process.env.PLAN_TEST_MODE !== '1') throw new Error('The comparison host requires test mode');
 
@@ -21,6 +22,7 @@ const conversationSystem =
 const registry = new ScriptedBackendRegistry();
 
 await startServer({
+  createEnvironments: create_test_environment_runtime,
   conversationSystem,
   createConversationCore: conversationSystem
     ? undefined

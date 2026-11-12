@@ -1,5 +1,7 @@
 import { assert_test_database_path } from '../test_paths.ts';
 import BetterSqlite3 from 'better-sqlite3';
+import { existsSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type {
   CommitStep,
   Database,
@@ -9,6 +11,11 @@ import type {
   SqlValue,
   WriteOptions,
   TransactionSql,
+  AuxiliaryDatabase,
+  AuxiliaryDatabaseOptions,
+  AuxiliaryTransactionSql,
+  StorageStats,
+  CheckpointResult,
 } from './contracts.ts';
 export type * from './contracts.ts';
 const functionScopes = new WeakMap<
@@ -27,6 +34,21 @@ export function registerReadFunction(
 }
 
 const BUSY_TIMEOUT_MS = 5000;
+const AUXILIARY_BUSY_TIMEOUT_MS = 500;
+function integer(
+  value: number,
+  name: string,
+  minimum: number,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new TypeError(`${name} must be an integer between ${minimum} and ${maximum}`);
+  }
+  return value;
+}
+function busyTimeout(value: number): number {
+  return integer(value, 'busyTimeoutMs', 0, 2147483647);
+}
 
 function assertSynchronous<T>(result: T): T {
   if (
@@ -81,10 +103,11 @@ function invoke<Row>(
   return (Array.isArray(values) ? statement[method](...values) : statement[method](values)) as Row;
 }
 
-function scope<T>(
+function scope<T, Sql extends ReadSql = TransactionSql>(
   connection: BetterSqlite3.Database,
   writable: boolean,
-  work: (sql: TransactionSql) => T,
+  work: (sql: Sql) => T,
+  auxiliary = false,
 ): T {
   let active = true;
   const clearFunctions: (() => void)[] = [];
@@ -104,6 +127,19 @@ function scope<T>(
         ...reader,
         run: (sql: string, parameters?: SqlParameters) =>
           invoke<BetterSqlite3.RunResult>(prepare(sql), 'run', parameters),
+        ...(auxiliary
+          ? {
+              incrementalVacuum(pages: number): void {
+                if (!active) throw new TypeError('database SQL scope is no longer active');
+                if (!connection.inTransaction)
+                  throw new TypeError('incremental vacuum requires a write transaction');
+                integer(pages, 'pages', 1);
+                // Python execute() discards the cursor after its first SQLite step.
+                // run() steps once and resets; pragma() would consume every page.
+                connection.prepare(`PRAGMA incremental_vacuum(${pages})`).run();
+              },
+            }
+          : {}),
       })
     : reader;
   functionScopes.set(capability, (name, callback) => {
@@ -119,7 +155,7 @@ function scope<T>(
     });
   });
   try {
-    return assertSynchronous(work(capability as TransactionSql));
+    return assertSynchronous(work(capability as unknown as Sql));
   } finally {
     functionScopes.delete(capability);
     active = false;
@@ -128,12 +164,15 @@ function scope<T>(
 }
 
 /** A worker thread can open this capability without a writable connection. */
-export function createReadAccess(path: string): ReadAccess {
+export function createReadAccess(
+  path: string,
+  options: { busyTimeoutMs?: number } = {},
+): ReadAccess {
   path = assert_test_database_path(path);
   const connection = new BetterSqlite3(path, {
     readonly: true,
     fileMustExist: true,
-    timeout: BUSY_TIMEOUT_MS,
+    timeout: busyTimeout(options.busyTimeoutMs ?? BUSY_TIMEOUT_MS),
   });
   try {
     connection.pragma('query_only = ON');
@@ -193,17 +232,35 @@ export function createDatabase(
     writer.close();
     throw error;
   }
+  return createOwnedDatabase<TransactionSql>(writer, reader, {
+    ...options,
+    busyTimeoutMs: BUSY_TIMEOUT_MS,
+  }).database;
+}
+
+/** Both application and auxiliary stores enter the same transaction engine. */
+function createOwnedDatabase<Tx extends TransactionSql>(
+  writer: BetterSqlite3.Database,
+  reader: ReadAccess,
+  options: {
+    busyTimeoutMs: number;
+    commitSteps?: readonly CommitStep[];
+    onChange?: () => void;
+    auxiliary?: boolean;
+  },
+) {
   const commitSteps = [...(options.commitSteps ?? [])];
   let writing = false;
   let closed = false;
   const checkOpen = () => {
     if (closed) throw new Error('database is closed');
   };
-  return Object.freeze({
-    write<T>(work: (tx: TransactionSql) => T, writeOptions?: WriteOptions): T {
+  const database = Object.freeze({
+    write<T>(work: (tx: Tx) => T, writeOptions?: WriteOptions): T {
       checkOpen();
       if (writing)
         throw new TypeError('nested write door calls are not allowed; use the current transaction');
+      if (writeOptions?.busyTimeoutMs !== undefined) busyTimeout(writeOptions.busyTimeoutMs);
       writing = true;
       let result: T;
       let changed = false;
@@ -212,7 +269,7 @@ export function createDatabase(
           writer.pragma(`busy_timeout = ${writeOptions.busyTimeoutMs}`);
         writer.exec('BEGIN IMMEDIATE');
         const before = writer.prepare('SELECT total_changes() AS count').get() as { count: number };
-        result = scope(writer, true, work);
+        result = scope(writer, true, work, options.auxiliary);
         for (const step of commitSteps) scope(writer, true, step);
         const after = writer.prepare('SELECT total_changes() AS count').get() as { count: number };
         changed = after.count !== before.count;
@@ -221,9 +278,12 @@ export function createDatabase(
         if (writer.inTransaction) writer.exec('ROLLBACK');
         throw error;
       } finally {
-        if (writeOptions?.busyTimeoutMs !== undefined)
-          writer.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
-        writing = false;
+        try {
+          if (writeOptions?.busyTimeoutMs !== undefined)
+            writer.pragma(`busy_timeout = ${options.busyTimeoutMs}`);
+        } finally {
+          writing = false;
+        }
       }
       if (changed && writeOptions?.changeSignal !== 'silent') {
         try {
@@ -246,4 +306,100 @@ export function createDatabase(
       closed = true;
     },
   });
+  return {
+    database,
+    outsideTransaction(): void {
+      checkOpen();
+      if (writing || writer.inTransaction) {
+        throw new TypeError('database maintenance requires no active write transaction');
+      }
+    },
+  };
+}
+
+/** Domain-owned sidecar schema; application schema creation remains Python-owned. */
+export function createAuxiliaryDatabase(
+  path: string,
+  options: AuxiliaryDatabaseOptions,
+): AuxiliaryDatabase {
+  path = assert_test_database_path(path);
+  const expectedVersion = integer(options.schemaVersion, 'schemaVersion', 1, 2147483647);
+  const maxBytes = integer(options.maxBytes, 'maxBytes', 1);
+  const timeout = busyTimeout(options.busyTimeoutMs ?? AUXILIARY_BUSY_TIMEOUT_MS);
+  const admit = (connection: BetterSqlite3.Database) => {
+    const version = Number(connection.pragma('user_version', { simple: true }));
+    if (version !== 0 && version !== expectedVersion) {
+      throw new Error(`unsupported auxiliary database schema: ${version}`);
+    }
+  };
+  if (existsSync(path)) {
+    const preflight = new BetterSqlite3(path, { readonly: true, fileMustExist: true, timeout });
+    try {
+      admit(preflight);
+    } finally {
+      preflight.close();
+    }
+  }
+  mkdirSync(dirname(path), { recursive: true });
+  const writer = new BetterSqlite3(path, { timeout });
+  let reader: ReadAccess | undefined;
+  try {
+    // Recheck before persistent settings in case the version changed after preflight.
+    admit(writer);
+    writer.pragma('auto_vacuum = INCREMENTAL');
+    const journalMode = writer.pragma('journal_mode = WAL', { simple: true });
+    if (journalMode !== 'wal') throw new Error('auxiliary database requires WAL mode');
+    const pageSize = Number(writer.pragma('page_size', { simple: true }));
+    writer.pragma(`max_page_count = ${Math.max(1, Math.floor(maxBytes / pageSize))}`);
+    writer.pragma('synchronous = FULL');
+    writer.pragma('foreign_keys = ON');
+    writer.pragma('recursive_triggers = ON');
+    reader = createReadAccess(path, { busyTimeoutMs: timeout });
+    const owned = createOwnedDatabase<AuxiliaryTransactionSql>(writer, reader, {
+      busyTimeoutMs: timeout,
+      auxiliary: true,
+    });
+    owned.database.write((tx) => {
+      assertSynchronous(options.initialize(tx));
+      // user_version participates in this same transaction as the domain DDL.
+      writer.pragma(`user_version = ${expectedVersion}`);
+    });
+    return Object.freeze({
+      ...owned.database,
+      storageStats(): StorageStats {
+        owned.outsideTransaction();
+        return {
+          pageSize: Number(writer.pragma('page_size', { simple: true })),
+          pageCount: Number(writer.pragma('page_count', { simple: true })),
+          freelistCount: Number(writer.pragma('freelist_count', { simple: true })),
+          maxPageCount: Number(writer.pragma('max_page_count', { simple: true })),
+          userVersion: Number(writer.pragma('user_version', { simple: true })),
+          autoVacuum: (['none', 'full', 'incremental'] as const)[
+            Number(writer.pragma('auto_vacuum', { simple: true }))
+          ],
+          journalMode: String(writer.pragma('journal_mode', { simple: true })),
+        };
+      },
+      checkpoint(
+        mode: 'PASSIVE' | 'TRUNCATE',
+        override: { busyTimeoutMs?: number } = {},
+      ): CheckpointResult {
+        owned.outsideTransaction();
+        if (mode !== 'PASSIVE' && mode !== 'TRUNCATE')
+          throw new TypeError('unsupported checkpoint mode');
+        if (override.busyTimeoutMs !== undefined) busyTimeout(override.busyTimeoutMs);
+        try {
+          if (override.busyTimeoutMs !== undefined)
+            writer.pragma(`busy_timeout = ${override.busyTimeoutMs}`);
+          return (writer.pragma(`wal_checkpoint(${mode})`) as CheckpointResult[])[0];
+        } finally {
+          if (override.busyTimeoutMs !== undefined) writer.pragma(`busy_timeout = ${timeout}`);
+        }
+      },
+    });
+  } catch (error) {
+    reader?.close();
+    writer.close();
+    throw error;
+  }
 }
