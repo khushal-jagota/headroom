@@ -189,6 +189,12 @@ reader.on('line', (line) => {
         cwd: '/synthetic',
       },
     });
+  } else if (message.method === 'wire/slow-handler') {
+    send({
+      method: 'item/agentMessage/delta',
+      params: { ...identity, itemId: 'slow', delta: 'slow' },
+    });
+    send({ id: message.id, result: { after_handler: true } });
   } else if (message.method === 'account/rateLimits/read') {
     process.stdout.write(
       `{"id":${JSON.stringify(message.id)},"result":{"rateLimits":{"primary":{"usedPercent":25.0,"windowDurationMins":300,"resetsAt":2000000000}},"note":${JSON.stringify('literal result } and "quoted"')}}}\n`,

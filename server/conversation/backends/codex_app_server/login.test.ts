@@ -1,5 +1,5 @@
 /** Risks: false saved-login certainty and duplicate rotating credentials. No provider starts. */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -94,5 +94,9 @@ test('API-key overlap and unreadable credentials preserve duplicate-check certai
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   expect(child_environment({ overrides: [['CODEX_HOME', alternate]] }).CODEX_HOME).toBe(alternate);
   expect(warn).toHaveBeenCalledOnce();
+  const loop = join(directory, 'loop');
+  symlinkSync(loop, loop);
+  expect(child_environment({ overrides: [['CODEX_HOME', loop]] }).CODEX_HOME).toBe(loop);
+  expect(warn).toHaveBeenCalledTimes(2);
   expect(codex_home({ HOME: '/not-the-process-home' })).toBe(join(directory, '.codex'));
 });
