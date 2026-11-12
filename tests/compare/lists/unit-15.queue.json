@@ -343,7 +343,8 @@
             "text": "before command"
           }
         ],
-        "sender_label": "loop"
+        "sender_label": "loop",
+        "sender_message_id": "u15-held-sender-31"
       }
     },
     {
@@ -367,7 +368,8 @@
             "text": "/review focus"
           }
         ],
-        "sender_label": "captain"
+        "sender_label": "captain",
+        "sender_message_id": "u15-held-sender-33"
       }
     },
     {
@@ -391,7 +393,8 @@
             "text": "after command"
           }
         ],
-        "sender_label": "owner"
+        "sender_label": "owner",
+        "sender_message_id": "u15-held-sender-35"
       }
     },
     {
@@ -1034,5 +1037,12 @@
     "queue_41",
     "queue_42"
   ],
-  "candidate": "typescript"
+  "candidate": "typescript",
+  "external_proofs": [
+    {
+      "source_test": "test_everything_waiting_goes_in_as_one_turn_with_a_row_for_each_sender",
+      "request_area": "test_command_shaped_prose_later_in_the_line_stays_in_the_held_batch",
+      "coverage": "sender IDs on all three held messages, one backend batch and one ordered row per sender"
+    }
+  ]
 }

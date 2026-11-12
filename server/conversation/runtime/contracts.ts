@@ -90,6 +90,8 @@ export interface ConversationCoreOptions {
   readonly emit_change?: () => void;
   readonly save_attempt?: SaveAttempt;
   readonly require_runtime_ownership?: () => void;
+  readonly require_signal_current?: () => void;
+  readonly on_shutdown?: () => void;
   readonly unix_time_now?: () => number;
   readonly monotonic_now?: () => number;
   readonly idle_child_stop_after_seconds?: number;

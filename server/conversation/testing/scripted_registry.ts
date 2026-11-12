@@ -50,8 +50,13 @@ export class ScriptedBackendRegistry {
     return child;
   }
 
-  async configure(id: string, command: string, behavior: ScriptedBehavior): Promise<void> {
-    const child = this.current.get(id);
+  async configure(
+    id: string,
+    command: string,
+    behavior: ScriptedBehavior,
+    target: 'current' | 'next' = 'current',
+  ): Promise<void> {
+    const child = target === 'next' ? undefined : this.current.get(id);
     if (child) {
       await this.ready.get(child);
       await child.configure(command, behavior);

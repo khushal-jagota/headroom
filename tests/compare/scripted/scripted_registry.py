@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 from planner.conversation.backends.contracts import BackendEventSink
 from planner.conversation.contracts import ResolvedConversationStart
@@ -74,8 +74,15 @@ class ScriptedBackendRegistry:
         self._children[child] = identity
         return child
 
-    async def configure(self, identity: str, command: str, behavior: dict[str, Any]) -> None:
-        child = self.current.get(identity)
+    async def configure(
+        self,
+        identity: str,
+        command: str,
+        behavior: dict[str, Any],
+        *,
+        target: Literal["current", "next"] = "current",
+    ) -> None:
+        child = None if target == "next" else self.current.get(identity)
         if child is None:
             self._pending.setdefault(identity, []).append((command, behavior))
         else:

@@ -1,0 +1,15 @@
+{
+  "ignore": {
+    "attention_history_metadata.started_at": "Schema initialization reads real wall time before the synthetic host clock is installed."
+  },
+  "response_ignore": {},
+  "tokens": {
+    "resource_source_versions.revision": "Trigger counters count SQL updates, so compare change rather than magnitude.",
+    "navigation_view_meta.ordering_generation": "Approved comparator-generation metadata: Python uses ICU and TypeScript uses Intl. Compare generation changes, while every semantic navigation field and raw content hash remains exact."
+  },
+  "response_tokens": {
+    "body.ordering_generation": "Approved comparator-generation label differs between Python ICU and TypeScript Intl. Snapshot content and content_version remain exact.",
+    "after_open.*.probes.*.body.ordering_generation": "Approved comparator-generation label on navigation probes after an open-stream write. Probe content and content_version remain exact."
+  },
+  "derived_tables": {}
+}
