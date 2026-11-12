@@ -124,6 +124,7 @@ export class PendingSteerProbe {
 export async function live_status_before_adoption(
   context: TestCompositionContext,
   conversation_id: string,
+  include_runtime_epoch = false,
 ): Promise<Record<string, unknown>> {
   const core = context.core;
   if (!core) throw new Error('Scripted probes require the real conversation core');
@@ -152,6 +153,15 @@ export async function live_status_before_adoption(
       read_count: reads,
       before_keys,
       after_keys: [...core.conversations.keys()].sort(),
+      ...(include_runtime_epoch
+        ? {
+            runtime_epoch_rows: context.database.read((sql) =>
+              sql.all<{ singleton: number; epoch: string }>(
+                'SELECT singleton,epoch FROM conversation_runtime_epoch ORDER BY singleton',
+              ),
+            ),
+          }
+        : {}),
     };
   } finally {
     store.read_conversation = original;

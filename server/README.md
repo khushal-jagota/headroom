@@ -86,7 +86,7 @@ Without this switch, the host composes `SqliteProcessConversationSystem` with th
 
 The comparison host uses `conversation/testing/scripted_process.ts` behind both Python and TypeScript backend adapters. Existing signal controls retain their meanings. Configuration and inspection controls expose process behavior and actual backend observations; backend news enters through the real core rather than direct event-row inserts.
 
-The TS host also supplies ten existing browser controls: signal `start`, `finish`, `message`, `queue`, `questions`, `answers`, `reject-next-prompt`, and `delivered`, plus connected `bind` and `message`. Optional Ticket starts preserve the synthetic Worker role and canonical association. Answers come from the latest child; delivered content retains the history across child replacement. The eleventh `ticket-model-catalog` control depends on the backend snapshot-service injection seam and is not implemented as a successful placeholder.
+The TS host also supplies ten existing browser controls: signal `start`, `finish`, `message`, `queue`, `questions`, `answers`, `reject-next-prompt`, and `delivered`, plus connected `bind` and `message`. Optional Ticket starts preserve the synthetic Worker role and canonical association. Answers come from the latest child; delivered content retains the history across child replacement. The backend snapshot unit supplies the eleventh `ticket-model-catalog` control through its snapshot-service injection seam and owns the synthetic catalog and credential-state fixture.
 
 The four core `unit-15.*` lists compare all 21 conformance scenarios through start, state, send, interrupt, kill, and permission-answer routes. They compare the conversation row, ordered events, lifecycle facts, all five view tables, runtime state, and process observations. The complete product route surface and existing browser-fixture selection are present below. New paired route comparisons and earlier-unit rerun evidence remain separate gates; route presence does not claim those results.
 
@@ -150,6 +150,8 @@ The core reuses that store and tail. Publication binds its live-turn reader befo
 The source transaction runs publication, its navigation participant, artifact links, and navigation finalization before commit.
 The core's save-attempt scope rolls runtime field mutations and producer dirty marks back with the record.
 Only committed rows reach the tail. The five status readers also check the current Signal authority.
+
+The record participants also use the Manager wake area's canonical Ticket failure target and durable notice-batch membership readers. `create_ticket_failure_notice` and `all_sender_messages_are_manager_notices` live in `manager_wakes/data.ts`; the existing `create_turn_failure_wake` remains the only failure-wake writer. Admission uses that area's existing `admit_notice_batch` and preserves its notice flag and suppression reason. These bindings do not implement deployment receipt settlement or queued-notice marking.
 
 The `createConversationCore(context)` factory receives the shared publication coordinator.
 Core adapters pass `context.publication.save_attempt`, a `current_read` callback, and `context.revoke_signal` through the corresponding core options.
