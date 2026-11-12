@@ -4,6 +4,7 @@ import SwiftUI
 /// The card supplies the title, recap, Skip and the exit.
 struct ReviewMessageSection: View {
     let item: ReviewItem
+    let isActive: Bool
     /// Owned by ReviewView so the next message can be read ahead, like proposals.
     let decision: ReviewMessageDecision
     /// True while the card or this part is leaving.
@@ -66,17 +67,21 @@ struct ReviewMessageSection: View {
         }
         // Read again as the part is shown: a message arriving while it is on screen
         // stays outside the displayed run and returns to Review after a reply.
-        .task {
+        .task(id: isActive) {
+            guard isActive else { return }
+            if let state = decision.attempt?.state, [.failed, .changed, .uncertain].contains(state) { sendingPresentation = false }
             await decision.load(item: live, api: store.client, shownAt: .now)
+            guard !Task.isCancelled else { return }
             if decision.accepted { finishReply() }
             else if decision.loaded, decision.events.isEmpty, decision.composer.draft.isEmpty, decision.composer.attachments.isEmpty, decision.attempt == nil { finish() }
         }
         .onChange(of: activity, initial: true) { _, activity in onActivity(activity) }
         .onChange(of: decision.attempt?.state) { _, state in
+            guard isActive else { return }
             if state == .failed || state == .changed { ReviewStyle.error() }
             if state == .failed || state == .changed || state == .uncertain { sendingPresentation = false }
         }
-        .onChange(of: decision.accepted) { _, accepted in if accepted { finishReply() } }
+        .onChange(of: decision.accepted) { _, accepted in if isActive, accepted { finishReply() } }
     }
     private func send() async -> Bool {
         guard !sendingPresentation else { return false }

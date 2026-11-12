@@ -7,6 +7,7 @@ struct AppShell: View {
     @State private var updateRequired = false
     @State private var deploymentState: DeploymentStatusPresentation?
     @State private var selectedTab: AppTab = .workspace
+    @State private var savedReviewWork = ReviewSavedWork()
     @State private var reviewPath: [AppRoute] = []
     @State private var workspacePath: [AppRoute] = []
     @State private var morePath: [AppRoute] = []
@@ -46,6 +47,7 @@ struct AppShell: View {
                 .accessibilityIdentifier("ios-update-required")
             }
         }
+        .environment(savedReviewWork)
         .task(id: notifications.pendingOpen?.id) { openNotification() }
         .task(id: "push:\(store.baseURL):\(scenePhase == .active)") {
             if scenePhase == .active { await notifications.refresh(using: store.client) }
@@ -54,6 +56,9 @@ struct AppShell: View {
             Button("OK") { notifications.routingError = nil }
         } message: { Text(notifications.routingError ?? "") }
         // Owner override: tabs select; pushes and back navigation give a light impact.
+        .onChange(of: ReviewSavedWork.Key(server: LocalStore.server(store.baseURL), revision: LocalStore.shared.outgoingRevision(LocalStore.server(store.baseURL))), initial: true) { _, key in
+            savedReviewWork.refresh(key.server)
+        }
         .onChange(of: selectedTab) { _, _ in Haptics.selection() }
         .onChange(of: reviewPath) { old, new in if old != new { Haptics.light() } }
         .onChange(of: workspacePath) { old, new in if old != new { Haptics.light() } }
@@ -76,7 +81,7 @@ struct AppShell: View {
     private var tabs: some View {
         TabView(selection: $selectedTab) {
             NavigationStack(path: $reviewPath) {
-                ReviewView(openTicket: { id in
+                ReviewView(savedWork: savedReviewWork, isActive: selectedTab == .review && reviewPath.isEmpty && scenePhase == .active && !store.serverUnreachable, openTicket: { id in
                     var transaction = Transaction(animation: nil)
                     transaction.disablesAnimations = true
                     withTransaction(transaction) {
@@ -102,7 +107,7 @@ struct AppShell: View {
     }
 
     private var reviewBadge: Int {
-        let pending = Set(Outbox.shared.entries(LocalStore.server(store.baseURL)).filter {
+        let pending = Set(savedReviewWork.decisions(LocalStore.server(store.baseURL)).filter {
             ($0.kind == .approval || $0.kind == .sendBack) && [.waiting, .sending].contains($0.state)
         }.compactMap(\.ticketID))
         let count = store.counts?.review ?? 0

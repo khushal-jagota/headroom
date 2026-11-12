@@ -23,10 +23,14 @@ keep their separate main-thread writer. Outgoing work raises the saved-work sign
 A plain draft save does not, because each key press saves the draft. A draft saved
 together with outgoing work, such as a voice transcript, still raises it.
 
+Review and its badge share an in-memory snapshot. A separate server-specific revision
+refreshes it only after an outgoing payload changes or a record is removed. An
+unchanged outgoing save, draft edit, or cache write does not refresh this snapshot.
+
 Responses are bounded to 96 entries and 16 MiB across servers. A response larger
 than the budget is not cached. Drafts and outgoing work are separate records and
-are never removed by this eviction. Every screen that shows outgoing work reads the
-whole list, so each send pass first clears finished work, before it checks the
+are never removed by this eviction. Outgoing list reads still fetch the whole list,
+so each send pass first clears finished work, before it checks the
 network. The foreground loop runs a pass when it starts and every 3 seconds. Sent and changed work is removed
 24 hours after it finished, and uncertain work after 7 days. Failed work stays
 until the user retries it. Waiting, sending, recording and server-queued work stays.

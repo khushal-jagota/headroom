@@ -49,6 +49,13 @@ extension APIClient {
 
 @MainActor @Observable final class ReviewMessageDecision {
     let composer = ConversationModel()
+    @ObservationIgnored private let savedWork: (String) -> [PendingWork]
+    @ObservationIgnored private let refreshSavedWork: (String) -> Void
+    init(savedWork: @escaping (String) -> [PendingWork] = { Outbox.shared.entries($0) },
+         refreshSavedWork: @escaping (String) -> Void = { _ in }) {
+        self.savedWork = savedWork
+        self.refreshSavedWork = refreshSavedWork
+    }
     var events: [ReviewMessageEvent] = []
     var loaded = false
     var historical = false
@@ -69,7 +76,7 @@ extension APIClient {
     var through: Int { events.last?.sequence ?? 0 }
     var attempt: PendingWork? {
         guard let api, let attemptID else { return nil }
-        return Outbox.shared.entries(LocalStore.server(api.baseURL)).first { $0.id == attemptID }
+        return savedWork(LocalStore.server(api.baseURL)).first { $0.id == attemptID }
     }
     var accepted: Bool { attempt.map { [.sent, .serverQueued].contains($0.state) } ?? false }
     var pending: Bool { attempt.map { [.waiting, .sending, .uncertain].contains($0.state) } ?? false }
@@ -83,6 +90,7 @@ extension APIClient {
     /// meanwhile, and Mark read and a reply wait for the new read.
     func load(item: ReviewItem, api: APIClient, shownAt: ContinuousClock.Instant? = nil) async {
         await settled()
+        guard !Task.isCancelled else { return }
         if isCurrent(for: item), let readStarted, shownAt.map({ readStarted >= $0 }) ?? true { return }
         guard !busy, let id = item.conversationId, let owner = item.owner else { return }
         let first = !loaded
@@ -90,21 +98,23 @@ extension APIClient {
         defer { loading = false; if first { busy = false } }
         self.api = api; self.item = item
         let started = ContinuousClock.now
+        refreshSavedWork(LocalStore.server(api.baseURL))
         if !loaded {
             composer.conversationID = id
-            composer.restore(owner: owner, api: api, draftID: "review-message:\(id)")
+            composer.restore(owner: owner, api: api, draftID: "review-message:\(id)", savedWork: savedWork(LocalStore.server(api.baseURL)))
             composer.deliveryMode = "queue"
         }
         do {
             let messages = try await api.reviewMessages(id, after: item.ownerReadThroughSequence)
             try Task.checkCancellation()
             events = messages; historical = !item.addressCurrent
-            let saved = Outbox.shared.entries(LocalStore.server(api.baseURL)).last {
+            refreshSavedWork(LocalStore.server(api.baseURL))
+            let saved = savedWork(LocalStore.server(api.baseURL)).last {
                 $0.message?.conversationId == id && $0.message?.ownerReadThroughSequence != nil &&
                 (![.sent, .serverQueued, .changed].contains($0.state) || ($0.message?.ownerReadThroughSequence ?? 0) >= (messages.last?.sequence ?? Int.max))
             }
             attemptID = saved?.id
-            if saved == nil, let delivered = Outbox.shared.entries(LocalStore.server(api.baseURL)).last(where: {
+            if saved == nil, let delivered = savedWork(LocalStore.server(api.baseURL)).last(where: {
                 $0.message?.conversationId == id && $0.message?.ownerReadThroughSequence != nil && [.sent, .serverQueued].contains($0.state)
             }), let message = delivered.message,
                composer.draft == message.content.compactMap(\.text).joined(separator: "\n"),
@@ -140,6 +150,7 @@ extension APIClient {
             }
             attemptID = replacement
             await Outbox.shared.drain(api: api)
+            refreshSavedWork(LocalStore.server(api.baseURL))
             return accepted
         }
         let messageID = UUID().uuidString
@@ -151,6 +162,7 @@ extension APIClient {
             try Outbox.shared.enqueue(work, api: api)
             attemptID = messageID
             await Outbox.shared.drain(api: api)
+            refreshSavedWork(LocalStore.server(api.baseURL))
             return accepted
         } catch { self.error = error.localizedDescription; return false }
     }

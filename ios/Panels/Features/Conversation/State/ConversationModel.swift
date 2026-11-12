@@ -15,8 +15,8 @@ import UniformTypeIdentifiers
         guard !restoring, let api = persistenceAPI else { return }
         LocalStore.shared.saveDraft(draft, server: LocalStore.server(api.baseURL), id: draftKey)
     }
-    func restore(owner: ConversationOwner, api: APIClient, draftID: String? = nil) {
-        guard persistenceAPI?.baseURL != api.baseURL || persistenceOwner != owner || customDraftID != draftID else { syncOutbox(); return }
+    func restore(owner: ConversationOwner, api: APIClient, draftID: String? = nil, savedWork: [PendingWork]? = nil) {
+        guard persistenceAPI?.baseURL != api.baseURL || persistenceOwner != owner || customDraftID != draftID else { syncOutbox(savedWork: savedWork); return }
         persistenceAPI = api; persistenceOwner = owner; customDraftID = draftID; restoring = true
         defer { restoring = false }
         items = []; expandedBodies = [:]; status = nil; older = nil
@@ -38,7 +38,7 @@ import UniformTypeIdentifiers
             retainDisplay()
             rememberRows(items.map(\.id))
         }
-        syncOutbox()
+        syncOutbox(savedWork: savedWork)
     }
     private var readerGeneration = 0
     private var pageProjectionVersion: Int?
@@ -97,9 +97,9 @@ import UniformTypeIdentifiers
         lastDisplaySave = .now
     }
 
-    func syncOutbox() {
+    func syncOutbox(savedWork: [PendingWork]? = nil) {
         guard let api = persistenceAPI, let owner = persistenceOwner else { return }
-        let saved = Outbox.shared.entries(LocalStore.server(api.baseURL)).filter { $0.kind == .message && $0.owner == owner && (conversationID == nil || $0.message?.conversationId == conversationID) }
+        let saved = (savedWork ?? Outbox.shared.entries(LocalStore.server(api.baseURL))).filter { $0.kind == .message && $0.owner == owner && (conversationID == nil || $0.message?.conversationId == conversationID) }
         for work in saved {
             if let previous = work.priorMessageIDs, let first = previous.first {
                 supersededIDs.formUnion(previous)
@@ -573,7 +573,7 @@ import UniformTypeIdentifiers
             let work = PendingWork(id: id, created: .now, kind: .message, owner: owner, message: message)
             do {
                 try LocalStore.shared.put(server: LocalStore.server(api.baseURL), kind: "outbox", id: id,
-                    data: JSONEncoder().encode(work), draft: (draftKey, ""))
+                    data: Outbox.encode(work), draft: (draftKey, ""))
                 draft = ""; attachments = []; syncOutbox()
                 Task { await Outbox.shared.drain(api: api); syncOutbox() }
                 return true
