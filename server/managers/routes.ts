@@ -224,7 +224,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     return {
       ...result,
       conversation_history,
-      artifacts: list_artifact_entries(services.config.db_path, id),
+      artifacts: await list_artifact_entries(services.config.db_path, id),
     };
   });
   app.get<{ Params: { item_id: string } }>(
