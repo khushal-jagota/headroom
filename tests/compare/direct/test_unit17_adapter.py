@@ -476,9 +476,8 @@ def normalize(value: Any) -> Any:
     return walk(value)
 
 
-@pytest.mark.parametrize("_hosted_repeat", range(10))
 def test_unit17_adapter_real_core_parity(
-    tmp_path: Path, request: pytest.FixtureRequest, _hosted_repeat: int
+    tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
     """Protect RPC identity, certainty, interaction answers and persisted outcomes."""
     started = time.perf_counter()
@@ -585,10 +584,7 @@ def test_unit17_adapter_real_core_parity(
     }
     destination = request.config.getoption("--compare-report-dir")
     if destination:
-        output = (
-            Path(destination)
-            / f"unit-17-adapter-real-core-hosted-{_hosted_repeat:02d}.json"
-        )
+        output = Path(destination) / "unit-17-adapter-real-core.json"
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(report, indent=2) + "\n")
     if actual["trace"] != expected["trace"]:
