@@ -62,6 +62,10 @@ new intake and waits for tracked transfers before record or database closure.
 The shared shutdown deadline bounds that wait. If it expires, teardown stops and
 retains the database and runtime ownership beneath the active transfer. It does
 not abort that transfer or invent a shutdown error in its row.
+`drain({ deadline })` returns `Promise<void>` and resolves only after every tracked
+transfer settles. An unfinished drain rejects with `ServerLifecycleError` and the
+message `Video transfers remain unfinished at the shutdown deadline.` The caller
+keeps runtime ownership when it receives that rejection.
 
 A client disconnect removes the temporary file and records `Upload interrupted.`,
 with the last committed progress checkpoint, as Python does. The focused app test

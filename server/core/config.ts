@@ -42,16 +42,16 @@ export function pythonRepr(value: unknown): string {
   if (typeof value === 'string') return python_string_repr(value);
   return String(value);
 }
-function parse_boolean(v: unknown, key: string): boolean {
-  if (typeof v === 'boolean') return v;
-  const s = String(v).trim().toLowerCase();
-  if (['1', 'true', 'yes', 'on'].includes(s)) return true;
-  if (['0', 'false', 'no', 'off'].includes(s)) return false;
-  throw new PlannerError('validation', `invalid boolean for ${key}: ${pythonRepr(v)}`);
+export function parseConfigBoolean(value: unknown, key: string): boolean {
+  if (typeof value === 'boolean') return value;
+  const text = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(text)) return true;
+  if (['0', 'false', 'no', 'off'].includes(text)) return false;
+  throw new PlannerError('validation', `invalid boolean for ${key}: ${pythonRepr(value)}`);
 }
-
-export function test_mode_enabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return parse_boolean(env.PLAN_TEST_MODE ?? '0', 'test_mode');
+/** The I/O guards use the same environment-only test setting as loadConfig. */
+export function testModeFromEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+  return parseConfigBoolean(env.PLAN_TEST_MODE ?? '0', 'test_mode');
 }
 export function loadConfig(
   path: string | undefined = undefined,
@@ -99,7 +99,7 @@ export function loadConfig(
       );
     }
   };
-  const test_mode = test_mode_enabled(env);
+  const test_mode = testModeFromEnvironment(env);
   let provider =
     optional('trusted_ingress_provider', 'PLAN_TRUSTED_INGRESS_PROVIDER')?.toLowerCase() ?? null;
   let login = optional('trusted_ingress_allowed_login', 'PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN');
@@ -170,7 +170,7 @@ export function loadConfig(
     db_path,
     port: integer('port', 'PLAN_PORT', 8767),
     tick_seconds: integer('tick_seconds', 'PLAN_TICK_SECONDS', 60),
-    dispatch_enabled: parse_boolean(
+    dispatch_enabled: parseConfigBoolean(
       raw('dispatch_enabled', 'PLAN_DISPATCH_ENABLED', true),
       'dispatch_enabled',
     ),

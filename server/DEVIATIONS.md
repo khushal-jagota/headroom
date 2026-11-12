@@ -241,6 +241,38 @@ on November 12, 2026. On Linux, Python sets `BASH_ENV` to
 The paired startup check asserts each exact path and identical script bytes. Every other
 child environment value and launch argument compares exactly.
 
+## Recorded usage test composition and shutdown
+
+The migration Manager accepted these usage differences in the Part 5 review on
+November 12, 2026:
+
+- Default TypeScript test composition selects synthetic provider homes beside the
+  test database and supplies a rates fetcher that returns no rates. Python's
+  default composition selects ambient provider homes and can fetch LiteLLM rates.
+  Explicit source directories and recording fetchers remain injectable. Tests do
+  not read owner transcripts or contact the public rates source.
+- TypeScript summary and rate-refresh requests receive HTTP 503 after the shared
+  conversation write admission seals during shutdown. This retains ownership of
+  previously admitted work through its drain. Python has no equivalent shared
+  write-admission gate on these routes.
+
+## Recorded usage timezone data and nonstandard JSON
+
+The migration Manager accepted these remaining Part 5 differences on November 12,
+2026:
+
+- Day buckets use Node's bundled ICU timezone rules. Python uses the installed
+  ZoneInfo data, with its package fallback. A temporary rule difference between
+  these data releases can place an instant in a different day bucket. Validation
+  still requires a Python-valid key. The Manager also accepted UTC fallback for
+  an installed custom or legacy key that ICU cannot name, which differs from
+  Python's installed TZif offset and can change its buckets. Invalid or
+  uninstalled HTTP keys still receive 422.
+- Transcript JSON in TypeScript rejects the nonstandard numeric tokens `NaN`,
+  `Infinity`, and `-Infinity`. Python's `json.loads` accepts these tokens. The
+  TypeScript parser rejects the whole line even when such a token occurs in an
+  otherwise unused property. This narrower intake does not change ordinary JSON
+  numeric signatures or finite token arithmetic.
 ## Codex ask withdrawal at shutdown
 
 The migration Manager accepted this difference in the Part 2 review on November 12, 2026.

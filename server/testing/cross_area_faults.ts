@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { registerHooks } from 'node:module';
 import { python_string_repr } from '../core/python_repr.ts';
 import { NODE_UNICODE_VERSION } from '../core/python_repr_unicode.ts';
-import { loadConfig, test_mode_enabled } from '../core/config.ts';
+import { loadConfig, testModeFromEnvironment } from '../core/config.ts';
 import { assert_test_database_path } from '../core/test_paths.ts';
 import {
   backend_io_is_test,
@@ -88,7 +88,7 @@ if (mode === 'repr') {
   globalThis.fetch = async () => {
     throw new Error('Unexpected external HTTP');
   };
-  assert.equal(test_mode_enabled(), true);
+  assert.equal(testModeFromEnvironment(), true);
   assert.equal(loadConfig('/nonexistent-cross-area-config.yaml').test_mode, true);
   assert.equal(backend_io_is_test(), true);
   const refusal = /Production backend I\/O is unavailable in tests/;

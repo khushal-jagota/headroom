@@ -1,4 +1,3 @@
-import { test_mode_enabled } from '../../core/config.ts';
 /** Production machine I/O stays outside card and route policy. */
 import { BackendCommands } from './commands.ts';
 import type { BackendCommandOptions } from './commands.ts';
@@ -6,9 +5,10 @@ import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, delimiter, normalize } from 'node:path';
 import type { BackendProbeEnvironment, CommandOutcome } from './contracts.ts';
+import { testModeFromEnvironment } from '../../core/config.ts';
 export function backend_io_is_test(): boolean {
   return (
-    test_mode_enabled() ||
+    testModeFromEnvironment() ||
     process.env.VITEST === 'true' ||
     process.env.PYTEST_CURRENT_TEST !== undefined
   );
