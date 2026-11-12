@@ -118,6 +118,7 @@ def test_unit20_parser_smoke_and_startup(
             (["project", "list", "--limit"], 2),
             (["project", "list", "--json=no"], 2),
             (["project", "create"], 2),
+            (["goal", "schema"], 2),
             (["project", "list", "--limit", "bad"], 2),
             (["project", "list", "--unknown-option"], 2),
         ):
@@ -357,6 +358,7 @@ def test_unit20_every_help_and_group_usage(
         )
     handle = _start_server(tmp_path / "host", server_module="tests.compare.host")
     evidence = []
+    differences = []
     try:
         for argv, code in cases:
             answers = [
@@ -370,9 +372,8 @@ def test_unit20_every_help_and_group_usage(
                 for side in (0, 1)
             ]
             evidence.append({"argv": argv, "answers": answers})
-            assert driver.comparable(answers[0]) == driver.comparable(
-                answers[1]
-            ), evidence[-1]
+            if driver.comparable(answers[0]) != driver.comparable(answers[1]):
+                differences.append(evidence[-1])
         _report(
             request,
             "unit20-help-and-usage",
@@ -380,7 +381,9 @@ def test_unit20_every_help_and_group_usage(
                 "seconds": time.perf_counter() - started,
                 "cases": len(cases),
                 "comparisons": evidence,
+                "differences": differences,
             },
         )
+        assert not differences, differences
     finally:
         _stop_server(handle)

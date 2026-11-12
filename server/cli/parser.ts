@@ -72,6 +72,12 @@ function converted(command: CommandDefinition, p: Parameter, text: string): unkn
   }
   return text;
 }
+/** Choice parameters append their available values to Click's missing-value error. */
+function missing_message(p: Parameter): string {
+  const label = p.argument ? p.metavar : p.opts?.[0];
+  const base = `Missing ${p.argument ? 'argument' : 'option'} '${label}'.`;
+  return p.type === 'choice' ? base + ' Choose from: ' + (p.choices ?? []).join(', ') : base;
+}
 export interface Parsed {
   command: CommandDefinition;
   values: Record<string, any>;
@@ -177,13 +183,12 @@ export function parse(argv: string[], commands: readonly CommandDefinition[]): P
     if (p.nargs === -1) {
       values[p.name] = positionals.slice(index).map((raw) => converted(command, p, raw));
       index = positionals.length;
-      if (p.required && !values[p.name].length)
-        usage_error(command, `Missing argument '${p.metavar}'.`);
+      if (p.required && !values[p.name].length) usage_error(command, missing_message(p));
       continue;
     }
     const raw = positionals[index++];
     if (raw !== undefined) values[p.name] = converted(command, p, raw);
-    else if (p.required) usage_error(command, `Missing argument '${p.metavar}'.`);
+    else if (p.required) usage_error(command, missing_message(p));
   }
   if (positionals.length > index)
     usage_error(
@@ -196,7 +201,7 @@ export function parse(argv: string[], commands: readonly CommandDefinition[]): P
       values[p.name] === undefined ||
       (p.flag && values[p.name] === false)
     )
-      usage_error(command, `Missing option '${p.opts?.[0]}'.`);
+      usage_error(command, missing_message(p));
   }
   return { command, values, help: false };
 }
