@@ -1,4 +1,4 @@
-/** The file service handed to a backend. Storage implementation belongs to the record unit. */
+/** The file service handed to a backend. Durable storage lives in record/message_files.ts. */
 export interface KeptMessageFile {
   readonly conversation_id: string;
   readonly stored_file_id: string;
