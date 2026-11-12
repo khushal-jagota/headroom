@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { conversationPreview } from "../lib/conversation/preview.svelte";
+  import { elapsedTurnTime } from "../lib/conversation/elapsedTime.svelte";
+  import { formatDuration } from "../lib/conversation/transcript";
   import ManagerGoalPreview from "./goals/ManagerGoalPreview.svelte";
   import type {GoalResponse} from "../lib/goals/contracts";
   import { skipPreviewTabStops } from "../lib/previewTabOrder";
@@ -28,6 +31,12 @@
     element?: HTMLDivElement | null;
   } = $props();
   let currentWorker = $derived(worker);
+  const preview = conversationPreview(() => ({ visible, target: recapTarget,
+    conversationId: currentWorker?.conversation_id ?? conversationId,
+    locale: currentWorker?.locale }));
+  const elapsed = elapsedTurnTime(() => preview.startedAtUnixMilliseconds);
+  let activity = $derived(preview.activity === "Working" && elapsed.seconds !== null
+    ? `Working · ${formatDuration(elapsed.seconds)}` : preview.activity);
   const health=createQuery(() => ({...queries.executorHealth(),enabled:worker?.locale === "macos"}));
   let unknownMac = $derived(worker?.locale === "macos" && (health.isError || !macActivityKnown(health.data)));
   let macHealth = $derived(health.isError ? undefined : health.data);
@@ -46,7 +55,7 @@
   // Measure the fixed content, never the clamped recap. This keeps the budget
   // independent of the height that the budget itself produces.
   $effect(() => {
-    recapText; stageSentence; title; kicker; goals; holdRecapHeight;
+    recapText; stageSentence; title; preview.modelLabel; activity; goals; holdRecapHeight;
     if (!visible || !element) return;
     const panel = element;
     const recapBox = recapElement;
@@ -115,11 +124,14 @@
         clearOfRail = left >= railRight;
         return;
       }
-      // A row in a page list, as on staging: the panel opens 14px past the row's own box (the
-      // list's full width), 8px above the row's top, kept inside the window.
-      left = Math.max(12, Math.min(rect.right + 14, window.innerWidth - width - 12));
-      top = Math.max(12, Math.min(rect.top - 8, window.innerHeight - height - 12));
-      clearOfRail = left >= rect.right;
+      // Page rows span the content column. If there is no room beside the row,
+      // open below it (or above near the floor). The panel must still take the
+      // pointer there, so its shared keepOpen handler can protect recap controls.
+      const beside = rect.right + 14 + width <= window.innerWidth - 12;
+      left = beside ? rect.right + 14 : Math.max(12, Math.min(rect.left, window.innerWidth - width - 12));
+      top = beside ? Math.max(12, Math.min(rect.top - 8, floor - height))
+        : rect.bottom + 8 + height <= floor ? rect.bottom + 8 : Math.max(12, rect.top - height - 8);
+      clearOfRail = true;
     };
     // Manifest arrival can change the height after the panel is already visible.
     const observer = new ResizeObserver(place);
@@ -149,7 +161,7 @@
     const moved = event.relatedTarget as Node | null;
     if (moved !== null && !element?.contains(moved)) onLeave?.();
   }}>
-  <div class="kicker">{#if currentWorker?.locale}<MachineIdentity locale={currentWorker.locale} />{/if}<span>{kicker}</span></div>
+  <div class="kicker">{#if currentWorker?.locale}<MachineIdentity locale={currentWorker.locale} />{/if}<span data-preview-model>{preview.modelLabel}</span><span class="activity" data-preview-activity>{activity ?? ""}</span></div>
   <div class="title"><span class="title-text">{currentWorker?.title ?? title}</span><MachineActivityMark agentHold={currentWorker ?? undefined} locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
   <!-- The box stays while there is an ask to hold, so pressing it leaves the recessed
        block where it is and the budget above keeps measuring. -->
@@ -176,6 +188,8 @@
   .interactive { pointer-events:auto; }
   .instant { transition:none; }
   .kicker { display:flex; align-items:center; gap:var(--space-2); font-size:var(--type-small); font-weight:var(--weight-small); color:var(--tone-tertiary); margin-bottom:5px; }
+  .activity { margin-left:auto; flex:none; font-variant-numeric:tabular-nums; }
+  [data-preview-model] { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); font-size:var(--type-body); font-weight:var(--weight-title); line-height:1.4; color:var(--tone-strong); overflow-wrap:anywhere; }
   .title-text { flex:1; min-width:0; }
   /* Staging's recessed field (owner), one softer step deep: #161616 under the #202020 preview, and

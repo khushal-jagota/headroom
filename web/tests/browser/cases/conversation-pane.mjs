@@ -826,7 +826,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
 {:else if managerLayoutOnly}
 <QueryClientProvider client={catalogClient}>
   <main class="manager-column" style="max-width:768px;margin:auto;padding:0 32px" data-layout-proof>
-    <ManagerHeader recap={layoutRecap} onSaveRecap={async(value)=>{layoutRecap=value;}}>
+    <ManagerHeader recap={layoutRecap}>
       {#snippet eyebrow()}<div class="page-eyebrow"><span>Panels</span><button class="page-settle" aria-label="Settle Workspace clarity">Settle</button></div>{/snippet}
       {#snippet title()}<InlineEdit value={headerFacts.title} ariaLabel="Manager title" onSave={async()=>{}} />{/snippet}
     </ManagerHeader>

@@ -102,6 +102,30 @@ def run(browser, urls):
     def respond(route):
         parts = urlsplit(route.request.url)
         path = parts.path
+        if card_fixture.get("preview_details"):
+            preview_launch = {"backend_key": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "medium"}
+            if path == "/api/artifact-catalog/manager/preview_manager":
+                route.fulfill(json={"revision": "fixture", "directory": "", "offset": 0, "total": 0, "entries": []})
+                return
+            if path == "/api/managers/preview_manager/page":
+                route.fulfill(json={"page": None, "page_revision": 0})
+                return
+            if path == "/api/managers/preview_manager/conversation/start-values":
+                route.fulfill(json=preview_launch)
+                return
+            if path == "/api/resource-body":
+                key = parse_qs(parts.query).get("key", [""])[0]
+                body = {"goal": "Make previews useful", "recap": "Preview work", "goals": []} if key == "/api/managers/preview_manager/workspace-content" else preview_launch if key == "/api/chief/conversation/start-values" else None
+                if body is not None:
+                    route.fulfill(json={"key": key, "epoch": "fixture", "revision": "1", "body": body})
+                    return
+        if card_fixture.get("enabled") and path.endswith("/conversation/start-values"):
+            preview_owners = [item for manager in card_fixture.get("board", {}).get("managers", []) for item in manager.get("tickets", [])]
+            preview_owners.extend(item for column in card_fixture.get("board", {}).get("columns", []) for item in column.get("cards", []))
+            if any(path == f"/api/tickets/{item['id']}/conversation/start-values" for item in preview_owners):
+                route.fulfill(json={"backend_key": "codex", "model": "gpt-6.1-sol" if card_fixture.get("preview_details") else None,
+                                    "reasoning_effort": "medium" if card_fixture.get("preview_details") else None})
+                return
         if backend_updates["enabled"] and path == "/api/conversation/backends":
             if backend_updates["fail_discovery"] and parse_qs(parts.query).get("refresh") == ["true"]:
                 route.fulfill(status=503, json={"detail": "Registry discovery failed"})
@@ -491,6 +515,7 @@ def run(browser, urls):
     verify_rail_pagination(page, url, card_fixture, evidence)
     fold["release_sha"] = "fixture-boot"
     verify_recap_pointer_floor(browser, page, url, card_fixture, respond, evidence)
+    verify_ticket_preview_details(page, url, card_fixture, evidence)
     verify_vps_route_leave(page, url, pane, rail, metrics_calls)
     verify_owner_updates(browser, url)
     verify_conversation_overlay(browser, url)
@@ -2818,3 +2843,107 @@ def verify_selection_washes(page, url, fixture, evidence):
         'boundary': 'Real App layout and WAAPI with existing mocked navigation source',
         'samples': samples,
     }, indent=2))
+
+
+def verify_ticket_preview_details(page, url, fixture, evidence):
+    """Real hit testing and shared live duration in the existing App host.
+
+    Existing hover-controller units cannot prove access to a panel beside a wide
+    Manager row, or that dock and preview share the conversation's live turn clock.
+    """
+    started = time.perf_counter()
+    worker = {"id": "preview_worker", "manager_id": "preview_manager", "title": "Fix Ticket previews", "worker_type": "coding",
+              "stage": "needs_implementation", "ticket_status": "agent", "recap": "The preview stays open for recap requests.",
+              "conversation_id": "preview-conversation", "conversation_signal": {"working": True, "message_for_owner": False}}
+    manager = {"id": "preview_manager", "title": "Preview work", "created_at": 1,
+               "conversation_id": "preview-manager", "tickets": [worker, {**worker, "id": "preview_new", "title": "New Ticket", "conversation_id": None}]}
+    fixture.update(enabled=True, preview_details=True, recap_worker=worker,
+                   board={"managers": [manager]}, chief={"label": "Chief", "conversation_id": "preview-chief"})
+    page.evaluate("localStorage.removeItem('panels.workspace.rail-width')")
+    page.goto(url + '?preview-clock&unread=0#/workspace/manager/preview_manager', wait_until='domcontentloaded')
+    page.wait_for_selector('[data-worker-ticket-id="preview_worker"]')
+    panels = page.locator('[data-rail-hover-panel][aria-hidden="false"]')
+    rail_row = page.locator('[data-ticket-id="preview_worker"]')
+    rail_row.hover()
+    expect(panels).to_have_count(1)
+    wait_settled(page, '[data-rail-hover-panel]')
+    page.screenshot(path=str(evidence / 'ticket-preview-sidebar.png'), animations='disabled')
+    expect(panels.locator('[data-preview-model]')).to_have_text('GPT 6.1 Sol medium')
+    expect(panels.locator('[data-preview-activity]')).to_contain_text('Working · 4m')
+    # The shared preview resolves both supervisor sources and a new Worker's launch values.
+    for selector, model in [('[data-chief-destination]', 'GPT 6.1 Terra medium'), ('[data-manager="preview_manager"] .item-head', 'GPT 6.1 Sol medium')]:
+        page.locator(selector).hover()
+        expect(panels.locator('[data-preview-model]')).to_have_text(model)
+        expect(panels.locator('[data-preview-activity]')).to_contain_text('Working · 4m')
+    page.locator('[data-ticket-id="preview_new"]').hover()
+    expect(panels.locator('[data-preview-model]')).to_have_text('GPT 6.1 Sol medium')
+    expect(panels.locator('[data-preview-activity]')).to_have_text('Idle')
+    rail_row.hover()
+    expect(panels.locator('[data-preview-activity]')).to_contain_text('Working · 4m')
+    # A real model change at the next turn refreshes the same visible preview.
+    page.evaluate("window.__previewActivity('model')")
+    expect(panels.locator('[data-preview-model]')).to_have_text('GPT 6.1 Terra medium')
+    page.mouse.move(1200, 680)
+    expect(panels).to_have_count(0)
+    row = page.locator('[data-worker-ticket-id="preview_worker"]')
+    row.hover()
+    expect(panels).to_have_count(1)
+    wait_settled(page, '[data-rail-hover-panel]')
+    page.screenshot(path=str(evidence / 'ticket-preview-manager-before-click.png'), animations='disabled')
+    before = fixture.get('recap_requests', 0)
+    # Cross the gap with real pointer events; a forced click would miss the bug.
+    panels.hover()
+    with page.expect_response('**/api/recap-requests'):
+        panels.get_by_role('button', name='Ask for a recap', exact=True).click()
+    assert fixture['recap_requests'] == before + 1
+    refresh_projection(page, required_recaps=[{"id": worker["id"], "text": ""}])
+    expect(panels.locator('[data-recap-text]')).to_have_count(0)
+    expect(panels).to_have_count(1)
+    page.screenshot(path=str(evidence / 'ticket-preview-manager-recap-clicked.png'), animations='disabled')
+    page.mouse.move(1200, 680)
+    expect(panels).to_have_count(0)
+    line = page.locator('[data-conversation-rest-line]')
+    expect(line).to_contain_text('Working')
+    page.screenshot(path=str(evidence / 'ticket-preview-composer-working.png'), animations='disabled')
+    expect(line).to_contain_text('Working · 4m')
+    old = line.inner_text()
+    expect(line).not_to_have_text(old, timeout=2500)
+    row.hover()
+    expect(panels).to_have_count(1)
+    page.wait_for_function("""() => document.querySelector('[data-rail-hover-panel][aria-hidden="false"] [data-preview-activity]')?.textContent
+      === document.querySelector('[data-conversation-rest-line]')?.textContent""")
+    page.mouse.move(1200, 680)
+    expect(panels).to_have_count(0)
+    # Hover-only reads must never send an owner-read request.
+    calls = page.evaluate('window.__viewCalls')
+    assert not any('/owner-read' in call for call in calls), calls
+    # Reopen the same conversation: the turn head uses exactly the same duration.
+    page.locator('[data-conversation-expand]').click()
+    page.wait_for_function("""() => {
+      const head=[...document.querySelectorAll('[data-conversation-turn]')].find(n=>n.textContent.includes('Working for'));
+      return Boolean(head);
+    }""")
+    head_text = page.locator('[data-conversation-turn][data-conversation-turn-settled="false"]').inner_text()
+    assert 'Working for 4m' in head_text, head_text
+    page.screenshot(path=str(evidence / 'ticket-preview-open-conversation.png'), animations='disabled')
+    page.keyboard.press('Escape')
+    expect(line).to_be_visible()
+    row.hover()
+    expect(panels).to_have_count(1)
+    page.evaluate("window.__previewActivity('permission')")
+    expect(panels.locator('[data-preview-activity]')).to_have_text('Waiting for you')
+    expect(line).to_contain_text('Working · 4m')
+    page.evaluate("window.__previewActivity('background')")
+    expect(panels.locator('[data-preview-activity]')).to_have_text('Background work running: Run checks')
+    expect(line).to_have_text('Background work running: Run checks')
+    page.evaluate("window.__previewActivity('idle')")
+    expect(panels.locator('[data-preview-activity]')).to_have_text('Idle')
+    page.evaluate("window.__previewActivity('unknown')")
+    expect(panels.locator('[data-preview-activity]')).to_have_text('Activity unknown')
+    page.evaluate("window.__previewActivity('working')")
+    expect(panels.locator('[data-preview-activity]')).to_contain_text('Working · 4m')
+    (evidence / 'ticket-preview-proof.json').write_text(json.dumps({
+        'seconds': round(time.perf_counter() - started, 3), 'newHosts': 0,
+        'boundary': 'Existing App host, navigation and compact live conversation transport; real pointer and recap request',
+    }, indent=2))
+    fixture['preview_details'] = False
