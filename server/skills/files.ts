@@ -1,4 +1,12 @@
-import { closeSync, mkdirSync, openSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import koffi from 'koffi';
@@ -13,12 +21,20 @@ export function with_skill_publication_lock<T>(parent: string, action: (root: st
   try {
     if (flock(fd, 2) !== 0) throw new Error(`flock failed: errno ${koffi.errno()}`);
     return action(root);
-  } finally { flock(fd, 8); closeSync(fd); }
+  } finally {
+    flock(fd, 8);
+    closeSync(fd);
+  }
 }
 export function atomic_replace_bytes(path: string, content: Buffer): void {
   mkdirSync(dirname(path), { recursive: true });
   const temp = join(dirname(path), `.${path.split('/').at(-1)}.tmp-${process.pid}-${randomUUID()}`);
-  try { writeFileSync(temp, content, { flag: 'wx', mode: 0o600 }); renameSync(temp, path); }
-  finally { rmSync(temp, { force: true }); }
+  try {
+    writeFileSync(temp, content, { flag: 'wx', mode: 0o600 });
+    renameSync(temp, path);
+  } finally {
+    rmSync(temp, { force: true });
+  }
 }
-export const atomic_replace_text = (path: string, text: string): void => atomic_replace_bytes(path, Buffer.from(text));
+export const atomic_replace_text = (path: string, text: string): void =>
+  atomic_replace_bytes(path, Buffer.from(text));

@@ -10,6 +10,13 @@ scripts/dev npm --prefix server run check
 scripts/dev npm --prefix server run test
 ```
 
+TypeScript formatting is enforced by Prettier in CI, with a line width of 100 and single quotes. From the repository root:
+
+```sh
+scripts/dev npm --prefix server run format
+scripts/dev npm --prefix server run format:check
+```
+
 The dependency guard checks the selected package before these commands. npm 11 adds a script environment key that the existing guard does not accept. For Node 24, use npm 10, or check the package before direct Node checks, as CI does:
 
 ```sh

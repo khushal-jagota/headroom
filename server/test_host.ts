@@ -6,8 +6,10 @@ import { inMemoryConversationRoutes } from './conversation/testing/routes.ts';
 
 if (process.env.PLAN_TEST_MODE !== '1') throw new Error('The comparison host requires test mode');
 
-const conversationSystem = process.env.PLAN_COMPARE_CONVERSATION_SYSTEM === 'in_memory'
-  ? new InMemoryConversationSystem() : undefined;
+const conversationSystem =
+  process.env.PLAN_COMPARE_CONVERSATION_SYSTEM === 'in_memory'
+    ? new InMemoryConversationSystem()
+    : undefined;
 const testAreas: readonly Area[] = [
   ...(conversationSystem ? inMemoryConversationRoutes(conversationSystem) : []),
 ];
