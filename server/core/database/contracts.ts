@@ -25,3 +25,33 @@ export interface ReadAccess {
   close(): void;
 }
 export interface Database extends WriteDoor, ReadAccess {}
+
+/** Dedicated domain storage uses the same writer engine without app projections. */
+export interface AuxiliaryDatabaseOptions {
+  schemaVersion: number;
+  initialize(tx: TransactionSql): void;
+  maxBytes: number;
+  busyTimeoutMs?: number;
+}
+export interface AuxiliaryTransactionSql extends TransactionSql {
+  incrementalVacuum(pages: number): void;
+}
+export interface StorageStats {
+  pageSize: number;
+  pageCount: number;
+  freelistCount: number;
+  maxPageCount: number;
+  userVersion: number;
+  autoVacuum: 'none' | 'full' | 'incremental';
+  journalMode: string;
+}
+export interface CheckpointResult {
+  busy: number;
+  log: number;
+  checkpointed: number;
+}
+export interface AuxiliaryDatabase extends ReadAccess {
+  write<T>(work: (tx: AuxiliaryTransactionSql) => T, options?: WriteOptions): T;
+  storageStats(): StorageStats;
+  checkpoint(mode: 'PASSIVE' | 'TRUNCATE', options?: { busyTimeoutMs?: number }): CheckpointResult;
+}

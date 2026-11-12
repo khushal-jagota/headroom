@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
+import { pythonRepr } from '../core/config.ts';
+import {
+  JsonNumber,
+  parse_numeric_json,
+  stringify_python_json,
+} from '../core/http/numeric_json.ts';
 import type {
   FailureNoticeIdentity,
   ProposalNoticeSuppression,
@@ -111,6 +117,80 @@ export function create_turn_failure_wake(
     source_conversation_id: w.conversation_id,
     summary: `Ticket \`${w.ticket_id}\` (${w.ticket_title}) failed: ${w.error_summary}`,
   });
+}
+
+/** Python str() for the JSON fields consumed by the stored Principal constructor. */
+function notice_text(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value instanceof JsonNumber) return stringify_python_json(value);
+  if (Array.isArray(value)) return '[' + value.map(notice_repr).join(', ') + ']';
+  if (value !== null && typeof value === 'object')
+    return (
+      '{' +
+      Object.entries(value)
+        .map(([key, item]) => pythonRepr(key) + ': ' + notice_repr(item))
+        .join(', ') +
+      '}'
+    );
+  return pythonRepr(value);
+}
+function notice_repr(value: unknown): string {
+  return typeof value === 'string' ? pythonRepr(value) : notice_text(value);
+}
+function notice_principal(raw: string): Principal {
+  const stored = parse_numeric_json(raw) as Record<string, unknown>;
+  if (!Object.hasOwn(stored, 'kind')) throw new Error(pythonRepr('kind'));
+  const kind = notice_text(stored.kind);
+  if (!['owner', 'chief', 'manager', 'goal', 'ticket'].includes(kind))
+    throw new Error(`${pythonRepr(kind)} is not a valid PrincipalKind`);
+  if (!Object.hasOwn(stored, 'id')) throw new Error(pythonRepr('id'));
+  const id = notice_text(stored.id);
+  // Python str.strip() includes the control separators and excludes the BOM.
+  if (
+    !id ||
+    /^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]$/u.test(
+      id,
+    )
+  )
+    throw new Error('principal id must be non-empty and must not contain outer whitespace');
+  if ((kind === 'owner' || kind === 'chief') && id !== kind)
+    throw new Error(`${kind} principal id must be ${kind}`);
+  return { kind: kind as Principal['kind'], id };
+}
+
+/** Snapshot the actual ceiling holder for a failed turn on an active Ticket link. */
+export function create_ticket_failure_notice(
+  sql: TransactionSql,
+  notice: { conversation_id: string; event_sequence: number; error_summary: string; now: number },
+): void {
+  const row = sql.get<{ id: string; title: string; ceiling_holder: string }>(
+    'SELECT id,title,ceiling_holder FROM tickets WHERE conversation_id=?',
+    [notice.conversation_id],
+  );
+  if (row === undefined) return;
+  const holder = notice_principal(row.ceiling_holder);
+  if (holder.kind === 'owner') return;
+  create_turn_failure_wake(sql, {
+    target: holder,
+    ticket_id: row.id,
+    ticket_title: row.title,
+    ...notice,
+  });
+}
+
+/** The record facade rejects empty lists/null entries and deduplicates before this query. */
+export function all_sender_messages_are_manager_notices(
+  sql: ReadSql,
+  conversation_id: string,
+  sender_message_ids: readonly string[],
+): boolean {
+  const placeholders = sender_message_ids.map(() => '?').join(',');
+  const row = sql.get<{ notice_count: number }>(
+    `SELECT count(*) AS notice_count FROM manager_wake_batches
+     WHERE conversation_id=? AND sender_message_id IN (${placeholders})`,
+    [conversation_id, ...sender_message_ids],
+  );
+  return row !== undefined && row.notice_count === sender_message_ids.length;
 }
 
 interface BatchRow {

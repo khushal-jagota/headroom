@@ -146,6 +146,7 @@ def _start_server(
                 "PLAN_SERVER_LISTENER_FD": str(listener.fileno()),
                 "PLAN_FAKE_NOW": fake_now if fake_now is not None else FAKE_NOW,
                 "PLAN_LOGS_DIR": str(srvdir / "logs"),
+                "PLAN_BACKUP_DIR": str(srvdir / "backups"),
                 "PLAN_DISPATCHER_LOCK_PATH": str(srvdir / "dispatcher.lock"),
             }
         )
