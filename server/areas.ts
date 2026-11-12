@@ -12,8 +12,10 @@ import { routes as ideas } from './ideas/routes.ts';
 import { routes as resourceVersions } from './resource_versions/routes.ts';
 import { createNavigationRuntime } from './navigation/index.ts';
 import { idle_publication } from './conversation/publication/idle.ts';
+import { createConversationRuntime } from './conversation/record/runtime.ts';
 
 const navigation = createNavigationRuntime(idle_publication);
+const conversation = createConversationRuntime();
 export const initializeAreas = (
   database: Database,
   authority: SignalNavigationAuthority,
@@ -21,9 +23,13 @@ export const initializeAreas = (
 ): void => {
   initialize_worker_settings(database, config);
   database.write((tx) => audit_ticket_registry_integrity(tx, { startup: true }));
+  conversation.initialize(database, config);
   navigation.initialize(database, authority);
 };
-export const closeAreas = (): void => navigation.close();
+export const closeAreas = async (): Promise<void> => {
+  navigation.close();
+  await conversation.close();
+};
 
 /** Add one area registration here. Core has no area identity branches. */
 export const areas: readonly Area[] = [
@@ -33,6 +39,7 @@ export const areas: readonly Area[] = [
   { prefix: '/api', routes: workerSettings },
   { prefix: '/api', routes: resourceVersions },
   { prefix: '/api/navigation/view', routes: navigation.routes },
+  { prefix: '/api/conversation', routes: conversation.routes },
 ];
 /** Global order: signal publication, artifact links, navigation. */
 export const commitSteps: readonly CommitStep[] = [
