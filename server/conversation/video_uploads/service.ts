@@ -254,7 +254,12 @@ export class VideoUploadService {
         Promise.allSettled([...this.transfers]),
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(
-            () => reject(new ServerLifecycleError('Video transfers remain unfinished at the shutdown deadline.')),
+            () =>
+              reject(
+                new ServerLifecycleError(
+                  'Video transfers remain unfinished at the shutdown deadline.',
+                ),
+              ),
             Math.max(0, (options.deadline - performance.now() / 1000) * 1000),
           );
         }),

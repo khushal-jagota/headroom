@@ -26,30 +26,58 @@ async function proxied_rates(url: string, signal: AbortSignal, remaining = 10): 
     return response.json();
   }
   const proxy = new URL(selected.includes('://') ? selected : 'http://' + selected);
-  const tunnel = target.protocol === 'https:' ? new HttpsProxyAgent(proxy) : null;
+  const tunnel = target.protocol === 'https:' ? new HttpsProxyAgent(proxy, { signal }) : null;
   try {
-    const result = await new Promise<{ status: number; location?: string; body: string }>((resolve, reject) => {
-      const endpoint = new URL((tunnel === null ? proxy : target).href);
-      // Proxy credentials belong only in Proxy-Authorization, never origin auth.
-      if (tunnel === null) { endpoint.username = ''; endpoint.password = ''; }
-      const request = (endpoint.protocol === 'https:' ? https_request : http_request)(endpoint, {
-        method: 'GET', signal,
-        ...(tunnel === null ? {
-          path: target.href,
-          headers: { host: target.host,
-            ...(proxy.username || proxy.password ? { 'proxy-authorization': 'Basic ' + Buffer.from(decodeURIComponent(proxy.username) + ':' + decodeURIComponent(proxy.password)).toString('base64') } : {}),
+    const result = await new Promise<{ status: number; location?: string; body: string }>(
+      (resolve, reject) => {
+        const endpoint = new URL((tunnel === null ? proxy : target).href);
+        // Proxy credentials belong only in Proxy-Authorization, never origin auth.
+        if (tunnel === null) {
+          endpoint.username = '';
+          endpoint.password = '';
+        }
+        const request = (endpoint.protocol === 'https:' ? https_request : http_request)(
+          endpoint,
+          {
+            method: 'GET',
+            signal,
+            ...(tunnel === null
+              ? {
+                  path: target.href,
+                  headers: {
+                    host: target.host,
+                    ...(proxy.username || proxy.password
+                      ? {
+                          'proxy-authorization':
+                            'Basic ' +
+                            Buffer.from(
+                              decodeURIComponent(proxy.username) +
+                                ':' +
+                                decodeURIComponent(proxy.password),
+                            ).toString('base64'),
+                        }
+                      : {}),
+                  },
+                }
+              : { agent: tunnel }),
           },
-        } : { agent: tunnel }),
-      }, (response) => {
-        const chunks: Buffer[] = [];
-        response.on('data', (chunk: Buffer) => chunks.push(chunk));
-        response.on('error', reject);
-        response.on('end', () => resolve({ status: response.statusCode ?? 0,
-          location: response.headers.location, body: Buffer.concat(chunks).toString('utf8') }));
-      });
-      request.on('error', reject);
-      request.end();
-    });
+          (response) => {
+            const chunks: Buffer[] = [];
+            response.on('data', (chunk: Buffer) => chunks.push(chunk));
+            response.on('error', reject);
+            response.on('end', () =>
+              resolve({
+                status: response.statusCode ?? 0,
+                location: response.headers.location,
+                body: Buffer.concat(chunks).toString('utf8'),
+              }),
+            );
+          },
+        );
+        request.on('error', reject);
+        request.end();
+      },
+    );
     if ([301, 302, 303, 307, 308].includes(result.status) && result.location !== undefined) {
       if (remaining === 0) throw new Error('The usage rates source redirected too many times.');
       return await proxied_rates(new URL(result.location, target).href, signal, remaining - 1);

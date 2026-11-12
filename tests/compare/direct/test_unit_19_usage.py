@@ -20,7 +20,10 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 from urllib.parse import urlsplit
-from urllib.request import getproxies_environment, proxy_bypass_environment
+from urllib.request import (  # type: ignore[attr-defined]
+    getproxies_environment,
+    proxy_bypass_environment,
+)
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytest
@@ -322,13 +325,20 @@ def _report(
 
 
 def _reader(spec: dict[str, Any]) -> dict[str, Any]:
-    home_paths = [str(Path(value["path"]).expanduser() / value["child"]) for value in spec["homes"]]
+    home_paths = [
+        str(Path(value["path"]).expanduser() / value["child"])
+        for value in spec["homes"]
+    ]
     proxy_choices = []
     for value in spec["proxy_inputs"]:
         with patch.dict(os.environ, value["environment"], clear=True):
             proxies = getproxies_environment()
         target = urlsplit(value["target"])
-        proxy_choices.append(None if proxy_bypass_environment(target.netloc, proxies) else proxies.get(target.scheme))
+        proxy_choices.append(
+            None
+            if proxy_bypass_environment(target.netloc, proxies)
+            else proxies.get(target.scheme)
+        )
     inventory = [
         {
             "provider": source["provider"],
@@ -450,13 +460,37 @@ def test_unit19_usage_reader_and_cache(
     spec = {
         "homes": [
             {"path": str(tmp_path) + "/native/link/../codex", "child": "sessions"},
-            {"path": str(tmp_path) + "/native//./claude/../configured", "child": "projects"},
+            {
+                "path": str(tmp_path) + "/native//./claude/../configured",
+                "child": "projects",
+            },
         ],
         "proxy_inputs": [
-            {"target": "https://example.test:443/rates", "environment": {"https_proxy": "http://recorded-lower:8081", "no_proxy": "example.test:443"}},
-            {"target": "https://raw.githubusercontent.com/rates.json", "environment": {"HTTPS_PROXY": "http://recorded-upper:8080"}},
-            {"target": "https://raw.githubusercontent.com/rates.json", "environment": {"HTTPS_PROXY": "http://recorded-upper:8080", "https_proxy": "http://recorded-lower:8081"}},
-            {"target": "https://raw.githubusercontent.com/rates.json", "environment": {"https_proxy": "http://recorded-lower:8081", "no_proxy": ".githubusercontent.com"}},
+            {
+                "target": "https://example.test:443/rates",
+                "environment": {
+                    "https_proxy": "http://recorded-lower:8081",
+                    "no_proxy": "example.test:443",
+                },
+            },
+            {
+                "target": "https://raw.githubusercontent.com/rates.json",
+                "environment": {"HTTPS_PROXY": "http://recorded-upper:8080"},
+            },
+            {
+                "target": "https://raw.githubusercontent.com/rates.json",
+                "environment": {
+                    "HTTPS_PROXY": "http://recorded-upper:8080",
+                    "https_proxy": "http://recorded-lower:8081",
+                },
+            },
+            {
+                "target": "https://raw.githubusercontent.com/rates.json",
+                "environment": {
+                    "https_proxy": "http://recorded-lower:8081",
+                    "no_proxy": ".githubusercontent.com",
+                },
+            },
         ],
         "composition_db_link": str(link),
         "fork_append_hex": (_codex(300, "2026-11-12T00:00:05Z") + "\n").encode().hex(),
@@ -650,8 +684,10 @@ def _operations() -> list[dict[str, Any]]:
             "status": 422,
         },
         {
-            "name": "absent-conversation-runtime", "method": "GET",
-            "path": "/api/conversation/usage/limits", "status": 503,
+            "name": "absent-conversation-runtime",
+            "method": "GET",
+            "path": "/api/conversation/usage/limits",
+            "status": 503,
             "runtime_available": False,
         },
     ]
@@ -766,13 +802,19 @@ def _python_http(spec: dict[str, Any], homes: dict[str, str]) -> dict[str, Any]:
                     app.state.recorded_usage = current
                 if operation.get("runtime_available") is False:
                     original_runtime = app.state.conversation
-                    original_override = app.dependency_overrides.pop(conversation_api._runtime)
+                    original_override = app.dependency_overrides.pop(
+                        conversation_api._runtime
+                    )
                     app.state.conversation = None
                     try:
-                        response = client.request(operation["method"], operation["path"])
+                        response = client.request(
+                            operation["method"], operation["path"]
+                        )
                     finally:
                         app.state.conversation = original_runtime
-                        app.dependency_overrides[conversation_api._runtime] = original_override
+                        app.dependency_overrides[conversation_api._runtime] = (
+                            original_override
+                        )
                 else:
                     response = client.request(operation["method"], operation["path"])
                 assert response.status_code == operation["status"], (

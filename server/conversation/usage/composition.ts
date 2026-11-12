@@ -15,8 +15,12 @@ export interface UsageCompositionOptions extends Omit<UsageServiceOptions, 'now'
 /** pathlib removes empty and '.' segments, but deliberately retains '..'. */
 export function transcript_home(path: string, child: string): string {
   const expanded = expand_path(path);
-  const root = expanded.startsWith('//') && !expanded.startsWith('///') ? '//'
-    : expanded.startsWith('/') ? '/' : '';
+  const root =
+    expanded.startsWith('//') && !expanded.startsWith('///')
+      ? '//'
+      : expanded.startsWith('/')
+        ? '/'
+        : '';
   const parts = expanded.split('/').filter((part) => part !== '' && part !== '.');
   return root + [...parts, child].join('/');
 }
@@ -82,7 +86,10 @@ export function makeUsageService(
           },
           {
             provider: 'claude' as const,
-            dir: transcript_home(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects'),
+            dir: transcript_home(
+              process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'),
+              'projects',
+            ),
           },
         ]);
   return new UsageService(stateDir, transcriptDirs, {

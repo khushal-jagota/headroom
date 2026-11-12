@@ -37,8 +37,12 @@ export async function trim_surrounding_silence(
     try {
       if (child.pid !== undefined) process.kill(-child.pid, 'SIGKILL');
     } catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH') &&
-        !settled && child.exitCode === null && child.signalCode === null)
+      if (
+        !(error instanceof Error && 'code' in error && error.code === 'ESRCH') &&
+        !settled &&
+        child.exitCode === null &&
+        child.signalCode === null
+      )
         child.kill('SIGKILL');
     }
   };

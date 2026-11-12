@@ -136,7 +136,9 @@ export async function compare_reader(spec: ReaderSpec) {
     fork: { cold: forkCold, encoded: forkEncoded, resumed: forkResumed },
     composition,
     home_paths: spec.homes.map((value) => transcript_home(value.path, value.child)),
-    proxy_choices: spec.proxy_inputs.map((value) => rates_proxy_for(value.target, value.environment)),
+    proxy_choices: spec.proxy_inputs.map((value) =>
+      rates_proxy_for(value.target, value.environment),
+    ),
     cold,
     resumed,
     rejected_guard,
@@ -204,7 +206,9 @@ export async function compare_http(spec: HttpSpec) {
         {
           prefix: '/api/conversation/usage',
           routes: createUsageRoutes({
-            get conversation_runtime_available() { return runtimeAvailable; },
+            get conversation_runtime_available() {
+              return runtimeAvailable;
+            },
             recorded_usage: {
               readSummary: (input: UsageSummaryInput) => current.readSummary(input),
               refreshRates: () => current.refreshRates(),

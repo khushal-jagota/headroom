@@ -119,7 +119,9 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop'> {
     while (this.operations.size !== 0) await Promise.allSettled([...this.operations]);
   }
 
-  private clock(): Promise<number> { return this.workerClock?.() ?? Promise.resolve(this.now()); }
+  private clock(): Promise<number> {
+    return this.workerClock?.() ?? Promise.resolve(this.now());
+  }
 
   private async readRates(): Promise<unknown> {
     const controller = new AbortController();
@@ -272,8 +274,9 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop'> {
     settings: UsageSettings,
     suppliedDirectories?: readonly TranscriptDirectory[],
   ): Promise<readonly ScannedDirectory[]> {
-    const raw = suppliedDirectories ?? (
-      typeof this.transcriptDirs === 'function'
+    const raw =
+      suppliedDirectories ??
+      (typeof this.transcriptDirs === 'function'
         ? this.transcriptDirs(settings)
         : this.transcriptDirs);
     const directories = raw.map((entry): TranscriptDirectory =>
@@ -308,7 +311,11 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop'> {
     return scanned;
   }
 
-  async scanSummary(input: UsageSummaryInput, settings: UsageSettings, directories?: readonly TranscriptDirectory[]): Promise<UsageSummary> {
+  async scanSummary(
+    input: UsageSummaryInput,
+    settings: UsageSettings,
+    directories?: readonly TranscriptDirectory[],
+  ): Promise<UsageSummary> {
     if (input.sinceDay > input.untilDay)
       throw new UsageReadError(
         'invalidWindow',
@@ -418,10 +425,16 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop'> {
     } as UsageSummary;
   }
 
-  readSummary(input: UsageSummaryInput, suppliedSettings?: UsageSettings, directories?: readonly TranscriptDirectory[]): Promise<UsageSummary> {
+  readSummary(
+    input: UsageSummaryInput,
+    suppliedSettings?: UsageSettings,
+    directories?: readonly TranscriptDirectory[],
+  ): Promise<UsageSummary> {
     let settings: UsageSettings;
     try {
-      settings = suppliedSettings ?? (this.options.settingsProvider ?? (() => ({ usagePriceOverrides: {} })))();
+      settings =
+        suppliedSettings ??
+        (this.options.settingsProvider ?? (() => ({ usagePriceOverrides: {} })))();
     } catch {
       return Promise.reject(new UsageReadError('scanFailed', 'Server settings could not be read.'));
     }

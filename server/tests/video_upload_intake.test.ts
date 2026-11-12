@@ -148,7 +148,10 @@ test('shutdown waits for upload settlement and a disconnect records Python inter
       (error: unknown) => error,
     );
     expect(unfinished).toBeInstanceOf(ServerLifecycleError);
-    expect(unfinished).toHaveProperty('message', 'Video transfers remain unfinished at the shutdown deadline.');
+    expect(unfinished).toHaveProperty(
+      'message',
+      'Video transfers remain unfinished at the shutdown deadline.',
+    );
     expect(service.status(reserved.upload_id)).toMatchObject({
       state: 'transferring',
       received_bytes: 8,
