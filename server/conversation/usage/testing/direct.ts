@@ -22,6 +22,7 @@ import { rates_proxy_for } from '../proxy.ts';
 import { createUsageRoutes } from '../routes.ts';
 import { BackendStateStore } from '../../backend_state.ts';
 import { createApp } from '../../../app.ts';
+import { HttpError } from '../../../core/http/errors.ts';
 import { createDatabase } from '../../../core/database/index.ts';
 import { loadConfig } from '../../../core/config.ts';
 import { TestClock } from '../../../core/clock.ts';
@@ -215,6 +216,9 @@ export async function compare_http(spec: HttpSpec) {
       ],
     },
   );
+  app.addHook('onError', async (_request, _reply, error) => {
+    if (!(error instanceof HttpError)) console.error('Usage direct route error:', error);
+  });
   try {
     const answers = [];
     for (const operation of spec.operations) {
@@ -236,10 +240,12 @@ export async function compare_http(spec: HttpSpec) {
         }
       }
       if (operation.restart) {
-        await current.finish_operations();
+        await current.stop({ deadline: performance.now() / 1000 + 2 });
         current = make();
       }
       const response = await app.inject({ method: operation.method, url: operation.path });
+      if (response.statusCode === 500)
+        throw new Error(`${operation.name}: ${response.statusCode} ${response.body}`);
       answers.push({
         name: operation.name,
         status: response.statusCode,
@@ -262,7 +268,7 @@ export async function compare_http(spec: HttpSpec) {
       ),
     };
   } finally {
-    for (const service of services) await service.finish_operations();
+    for (const service of services) await service.stop({ deadline: performance.now() / 1000 + 2 });
     await app.close();
     database.close();
   }

@@ -6,6 +6,7 @@ import { expect, test } from 'vitest';
 import { createApp } from '../app.ts';
 import { loadConfig } from '../core/config.ts';
 import type { Database } from '../core/database/contracts.ts';
+import { ServerLifecycleError } from '../lifecycle/contracts.ts';
 import { VideoUploadService } from '../conversation/video_uploads/service.ts';
 import { createVideoUploadRoutes } from '../conversation/video_uploads/routes.ts';
 import { createVoiceRoutes } from '../conversation/voice_transcription/routes.ts';
@@ -142,9 +143,12 @@ test('shutdown waits for upload settlement and a disconnect records Python inter
         (error: unknown) => ({ error }),
       );
     await progress_committed;
-    await expect(service.drain({ deadline: performance.now() / 1000 + 0.01 })).rejects.toThrow(
-      'Video transfers did not settle before the shutdown deadline',
+    const unfinished = await service.drain({ deadline: performance.now() / 1000 + 0.01 }).then(
+      () => null,
+      (error: unknown) => error,
     );
+    expect(unfinished).toBeInstanceOf(ServerLifecycleError);
+    expect(unfinished).toHaveProperty('message', 'Video transfers remain unfinished at the shutdown deadline.');
     expect(service.status(reserved.upload_id)).toMatchObject({
       state: 'transferring',
       received_bytes: 8,

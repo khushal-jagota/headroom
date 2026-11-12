@@ -5,6 +5,19 @@ import { UsageReadError, UsageServiceStopped } from './contracts.ts';
 import type { RecordedUsageService, TranscriptDirectories, TranscriptDirectory, UsagePricing, UsageServiceOptions, UsageSummary, UsageSummaryInput } from './contracts.ts';
 import type { UsageWorkerRequest, UsageWorkerResponse } from './workerProtocol.ts';
 
+/** File-backed workers inherit runtime switches, never the parent's eval entry. */
+function workerExecArgv(): string[] {
+  const retained: string[] = [];
+  const entryWithValue = new Set(['--input-type', '--eval', '-e', '--print', '-p', '-pe', '-ep']);
+  for (let index = 0; index < process.execArgv.length; index++) {
+    const argument = process.execArgv[index]!;
+    if (entryWithValue.has(argument)) { index++; continue; }
+    if (/^--(?:input-type|eval|print)=/.test(argument) || /^-[ep].+/.test(argument)) continue;
+    retained.push(argument);
+  }
+  return retained;
+}
+
 export class UsageService implements RecordedUsageService {
   readonly stateDir: string;
   readonly transcriptDirs: TranscriptDirectories;
@@ -15,9 +28,12 @@ export class UsageService implements RecordedUsageService {
   private sequence = 0;
   private closed = false;
   private stopping: Promise<void> | undefined;
+  private resourceJoin: Promise<unknown> | undefined;
   private readonly operations = new Set<Promise<unknown>>();
   private readonly pending = new Map<number, { resolve(value: UsageSummary | UsagePricing): void; reject(error: Error): void }>();
   private readonly callbacks = new Map<number, AbortController>();
+  // Abort notification does not settle a provider's asynchronous cleanup.
+  private readonly callbackOperations = new Set<Promise<unknown>>();
   constructor(
     stateDir: string,
     transcriptDirs: TranscriptDirectories,
@@ -39,6 +55,7 @@ export class UsageService implements RecordedUsageService {
     if (this.closed) throw new UsageServiceStopped();
     if (this.worker) return this.worker;
     const worker = new Worker(new URL('./usageWorker.ts', import.meta.url), {
+      execArgv: workerExecArgv(),
       workerData: { stateDir: this.stateDir, injectedRates: this.options.ratesFetcher !== undefined, injectedClock: this.options.now !== undefined },
     });
     this.worker = worker;
@@ -64,8 +81,10 @@ export class UsageService implements RecordedUsageService {
       const value = Promise.resolve().then(() => message.callback === 'clock'
         ? (this.options.now ?? Date.now)()
         : this.options.ratesFetcher!({ signal: controller.signal }));
+      this.callbackOperations.add(value);
+      void value.then(() => this.callbackOperations.delete(value), () => this.callbackOperations.delete(value));
       const reply = (result: Omit<Extract<UsageWorkerRequest, { kind: 'callback-result' }>, 'kind' | 'id'>) => {
-        if (!this.callbacks.delete(message.id) || this.closed) return;
+        if (this.worker !== worker || !this.callbacks.delete(message.id) || this.closed) return;
         try {
           worker.postMessage({ kind: 'callback-result', id: message.id, ...result } satisfies UsageWorkerRequest);
         } catch (error) {
@@ -125,6 +144,7 @@ export class UsageService implements RecordedUsageService {
   }
   async finish_operations(): Promise<void> {
     while (this.operations.size !== 0) await Promise.allSettled([...this.operations]);
+    if (this.closed) await this.resourceJoin;
   }
   stop(options: { readonly deadline: number }): Promise<void> {
     if (this.stopping) return this.stopping;
@@ -132,13 +152,16 @@ export class UsageService implements RecordedUsageService {
     this.fail(new UsageServiceStopped());
     const worker = this.worker;
     this.stopping = (async () => {
-      if (!worker) return;
       let timer: ReturnType<typeof setTimeout> | undefined;
+      this.resourceJoin = Promise.all([
+        worker?.terminate(),
+        Promise.allSettled([...this.callbackOperations]),
+      ]);
       try {
         await Promise.race([
-          worker.terminate(),
+          this.resourceJoin,
           new Promise<never>((_resolve, reject) => {
-            timer = setTimeout(() => reject(new Error('Usage worker did not stop before the shutdown deadline.')),
+            timer = setTimeout(() => reject(new Error('Usage resources did not stop before the shutdown deadline.')),
               Math.max(0, (options.deadline - performance.now() / 1000) * 1000));
           }),
         ]);

@@ -17,7 +17,10 @@ export function rates_proxy_for(
     else delete proxies[key];
   }
   const url = new URL(target);
-  const host = url.host.toLowerCase();
+  // WHATWG URL erases an explicit default port. urllib's bypass checks retain
+  // that port in the request authority, including in exact host:port entries.
+  const authority = /^[^:]+:\/\/([^/?#]*)/.exec(target)?.[1];
+  const host = (authority === undefined ? url.host : authority.slice(authority.lastIndexOf('@') + 1)).toLowerCase();
   const hostname = url.hostname.toLowerCase();
   const bypass = proxies.no;
   if (bypass === '*') return null;

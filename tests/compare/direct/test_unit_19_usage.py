@@ -453,6 +453,7 @@ def test_unit19_usage_reader_and_cache(
             {"path": str(tmp_path) + "/native//./claude/../configured", "child": "projects"},
         ],
         "proxy_inputs": [
+            {"target": "https://example.test:443/rates", "environment": {"https_proxy": "http://recorded-lower:8081", "no_proxy": "example.test:443"}},
             {"target": "https://raw.githubusercontent.com/rates.json", "environment": {"HTTPS_PROXY": "http://recorded-upper:8080"}},
             {"target": "https://raw.githubusercontent.com/rates.json", "environment": {"HTTPS_PROXY": "http://recorded-upper:8080", "https_proxy": "http://recorded-lower:8081"}},
             {"target": "https://raw.githubusercontent.com/rates.json", "environment": {"https_proxy": "http://recorded-lower:8081", "no_proxy": ".githubusercontent.com"}},

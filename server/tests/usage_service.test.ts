@@ -298,29 +298,65 @@ test('the service bounds an injected fetcher and releases retained work after ti
 test('shutdown aborts the injected rate operation and joins the worker within the shared deadline', async () => {
   const paths = fixture();
   const entered = new Deferred<void>();
-  const release = new Deferred<unknown>();
+  const release = new Deferred<void>();
+  const cleanupEntered = new Deferred<void>();
   let signal: AbortSignal | undefined;
   const service = new WorkerUsageService(paths.state, [], {
-    ratesFetcher: (options) => {
+    ratesFetcher: async (options) => {
       signal = options?.signal;
       entered.resolve();
-      return release.promise;
+      await new Promise<void>((resolve) => signal!.addEventListener('abort', () => resolve(), { once: true }));
+      cleanupEntered.resolve();
+      await release.promise;
+      return null;
     },
   });
   const result = service.refreshRates().then(() => null, (error: unknown) => error);
   try {
     await entered.promise;
     const started = performance.now();
-    await service.stop({ deadline: performance.now() / 1000 + 2 });
+    let stopped = false;
+    const stopping = service.stop({ deadline: performance.now() / 1000 + 2 }).then(() => { stopped = true; });
+    await cleanupEntered.promise;
+    await setImmediate();
     expect(signal?.aborted).toBe(true);
+    expect(stopped).toBe(false);
+    release.resolve();
+    await stopping;
     expect(await result).toBeInstanceOf(UsageServiceStopped);
     await service.finish_operations();
     await expect(service.refreshRates()).rejects.toBeInstanceOf(UsageServiceStopped);
     await expect(service.readSummary(window)).rejects.toBeInstanceOf(UsageServiceStopped);
     console.info(JSON.stringify({ usage_worker_stop_ms: performance.now() - started }));
   } finally {
-    release.resolve(null);
+    release.resolve();
     await service.stop({ deadline: performance.now() / 1000 + 2 });
+  }
+});
+
+// Gap: abort cleanup can ignore cancellation. Shutdown must report retained ownership.
+test('an unsettled injected callback makes shutdown fail at its shared deadline', async () => {
+  const paths = fixture();
+  const entered = new Deferred<void>();
+  const release = new Deferred<unknown>();
+  const settled = new Deferred<void>();
+  const service = new WorkerUsageService(paths.state, [], {
+    ratesFetcher: async () => {
+      entered.resolve();
+      try { return await release.promise; }
+      finally { settled.resolve(); }
+    },
+  });
+  const request = service.refreshRates().catch((error: unknown) => error);
+  try {
+    await entered.promise;
+    await expect(service.stop({ deadline: performance.now() / 1000 + 0.05 }))
+      .rejects.toThrow('Usage resources did not stop before the shutdown deadline.');
+    expect(await request).toBeInstanceOf(UsageServiceStopped);
+  } finally {
+    release.resolve(null);
+    await settled.promise;
+    await service.finish_operations();
   }
 });
 

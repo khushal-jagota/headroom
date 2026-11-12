@@ -1,0 +1,57 @@
+/** Config already covers boolean spellings. This proves that our I/O doors use its result. */
+import { expect, test, vi } from 'vitest';
+
+const recording = vi.hoisted(() => ({
+  spawn: vi.fn(() => { throw new Error('Unexpected recorded subprocess call'); }),
+  request: vi.fn(() => { throw new Error('Unexpected recorded HTTP call'); }),
+}));
+vi.mock('node:child_process', async (original) => ({
+  ...await original<typeof import('node:child_process')>(), spawn: recording.spawn,
+}));
+vi.mock('node:http', async (original) => ({
+  ...await original<typeof import('node:http')>(), request: recording.request,
+}));
+vi.mock('node:https', async (original) => ({
+  ...await original<typeof import('node:https')>(), request: recording.request,
+}));
+
+import { SubprocessBackendProbeEnvironment } from '../conversation/snapshot/environment.ts';
+import { http_get_usage } from '../conversation/backend_usage/http.ts';
+import { trim_surrounding_silence } from '../conversation/voice_transcription/production.ts';
+import { post_voice_http } from '../conversation/voice_transcription/http.ts';
+import { fetchRates } from '../conversation/usage/http.ts';
+
+// Gap: ordinary Vitest/Pytest markers previously hid the PLAN_TEST_MODE=true guard mismatch.
+test('parsed test mode blocks production subprocess and HTTP doors without runner markers', async () => {
+  vi.stubEnv('VITEST', undefined);
+  vi.stubEnv('PYTEST_CURRENT_TEST', undefined);
+  vi.stubEnv('PLAN_TEST_MODE', '0');
+  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+    throw new Error('Unexpected recorded fetch call');
+  });
+  const environment = new SubprocessBackendProbeEnvironment();
+  vi.stubEnv('PLAN_TEST_MODE', 'true');
+  try {
+    expect(() => new SubprocessBackendProbeEnvironment()).toThrow('Production backend I/O is unavailable in tests');
+    await expect(environment.run(['recorded-provider'], { timeout_seconds: 1 }))
+      .rejects.toThrow('Production backend I/O is unavailable in tests');
+    await expect(environment.latest_released_version('recorded-package', { timeout_seconds: 1 }))
+      .rejects.toThrow('Production backend I/O is unavailable in tests');
+    await expect(http_get_usage('https://recorded.invalid/usage', {}, 1))
+      .rejects.toThrow('Production backend I/O is unavailable in tests');
+    await expect(trim_surrounding_silence(new Uint8Array([1])))
+      .rejects.toThrow('Production voice I/O is unavailable in tests');
+    await expect(post_voice_http({
+      url: 'https://recorded.invalid/transcription', headers: {}, data: {}, timeout_seconds: 1,
+      file: { filename: 'recorded.ogg', contents: new Uint8Array([1]), media_type: 'audio/ogg' },
+    })).rejects.toThrow('Production voice I/O is unavailable in tests');
+    await expect(fetchRates()).rejects.toThrow('Production usage rates I/O is unavailable in tests');
+    expect(recording.spawn).not.toHaveBeenCalled();
+    expect(recording.request).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  } finally {
+    await environment.shutdown();
+    vi.unstubAllEnvs();
+    fetch.mockRestore();
+  }
+});

@@ -67,11 +67,12 @@ export async function probe_video(
   });
   const stop = () => {
     child.stdout.destroy();
-    if (child.pid === undefined) return;
+    if (settled || child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
     try {
       process.kill(-child.pid, 'SIGKILL');
     } catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH'))
+      if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH') &&
+        !settled && child.exitCode === null && child.signalCode === null)
         child.kill('SIGKILL');
     }
   };

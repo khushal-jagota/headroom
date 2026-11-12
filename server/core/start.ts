@@ -174,7 +174,9 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       await producers;
       await attempt(() => conversationWrites.drain());
       await attempt(() => credential_requests?.finish_operations());
-      await attempt(() => recorded_usage?.finish_operations());
+      // Concrete usage shutdown already joins its resources by the shared deadline.
+      // Do not await its retained cleanup again after a deadline failure.
+      if (!recorded_usage?.stop) await attempt(() => recorded_usage?.finish_operations());
       // Loop cancellation shares one deadline. Core and record settlement have
       // no deadline contract, so retain ownership through their final writes.
       await attempt(() => core?.shutdown());
