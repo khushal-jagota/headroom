@@ -10,7 +10,12 @@ import { CLAUDE_PERMISSION_ORDER, claude_sdk_client } from './query.ts';
 import { CLAUDE_AGENT_SDK_VERSION } from '../claude_sdk.ts';
 
 const { query } = vi.hoisted(() => ({
-  query: vi.fn<(typeof import('@anthropic-ai/claude-agent-sdk'))['query']>(),
+  query:
+    vi.fn<
+      (
+        ...arguments_: Parameters<(typeof import('@anthropic-ai/claude-agent-sdk'))['query']>
+      ) => ReturnType<(typeof import('@anthropic-ai/claude-agent-sdk'))['query']>
+    >(),
 }));
 
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
@@ -22,29 +27,49 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function setup(
-  environment: Record<string, string> = {},
-  can_use_tool?: Options['canUseTool'],
-  owned_process?: ChildProcessWithoutNullStreams,
-) {
+function setup(environment: Record<string, string> = {}, can_use_tool?: Options['canUseTool']) {
   const writes: ((cause?: Error | null) => void)[] = [];
   const received: string[] = [];
-  const child =
-    owned_process ??
-    Object.assign(new EventEmitter(), {
-      stdin: new Writable({
-        write(chunk, _encoding, callback) {
-          received.push(chunk.toString());
-          writes.push(callback);
-        },
-      }),
-      stdout: new PassThrough(),
-      stderr: new PassThrough(),
-      killed: false,
-      exitCode: null as number | null,
-      signalCode: null as NodeJS.Signals | null,
-      kill: vi.fn(() => true),
-    });
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new Writable({
+      write(chunk, _encoding, callback) {
+        received.push(chunk.toString());
+        writes.push(callback);
+      },
+    }),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    killed: false,
+    exitCode: null as number | null,
+    signalCode: null as NodeJS.Signals | null,
+    kill: vi.fn(() => true),
+  });
+  const configured = setup_client(
+    child,
+    () => {
+      child.exitCode = 0;
+      child.stdout.end();
+      child.stderr.end();
+      child.emit('close', 0, null);
+    },
+    environment,
+    can_use_tool,
+  );
+  return { ...configured, writes, received };
+}
+
+function setup_owned_process(child: ChildProcessWithoutNullStreams) {
+  return setup_client(child, () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+  });
+}
+
+function setup_client<T extends object>(
+  child: T,
+  close_child: () => void,
+  environment: Record<string, string> = {},
+  can_use_tool?: Options['canUseTool'],
+) {
   vi.mocked(spawn).mockReturnValue(child as never);
   let spawned: SpawnedProcess;
   let pumping: Promise<void> = Promise.resolve();
@@ -63,16 +88,9 @@ function setup(
   };
   const close = vi.fn(() => {
     finish_reader();
-    if (owned_process) {
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
-      return;
-    }
-    child.exitCode = 0;
-    child.stdout.end();
-    child.stderr.end();
-    child.emit('close', 0, null);
+    close_child();
   });
-  vi.mocked(query).mockImplementation(({ prompt, options }) => {
+  query.mockImplementation(({ prompt, options }) => {
     spawned = options!.spawnClaudeCodeProcess!({
       command: '/synthetic/claude',
       args: [],
@@ -126,8 +144,6 @@ function setup(
   return {
     client,
     child,
-    writes,
-    received,
     close,
     finish_reader,
     yield_message,
@@ -247,8 +263,8 @@ it('retains a failed cleanup handle until the same owned child confirms exit', a
 
 it('closes an exact spawned process even when SDK query construction never returns its handle', async () => {
   const { client, child, pumping } = setup();
-  const construct = vi.mocked(query).getMockImplementation()!;
-  vi.mocked(query).mockImplementation((options) => {
+  const construct = query.getMockImplementation()!;
+  query.mockImplementation((options) => {
     construct(options);
     throw new Error('query construction failed after spawn');
   });
@@ -322,7 +338,7 @@ it('preserves both native assistant/permission orders without waiting for SDK-fi
       ...(assistant_first ? [assistant, request] : [request, assistant]),
     ];
     child.stdout.write(frames.map((frame) => JSON.stringify(frame) + '\n').join(''));
-    const options = vi.mocked(query).mock.calls.at(-1)![0].options!;
+    const options = query.mock.calls.at(-1)![0].options!;
     const permission = options.canUseTool!(
       'Read',
       {},
@@ -367,7 +383,7 @@ it('releases a permission barrier on callback abort and disconnect', async () =>
       }) +
       '\n',
   );
-  const options = vi.mocked(query).mock.calls.at(-1)![0].options!;
+  const options = query.mock.calls.at(-1)![0].options!;
   const abort = new AbortController();
   const permission = options.canUseTool!(
     'Read',
@@ -433,7 +449,7 @@ it('fails a later prompt immediately after an owned live child loses stdin', asy
     );
     owned.once('error', reject);
   });
-  const { client, pumping } = setup({}, undefined, owned);
+  const { client, pumping } = setup_owned_process(owned);
   try {
     await ready;
     await client.connect();
@@ -471,7 +487,7 @@ it('does not wait for SDK-unknown frames and releases ordering barriers after a 
       }) +
       '\n',
   );
-  const options = vi.mocked(query).mock.calls.at(-1)![0].options!;
+  const options = query.mock.calls.at(-1)![0].options!;
   await options.canUseTool!(
     'Read',
     {},
@@ -514,7 +530,7 @@ it('bounds a permission barrier when a consumed native frame never reaches the i
   child.stdout.write(
     '{"type":"assistant"}\n{"type":"control_request","request_id":"lost-frame","request":{"subtype":"can_use_tool"}}\n',
   );
-  const options = vi.mocked(query).mock.calls.at(-1)![0].options!;
+  const options = query.mock.calls.at(-1)![0].options!;
   const answer = options.canUseTool!(
     'Read',
     {},
@@ -573,7 +589,7 @@ it('reaches the ask callback on an unknown system frame and does not retain its 
   child.stdout.write(
     '{"type":"assistant"}\n{"type":"control_request","request_id":"before-extension","request":{"subtype":"can_use_tool"}}\n',
   );
-  const options = vi.mocked(query).mock.calls.at(-1)![0].options!;
+  const options = query.mock.calls.at(-1)![0].options!;
   const waiting = options.canUseTool!(
     'Read',
     {},

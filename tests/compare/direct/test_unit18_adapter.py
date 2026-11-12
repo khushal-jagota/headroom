@@ -7,7 +7,6 @@ manager, real Claude executable, provider session, or HTTP/browser host is used.
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
 import json
 import os
 import re
@@ -15,6 +14,7 @@ import shutil
 import sqlite3
 import subprocess
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -22,6 +22,7 @@ from unittest.mock import patch
 import anyio
 import pytest
 
+from planner.conversation import worker_unit
 from planner.conversation.api import delivery_fate_json
 from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChildFactory,
@@ -40,7 +41,6 @@ from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
-from planner.conversation import worker_unit
 from planner.core.db import connect, create_schema
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -292,6 +292,7 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
             )
         )
         plain = await send("plain")
+        assert plain == {"fate": "started"}, plain
         await ended(1)
         subscription.close()
         async for item in subscription:
@@ -712,8 +713,10 @@ def launch_arguments(
         assert launch["node_executable"] == result["node_executable"]
         if language == "python":
             assert delegated == [executable, *expected]
+        elif launch["environment"]["PLAN_ACTOR"] == "worker":
+            assert delegated == [result["node_path_executable"], executable, *expected]
         else:
-            assert delegated == [result["node_executable"], executable, *expected]
+            assert delegated == ["node", executable, *expected]
         if launch["environment"]["PLAN_ACTOR"] == "worker":
             wrapped = launch["wrapped_argv"]
             assert launch["launch_argv"] == wrapped
@@ -843,8 +846,9 @@ def test_unit18_adapter_real_core_parity(
         text=True,
         capture_output=True,
         timeout=90,
-        check=True,
+        check=False,
     )
+    assert completed.returncode == 0, completed.stderr
     typescript = cast(dict[str, Any], json.loads(completed.stdout))
     expected = comparison(python, "python")
     actual = comparison(typescript, "typescript")
@@ -982,7 +986,8 @@ def test_unit18_adapter_real_core_parity(
             if row["kind"] == "token_usage"
         )
         counted = json.loads(plain_usage["payload"])
-        assert counted["input_tokens"] is None and counted["output_tokens"] == 5
+        # The core omits absent counts from the stored event payload.
+        assert "input_tokens" not in counted and counted["output_tokens"] == 5
         crash_checkpoint = next(
             item for item in result["checkpoints"] if item["name"] == "process-exit7"
         )
@@ -1051,7 +1056,9 @@ def test_unit18_adapter_real_core_parity(
                 {
                     "python_common_values": python_arguments,
                     "typescript_common_values": typescript_arguments,
-                    "raw_arrays": "Retained in unit18-adapter-real-core.json under each launch record",
+                    "raw_arrays": (
+                        "Retained in unit18-adapter-real-core.json under each launch record"
+                    ),
                     "containment": containment,
                 },
                 indent=2,

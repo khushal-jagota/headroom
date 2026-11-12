@@ -2,10 +2,37 @@
 import childProcess from 'node:child_process';
 import type { SpawnOptions } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
-import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  accessSync,
+  appendFileSync,
+  constants,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { resolve } from 'node:path';
 import type { Part2Spec } from './part2_parity.ts';
 
+export function selected_node_executable(): string {
+  for (const directory of (process.env.PATH ?? '').split(':')) {
+    const candidate = resolve(directory || '.', 'node');
+    try {
+      accessSync(candidate, constants.X_OK);
+    } catch {
+      continue;
+    }
+    if (realpathSync(candidate) !== realpathSync(process.execPath)) {
+      throw new Error('The scripted SDK node prefix must resolve to this evaluator runtime');
+    }
+    return candidate;
+  }
+  throw new Error('The scripted SDK requires node on its isolated PATH');
+}
+
 export async function install_owned_launch_boundary(spec: Part2Spec): Promise<() => void> {
+  const nodePath = selected_node_executable();
   const original = {
     spawn: childProcess.spawn,
     spawnSync: childProcess.spawnSync,
@@ -31,8 +58,12 @@ export async function install_owned_launch_boundary(spec: Part2Spec): Promise<()
     }
     const script =
       delegated[0] === spec.executable ||
-      (delegated[0] === process.execPath && delegated[1] === spec.executable);
+      ((delegated[0] === 'node' ||
+        delegated[0] === nodePath ||
+        delegated[0] === process.execPath) &&
+        delegated[1] === spec.executable);
     if (!script) denied();
+    if (delegated[0] !== spec.executable && options?.env?.PATH !== process.env.PATH) denied();
     const probe = delegated.includes('--version') || delegated.includes('-v');
     if (!probe)
       writeFileSync(
@@ -46,7 +77,7 @@ export async function install_owned_launch_boundary(spec: Part2Spec): Promise<()
         }),
       );
     // This call can receive only the exact owned script, never systemd-run/systemctl.
-    return original.spawn(delegated[0], delegated.slice(1), options);
+    return original.spawn(delegated[0], delegated.slice(1), options ?? {});
   };
   Object.assign(childProcess, {
     spawn,

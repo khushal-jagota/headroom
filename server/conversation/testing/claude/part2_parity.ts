@@ -8,7 +8,7 @@ import { ConversationStartRequest, ConversationRoleMaterials } from '../../contr
 import { AgentMessageDeltaFrame, UserInputAnswer } from '../../events.ts';
 import { text_message_content } from '../../message_content.ts';
 import { delivery_fate_json } from '../../http.ts';
-import { install_owned_launch_boundary } from './part2_containment.ts';
+import { install_owned_launch_boundary, selected_node_executable } from './part2_containment.ts';
 
 export interface Part2Spec {
   database: string;
@@ -127,6 +127,8 @@ export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
       }),
     );
     const plain = await send('plain');
+    if (plain.fate !== 'started')
+      throw new Error(`The plain SDK turn did not start: ${JSON.stringify(plain)}`);
     await ended(1);
     await capture('plain', [plain]);
     const steerBase = await send('steer-base');
@@ -297,6 +299,7 @@ export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
   return {
     checkpoints,
     node_executable: process.execPath,
+    node_path_executable: selected_node_executable(),
     server_environment_before: serverEnvironmentBefore,
     server_environment_after: { ...process.env },
     plain_live_text: plainLiveText,
