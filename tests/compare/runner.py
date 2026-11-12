@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from tests.support.server_fixtures import _start_server, _stop_server
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
@@ -47,6 +49,51 @@ HEADERS = (
     "accept-ranges",
     "content-range",
 )
+
+
+# Deliberately extensible by reviewed code, never by a request list. Values stay
+# synthetic even when the matching production configuration names are used.
+HOST_ENVIRONMENT_PATTERNS = {
+    "PLAN_TRUSTED_INGRESS_PROVIDER": r"tailscale",
+    "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": r"[A-Za-z0-9._+-]+@[a-z0-9.-]+\.invalid",
+    "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN": r"https://[a-z0-9-]+(?:\.[a-z0-9-]+)*\.invalid",
+    "PLAN_APNS_KEY_ID": r"TEST[A-Z0-9]+",
+    "PLAN_APNS_TEAM_ID": r"TEST[A-Z0-9]+",
+    "PLAN_APNS_BUNDLE_IDS": r"invalid(?:\.[A-Za-z0-9-]+)+(?:,invalid(?:\.[A-Za-z0-9-]+)+)*",
+}
+_APNS_METADATA_NAMES = frozenset({
+    "PLAN_APNS_KEY_ID", "PLAN_APNS_TEAM_ID", "PLAN_APNS_BUNDLE_IDS",
+})
+
+
+def comparison_host_environment(raw: Any, root: Path) -> dict[str, str]:
+    """Validate list configuration before any host starts. Paths are runner-owned."""
+    if not isinstance(raw, dict):
+        raise ValueError("host_environment must be an object")
+    environment: dict[str, str] = {}
+    for name, value in raw.items():
+        pattern = HOST_ENVIRONMENT_PATTERNS.get(name)
+        if pattern is None:
+            raise ValueError(f"unsupported comparison host environment name: {name}")
+        if not isinstance(value, str) or re.fullmatch(pattern, value) is None:
+            raise ValueError(f"comparison host environment value is not synthetic: {name}")
+        environment[name] = value
+    apns_names = _APNS_METADATA_NAMES.intersection(environment)
+    if apns_names and apns_names != _APNS_METADATA_NAMES:
+        raise ValueError("comparison APNs configuration requires all three metadata names")
+    if apns_names:
+        # The list cannot select a key path. This key belongs only to this run.
+        root.mkdir(parents=True, exist_ok=True)
+        key_path = root / "comparison-apns-key.p8"
+        with key_path.open("xb") as key_file:
+            key_path.chmod(0o600)
+            key_file.write(ec.generate_private_key(ec.SECP256R1()).private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            ))
+        environment["PLAN_APNS_KEY_PATH"] = str(key_path.resolve())
+    return environment
 
 
 class Normalizer:
@@ -339,6 +386,10 @@ def run_list(
 ) -> dict[str, Any]:
     started = time.monotonic()
     spec = json.loads(list_path.read_text())
+    seed_environment = comparison_host_environment(spec.get("host_environment", {}), root)
+    host_environment = dict(seed_environment)
+    if spec.get("conversation_system") == "in_memory":
+        host_environment["PLAN_COMPARE_CONVERSATION_SYSTEM"] = "in_memory"
     rule_path = list_path.parent.parent / "rules" / list_path.name
     rules = json.loads(rule_path.read_text())
     rules["derived_tables"] = {**SHARED_DERIVED_TABLES, **rules.get("derived_tables", {})}
@@ -354,7 +405,7 @@ def run_list(
     if spec.get("seed_requests"):
         seed_server = _start_server(
             root / "seed-source", seed_db=lambda target: backup_database(seed, target),
-            server_module="tests.compare.host",
+            server_module="tests.compare.host", trusted_ingress_env=seed_environment,
         )
         try:
             with httpx.Client(timeout=30) as client:
@@ -390,11 +441,6 @@ def run_list(
                         dirs_exist_ok=True,
                     )
 
-            host_environment = (
-                {"PLAN_COMPARE_CONVERSATION_SYSTEM": "in_memory"}
-                if spec.get("conversation_system") == "in_memory"
-                else {}
-            )
             servers.append(
                 _start_server(
                     root / name,

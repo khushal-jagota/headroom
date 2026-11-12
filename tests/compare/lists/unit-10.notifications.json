@@ -1,0 +1,585 @@
+{
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/notifications/",
+    "src/planner/stalls/"
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Notification Manager",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "manager": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Notification Ticket",
+        "worker_type": "coding",
+        "ceiling": "needs_brief",
+        "ceiling_holder": {
+          "kind": "owner",
+          "id": "owner"
+        }
+      },
+      "capture": {
+        "ticket": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Seed ticket notification facts"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "unit10-seed-ticket"
+      },
+      "capture": {
+        "ticket_conversation": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/signals/${ticket_conversation}/message",
+      "status": 200,
+      "json": {
+        "text": "Unread ticket message",
+        "label": "Ticket",
+        "kind": "ticket",
+        "id": "${ticket}"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/signals/${ticket_conversation}/questions",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/managers/${manager}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Seed manager notification facts"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "unit10-seed-manager"
+      },
+      "capture": {
+        "manager_conversation": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/signals/${manager_conversation}/message",
+      "status": 200,
+      "json": {
+        "text": "Unread manager message",
+        "label": "Manager",
+        "kind": "manager",
+        "id": "${manager}"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/signals/${manager_conversation}/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "turn_ended",
+            "ending": "failed"
+          }
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/chief/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Seed chief notification facts"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "unit10-seed-chief"
+      },
+      "capture": {
+        "chief_conversation": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/signals/${chief_conversation}/message",
+      "status": 200,
+      "json": {
+        "text": "Unread chief message",
+        "label": "Chief",
+        "kind": "chief",
+        "id": "chief"
+      }
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/notifications/settings",
+      "status": 200,
+      "area": "notifications",
+      "capture": {
+        "initial_settings": ""
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/notifications/preferences/tickets/awaiting_reply",
+      "status": 200,
+      "area": "notifications",
+      "json": {
+        "enabled": false
+      },
+      "capture": {
+        "suppressed_settings": ""
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/notifications/preferences/panels/stall_alarm",
+      "status": 200,
+      "area": "notifications",
+      "json": {
+        "enabled": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/notifications/preferences/managers/assigned",
+      "status": 404,
+      "area": "notifications",
+      "json": {
+        "enabled": true
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/notifications/subscriptions",
+      "status": 200,
+      "area": "notifications",
+      "json": {
+        "endpoint": "https://push.comparison.invalid/unit10/web",
+        "keys": {
+          "p256dh": "synthetic-public-key",
+          "auth": "synthetic-auth-secret"
+        }
+      },
+      "capture": {
+        "subscription": "subscription_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/notifications/subscriptions",
+      "status": 200,
+      "area": "notifications",
+      "json": {
+        "endpoint": "https://push.comparison.invalid/unit10/web",
+        "keys": {
+          "p256dh": "updated-synthetic-key",
+          "auth": "updated-synthetic-auth"
+        }
+      },
+      "capture": {
+        "updated_subscription": "subscription_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/notifications/subscriptions",
+      "status": 400,
+      "area": "notifications",
+      "json": {
+        "endpoint": "http://push.comparison.invalid/unit10/refused",
+        "keys": {
+          "p256dh": "synthetic-public-key",
+          "auth": "synthetic-auth-secret"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/notifications/subscriptions",
+      "status": 400,
+      "area": "notifications",
+      "json": {
+        "endpoint": "https:push.comparison.invalid/unit10/refused",
+        "keys": {
+          "p256dh": "synthetic-public-key",
+          "auth": "synthetic-auth-secret"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/notifications/subscriptions",
+      "status": 400,
+      "area": "notifications",
+      "json": {
+        "endpoint": "https://@push.comparison.invalid/unit10/refused",
+        "keys": {
+          "p256dh": "synthetic-public-key",
+          "auth": "synthetic-auth-secret"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/propose",
+      "status": 200,
+      "area": "notification-source",
+      "json": {
+        "body": "Notification approval proof"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/notifications/apns/devices",
+      "status": 200,
+      "area": "notifications",
+      "json": {
+        "device_token": "0011aaff",
+        "bundle_id": "invalid.panels.ios",
+        "environment": "development"
+      },
+      "headers": {
+        "Tailscale-User-Login": "owner@comparison.invalid"
+      },
+      "capture": {
+        "registered_device": ""
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/notifications/apns/devices",
+      "status": 200,
+      "area": "notifications",
+      "json": {
+        "device_token": "0011aaff",
+        "bundle_id": "invalid.panels.ios",
+        "environment": "development"
+      },
+      "headers": {
+        "Tailscale-User-Login": "owner@comparison.invalid"
+      },
+      "capture": {
+        "reregistered_device": ""
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/poll/notifications",
+      "status": 200,
+      "area": "notification-pass",
+      "capture": {
+        "first_pass": ""
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/poll/notifications",
+      "status": 200,
+      "area": "notification-pass",
+      "capture": {
+        "unchanged_pass": ""
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/notifications/preferences/tickets/awaiting_reply",
+      "status": 200,
+      "area": "notifications",
+      "json": {
+        "enabled": true
+      },
+      "capture": {
+        "restored_settings": ""
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/poll/notifications",
+      "status": 200,
+      "area": "notification-pass",
+      "capture": {
+        "suppressed_edge_stays_decided": ""
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/notifications/subscriptions",
+      "status": 200,
+      "area": "notifications",
+      "json": {
+        "endpoint": "https://push.comparison.invalid/unit10/transient",
+        "keys": {
+          "p256dh": "transient-public-key",
+          "auth": "transient-auth-secret"
+        }
+      },
+      "capture": {
+        "transient_subscription": "subscription_id"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/notifications/subscriptions/${transient_subscription}",
+      "status": 200,
+      "area": "notifications",
+      "capture": {
+        "removed_subscription": ""
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/notifications/subscriptions/${transient_subscription}",
+      "status": 200,
+      "area": "notifications",
+      "capture": {
+        "absent_subscription": ""
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/notifications/subscriptions",
+      "status": 200,
+      "area": "notifications",
+      "json": {
+        "endpoint": "https://push.comparison.invalid/unit10/transient",
+        "keys": {
+          "p256dh": "transient-public-key",
+          "auth": "transient-auth-secret"
+        }
+      },
+      "capture": {
+        "reregistered_subscription": "subscription_id"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/notifications/subscriptions/${reregistered_subscription}",
+      "status": 200,
+      "area": "notifications"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/notifications/apns/devices",
+      "status": 200,
+      "area": "notifications",
+      "json": {
+        "device_token": "0011aaff",
+        "bundle_id": "invalid.panels.ios",
+        "environment": "production"
+      },
+      "headers": {
+        "Tailscale-User-Login": "owner@comparison.invalid"
+      },
+      "capture": {
+        "registered_production_device": ""
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/notifications/apns/devices",
+      "status": 200,
+      "area": "notifications",
+      "json": {
+        "device_token": "0011aaff",
+        "bundle_id": "invalid.panels.ios",
+        "environment": "production"
+      },
+      "headers": {
+        "Tailscale-User-Login": "owner@comparison.invalid"
+      },
+      "capture": {
+        "revoked_production_device": ""
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/notifications/apns/devices",
+      "status": 200,
+      "area": "notifications",
+      "json": {
+        "device_token": "0011aaff",
+        "bundle_id": "invalid.panels.ios",
+        "environment": "production"
+      },
+      "headers": {
+        "Tailscale-User-Login": "owner@comparison.invalid"
+      },
+      "capture": {
+        "absent_production_device": ""
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/notifications/apns/devices",
+      "status": 400,
+      "area": "notifications",
+      "json": {
+        "device_token": "0011aaff",
+        "bundle_id": "invalid.panels.ios",
+        "environment": "development"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/notifications/apns/devices",
+      "status": 400,
+      "area": "notifications",
+      "json": {
+        "device_token": "0011aaff",
+        "bundle_id": "invalid.panels.ios",
+        "environment": "development"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/notifications/apns/devices",
+      "status": 400,
+      "area": "notifications",
+      "json": {
+        "device_token": "0011aaff",
+        "bundle_id": "invalid.panels.ios",
+        "environment": "development"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/notifications/apns/devices",
+      "status": 400,
+      "area": "notifications",
+      "json": {
+        "device_token": "0011aaff",
+        "bundle_id": "invalid.panels.ios",
+        "environment": "development"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/notifications/apns/devices",
+      "status": 400,
+      "area": "notifications",
+      "json": {
+        "device_token": "0011aaff",
+        "bundle_id": "invalid.panels.ios",
+        "environment": "development"
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/notifications/apns/devices",
+      "status": 400,
+      "area": "notifications",
+      "json": {
+        "device_token": "0011aaff",
+        "bundle_id": "invalid.panels.ios",
+        "environment": "development"
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/notifications/apns/devices",
+      "status": 400,
+      "area": "notifications",
+      "json": {
+        "device_token": "0011aaff",
+        "bundle_id": "invalid.panels.ios",
+        "environment": "development"
+      },
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/notifications/apns/devices",
+      "status": 400,
+      "area": "notifications",
+      "json": {
+        "device_token": "0011aaff",
+        "bundle_id": "invalid.panels.ios",
+        "environment": "development"
+      },
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    }
+  ],
+  "probes": [
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D"
+  ],
+  "report_captures": [
+    "initial_settings",
+    "suppressed_settings",
+    "restored_settings",
+    "first_pass",
+    "unchanged_pass",
+    "suppressed_edge_stays_decided",
+    "removed_subscription",
+    "absent_subscription",
+    "registered_device",
+    "reregistered_device",
+    "registered_production_device",
+    "revoked_production_device",
+    "absent_production_device"
+  ],
+  "host_environment": {
+    "PLAN_TRUSTED_INGRESS_PROVIDER": "tailscale",
+    "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": "owner@comparison.invalid",
+    "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN": "https://panels.comparison.invalid",
+    "PLAN_APNS_KEY_ID": "TESTKEY10",
+    "PLAN_APNS_TEAM_ID": "TESTTEAM10",
+    "PLAN_APNS_BUNDLE_IDS": "invalid.panels.ios"
+  },
+  "candidate": "typescript"
+}
