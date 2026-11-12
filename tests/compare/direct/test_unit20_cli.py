@@ -79,10 +79,17 @@ def test_unit20_guard_refuses_before_subprocess_or_network(
                 True,
                 tmp_path / "input",
             )
-    for step in ({**_step(["--help"]), "environment": {"PLAN_SERVER_URL": "http://127.0.0.1:8767"}},
-                 {**_step(["--help"]), "argv": "panels --help"}):
+    for step in (
+        {
+            **_step(["--help"]),
+            "environment": {"PLAN_SERVER_URL": "http://127.0.0.1:8767"},
+        },
+        {**_step(["--help"]), "argv": "panels --help"},
+    ):
         with pytest.raises(ValueError):
-            driver.run_cli(driver.CliHost(handle, tmp_path), step, False, tmp_path / "input")
+            driver.run_cli(
+                driver.CliHost(handle, tmp_path), step, False, tmp_path / "input"
+            )
     monkeypatch.setattr(driver, "LIVE_URL", handle.base)
     with pytest.raises(ValueError, match="live or foreign"):
         driver.run_cli(
@@ -105,6 +112,11 @@ def test_unit20_parser_smoke_and_startup(
         for argv, code in (
             (["--help"], 0),
             (["project", "--help"], 0),
+            (["manager", "set", "--help"], 0),
+            (["stalls", "--help=no"], 2),
+            (["project", "list", "--help=no"], 2),
+            (["project", "list", "--limit"], 2),
+            (["project", "list", "--json=no"], 2),
             (["project", "create"], 2),
             (["project", "list", "--limit", "bad"], 2),
             (["project", "list", "--unknown-option"], 2),
@@ -197,6 +209,7 @@ def test_unit20_same_python_host_populated_sequence(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
     """Fresh database/files and process state make both CLI write sequences comparable."""
+    started = time.perf_counter()
     spec = json.loads(LIST.read_text())
     rules = json.loads((LIST.parent.parent / "rules" / LIST.name).read_text())
     root = tmp_path / "same-host"
@@ -259,7 +272,15 @@ def test_unit20_same_python_host_populated_sequence(
             finally:
                 _stop_server(handle)
         proof[mode] = answers
-        _report(request, "unit20-same-host", proof)
+        _report(
+            request,
+            "unit20-same-host",
+            {
+                "seconds": time.perf_counter() - started,
+                "modes_completed": list(proof),
+                "comparisons": proof,
+            },
+        )
         assert answers[0] == answers[1], proof
 
 
@@ -267,6 +288,7 @@ def test_unit20_every_help_and_group_usage(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
     """Fresh Click metadata selects cases; no frozen help snapshot hides Python drift."""
+    started = time.perf_counter()
     import click
 
     from planner.cli.main import main
@@ -281,8 +303,14 @@ def test_unit20_every_help_and_group_usage(
 
     visit(main, [])
     cases = [(path + ["--help"], 0) for path, _ in declarations]
-    cases.extend(((["projec"], 2), (["project", "shwo"], 2),
-                  (["manager", "delte"], 2), (["unit20-no-such-command"], 2)))
+    cases.extend(
+        (
+            (["projec"], 2),
+            (["project", "shwo"], 2),
+            (["manager", "delte"], 2),
+            (["unit20-no-such-command"], 2),
+        )
+    )
     for path, command in declarations:
         if not isinstance(command, click.Group):
             continue
@@ -345,6 +373,14 @@ def test_unit20_every_help_and_group_usage(
             assert driver.comparable(answers[0]) == driver.comparable(
                 answers[1]
             ), evidence[-1]
-        _report(request, "unit20-help-and-usage", evidence)
+        _report(
+            request,
+            "unit20-help-and-usage",
+            {
+                "seconds": time.perf_counter() - started,
+                "cases": len(cases),
+                "comparisons": evidence,
+            },
+        )
     finally:
         _stop_server(handle)

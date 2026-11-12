@@ -54,7 +54,7 @@ export function human_error(
   command: CommandDefinition,
   message: string,
   exit_code = 1,
-  options: { recovery?: string; no_route?: string } = {},
+  options: { recovery?: string | null; no_route?: string } = {},
 ): CommandResult {
   const line = message
     .split(/\r?\n/)
@@ -65,8 +65,10 @@ export function human_error(
   if (options.no_route !== undefined) stderr += options.no_route + '\n';
   else {
     const shape =
-      options.recovery ??
-      (/(?:^|[`'" ])panels(?:[ `]|$)/.test(line) ? undefined : command_shape(command));
+      options.recovery === null
+        ? undefined
+        : (options.recovery ??
+          (/(?:^|[`'" ])panels(?:[ `]|$)/.test(line) ? undefined : command_shape(command)));
     if (shape !== undefined) stderr += 'Use: ' + shape + '\n';
   }
   return { exit_code, stdout: '', stderr };
@@ -74,7 +76,7 @@ export function human_error(
 export function usage_error(
   command: CommandDefinition,
   message: string,
-  options: { recovery?: string; no_route?: string } = {},
+  options: { recovery?: string | null; no_route?: string } = {},
 ): never {
   throw new CliFailure(human_error(command, message, 2, options));
 }

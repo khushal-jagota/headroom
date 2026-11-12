@@ -1,4 +1,5 @@
 {
+  "candidate": "typescript",
   "source_roots": [
     "src/planner/cli/",
     "src/planner/projects/",
@@ -125,6 +126,23 @@
     },
     {
       "method": "POST",
+      "path": "/api/tickets/${blocker}/restart-worker",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "blocker_conversation": "conversation_id"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversation/conversations/${blocker_conversation}/events?after=0&limit=2",
+      "status": 200,
+      "capture": {
+        "history_first_event": "events.0"
+      }
+    },
+    {
+      "method": "POST",
       "path": "/api/tickets/${blocker}/backlog",
       "status": 200,
       "json": {}
@@ -166,7 +184,10 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Lists real project rows and bounded pagination."
+      "proof": "Lists real project rows and bounded pagination.",
+      "assert_text": [
+        "CLI proof"
+      ]
     },
     {
       "kind": "cli",
@@ -181,7 +202,10 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Shows the populated summary through the record projection."
+      "proof": "Shows the populated summary through the record projection.",
+      "assert_text": [
+        "quotes"
+      ]
     },
     {
       "kind": "cli",
@@ -228,7 +252,10 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Lists the saved Worker type with the shipped types."
+      "proof": "Lists the saved Worker type with the shipped types.",
+      "assert_text": [
+        "unit20_cli"
+      ]
     },
     {
       "kind": "cli",
@@ -290,7 +317,10 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Lists populated managed skill rows."
+      "proof": "Lists populated managed skill rows.",
+      "assert_text": [
+        "unit20-cli-notes"
+      ]
     },
     {
       "kind": "cli",
@@ -353,7 +383,19 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Reports the deliberately stale command reference from populated skill text."
+      "proof": "Reports the deliberately stale command reference from populated skill text.",
+      "assert_text": [
+        "missing-unit20-command"
+      ]
+    },
+    {
+      "area": "cli-fixture-clock",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:01"
+      }
     },
     {
       "kind": "cli",
@@ -376,6 +418,15 @@
       },
       "capture_text": {
         "created_manager": "(si_[a-z0-9]{8})"
+      }
+    },
+    {
+      "area": "cli-fixture-clock",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:02"
       }
     },
     {
@@ -430,7 +481,10 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Lists the real report artifact from the workspace tree."
+      "proof": "Lists the real report artifact from the workspace tree.",
+      "assert_text": [
+        "report.txt"
+      ]
     },
     {
       "kind": "cli",
@@ -479,7 +533,10 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Lists populated Manager summaries and settled state."
+      "proof": "Lists populated Manager summaries and settled state.",
+      "assert_text": [
+        "CLI populated Manager"
+      ]
     },
     {
       "kind": "cli",
@@ -494,7 +551,10 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Shows populated authored parts and the Manager header."
+      "proof": "Shows populated authored parts and the Manager header.",
+      "assert_text": [
+        "CLI populated Manager"
+      ]
     },
     {
       "kind": "cli",
@@ -524,7 +584,10 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Shows the populated Manager purpose, recap and child Ticket after artifact deletion."
+      "proof": "Shows the populated Manager purpose, recap and child Ticket after artifact deletion.",
+      "assert_text": [
+        "CLI populated Manager"
+      ]
     },
     {
       "kind": "cli",
@@ -623,6 +686,15 @@
       "proof": "Deletes the empty Manager created by the CLI."
     },
     {
+      "area": "cli-fixture-clock",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:03"
+      }
+    },
+    {
       "kind": "cli",
       "area": "cli-ticket",
       "argv": [
@@ -663,7 +735,10 @@
       "assert_json": {
         "page.match_count": 4,
         "page.return_count": 4
-      }
+      },
+      "assert_text": [
+        "CLI ticket"
+      ]
     },
     {
       "kind": "cli",
@@ -678,7 +753,10 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Shows a real Ticket and its complete workflow declaration."
+      "proof": "Shows a real Ticket and its complete workflow declaration.",
+      "assert_text": [
+        "CLI ticket"
+      ]
     },
     {
       "kind": "cli",
@@ -877,6 +955,23 @@
     },
     {
       "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "restart-worker",
+        "${ticket}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Starts the real scripted Worker conversation before help delivery and history reads.",
+      "assert_json": {
+        "started": true
+      }
+    },
+    {
+      "kind": "cli",
       "area": "cli-worker",
       "argv": [
         "worker",
@@ -898,13 +993,15 @@
         "ticket",
         "request-help",
         "${ticket}",
-        "--owner"
+        "--manager",
+        "${manager}"
       ],
       "identity": {
-        "actor": "owner"
+        "actor": "worker",
+        "ticket_id": "${ticket}"
       },
       "exit_code": 0,
-      "proof": "Uses the actor-neutral help route for a real Ticket.",
+      "proof": "Routes the actor-neutral help command as the assigned Worker to the named Manager.",
       "stdin": "Synthetic owner request for input.\n"
     },
     {
@@ -912,22 +1009,10 @@
       "area": "cli-ticket",
       "argv": [
         "ticket",
-        "restart-worker",
-        "${ticket}"
-      ],
-      "identity": {
-        "actor": "owner"
-      },
-      "exit_code": 0,
-      "proof": "Runs recovery on the existing Ticket and prints its exact outcome."
-    },
-    {
-      "kind": "cli",
-      "area": "cli-ticket",
-      "argv": [
-        "ticket",
         "history",
-        "${ticket}",
+        "${blocker}",
+        "--after",
+        "0",
         "--limit",
         "2"
       ],
@@ -935,7 +1020,10 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Reads the current synthetic Worker conversation event page."
+      "proof": "Reads populated event history from the real seeded blocker conversation, with exact copied timestamps.",
+      "assert_json": {
+        "events.0": "${history_first_event}"
+      }
     },
     {
       "kind": "cli",

@@ -22,6 +22,18 @@ const quote = (value: string, slash = false): string => {
   );
   return slash ? encoded.replace(/%2F/g, '/') : encoded;
 };
+/** Keep the Python CLI's field order for these explicit read projections. */
+function fields_before(body: Body, names: string[], anchor: string): Body {
+  if (!Object.hasOwn(body, anchor)) return body;
+  const entries: [string, any][] = [];
+  for (const [name, value] of Object.entries(body)) {
+    if (name === anchor) {
+      for (const field of names) if (Object.hasOwn(body, field)) entries.push([field, body[field]]);
+    }
+    if (!names.includes(name)) entries.push([name, value]);
+  }
+  return Object.fromEntries(entries);
+}
 const drop_none = (body: Body): Body =>
   Object.fromEntries(
     Object.entries(body).filter(([, value]) => value !== null && value !== undefined),
@@ -348,7 +360,15 @@ async function manager_show(inv: Invocation): Promise<CommandResult> {
 }
 async function manager_workspace(inv: Invocation): Promise<CommandResult> {
   const id = inv.values.item_id;
-  const data = await send(inv, 'GET', `/api/managers/${id}/workspace`);
+  const response = await send(inv, 'GET', `/api/managers/${id}/workspace`);
+  const data = fields_before(
+    response,
+    ['conversation_history', 'conversation_signal'],
+    'awaiting_reply',
+  );
+  for (const ticket of data.tickets) {
+    ticket.ceiling_holder = fields_before(ticket.ceiling_holder, ['id'], 'kind');
+  }
   const goals = data.goals;
   let visible: string;
   if (goals.length === 1) {
@@ -632,6 +652,9 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       const page = await send(inv, 'GET', `/api/conversation/conversations/${cid}/events`, {
         params,
       });
+      for (const event of page.events) {
+        event.payload = parse_numeric_json(json(event.payload, { sort_keys: true }));
+      }
       data = { ticket_id: tid, conversation_id: cid, events: page.events, has_more: page.has_more };
       return emit(data, as_json, `${tid} ${data.events.length} history events`);
     }
@@ -732,6 +755,9 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
         offset: v.offset,
       });
       data = await send(inv, 'GET', '/api/managers', { params: { detail: 'summary', ...params } });
+      data.managers = data.managers.map((row: Body) =>
+        fields_before(row, ['conversation_signal'], 'awaiting_reply'),
+      );
       return emit(
         data,
         as_json,

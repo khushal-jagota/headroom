@@ -6,7 +6,9 @@ function wrap(text: string, width: number, initial = '', subsequent = initial): 
     text
       .trim()
       .replace(/[\t\n\r\f\v]/g, ' ')
-      .match(/\s+|[^\s]+/g) ?? [];
+      .match(
+        /[\t\n\v\f\r ]+|(?<=[\p{L}\p{N}_!"'&.,?])-{2,}(?=[\p{L}\p{N}_])|[^\t\n\v\f\r ]+?(?:-(?:(?<=[\p{L}_]{2}-)|(?<=[\p{L}_]-[\p{L}_]-))(?=[\p{L}_]-?[\p{L}_])|(?=[\t\n\v\f\r ]|$)|(?<=[\p{L}\p{N}_!"'&.,?])(?=-{2,}[\p{L}\p{N}_]))/gu,
+      ) ?? [];
   const lines: string[] = [];
   let line = initial;
   let whitespace = '';
@@ -120,13 +122,17 @@ export function render_help(
   program = 'panels',
 ): string {
   const path = command_path(command).replace(/^panels/, program);
-  const usage = [
-    path,
+  const args = [
     '[OPTIONS]',
     ...command.parameters.filter((p) => p.argument).map((p) => p.metavar),
     ...(command.group ? ['COMMAND [ARGS]...'] : []),
   ].join(' ');
-  const lines = [wrap(usage, 78, 'Usage: ', '       ')];
+  const usagePrefix = 'Usage: ' + path + ' ';
+  const usage =
+    78 >= usagePrefix.length + 20
+      ? wrap(args, 78, usagePrefix, ' '.repeat(usagePrefix.length))
+      : usagePrefix + '\n' + wrap(args, 78, ' '.repeat(11));
+  const lines = [usage];
   if (command.help.trim()) lines.push('', paragraphs(command.help));
   const options: [string, string][] = command.parameters
     .filter((p) => !p.argument && !p.hidden)

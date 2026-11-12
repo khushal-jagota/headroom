@@ -87,6 +87,8 @@ export function parse(argv: string[], commands: readonly CommandDefinition[]): P
       });
     const token = tokens.shift()!;
     if (token === '--help') return { command, values: {}, help: true };
+    if (token.startsWith('--help='))
+      usage_error(command, "Option '--help' does not take a value.", { recovery: null });
     if (token.startsWith('-'))
       usage_error(
         command,
@@ -144,6 +146,8 @@ export function parse(argv: string[], commands: readonly CommandDefinition[]): P
       continue;
     }
     if (!positionalOnly && token === '--help') return { command, values, help: true };
+    if (!positionalOnly && token.startsWith('--help='))
+      usage_error(command, "Option '--help' does not take a value.", { recovery: null });
     if (!positionalOnly && token.startsWith('-') && token !== '-') {
       const equal = token.indexOf('=');
       const name = equal < 0 ? token : token.slice(0, equal);
@@ -155,11 +159,13 @@ export function parse(argv: string[], commands: readonly CommandDefinition[]): P
           recovery: command_shape(command),
         });
       if (p.flag) {
-        if (equal >= 0) usage_error(command, `Option '${name}' does not take a value.`);
+        if (equal >= 0)
+          usage_error(command, `Option '${name}' does not take a value.`, { recovery: null });
         values[p.name] = !p.secondary_opts?.includes(name);
       } else {
         const raw = equal >= 0 ? token.slice(equal + 1) : tokens.shift();
-        if (raw === undefined) usage_error(command, `Option '${name}' requires an argument.`);
+        if (raw === undefined)
+          usage_error(command, `Option '${name}' requires an argument.`, { recovery: null });
         const value = converted(command, p, raw);
         if (p.multiple) values[p.name].push(value);
         else values[p.name] = value;
