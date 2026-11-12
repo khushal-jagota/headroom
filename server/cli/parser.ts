@@ -1,3 +1,4 @@
+import { python_string_repr } from '../core/python_repr.ts';
 import { close_matches } from './suggestions.ts';
 import { statSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -30,13 +31,13 @@ function integer_text(text: string): bigint | null {
 function converted(command: CommandDefinition, p: Parameter, text: string): unknown {
   let message: string | undefined;
   if (p.type === 'choice' && !p.choices?.includes(text))
-    message = `'${text}' is not one of ${(p.choices ?? []).map((s) => `'${s}'`).join(', ')}.`;
+    message = `${python_string_repr(text)} is not${p.choices?.length === 1 ? '' : ' one of'} ${(p.choices ?? []).map(python_string_repr).join(', ')}.`;
   if (p.type === 'integer' || p.type === 'float') {
     const value = p.type === 'integer' ? integer_text(text) : Number(text);
     const valid =
       value !== null && (p.type === 'integer' || (text.trim() !== '' && !Number.isNaN(value)));
     const type_name = p.type + (p.min !== undefined || p.max !== undefined ? ' range' : '');
-    if (!valid) message = `'${text}' is not a valid ${type_name}.`;
+    if (!valid) message = `${python_string_repr(text)} is not a valid ${type_name}.`;
     else if ((p.min !== undefined && value < p.min) || (p.max !== undefined && value > p.max)) {
       const range =
         p.min !== undefined && p.max !== undefined
@@ -52,23 +53,41 @@ function converted(command: CommandDefinition, p: Parameter, text: string): unkn
     } else return value;
   }
   if (p.type === 'boolean') {
-    if (['1', 'true', 't', 'yes', 'y', 'on'].includes(text.toLowerCase())) return true;
-    if (['0', 'false', 'f', 'no', 'n', 'off'].includes(text.toLowerCase())) return false;
-    message = `'${text}' is not a valid boolean.`;
+    if (
+      ['1', 'true', 't', 'yes', 'y', 'on'].includes(
+        text
+          .replace(/^[\p{White_Space}\u001c-\u001f]+|[\p{White_Space}\u001c-\u001f]+$/gu, '')
+          .toLowerCase(),
+      )
+    )
+      return true;
+    if (
+      ['0', 'false', 'f', 'no', 'n', 'off'].includes(
+        text
+          .replace(/^[\p{White_Space}\u001c-\u001f]+|[\p{White_Space}\u001c-\u001f]+$/gu, '')
+          .toLowerCase(),
+      )
+    )
+      return false;
+    message = `${python_string_repr(text)} is not a valid boolean. Recognized values: 0, 1, f, false, n, no, off, on, t, true, y, yes`;
   }
   if (p.type === 'path') {
+    const name =
+      p.file_okay && !p.dir_okay ? 'File' : p.dir_okay && !p.file_okay ? 'Directory' : 'Path';
     let stat;
     try {
       stat = statSync(resolve(text));
     } catch {
-      if (p.exists) message = `Path '${text}' does not exist.`;
+      if (p.exists) message = `${name} ${python_string_repr(text)} does not exist.`;
     }
-    if (stat?.isFile() && p.file_okay === false) message = `Directory '${text}' is a file.`;
-    if (stat?.isDirectory() && p.dir_okay === false) message = `File '${text}' is a directory.`;
+    if (stat?.isFile() && p.file_okay === false)
+      message = `${name} ${python_string_repr(text)} is a file.`;
+    if (stat?.isDirectory() && p.dir_okay === false)
+      message = `${name} ${python_string_repr(text)} is a directory.`;
   }
   if (message) {
     const label = p.argument ? p.metavar : (p.opts ?? []).join(' / ');
-    usage_error(command, `Invalid value for '${label}': ${message}`);
+    usage_error(command, `Invalid value for ${python_string_repr(label ?? '')}: ${message}`);
   }
   return text;
 }
@@ -87,6 +106,7 @@ export function parse(argv: string[], commands: readonly CommandDefinition[]): P
   let command = commands.find((c) => !c.path.length)!;
   let tokens = [...argv];
   while (command.group) {
+    if (tokens[0] === '--') tokens.shift();
     if (!tokens.length)
       usage_error(command, `${command_path(command)} needs a command.`, {
         no_route: 'No panels call can be named until an action is selected.',
@@ -95,10 +115,10 @@ export function parse(argv: string[], commands: readonly CommandDefinition[]): P
     if (token === '--help') return { command, values: {}, help: true };
     if (token.startsWith('--help='))
       usage_error(command, "Option '--help' does not take a value.", { recovery: null });
-    if (token.startsWith('-'))
+    if (token.startsWith('-') && token !== '-')
       usage_error(
         command,
-        `"${token.split('=')[0]}" is not an option for ${command_path(command)}.`,
+        `"${token.startsWith('--') ? token.split('=')[0] : token.slice(0, 2)}" is not an option for ${command_path(command)}.`,
         { no_route: 'No panels call can be named until an action is selected.' },
       );
     const child = commands.find((c) => c.path.join(' ') === [...command.path, token].join(' '));
@@ -156,7 +176,11 @@ export function parse(argv: string[], commands: readonly CommandDefinition[]): P
       usage_error(command, "Option '--help' does not take a value.", { recovery: null });
     if (!positionalOnly && token.startsWith('-') && token !== '-') {
       const equal = token.indexOf('=');
-      const name = equal < 0 ? token : token.slice(0, equal);
+      const name = token.startsWith('--')
+        ? equal < 0
+          ? token
+          : token.slice(0, equal)
+        : token.slice(0, 2);
       const p = command.parameters.find(
         (p) => p.opts?.includes(name) || p.secondary_opts?.includes(name),
       );

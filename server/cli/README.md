@@ -20,6 +20,11 @@ no inherited `PLAN_*` variables, then format the generated TypeScript. The ordin
 proof instead invokes both CLIs through the guarded synthetic-host driver. It
 compares fresh Python output, not frozen help snapshots.
 
+The exhaustive help check invokes Click in-process and batches the TypeScript
+parser in one test-only process. The duplicate same-host replay uses Click
+in-process too. Startup checks compare these Python results with real executable
+results. The shared populated list still runs both executables for every step.
+
 The shared comparison runner accepts `kind: cli` steps with argv, stdin, fixture
 files, explicit synthetic identity, expected exit code, and captures. It accepts
 neither a shell command nor an environment map. The driver checks the fixture's

@@ -87,9 +87,7 @@ def test_unit20_guard_refuses_before_subprocess_or_network(
         {**_step(["--help"]), "argv": "panels --help"},
     ):
         with pytest.raises(ValueError):
-            driver.run_cli(
-                driver.CliHost(handle, tmp_path), step, False, tmp_path / "input"
-            )
+            driver.run_cli(driver.CliHost(handle, tmp_path), step, False, tmp_path / "input")
     monkeypatch.setattr(driver, "LIVE_URL", handle.base)
     with pytest.raises(ValueError, match="live or foreign"):
         driver.run_cli(
@@ -100,9 +98,7 @@ def test_unit20_guard_refuses_before_subprocess_or_network(
         )
 
 
-def test_unit20_parser_smoke_and_startup(
-    tmp_path: Path, request: pytest.FixtureRequest
-) -> None:
+def test_unit20_parser_smoke_and_startup(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """One existing host proves real subprocess output and startup without browser cost."""
     started = time.perf_counter()
     handle = _start_server(tmp_path / "host", server_module="tests.compare.host")
@@ -111,7 +107,7 @@ def test_unit20_parser_smoke_and_startup(
         host = driver.CliHost(handle, tmp_path)
         for argv, code in (
             (["--help"], 0),
-            (["project", "--help"], 0),
+            (["--", "project", "--help"], 0),
             (["manager", "set", "--help"], 0),
             (["stalls", "--help=no"], 2),
             (["project", "list", "--help=no"], 2),
@@ -120,7 +116,8 @@ def test_unit20_parser_smoke_and_startup(
             (["project", "create"], 2),
             (["goal", "schema"], 2),
             (["project", "list", "--limit", "bad"], 2),
-            (["project", "list", "--unknown-option"], 2),
+            (["project", "list", "--limit", "a'b"], 2),
+            (["project", "list", "-xy"], 2),
         ):
             answers = [
                 driver.run_cli(
@@ -133,9 +130,8 @@ def test_unit20_parser_smoke_and_startup(
                 for side in (0, 1)
             ]
             evidence["parser"].append({"argv": argv, "answers": answers})
-            assert driver.comparable(answers[0]) == driver.comparable(
-                answers[1]
-            ), evidence
+            assert driver.comparable(answers[0]) == driver.comparable(answers[1]), evidence
+        physical_python: dict[str, dict[str, Any]] = {}
         for argv in (["--help"], ["project", "list", "--limit", "1"]):
             label = " ".join(argv)
             evidence["timings"][label] = {}
@@ -154,6 +150,27 @@ def test_unit20_parser_smoke_and_startup(
                     "seconds": [answer["seconds"] for answer in answers],
                     "median_seconds": median(answer["seconds"] for answer in answers),
                 }
+                if side == 0:
+                    physical_python[label] = answers[0]
+        evidence["reference_crosschecks"] = []
+        for argv in (["--help"], ["project", "list", "--limit", "1"]):
+            library = driver.run_cli(
+                host,
+                _step(argv),
+                False,
+                tmp_path / "library-input",
+                "text",
+                python_in_process=True,
+            )
+            physical = physical_python[" ".join(argv)]
+            evidence["reference_crosschecks"].append(
+                {
+                    "argv": argv,
+                    "subprocess": physical,
+                    "library": library,
+                }
+            )
+            assert driver.comparable(library) == driver.comparable(physical)
         evidence["seconds"] = time.perf_counter() - started
         _report(request, "unit20-startup", evidence)
     finally:
@@ -181,6 +198,7 @@ def _replay(
                     candidate,
                     root / "client-input",
                     mode,
+                    python_in_process=not candidate,
                 )
                 driver.cli_capture(answer, resolved, saved, mode)
                 evidence.append(
@@ -217,9 +235,7 @@ def test_unit20_same_python_host_populated_sequence(
     handle = _start_server(root, server_module="tests.compare.host")
     captures: dict[str, Any] = {}
     try:
-        with httpx.Client(
-            trust_env=False, follow_redirects=False, timeout=30
-        ) as client:
+        with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
             for step in spec["seed_requests"]:
                 resolved = substitute(step, captures)
                 answer = client.request(
@@ -251,9 +267,7 @@ def test_unit20_same_python_host_populated_sequence(
             def restore(target: Path) -> None:
                 backup_database(snapshot, target)
                 for directory in seed_files.iterdir():
-                    shutil.copytree(
-                        directory, target.parent / directory.name, dirs_exist_ok=True
-                    )
+                    shutil.copytree(directory, target.parent / directory.name, dirs_exist_ok=True)
 
             handle = _start_server(
                 root, port=port, server_module="tests.compare.host", seed_db=restore
@@ -279,15 +293,14 @@ def test_unit20_same_python_host_populated_sequence(
             {
                 "seconds": time.perf_counter() - started,
                 "modes_completed": list(proof),
+                "strategy": {"python": "CliRunner.invoke", "typescript": "subprocess"},
                 "comparisons": proof,
             },
         )
         assert answers[0] == answers[1], proof
 
 
-def test_unit20_every_help_and_group_usage(
-    tmp_path: Path, request: pytest.FixtureRequest
-) -> None:
+def test_unit20_every_help_and_group_usage(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """Fresh Click metadata selects cases; no frozen help snapshot hides Python drift."""
     started = time.perf_counter()
     import click
@@ -309,7 +322,7 @@ def test_unit20_every_help_and_group_usage(
             (["projec"], 2),
             (["project", "shwo"], 2),
             (["manager", "delte"], 2),
-            (["unit20-no-such-command"], 2),
+            (["-"], 2),
         )
     )
     for path, command in declarations:
@@ -318,16 +331,10 @@ def test_unit20_every_help_and_group_usage(
         descendants = [
             (p, c)
             for p, c in declarations
-            if p[: len(path)] == path
-            and len(p) > len(path)
-            and not isinstance(c, click.Group)
+            if p[: len(path)] == path and len(p) > len(path) and not isinstance(c, click.Group)
         ]
         missing = next(
-            (
-                p
-                for p, c in descendants
-                if any(parameter.required for parameter in c.params)
-            ),
+            (p for p, c in descendants if any(parameter.required for parameter in c.params)),
             path,
         )
         # Every group has a child with --json. A value for a boolean option is a
@@ -353,26 +360,16 @@ def test_unit20_every_help_and_group_usage(
             ),
             None,
         )
-        cases.extend(
-            ((missing, 2), (path + ["--unknown-unit20-option"], 2), (typed or bad, 2))
-        )
+        cases.extend(((missing, 2), (path + ["--unknown-unit20-option"], 2), (typed or bad, 2)))
     handle = _start_server(tmp_path / "host", server_module="tests.compare.host")
     evidence = []
     differences = []
     try:
-        for argv, code in cases:
-            answers = [
-                driver.run_cli(
-                    driver.CliHost(handle, tmp_path),
-                    _step(argv, code),
-                    bool(side),
-                    tmp_path / f"client-{side}",
-                    "text",
-                )
-                for side in (0, 1)
-            ]
+        batch = driver.help_batch(driver.CliHost(handle, tmp_path), cases, tmp_path / "help-input")
+        for (argv, _), left, right in zip(cases, batch["python"], batch["typescript"], strict=True):
+            answers = [left, right]
             evidence.append({"argv": argv, "answers": answers})
-            if driver.comparable(answers[0]) != driver.comparable(answers[1]):
+            if driver.comparable(left) != driver.comparable(right):
                 differences.append(evidence[-1])
         _report(
             request,
@@ -380,6 +377,8 @@ def test_unit20_every_help_and_group_usage(
             {
                 "seconds": time.perf_counter() - started,
                 "cases": len(cases),
+                "strategy": batch["strategy"],
+                "batch_seconds": batch["seconds"],
                 "comparisons": evidence,
                 "differences": differences,
             },
