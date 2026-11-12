@@ -205,6 +205,8 @@ export function createDatabase(
       let result: T;
       let changed = false;
       try {
+        if (writeOptions?.busyTimeoutMs !== undefined)
+          writer.pragma(`busy_timeout = ${writeOptions.busyTimeoutMs}`);
         writer.exec('BEGIN IMMEDIATE');
         const before = writer.prepare('SELECT total_changes() AS count').get() as { count: number };
         result = scope(writer, true, work);
@@ -216,6 +218,8 @@ export function createDatabase(
         if (writer.inTransaction) writer.exec('ROLLBACK');
         throw error;
       } finally {
+        if (writeOptions?.busyTimeoutMs !== undefined)
+          writer.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
         writing = false;
       }
       if (changed && writeOptions?.changeSignal !== 'silent') {

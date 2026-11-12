@@ -1,0 +1,137 @@
+{
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/previews/"
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Preview caller",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "manager": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Preview caller",
+        "worker_type": "coding",
+        "brief": "Synthetic preview caller"
+      },
+      "capture": {
+        "ticket": "id"
+      }
+    }
+  ],
+  "requests": [
+    {
+      "area": "previews",
+      "method": "GET",
+      "path": "/api/previews",
+      "status": 400
+    },
+    {
+      "area": "previews",
+      "method": "GET",
+      "path": "/api/previews",
+      "status": 400,
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "area": "previews",
+      "method": "GET",
+      "path": "/api/previews",
+      "status": 400,
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "area": "previews",
+      "method": "GET",
+      "path": "/api/previews",
+      "status": 200,
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "previews",
+      "method": "DELETE",
+      "path": "/api/previews",
+      "status": 200,
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "previews",
+      "method": "POST",
+      "path": "/api/previews/register",
+      "status": 400,
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      },
+      "json": {}
+    },
+    {
+      "area": "previews",
+      "method": "POST",
+      "path": "/api/previews/register",
+      "status": 400,
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      },
+      "json": {
+        "port": "4000"
+      }
+    },
+    {
+      "area": "previews",
+      "method": "POST",
+      "path": "/api/previews/prepare",
+      "status": 503,
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "previews",
+      "method": "POST",
+      "path": "/api/previews/register",
+      "status": 503,
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      },
+      "json": {
+        "port": 4000
+      }
+    },
+    {
+      "area": "previews",
+      "method": "GET",
+      "path": "/dev/tickets/${ticket}/absent/",
+      "status": 400
+    }
+  ],
+  "candidate": "typescript",
+  "probes": [
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22blocked%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D"
+  ]
+}

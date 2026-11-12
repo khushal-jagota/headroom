@@ -8,6 +8,7 @@ import type { AdmissionDependencies } from './intake.ts';
 import type { ConversationSystem } from '../../conversation/contracts.ts';
 import type { SignalNavigationAuthority } from '../../conversation/publication/authority.ts';
 export interface AreaServices {
+  changes?: { subscribe(callback: () => void): () => void };
   conversationSystem?: ConversationSystem;
   signalAuthority?: SignalNavigationAuthority;
   database: Database;
