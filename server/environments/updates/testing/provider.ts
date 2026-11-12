@@ -18,7 +18,7 @@ interface Reply {
 }
 interface Case {
   name: string;
-  action: 'available' | 'publication' | 'download';
+  action: 'available' | 'available_order' | 'publication' | 'download';
   run_id: number;
   artifact_id: number;
   responses: Record<string, Reply>;
@@ -122,7 +122,15 @@ export async function probe_update_provider(request: Request) {
     try {
       let result: unknown;
       if (item.action === 'available') result = await provider.available();
-      else if (item.action === 'publication') result = await provider.publication(item.run_id);
+      else if (item.action === 'available_order') {
+        const considered: unknown[] = [];
+        provider.publication = async (run_id) => {
+          considered.push(run_id);
+          return null;
+        };
+        await provider.available();
+        result = { considered };
+      } else if (item.action === 'publication') result = await provider.publication(item.run_id);
       else {
         const destination = join(request.root, `download-${index}.zip`);
         await provider.download_artifact(item.artifact_id, destination);

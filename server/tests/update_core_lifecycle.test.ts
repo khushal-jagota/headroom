@@ -192,6 +192,9 @@ async function owned_server(installer?: Partial<InstallerOperations>) {
             },
           },
           installer: {
+            require_exact_schema_frontier: () => {
+              throw new Error('Node frontier admission is unavailable in this v1 fixture');
+            },
             schema_change_pending: () => false,
             create_backup: async () => {
               throw new Error('no actual backup');
