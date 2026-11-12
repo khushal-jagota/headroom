@@ -588,6 +588,9 @@ def retire_workspace(
     token = uuid4().hex
     target = retired_root / f"{state.ticket_id}-{identity.workspace_id}-{token}"
     record_path = retired_root / f"{token}.json"
+    from planner.conversation.worker_scratch import snapshot_ticket_scratch
+
+    scratch_names = snapshot_ticket_scratch(state.ticket_id)
     # Write ahead: a crash after rename still leaves an exact owned target to retry.
     _write_json(
         record_path,
@@ -599,6 +602,7 @@ def retire_workspace(
             "workspace_id": identity.workspace_id,
             "ended_at": state.ended_at,
             "deleted": state.deleted,
+            "scratch_names": scratch_names,
         },
     )
     path.rename(target)
@@ -612,6 +616,17 @@ def _remove_retired(path: Path) -> str | None:
             result = _git(checkout, "worktree", "repair", str(checkout))
             if result.returncode:
                 return f"cannot repair retired worktree: {result.stderr.strip()}"
+    from planner.conversation.worker_scratch import prune_ticket_scratch
+
+    token = path.name.rsplit("-", 1)[-1]
+    record = json.loads((path.parent / f"{token}.json").read_text())
+    if record["target"] != str(path):
+        return "retirement target differs from its record"
+    names = record.get("scratch_names", [])
+    if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
+        return "invalid retirement scratch snapshot"
+    if not prune_ticket_scratch(record["ticket_id"], names):
+        return "Worker scratch path is not an owned real directory"
     return cleanup_ticket_folder(path)
 
 

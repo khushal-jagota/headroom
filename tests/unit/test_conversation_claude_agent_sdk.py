@@ -596,6 +596,7 @@ def test_prequery_connect_failure_cannot_skip_retained_transport_exit_proof(
         with pytest.raises(RuntimeError, match="post-spawn pre-query failure"):
             await observed.connect()
         assert observed._client._query is None
+        assert closes == 0  # Non-Workers keep startup failure separate from disconnect.
         assert transport._process is cast(Process, process)
         with pytest.raises(RuntimeError, match="termination remains unconfirmed"):
             await observed.disconnect()

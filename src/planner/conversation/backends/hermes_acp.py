@@ -159,6 +159,7 @@ from planner.conversation.message_files import (
     ConversationMessageFiles,
     MessageFileMissing,
 )
+from planner.conversation.worker_scratch import WorkerScratch
 
 LOGGER = logging.getLogger("planner.conversation.backends.hermes_acp")
 
@@ -385,6 +386,7 @@ class HermesAcpBackendChild:
         self._sink = event_sink
         self._message_files = message_files
         self._processes = AsyncExitStack()
+        self._worker_scratch: WorkerScratch | None = None
         self._connection: ClientSideConnection | None = None
         self._session_id: str | None = None
         self._session_configuration_options: tuple[Any, ...] = ()
@@ -738,6 +740,8 @@ class HermesAcpBackendChild:
             with suppress(Exception):
                 await connection.close()
         await self._processes.aclose()
+        if self._worker_scratch is not None:
+            self._worker_scratch.close()
 
     # --- starting -----------------------------------------------------------------------
 
@@ -747,12 +751,18 @@ class HermesAcpBackendChild:
     ) -> ClientSideConnection:
         """Get the process up and speaking ACP, or say it would not start."""
         launch = self._launch
+        environment = _child_environment(launch, resolved_start)
+        role_identity = (dict(resolved_start.role_materials.identity_environment_variables)
+                    if resolved_start.role_materials else {})
+        if role_identity.get("PLAN_TICKET_ID"):
+            self._worker_scratch = WorkerScratch(environment)
+            environment = self._worker_scratch.environment
         try:
             reader, writer, process = await self._processes.enter_async_context(
                 spawn_stdio_transport(
                     launch.argv[0],
                     *launch.argv[1:],
-                    env=_child_environment(launch, resolved_start),
+                    env=environment,
                     cwd=resolved_start.workspace_folder,
                     limit=CHILD_OUTPUT_LINE_LIMIT_BYTES,
                 )
@@ -1455,6 +1465,8 @@ class HermesAcpBackendChild:
         would wait forever instead of being told it did not.
         """
         await process.wait()
+        if self._worker_scratch is not None:
+            self._worker_scratch.close()
         self._wire_broken = True
         self._give_up_on_unsent_permission_answers("the backend process ended")
 

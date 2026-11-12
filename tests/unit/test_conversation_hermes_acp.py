@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 from tempfile import mkdtemp
 
@@ -37,6 +38,7 @@ from tests.support.conversation_system_under_test import (
     open_conversation_system_under_test,
 )
 
+from planner.conversation import worker_scratch
 from planner.conversation.backends.contracts import (
     AgentMessageCompleted,
     BackendEventValue,
@@ -59,6 +61,7 @@ from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ConversationAccess,
     ConversationBackendKey,
+    ConversationRoleMaterials,
     ConversationStartRequest,
     PromptDeliveryMode,
     PromptDeliveryQueued,
@@ -605,6 +608,9 @@ def test_absent_hermes_interpreter_preserves_spawn_failure_without_session_or_pr
     from collections.abc import AsyncIterator
     from contextlib import asynccontextmanager
 
+    scratch_root = tmp_path / "runs"
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: scratch_root)
+    scratch_paths: list[Path] = []
     missing_interpreter = tmp_path / "missing-hermes-python"
     failure = FileNotFoundError(2, "No such file or directory", str(missing_interpreter))
     launches: list[str] = []
@@ -616,6 +622,13 @@ def test_absent_hermes_interpreter_preserves_spawn_failure_without_session_or_pr
         **kwargs: object,
     ) -> AsyncIterator[object]:
         launches.append(executable)
+        assert args == ("-m", "hermes.acp")
+        environment = kwargs["env"]
+        assert isinstance(environment, dict)
+        scratch = Path(environment["TMPDIR"])
+        assert scratch.parent == scratch_root and scratch.is_dir()
+        assert environment["TMP"] == environment["TEMP"] == str(scratch)
+        scratch_paths.append(scratch)
         raise failure
         yield  # pragma: no cover - an async context manager that refuses entry
 
@@ -625,7 +638,9 @@ def test_absent_hermes_interpreter_preserves_spawn_failure_without_session_or_pr
     )
 
     async def exercise() -> None:
-        start = _resolved_start(tmp_path)
+        start = replace(_resolved_start(tmp_path), role_materials=ConversationRoleMaterials(
+            role_text="Worker", identity_environment_variables=(("PLAN_TICKET_ID", "ticket"),),
+        ))
         sink = _RecordingSink()
         child = HermesAcpBackendChild(
             launch=AcpChildLaunch((str(missing_interpreter), "-m", "hermes.acp")),
@@ -638,6 +653,7 @@ def test_absent_hermes_interpreter_preserves_spawn_failure_without_session_or_pr
         assert str(refusal.value) == str(failure)
         assert refusal.value.__cause__ is failure
         assert launches == [str(missing_interpreter)]
+        assert len(scratch_paths) == 1 and not scratch_paths[0].exists()
         assert sink.vendor_session_cursor is None
         assert sink.agent_contents == []
         assert sink.endings == []

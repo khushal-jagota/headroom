@@ -23,6 +23,13 @@ from planner.ticket_workspaces.filesystem import (
 from planner.tickets.data import create_ticket
 
 
+@pytest.fixture(autouse=True)
+def isolated_worker_scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from planner.conversation import worker_scratch
+
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
+
+
 def test_end_clock_survives_edits_reopen_and_deletion_without_expiring_live_files(
     tmp_db: Connection,
     tmp_path: Path,
@@ -47,6 +54,9 @@ def test_end_clock_survives_edits_reopen_and_deletion_without_expiring_live_file
     folder = root / ticket.id
     prepare_workspace(folder, None, ticket.id)
     (folder / "artifacts" / "document.md").write_text("document")
+    from planner.conversation.worker_scratch import WorkerScratch
+
+    scratch = WorkerScratch({"PLAN_TICKET_ID": ticket.id})
     unknown = root / "t_aaaaaaaa"
     unknown.mkdir()
     now = RETENTION_SECONDS + 400
@@ -60,6 +70,7 @@ def test_end_clock_survives_edits_reopen_and_deletion_without_expiring_live_file
     assert folder.exists()
     cleanup_local_workspaces(root, read_workspace_states(tmp_db), now)
     assert not folder.exists() and unknown.exists()
+    assert not scratch.directory.exists()
     assert (root.parent / "ticket-workspaces-cleanup.json").exists()
 
 
@@ -126,6 +137,11 @@ def test_retirement_detaches_exact_workspace_before_reopen(
         title_max_chars=200,
         worker_type="coding",
     )
+    from planner.conversation.worker_scratch import WorkerScratch
+
+    scratch = WorkerScratch({"PLAN_TICKET_ID": ticket.id})
+    suffix = "000000" if not scratch.directory.name.endswith("000000") else "111111"
+    fresh_scratch = scratch.directory.parent / f"{ticket.id}-{suffix}"
     root = ticket_files_root(database_path(tmp_db))
     folder = root / ticket.id
     prepare_workspace(folder, None, ticket.id)
@@ -179,13 +195,21 @@ def test_retirement_detaches_exact_workspace_before_reopen(
         prepare_workspace(folder, None, ticket.id)
         assert workspace_identity(folder) != previous_identity
         (folder / "artifacts" / "new.md").write_text("live workspace")
-        return remove(retired)
+        fresh_scratch.mkdir()
+        (fresh_scratch / "active").write_text("new backend")
+        return "simulate failed deletion after the old workspace detached"
 
     monkeypatch.setattr(filesystem, "_remove_retired", reopen_after_detach)
     refreshed_end = read_workspace_states(tmp_db)[ticket.id].ended_at
     assert refreshed_end is not None
     clean_for_database(database_path(tmp_db), refreshed_end + RETENTION_SECONDS)
     assert (folder / "artifacts" / "new.md").read_text() == "live workspace"
+    assert scratch.directory.exists() and fresh_scratch.exists()
+    monkeypatch.setattr(filesystem, "_remove_retired", remove)
+    clean_for_database(database_path(tmp_db), refreshed_end + RETENTION_SECONDS)
+    assert not scratch.directory.exists()
+    assert (fresh_scratch / "active").read_text() == "new backend"
+    assert not list((root.parent / ".ticket-retired").glob("*.json"))
     assert read_workspace_states(tmp_db)[ticket.id].ended_at is None
     # A stale native conversation cannot create provider work after its grant.
     with pytest.raises(sqlite3.IntegrityError, match="workspace is retired"):

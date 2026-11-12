@@ -50,6 +50,7 @@ from planner.conversation.backends.codex_app_server.login import (
 from planner.conversation.child_custody import process_identity
 from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.conversation.tool_shell_kill_priority import with_tool_shell_kill_priority
+from planner.conversation.worker_scratch import WorkerScratch
 from planner.conversation.worker_unit import WorkerUnit, WorkerUnitError
 
 LOGGER = logging.getLogger("planner.conversation.backends.codex_app_server")
@@ -180,6 +181,7 @@ class CodexAppServerClient:
         )
         self._process: asyncio.subprocess.Process | None = None
         self._worker_unit: WorkerUnit | None = None
+        self._worker_scratch: WorkerScratch | None = None
         self._end_reason: str | None = None
         self._request_ids = itertools.count(1)
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
@@ -212,6 +214,9 @@ class CodexAppServerClient:
                 "codex", argv[0], environment=environment, working_directory=working_directory
             )
             if worker_ticket_id:
+                environment = {**environment, "PLAN_TICKET_ID": worker_ticket_id}
+                self._worker_scratch = WorkerScratch(environment)
+                environment = self._worker_scratch.environment
                 self._worker_unit = await WorkerUnit.create(
                     {**environment, "PLAN_TICKET_ID": worker_ticket_id}, working_directory
                 )
@@ -229,6 +234,8 @@ class CodexAppServerClient:
             if self._worker_unit is not None:
                 await self._worker_unit.stop()
                 self._worker_unit = None
+            if self._worker_scratch is not None:
+                self._worker_scratch.close()
             if isinstance(would_not_spawn, (OSError, WorkerUnitError, BackendCliIncompatible)):
                 raise CodexChildWouldNotStart(str(would_not_spawn)) from would_not_spawn
             raise
@@ -272,6 +279,8 @@ class CodexAppServerClient:
         process = self._process
         self._process = None
         if process is None:
+            if self._worker_scratch is not None:
+                self._worker_scratch.close()
             return
         if process.stdin is not None:
             with suppress(Exception):
@@ -286,6 +295,8 @@ class CodexAppServerClient:
                     process.kill()
                 with suppress(Exception):
                     await process.wait()
+        if self._worker_scratch is not None:
+            self._worker_scratch.close()
 
     @property
     def end_reason(self) -> str | None:
@@ -586,6 +597,8 @@ class CodexAppServerClient:
                 self._end_reason = f"Worker stopped, but its unit cleanup failed: {cleanup_failed}"
             else:
                 self._worker_unit = None
+        if self._worker_unit is None and self._worker_scratch is not None:
+            self._worker_scratch.close()
         # The pipes reach EOF separately. Finish draining stderr before the adapter
         # classifies the turn that ended with the child.
         if self._standard_error_reader is not None:
