@@ -53,13 +53,14 @@ final class ServerReachabilityTests: XCTestCase {
         foreground()
         assertUnreachable()
         capture("unreachable-with-cached-review")
-        app.buttons["Try again"].tap()
-        XCTAssertTrue(app.buttons["Try again"].waitForExistence(timeout: 10))
+        // Host tests pin the 15/30/60-second retry deadlines. The real UI
+        // remains covered through that interval and recovers automatically.
+        try await Task.sleep(for: .seconds(110))
+        XCTAssertTrue(title.exists)
         try await state("online")
-        if app.buttons["Try again"].exists { app.buttons["Try again"].tap() }
-        XCTAssertTrue(proposal.waitForExistence(timeout: 20))
+        XCTAssertTrue(proposal.waitForExistence(timeout: 70))
         XCTAssertFalse(title.exists)
-        capture("recovered-after-retry")
+        capture("recovered-automatically-after-backoff")
 
         try await state("offline")
         foreground()

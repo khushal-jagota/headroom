@@ -133,7 +133,8 @@ class Stub:
 
 
 def main() -> int:
-    if "--locked" not in sys.argv:
+    server_only = "--server-only" in sys.argv
+    if not server_only and "--locked" not in sys.argv:
         return subprocess.call(
             [
                 "lockf",
@@ -152,15 +153,27 @@ def main() -> int:
     assert BUNDLE.startswith("app.panels.ios.pios-"), "Use a separate task bundle"
     output = Path(os.environ["PANELS_CONVERSATION_OUTPUT"]).resolve()
     output.mkdir(parents=True, exist_ok=True)
-    devices = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "--json"]))
-    assert any(
-        d["udid"] == DEVICE and d["name"] == LANE and d["state"] == "Booted"
-        for group in devices["devices"].values()
-        for d in group
-    ), f"{LANE} must already be booted"
-    original_appearance = subprocess.check_output(
-        ["xcrun", "simctl", "ui", DEVICE, "appearance"], text=True
-    ).strip()
+    if not server_only:
+        devices = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "--json"]))
+        assert any(
+            d["udid"] == DEVICE and d["name"] == LANE and d["state"] == "Booted"
+            for group in devices["devices"].values()
+            for d in group
+        ), f"{LANE} must already be booted"
+        original_appearance = subprocess.check_output(
+            ["xcrun", "simctl", "ui", DEVICE, "appearance"], text=True
+        ).strip()
+
+    def native_control_allowed() -> bool:
+        if not server_only:
+            return True
+        try:
+            return os.environ.get("PANELS_OWNED_UDID") == DEVICE and time.time() < float(
+                os.environ["PANELS_WORK_END"]
+            )
+        except (KeyError, ValueError):
+            return False
+
     stub = Stub(output)
     fixtures = ROOT / "ios/PanelsTests/Fixtures"
     ticket = json.loads((fixtures / "ticket-full.json").read_text())
@@ -289,7 +302,11 @@ def main() -> int:
                 )
                 return
             if path.startswith("/proof/start/"):
-                stub.start_clip(path.rsplit("/", 1)[-1])
+                if os.environ.get("PANELS_CONVERSATION_RECORD_CLIPS", "0" if server_only else "1") == "1":
+                    if not native_control_allowed():
+                        self.respond({"error": "An owned device and active turn are required"}, 409)
+                        return
+                    stub.start_clip(path.rsplit("/", 1)[-1])
                 self.respond({})
                 return
             if path == "/proof/stop":
@@ -328,6 +345,9 @@ def main() -> int:
                 self.respond({})
                 return
             if path in {"/proof/appearance/light", "/proof/appearance/dark"}:
+                if not native_control_allowed():
+                    self.respond({"error": "An owned device and active turn are required"}, 409)
+                    return
                 subprocess.run(
                     ["xcrun", "simctl", "ui", DEVICE, "appearance", path.rsplit("/", 1)[-1]],
                     check=True,
@@ -532,6 +552,17 @@ def main() -> int:
         "PANELS_LATEST_BASELINE", "0"
     )
     try:
+        if server_only:
+            # The caller owns build, test, device and deadline. Startup starts
+            # only the existing loopback fixture, without native preflight.
+            stopped = threading.Event()
+            signal.signal(signal.SIGTERM, lambda *_: stopped.set())
+            signal.signal(signal.SIGINT, lambda *_: stopped.set())
+            (output / "fixture-ready.json").write_text(
+                json.dumps({"PANELS_CONVERSATION_STUB_URL": url})
+            )
+            stopped.wait()
+            return 0
         return subprocess.call(
             [
                 "xcodebuild",
@@ -565,10 +596,12 @@ def main() -> int:
         )
     finally:
         stub.stop_clip()
-        subprocess.run(
-            ["xcrun", "simctl", "ui", DEVICE, "appearance", original_appearance], check=True
-        )
-        subprocess.run(["xcrun", "simctl", "terminate", DEVICE, BUNDLE], check=False)
+        if not server_only:
+            subprocess.run(
+                ["xcrun", "simctl", "ui", DEVICE, "appearance", original_appearance], check=True
+            )
+            subprocess.run(["xcrun", "simctl", "terminate", DEVICE, BUNDLE], check=False)
+        stub.offline = True
         server.shutdown()
         server.server_close()
 

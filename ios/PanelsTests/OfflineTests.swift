@@ -375,6 +375,52 @@ import XCTest
         XCTAssertEqual(try afterRelease.outgoing.work(server: "a", id: "unknown-tail")?.message?.conversationId, "chosen-new-start")
     }
 
+    func testPredecessorQueryMatchesReleaseRulesAcrossRetiredAndFailedRows() throws {
+        let container = try ModelContainer(for: Schema(versionedSchema: PhoneOutgoingSchema.self), configurations: [ModelConfiguration(isStoredInMemoryOnly: true)])
+        let context = ModelContext(container)
+        context.autosaveEnabled = false
+        let lane = "conversation:c"
+        func seed(_ id: String, server: String = "a", lane: String = "conversation:c", sequence: Int64, state: PendingWork.State = .waiting, conversation: String? = "c", scheduled: Bool = true) throws {
+            var work = pending(id, conversation: conversation)
+            work.state = state
+            let record = LocalRecord(key: LocalStore.key(server, "outbox", id), server: server, kind: "outbox", payload: try JSONEncoder().encode(work), updated: .now)
+            let metadata = OutgoingMetadata(record: record, work: work, sequence: sequence)
+            metadata.lane = lane
+            metadata.scheduled = scheduled
+            context.insert(record)
+            context.insert(metadata)
+        }
+        // Higher released, retired and foreign rows must not consume the fetch limit.
+        try seed("waiting", sequence: 1)
+        try seed("foreign-server", server: "b", sequence: 20)
+        try seed("sending", sequence: 3, state: .sending)
+        try seed("foreign-lane", lane: "conversation:other", sequence: 21, conversation: "other")
+        try seed("uncertain", sequence: 5, state: .uncertain)
+        try seed("failed-unknown", sequence: 7, state: .failed, conversation: nil)
+        try seed("sent", sequence: 8, state: .sent)
+        try seed("changed", sequence: 9, state: .changed)
+        try seed("queued", sequence: 10, state: .serverQueued)
+        try seed("failed-known", sequence: 11, state: .failed)
+        try seed("retired", sequence: 12, scheduled: false)
+        try context.save()
+
+        // Exercise the exact descriptor used by insert, including its result bound.
+        for (server, selectedLane, expected) in [
+            ("a", lane, "failed-unknown"), ("a", "conversation:other", "foreign-lane"),
+            ("b", lane, "foreign-server"), ("missing", lane, nil)
+        ] as [(String, String, String?)] {
+            let query = OutgoingStore.predecessorQuery(server: server, lane: selectedLane)
+            XCTAssertEqual(query.fetchLimit, 1)
+            let rows = try context.fetch(query)
+            XCTAssertLessThanOrEqual(rows.count, 1)
+            XCTAssertEqual(rows.first?.identity, expected)
+        }
+        let outgoing = OutgoingStore(context: context, changed: { _ in }, failed: { _ in })
+        try outgoing.enqueue(pending("next", conversation: "c"), server: "a")
+        XCTAssertEqual(try outgoing.summary(server: "a", id: "next")?.predecessorID, "failed-unknown")
+        XCTAssertEqual(try outgoing.summary(server: "a", id: "next")?.holdReason, "destinationUnresolved")
+    }
+
     func testKnownRefusalReleasesLaneButUnresolvedCreationNeedsExplicitDestination() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

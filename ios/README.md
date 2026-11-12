@@ -759,6 +759,14 @@ remain separate work. The compatibility checks use Foundation host tests, in-mem
 HTTP stubs, backend checks and one unsigned generic iOS compile. They do not prove
 physical-device behavior or a live Mac/VPS round trip from the iPhone.
 
+The offline and conversation fixture scripts accept `--server-only` for a caller-owned
+verification turn. This mode starts only the loopback fixture and writes
+`fixture-ready.json` under its output directory. The caller supplies the test runner
+environment, assigned device, build products and deadline. Fixture videos default off.
+Optional native proof endpoints require the owned device and an active deadline.
+Send TERM to the recorded fixture process to close its listeners. This mode permits
+one build for multiple fixture cases without another simulator or build host.
+
 ## Goals
 
 Active goals sit inside their Chief or Manager holder's card in Workspace. A tap

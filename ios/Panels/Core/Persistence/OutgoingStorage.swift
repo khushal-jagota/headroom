@@ -240,6 +240,18 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
     private func laneRows(_ server: String, _ lane: String) throws -> [OutgoingMetadata] {
         try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.server == server && $0.lane == lane }, sortBy: [SortDescriptor(\.sequence)]))
     }
+    /// Keep filtering inside the limited fetch so retained lane history is not materialized.
+    static func predecessorQuery(server: String, lane: String) -> FetchDescriptor<OutgoingMetadata> {
+        let releasedStates = ["sent", "changed", "serverQueued"]
+        let predicate = #Predicate<OutgoingMetadata> {
+            ($0.server == server && $0.lane == lane) &&
+            ($0.scheduled && !releasedStates.contains($0.state)) &&
+            ($0.state != "failed" || $0.conversationID == nil)
+        }
+        var query = FetchDescriptor<OutgoingMetadata>(predicate: predicate, sortBy: [SortDescriptor(\.sequence, order: .reverse)])
+        query.fetchLimit = 1
+        return query
+    }
     private func nextSequence(_ server: String) throws -> Int64 {
         var query = FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.server == server }, sortBy: [SortDescriptor(\.sequence, order: .reverse)])
         query.fetchLimit = 1
@@ -375,7 +387,7 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
             query.fetchLimit = 1
             if let previous = try context.fetch(query).first, !["sent", "changed"].contains(previous.state) { metadata.lane = previous.lane }
         }
-        let predecessor = try laneRows(server, metadata.lane).last(where: { $0.scheduled && !Self.releasesLane($0) })
+        let predecessor = try context.fetch(Self.predecessorQuery(server: server, lane: metadata.lane)).first
         metadata.predecessorID = predecessor?.identity
         if (predecessor?.state == "failed" && predecessor?.conversationID == nil) || predecessor?.holdReason == "destinationUnresolved" {
             metadata.holdReason = "destinationUnresolved"

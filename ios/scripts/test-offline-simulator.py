@@ -35,16 +35,18 @@ REVIEW_MESSAGES = os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE
 
 
 def main() -> int:
-    if "--locked" not in sys.argv:
+    server_only = "--server-only" in sys.argv
+    if not server_only and "--locked" not in sys.argv:
         return subprocess.call(["lockf", LANE_LOCK, sys.executable, __file__, "--locked"])
     output = Path(os.environ["PANELS_OFFLINE_OUTPUT"]).resolve()
     output.mkdir(parents=True, exist_ok=True)
-    devices = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "--json"]))
-    assert any(
-        d["udid"] == DEVICE and d["state"] == "Booted"
-        for group in devices["devices"].values()
-        for d in group
-    )
+    if not server_only:
+        devices = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "--json"]))
+        assert any(
+            d["udid"] == DEVICE and d["state"] == "Booted"
+            for group in devices["devices"].values()
+            for d in group
+        )
     base_ticket = json.loads((ROOT / "ios/PanelsTests/Fixtures/ticket-full.json").read_text())
     tickets = {}
     for index in range(1, 4):
@@ -253,12 +255,14 @@ def main() -> int:
         latest_observation=dict(value=400),
     )
     manual_receipts: dict[str, Any] = {}
+    decision_receipts: dict[str, dict[str, Any]] = {}
     state: dict[str, Any] = {
         "offline": False,
         "slow": not REVIEW_COMPLETION and not GOALS_SMOKE and not REACHABILITY_SMOKE,
         "writes": [],
         "messages": [],
         "recording": None,
+        "goal_patch_attempts": 0,
     }
     state.update(
         read_through=1,
@@ -272,6 +276,16 @@ def main() -> int:
         tickets = {"offline-1": tickets["offline-1"]}
         tickets["offline-1"]["pending_proposal"]["created_at"] = 2
     lock = threading.RLock()
+
+    def native_control_allowed() -> bool:
+        if not server_only:
+            return True
+        try:
+            return os.environ.get("PANELS_OWNED_UDID") == DEVICE and time.time() < float(
+                os.environ["PANELS_WORK_END"]
+            )
+        except (KeyError, ValueError):
+            return False
 
     def stop_clip() -> None:
         recording = state["recording"]
@@ -567,10 +581,20 @@ def main() -> int:
                     state["slow"] = False
                 elif name == "fast":
                     state["slow"] = False
+                elif name == "goal-conflict" and GOALS_SMOKE:
+                    with lock:
+                        goals["words"]["revision"] += 1
+                        goals["words"]["why"] = "Newer server explanation."
+                elif name == "goal-state" and GOALS_SMOKE:
+                    self.respond(dict(goal=goals["words"], attempts=state["goal_patch_attempts"]))
+                    return
                 elif name == "writes":
                     self.respond(state["writes"])
                     return
-                elif name.startswith("start/"):
+                elif name.startswith("start/") and os.environ.get("PANELS_OFFLINE_RECORD_CLIPS", "0" if server_only else "1") == "1":
+                    if not native_control_allowed():
+                        self.respond({"error": "An owned device and active turn are required"}, 409)
+                        return
                     stop_clip()
                     state["recording"] = subprocess.Popen(
                         [
@@ -763,6 +787,9 @@ def main() -> int:
                 value = {"state": "idle"}
             elif path.endswith("/manifest"):
                 value = manifest
+            elif "/decision-operations/" in path:
+                self.respond({"receipt_contract": 1, "receipt": decision_receipts.get(path)})
+                return
             elif path.endswith("/view/receipts"):
                 ids = json.loads(query["message_ids"][0])
                 value = {
@@ -802,6 +829,7 @@ def main() -> int:
                 return
             with lock:
                 goal = goals[path.split("/")[3]]
+                state["goal_patch_attempts"] += 1
                 if body.pop("expected_revision") != goal["revision"]:
                     self.respond(dict(error=dict(message="This goal changed.")), 409)
                     return
@@ -874,6 +902,31 @@ def main() -> int:
                         state["messages"].append(body)
                         state["writes"].append("message")
                     value = {"conversation_id": "stub", "fate": "started"}
+                elif "/decision-operations/" in path:
+                    if path in decision_receipts:
+                        self.respond({"receipt_contract": 1, "receipt": decision_receipts[path]})
+                        return
+                    ticket = tickets[path.split("/")[3]]
+                    proposal = ticket["pending_proposal"]
+                    refused = not proposal or body["expected_proposal_revision"] != proposal["revision"] or body["field"] != proposal["field"]
+                    receipt = dict(
+                        operation_id=path.rsplit("/", 1)[-1], ticket_id=ticket["id"],
+                        decision=body["decision"], field=body["field"],
+                        expected_proposal_revision=body["expected_proposal_revision"],
+                        outcome="refused" if refused else "applied", created_at=time.time(),
+                        transition=None if refused else dict(
+                            stage=ticket["stage"] if body["decision"] == "send_back" else "done",
+                            ceiling=body.get("next_ceiling", ticket["ceiling"]),
+                            ceiling_holder=body.get("next_holder", ticket["ceiling_holder"]),
+                            ticket_status="ready", pending_proposal_revision=body["expected_proposal_revision"] + 1,
+                        ),
+                        error=dict(code="validation", message="This changed, review again", detail={}) if refused else None,
+                    )
+                    decision_receipts[path] = receipt
+                    if not refused:
+                        ticket["pending_proposal"] = None
+                        state["writes"].append("approve" if body["decision"] == "approve" else "sendBack")
+                    value = {"receipt_contract": 1, "receipt": receipt}
                 elif "/accept/" in path:
                     ticket = tickets[path.split("/")[3]]
                     if (
@@ -939,6 +992,18 @@ def main() -> int:
         threading.Thread(target=control.serve_forever, daemon=True).start()
         env["TEST_RUNNER_PANELS_REACHABILITY_CONTROL_URL"] = f"http://127.0.0.1:{control.server_port}"
     try:
+        if server_only:
+            # The caller owns build, test, device and deadline. This mode starts
+            # only the existing loopback fixture, with no native preflight.
+            ready = {"PANELS_OFFLINE_STUB_URL": url}
+            if control:
+                ready["PANELS_REACHABILITY_CONTROL_URL"] = f"http://127.0.0.1:{control.server_port}"
+            stopped = threading.Event()
+            signal.signal(signal.SIGTERM, lambda *_: stopped.set())
+            signal.signal(signal.SIGINT, lambda *_: stopped.set())
+            (output / "fixture-ready.json").write_text(json.dumps(ready))
+            stopped.wait()
+            return 0
         return subprocess.call(
             [
                 "xcodebuild",
@@ -986,7 +1051,9 @@ def main() -> int:
         )
     finally:
         stop_clip()
-        subprocess.run(["xcrun", "simctl", "terminate", DEVICE, BUNDLE], check=False)
+        if not server_only:
+            subprocess.run(["xcrun", "simctl", "terminate", DEVICE, BUNDLE], check=False)
+        state["offline"] = True
         server.shutdown()
         server.server_close()
         if control:
