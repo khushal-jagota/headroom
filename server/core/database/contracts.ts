@@ -25,6 +25,14 @@ export interface ReadAccess {
   close(): void;
 }
 export interface Database extends WriteDoor, ReadAccess {}
+/** Cleanup ownership can cross an opening failure without exposing a connection. */
+export interface DatabaseCloseHandle {
+  close(): void;
+}
+export interface DurableSidecarOpenFailure extends Error {
+  database_cleanup: DatabaseCloseHandle;
+  cleanup_error: unknown;
+}
 
 /** Build-time DDL only. Generated identities and domain rows never enter this artifact. */
 export interface ApplicationSchemaSeed {
@@ -41,6 +49,13 @@ export interface AuxiliaryDatabaseOptions {
   initialize(tx: TransactionSql): void;
   maxBytes: number;
   busyTimeoutMs?: number;
+}
+/** A frozen durable format. Existing version zero is incompatible, not a fresh store. */
+export interface DurableSidecarDatabaseOptions {
+  schemaVersion: number;
+  initialize(tx: TransactionSql): void;
+  foreignKeys: boolean;
+  refusalMessage: string;
 }
 export interface AuxiliaryTransactionSql extends TransactionSql {
   incrementalVacuum(pages: number): void;
