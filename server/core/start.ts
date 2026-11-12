@@ -25,6 +25,7 @@ import {
   create_backend_runtime,
   unavailable_backend_providers,
 } from '../conversation/snapshot/composition.ts';
+import { run_automatic_recovery } from '../conversation/deploy_interruptions/coordinator.ts';
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 
 import {
@@ -98,6 +99,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   let ownership_current = true;
   let signalRevoked = false;
   let closing: Promise<void> | undefined;
+  let recovery: Promise<void> | undefined;
   const requireOwnership = () => {
     if (!ownership_current) throw new Error('the conversation runtime is shut down');
   };
@@ -132,6 +134,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       // Loop cancellation shares one deadline. Core and record settlement have
       // no deadline contract, so retain ownership through their final writes.
       await attempt(() => core?.shutdown());
+      await attempt(() => recovery);
       await attempt(() => backendServices?.codex_sign_in?.shutdown());
       await attempt(() => areas.closeRecord());
       await attempt(() => app?.close());
@@ -254,6 +257,15 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     });
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       process.once(signal, onSignal);
+    }
+    if (core) {
+      const current = core;
+      recovery = current.workspace_admission.operation(async (admitted) => {
+        if (!admitted) return;
+        await current.tell_agents_of_background_tasks_lost_at_restart();
+        await run_automatic_recovery(current, database!);
+      });
+      void recovery.catch((error) => console.error('Conversation startup recovery failed', error));
     }
     await background.start();
     if (closing) {

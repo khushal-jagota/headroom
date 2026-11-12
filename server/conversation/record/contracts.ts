@@ -181,6 +181,19 @@ export interface DeliverySettlement {
 }
 /** Each callback uses the record's existing transaction and never commits or awaits. */
 export interface RecordParticipants {
+  readonly bind_interruption_delivery?: (
+    tx: TransactionSql,
+    conversation_id: string,
+    turn_number: number,
+    references: readonly DeploymentRecoveryReference[] | null,
+    recovery_sender_message_ids: ReadonlyMap<string, string> | null,
+  ) => string | null;
+  readonly fail_recovery_claims?: (
+    tx: TransactionSql,
+    conversation_id: string,
+    turn_number: number,
+    now: number,
+  ) => void;
   readonly event_participant?: EventParticipant;
   readonly transaction_participant?: LifecycleParticipant;
   readonly prepare_attention?: (
@@ -258,6 +271,13 @@ export type RecordCommitParticipant<T> = (
 
 /** One append owner, synchronous source effects, and publication after successful return. */
 export interface ConversationRecordStore {
+  bind_interruption_delivery(
+    conversation_id: string,
+    turn_number: number,
+    references?: readonly DeploymentRecoveryReference[] | null,
+    recovery_sender_message_ids?: ReadonlyMap<string, string> | null,
+  ): string | null;
+  fail_recovery_claims(conversation_id: string, turn_number: number): void;
   settle_recording<T>(
     conversation_id: string,
     operation: () => T | Promise<T>,

@@ -1,3 +1,7 @@
+import {
+  routes as measureSources,
+  admission as source_admission,
+} from './measure_sources/routes.ts';
 import { routes as previews } from './previews/routes.ts';
 import { routes as files } from './files/routes.ts';
 import { routes as measures } from './measures/routes.ts';
@@ -40,6 +44,7 @@ import { routes as ideas } from './ideas/routes.ts';
 import { routes as resourceVersions } from './resource_versions/routes.ts';
 import { createSignalNavigationRuntime } from './navigation/index.ts';
 import { createConversationRuntime } from './conversation/record/runtime.ts';
+import { deployment_participants } from './conversation/deploy_interruptions/participants.ts';
 import type { SignalPublicationCoordinator } from './conversation/publication/coordinator.ts';
 
 /** Each server owns one reconciled record and its publication attachment. */
@@ -82,6 +87,7 @@ export function createAreasRuntime() {
       beforeRuntime();
       // The record owns the sole store, tail, reconciliation, and epoch rotation.
       conversation.initialize(database, config, {
+        ...deployment_participants(config.db_path),
         integer_now: () => clock.nowUnix(),
         prepare_attention(tx, conversation_id) {
           const snapshot = conversation_attention_snapshot(tx, conversation_id);
@@ -113,6 +119,7 @@ export function createAreasRuntime() {
       return [
         { prefix: '', routes: previews },
         { prefix: '/api', routes: measures, admission: measure_admission },
+        { prefix: '/api', routes: measureSources, admission: source_admission },
         { prefix: '/api', routes: datasets, admission: measure_admission },
         { prefix: '/api', routes: goals },
         { prefix: '/api', routes: attention },
