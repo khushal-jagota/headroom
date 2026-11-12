@@ -45,7 +45,12 @@
       "method": "PUT",
       "path": "/api/managers/launch-defaults",
       "status": 200,
-      "json": "${defaults}"
+      "json": {
+        "employee_backend": "codex",
+        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_reasoning_effort": "high"
+      },
+      "note": "Change the reasoning choice, rather than rewrite the existing defaults unchanged."
     },
     {
       "area": "navigation",
@@ -106,7 +111,12 @@
       "method": "PUT",
       "path": "/api/managers/${manager}/launch-defaults",
       "status": 200,
-      "json": "${choice}"
+      "json": {
+        "employee_backend": "codex",
+        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_reasoning_effort": "high"
+      },
+      "note": "Change the reasoning choice, rather than rewrite the existing defaults unchanged."
     },
     {
       "area": "navigation",
@@ -677,6 +687,22 @@
     },
     {
       "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}",
+      "status": 200,
+      "json": {
+        "project_id": "project_vylo"
+      },
+      "note": "The populated workspace read must show the child inherits the new Manager project."
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
       "method": "GET",
       "path": "/api/managers/${manager}/workspace",
       "status": 200
@@ -722,6 +748,53 @@
       "method": "GET",
       "path": "/api/managers?detail=full",
       "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${created_manager}/page",
+      "status": 200,
+      "json": {
+        "page": "${manager_page}"
+      },
+      "note": "Keep this float-valued document in final source rows so the oracle compares its exact stored bytes, not only a decoded response."
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${created_manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers?id=${created_manager}&detail=full",
+      "status": 200,
+      "capture": {
+        "stored_float_page_character_count": "page_character_count"
+      }
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${created_manager}/page",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/chief/page",
+      "status": 200,
+      "json": {
+        "page": "${chief_page}"
+      },
+      "note": "Retain the nested Chief document for exact final source-row comparison as well."
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${created_manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D}",
+      "status": 200
     }
   ],
   "report_captures": [
@@ -729,7 +802,8 @@
     "created_manager",
     "conversation",
     "manager_page",
-    "chief_page"
+    "chief_page",
+    "stored_float_page_character_count"
   ],
   "seed_requests": [
     {
