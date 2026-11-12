@@ -41,7 +41,9 @@ def main() -> int:
     output = Path(os.environ["PANELS_OFFLINE_OUTPUT"]).resolve()
     output.mkdir(parents=True, exist_ok=True)
     if not server_only:
-        devices = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "--json"]))
+        devices = json.loads(
+            subprocess.check_output(["xcrun", "simctl", "list", "devices", "--json"])
+        )
         assert any(
             d["udid"] == DEVICE and d["state"] == "Booted"
             for group in devices["devices"].values()
@@ -591,7 +593,10 @@ def main() -> int:
                 elif name == "writes":
                     self.respond(state["writes"])
                     return
-                elif name.startswith("start/") and os.environ.get("PANELS_OFFLINE_RECORD_CLIPS", "0" if server_only else "1") == "1":
+                elif name.startswith("start/") and (
+                    os.environ.get("PANELS_OFFLINE_RECORD_CLIPS", "0" if server_only else "1")
+                    == "1"
+                ):
                     if not native_control_allowed():
                         self.respond({"error": "An owned device and active turn are required"}, 409)
                         return
@@ -908,24 +913,44 @@ def main() -> int:
                         return
                     ticket = tickets[path.split("/")[3]]
                     proposal = ticket["pending_proposal"]
-                    refused = not proposal or body["expected_proposal_revision"] != proposal["revision"] or body["field"] != proposal["field"]
+                    refused = (
+                        not proposal
+                        or body["expected_proposal_revision"] != proposal["revision"]
+                        or body["field"] != proposal["field"]
+                    )
                     receipt = dict(
-                        operation_id=path.rsplit("/", 1)[-1], ticket_id=ticket["id"],
-                        decision=body["decision"], field=body["field"],
+                        operation_id=path.rsplit("/", 1)[-1],
+                        ticket_id=ticket["id"],
+                        decision=body["decision"],
+                        field=body["field"],
                         expected_proposal_revision=body["expected_proposal_revision"],
-                        outcome="refused" if refused else "applied", created_at=time.time(),
-                        transition=None if refused else dict(
-                            stage=ticket["stage"] if body["decision"] == "send_back" else "done",
-                            ceiling=body.get("next_ceiling", ticket["ceiling"]),
-                            ceiling_holder=body.get("next_holder", ticket["ceiling_holder"]),
-                            ticket_status="ready", pending_proposal_revision=body["expected_proposal_revision"] + 1,
+                        outcome="refused" if refused else "applied",
+                        created_at=int(time.time()),
+                        transition=(
+                            None
+                            if refused
+                            else dict(
+                                stage=(
+                                    ticket["stage"] if body["decision"] == "send_back" else "done"
+                                ),
+                                ceiling=body.get("next_ceiling", ticket["ceiling"]),
+                                ceiling_holder=body.get("next_holder", ticket["ceiling_holder"]),
+                                ticket_status="ready",
+                                pending_proposal_revision=body["expected_proposal_revision"] + 1,
+                            )
                         ),
-                        error=dict(code="validation", message="This changed, review again", detail={}) if refused else None,
+                        error=(
+                            dict(code="validation", message="This changed, review again", detail={})
+                            if refused
+                            else None
+                        ),
                     )
                     decision_receipts[path] = receipt
                     if not refused:
                         ticket["pending_proposal"] = None
-                        state["writes"].append("approve" if body["decision"] == "approve" else "sendBack")
+                        state["writes"].append(
+                            "approve" if body["decision"] == "approve" else "sendBack"
+                        )
                     value = {"receipt_contract": 1, "receipt": receipt}
                 elif "/accept/" in path:
                     ticket = tickets[path.split("/")[3]]

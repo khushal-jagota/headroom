@@ -154,7 +154,9 @@ def main() -> int:
     output = Path(os.environ["PANELS_CONVERSATION_OUTPUT"]).resolve()
     output.mkdir(parents=True, exist_ok=True)
     if not server_only:
-        devices = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "--json"]))
+        devices = json.loads(
+            subprocess.check_output(["xcrun", "simctl", "list", "devices", "--json"])
+        )
         assert any(
             d["udid"] == DEVICE and d["name"] == LANE and d["state"] == "Booted"
             for group in devices["devices"].values()
@@ -302,7 +304,10 @@ def main() -> int:
                 )
                 return
             if path.startswith("/proof/start/"):
-                if os.environ.get("PANELS_CONVERSATION_RECORD_CLIPS", "0" if server_only else "1") == "1":
+                if (
+                    os.environ.get("PANELS_CONVERSATION_RECORD_CLIPS", "0" if server_only else "1")
+                    == "1"
+                ):
                     if not native_control_allowed():
                         self.respond({"error": "An owned device and active turn are required"}, 409)
                         return
