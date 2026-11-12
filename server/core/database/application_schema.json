@@ -331,5 +331,5 @@
     "CREATE TRIGGER tickets_assignment_insert BEFORE INSERT ON tickets WHEN NOT ((NEW.manager_kind='chief' AND NEW.manager_id IS NULL) OR (NEW.manager_kind='manager' AND NEW.manager_id IS NOT NULL)) BEGIN SELECT RAISE(ABORT,'invalid manager assignment'); END",
     "CREATE TRIGGER tickets_assignment_update BEFORE UPDATE ON tickets WHEN NOT ((NEW.manager_kind='chief' AND NEW.manager_id IS NULL) OR (NEW.manager_kind='manager' AND NEW.manager_id IS NOT NULL)) BEGIN SELECT RAISE(ABORT,'invalid manager assignment'); END"
   ],
-  "alembicRevision": "retire_executor_websocket_tables"
+  "alembicRevision": "memory_notice_turns_are_maintenance"
 }

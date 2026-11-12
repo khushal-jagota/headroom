@@ -155,6 +155,11 @@ From the independent worktree, with the private environment described above, reg
 The generator creates its own temporary Python database and migrates it through Alembic.
 The JSON stores DDL and the exact revision, without seeded data or shared identities.
 
+The first real drift exercise used target `d42fa18dd` and its `memory_notice_turns_are_maintenance` migration.
+Before regeneration, `--check` exited 1 and the existing fresh-schema comparison failed against the saved frontier.
+After regeneration, both passed. Only the revision changed; all 330 DDL statements remained identical.
+The fresh-schema body took 1.03 seconds and produced zero skill-tree guard receipts.
+
 The registry uses blocking kernel `flock`. Its wait blocks the Node event loop.
 Use this registry layer only from a command process, never from a server request or background loop.
 
