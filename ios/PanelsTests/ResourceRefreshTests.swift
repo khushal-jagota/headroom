@@ -386,11 +386,11 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
 /// These cases exercise shared admission, not a second HTTP host. The controlled
 /// transport deliberately completes a canceled read to prove the generation fence.
 @MainActor final class ResourceOwnerTests: XCTestCase {
-    private func owner(_ fixture: OwnerTransport) -> ResourceOwner {
+    private func owner(_ fixture: OwnerTransport, cacheStore: LocalStore? = nil) -> ResourceOwner {
         ResourceOwner(api: APIClient(baseURL: URL(string: "https://owner.invalid")!), transport: ResourceTransport(
             versions: { _, keys in await fixture.probe(keys) },
             read: { api, key, _ in try await fixture.read(api.baseURL.absoluteString, key) }),
-            cacheStore: LocalStore(url: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("owner.store")))
+            cacheStore: cacheStore ?? LocalStore(url: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("owner.store")))
     }
     private func until(_ condition: @escaping () async -> Bool) async throws {
         for _ in 0..<200 {
@@ -615,17 +615,30 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
 
     func testTerminalFailureDiscardsBodyButTransientFailureRetainsIt() async throws {
         let transport = OwnerTransport()
-        let actual = owner(transport)
+        let cache = LocalStore(url: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("owner.store"))
+        let actual = owner(transport, cacheStore: cache)
         let handle = actual.handle(ResourceRegistration<String>(key: "/api/terminal", discardOnFailure: {
             ($0 as? APIError)?.message.hasPrefix("Broken Ticket:") == true
         }))
-        await handle.refresh()
+        await handle.refresh(); await cache.flushCache()
         XCTAssertEqual(handle.value, "1")
+        let saved = await cache.cachedResponse(server: actual.server, id: ResourceCacheEnvelope.identity(handle.key))
+        XCTAssertNotNil(saved)
         await transport.failReads(); await handle.refresh()
         XCTAssertEqual(handle.value, "1")
         await transport.failTerminal(); await handle.refresh()
         XCTAssertNil(handle.value)
         XCTAssertNotNil(handle.error)
+        await transport.failTransientOnly()
+        handle.acquire()
+        await handle.refresh(); await handle.entry.restoring?.value
+        XCTAssertNil(handle.value, "Revisiting offline cannot restore the disk body discarded after a terminal failure")
+        XCTAssertNotNil(handle.error)
+        handle.release()
+        await transport.recover(); await handle.refresh()
+        XCTAssertEqual(handle.value, "1", "A successful fresh body can admit content again")
+        await transport.failReads(); await handle.refresh()
+        XCTAssertEqual(handle.value, "1", "Transient failures still retain the newly accepted content")
         actual.stop()
     }
 
@@ -663,6 +676,8 @@ private actor OwnerTransport {
     func delayReads() { delay = true }
     func failReads() { failure = true }
     func failTerminal() { terminal = true }
+    func failTransientOnly() { terminal = false; failure = true }
+    func recover() { terminal = false; failure = false }
     func setRevision(_ value: String) { revision = value }
     func setBody(_ value: String) { body = value }
     func setRevision(_ value: String, keys: [String]) { for key in keys { revisions[key] = value } }

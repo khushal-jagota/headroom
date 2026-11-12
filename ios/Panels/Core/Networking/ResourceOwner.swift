@@ -63,6 +63,7 @@ fileprivate struct ResourceDecoder: Sendable {
     @ObservationIgnored var probeGeneration = 0
     @ObservationIgnored var targetStamp: (String, String)?
     @ObservationIgnored var fallback: Task<Void, Never>?
+    @ObservationIgnored var terminallyDiscarded = false
     @ObservationIgnored var restoreSequence = 0
     @ObservationIgnored var restoring: Task<Void, Never>?
     @ObservationIgnored var decoded: [String: Any] = [:]
@@ -106,6 +107,7 @@ fileprivate struct ResourceDecoder: Sendable {
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
         entry.generation += 1; entry.task?.cancel(); entry.task = nil
         entry.data = try? encoder.encode(value)
+        entry.terminallyDiscarded = false
         entry.epoch = nil; entry.revision = nil
         entry.decoded = [type: value]
         entry.publication += 1
@@ -204,6 +206,8 @@ struct ResourceCacheEnvelope: Codable {
     }
     /// Cache I/O, envelope parsing and typed body decoding happen off the main actor.
     private func restore(_ entry: ResourceEntry) {
+        // A known terminal document failure cannot be repaired by its older cache.
+        guard !entry.terminallyDiscarded else { return }
         entry.restoreSequence += 1
         let expected = generation, sequence = entry.restoreSequence, publication = entry.publication
         let store = cacheStore, server = entry.server, key = entry.key, decoders = entry.decoders
@@ -219,7 +223,8 @@ struct ResourceCacheEnvelope: Codable {
                 guard !values.isEmpty else { return nil }
                 return (saved, values)
             }.value
-            guard let self, expected == generation, publication == entry.publication, entry.data == nil else { return }
+            guard let self, expected == generation, publication == entry.publication,
+                  !entry.terminallyDiscarded, entry.data == nil else { return }
             if let (saved, values) = restored {
                 entry.data = saved.data; entry.epoch = saved.epoch; entry.revision = saved.revision
                 entry.decoded = values.mapValues(\.value); entry.acceptedDeadline = values.values.compactMap(\.deadline).min(); entry.publication += 1
@@ -451,6 +456,7 @@ struct ResourceCacheEnvelope: Codable {
                         throw APIError(status: 0, message: "The response changed during refresh. Try again.")
                     }
                     entry.restoring?.cancel(); entry.restoring = nil
+                    entry.terminallyDiscarded = false
                     if changed {
                         entry.data = data; entry.decoded = processed.0.mapValues(\.value)
                         entry.decodeErrors = [:]; entry.publication += 1
@@ -477,6 +483,7 @@ struct ResourceCacheEnvelope: Codable {
                     entry.failures += 1
                     entry.retryAt = Date().addingTimeInterval(ResourceLimits.retrySeconds(entry.failures))
                     if entry.discardOnFailure?(error) == true {
+                        entry.terminallyDiscarded = true
                         entry.data = nil; entry.decoded = [:]; entry.decodeErrors = [:]; entry.publication += 1
                     }
                     entry.error = error.localizedDescription; entry.failure = ServerReadFailure(error); entry.isStale = true
