@@ -24,7 +24,7 @@ Live and staging are registered environments. Headroom validates them together: 
 
 The home uses one platform contract for service identity, app-child launch, process evidence, private sockets, locks, and resource collection. The Linux adapter preserves the existing systemd and kernel operations. Shared installation paths keep explicit configuration and current defaults. Runtime selection separates the operating system, architecture, and home or executor role. Existing archive formats and integrity checks stay the same. A Mac executor archive cannot become a home release.
 
-Only the Linux home adapter exists. Unsupported home capabilities refuse explicitly. The later Mac adapter must supply login-session launchd services, crash-orphan cleanup, process and preview evidence, metrics, short socket addresses, and an Apple Silicon home runtime. The existing Mac executor remains separate. No Mac home behavior is proved by Linux checks.
+Only the Linux native home adapter exists. Other POSIX source servers retain their existing foreground lifecycle. Native updates, preview evidence, and resource collection remain explicitly unavailable there. The later Mac adapter must supply login-session launchd services, crash-orphan cleanup, process and preview evidence, metrics, short socket addresses, and an Apple Silicon home runtime. The existing Mac executor remains separate. No Mac home behavior is proved by Linux checks.
 
 Worker supervision remains a separate subsystem. Its later implementation uses process identities and custody evidence for bounded shutdown and confirmed cleanup. A missing process observation never proves that all descendants stopped. The current Linux Worker units remain in place.
 

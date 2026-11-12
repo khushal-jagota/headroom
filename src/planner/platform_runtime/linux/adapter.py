@@ -14,6 +14,8 @@ from planner.server_lifecycle.contracts import ProcessIdentity, ShutdownPolicy
 
 
 class LinuxPlatformAdapter:
+    update_unavailable_reason: str | None = None
+
     def read_process_identity(self, pid: int) -> ProcessIdentity | None:
         from .lifecycle import read_process_identity
 

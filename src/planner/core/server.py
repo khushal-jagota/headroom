@@ -550,7 +550,12 @@ def create_app(
     # Only an installed release under <current_root>/app installs its own updates.
     installed_app = bool(config.app_sha) and _REPO_ROOT == current_root / "app"
     # The installer restarts the unit this server runs in, and nothing else.
-    service_unit = own_service_unit() if installed_app else None
+    from planner.platform_runtime.selection import get_platform_adapter
+
+    update_unavailable_reason = get_platform_adapter().update_unavailable_reason
+    service_unit = (
+        own_service_unit() if installed_app and update_unavailable_reason is None else None
+    )
     update_attempts = FileUpdateAttemptStore(attempt_path(data_directory))
     import_legacy_request(update_attempts, data_directory, config.app_sha)
     update_provider = GitHubUpdateProvider.configured() if service_unit is not None else None
@@ -572,6 +577,7 @@ def create_app(
         current_app_sha=config.app_sha,
         health_url=f"http://{HOST}:{config.port}/api/health",
         service_unit=service_unit or "",
+        unavailable_reason=update_unavailable_reason,
         prepare_mac_update=app.state.mac_updates.prepare,
         mac_phase=app.state.mac_updates.phase,
         mac_reported_at=app.state.mac_updates.reported_at,

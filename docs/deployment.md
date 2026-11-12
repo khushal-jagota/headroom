@@ -103,8 +103,8 @@ Commands outside the guard, such as Ruff or a direct `.venv/bin` call, can still
 
 - `.github/workflows/deploy.yml`: publication, the install rehearsal, and the bridge `adopt` job. `recover-private-route.yml`: route repair.
 - `src/planner/environments/update_provider.py`: reading publications and streaming downloads. `update_service.py`, `update_api.py`: getting ready, the press, and the card's state.
-- `src/planner/environments/update_attempts.py`: the attempt record. `update_install.py`: the schema and backup decision and the installer's start. `update_installer.py`: the installer.
-- `src/planner/environments/runtime_packaging.py`, `runtime_contracts.py`, `runtime_admission.py`, and `scripts/runtime_target_proof.py`: the private runtime and host contract.
+- `src/planner/environments/update_attempts.py`: the attempt record. `update_install.py`: the schema and backup decision and the installer's start. `src/planner/platform_runtime/linux/update_installer.py`: the standalone installer.
+- `src/planner/platform_runtime/`: shared contracts and selection, with Linux native packaging, contract validation, and service operations. `src/planner/environments/runtime_admission.py` and `scripts/runtime_target_proof.py` coordinate runtime proof.
 - `src/planner/environments/mac_updates.py`: the Mac target and its progress.
 - `web/src/components/UpdateActions.svelte`, `web/src/lib/updates/`: the card.
 - `scripts/dev`, `scripts/development_safety/`: the worktree guard.

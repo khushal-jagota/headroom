@@ -26,6 +26,9 @@ class PreviewProcessInspector(Protocol):
 
 
 class PlatformAdapter(Protocol):
+    @property
+    def update_unavailable_reason(self) -> str | None: ...
+
     def read_process_identity(self, pid: int) -> ProcessIdentity | None: ...
     def read_authenticated_manager_identity(
         self, pid: int, bus: Literal["user", "system"] | None = None

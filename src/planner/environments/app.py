@@ -20,7 +20,7 @@ from planner.environments.runtime_contracts import (
     parse_optional_runtime_contract,
     runtime_bytes_digest,
 )
-from planner.platform_runtime.contracts import RuntimeRequirements, UnsupportedPlatformError
+from planner.platform_runtime.contracts import RuntimeRequirements
 
 APP_FORMAT = "panels-app-v1"
 FULL_SHA_PATTERN = r"[0-9a-f]{40}"
@@ -118,7 +118,7 @@ def validate_app_manifest(
                 != contract.inventory_sha256
             ):
                 raise ValueError("runtime inventory differs from contract")
-    except (OSError, ValueError, UnsupportedPlatformError) as exc:
+    except (OSError, ValueError) as exc:
         raise AppValidationError(f"invalid runtime contract: {exc}") from exc
     return AppManifest(app_sha, source_digest, artifact_digest, contract)
 
