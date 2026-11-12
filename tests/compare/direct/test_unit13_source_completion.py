@@ -16,6 +16,7 @@ from contextlib import closing
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 from tests.support.measure_sources import NOW, configured_source
@@ -72,6 +73,7 @@ def test_unit13_source_completion(
         source, measure = configured_source(conn)
         item = dataset(conn, source.id)
         source = data.read_source(conn, source.id)
+        assert source.active_script is not None
         metrics = RunMetrics(0, 0, 0, 1, 0)
 
         def result(
@@ -104,7 +106,7 @@ def test_unit13_source_completion(
                 )
             return RunResult((scalar,), None, metrics, (candidate,))
 
-        phases: list[dict] = []
+        phases: list[dict[str, Any]] = []
         values = [
             ("collection", result(9007199254740994.0), RunMode.collection),
             ("test-only", result(-2.5), RunMode.test),
@@ -171,7 +173,7 @@ def test_unit13_source_completion(
             conn.backup(other)
         expected = []
         for phase in phases:
-            outcome = None
+            outcome: object = None
             if phase.get("operation") == "transfer":
                 actions.set_responsible(
                     conn,
