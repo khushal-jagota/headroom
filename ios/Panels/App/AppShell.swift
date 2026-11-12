@@ -65,7 +65,10 @@ struct AppShell: View {
         .onChange(of: morePath) { old, new in if old != new { Haptics.light() } }
         .onChange(of: store.baseURL) { _, _ in reviewPath = []; workspacePath = []; morePath = [] }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if let error = LocalStore.shared.outgoingError ?? LocalStore.shared.saveError { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error).padding(8) }
+            VStack(spacing: 0) {
+                if let error = LocalStore.shared.outgoingError ?? LocalStore.shared.saveError { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error).padding(8) }
+                OutgoingStorageErrors(server: LocalStore.server(store.baseURL)).id(LocalStore.server(store.baseURL))
+            }
         }
         .onChange(of: Outbox.shared.networkAvailable) { _, available in
             if available, scenePhase == .active {

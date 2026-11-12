@@ -27,6 +27,7 @@ import SwiftData
     private var outgoingStorage: OutgoingStore?
     private var startupError: Error?
     private let beforeSave: (() throws -> Void)?
+    private let onPayloadDecode: (() -> Void)?
     // Cached GET responses are handed to their screen by the caller. Only durable
     // user work needs to wake draft restoration and outgoing-work observers.
     private(set) var workRevision = 0
@@ -37,8 +38,9 @@ import SwiftData
     private(set) var cacheErrors: [String: String] = [:]
     private var cacheWriteGenerations: [String: Int] = [:]
 
-    init(url: URL? = nil, cacheWrite: (@Sendable () throws -> Void)? = nil, beforeSave: (() throws -> Void)? = nil) {
+    init(url: URL? = nil, cacheWrite: (@Sendable () throws -> Void)? = nil, beforeSave: (() throws -> Void)? = nil, onPayloadDecode: (() -> Void)? = nil) {
         self.beforeSave = beforeSave
+        self.onPayloadDecode = onPayloadDecode
         do {
             let location = url ?? Self.directory.appendingPathComponent("phone.store")
             try FileManager.default.createDirectory(at: location.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -71,9 +73,15 @@ import SwiftData
     var outgoing: OutgoingStore {
         get throws {
             if let outgoingStorage { return outgoingStorage }
-            let storage = OutgoingStore(context: try context, beforeSave: beforeSave) { [weak self] server in
+            let storage = OutgoingStore(context: try context, beforeSave: beforeSave, onPayloadDecode: onPayloadDecode) { [weak self] server in
                 self?.outgoingRevisions[server, default: 0] += 1
                 self?.workRevision += 1
+                guard let self else { return }
+                let previous = self.outgoingError
+                // Successful durable work clears a transient outgoing fault, but retains corrupt rows.
+                do { self.outgoingError = try self.outgoingStorage?.storageFailure() }
+                catch { self.outgoingError = "Couldn’t read outgoing work: \(error.localizedDescription)" }
+                if self.saveError == previous { self.saveError = self.outgoingError }
             } failed: { [weak self] error in
                 self?.outgoingError = "Couldn’t save outgoing work: \(error.localizedDescription)"
                 self?.saveError = self?.outgoingError

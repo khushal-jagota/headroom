@@ -39,7 +39,8 @@ reencode the original intent. Both installed date schemas migrate without changi
 existing keys, bytes, drafts, attachment or audio references. A completion marker
 shares the backfill transaction. Later opens use that exact marker and a bounded
 metadata error query. Undecodable work stays visible through the persistent storage
-error surface. Legacy waiting or sending work has unknown provenance and remains
+error surface, with an origin-scoped per-item discard confirmation. Original bytes
+remain until that action. Legacy waiting or sending work has unknown provenance and remains
 uncertain rather than receiving permission to POST.
 
 This phone-store migration runs forward. Opening the upgraded store with an older
@@ -50,9 +51,17 @@ and keeps the store instead of deleting it or creating an empty replacement.
 Responses are bounded to 96 entries and 16 MiB across servers. A response larger
 than the budget is not cached. Drafts and outgoing work are separate records and
 are never removed by this eviction. Each foreground pass first clears a due batch
-of at most 64 outgoing metadata rows through the expiry index. The foreground loop
-runs a pass when it starts and every 3 seconds. Sent and changed work expires after
-24 hours, and uncertain work after 7 days. Failed and pending work has no age limit.
+of at most 64 outgoing metadata rows through the expiry index. Activation, enqueue,
+explicit recovery and network changes wake the foreground drainer. A three-second
+retry timer exists only while network/build admission allows runnable work or an
+addressable receipt to reconcile. Unknown-destination uncertain messages, uncertain
+voice and bodyless legacy decisions alone park without a repeating timer. Enqueue
+also wakes an already-running pass, so a new lane can use its free server slot
+while another request is stalled. Limits remain one request per lane and two per
+server. Sent and changed work expires 24 hours after completion; retired failed
+originals also expire after 24 hours. Uncertainty gets seven days from entry into
+that state (legacy uncertainty starts at migration), and repeated polls do not
+extend it. Scheduled failed work and pending work have no age limit.
 Before an uncertain predecessor expires, its dependent message receives a durable
 hold in the same transaction. The expired operation leaves no receipt or payload
 shadow. A known destination requires Send this message. An unknown destination
@@ -82,8 +91,11 @@ only a reason to try; request results determine delivery.
 
 A proven-unattempted message in “Waiting” goes straight to the send POST without
 receipt or held-message reads. The drainer saves attempted provenance and “Sending”
-before the POST. Responses that confirm
-started or injected delivery mark the message “Sent” as before.
+before the POST. Proven predispatch failures (not connected, cannot connect/find
+host, DNS lookup failure) restore waiting and unattempted eligibility. Cancellation,
+connection loss, timeout or an ambiguous in-flight response preserve uncertainty;
+they cannot authorize blind replay. Responses that confirm started or injected
+delivery mark the message “Sent” as before.
 
 For an existing conversation, attempted or uncertain work only checks its exact
 receipt. An absent receipt never grants permission to POST again. Server-queued
@@ -92,7 +104,10 @@ submission without a wait for the eventual prompt receipt. A timeout, HTTP 408,
 or interrupted response retains uncertainty. A receipt settles its own operation
 even outside the visible transcript.
 
-A confirmed refusal permits an explicit retry with a new identity. An uncertain
+A known terminal refusal releases later submissions in its known conversation.
+An unresolved creation destination instead holds dependent work until an explicit
+destination/new-start choice. A confirmed refusal permits an explicit retry with
+a new identity. An uncertain
 resend requires confirmation that delivery can duplicate. The replacement occupies
 the original logical position, and the dependency transfer commits atomically.
 The original retains its independent receipt outcome until expiry. It cannot
@@ -106,7 +121,13 @@ revert both survive. Existing-conversation messages omit unchanged settings.
 
 A message that created a conversation but lost the response has no known
 conversation ID to query. It remains “Delivery uncertain” rather than being
-silently sent into another conversation. Messages accepted into the server's
+silently sent into another conversation. Its provisional owner chain stays visible
+when navigation learns a different conversation ID; that navigation fact never
+retargets the attempted operation or its followers. Message receipt polls use only
+indexed identity/destination metadata, without decoding photo payloads. Conversation
+sync scopes metadata to its destination plus active provisional work and reuses
+already-rendered content; receipt/note changes and unrelated work never repeatedly
+decode retained payload history. Messages accepted into the server's
 queue are retained locally and checked for receipts, but are not automatically
 re-admitted if the server loses that queue. Server queue durability is outside
 this app change. The app does not claim exactly-once delivery across a server
@@ -128,9 +149,12 @@ same operation ID and frozen body. The first POST persists attempted provenance
 before the request. Restart recovery does not reset it to ordinary unattempted work.
 
 Before a possible POST, an unsupported server restores the card with a compatible
-server note and keeps its draft. Transient lookup failures remain pending. After
-an attempt, malformed, mismatched, unsupported and ambiguous HTTP responses remain
-uncertain. There is no fallback to legacy decision endpoints. A local save failure
+server note and keeps its draft. Authentication/access lookup failures restore
+normal review with an actionable sign-in/access note; invalid lookup responses
+restore it with a refresh/review note. Transient lookup failures remain pending.
+A definitive submit HTTP 4xx, including 429, restores the exact card/draft with its
+refusal and never automatically reposts. HTTP 408 and ambiguous transport/5xx or
+malformed attempted outcomes remain uncertain; 426 holds for the build gate. There is no fallback to legacy decision endpoints. A local save failure
 exposes the storage error and preserves the operation instead of classifying the
 server as unsupported.
 

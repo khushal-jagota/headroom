@@ -37,7 +37,7 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
 
 /// Queryable scheduling and presentation facts. The original payload stays once in LocalRecord.
 @Model final class OutgoingMetadata {
-    #Index<OutgoingMetadata>([\.state], [\.server, \.expiresAt], [\.audioFile], [\.server, \.state], [\.server, \.kind], [\.server, \.conversationID], [\.server, \.sequence], [\.server, \.lane, \.sequence], [\.server, \.ownerKey], [\.server, \.draftID])
+    #Index<OutgoingMetadata>([\.state], [\.server, \.expiresAt], [\.audioFile], [\.server, \.state], [\.server, \.kind], [\.server, \.conversationID], [\.server, \.sequence], [\.server, \.lane, \.sequence], [\.server, \.ownerKey], [\.server, \.draftID], [\.server, \.replacementID])
     @Attribute(.unique) var key: String
     var server: String
     var identity: String
@@ -67,8 +67,9 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
     var proposalField: String?
     var proposalRevision: Int?
     var proposalCreatedAt: Double?
+    var hasProtectedDecisionBody: Bool = false
 
-    init(record: LocalRecord, work: PendingWork?, sequence: Int64) {
+    init(record: LocalRecord, work: PendingWork?, sequence: Int64, now: Date = .now) {
         let savedIdentity = work?.id ?? record.key.components(separatedBy: "\u{1f}").last ?? record.key
         let savedOwner = work?.owner.map(Self.ownerKey)
         let savedConversation = work?.message?.conversationId
@@ -86,7 +87,7 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         if let work {
             switch work.state {
             case .sent, .changed: expiresAt = (work.completed ?? work.created).addingTimeInterval(86400)
-            case .uncertain: expiresAt = (work.completed ?? work.created).addingTimeInterval(7 * 86400)
+            case .uncertain: expiresAt = now.addingTimeInterval(7 * 86400)
             default: expiresAt = nil
             }
         } else { expiresAt = nil }
@@ -101,6 +102,7 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         proposalField = command?.field ?? work?.proposal?.field
         proposalRevision = command?.expectedProposalRevision ?? work?.proposal?.revision
         proposalCreatedAt = work?.protectedProposalCreatedAt ?? work?.proposal?.createdAt
+        hasProtectedDecisionBody = work?.protectedDecisionBody != nil
         failure = work == nil ? "Saved outgoing work could not be decoded. Its original bytes remain on this phone." : nil
     }
 
@@ -117,12 +119,12 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
 /// Add metadata once, without rewriting any saved intent or making it dispatchable.
 @MainActor enum OutgoingStoreMigration {
     static let markerID = "outgoing-v1"
-    private static func storageError(_ context: ModelContext) throws -> String? {
+    static func storageError(_ context: ModelContext) throws -> String? {
         var query = FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.state == "storageError" })
         query.fetchLimit = 1
         return try context.fetch(query).first?.failure
     }
-    static func backfill(_ context: ModelContext, beforeSave: (() throws -> Void)? = nil) throws -> String? {
+    static func backfill(_ context: ModelContext, now: Date = .now, beforeSave: (() throws -> Void)? = nil) throws -> String? {
         do {
             let markerKey = LocalStore.key("", "outgoingMigration", markerID)
             var marker = FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == markerKey })
@@ -130,7 +132,7 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
             if try !context.fetch(marker).isEmpty { return try storageError(context) }
             let indexed = try context.fetch(FetchDescriptor<OutgoingMetadata>())
             for row in indexed where row.provenance == "unknown" && ["waiting", "sending"].contains(row.state) {
-                row.state = "uncertain"; row.note = "Delivery uncertain · check before another attempt"; row.expiresAt = row.created.addingTimeInterval(7 * 86400)
+                row.state = "uncertain"; row.note = "Delivery uncertain · check before another attempt"; row.expiresAt = now.addingTimeInterval(7 * 86400)
             }
             let keys = Set(indexed.map(\.key))
             let rows = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.kind == "outbox" }))
@@ -143,13 +145,13 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
             var sequence = indexed.map(\.sequence).max() ?? 0
             for (record, work) in pending {
                 sequence += 1
-                let metadata = OutgoingMetadata(record: record, work: work, sequence: sequence)
+                let metadata = OutgoingMetadata(record: record, work: work, sequence: sequence, now: now)
                 if ["waiting", "sending"].contains(metadata.state) {
-                    metadata.state = "uncertain"; metadata.note = "Delivery uncertain · check before another attempt"; metadata.expiresAt = metadata.created.addingTimeInterval(7 * 86400)
+                    metadata.state = "uncertain"; metadata.note = "Delivery uncertain · check before another attempt"; metadata.expiresAt = now.addingTimeInterval(7 * 86400)
                 }
                 context.insert(metadata)
             }
-            context.insert(LocalRecord(key: markerKey, server: "", kind: "outgoingMigration", payload: Data([1]), updated: .now))
+            context.insert(LocalRecord(key: markerKey, server: "", kind: "outgoingMigration", payload: Data([1]), updated: now))
             if context.hasChanges { try beforeSave?(); try context.save() }
             return try storageError(context)
         } catch {
@@ -193,6 +195,10 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         let proposalField: String?
         let proposalRevision: Int?
         let proposalCreatedAt: Double?
+        let hasProtectedDecisionBody: Bool
+        let created: Date
+        let completed: Date?
+        let expiresAt: Date?
         init(_ value: OutgoingMetadata) {
             id = value.identity; ownerKey = value.ownerKey; conversationID = value.conversationID; ownerReadThroughSequence = value.ownerReadThroughSequence
             ticketID = value.ticketID; draftID = value.draftID; lane = value.lane
@@ -201,21 +207,23 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
             predecessorID = value.predecessorID; replacementID = value.replacementID; holdReason = value.holdReason
             proposalField = value.proposalField; proposalRevision = value.proposalRevision
             proposalCreatedAt = value.proposalCreatedAt
+            hasProtectedDecisionBody = value.hasProtectedDecisionBody; created = value.created; completed = value.completed; expiresAt = value.expiresAt
         }
     }
     private let context: ModelContext
     private let beforeSave: (() throws -> Void)?
+    private let onPayloadDecode: (() -> Void)?
     private let changed: (String) -> Void
     private let failed: (Error) -> Void
-    init(context: ModelContext, beforeSave: (() throws -> Void)? = nil, changed: @escaping (String) -> Void, failed: @escaping (Error) -> Void) {
-        self.context = context; self.beforeSave = beforeSave; self.changed = changed; self.failed = failed
+    init(context: ModelContext, beforeSave: (() throws -> Void)? = nil, onPayloadDecode: (() -> Void)? = nil, changed: @escaping (String) -> Void, failed: @escaping (Error) -> Void) {
+        self.context = context; self.beforeSave = beforeSave; self.onPayloadDecode = onPayloadDecode; self.changed = changed; self.failed = failed
     }
     private func transaction<T>(_ server: String, _ body: () throws -> T) throws -> T {
         do {
             let result = try body()
             if context.hasChanges { try beforeSave?(); try context.save(); changed(server) }
             return result
-        } catch { context.rollback(); failed(error); throw error }
+        } catch { context.rollback(); if !(error is StoreError) { failed(error) }; throw error }
     }
     private func metadata(_ server: String, _ id: String) throws -> OutgoingMetadata? {
         let key = LocalStore.key(server, "outbox", id)
@@ -248,6 +256,52 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
     func summaries(server: String, conversationID: String) throws -> [Summary] {
         try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.server == server && $0.conversationID == conversationID }, sortBy: [SortDescriptor(\.sequence)])).map(Summary.init)
     }
+    /// Preserve latest-lane selection, including a provisional start with no known destination.
+    func latestConversationID(server: String, owner: ConversationOwner) throws -> String? {
+        let ownerKey = OutgoingMetadata.ownerKey(owner)
+        var query = FetchDescriptor<OutgoingMetadata>(predicate: #Predicate {
+            ($0.server == server && $0.ownerKey == ownerKey) && ($0.kind == "message" && $0.scheduled)
+        }, sortBy: [SortDescriptor(\.sequence, order: .reverse)])
+        query.fetchLimit = 1
+        return try context.fetch(query).first?.conversationID
+    }
+    /// Selected destination and its active provisional start, plus independently retained originals.
+    func conversationSummaries(server: String, owner: ConversationOwner, conversationID: String?) throws -> [Summary] {
+        let ownerKey = OutgoingMetadata.ownerKey(owner)
+        let hasDestination = conversationID != nil
+        var rows = try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate {
+            $0.server == server && $0.ownerKey == ownerKey && $0.kind == "message" &&
+            (($0.conversationID == conversationID && (hasDestination || $0.scheduled)) || ($0.conversationID == nil && $0.scheduled))
+        }, sortBy: [SortDescriptor(\.sequence)]))
+        // One metadata-only query selects retired links in this owner/destination scope.
+        // Walking those links in memory avoids a fetch for every retained sent message.
+        let ancestorPredicate = #Predicate<OutgoingMetadata> {
+            ($0.server == server && $0.ownerKey == ownerKey) && (!$0.scheduled && $0.replacementID != nil)
+        }
+        let ancestorQuery = FetchDescriptor<OutgoingMetadata>(predicate: ancestorPredicate)
+        let ancestors = try context.fetch(ancestorQuery)
+        var byReplacement: [String: [OutgoingMetadata]] = [:]
+        for original in ancestors where original.kind == "message" && (original.conversationID == nil || original.conversationID == conversationID) {
+            if let replacementID = original.replacementID { byReplacement[replacementID, default: []].append(original) }
+        }
+        var known = Set(rows.map(\.identity))
+        var links = rows.filter(\.scheduled).map(\.identity)
+        var traversed = Set(links)
+        var linkIndex = 0
+        while linkIndex < links.count {
+            let replacementID = links[linkIndex]
+            linkIndex += 1
+            for original in byReplacement[replacementID, default: []] {
+                if known.insert(original.identity).inserted { rows.append(original) }
+                if traversed.insert(original.identity).inserted { links.append(original.identity) }
+            }
+        }
+        return rows.sorted { $0.sequence < $1.sequence }.map(Summary.init)
+    }
+    func corruptSummaries(server: String) throws -> [Summary] {
+        try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.server == server && $0.state == "storageError" }, sortBy: [SortDescriptor(\.sequence)])).map(Summary.init)
+    }
+    func storageFailure() throws -> String? { try OutgoingStoreMigration.storageError(context) }
     func replySummaries(server: String, conversationID: String) throws -> [Summary] {
         try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.server == server && $0.conversationID == conversationID && $0.ownerReadThroughSequence != nil }, sortBy: [SortDescriptor(\.sequence)])).map(Summary.init)
     }
@@ -268,6 +322,7 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
     }
     func work(server: String, id: String) throws -> PendingWork? {
         guard let row = try raw(server, "outbox", id), let metadata = try metadata(server, id) else { return nil }
+        onPayloadDecode?()
         var work = try JSONDecoder().decode(PendingWork.self, from: row.payload)
         work.state = PendingWork.State(rawValue: metadata.state) ?? .failed
         work.note = metadata.note; work.completed = metadata.completed
@@ -312,7 +367,12 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
             query.fetchLimit = 1
             if let previous = try context.fetch(query).first, !["sent", "changed"].contains(previous.state) { metadata.lane = previous.lane }
         }
-        metadata.predecessorID = try laneRows(server, metadata.lane).last(where: { $0.scheduled && !["sent", "changed", "serverQueued"].contains($0.state) })?.identity
+        let predecessor = try laneRows(server, metadata.lane).last(where: { $0.scheduled && !Self.releasesLane($0) })
+        metadata.predecessorID = predecessor?.identity
+        if (predecessor?.state == "failed" && predecessor?.conversationID == nil) || predecessor?.holdReason == "destinationUnresolved" {
+            metadata.holdReason = "destinationUnresolved"
+            metadata.note = "Not sent · choose a conversation or start a new one"
+        }
         context.insert(row); context.insert(metadata)
         return metadata
     }
@@ -327,7 +387,10 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         guard let predecessor = row.predecessorID else { return true }
         // Missing predecessors require an explicit decision, never an inferred release.
         guard let previous = try metadata(server, predecessor) else { return false }
-        return ["sent", "changed", "serverQueued"].contains(previous.state)
+        return Self.releasesLane(previous)
+    }
+    private static func releasesLane(_ row: OutgoingMetadata) -> Bool {
+        ["sent", "changed", "serverQueued"].contains(row.state) || (row.state == "failed" && row.conversationID != nil)
     }
     func beginAttempt(server: String, id: String) throws {
         try transaction(server) {
@@ -340,16 +403,25 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         try transaction(server) {
             guard let row = try metadata(server, id) else { throw StoreError.missingWork }
             let oldLane = row.lane
+            let enteredUncertain = state == .uncertain && row.state != "uncertain"
+            let enteredFailed = state == .failed && row.state != "failed"
             if row.state != state.rawValue { row.state = state.rawValue }
             if row.note != note { row.note = note }
             if [.sent, .changed, .failed].contains(state), row.completed == nil { row.completed = now }
             let deadline: Date?
             switch state {
             case .sent, .changed: deadline = (row.completed ?? row.created).addingTimeInterval(86400)
-            case .uncertain: deadline = (row.completed ?? row.created).addingTimeInterval(7 * 86400)
+            case .uncertain: deadline = enteredUncertain ? now.addingTimeInterval(7 * 86400) : row.expiresAt ?? now.addingTimeInterval(7 * 86400)
+            case .failed where !row.scheduled: deadline = enteredFailed ? now.addingTimeInterval(86400) : row.expiresAt ?? now.addingTimeInterval(86400)
             default: deadline = nil
             }
             if row.expiresAt != deadline { row.expiresAt = deadline }
+            if state == .failed, row.scheduled, row.conversationID == nil, conversationID == nil {
+                for successor in try laneRows(server, oldLane) where successor.scheduled && successor.provenance == "unattempted" && successor.sequence > row.sequence {
+                    successor.holdReason = "destinationUnresolved"
+                    successor.note = "Not sent · choose a conversation or start a new one"
+                }
+            }
             if let conversationID, row.conversationID != conversationID {
                 row.conversationID = conversationID
                 // A late original receipt never retargets a replacement's successors.
@@ -369,9 +441,9 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         }
     }
     /// An explicit resend occupies the old logical position; the original keeps its own receipt.
-    func replace(server: String, id: String, with replacement: PendingWork) throws {
+    func replace(server: String, id: String, with replacement: PendingWork, now: Date = .now) throws {
         try transaction(server) {
-            guard let original = try metadata(server, id), (["uncertain", "failed"].contains(original.state) || (original.state == "waiting" && original.provenance == "unknown")), replacement.state == .waiting else { throw StoreError.invalidTransition }
+            guard let original = try metadata(server, id), original.scheduled, (["uncertain", "failed"].contains(original.state) || (original.state == "waiting" && original.provenance == "unknown")), replacement.state == .waiting else { throw StoreError.invalidTransition }
             guard original.state == "failed" || !(replacement.priorMessageIDs ?? []).contains(id) else { throw StoreError.invalidTransition }
             let next = try insert(replacement, server: server)
             next.sequence = original.sequence; next.lane = original.lane; next.predecessorID = original.predecessorID
@@ -380,8 +452,9 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
                 next.holdReason = "destinationUnresolved"
                 next.note = "Not sent · choose a conversation or start a new one"
             }
-            if original.state == "waiting" && original.provenance == "unknown" { original.state = "uncertain"; original.expiresAt = original.created.addingTimeInterval(7 * 86400) }
+            if original.state == "waiting" && original.provenance == "unknown" { original.state = "uncertain"; original.expiresAt = now.addingTimeInterval(7 * 86400) }
             original.scheduled = false; original.replacementID = next.identity
+            if original.state == "failed" { original.expiresAt = now.addingTimeInterval(86400) }
             for successor in try laneRows(server, original.lane) where successor.identity != next.identity && successor.predecessorID == id {
                 successor.predecessorID = next.identity
             }
@@ -400,7 +473,7 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
             let files = Set(due.compactMap(\.audioFile))
             for row in due {
                 for successor in try laneRows(server, row.lane) where successor.predecessorID == row.identity {
-                    if !["sent", "changed", "serverQueued"].contains(row.state) {
+                    if !Self.releasesLane(row) {
                         successor.holdReason = successor.conversationID == nil ? "destinationUnresolved" : "predecessorExpired"
                         successor.note = "Not sent · choose how to send this message"
                     }
@@ -438,6 +511,7 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
                 guard let predecessor = successor.predecessorID, predecessors.contains(predecessor) else { continue }
                 let chosen = try work(server: server, id: successor.identity)?.message
                 successor.lane = row.lane; successor.conversationID = row.conversationID
+                successor.holdReason = nil; successor.note = "Waiting for connection"
                 successor.omitCreationSettings = row.omitCreationSettings
                 successor.omitModel = row.conversationID != nil && chosen?.model == inherited?.model
                 successor.omitEffort = row.conversationID != nil && chosen?.reasoningEffort == inherited?.reasoningEffort
@@ -453,13 +527,16 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
             let decoded = try? JSONDecoder().decode(PendingWork.self, from: data)
             if let row = try metadata(server, id) {
                 if let decoded {
+                    let enteredUncertain = decoded.state == .uncertain && row.state != "uncertain"
+                    let enteredFailed = decoded.state == .failed && row.state != "failed"
                     if row.state != decoded.state.rawValue { row.state = decoded.state.rawValue }
                     if row.note != decoded.note { row.note = decoded.note }
                     if row.completed != decoded.completed { row.completed = decoded.completed }
                     let deadline: Date?
                     switch decoded.state {
                     case .sent, .changed: deadline = (decoded.completed ?? decoded.created).addingTimeInterval(86400)
-                    case .uncertain: deadline = (decoded.completed ?? decoded.created).addingTimeInterval(7 * 86400)
+                    case .uncertain: deadline = enteredUncertain ? Date.now.addingTimeInterval(7 * 86400) : row.expiresAt ?? Date.now.addingTimeInterval(7 * 86400)
+                    case .failed where !row.scheduled: deadline = enteredFailed ? Date.now.addingTimeInterval(86400) : row.expiresAt ?? Date.now.addingTimeInterval(86400)
                     default: deadline = nil
                     }
                     if row.expiresAt != deadline { row.expiresAt = deadline }
@@ -514,7 +591,7 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
 
     func rejectAdmission(server: String, id: String, note: String) throws {
         try transaction(server) {
-            guard let row = try metadata(server, id), row.provenance == "attempted", row.state == "sending" else { throw StoreError.invalidTransition }
+            guard let row = try metadata(server, id), row.scheduled, row.provenance == "attempted", row.state == "sending" else { throw StoreError.invalidTransition }
             row.provenance = "unattempted"; row.state = "waiting"; row.note = note
         }
     }

@@ -3,6 +3,8 @@ import Observation
 import UniformTypeIdentifiers
 
 @MainActor @Observable final class ConversationModel {
+    @ObservationIgnored private let outgoingStore: LocalStore
+    init(outgoingStore: LocalStore = .shared) { self.outgoingStore = outgoingStore }
     var machineLocale: String?
     var conversationID: String? { didSet { if oldValue != conversationID { invalidateReader() } } }
     var draft = "" { didSet { saveDraft() } }
@@ -17,6 +19,7 @@ import UniformTypeIdentifiers
     }
     func restore(owner: ConversationOwner, api: APIClient, draftID: String? = nil, savedWork: [PendingWork]? = nil) {
         guard persistenceAPI?.baseURL != api.baseURL || persistenceOwner != owner || customDraftID != draftID else { syncOutbox(savedWork: savedWork); return }
+        outgoing = []; retryAliases = [:]; supersededIDs = []
         persistenceAPI = api; persistenceOwner = owner; customDraftID = draftID; restoring = true
         defer { restoring = false }
         items = []; expandedBodies = [:]; status = nil; older = nil
@@ -172,20 +175,10 @@ import UniformTypeIdentifiers
     func syncOutbox(savedWork: [PendingWork]? = nil) {
         guard let api = persistenceAPI, let owner = persistenceOwner else { return }
         let server = LocalStore.server(api.baseURL)
-        let summaries = (try? LocalStore.shared.outgoing.summaries(server: server, owner: owner)) ?? []
-        if conversationID == nil { conversationID = summaries.last(where: { $0.scheduled })?.conversationID }
-        var selectedIDs = Set(summaries.filter { $0.conversationID == conversationID }.map(\.id))
-        // Only originals of this selected replacement chain join this destination.
-        var added = true
-        while added {
-            added = false
-            for fact in summaries where !fact.scheduled && (fact.conversationID == nil || fact.conversationID == conversationID) {
-                if let replacement = fact.replacementID, selectedIDs.contains(replacement), selectedIDs.insert(fact.id).inserted { added = true }
-            }
-        }
-        let selected = summaries.filter { selectedIDs.contains($0.id) }
-        let facts = Dictionary(uniqueKeysWithValues: summaries.map { ($0.id, $0) })
-        let saved = (savedWork ?? selected.compactMap { Outbox.shared.work(server, id: $0.id) }).filter { $0.kind == .message && $0.owner == owner }
+        if conversationID == nil { conversationID = try? outgoingStore.outgoing.latestConversationID(server: server, owner: owner) }
+        let selected = (try? outgoingStore.outgoing.conversationSummaries(server: server, owner: owner, conversationID: conversationID)) ?? []
+        let previous = Dictionary(outgoing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let supplied = savedWork.map { Dictionary($0.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }) }
         recoveries = [:]
         for fact in selected where fact.scheduled {
             if fact.holdReason != nil { recoveries[fact.id] = .held(unknownDestination: fact.conversationID == nil) }
@@ -193,19 +186,25 @@ import UniformTypeIdentifiers
                 recoveries[fact.id] = .resend(unknownDestination: fact.conversationID == nil)
             } else if fact.state == "failed" { recoveries[fact.id] = .retry }
         }
-        for work in saved {
+        let received = Set(items.compactMap(\.senderMessageId))
+        outgoing = selected.compactMap { fact -> Outgoing? in
+            guard fact.kind == "message", !supersededIDs.contains(fact.id), !received.contains(fact.id) || fact.state != "sent" else { return nil }
+            // Intent bytes are immutable. Keep only the already-rendered content;
+            // scheduling/receipt updates replace metadata without decoding it again.
+            if var rendered = previous[fact.id] {
+                rendered.note = fact.note; rendered.retryable = recoveries[fact.id] != nil
+                return rendered
+            }
+            guard let work = supplied?[fact.id] ?? (try? outgoingStore.outgoing.work(server: server, id: fact.id)), work.owner == owner else { return nil }
             if let previous = work.priorMessageIDs, let first = previous.first {
                 supersededIDs.formUnion(previous)
                 retryAliases[work.id] = first
             }
-        }
-        if conversationID == nil { conversationID = saved.last(where: { facts[$0.id]?.scheduled == true })?.message?.conversationId }
-        let received = Set(items.compactMap(\.senderMessageId))
-        outgoing = saved.filter { !supersededIDs.contains($0.id) && (!received.contains($0.id) || $0.state != .sent) }.map {
-            Outgoing(id: $0.id, text: $0.message?.content.compactMap(\.text).joined(separator: "\n") ?? $0.displayText, note: $0.note, retryable: recoveries[$0.id] != nil,
-                     attachments: $0.message?.content.filter { $0.piece != "text" } ?? [])
-        }
-        rememberRows(saved.map { retryAliases[$0.id] ?? $0.id })
+            return Outgoing(id: work.id, text: work.message?.content.compactMap(\.text).joined(separator: "\n") ?? work.displayText,
+                note: fact.note, retryable: recoveries[work.id] != nil,
+                attachments: work.message?.content.filter { $0.piece != "text" } ?? [])
+        }.filter { !supersededIDs.contains($0.id) }
+        rememberRows(outgoing.map { retryAliases[$0.id] ?? $0.id })
     }
     var lens: ConversationLens = .focus { didSet { if oldValue != lens { invalidateReader() } } }
     var items: [ConversationItem] = [] { didSet { if oldValue != items { projectionRevision += 1 } } }

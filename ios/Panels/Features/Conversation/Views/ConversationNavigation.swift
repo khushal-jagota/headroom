@@ -145,7 +145,7 @@ private struct ConversationSurface: View {
                 do { try await Task.sleep(for: wait) } catch { return }
             }
         }
-        .onChange(of: LocalStore.shared.workRevision) { _, _ in
+        .onChange(of: LocalStore.shared.outgoingRevision(LocalStore.server(store.baseURL))) { _, _ in
             let before = model.outgoing
             model.syncOutbox()
             // A saved message can be held by the server; its queue lives in the configuration.

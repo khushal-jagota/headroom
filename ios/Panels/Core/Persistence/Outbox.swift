@@ -7,7 +7,10 @@ import Observation
     static let shared = Outbox(store: .shared)
     let store: LocalStore
     private var draining: Set<String> = []
+    private enum DrainWake { case changed, finished(String) }
+    private var drainWakes: [String: AsyncStream<DrainWake>.Continuation] = [:]
     private var foregroundRunID = UUID()
+    private var foregroundWakes: [String: (id: UUID, continuation: AsyncStream<Void>.Continuation)] = [:]
     private(set) var networkAvailable = true
     init(store: LocalStore) { self.store = store }
 
@@ -60,20 +63,44 @@ import Observation
     }
     func run(api: APIClient) async {
         let runID = UUID(); foregroundRunID = runID
+        let server = LocalStore.server(api.baseURL)
+        let (wakes, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        foregroundWakes[server] = (runID, continuation)
+        var wake = wakes.makeAsyncIterator()
         let monitor = NWPathMonitor()
         monitor.pathUpdateHandler = { [weak self] path in
             let available = path.status == .satisfied
             Task { @MainActor in
                 guard let self, self.foregroundRunID == runID else { return }
                 self.networkAvailable = available
-                if available { await self.drain(api: api) }
+                continuation.yield(())
             }
         }
         monitor.start(queue: DispatchQueue(label: "app.panels.connection"))
-        defer { monitor.cancel(); if foregroundRunID == runID { foregroundRunID = UUID() } }
+        defer {
+            monitor.cancel(); continuation.finish()
+            if foregroundRunID == runID { foregroundRunID = UUID() }
+            if foregroundWakes[server]?.id == runID { foregroundWakes[server] = nil }
+        }
         while !Task.isCancelled {
-            await drain(api: api)
-            do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            await drain(api: api, wakeForeground: false)
+            let timer: Task<Void, Never>?
+            if networkAvailable && !NativeBuildGate.requiresUpdate(api.baseURL) && hasReconciliationWork(server: server) {
+                timer = Task {
+                    do { try await Task.sleep(for: .seconds(3)); continuation.yield(()) } catch { }
+                }
+            } else { timer = nil }
+            let event: Void? = await wake.next()
+            timer?.cancel()
+            if event == nil { return }
+        }
+    }
+    /// No repeating timer for work with no receipt door or admitted submission.
+    func hasReconciliationWork(server: String) -> Bool {
+        guard let rows = try? store.outgoing.schedulingSummaries(server: server) else { return false }
+        return rows.contains { row in
+            (try? store.outgoing.canSubmit(server: server, id: row.id)) == true ||
+                (["sending", "uncertain", "serverQueued"].contains(row.state) && Self.canPoll(row))
         }
     }
     nonisolated static let finishedLifetime: TimeInterval = 24 * 60 * 60
@@ -110,75 +137,91 @@ import Observation
             if message.conversationId == nil, let destination { try store.outgoing.releaseHold(server: server, id: nextID, destination: destination) }
             Task { await drain(api: api) }
             return nextID
-        } catch { store.saveError = error.localizedDescription; return nil }
+        } catch is OutgoingStore.StoreError { return nil }
+        catch { if store.outgoingError == nil { store.saveError = error.localizedDescription }; return nil }
     }
     func sendHeld(_ id: String, api: APIClient, destination: OutgoingStore.Destination) {
         do {
             try store.outgoing.releaseHold(server: LocalStore.server(api.baseURL), id: id, destination: destination)
             Task { await drain(api: api) }
-        } catch { store.saveError = error.localizedDescription }
+        } catch is OutgoingStore.StoreError { return }
+        catch { if store.outgoingError == nil { store.saveError = error.localizedDescription } }
     }
     /// A task owns one lane until its request settles. Other lanes can use the second slot.
-    func drain(api: APIClient) async {
+    func drain(api: APIClient, wakeForeground: Bool = true) async {
         let server = LocalStore.server(api.baseURL)
-        guard !draining.contains(server) else { return }
+        if wakeForeground { foregroundWakes[server]?.continuation.yield(()) }
+        guard !draining.contains(server) else { drainWakes[server]?.yield(.changed); return }
         do { try expire(server) } catch { return }
         guard !NativeBuildGate.requiresUpdate(api.baseURL), networkAvailable else { return }
         draining.insert(server)
-        defer { draining.remove(server) }
+        let (wakes, continuation) = AsyncStream<DrainWake>.makeStream()
+        drainWakes[server] = continuation
+        defer { continuation.finish(); drainWakes[server] = nil; draining.remove(server) }
         var visited: Set<String> = []
         var activeLanes: Set<String> = []
-        await withTaskGroup(of: String.self) { group in
+        await withTaskGroup(of: Void.self) { group in
+            var wake = wakes.makeAsyncIterator()
             while !Task.isCancelled, !NativeBuildGate.requiresUpdate(api.baseURL) {
                 let rows = (try? store.outgoing.schedulingSummaries(server: server)) ?? []
-                // A queued receipt must not hold up a later submission in its lane.
+                // A crashed unaddressable attempt has no receipt door. Keep it visible,
+                // but do not repeatedly decode its potentially large original payload.
+                for row in rows where row.state == "sending" && !Self.canPoll(row) && !activeLanes.contains(row.lane) && !visited.contains(row.id) {
+                    try? store.outgoing.settle(server: server, id: row.id, state: .uncertain,
+                        note: "Delivery uncertain · check before another attempt")
+                }
                 let candidates = rows.filter { !visited.contains($0.id) && !activeLanes.contains($0.lane) }
                 let ready = candidates.filter { (try? store.outgoing.canSubmit(server: server, id: $0.id)) == true }
-                let polls = candidates.filter { ["sending", "uncertain", "serverQueued"].contains($0.state) }
+                let polls = candidates.filter { ["sending", "uncertain", "serverQueued"].contains($0.state) && Self.canPoll($0) }
                 for row in ready + polls where activeLanes.count < 2 && !activeLanes.contains(row.lane) && !visited.contains(row.id) {
                     visited.insert(row.id); activeLanes.insert(row.lane)
                     group.addTask {
-                        await self.process(row.id, api: api, server: server)
-                        return row.lane
+                        await self.process(row, api: api, server: server)
+                        continuation.yield(.finished(row.lane))
                     }
                 }
-                guard !activeLanes.isEmpty, let lane = await group.next() else { break }
-                activeLanes.remove(lane)
+                guard !activeLanes.isEmpty, let event = await wake.next() else { break }
+                if case .finished(let lane) = event { activeLanes.remove(lane) }
             }
             group.cancelAll()
         }
     }
-    private func process(_ id: String, api: APIClient, server: String) async {
-        guard let work = work(server, id: id) else { return }
-        if work.kind == .approval || work.kind == .sendBack {
-            await processDecision(work, api: api, server: server)
+    private static func canPoll(_ row: OutgoingStore.Summary) -> Bool {
+        switch row.kind {
+        case "message": row.conversationID != nil
+        case "approval", "sendBack": row.hasProtectedDecisionBody && row.ticketID != nil
+        default: false
+        }
+    }
+    private func process(_ row: OutgoingStore.Summary, api: APIClient, server: String) async {
+        let id = row.id
+        if row.kind == "message", row.state != "waiting" {
+            guard let conversationID = row.conversationID else { return }
+            do {
+                if let receipt = try await api.conversationReceipts(conversationID, messageIDs: [id]).first(where: { $0.senderMessageId == id }) {
+                    let state: PendingWork.State, note: String
+                    switch receipt.fate {
+                    case "prompt": state = .sent; note = "Sent"
+                    case "prompt_refused": state = .failed; note = "Not sent · tap to retry"
+                    case "prompt_discarded": state = .changed; note = "Not sent · no longer applicable"
+                    default: state = .uncertain; note = "Delivery uncertain"
+                    }
+                    try store.outgoing.settle(server: server, id: id, state: state, note: note)
+                } else if row.state != "serverQueued" {
+                    try store.outgoing.settle(server: server, id: id, state: .uncertain, note: "Delivery uncertain · check conversation")
+                }
+            } catch { /* Missing authority preserves the exact attempted operation. */ }
             return
         }
+        if row.kind == "approval" || row.kind == "sendBack" {
+            await processDecision(row, api: api, server: server)
+            return
+        }
+        guard let work = work(server, id: id) else { return }
         var writeStarted = false
         do {
             if case .goal = work.owner {
                 try store.outgoing.settle(server: server, id: id, state: .changed, note: "Not sent · goal conversations are retired; open the goal to talk to its holder")
-                return
-            }
-            if work.state != .waiting {
-                // An absent receipt never proves that an attempted or legacy write is safe to replay.
-                if work.kind == .message, let conversationID = work.message?.conversationId {
-                    if let receipt = try await api.conversationReceipts(conversationID, messageIDs: [id]).first(where: { $0.senderMessageId == id }) {
-                        let state: PendingWork.State
-                        let note: String
-                        switch receipt.fate {
-                        case "prompt": state = .sent; note = "Sent"
-                        case "prompt_refused": state = .failed; note = "Not sent · tap to retry"
-                        case "prompt_discarded": state = .changed; note = "Not sent · no longer applicable"
-                        default: state = .uncertain; note = "Delivery uncertain"
-                        }
-                        try store.outgoing.settle(server: server, id: id, state: state, note: note)
-                    } else if work.state != .serverQueued {
-                        try store.outgoing.settle(server: server, id: id, state: .uncertain, note: "Delivery uncertain · check conversation")
-                    }
-                } else if work.state != .uncertain {
-                    try store.outgoing.settle(server: server, id: id, state: .uncertain, note: "Delivery uncertain · check before another attempt")
-                }
                 return
             }
             try store.outgoing.beginAttempt(server: server, id: id)
@@ -205,6 +248,10 @@ import Observation
 
             }
         } catch {
+            if let error = error as? URLError, Self.failedBeforeDispatch(error), writeStarted {
+                try? store.outgoing.rejectAdmission(server: server, id: id, note: "Waiting for connection")
+                return
+            }
             if let error = error as? APIError, error.isUpdateRequired, writeStarted {
                 try? store.outgoing.rejectAdmission(server: server, id: id, note: NativeBuildGate.message)
                 return
@@ -218,65 +265,85 @@ import Observation
             }
         }
     }
-    private func processDecision(_ work: PendingWork, api: APIClient, server: String) async {
-        guard let body = work.protectedDecisionBody, let ticketID = work.ticketID,
-              let command = try? APIClient.decoder().decode(DecisionCommand.self, from: body) else {
-            // Bodyless legacy rows never gain protected-write authority on read.
-            try? store.outgoing.settle(server: server, id: work.id, state: .uncertain, note: "Delivery uncertain · check the ticket before another decision")
+    private static func failedBeforeDispatch(_ error: URLError) -> Bool {
+        [.notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed].contains(error.code)
+    }
+    private func processDecision(_ fact: OutgoingStore.Summary, api: APIClient, server: String) async {
+        guard fact.hasProtectedDecisionBody, let ticketID = fact.ticketID,
+              let field = fact.proposalField, let revision = fact.proposalRevision else {
+            // Legacy rows never gain protected-write authority on read.
+            try? store.outgoing.settle(server: server, id: fact.id, state: .uncertain,
+                note: "Delivery uncertain · check the ticket before another decision")
             return
         }
-        let fact: OutgoingStore.Summary
-        do {
-            guard let saved = try store.outgoing.summary(server: server, id: work.id) else { return }
-            fact = saved
-        } catch { store.saveError = error.localizedDescription; return }
+        // Receipt identity is indexed metadata. Read the frozen body only if an
+        // explicit supported absence actually permits this operation to POST.
+        let identity = DecisionCommand(decision: fact.kind == "approval" ? "approve" : "send_back",
+            field: field, expectedProposalRevision: revision)
         var attempted = fact.provenance != "unattempted"
         let existing: DecisionReceipt?
         do {
-            existing = try await api.lookupReviewDecision(ticketID: ticketID, operationID: work.id, command: command)
+            existing = try await api.lookupReviewDecision(ticketID: ticketID, operationID: fact.id, command: identity)
         } catch {
-            recordDecisionTransportFailure(error, work: work, server: server, attempted: attempted)
+            recordDecisionTransportFailure(error, id: fact.id, server: server, attempted: attempted)
             return
         }
         if let existing {
             // Local save errors already expose the storage failure. They cannot prove
             // that the server lacks support or turn its applied outcome into refusal.
-            do { try settleDecision(existing, work: work, server: server) } catch { return }
+            do { try settleDecision(existing, id: fact.id, kind: fact.kind, server: server) } catch { return }
             return
         }
+        guard let work = work(server, id: fact.id), let body = work.protectedDecisionBody,
+              let command = try? APIClient.decoder().decode(DecisionCommand.self, from: body) else { return }
         // Only an explicit supported null receipt permits this exact operation to POST.
         if !attempted {
-            do { try store.outgoing.beginAttempt(server: server, id: work.id) } catch { return }
+            do { try store.outgoing.beginAttempt(server: server, id: fact.id) } catch { return }
             attempted = true
         }
         let result: DecisionReceipt
         do {
-            result = try await api.submitReviewDecision(ticketID: ticketID, operationID: work.id, command: command, frozenBody: body)
+            result = try await api.submitReviewDecision(ticketID: ticketID, operationID: fact.id, command: command, frozenBody: body)
         } catch {
-            recordDecisionTransportFailure(error, work: work, server: server, attempted: attempted)
+            if let refusal = error as? APIError, refusal.isUpdateRequired {
+                try? store.outgoing.rejectAdmission(server: server, id: fact.id, note: NativeBuildGate.message)
+            } else if let refusal = error as? APIError, (400..<500).contains(refusal.status), refusal.status != 408 {
+                try? store.outgoing.settle(server: server, id: fact.id, state: .changed, note: "Not sent · " + refusal.message)
+            } else if let disconnected = error as? URLError, Self.failedBeforeDispatch(disconnected) {
+                try? store.outgoing.rejectAdmission(server: server, id: fact.id, note: "Waiting for connection")
+            } else {
+                recordDecisionTransportFailure(error, id: fact.id, server: server, attempted: attempted)
+            }
             return
         }
-        do { try settleDecision(result, work: work, server: server) } catch { return }
+        do { try settleDecision(result, id: fact.id, kind: fact.kind, server: server) } catch { return }
     }
-    private func recordDecisionTransportFailure(_ error: Error, work: PendingWork, server: String, attempted: Bool) {
+    private func recordDecisionTransportFailure(_ error: Error, id: String, server: String, attempted: Bool) {
         if attempted {
-            try? store.outgoing.settle(server: server, id: work.id, state: .uncertain,
+            try? store.outgoing.settle(server: server, id: id, state: .uncertain,
                 note: "Decision outcome uncertain · waiting for its server receipt")
         } else if let error = error as? APIError, error.isUpdateRequired {
-            try? store.outgoing.settle(server: server, id: work.id, state: .waiting, note: NativeBuildGate.message)
+            try? store.outgoing.settle(server: server, id: id, state: .waiting, note: NativeBuildGate.message)
         } else if error is URLError || error is CancellationError || (error as? APIError).map({ $0.status >= 500 || $0.status == 408 || $0.status == 429 }) == true {
             // A transient lookup failure did not attempt the write or disprove support.
-            try? store.outgoing.settle(server: server, id: work.id, state: .waiting, note: "Waiting for connection")
+            try? store.outgoing.settle(server: server, id: id, state: .waiting, note: "Waiting for connection")
         } else {
-            try? store.outgoing.settle(server: server, id: work.id, state: .changed,
-                note: "Not sent · this server cannot confirm protected decisions. Use a compatible server and review again.")
+            let note: String
+            if let failure = error as? APIError, failure.status == 401 || failure.status == 403 {
+                note = "Not sent · sign in or check your access to this ticket, then review again."
+            } else if error as? DecisionResponseError == .unsupported || (error as? APIError).map({ [404, 405].contains($0.status) }) == true {
+                note = "Not sent · this server cannot confirm protected decisions. Use a compatible server and review again."
+            } else {
+                note = "Not sent · the server returned an invalid decision response. Refresh and review again."
+            }
+            try? store.outgoing.settle(server: server, id: id, state: .changed, note: note)
         }
     }
-    private func settleDecision(_ receipt: DecisionReceipt, work: PendingWork, server: String) throws {
+    private func settleDecision(_ receipt: DecisionReceipt, id: String, kind: String, server: String) throws {
         if receipt.outcome == "applied" {
-            try store.outgoing.settle(server: server, id: work.id, state: .sent, note: work.kind == .approval ? "Approved" : "Sent back")
+            try store.outgoing.settle(server: server, id: id, state: .sent, note: kind == "approval" ? "Approved" : "Sent back")
         } else {
-            try store.outgoing.settle(server: server, id: work.id, state: .changed,
+            try store.outgoing.settle(server: server, id: id, state: .changed,
                 note: "Not sent · " + (receipt.error?.message ?? "This decision was refused. Review again."))
         }
     }

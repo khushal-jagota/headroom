@@ -31,6 +31,10 @@ struct ReviewApproval: Codable, Sendable {
     let nextHolder: Principal
 }
 
+enum DecisionResponseError: Error, Equatable {
+    case unsupported, invalid
+}
+
 extension APIClient {
     func reviewManifest(_ workerType: String?) async throws -> ReviewWorkerManifest {
         guard let workerType else { throw APIError(status: 0, message: "This ticket has no saved workflow.") }
@@ -78,7 +82,7 @@ extension APIClient {
         // A successful POST always confirms a terminal outcome. Null remains unknown.
         guard let receipt = try Self.validateReviewDecisionResponse(value, ticketID: ticketID,
             operationID: operationID, command: command, allowMissingReceipt: false) else {
-            throw APIError(status: 0, message: "The server did not confirm this decision.")
+            throw DecisionResponseError.invalid
         }
         return receipt
     }
@@ -99,16 +103,16 @@ extension APIClient {
     static func validateReviewDecisionResponse(_ response: DecisionOperationResponse, ticketID: String,
         operationID: String, command: DecisionCommand, allowMissingReceipt: Bool) throws -> DecisionReceipt? {
         guard response.receiptContract == 1 else {
-            throw APIError(status: 0, message: "The server cannot confirm decision operations.")
+            throw DecisionResponseError.unsupported
         }
         guard let receipt = response.receipt else {
             if allowMissingReceipt { return nil }
-            throw APIError(status: 0, message: "The server did not confirm this decision.")
+            throw DecisionResponseError.invalid
         }
         guard receipt.operationId == operationID, receipt.ticketId == ticketID,
               receipt.decision == command.decision, receipt.field == command.field,
               receipt.expectedProposalRevision == command.expectedProposalRevision else {
-            throw APIError(status: 0, message: "The server returned a different decision operation.")
+            throw DecisionResponseError.invalid
         }
         switch receipt.outcome {
         case "applied" where receipt.transition != nil && receipt.error == nil:
@@ -116,7 +120,7 @@ extension APIClient {
         case "refused" where receipt.transition == nil && receipt.error != nil:
             return receipt
         default:
-            throw APIError(status: 0, message: "The server returned an incomplete decision outcome.")
+            throw DecisionResponseError.invalid
         }
     }
 
