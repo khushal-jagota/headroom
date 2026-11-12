@@ -1,0 +1,619 @@
+{
+  "case": "unit-21-record-rebuild",
+  "complete": true,
+  "kind": "measurement",
+  "measurement": {
+    "event_loop_delay_ms": {
+      "max": 836.239359,
+      "p50": 1.084415,
+      "p95": 1.502207,
+      "p99": 1.797119,
+      "samples": 158071
+    },
+    "heartbeat": {
+      "count": 34881,
+      "interval_ms": 5,
+      "max_ms": 984.7003930000064,
+      "over_100_ms": 405,
+      "over_500_ms": 104,
+      "over_50_ms": 413,
+      "p50_ms": 5.399182999972254,
+      "p95_ms": 5.9660539999604225,
+      "p99_ms": 420.45858200000293,
+      "total_ms": 370320.713591
+    },
+    "install_transactions": {
+      "count": 20,
+      "max_ms": 171.96706000000268,
+      "over_100_ms": 14,
+      "over_500_ms": 0,
+      "over_50_ms": 20,
+      "p50_ms": 116.26732600000105,
+      "p95_ms": 155.32283900000039,
+      "p99_ms": 171.96706000000268,
+      "total_ms": 2295.6939720001956
+    },
+    "limitations": [
+      "Profiling wrappers and per-SQL timers add overhead. Do not compare its wall time directly with the earlier plain measurement.",
+      "SQL method time includes driver preparation, execution, and row materialization. Residual callback time is JS reduction/control plus instrumentation, not pure reducer time.",
+      "Scope overhead includes BEGIN/COMMIT, write-door checks, and unwrapped area commit steps in navigation mode.",
+      "Outside synchronous database scopes combines yield, production pacing, timer scheduling, and other control work. It is not measured pure idle time.",
+      "Record-only replay omits area commit steps. Navigation mode uses actual area commit steps and current Python-written projections, with no conversation replay.",
+      "The canonical fixture has completed synthetic turns and no linked Ticket or Manager conversations. Navigation results do not represent a populated application workload.",
+      "No production providers, browser, HTTP listener, live data, or concurrent external writer participates."
+    ],
+    "measured_wall_ms": 370301.059555,
+    "mode": "record-rebuild",
+    "navigation": {
+      "navigation_records": 0,
+      "navigation_signal_publications": 0,
+      "navigation_view_ordered": null
+    },
+    "node_version": "v22.23.1",
+    "outside_database_yield_pacing_and_control_ms": 192597.8401160032,
+    "phase_wall_ms": {
+      "all_views_current_ms": 370301.055578,
+      "record_initialize_ms": 464.44493199999994
+    },
+    "phases": {
+      "atomic-view-install": {
+        "callback_residual_js_ms": 85.71478699996624,
+        "replayed_events": 0,
+        "scopes": {
+          "count": 20,
+          "max_ms": 171.96706000000268,
+          "over_100_ms": 14,
+          "over_500_ms": 0,
+          "over_50_ms": 20,
+          "p50_ms": 116.26732600000105,
+          "p95_ms": 155.32283900000039,
+          "p99_ms": 171.96706000000268,
+          "total_ms": 2295.6939720001956
+        },
+        "sql_read_ms": 645.6733450001102,
+        "sql_write_ms": 1021.1383679998653,
+        "transaction_or_read_scope_overhead_ms": 543.1674720002538
+      },
+      "private-view-setup": {
+        "callback_residual_js_ms": 17.378072999993094,
+        "replayed_events": 0,
+        "scopes": {
+          "count": 20,
+          "max_ms": 3.9970910000000117,
+          "over_100_ms": 0,
+          "over_500_ms": 0,
+          "over_50_ms": 0,
+          "p50_ms": 3.153214999998454,
+          "p95_ms": 3.9524139999994077,
+          "p99_ms": 3.9970910000000117,
+          "total_ms": 62.50396399995117
+        },
+        "sql_read_ms": 18.315887000093255,
+        "sql_write_ms": 17.32344899992694,
+        "transaction_or_read_scope_overhead_ms": 9.48655499993788
+      },
+      "record-startup-or-control": {
+        "callback_residual_js_ms": 416.74810899947107,
+        "replayed_events": 0,
+        "scopes": {
+          "count": 17668,
+          "max_ms": 57.21193299999868,
+          "over_100_ms": 0,
+          "over_500_ms": 0,
+          "over_50_ms": 1,
+          "p50_ms": 0.3230289999919478,
+          "p95_ms": 0.482890999999654,
+          "p99_ms": 1.100897999946028,
+          "total_ms": 6454.716737996828
+        },
+        "sql_read_ms": 4967.923806000985,
+        "sql_write_ms": 0.15707700000001523,
+        "transaction_or_read_scope_overhead_ms": 1069.887745996372
+      },
+      "replay-batch": {
+        "callback_residual_js_ms": 21219.0448100111,
+        "replayed_events": 200000,
+        "scopes": {
+          "count": 400,
+          "max_ms": 625.4725780000008,
+          "over_100_ms": 400,
+          "over_500_ms": 19,
+          "over_50_ms": 400,
+          "p50_ms": 416.7264530000002,
+          "p95_ms": 495.4475669999956,
+          "p99_ms": 566.4274790000054,
+          "total_ms": 168890.30476499978
+        },
+        "sql_read_ms": 97524.03902299193,
+        "sql_write_ms": 49884.62364299726,
+        "transaction_or_read_scope_overhead_ms": 262.5972889995154
+      }
+    },
+    "projection_current": true,
+    "projection_rows_digest_after": "f90f4b1ecf64acaea3ace83ba1a03a6d3d3165cc5486f27c3e207d9c959282ca",
+    "projection_rows_digest_before": "7d029fbbe4c57dfec68ac09785d7e050416fbc24ec11b7b8727e31c94fd3f25a",
+    "projection_version": 4,
+    "replay_batch_events": 500,
+    "replay_batches": {
+      "count": 400,
+      "max_ms": 625.4725780000008,
+      "over_100_ms": 400,
+      "over_500_ms": 19,
+      "over_50_ms": 400,
+      "p50_ms": 416.7264530000002,
+      "p95_ms": 495.4475669999956,
+      "p99_ms": 566.4274790000054,
+      "total_ms": 168890.30476499978
+    },
+    "replayed_events": 200000,
+    "slowest_scopes": [
+      {
+        "callback_residual_js_ms": 84.52466999969693,
+        "duration_ms": 625.4725780000008,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 343.99403400014126,
+        "sql_write_ms": 196.21041900015916,
+        "start_offset_ms": 27804.638883,
+        "transaction_or_read_scope_overhead_ms": 0.7434550000034506
+      },
+      {
+        "callback_residual_js_ms": 126.8851799981785,
+        "duration_ms": 606.3525219999719,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 316.60697399941273,
+        "sql_write_ms": 162.08559400239028,
+        "start_offset_ms": 327846.96503900003,
+        "transaction_or_read_scope_overhead_ms": 0.7747739999904297
+      },
+      {
+        "callback_residual_js_ms": 75.07441499916604,
+        "duration_ms": 603.8850569999777,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 356.4961549991276,
+        "sql_write_ms": 171.4942240016535,
+        "start_offset_ms": 327194.70901600004,
+        "transaction_or_read_scope_overhead_ms": 0.8202630000305362
+      },
+      {
+        "callback_residual_js_ms": 112.983147999621,
+        "duration_ms": 576.2674389999884,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 318.1853329996957,
+        "sql_write_ms": 144.3533570006839,
+        "start_offset_ms": 78282.96442,
+        "transaction_or_read_scope_overhead_ms": 0.7456009999878006
+      },
+      {
+        "callback_residual_js_ms": 63.7945200005488,
+        "duration_ms": 566.4274790000054,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 307.05137699935585,
+        "sql_write_ms": 194.8705850000988,
+        "start_offset_ms": 86205.806692,
+        "transaction_or_read_scope_overhead_ms": 0.710997000001953
+      },
+      {
+        "callback_residual_js_ms": 63.44291599999997,
+        "duration_ms": 554.2554500000006,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 316.6611890000604,
+        "sql_write_ms": 173.51378999993904,
+        "start_offset_ms": 26616.97661,
+        "transaction_or_read_scope_overhead_ms": 0.6375550000011572
+      },
+      {
+        "callback_residual_js_ms": 87.6533510003901,
+        "duration_ms": 538.9308799999999,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 286.97828199969445,
+        "sql_write_ms": 163.547636999916,
+        "start_offset_ms": 28467.350863,
+        "transaction_or_read_scope_overhead_ms": 0.7516099999993457
+      },
+      {
+        "callback_residual_js_ms": 66.23421299905749,
+        "duration_ms": 538.0240699999849,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 319.5799180017784,
+        "sql_write_ms": 151.50747499911813,
+        "start_offset_ms": 267924.622993,
+        "transaction_or_read_scope_overhead_ms": 0.7024640000308864
+      },
+      {
+        "callback_residual_js_ms": 70.43451899984211,
+        "duration_ms": 537.4700239999947,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 318.67737200031115,
+        "sql_write_ms": 147.67667299984896,
+        "start_offset_ms": 86799.688129,
+        "transaction_or_read_scope_overhead_ms": 0.6814599999925122
+      },
+      {
+        "callback_residual_js_ms": 67.3432740002172,
+        "duration_ms": 536.2367769999983,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 319.3985359997023,
+        "sql_write_ms": 148.8784750000923,
+        "start_offset_ms": 102049.285485,
+        "transaction_or_read_scope_overhead_ms": 0.6164919999864651
+      },
+      {
+        "callback_residual_js_ms": 64.1556619987823,
+        "duration_ms": 530.8301159999683,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 307.2273480015574,
+        "sql_write_ms": 158.7546289996826,
+        "start_offset_ms": 267324.632654,
+        "transaction_or_read_scope_overhead_ms": 0.6924769999459386
+      },
+      {
+        "callback_residual_js_ms": 47.99517300300067,
+        "duration_ms": 523.1904390000273,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 336.5327039985568,
+        "sql_write_ms": 137.9670389984385,
+        "start_offset_ms": 326606.486865,
+        "transaction_or_read_scope_overhead_ms": 0.695523000031244
+      },
+      {
+        "callback_residual_js_ms": 52.12213400215842,
+        "duration_ms": 523.0741430000053,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 327.071956000058,
+        "sql_write_ms": 143.29296399775194,
+        "start_offset_ms": 344417.421397,
+        "transaction_or_read_scope_overhead_ms": 0.58708900003694
+      },
+      {
+        "callback_residual_js_ms": 54.2954489999247,
+        "duration_ms": 518.8038359999991,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 296.2907159998322,
+        "sql_write_ms": 167.53669800024363,
+        "start_offset_ms": 27224.668937000002,
+        "transaction_or_read_scope_overhead_ms": 0.6809729999986303
+      },
+      {
+        "callback_residual_js_ms": 52.382238999940455,
+        "duration_ms": 508.86939999999595,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 285.34403700055555,
+        "sql_write_ms": 170.53096799951163,
+        "start_offset_ms": 139722.787618,
+        "transaction_or_read_scope_overhead_ms": 0.6121559999883175
+      },
+      {
+        "callback_residual_js_ms": 56.0604890009854,
+        "duration_ms": 508.05761899999925,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 315.2164450000855,
+        "sql_write_ms": 136.07022999893525,
+        "start_offset_ms": 192649.805735,
+        "transaction_or_read_scope_overhead_ms": 0.7104549999930896
+      },
+      {
+        "callback_residual_js_ms": 55.72989699896425,
+        "duration_ms": 507.97789999999804,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 299.9589570009557,
+        "sql_write_ms": 151.66442100008135,
+        "start_offset_ms": 196110.880413,
+        "transaction_or_read_scope_overhead_ms": 0.6246249999967404
+      },
+      {
+        "callback_residual_js_ms": 101.30906999780564,
+        "duration_ms": 506.3839039999875,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 277.8608720017364,
+        "sql_write_ms": 126.5218540004571,
+        "start_offset_ms": 309224.489171,
+        "transaction_or_read_scope_overhead_ms": 0.6921079999883659
+      },
+      {
+        "callback_residual_js_ms": 56.709599998255726,
+        "duration_ms": 500.2300960000139,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 302.1548790005618,
+        "sql_write_ms": 140.73649500118336,
+        "start_offset_ms": 325591.21045,
+        "transaction_or_read_scope_overhead_ms": 0.6291220000130124
+      },
+      {
+        "callback_residual_js_ms": 57.092976996907964,
+        "duration_ms": 495.949775999994,
+        "operation": "write",
+        "phase": "replay-batch",
+        "replayed_events": 500,
+        "sql_calls": 11401,
+        "sql_read_ms": 296.82359700032976,
+        "sql_write_ms": 141.33033900277223,
+        "start_offset_ms": 271090.46263900003,
+        "transaction_or_read_scope_overhead_ms": 0.7028629999840632
+      }
+    ],
+    "source": {
+      "agents": 0,
+      "conversation_events": 200000,
+      "conversations": 20,
+      "managers": 0,
+      "projects": 0,
+      "ticket_conversations": 0,
+      "tickets": 0
+    },
+    "source_projection_versions": [],
+    "sql_by_total_time": [
+      {
+        "calls": 240000,
+        "max_ms": 16.420902999991085,
+        "operation": "get",
+        "sql": "SELECT r.*, t.ending_sequence AS turn_ending_sequence,t.ending AS turn_ending,t.latest_full_message_sequence,t.latest_focus_message_sequence,t.focus_head FROM temp.conversation_rebuild_rows r LEFT JOIN temp.conversation_rebuild_turns t ON r.conversation_id=t.conversation_id AND r.turn_key=t.turn_key WHERE r.conversation_id=? AND r.sequence=? AND r.removed=0",
+        "total_ms": 19181.885892003498
+      },
+      {
+        "calls": 400,
+        "max_ms": 102.67919299999994,
+        "operation": "all",
+        "sql": "SELECT sequence,created_at,kind,payload FROM conversation_events WHERE conversation_id=? AND sequence>? AND sequence<=? ORDER BY sequence LIMIT ?",
+        "total_ms": 14969.222433000394
+      },
+      {
+        "calls": 400000,
+        "max_ms": 17.04728199999954,
+        "operation": "get",
+        "sql": "SELECT sequence FROM temp.conversation_rebuild_rows WHERE conversation_id=? AND row_kind='agent_message' AND focus_visible=1 AND removed=0 ORDER BY sequence DESC LIMIT 1",
+        "total_ms": 12793.628685996784
+      },
+      {
+        "calls": 320000,
+        "max_ms": 14.873869000002742,
+        "operation": "get",
+        "sql": "SELECT sequence FROM temp.conversation_rebuild_rows WHERE conversation_id=? AND turn_key=? AND row_kind='tool_call' AND removed=0 ORDER BY sequence DESC LIMIT 1",
+        "total_ms": 11059.381766991677
+      },
+      {
+        "calls": 440000,
+        "max_ms": 17.170708000005106,
+        "operation": "get",
+        "sql": "SELECT kind,payload FROM conversation_events WHERE conversation_id=? AND sequence=?",
+        "total_ms": 10572.730179005895
+      },
+      {
+        "calls": 400000,
+        "max_ms": 18.35140399998636,
+        "operation": "get",
+        "sql": "SELECT latest_full_happened_sequence,latest_focus_happened_sequence,current_turn_key FROM temp.conversation_rebuild_state WHERE conversation_id=?",
+        "total_ms": 9347.395522988521
+      },
+      {
+        "calls": 439940,
+        "max_ms": 17.207693000033032,
+        "operation": "get",
+        "sql": "SELECT rest_summary FROM temp.conversation_rebuild_rows WHERE conversation_id=? AND sequence=?",
+        "total_ms": 8587.676320000533
+      },
+      {
+        "calls": 160000,
+        "max_ms": 13.56610900000669,
+        "operation": "run",
+        "sql": "INSERT INTO temp.conversation_rebuild_rows(conversation_id,sequence,row_kind,created_at,changed_sequence,focus_visible,sender_message_id) VALUES (?,?,?,?,?,?,?)",
+        "total_ms": 6926.563670994374
+      },
+      {
+        "calls": 200000,
+        "max_ms": 15.719361000010394,
+        "operation": "run",
+        "sql": "UPDATE temp.conversation_rebuild_rows SET rest_summary=?,permission_title_excerpt=COALESCE(?,permission_title_excerpt) WHERE conversation_id=? AND sequence=?",
+        "total_ms": 5761.343769003188
+      },
+      {
+        "calls": 160000,
+        "max_ms": 12.473815999997896,
+        "operation": "run",
+        "sql": "UPDATE temp.conversation_rebuild_rows SET turn_key=?,work_group_key=?,changed_sequence=? WHERE conversation_id=? AND sequence=?",
+        "total_ms": 5587.622443996546
+      },
+      {
+        "calls": 17667,
+        "max_ms": 57.086232999994536,
+        "operation": "all",
+        "sql": "SELECT c.conversation_id FROM conversations c LEFT JOIN conversation_view_state v ON v.conversation_id=c.conversation_id WHERE c.latest_sequence>0 AND (v.conversation_id IS NULL OR v.projection_version!=?) ORDER BY c.latest_sequence,c.conversation_id",
+        "total_ms": 4967.807060000984
+      },
+      {
+        "calls": 240000,
+        "max_ms": 11.044801999989431,
+        "operation": "get",
+        "sql": "SELECT backend_key FROM conversations WHERE conversation_id=?",
+        "total_ms": 4937.703962006812
+      },
+      {
+        "calls": 160000,
+        "max_ms": 15.72822399999859,
+        "operation": "run",
+        "sql": "UPDATE temp.conversation_rebuild_state SET latest_full_happened_sequence=MAX(COALESCE(latest_full_happened_sequence,0),?),latest_focus_happened_sequence=CASE WHEN ? THEN MAX(COALESCE(latest_focus_happened_sequence,0),?) ELSE latest_focus_happened_sequence END WHERE conversation_id=?",
+        "total_ms": 4381.358744997844
+      },
+      {
+        "calls": 200000,
+        "max_ms": 15.290381000002526,
+        "operation": "get",
+        "sql": "SELECT current_turn_key,current_group_key FROM temp.conversation_rebuild_state WHERE conversation_id=?",
+        "total_ms": 4254.145563997759
+      },
+      {
+        "calls": 200000,
+        "max_ms": 11.444266999955289,
+        "operation": "run",
+        "sql": "INSERT OR IGNORE INTO temp.conversation_rebuild_state(conversation_id,projection_version) VALUES (?,?)",
+        "total_ms": 3782.851628001682
+      },
+      {
+        "calls": 200000,
+        "max_ms": 16.97287800000049,
+        "operation": "run",
+        "sql": "UPDATE temp.conversation_rebuild_state SET through_sequence=?,current_turn_key=?,current_group_key=? WHERE conversation_id=?",
+        "total_ms": 3612.9909970082467
+      },
+      {
+        "calls": 159980,
+        "max_ms": 10.928405999999086,
+        "operation": "run",
+        "sql": "UPDATE temp.conversation_rebuild_rows SET rest_summary=NULL WHERE conversation_id=? AND sequence=?",
+        "total_ms": 2987.986398995501
+      },
+      {
+        "calls": 40000,
+        "max_ms": 11.06260000000475,
+        "operation": "run",
+        "sql": "UPDATE temp.conversation_rebuild_rows SET changed_sequence=? WHERE conversation_id=? AND sequence IN (SELECT source_sequence FROM temp.conversation_rebuild_lookups WHERE conversation_id=? AND lookup_kind='saved_answer' AND turn_key=?)",
+        "total_ms": 2057.023519999375
+      },
+      {
+        "calls": 40000,
+        "max_ms": 11.213527999992948,
+        "operation": "run",
+        "sql": "UPDATE temp.conversation_rebuild_turns SET ending_sequence=?,ending=?,ended_at=?,focus_head=(focus_message_count>0 OR EXISTS(SELECT 1 FROM temp.conversation_rebuild_rows r WHERE r.conversation_id=temp.conversation_rebuild_turns.conversation_id AND r.sequence=temp.conversation_rebuild_turns.source_sequence AND r.focus_visible=1 AND r.removed=0)),changed_sequence=? WHERE conversation_id=? AND turn_key=?",
+        "total_ms": 1908.2881570030718
+      },
+      {
+        "calls": 40000,
+        "max_ms": 11.642828000010923,
+        "operation": "run",
+        "sql": "UPDATE temp.conversation_rebuild_groups SET ending_sequence=?,changed_sequence=? WHERE conversation_id=? AND source_sequence>? AND ending_sequence IS NULL",
+        "total_ms": 1453.1517409999406
+      },
+      {
+        "calls": 80000,
+        "max_ms": 10.524405000003753,
+        "operation": "run",
+        "sql": "UPDATE temp.conversation_rebuild_state SET segment_start_sequence=? WHERE conversation_id=?",
+        "total_ms": 1326.7207509983018
+      },
+      {
+        "calls": 40000,
+        "max_ms": 10.751450000039767,
+        "operation": "run",
+        "sql": "INSERT INTO temp.conversation_rebuild_turns(conversation_id,turn_key,source_sequence,created_at,started_at_milliseconds,focus_head,changed_sequence) VALUES (?,?,?,?,?,?,?)",
+        "total_ms": 1317.071911002018
+      },
+      {
+        "calls": 40000,
+        "max_ms": 11.054237000003923,
+        "operation": "run",
+        "sql": "INSERT INTO temp.conversation_rebuild_lookups VALUES (?,?,?,?,?) ON CONFLICT(conversation_id,lookup_kind,lookup_id) DO UPDATE SET source_sequence=excluded.source_sequence,turn_key=excluded.turn_key",
+        "total_ms": 1272.480980999594
+      },
+      {
+        "calls": 40000,
+        "max_ms": 11.090442000000621,
+        "operation": "run",
+        "sql": "INSERT INTO temp.conversation_rebuild_groups(conversation_id,group_key,source_sequence,turn_key,entry_count,latest_entry_sequence,changed_sequence) VALUES (?,?,?,?,?,?,?)",
+        "total_ms": 1219.087940999238
+      },
+      {
+        "calls": 40000,
+        "max_ms": 16.00278900002013,
+        "operation": "run",
+        "sql": "UPDATE temp.conversation_rebuild_turns SET full_message_count=full_message_count+1,latest_full_message_sequence=?,focus_message_count=focus_message_count+?,latest_focus_message_sequence=CASE WHEN ? THEN ? ELSE latest_focus_message_sequence END,changed_sequence=? WHERE conversation_id=? AND turn_key=?",
+        "total_ms": 1162.3699559998824
+      },
+      {
+        "calls": 40000,
+        "max_ms": 10.669784000026993,
+        "operation": "run",
+        "sql": "DELETE FROM temp.conversation_rebuild_lookups WHERE conversation_id=? AND lookup_kind IN ('permission','user_input')",
+        "total_ms": 1148.0204559963117
+      },
+      {
+        "calls": 40000,
+        "max_ms": 10.563744000013685,
+        "operation": "run",
+        "sql": "UPDATE temp.conversation_rebuild_groups SET entry_count=entry_count+1,latest_entry_sequence=?,changed_sequence=? WHERE conversation_id=? AND group_key=?",
+        "total_ms": 1072.7601499957677
+      },
+      {
+        "calls": 40000,
+        "max_ms": 10.953716000018176,
+        "operation": "run",
+        "sql": "UPDATE temp.conversation_rebuild_rows SET settlement_sequence=?,changed_sequence=? WHERE conversation_id=? AND sequence=?",
+        "total_ms": 1020.8216310058815
+      },
+      {
+        "calls": 40000,
+        "max_ms": 10.776497000013478,
+        "operation": "run",
+        "sql": "UPDATE temp.conversation_rebuild_rows SET rest_summary=? WHERE conversation_id=? AND sequence=?",
+        "total_ms": 993.1134729999993
+      },
+      {
+        "calls": 40000,
+        "max_ms": 11.069530000000668,
+        "operation": "get",
+        "sql": "SELECT source_sequence FROM temp.conversation_rebuild_lookups WHERE conversation_id=? AND lookup_kind=? AND lookup_id=?",
+        "total_ms": 932.0370559968633
+      }
+    ],
+    "sqlite_version": "3.54.1",
+    "synchronous_database_scope_ms": 177703.21943899678
+  },
+  "process_seconds": 372.42630672222003,
+  "source_digest": "0fba82ebd75a85717f05cc3a9425df8b78c5627cafa142ecd6a6cd11b3de16db",
+  "source_digest_after": "0fba82ebd75a85717f05cc3a9425df8b78c5627cafa142ecd6a6cd11b3de16db"
+}

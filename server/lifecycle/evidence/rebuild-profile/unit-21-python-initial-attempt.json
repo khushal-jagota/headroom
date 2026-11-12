@@ -1,0 +1,8 @@
+{
+  "complete": false,
+  "elapsed_seconds": 316.75,
+  "reason": "Exact owned pytest interrupted to expose progress after zero installed views",
+  "current_views_at_304_seconds": 0,
+  "cpu_seconds_at_304_seconds": 115,
+  "source_unchanged": true
+}

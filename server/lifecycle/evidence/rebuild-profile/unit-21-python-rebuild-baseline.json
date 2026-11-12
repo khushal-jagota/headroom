@@ -1,0 +1,126 @@
+{
+  "case": "unit-21-python-rebuild-baseline",
+  "complete": true,
+  "kind": "measurement",
+  "measurement": {
+    "all_views_current_ms": 94473.8693269901,
+    "conversation_rebuilds": [
+      {
+        "conversation_id": "synthetic-000",
+        "seconds": 2.2687829858623445
+      },
+      {
+        "conversation_id": "synthetic-001",
+        "seconds": 2.7538706152699888
+      },
+      {
+        "conversation_id": "synthetic-002",
+        "seconds": 2.467842177953571
+      },
+      {
+        "conversation_id": "synthetic-003",
+        "seconds": 2.7333196350373328
+      },
+      {
+        "conversation_id": "synthetic-004",
+        "seconds": 2.492938474752009
+      },
+      {
+        "conversation_id": "synthetic-005",
+        "seconds": 3.276471515186131
+      },
+      {
+        "conversation_id": "synthetic-006",
+        "seconds": 2.351386688183993
+      },
+      {
+        "conversation_id": "synthetic-007",
+        "seconds": 2.216291479766369
+      },
+      {
+        "conversation_id": "synthetic-008",
+        "seconds": 2.3780226060189307
+      },
+      {
+        "conversation_id": "synthetic-009",
+        "seconds": 2.3454196308739483
+      },
+      {
+        "conversation_id": "synthetic-010",
+        "seconds": 2.393069635145366
+      },
+      {
+        "conversation_id": "synthetic-011",
+        "seconds": 2.3328269133344293
+      },
+      {
+        "conversation_id": "synthetic-012",
+        "seconds": 2.232621288858354
+      },
+      {
+        "conversation_id": "synthetic-013",
+        "seconds": 2.2244992419146
+      },
+      {
+        "conversation_id": "synthetic-014",
+        "seconds": 2.212962480727583
+      },
+      {
+        "conversation_id": "synthetic-015",
+        "seconds": 2.2493385169655085
+      },
+      {
+        "conversation_id": "synthetic-016",
+        "seconds": 2.175770957954228
+      },
+      {
+        "conversation_id": "synthetic-017",
+        "seconds": 2.5333687821403146
+      },
+      {
+        "conversation_id": "synthetic-018",
+        "seconds": 2.434233111795038
+      },
+      {
+        "conversation_id": "synthetic-019",
+        "seconds": 2.2980491970665753
+      }
+    ],
+    "final_pacing_ms": 2312.2950568795204,
+    "heartbeat": {
+      "interval_ms": 5,
+      "max_gap_ms": 19.81350826099515,
+      "samples": 17806
+    },
+    "incomplete_conversations": 0,
+    "limits": [
+      "Synthetic completed turns only. No concurrent domain writers or production provider.",
+      "The 10ms completion poll uses the held application connection and adds read work.",
+      "Python connect() keeps its production commit participants. The prior standalone TS record probe omits global commit steps.",
+      "All-current excludes the final pacing wait, while task-finished includes it."
+    ],
+    "process_cpu_ms": 49420.876589,
+    "production_task_finished_ms": 96786.16438386962,
+    "projection": {
+      "groups": 40000,
+      "lookups": 40000,
+      "rows": 160000,
+      "state": 20,
+      "turns": 40000
+    },
+    "projection_version": 4,
+    "python_version": "3.13.5",
+    "scope": "Production rebuild_out_of_date_views, real connect() second connection on a worker thread, application writer held open.",
+    "source": {
+      "conversations": 20,
+      "events": 200000
+    },
+    "source_digest": "0fba82ebd75a85717f05cc3a9425df8b78c5627cafa142ecd6a6cd11b3de16db",
+    "sqlite_version": "3.46.1"
+  },
+  "setup_prerequisites": [
+    "INSERT INTO chief_page(singleton) VALUES(1)",
+    "INSERT INTO navigation_meta VALUES(1,?,7,?,0) with fresh UUID scope and epoch"
+  ],
+  "source_digest": "0fba82ebd75a85717f05cc3a9425df8b78c5627cafa142ecd6a6cd11b3de16db"
+}
