@@ -16,6 +16,10 @@ from planner.platform_runtime.targets import LINUX_HOME, RuntimeTarget, require_
 
 def get_platform_adapter(system: str | None = None) -> PlatformAdapter:
     selected = (platform.system() if system is None else system).lower()
+    if selected == "darwin":
+        from planner.platform_runtime.darwin.adapter import DarwinPlatformAdapter
+
+        return DarwinPlatformAdapter()
     if selected != "linux":
         if os.name == "posix" and selected != "windows":
             from planner.platform_runtime.legacy_posix import LegacyPosixPlatformAdapter

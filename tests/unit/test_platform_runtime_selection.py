@@ -29,7 +29,7 @@ def test_legacy_posix_preserves_lifecycle_and_refuses_native_home_features(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    adapter = get_platform_adapter("darwin")
+    adapter = get_platform_adapter("freebsd")
     assert adapter.capture_shutdown_policy().mode == "dogfood"
     assert adapter.read_process_identity(123) is None
     assert not adapter.process_is_zombie(123)
@@ -136,3 +136,18 @@ def test_legacy_posix_preserves_lifecycle_and_refuses_native_home_features(
     service.prefetch()
     assert store.read() == saved
     provider.available.assert_not_called()
+
+
+def test_darwin_app_stays_in_launchd_group_without_changing_linux(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An escaped app survives supervisor SIGKILL and blocks service recovery. The
+    # existing POSIX test only proves the separate-session foreground launch.
+    launch = Mock()
+    monkeypatch.setattr("subprocess.Popen", launch)
+    for system, separate_session in (("darwin", False), ("linux", True)):
+        adapter = get_platform_adapter(system)
+        adapter.spawn_application_child("python", tmp_path, {"PLAN_SERVER_LISTENER_FD": "7"}, [2])
+        assert launch.call_args.kwargs["start_new_session"] is separate_session
+        assert launch.call_args.kwargs["pass_fds"] == (7,)
+        assert launch.call_args.kwargs["cwd"] == tmp_path

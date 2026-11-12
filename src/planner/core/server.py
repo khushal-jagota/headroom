@@ -63,7 +63,6 @@ from planner.credentials.api import router as credentials_router
 from planner.credentials.requests.api import router as credential_requests_router
 from planner.datasets.api import router as datasets_router
 from planner.environments import ticket_scratch
-from planner.environments.hermes_home import provision_planner_home_skills, resolve_planner_home
 from planner.environments.logic.update_experience import deployment_status
 from planner.environments.mac_updates import MacUpdateService
 from planner.environments.update_admission_middleware import UpdateAdmissionMiddleware
@@ -109,7 +108,7 @@ from planner.projects.api import router as projects_router
 from planner.resource_versions.api import router as resource_versions_router
 from planner.runtime.workspaces import register_workspace_root
 from planner.server_lifecycle.runtime import application_runtime
-from planner.skill_sources import provision_native_backend_skills, provision_workspace_skills
+from planner.skill_sources import provision_account_skills, provision_workspace_skills
 from planner.stalls import checker as stalls_checker
 from planner.stalls.contracts import StallChecker, StallCheckerFactory
 from planner.stalls.registry import WAITS
@@ -369,14 +368,14 @@ def create_app(
                     database_parent = Path(config.db_path).resolve().parent
                     if config.workspace_root is not None:
                         provision_workspace_skills(config.workspace_root, database_parent)
-                    if installed_app:
-                        # An installed release links its skills into the agent homes itself,
-                        # so an update needs no separate provisioning step.
-                        provision_planner_home_skills(
-                            resolve_planner_home(), configured_database_parent=database_parent
-                        )
-                        provision_native_backend_skills(Path.home() / ".codex", database_parent)
-                        provision_native_backend_skills(Path.home() / ".claude", database_parent)
+                    account_skills_enabled = (
+                        installed_app
+                        if config.provision_account_skills is None
+                        else config.provision_account_skills
+                    )
+                    if account_skills_enabled:
+                        if warning := provision_account_skills(database_parent):
+                            logging.getLogger(__name__).warning("%s", warning)
                     from planner.conversation.deploy_interruptions.coordinator import (
                         run_automatic_recovery,
                     )
