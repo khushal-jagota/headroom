@@ -1,0 +1,846 @@
+{
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/managers/",
+    "src/planner/work_attention.py"
+  ],
+  "requests": [
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/start",
+      "status": 200,
+      "json": {
+        "conversation_id": "${conversation}",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "/unit08-manager-workspace"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:10"
+      }
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/launch-defaults",
+      "status": 200,
+      "capture": {
+        "defaults": ""
+      }
+    },
+    {
+      "area": "managers",
+      "method": "PUT",
+      "path": "/api/managers/launch-defaults",
+      "status": 200,
+      "json": {
+        "employee_backend": "codex",
+        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_reasoning_effort": "high"
+      },
+      "note": "Change the reasoning choice, rather than rewrite the existing defaults unchanged."
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Disposable Manager creation",
+        "project_id": "project_other",
+        "goal": ""
+      },
+      "capture": {
+        "created_manager": "id"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${created_manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${conversation}/state",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/${conversation}/complete",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/launch-defaults",
+      "status": 200,
+      "capture": {
+        "choice": ""
+      }
+    },
+    {
+      "area": "managers",
+      "method": "PUT",
+      "path": "/api/managers/${manager}/launch-defaults",
+      "status": 200,
+      "json": {
+        "employee_backend": "codex",
+        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_reasoning_effort": "high"
+      },
+      "note": "Change the reasoning choice, rather than rewrite the existing defaults unchanged."
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers?detail=summary",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers?detail=full",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers?search=route&settled=false&limit=1&offset=0&detail=summary",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers?detail=full&id=${manager}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/workspace",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/workspace-content",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/conversation/start-values",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}",
+      "status": 200,
+      "json": {
+        "title": "Renamed Manager",
+        "goal": "An updated goal",
+        "recap": "A current Manager recap"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/settled",
+      "status": 200,
+      "json": {
+        "settled": true
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers?settled=true&detail=summary",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/settled",
+      "status": 200,
+      "json": {
+        "settled": false
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/page",
+      "status": 422,
+      "json": 50.0
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/page",
+      "status": 422,
+      "json": 50
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/page",
+      "status": 422,
+      "json": 900719925474099312345
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/page",
+      "status": 200,
+      "json": {
+        "page": {
+          "kind": "headroom.page",
+          "version": 1,
+          "title": "Plain document",
+          "summary": "Manager and Chief route proof",
+          "blocks": [
+            {
+              "type": "text",
+              "text": "The stored content is real. Unicode: caf\u00e9 \ud83e\udded."
+            },
+            {
+              "type": "table",
+              "columns": [
+                "Small",
+                "Remainder"
+              ],
+              "rows": [
+                [
+                  "A",
+                  "B"
+                ]
+              ],
+              "column_widths": [
+                50.0,
+                50.0
+              ]
+            }
+          ]
+        }
+      },
+      "capture": {
+        "manager_page": "page"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers?id=${manager}&detail=full",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/page",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/page/readings",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/page",
+      "status": 200,
+      "json": {
+        "page": "${manager_page}"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/page",
+      "status": 200,
+      "json": {
+        "page": null
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/page",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/chief/page",
+      "status": 400,
+      "json": {
+        "page": {
+          "kind": "headroom.page",
+          "version": 1,
+          "title": "Invalid tones",
+          "summary": "",
+          "blocks": [
+            {
+              "type": "table",
+              "columns": [
+                "a"
+              ],
+              "rows": [
+                [
+                  "x"
+                ]
+              ],
+              "cell_tones": [
+                [
+                  [
+                    "good"
+                  ]
+                ]
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/chief/page",
+      "status": 200,
+      "json": {
+        "page": {
+          "kind": "headroom.page",
+          "version": 1,
+          "title": "Plain document",
+          "summary": "Manager and Chief route proof",
+          "blocks": [
+            {
+              "type": "section",
+              "title": "Nested document",
+              "blocks": [
+                {
+                  "type": "checklist",
+                  "items": [
+                    {
+                      "label": "A real checklist item",
+                      "state": "open",
+                      "deadline": "2026-11-15"
+                    }
+                  ]
+                },
+                {
+                  "type": "table",
+                  "columns": [
+                    "Small",
+                    "Remainder"
+                  ],
+                  "rows": [
+                    [
+                      "A",
+                      "B"
+                    ]
+                  ],
+                  "column_widths": [
+                    50.0,
+                    50.0
+                  ],
+                  "cell_tones": [
+                    [
+                      "good",
+                      null
+                    ]
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capture": {
+        "chief_page": "page"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/chief/page",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/chief/page/readings",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/chief/page",
+      "status": 200,
+      "json": {
+        "page": "${chief_page}"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/chief/page",
+      "status": 200,
+      "json": {
+        "page": null
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/chief/page",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Authority worker",
+        "worker_type": "coding"
+      },
+      "capture": {
+        "worker": "id"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PUT",
+      "path": "/api/managers/launch-defaults",
+      "status": 400,
+      "json": "${defaults}",
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${worker}"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PUT",
+      "path": "/api/managers/launch-defaults",
+      "status": 400,
+      "json": "${defaults}",
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/settled",
+      "status": 400,
+      "json": {
+        "settled": true
+      },
+      "headers": {
+        "X-Plan-Actor": "chief_of_staff"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/settled",
+      "status": 400,
+      "json": {
+        "settled": "yes"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "POST",
+      "path": "/api/managers/${manager}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "A second real Manager prompt"
+          }
+        ],
+        "sender_message_id": "unit08-manager-second",
+        "conversation_id": "${conversation}",
+        "sender_label": "Owner"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${conversation}/state",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "POST",
+      "path": "/api/managers/${manager}/conversation/reset",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/workspace",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/resource-versions?keys=%5B%22%2Fapi%2Fchief%2Fpage%22%2C%20%22%2Fapi%2Fmanagers%2F${manager}%2Fworkspace-content%22%2C%20%22%2Fapi%2Fchief%2Fconversation%2Fstart-values%22%2C%20%22%2Fapi%2Fworkers%2Fchief-of-staff%2Fsettings%22%5D",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fchief%2Fpage",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fmanagers%2F${manager}%2Fworkspace-content",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Deletion guard child",
+        "worker_type": "coding",
+        "manager": {
+          "kind": "manager",
+          "id": "${manager}"
+        }
+      },
+      "capture": {
+        "child": "id"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}",
+      "status": 200,
+      "json": {
+        "project_id": "project_vylo"
+      },
+      "note": "The populated workspace read must show the child inherits the new Manager project."
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/workspace",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "DELETE",
+      "path": "/api/managers/${manager}",
+      "status": 400
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "DELETE",
+      "path": "/api/tickets/${child}",
+      "status": 200
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "DELETE",
+      "path": "/api/managers/${manager}",
+      "status": 200
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers?detail=full",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${created_manager}/page",
+      "status": 200,
+      "json": {
+        "page": "${manager_page}"
+      },
+      "note": "Keep this float-valued document in final source rows so the oracle compares its exact stored bytes, not only a decoded response."
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${created_manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers?id=${created_manager}&detail=full",
+      "status": 200,
+      "capture": {
+        "stored_float_page_character_count": "page_character_count"
+      }
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${created_manager}/page",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/chief/page",
+      "status": 200,
+      "json": {
+        "page": "${chief_page}"
+      },
+      "note": "Retain the nested Chief document for exact final source-row comparison as well."
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${created_manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D}",
+      "status": 200
+    }
+  ],
+  "report_captures": [
+    "manager",
+    "created_manager",
+    "conversation",
+    "manager_page",
+    "chief_page",
+    "stored_float_page_character_count"
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Manager route proof",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "manager": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/managers/${manager}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "A durable Manager history prompt."
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "unit08-history-seed"
+      },
+      "capture": {
+        "conversation": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversation/conversations/${conversation}/kill",
+      "status": 204
+    }
+  ],
+  "candidate": "typescript"
+}

@@ -7,6 +7,7 @@ import { acquireRuntimeOwnership } from '../core/locks/index.ts';
 import type { TestCompositionContext } from '../core/start.ts';
 import { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
+import { ManagerWakeLoop } from '../manager_wakes/runtime.ts';
 import { ScriptedBackendRegistry } from '../conversation/testing/scripted_registry.ts';
 import {
   BackendPermissionAsk,
@@ -17,7 +18,10 @@ import {
 import { PermissionAskOption, UserInputAnswer } from '../conversation/events.ts';
 import type { CurrentViewSnapshot } from '../../web/src/lib/navigation/contracts.ts';
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 function setup() {
   const database = fixture();
   const path = database.read((sql) =>
@@ -112,8 +116,12 @@ test('partial startup failure drains the record and releases the exact lease', a
 test('ordinary sends publish real core status and shutdown fences a blocked native receipt before lease release', async () => {
   const f = setup();
   const registry = new ScriptedBackendRegistry();
+  const wakePoll = vi.spyOn(ManagerWakeLoop.prototype, 'poll_once');
+  const wakeStop = vi.spyOn(ManagerWakeLoop.prototype, 'stop');
   let context!: TestCompositionContext;
   const server = await startServer({
+    // The explicit area loop shares this core, clock, and lease through shutdown.
+    areaLoops: { managerWakes: true },
     createConversationCore(value) {
       return new SqliteProcessConversationSystem({
         store: value.record.store,
@@ -146,6 +154,8 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
       }),
     });
   try {
+    await vi.waitFor(() => expect(wakePoll).toHaveBeenCalled());
+    await expect(wakePoll.mock.results[0].value).resolves.toEqual([]);
     const sent = await post('work');
     expect(sent.status).toBe(200);
     const delivery = (await sent.json()) as { conversation_id: string; fate: string };
@@ -234,6 +244,8 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     await child.wait_for_barrier('shutdown');
     await server.close();
     await pending;
+    expect(wakeStop).toHaveBeenCalledOnce();
+    for (const result of wakePoll.mock.results) await expect(result.value).resolves.toEqual([]);
     const replacement = acquireRuntimeOwnership(f.path);
     replacement.close();
   } finally {

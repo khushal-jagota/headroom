@@ -1,0 +1,749 @@
+{
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/message_delivery/",
+    "src/planner/work_attention.py",
+    "src/planner/managers/resource_versions.py"
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Delivery Manager",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "manager": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/chief/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Seed Chief"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "seed-chief"
+      },
+      "capture": {
+        "seed_chief": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversation/conversations/${seed_chief}/kill",
+      "status": 204
+    },
+    {
+      "method": "GET",
+      "path": "/api/chief/conversation/start-values",
+      "status": 200,
+      "capture": {
+        "chief_workspace": "workspace_folder"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/managers/${manager}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Seed Manager"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "seed-manager"
+      },
+      "capture": {
+        "seed_manager": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversation/conversations/${seed_manager}/kill",
+      "status": 204
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Delivery Worker",
+        "worker_type": "coding",
+        "brief": "Delivery proof",
+        "ceiling": "needs_what_changes",
+        "ceiling_holder": {
+          "kind": "owner",
+          "id": "owner"
+        },
+        "manager": {
+          "kind": "manager",
+          "id": "${manager}"
+        }
+      },
+      "capture": {
+        "ticket": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Seed Worker"
+          }
+        ],
+        "sender_message_id": "seed-worker",
+        "sender_label": "Owner"
+      },
+      "capture": {
+        "seed_ticket": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversation/conversations/${seed_ticket}/kill",
+      "status": 204
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Unrelated Worker",
+        "worker_type": "coding",
+        "brief": "Separate authority"
+      },
+      "capture": {
+        "unrelated": "id"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Manager review child",
+        "worker_type": "coding",
+        "brief": "Manager reviews this",
+        "ceiling": "needs_what_changes",
+        "ceiling_holder": {
+          "kind": "manager",
+          "id": "${manager}"
+        },
+        "manager": {
+          "kind": "manager",
+          "id": "${manager}"
+        }
+      },
+      "capture": {
+        "review_child": "id"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/managers/${manager}",
+      "status": 200,
+      "json": {
+        "recap": "Spent before a refused send"
+      }
+    }
+  ],
+  "requests": [
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/recap-requests",
+      "status": 200,
+      "json": {
+        "target": {
+          "kind": "manager",
+          "id": "${manager}"
+        }
+      },
+      "capture": {
+        "refused_recap_fate": "fate"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "GET",
+      "path": "/api/managers?id=${manager}&detail=full",
+      "status": 200,
+      "capture": {
+        "refused_recap_cleared": "recap"
+      }
+    },
+    {
+      "area": "conversation-fixture",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/start",
+      "status": 200,
+      "json": {
+        "conversation_id": "${seed_chief}",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "${chief_workspace}"
+      }
+    },
+    {
+      "area": "conversation-fixture",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/start",
+      "status": 200,
+      "json": {
+        "conversation_id": "${seed_manager}",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "/comparison/manager"
+      }
+    },
+    {
+      "area": "conversation-fixture",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/start",
+      "status": 200,
+      "json": {
+        "conversation_id": "${seed_ticket}",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "/comparison/worker"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 200,
+      "json": {
+        "target": {
+          "kind": "manager",
+          "id": "${manager}"
+        },
+        "message": "Owner asks Manager",
+        "mode": "queue"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 200,
+      "json": {
+        "target": {
+          "kind": "chief",
+          "id": "chief"
+        },
+        "message": "Owner asks Chief",
+        "mode": "steer"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 200,
+      "json": {
+        "target": {
+          "kind": "ticket",
+          "id": "${ticket}"
+        },
+        "message": "Manager asks Worker",
+        "mode": "send_now"
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 200,
+      "json": {
+        "target": {
+          "kind": "manager",
+          "id": "${manager}"
+        },
+        "message": "Worker reports to Manager",
+        "mode": "steer"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 200,
+      "json": {
+        "target": {
+          "kind": "chief",
+          "id": "chief"
+        },
+        "message": "Worker asks Chief",
+        "mode": "queue"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 200,
+      "json": {
+        "target": {
+          "kind": "owner",
+          "id": "owner"
+        },
+        "message": "Worker answer reaches owner",
+        "mode": "steer"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 200,
+      "json": {
+        "target": {
+          "kind": "owner",
+          "id": "owner"
+        },
+        "message": "Manager answer reaches owner",
+        "mode": "steer"
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 200,
+      "json": {
+        "target": {
+          "kind": "owner",
+          "id": "owner"
+        },
+        "message": "Chief answer reaches owner",
+        "mode": "steer"
+      },
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 400,
+      "json": {
+        "target": {
+          "kind": "owner",
+          "id": "owner"
+        },
+        "message": "Refused by authority"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 400,
+      "json": {
+        "target": {
+          "kind": "ticket",
+          "id": "${unrelated}"
+        },
+        "message": "Refused by authority"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 400,
+      "json": {
+        "target": {
+          "kind": "ticket",
+          "id": "${unrelated}"
+        },
+        "message": "Refused by authority"
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/recap-requests",
+      "status": 400,
+      "json": {
+        "target": {
+          "kind": "ticket",
+          "id": "${ticket}"
+        }
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/recap-requests",
+      "status": 400,
+      "json": {
+        "target": {
+          "kind": "ticket",
+          "id": "${ticket}"
+        }
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/recap-requests",
+      "status": 400,
+      "json": {
+        "target": {
+          "kind": "ticket",
+          "id": "${ticket}"
+        }
+      },
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/recap-requests",
+      "status": 400,
+      "json": {
+        "target": {
+          "kind": "owner",
+          "id": "owner"
+        }
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 400,
+      "json": {
+        "target": null,
+        "message": "bad target"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 400,
+      "json": {
+        "target": {
+          "kind": "goal",
+          "id": "missing"
+        },
+        "message": "bad kind"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 400,
+      "json": {
+        "target": {
+          "kind": "owner",
+          "id": "wrong"
+        },
+        "message": "bad singleton"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 400,
+      "json": {
+        "target": {
+          "kind": "chief",
+          "id": "chief"
+        },
+        "message": " "
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 400,
+      "json": {
+        "target": {
+          "kind": "chief",
+          "id": "chief"
+        },
+        "message": "Bad mode",
+        "mode": null
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "PATCH",
+      "path": "/api/tickets/${ticket}",
+      "status": 200,
+      "json": {
+        "recap": "Spent Worker recap"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}",
+      "status": 200,
+      "json": {
+        "recap": "Spent Manager recap"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "PUT",
+      "path": "/api/workers/chief-of-staff/recap",
+      "status": 200,
+      "json": {
+        "recap": "Spent Chief recap"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/recap-requests",
+      "status": 200,
+      "json": {
+        "target": {
+          "kind": "ticket",
+          "id": "${ticket}"
+        }
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/recap-requests",
+      "status": 200,
+      "json": {
+        "target": {
+          "kind": "manager",
+          "id": "${manager}"
+        }
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/recap-requests",
+      "status": 200,
+      "json": {
+        "target": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "GET",
+      "path": "/api/managers?id=${manager}&detail=full",
+      "status": 200,
+      "capture": {
+        "attention_busy": "",
+        "manager_cleared_recap": "recap"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "GET",
+      "path": "/api/tickets?id=${ticket}&detail=full",
+      "status": 200,
+      "capture": {
+        "worker_cleared_recap": "recap"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "GET",
+      "path": "/api/workers/chief-of-staff/settings",
+      "status": 200,
+      "capture": {
+        "chief_cleared_recap": "recap"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/propose",
+      "status": 200,
+      "json": {
+        "body": "Owner review proof"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "POST",
+      "path": "/api/tickets/${review_child}/propose",
+      "status": 200,
+      "json": {
+        "body": "Manager review proof"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${review_child}"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "GET",
+      "path": "/api/managers?id=${manager}&detail=full",
+      "status": 200,
+      "capture": {
+        "attention_mixed": "ticket_rollup"
+      }
+    },
+    {
+      "area": "conversation-evidence",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${seed_chief}/state",
+      "status": 200,
+      "capture": {
+        "chief_sends": ""
+      }
+    },
+    {
+      "area": "conversation-fixture",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/${seed_chief}/complete",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "conversation-evidence",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${seed_manager}/state",
+      "status": 200,
+      "capture": {
+        "manager_sends": ""
+      }
+    },
+    {
+      "area": "conversation-fixture",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/${seed_manager}/complete",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "conversation-evidence",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${seed_ticket}/state",
+      "status": 200,
+      "capture": {
+        "ticket_sends": ""
+      }
+    },
+    {
+      "area": "conversation-fixture",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/${seed_ticket}/complete",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "message-delivery",
+      "method": "GET",
+      "path": "/api/managers?id=${manager}&detail=full",
+      "status": 200,
+      "capture": {
+        "attention_idle": "agent_state"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/managers/${manager}/workspace-content",
+      "status": 200,
+      "capture": {
+        "manager_document": "body"
+      }
+    },
+    {
+      "area": "message-delivery",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/chief/page",
+      "status": 200,
+      "capture": {
+        "chief_page": "body"
+      }
+    }
+  ],
+  "probes": [
+    "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A30}%2C{%22section%22%3A%22review%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A30}%5D}"
+  ],
+  "report_captures": [
+    "attention_busy",
+    "attention_mixed",
+    "attention_idle",
+    "ticket_sends",
+    "manager_sends",
+    "chief_sends",
+    "worker_cleared_recap",
+    "manager_cleared_recap",
+    "chief_cleared_recap",
+    "manager_document",
+    "chief_page",
+    "refused_recap_fate",
+    "refused_recap_cleared"
+  ],
+  "candidate": "typescript"
+}

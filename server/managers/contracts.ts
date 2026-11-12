@@ -1,3 +1,6 @@
+import type { NumericJSON } from '../core/http/numeric_json.ts';
+import type { PageDocument as WirePageDocument } from '../../web/src/lib/goals/contracts.ts';
+export type ManagerPageDocument = NumericJSON<WirePageDocument>;
 /** Route-required Manager contracts. Manager CRUD remains with the Manager area. */
 import type { ConversationBackendKey } from '../conversation/contracts.ts';
 export interface ManagerLaunchConfiguration {
@@ -17,7 +20,7 @@ export interface Manager {
   created_at: number;
   updated_at: number;
   launch_configuration_is_explicit: boolean;
-  page: unknown;
+  page: ManagerPageDocument | null;
   page_revision: number;
   manager_agent_key: string;
 }

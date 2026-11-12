@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyListenOptions } from 'fastify';
-import { createAreasRuntime } from '../areas.ts';
+import { createAreasRuntime, composeAreaLoops } from '../areas.ts';
+import type { AreaLoopOptions } from '../areas.ts';
 import { createApp } from '../app.ts';
-import { loadConfig } from './config.ts';
+import { loadConfig, SHUTDOWN_GRACE_SECONDS } from './config.ts';
 import { buildClock } from './clock.ts';
 import { prepare_background_loops, type BackgroundLoops } from './loops.ts';
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
@@ -13,6 +14,7 @@ import type { Database } from './database/index.ts';
 import { acquireRuntimeOwnership, acquireLock } from './locks/index.ts';
 
 import type { Area } from './authority/register.ts';
+import type { OwnedAreaContext } from './authority/register.ts';
 import type { ConversationSystem } from '../conversation/contracts.ts';
 import type { ConversationViewRuntime } from '../conversation/views/routes.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
@@ -52,6 +54,8 @@ export interface ServerOptions {
   /** Unit 21 supplies UpdateService.poll. True suppresses this poll. */
   beforeWorkerReadinessPoll?: () => boolean;
   testAreas?: readonly Area[] | ((context: TestCompositionContext) => readonly Area[]);
+  /** Lifecycle composition opts in explicitly. Ordinary startup never polls wakes. */
+  areaLoops?: AreaLoopOptions;
   createConversationCore?: (
     context: ConversationCompositionContext,
   ) => SqliteProcessConversationSystem;
@@ -72,6 +76,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   const areas = createAreasRuntime();
   let dispatcher: ReturnType<typeof acquireLock> = null;
   let database: ReturnType<typeof createDatabase> | undefined;
+  let areaLoops: ReturnType<typeof composeAreaLoops> | undefined;
   let loops: BackgroundLoops | undefined;
   let publication: SignalPublicationCoordinator | undefined;
   let core: SqliteProcessConversationSystem | undefined;
@@ -109,8 +114,10 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     if (closing) return closing;
     revokeSignal();
     areas.closeSubscriptions();
+    const deadline = performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
     return (closing = Promise.resolve()
-      .then(() => loops?.stop())
+      .then(() => areaLoops?.stop({ deadline }))
+      .finally(() => loops?.stop({ deadline }))
       .finally(() => closeBackground())
       .finally(() => core?.shutdown())
       .finally(() => areas.closeRecord())
@@ -171,6 +178,16 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     if (!config.test_mode && config.dispatch_enabled) {
       dispatcher = acquireLock(config.dispatcher_lock_path);
     }
+    const ownedContext: OwnedAreaContext = {
+      database,
+      config,
+      clock,
+      changes,
+      signalAuthority: publication,
+      conversationSystem,
+      assert_database_owned: context.require_runtime_ownership,
+    };
+    areaLoops = composeAreaLoops(ownedContext, options.areaLoops);
     loops = prepare_background_loops({
       enable_worker_readiness: options.enableWorkerReadiness ?? false,
       test_mode: config.test_mode,
