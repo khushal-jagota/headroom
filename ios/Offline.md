@@ -48,13 +48,24 @@ app is not a supported recovery route, and older-binary readability is not prove
 If the store cannot open or backfill cannot commit, the app exposes a storage error
 and keeps the store instead of deleting it or creating an empty replacement.
 
+Installed build 5 uses the unversioned LocalRecord store covered by the copied-store
+migration check. Earlier unreleased PR version-3 stores from before
+`hasProtectedDecisionBody` do not open with the final version-3 model checksum:
+SwiftData reports an unknown model version. No upgrade or reset is provided for
+those prerelease test stores; the open failure retains their files and exposes an error.
+
 Responses are bounded to 96 entries and 16 MiB across servers. A response larger
 than the budget is not cached. Drafts and outgoing work are separate records and
 are never removed by this eviction. Each foreground pass first clears a due batch
 of at most 64 outgoing metadata rows through the expiry index. Activation, enqueue,
 explicit recovery and network changes wake the foreground drainer. A three-second
 retry timer exists only while network/build admission allows runnable work or an
-addressable receipt to reconcile. Unknown-destination uncertain messages, uncertain
+addressable receipt to reconcile. If the path stays up but a submission cannot
+reach the host, that waiting operation retries after 15, 30, then at most 60 seconds.
+During that delay, ticks do not decode its payload or change its saved state.
+Other lanes remain eligible. With only delayed submissions, the timer waits for
+the earliest deadline. A disconnected-to-connected path transition clears the delay.
+The delay is foreground memory only; a relaunch can try waiting work again. Unknown-destination uncertain messages, uncertain
 voice and bodyless legacy decisions alone park without a repeating timer. Enqueue
 also wakes an already-running pass, so a new lane can use its free server slot
 while another request is stalled. Limits remain one request per lane and two per

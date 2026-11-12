@@ -12,7 +12,12 @@ import Observation
     private var foregroundRunID = UUID()
     private var foregroundWakes: [String: (id: UUID, continuation: AsyncStream<Void>.Continuation)] = [:]
     private(set) var networkAvailable = true
-    init(store: LocalStore) { self.store = store }
+    @ObservationIgnored private let now: () -> Date
+    private struct SubmissionRetry { let deadline: Date; let delay: TimeInterval }
+    private static let initialSubmissionRetryDelay: TimeInterval = 15
+    private static let maximumSubmissionRetryDelay: TimeInterval = 60
+    @ObservationIgnored private var submissionRetries: [String: [String: SubmissionRetry]] = [:]
+    init(store: LocalStore, now: @escaping () -> Date = { .now }) { self.store = store; self.now = now }
 
     // Compatibility/debug detail list. Interactive consumers use scoped queries below.
     func entries(_ server: String) -> [PendingWork] {
@@ -72,6 +77,7 @@ import Observation
             let available = path.status == .satisfied
             Task { @MainActor in
                 guard let self, self.foregroundRunID == runID else { return }
+                if available && !self.networkAvailable { self.submissionRetries[server] = nil }
                 self.networkAvailable = available
                 continuation.yield(())
             }
@@ -85,9 +91,9 @@ import Observation
         while !Task.isCancelled {
             await drain(api: api, wakeForeground: false)
             let timer: Task<Void, Never>?
-            if networkAvailable && !NativeBuildGate.requiresUpdate(api.baseURL) && hasReconciliationWork(server: server) {
+            if networkAvailable && !NativeBuildGate.requiresUpdate(api.baseURL), let delay = reconciliationDelay(server: server) {
                 timer = Task {
-                    do { try await Task.sleep(for: .seconds(3)); continuation.yield(()) } catch { }
+                    do { try await Task.sleep(for: .seconds(delay)); continuation.yield(()) } catch { }
                 }
             } else { timer = nil }
             let event: Void? = await wake.next()
@@ -96,12 +102,20 @@ import Observation
         }
     }
     /// No repeating timer for work with no receipt door or admitted submission.
-    func hasReconciliationWork(server: String) -> Bool {
-        guard let rows = try? store.outgoing.schedulingSummaries(server: server) else { return false }
-        return rows.contains { row in
-            (try? store.outgoing.canSubmit(server: server, id: row.id)) == true ||
-                (["sending", "uncertain", "serverQueued"].contains(row.state) && Self.canPoll(row))
-        }
+    func hasReconciliationWork(server: String) -> Bool { reconciliationDelay(server: server) != nil }
+    /// Delayed lane heads retain eligibility without repeated decoding or saves.
+    func reconciliationDelay(server: String) -> TimeInterval? {
+        guard let rows = try? store.outgoing.schedulingSummaries(server: server) else { return nil }
+        return rows.compactMap { row -> TimeInterval? in
+            if ["sending", "uncertain", "serverQueued"].contains(row.state) && Self.canPoll(row) { return 3 }
+            guard (try? store.outgoing.canSubmit(server: server, id: row.id)) == true else { return nil }
+            return max(3, submissionRetries[server]?[row.id]?.deadline.timeIntervalSince(now()) ?? 0)
+        }.min()
+    }
+    private func deferSubmission(server: String, id: String) {
+        let delay = submissionRetries[server]?[id].map { min(Self.maximumSubmissionRetryDelay, $0.delay * 2) }
+            ?? Self.initialSubmissionRetryDelay
+        submissionRetries[server, default: [:]][id] = SubmissionRetry(deadline: now().addingTimeInterval(delay), delay: delay)
     }
     nonisolated static let finishedLifetime: TimeInterval = 24 * 60 * 60
     nonisolated static let uncertainLifetime: TimeInterval = 7 * 24 * 60 * 60
@@ -164,6 +178,8 @@ import Observation
             var wake = wakes.makeAsyncIterator()
             while !Task.isCancelled, !NativeBuildGate.requiresUpdate(api.baseURL) {
                 let rows = (try? store.outgoing.schedulingSummaries(server: server)) ?? []
+                let pendingIDs = Set(rows.filter { $0.state == "waiting" || $0.state == "sending" }.map(\.id))
+                submissionRetries[server] = submissionRetries[server]?.filter { pendingIDs.contains($0.key) }
                 // A crashed unaddressable attempt has no receipt door. Keep it visible,
                 // but do not repeatedly decode its potentially large original payload.
                 for row in rows where row.state == "sending" && !Self.canPoll(row) && !activeLanes.contains(row.lane) && !visited.contains(row.id) {
@@ -171,7 +187,10 @@ import Observation
                         note: "Delivery uncertain · check before another attempt")
                 }
                 let candidates = rows.filter { !visited.contains($0.id) && !activeLanes.contains($0.lane) }
-                let ready = candidates.filter { (try? store.outgoing.canSubmit(server: server, id: $0.id)) == true }
+                let ready = candidates.filter {
+                    (submissionRetries[server]?[$0.id]?.deadline ?? .distantPast) <= now() &&
+                        (try? store.outgoing.canSubmit(server: server, id: $0.id)) == true
+                }
                 let polls = candidates.filter { ["sending", "uncertain", "serverQueued"].contains($0.state) && Self.canPoll($0) }
                 for row in ready + polls where activeLanes.count < 2 && !activeLanes.contains(row.lane) && !visited.contains(row.id) {
                     visited.insert(row.id); activeLanes.insert(row.lane)
@@ -249,7 +268,10 @@ import Observation
             }
         } catch {
             if let error = error as? URLError, Self.failedBeforeDispatch(error), writeStarted {
-                try? store.outgoing.rejectAdmission(server: server, id: id, note: "Waiting for connection")
+                do {
+                    try store.outgoing.rejectAdmission(server: server, id: id, note: "Waiting for connection")
+                    deferSubmission(server: server, id: id)
+                } catch { }
                 return
             }
             if let error = error as? APIError, error.isUpdateRequired, writeStarted {
@@ -310,7 +332,10 @@ import Observation
             } else if let refusal = error as? APIError, (400..<500).contains(refusal.status), refusal.status != 408 {
                 try? store.outgoing.settle(server: server, id: fact.id, state: .changed, note: "Not sent · " + refusal.message)
             } else if let disconnected = error as? URLError, Self.failedBeforeDispatch(disconnected) {
-                try? store.outgoing.rejectAdmission(server: server, id: fact.id, note: "Waiting for connection")
+                do {
+                    try store.outgoing.rejectAdmission(server: server, id: fact.id, note: "Waiting for connection")
+                    deferSubmission(server: server, id: fact.id)
+                } catch { }
             } else {
                 recordDecisionTransportFailure(error, id: fact.id, server: server, attempted: attempted)
             }
@@ -327,6 +352,9 @@ import Observation
         } else if error is URLError || error is CancellationError || (error as? APIError).map({ $0.status >= 500 || $0.status == 408 || $0.status == 429 }) == true {
             // A transient lookup failure did not attempt the write or disprove support.
             try? store.outgoing.settle(server: server, id: id, state: .waiting, note: "Waiting for connection")
+            if let disconnected = error as? URLError, Self.failedBeforeDispatch(disconnected) {
+                deferSubmission(server: server, id: id)
+            }
         } else {
             let note: String
             if let failure = error as? APIError, failure.status == 401 || failure.status == 403 {

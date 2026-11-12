@@ -522,12 +522,14 @@ import XCTest
         XCTAssertEqual(reopened.entries(server).first?.state, .uncertain)
     }
     func testOfflineRelaunchDrainsInOrderOnceAndPreservesIdentity() async throws {
-        let outbox = Outbox(store: store)
+        var clock = Date.now
+        let outbox = Outbox(store: store, now: { clock })
         try outbox.save(message("first"), server: server)
         try outbox.save(message("second", at: 2), server: server)
         OfflineProtocol.state.offline = true
         for code: URLError.Code in [.notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed] {
             OfflineProtocol.state.offlineError = code
+            clock = clock.addingTimeInterval(60)
             await outbox.drain(api: api)
             XCTAssertEqual(outbox.entries(server).map(\.state), [.waiting, .waiting])
             XCTAssertEqual(try store.outgoing.summary(server: server, id: "first")?.provenance, "unattempted")
@@ -540,6 +542,57 @@ import XCTest
         await reopened.drain(api: api)
         XCTAssertEqual(OfflineProtocol.state.writes, ["first", "second"])
         XCTAssertEqual(reopened.entries(server).map(\.state), [.sent, .sent])
+    }
+    func testUnreachableServerBackoffSkipsPayloadAndSavesUntilRetryDeadline() async throws {
+        var clock = Date.now
+        var decodes = 0
+        let local = LocalStore(url: directory.appendingPathComponent("backoff.store"), onPayloadDecode: { decodes += 1 })
+        let outbox = Outbox(store: local, now: { clock })
+        let photo = ConversationSend.Piece(piece: "image", data: Data(repeating: 7, count: 512 * 1024).base64EncodedString(), mediaType: "image/jpeg", fileName: "photo.jpg")
+        for id in ["outage-a", "outage-b"] {
+            try outbox.save(PendingWork(id: id, created: .now, kind: .message, owner: .ticket(id),
+                message: ConversationSend(conversationId: id, content: [.init(text: id), photo], senderMessageId: id, sentAtUnixMilliseconds: 1)), server: server)
+        }
+        OfflineProtocol.state.offline = true
+        OfflineProtocol.state.offlineError = .cannotConnectToHost
+        await outbox.drain(api: api)
+        XCTAssertEqual(decodes, 2)
+        XCTAssertEqual(outbox.reconciliationDelay(server: server), 15)
+        let revision = local.outgoingRevision(server)
+        let requestCount = OfflineProtocol.state.requests.count
+        for _ in 0..<4 {
+            clock = clock.addingTimeInterval(3)
+            await outbox.drain(api: api)
+        }
+        XCTAssertEqual(decodes, 2)
+        XCTAssertEqual(local.outgoingRevision(server), revision)
+        XCTAssertEqual(OfflineProtocol.state.requests.count, requestCount)
+        for id in ["outage-a", "outage-b"] {
+            let fact = try XCTUnwrap(local.outgoing.summary(server: server, id: id))
+            XCTAssertEqual(fact.state, "waiting")
+            XCTAssertEqual(fact.provenance, "unattempted")
+        }
+        // Another lane remains eligible during these lane heads' delay.
+        OfflineProtocol.state.offline = false
+        try outbox.save(message("new-lane"), server: server)
+        await outbox.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.writes, ["new-lane"])
+        XCTAssertEqual(decodes, 3)
+        OfflineProtocol.state.offline = true
+        clock = clock.addingTimeInterval(3)
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.reconciliationDelay(server: server), 30)
+        clock = clock.addingTimeInterval(30)
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.reconciliationDelay(server: server), 60)
+        clock = clock.addingTimeInterval(60)
+        OfflineProtocol.state.offline = false
+        await outbox.drain(api: api)
+        XCTAssertEqual(Set(OfflineProtocol.state.writes), Set(["new-lane", "outage-a", "outage-b"]))
+        XCTAssertNil(outbox.reconciliationDelay(server: server))
+        XCTAssertEqual(try local.outgoing.summary(server: server, id: "outage-a")?.state, "sent")
+        XCTAssertEqual(try local.outgoing.summary(server: server, id: "outage-b")?.state, "sent")
+        print("OUTAGE_BACKOFF photo_bytes_each=524288 lanes=2 repeated_ticks=4 additional_decodes=0 revision_bumps=0 delays_seconds=15,30,60 recovered=3")
     }
     func testLaneSlotsReleaseQueuedSuccessorAndProgressWhileAnotherLaneStalls() async throws {
         let outbox = Outbox(store: store)
