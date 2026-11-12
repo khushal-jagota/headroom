@@ -72,7 +72,8 @@ def require_exact_schema_frontier(database: Path, staged_app: Path) -> None:
     Behind, ahead, unknown and divergent revision sets are all refused. A backup does
     not make any of them acceptable.
     """
-    if _database_revisions(database) != _migration_heads(migration_graph(staged_app)):
+    revisions = _database_revisions(database)
+    if not revisions or revisions != _migration_heads(migration_graph(staged_app)):
         raise ValueError(
             "This release requires the database to be at exactly its schema revision. "
             "Install the Python release that carries the same migrations first."

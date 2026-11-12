@@ -17,6 +17,8 @@ from planner.environments import update_provider
 from planner.environments.runtime_contracts import NodeRuntimeContract
 
 DEPLOY = ".github/workflows/deploy.yml"
+queries: list[dict[str, str]] = []
+REAL_CLIENT = httpx.Client
 TYPESCRIPT = ".github/workflows/publish-typescript-release.yml"
 PYTHON_RELEASE = release()
 NODE_RELEASE = release(
@@ -37,6 +39,7 @@ def provider(
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path.removeprefix("/repos/owner/panels/")
         if path.startswith("actions/workflows/"):
+            queries.append(dict(request.url.params))
             runs = listed[path.split("/")[2]]
             if runs is None:
                 return httpx.Response(404, json={"message": "Not Found"})
@@ -59,10 +62,9 @@ def provider(
             return httpx.Response(200, content=archive.getvalue())
         raise AssertionError(f"unexpected request {path}")
 
-    real_client = httpx.Client
     monkeypatch.setattr(
         httpx, "Client",
-        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+        lambda **kwargs: REAL_CLIENT(transport=httpx.MockTransport(handler), **kwargs),
     )
     token = tmp_path / "token"
     token.write_text("secret\n")
@@ -85,8 +87,11 @@ def test_runs_from_both_workflows_merge_newest_first_with_run_id_breaking_ties(
     })
     considered: list[int] = []
     monkeypatch.setattr(github, "publication", lambda run_id: considered.append(run_id))
+    queries.clear()
     assert github.available() is None
     assert considered == [21, 11, 20, 10]
+    eligible = {"branch": "main", "event": "push", "status": "success", "per_page": "20"}
+    assert queries == [eligible, eligible]
 
 
 def test_a_typescript_workflow_absent_from_github_leaves_deploy_releases_offered(
@@ -98,6 +103,11 @@ def test_a_typescript_workflow_absent_from_github_leaves_deploy_releases_offered
         "publish-typescript-release.yml": None,
     })
     assert github.available() == PYTHON_RELEASE
+    missing_deploy = provider(tmp_path, monkeypatch, listed={
+        "deploy.yml": None, "publish-typescript-release.yml": [],
+    })
+    with pytest.raises(RuntimeError, match="refused"):
+        missing_deploy.available()
 
 
 @pytest.mark.parametrize(

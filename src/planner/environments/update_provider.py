@@ -83,12 +83,13 @@ class GitHubUpdateProvider:
     def available(self) -> PublishedUpdate | None:
         """The newest acceptable publication across every trusted workflow."""
         runs: list[dict[str, Any]] = []
-        for workflow in TRUSTED_RELEASE_WORKFLOWS:
-            # A workflow that is not on GitHub yet has no runs, not a failed check.
+        for workflow, contract_version in TRUSTED_RELEASE_WORKFLOWS.items():
+            # Until the TypeScript workflow is on GitHub its runs are a 404: no runs yet.
+            # A 404 for deploy.yml still fails, as before; it can mean a lost credential.
             response = self._request(
                 "GET",
                 f"actions/workflows/{workflow.rsplit('/', 1)[-1]}/runs",
-                missing_ok=True,
+                missing_ok=contract_version == NODE_RUNTIME_CONTRACT_VERSION,
                 params={
                     "branch": "main",
                     "event": "push",

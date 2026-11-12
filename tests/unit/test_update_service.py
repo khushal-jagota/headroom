@@ -29,6 +29,7 @@ from planner.environments.update_attempts import (
     import_legacy_request,
 )
 from planner.environments.update_contracts import PublishedMacUpdate, PublishedUpdate
+from planner.environments.update_install import require_exact_schema_frontier
 from planner.environments.update_service import ACTIVITY_CHANGED_DETAIL, UpdateService
 
 
@@ -164,23 +165,34 @@ def test_node_release_needs_the_exact_schema_frontier_at_staging(tmp_path: Path)
         Harness(tmp_path / "behind", migrated=False, node=True)
     ready = Harness(tmp_path / "exact", node=True)
     assert ready.service.ready_release() == ready.release
+    # A candidate without migrations and a database without a revision do not match.
+    empty = tmp_path / "empty.db"
+    with sqlite3.connect(empty) as db:
+        db.execute("CREATE TABLE alembic_version (version_num TEXT)")
+    with pytest.raises(ValueError, match="exactly its schema revision"):
+        require_exact_schema_frontier(empty, tmp_path / "no-migrations")
 
 
-@pytest.mark.parametrize("revisions", [[], ["unknown"], ["base", "unknown"]])
+@pytest.mark.parametrize("frontier", ["ancestor", "unknown", "divergent"])
 def test_node_release_rechecks_the_frontier_before_the_stop(
-    tmp_path: Path, revisions: list[str]
+    tmp_path: Path, frontier: str
 ) -> None:
-    """Risk: the database moves after staging, and the service stops for a release
-    that cannot run on it. No backup makes that acceptable."""
+    """Risk: the frontier differs at install time, and the service stops for a release
+    that cannot run on it. A known ancestor, which version 1 backs up and migrates,
+    is refused too."""
     harness = Harness(tmp_path / "current", node=True)
     harness.service.install(SHA_B, "now", confirm_activity=False)
     with sqlite3.connect(harness.database) as db:
         head = db.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        db.execute("DELETE FROM alembic_version")
-        db.executemany(
-            "INSERT INTO alembic_version VALUES (?)",
-            [(head if revision == "base" else revision,) for revision in revisions],
-        )
+        if frontier == "ancestor":
+            staged = harness.root / f".app-next-{SHA_B}/src/planner/core/migrations/versions"
+            (staged / "next.py").write_text(f'revision = "next"\ndown_revision = "{head}"\n')
+        else:
+            db.execute("DELETE FROM alembic_version")
+            db.executemany(
+                "INSERT INTO alembic_version VALUES (?)",
+                [("unknown",)] + ([(head,)] if frontier == "divergent" else []),
+            )
     harness.advance()
     recorded = harness.store.read()
     assert recorded is not None and recorded.state == "failed"
