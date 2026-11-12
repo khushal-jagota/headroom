@@ -1464,7 +1464,6 @@
 			buildSettings = {
 				APNS_ENVIRONMENT = production;
 				APNS_REGISTRATION_ENABLED = NO;
-				"APNS_REGISTRATION_ENABLED[sdk=iphoneos*]" = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				"CODE_SIGNING_ALLOWED[sdk=iphoneos*]" = YES;
 				CODE_SIGN_ENTITLEMENTS = Panels/Panels.entitlements;

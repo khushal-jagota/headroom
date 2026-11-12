@@ -45,7 +45,6 @@ targets:
         Release:
           CODE_SIGNING_ALLOWED[sdk=iphoneos*]: YES
           APNS_ENVIRONMENT: production
-          APNS_REGISTRATION_ENABLED[sdk=iphoneos*]: YES
   PanelsTests:
     type: bundle.unit-test
     platform: iOS
