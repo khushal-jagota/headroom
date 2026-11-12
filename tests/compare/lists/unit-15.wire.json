@@ -3,7 +3,10 @@
     "src/planner/conversation/system.py",
     "src/planner/conversation/api.py",
     "src/planner/conversation/logic/",
-    "src/planner/conversation/backends/contracts.py"
+    "src/planner/conversation/backends/contracts.py",
+    "src/planner/conversation/storage.py",
+    "src/planner/conversation/lifecycle_storage.py",
+    "src/planner/conversation/runtime_composition.py"
   ],
   "scenarios": [
     "test_a_message_reaches_the_backend_whole_and_is_recorded_whole",
@@ -131,6 +134,31 @@
       "status": 200,
       "capture": {
         "wire_5": ""
+      }
+    },
+    {
+      "area": "test_backend_prose_is_runtime_only",
+      "method": "POST",
+      "path": "/api/test/signals/u15-s05/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "AgentMessageCompleted",
+            "values": {
+              "text": "backend-only prose"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "area": "test_backend_prose_is_runtime_only",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s05/inspect",
+      "status": 200,
+      "capture": {
+        "backend_prose_runtime_only": ""
       }
     },
     {
@@ -1129,6 +1157,550 @@
       "capture": {
         "wire_47": ""
       }
+    },
+    {
+      "area": "test_a_refused_first_delivery_leaves_the_role_text_for_the_next_one",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-role-after-refusal",
+        "backend_key": "codex",
+        "model": "a-model",
+        "workspace_folder": "/tmp",
+        "role_text": "You are the Chief of Staff."
+      }
+    },
+    {
+      "area": "test_a_refused_first_delivery_leaves_the_role_text_for_the_next_one",
+      "method": "GET",
+      "path": "/api/test/signals/u15-role-after-refusal/inspect",
+      "status": 200,
+      "capture": {
+        "u15_role_after_refusal_started": ""
+      }
+    },
+    {
+      "area": "test_a_refused_first_delivery_leaves_the_role_text_for_the_next_one",
+      "method": "POST",
+      "path": "/api/test/signals/u15-role-after-refusal/configure",
+      "status": 200,
+      "json": {
+        "command": "write_prompt",
+        "behavior": {
+          "error": {
+            "name": "BackendPromptRejected",
+            "message": "provider proved non-admission"
+          }
+        }
+      }
+    },
+    {
+      "area": "test_a_refused_first_delivery_leaves_the_role_text_for_the_next_one",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-role-after-refusal/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "never got there"
+          }
+        ],
+        "sender_label": "owner",
+        "sender_message_id": "role-refused"
+      }
+    },
+    {
+      "area": "test_a_refused_first_delivery_leaves_the_role_text_for_the_next_one",
+      "method": "GET",
+      "path": "/api/test/signals/u15-role-after-refusal/inspect",
+      "status": 200,
+      "capture": {
+        "u15_role_after_refusal_refused": ""
+      }
+    },
+    {
+      "area": "test_a_refused_first_delivery_leaves_the_role_text_for_the_next_one",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-role-after-refusal/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "after the refusal"
+          }
+        ],
+        "sender_label": "owner",
+        "sender_message_id": "role-accepted"
+      }
+    },
+    {
+      "area": "test_a_refused_first_delivery_leaves_the_role_text_for_the_next_one",
+      "method": "GET",
+      "path": "/api/test/signals/u15-role-after-refusal/inspect",
+      "status": 200,
+      "capture": {
+        "u15_role_after_refusal_accepted": ""
+      }
+    },
+    {
+      "area": "test_a_refused_first_delivery_leaves_the_role_text_for_the_next_one",
+      "method": "POST",
+      "path": "/api/test/signals/u15-role-after-refusal/finish",
+      "status": 200
+    },
+    {
+      "area": "test_a_refused_first_delivery_leaves_the_role_text_for_the_next_one",
+      "method": "GET",
+      "path": "/api/test/signals/u15-role-after-refusal/inspect",
+      "status": 200,
+      "capture": {
+        "u15_role_after_refusal_completed": ""
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-rebind-queue",
+        "backend_key": "codex",
+        "model": "a-model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "GET",
+      "path": "/api/test/signals/u15-rebind-queue/inspect",
+      "status": 200,
+      "capture": {
+        "u15_rebind_queue_started": ""
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-rebind-queue/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "first"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "GET",
+      "path": "/api/test/signals/u15-rebind-queue/inspect",
+      "status": 200,
+      "capture": {
+        "u15_rebind_queue_first": ""
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "POST",
+      "path": "/api/test/signals/u15-rebind-queue/finish",
+      "status": 200
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "GET",
+      "path": "/api/test/signals/u15-rebind-queue/inspect",
+      "status": 200,
+      "capture": {
+        "u15_rebind_queue_before_rebind": ""
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "POST",
+      "path": "/api/test/signals/u15-rebind-queue/configure",
+      "status": 200,
+      "json": {
+        "command": "start",
+        "behavior": {
+          "error": {
+            "name": "BackendSpawnFailed",
+            "message": "u15-rebind-queue"
+          }
+        },
+        "target": "next"
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "POST",
+      "path": "/api/test/signals/u15-rebind-queue/configure",
+      "status": 200,
+      "json": {
+        "command": "write_prompt",
+        "behavior": {
+          "error": {
+            "name": "NeedsRebind",
+            "message": "replace child before write"
+          }
+        }
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-rebind-queue/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "retry"
+          }
+        ],
+        "sender_label": "owner",
+        "mode": "queue",
+        "sender_message_id": "spawn-refusal-queue"
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "GET",
+      "path": "/api/test/signals/u15-rebind-queue/inspect",
+      "status": 200,
+      "capture": {
+        "u15_rebind_queue_spawn_refused": ""
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-rebind-send-now",
+        "backend_key": "codex",
+        "model": "a-model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "GET",
+      "path": "/api/test/signals/u15-rebind-send-now/inspect",
+      "status": 200,
+      "capture": {
+        "u15_rebind_send_now_started": ""
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-rebind-send-now/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "first"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "GET",
+      "path": "/api/test/signals/u15-rebind-send-now/inspect",
+      "status": 200,
+      "capture": {
+        "u15_rebind_send_now_first": ""
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "POST",
+      "path": "/api/test/signals/u15-rebind-send-now/finish",
+      "status": 200
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "GET",
+      "path": "/api/test/signals/u15-rebind-send-now/inspect",
+      "status": 200,
+      "capture": {
+        "u15_rebind_send_now_before_rebind": ""
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "POST",
+      "path": "/api/test/signals/u15-rebind-send-now/configure",
+      "status": 200,
+      "json": {
+        "command": "start",
+        "behavior": {
+          "error": {
+            "name": "BackendSpawnFailed",
+            "message": "u15-rebind-send-now"
+          }
+        },
+        "target": "next"
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "POST",
+      "path": "/api/test/signals/u15-rebind-send-now/configure",
+      "status": 200,
+      "json": {
+        "command": "write_prompt",
+        "behavior": {
+          "error": {
+            "name": "NeedsRebind",
+            "message": "replace child before write"
+          }
+        }
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-rebind-send-now/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "retry"
+          }
+        ],
+        "sender_label": "owner",
+        "mode": "send_now",
+        "sender_message_id": "spawn-refusal-send_now"
+      }
+    },
+    {
+      "area": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "method": "GET",
+      "path": "/api/test/signals/u15-rebind-send-now/inspect",
+      "status": 200,
+      "capture": {
+        "u15_rebind_send_now_spawn_refused": ""
+      }
+    },
+    {
+      "area": "test_message_to_owner_is_one_ordered_idempotent_row",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-owner-idempotent",
+        "backend_key": "codex",
+        "model": "a-model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_message_to_owner_is_one_ordered_idempotent_row",
+      "method": "POST",
+      "path": "/api/test/signals/u15-owner-idempotent/message",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "t_sender",
+        "label": "Ticket t_sender",
+        "text": "A reply for the owner",
+        "sender_message_id": "owner-message-1",
+        "sent_at_unix_milliseconds": 1234
+      }
+    },
+    {
+      "area": "test_message_to_owner_is_one_ordered_idempotent_row",
+      "method": "GET",
+      "path": "/api/test/signals/u15-owner-idempotent/inspect",
+      "status": 200,
+      "capture": {
+        "owner_message_first": ""
+      }
+    },
+    {
+      "area": "test_message_to_owner_is_one_ordered_idempotent_row",
+      "method": "POST",
+      "path": "/api/test/signals/u15-owner-idempotent/message",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "t_sender",
+        "label": "Ticket t_sender",
+        "text": "A reply for the owner",
+        "sender_message_id": "owner-message-1",
+        "sent_at_unix_milliseconds": 1234
+      }
+    },
+    {
+      "area": "test_message_to_owner_is_one_ordered_idempotent_row",
+      "method": "GET",
+      "path": "/api/test/signals/u15-owner-idempotent/inspect",
+      "status": 200,
+      "capture": {
+        "owner_message_duplicate": ""
+      }
+    },
+    {
+      "area": "test_message_to_owner_is_one_ordered_idempotent_row",
+      "method": "POST",
+      "path": "/api/test/signals/u15-owner-idempotent/message",
+      "status": 422,
+      "json": {
+        "kind": "ticket",
+        "id": "t_other",
+        "label": "Ticket t_sender",
+        "text": "A reply for the owner",
+        "sender_message_id": "owner-message-1",
+        "sent_at_unix_milliseconds": 1234
+      }
+    },
+    {
+      "area": "test_message_to_owner_is_one_ordered_idempotent_row",
+      "method": "GET",
+      "path": "/api/test/signals/u15-owner-idempotent/inspect",
+      "status": 200,
+      "capture": {
+        "owner_message_conflict": ""
+      }
+    },
+    {
+      "area": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-restart-lazy",
+        "backend_key": "codex",
+        "model": "openai-codex:gpt-5.6-sol",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
+      "method": "GET",
+      "path": "/api/test/signals/u15-restart-lazy/inspect",
+      "status": 200,
+      "capture": {
+        "u15_restart_lazy_started": ""
+      }
+    },
+    {
+      "area": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
+      "method": "POST",
+      "path": "/api/test/signals/u15-restart-lazy/configure",
+      "status": 200,
+      "json": {
+        "command": "start",
+        "behavior": {
+          "events": [
+            {
+              "turn": null,
+              "event": {
+                "kind": "VendorSessionCursorRebound",
+                "values": {
+                  "vendor_session_cursor": "unit15-retained-session"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "area": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-restart-lazy/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "before the restart"
+          }
+        ],
+        "sender_label": "owner",
+        "sender_message_id": "restart-before"
+      }
+    },
+    {
+      "area": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
+      "method": "GET",
+      "path": "/api/test/signals/u15-restart-lazy/inspect",
+      "status": 200,
+      "capture": {
+        "u15_restart_lazy_before_restart": ""
+      }
+    },
+    {
+      "area": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
+      "kind": "restart"
+    },
+    {
+      "area": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
+      "method": "GET",
+      "path": "/api/test/signals/u15-restart-lazy/inspect",
+      "status": 200,
+      "capture": {
+        "u15_restart_lazy_after_restart_before_send": ""
+      }
+    },
+    {
+      "area": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-restart-lazy",
+      "status": 200
+    },
+    {
+      "area": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-restart-lazy/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "after the restart"
+          }
+        ],
+        "sender_label": "owner",
+        "sender_message_id": "restart-after"
+      }
+    },
+    {
+      "area": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
+      "method": "GET",
+      "path": "/api/test/signals/u15-restart-lazy/inspect",
+      "status": 200,
+      "capture": {
+        "u15_restart_lazy_resumed": ""
+      }
+    },
+    {
+      "area": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
+      "method": "POST",
+      "path": "/api/test/signals/u15-restart-lazy/finish",
+      "status": 200
+    },
+    {
+      "area": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
+      "method": "GET",
+      "path": "/api/test/signals/u15-restart-lazy/inspect",
+      "status": 200,
+      "capture": {
+        "u15_restart_lazy_completed": ""
+      }
     }
   ],
   "probes": [],
@@ -1180,7 +1752,50 @@
     "wire_45",
     "wire_46",
     "wire_47",
-    "wire_positive_http_state"
+    "wire_positive_http_state",
+    "u15_role_after_refusal_started",
+    "u15_role_after_refusal_refused",
+    "u15_role_after_refusal_accepted",
+    "u15_role_after_refusal_completed",
+    "u15_rebind_queue_started",
+    "u15_rebind_queue_first",
+    "u15_rebind_queue_before_rebind",
+    "u15_rebind_queue_spawn_refused",
+    "u15_rebind_send_now_started",
+    "u15_rebind_send_now_first",
+    "u15_rebind_send_now_before_rebind",
+    "u15_rebind_send_now_spawn_refused",
+    "u15_restart_lazy_started",
+    "u15_restart_lazy_before_restart",
+    "u15_restart_lazy_after_restart_before_send",
+    "u15_restart_lazy_resumed",
+    "u15_restart_lazy_completed",
+    "backend_prose_runtime_only",
+    "owner_message_first",
+    "owner_message_duplicate",
+    "owner_message_conflict"
   ],
-  "candidate": "typescript"
+  "candidate": "typescript",
+  "external_proofs": [
+    {
+      "source_test": "test_a_refused_first_delivery_leaves_the_role_text_for_the_next_one",
+      "coverage": "known first refusal preserves role envelope until accepted prompt"
+    },
+    {
+      "source_test": "test_spawn_refusal_retains_native_detail_after_rebind",
+      "coverage": "queue and send_now modes preserve replacement spawn failure text and sender identity"
+    },
+    {
+      "source_test": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
+      "coverage": "partial: observable stopped runtime and lazy saved-cursor/model/workspace resume; zero-store-read/no-adoption private boundary remains unproved"
+    },
+    {
+      "source_test": "test_backend_prose_is_runtime_only",
+      "coverage": "typed completed backend prose creates no durable agent_message; no display claim"
+    },
+    {
+      "source_test": "test_message_to_owner_is_one_ordered_idempotent_row",
+      "coverage": "exact addressed row and duplicate identity; changed provenance rejects with exact native text, no backend child"
+    }
+  ]
 }

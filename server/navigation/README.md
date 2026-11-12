@@ -12,7 +12,9 @@ Count-only windows load no membership rows. Page reads fetch only admitted rows 
 
 ## Publication and delivery
 
-The shared startup creates `services.signalAuthority` under runtime ownership. Navigation stores and validates that supplied installation inside each read snapshot. It creates no producer permit. The idle callback retains durable unread/failure facts, but runtime-only working/question states remain false. The real conversation core replaces that temporary source.
+The shared startup creates the real conversation publication source under runtime ownership. Navigation attaches through its `SignalAttachment` snapshot and batch protocol. It stores the supplied installation and validates it inside each read snapshot. The producer supplies working, pending-question, unread-message, and failure facts from the same source transaction. Navigation creates no producer permit.
+
+The attachment accepts exact replay and rejects conflicting batches, cursor gaps, and stale conversation revisions. Deletions retain revision tombstones. Reattachment installs a complete snapshot without resetting the running producer's cursor or conversation revisions. Publication participation precedes artifact links and the retained navigation finalizer in the source transaction.
 
 Delivery follows the Python scoped coordinator: poll committed change footprints, recapture intersecting views, emit patch or checkpoint, send heartbeats, and retain bounded journal history. Epoch changes, missing retained footprints, and revoked authority close the connection. Reconnection starts a fresh snapshot, as Python does; Last-Event-ID is not a replay contract here. Snapshot sends retain their authority through asynchronous send hooks. Content reads validate the durable recap digest and stream bounded Unicode chunks.
 
