@@ -25,7 +25,10 @@ export function failure_message(
   } | null,
 ): string | null {
   if (!f) return null;
-  let message = failure_messages[f.code]!;
+  let message =
+    f.code === 'budget_exhausted' && f.budget !== null && f.budget !== 'wall_seconds'
+      ? 'The run exceeded an execution limit.'
+      : failure_messages[f.code]!;
   if (f.budget !== null) message += ` Limit: ${f.budget}.`;
   if (f.http_status !== null) message += ` HTTP status: ${f.http_status}.`;
   if (f.exception_type != null) message += ` ${f.exception_type}.`;

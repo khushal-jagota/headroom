@@ -1,3 +1,4 @@
+import { sourceTestArea } from './measure_sources/testing/routes.ts';
 import { notificationTestArea } from './notifications/testing.ts';
 /** Comparison composition. Each area appends its test-only route registration here. */
 import { managerWakeTestArea } from './manager_wakes/testing.ts';
@@ -15,6 +16,11 @@ import { InMemoryConversationSystem } from './conversation/in_memory_conversatio
 import { inMemoryConversationRoutes } from './conversation/testing/routes.ts';
 import { rebuild_conversation_view } from './conversation/views/data/writer.ts';
 import { create_test_environment_runtime } from './environments/testing/composition.ts';
+import {
+  create_backend_runtime,
+  unavailable_backend_providers,
+} from './conversation/snapshot/composition.ts';
+import { TicketModelSnapshots } from './conversation/snapshot/testing/ticket_models.ts';
 
 if (process.env.PLAN_TEST_MODE !== '1') throw new Error('The comparison host requires test mode');
 
@@ -27,6 +33,19 @@ const ticket_choice_fault = new ScriptedTicketChoiceFault();
 
 await startServer({
   createEnvironments: create_test_environment_runtime,
+  createBackendServices(context) {
+    const runtime = create_backend_runtime({
+      database: context.database,
+      config: context.config,
+      now: () => context.clock.now(),
+      providers: unavailable_backend_providers(),
+    });
+    const snapshots = new TicketModelSnapshots();
+    snapshots.model = 'gpt-6.1-sol';
+    snapshots.models = ['gpt-6.1-sol'];
+    runtime.backend_snapshots = snapshots;
+    return runtime;
+  },
   conversationSystem,
   createConversationCore: conversationSystem
     ? undefined
@@ -68,6 +87,7 @@ await startServer({
       },
   testAreas: (context): readonly Area[] => [
     readinessTestRoutes,
+    sourceTestArea({ ...context, assert_database_owned: context.require_runtime_ownership }),
     notificationTestArea,
     managerWakeTestArea({ ...context, assert_database_owned: context.require_runtime_ownership }),
     ...(conversationSystem

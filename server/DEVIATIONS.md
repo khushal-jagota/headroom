@@ -2,6 +2,30 @@
 
 This file records intentional differences that the migration Manager accepted. No new difference enters this file without that acceptance. Close an entry when Python adopts the same behavior.
 
+## Backend discovery in test mode
+
+The migration Manager accepted this safer rule during Unit 19's backend review.
+With `PLAN_TEST_MODE=1`, Python's default backend service still probes the machine.
+TypeScript composes an empty recording environment and no production providers.
+Without explicit recording fixtures, each backend card therefore reports not installed.
+Production subprocess and HTTP doors also refuse test contexts before external I/O.
+The focused backend composition check proves this refusal. Scripted comparison hosts
+inject their declared catalogs and recording actions explicitly.
+
+## Provider allowance scopes with an empty model display name
+
+The migration Manager accepted this difference during review of Unit 19's backend package.
+Python's `backend_state._catalogue_model_id` indexes the first word of each display name
+after an exact match fails. If a display name is empty or absent, that lookup raises
+`IndexError`. The explicit allowance refresh then returns HTTP 500 before it can replace
+the cached observation.
+
+TypeScript treats an empty display name as no display-family match. It can still resolve
+a unique model-ID family. It drops an unresolved or ambiguous scoped window and retains
+the account-wide windows, then commits a successful observation through the usual short
+transaction. It does not reproduce Python's exception. This difference concerns only the
+empty-display fallback. Nonempty model names and ordinary ambiguity retain the Python rules.
+
 ## Closed: accepted held prompts survive a secondary Ticket-model error
 
 The migration Manager accepted this difference during review of PR 712 on November 12, 2026.
@@ -98,6 +122,36 @@ The existing [configuration proof](../tests/compare/direct/test_unit21_metrics_c
 `test_unit21_metrics_configuration_and_sidecar_paths`, asserts the TS refusal as a gating result.
 It records Python's different answer as informational evidence. The ten keys share the same admission predicate.
 This policy acceptance does not approve the remaining Part 2 source or its merge.
+
+## JavaScript source execution limits
+
+The migration Manager accepted these limits for the new JavaScript script contract on November 12, 2026:
+
+- 8 MiB combined control, stdout, and stderr output per run.
+- 64 MiB aggregate decoded HTTP response bodies per run.
+- 256 MiB V8 old-space through the child Node process option. This is not a total resident-memory guarantee.
+
+Python enforces only the wall-time limit. Its configured default is 30 seconds (`src/planner/core/config.py` and `measure_sources/configuration.py`), equal to the TypeScript default. The configured wall-time value remains authoritative.
+
+`measure_sources/runtime/runtime.test.ts` proves each limit with actual children:
+
+- `stdout and private control frames share the output byte budget` proves combined output enforcement, including buffered output before completion.
+- `decoded HTTP bytes accumulate across responses and exhaust the run budget` proves aggregate response enforcement even if a script catches the failure.
+- `V8 old-space exhaustion is a safe budget failure and the child is reaped` proves heap exhaustion with a smaller test cap.
+- `good child sees frozen data and the exact environment allowlist; parent retains numeric candidates` checks the actual default child option `--max-old-space-size=256`.
+
+The byte/heap failure cases use smaller configured limits to avoid unnecessary VPS load. Default constants retain the accepted values above.
+
+### Accepted script-contract differences after source review
+
+The Manager accepted these differences on November 12, 2026:
+
+- Python inherits the full server environment. TypeScript constructs a filtered environment with private `HOME`/`TMPDIR` and fixed `LANG`. It retains only `TZ`, `PATH`, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, their lower-case forms, `SSL_CERT_FILE`, `SSL_CERT_DIR`, and `NODE_EXTRA_CA_CERTS`. No `PLAN_*` variable or provider home passes through. The environment test pins this exact list.
+- Non-wall limit notices say "The run exceeded an execution limit." Python's existing wall-time notice stays unchanged.
+- JavaScript diagnostics retain only `SyntaxError`, `TypeError`, `ReferenceError`, and `RangeError`. Python retains fourteen exception names.
+- A script's explicit `process.exit(0)` is a runtime failure because it omits the completion protocol. Python treated `SystemExit(0)` as success.
+
+The child runs as the same operating-system user and can read what the server can read, as in Python. Environment filtering is not a sandbox. The author prohibitions are policy, not filesystem or process isolation.
 
 ## Claude SDK identity in the child environment
 

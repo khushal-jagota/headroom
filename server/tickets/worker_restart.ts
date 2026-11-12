@@ -1,12 +1,14 @@
-/** Explicit recovery of a Ticket worker. Runtime busy state never decides admission. */
+/** Kill a Ticket's conversation, unlink it, and start a fresh worker step. */
 import { PlannerError, type Principal } from '../core/contracts.ts';
 import type { Database, ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type { ConversationSystem } from '../conversation/contracts.ts';
+import { now_ms } from '../executor/clock.ts';
 import type { WorkerStepStartResult } from '../runtime/worker_step_readiness_loop.ts';
 import * as conversation_start from '../runtime/conversation_start.ts';
 import * as worker_step_readiness from '../runtime/worker_step_readiness.ts';
 import * as tickets_data from './data/index.ts';
 import * as revision_feedback from './revision_feedback.ts';
+import * as locale_configuration from './locale_configuration.ts';
 import { stage_ownership_mode } from './logic/machine.ts';
 import type { Ticket } from './contracts.ts';
 export function require_restartable(
@@ -23,14 +25,14 @@ export function require_restartable(
       stage: ticket.stage,
     });
   }
-  if (ticket.worker_step_claim === 'out' || ticket.worker_step_claim === 'errored') return ticket;
-  if (ticket.conversation_id === null) return ticket;
-  if (ticket.ticket_status === 'empty' && revision_feedback.snapshot(sql, ticket_id) !== null)
-    return ticket;
-  throw new PlannerError('validation', 'the Ticket has no worker step out to restart', {
-    ticket_id,
-    ticket_status: ticket.ticket_status,
-  });
+  if (ticket.locale === 'macos' && !locale_configuration.mac_is_present(sql, now_ms())) {
+    throw new PlannerError(
+      'validation',
+      `${locale_configuration.WAITING_FOR_THE_MAC}: restart this Ticket once it is back`,
+      { ticket_id },
+    );
+  }
+  return ticket;
 }
 interface RestartOptions {
   start_worker_step: () => Promise<WorkerStepStartResult>;
@@ -44,8 +46,29 @@ export async function restart_worker(
   ticket_id: string,
   options: RestartOptions,
 ): Promise<Record<string, unknown>> {
-  const [killed_conversation_id, killed_conversation_looked_running] =
-    await _prepare_worker_restart(conversations, database, principal, ticket_id, options);
+  let killed_conversation_id: string | null = null;
+  let killed_conversation_looked_running = false;
+  let revision_restarted_in_fresh_conversation = false;
+  await conversation_start.conversation_link_lock(`ticket:${ticket_id}`).run(async () => {
+    const ticket = database.read((sql) => require_restartable(sql, principal, ticket_id));
+    killed_conversation_id = ticket.conversation_id;
+    if (killed_conversation_id !== null) {
+      revision_restarted_in_fresh_conversation = database.read(
+        (sql) => revision_feedback.snapshot(sql, ticket_id) !== null,
+      );
+      killed_conversation_looked_running = await conversations.is_running(killed_conversation_id);
+      await conversations.kill(killed_conversation_id);
+    }
+    const now = options.now();
+    database.write((sql) =>
+      _unlink_give_back_the_claim_and_write_configuration(sql, ticket_id, {
+        killed_conversation_id,
+        write_employee_configuration: options.write_employee_configuration,
+        now,
+      }),
+    );
+  });
+  // Starting obtains fresh ownership after the link mutation is complete.
   const start_result = await options.start_worker_step();
   return database.read((sql) =>
     _restart_result(
@@ -54,92 +77,32 @@ export async function restart_worker(
       start_result,
       killed_conversation_id,
       killed_conversation_looked_running,
+      revision_restarted_in_fresh_conversation,
     ),
   );
 }
-export async function _prepare_worker_restart(
-  conversations: ConversationSystem,
-  database: Database,
-  principal: Principal,
-  ticket_id: string,
-  options: Pick<RestartOptions, 'now' | 'write_employee_configuration'>,
-): Promise<[string | null, boolean]> {
-  let ticket = database.read((sql) => require_restartable(sql, principal, ticket_id));
-  const rearming_idle_revision =
-    ticket.worker_step_claim === 'none' && ticket.conversation_id !== null;
-  if (rearming_idle_revision && options.write_employee_configuration != null) {
-    throw new PlannerError(
-      'already_running',
-      'Employee configuration is frozen while a conversation or a worker step holds it',
-      { ticket_id },
-    );
-  }
-  let killed_conversation_id = ticket.conversation_id;
-  let killed_conversation_looked_running = false;
-  await conversation_start.conversation_link_lock(`ticket:${ticket_id}`).run(async () => {
-    ticket = database.read((sql) => require_restartable(sql, principal, ticket_id));
-    killed_conversation_id = ticket.conversation_id;
-    if (killed_conversation_id !== null) {
-      killed_conversation_looked_running = await conversations.is_running(killed_conversation_id);
-      await conversations.kill(killed_conversation_id);
-    }
-    let source_retirement_proven = false;
-    if (killed_conversation_id !== null) {
-      source_retirement_proven =
-        await conversations.retirement_is_confirmed(killed_conversation_id);
-      if (!source_retirement_proven) {
-        throw new PlannerError(
-          'validation',
-          'source retirement is unresolved; executor or operator settlement is required',
-          {
-            retirement_started: true,
-            source_retired: null,
-            reason: 'context_changed',
-            corrective_action: 'verify_launch_context',
-          },
-        );
-      }
-    }
-    try {
-      database.write((sql) =>
-        _give_the_claim_back_and_write_configuration(sql, principal, ticket_id, {
-          write_employee_configuration: options.write_employee_configuration,
-          now: options.now(),
-        }),
-      );
-    } catch (error) {
-      if (!(error instanceof PlannerError)) throw error;
-      throw new PlannerError(error.code, error.message, {
-        ...error.detail,
-        retirement_started: killed_conversation_id !== null,
-        source_retired: source_retirement_proven ? true : null,
-      });
-    }
-  });
-  return [killed_conversation_id, killed_conversation_looked_running];
-}
-export function _give_the_claim_back_and_write_configuration(
+export function _unlink_give_back_the_claim_and_write_configuration(
   sql: TransactionSql,
-  principal: Principal,
   ticket_id: string,
   options: {
+    killed_conversation_id: string | null;
     write_employee_configuration?: ((sql: TransactionSql, now: number) => void) | null;
     now: number;
   },
 ): void {
-  const ticket = require_restartable(sql, principal, ticket_id);
+  const ticket = tickets_data.read_ticket(sql, ticket_id);
   if (ticket.worker_step_claim === 'out' || ticket.worker_step_claim === 'errored') {
     tickets_data.release_worker_step_claim(sql, ticket_id, {
       expected_claim: ticket.worker_step_claim,
       expected_claim_revision: ticket.worker_step_claim_revision,
       now: options.now,
     });
-    if (ticket.conversation_id !== null) {
-      tickets_data.clear_ticket_conversation_link(sql, ticket_id, {
-        expected_conversation_id: ticket.conversation_id,
-        now: options.now,
-      });
-    }
+  }
+  if (options.killed_conversation_id !== null) {
+    tickets_data.clear_ticket_conversation_link(sql, ticket_id, {
+      expected_conversation_id: options.killed_conversation_id,
+      now: options.now,
+    });
   }
   options.write_employee_configuration?.(sql, options.now);
 }
@@ -149,12 +112,14 @@ export function _restart_result(
   start_result: WorkerStepStartResult,
   killed_conversation_id: string | null,
   killed_conversation_looked_running: boolean,
+  revision_restarted_in_fresh_conversation: boolean,
 ): Record<string, unknown> {
   const restarted = tickets_data.read_ticket(sql, ticket_id);
   return {
     ticket_id,
     killed_conversation_id,
     killed_conversation_looked_running,
+    revision_restarted_in_fresh_conversation,
     employee_configuration: {
       employee_backend: restarted.employee_backend,
       employee_launch_model: restarted.employee_launch_model,
