@@ -204,7 +204,7 @@ export async function send_now(
         settle_phase(state);
         return host.hold_prompt(state, message);
       }
-      automatic = host.automatic_compaction_is_due(state);
+      automatic = await host.automatic_compaction_may_start(state);
       if (automatic) held = host.hold_prompt(state, message);
       reservation = await host.reserve_turn(state, automatic);
       reservation.mode = automatic ? PromptDeliveryMode.queue : PromptDeliveryMode.send_now;
@@ -225,6 +225,7 @@ interface SteerAttempt {
   readonly lifecycle: LifecycleFact;
   readonly outcome: BackendSteerOutcome | PromptDeliverySuppressed;
   readonly automatic_notice: boolean;
+  readonly memory_notice_only: boolean;
   readonly adapter_error: unknown;
 }
 async function attempt_steer(
@@ -257,6 +258,7 @@ async function attempt_steer(
       lifecycle: attempt,
       outcome: new PromptDeliverySuppressed({ reason: decisions[0].suppression_reason }),
       automatic_notice: false,
+      memory_notice_only: false,
       adapter_error: null,
     };
   let outcome: BackendSteerOutcome;
@@ -280,6 +282,7 @@ async function attempt_steer(
     lifecycle: attempt,
     outcome,
     automatic_notice: decisions[0].is_manager_notice,
+    memory_notice_only: decisions[0].is_memory_notice,
     adapter_error,
   };
 }
@@ -337,6 +340,7 @@ async function record_steer_outcome(
   token: TurnToken | null,
   attempt: LifecycleFact | null = null,
   automatic_notice = false,
+  memory_notice_only = false,
   held_before: readonly string[] = [],
 ): Promise<PromptDeliveryFate> {
   const accepted = outcome instanceof BackendSteerAccepted;
@@ -381,8 +385,11 @@ async function record_steer_outcome(
       outcome.composed_content_delivered &&
       state.running_turn &&
       same_turn(state.running_turn.token, token)
-    )
+    ) {
       state.running_turn.automatic_notice = state.running_turn.automatic_notice && automatic_notice;
+      state.running_turn.memory_notice_only =
+        state.running_turn.memory_notice_only && memory_notice_only;
+    }
   }
   return fate;
 }
@@ -467,6 +474,7 @@ export async function steer(
         token,
         result.lifecycle,
         result.automatic_notice,
+        result.memory_notice_only,
         held_before,
       ),
     );
@@ -600,6 +608,7 @@ export async function promote_held_prompt(
         token,
         result.lifecycle,
         result.automatic_notice,
+        result.memory_notice_only,
         held_before,
       ),
     );

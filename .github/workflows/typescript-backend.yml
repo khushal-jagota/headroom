@@ -32,6 +32,8 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Install isolated dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
           python -m venv .venv
           .venv/bin/python -m pip install -r requirements.txt
           .venv/bin/python -m pip install --editable . --config-settings editable_mode=compat
@@ -147,13 +149,14 @@ jobs:
             BROWSER_EVIDENCE_DIR="$browser_evidence" \
             bash --noprofile --norc -euo pipefail <<'BROWSER' 2>&1 | tee "$browser_evidence/job.log"
           sudo apt-get update
-          sudo apt-get install -y libicu-dev pkg-config build-essential
+          sudo apt-get install -y libicu-dev pkg-config build-essential ffmpeg
           scripts/dev setup
           scripts/dev check-node web
           (cd web && node node_modules/vite/bin/vite.js build)
           .venv/bin/python -m playwright install --with-deps chromium
 
           browser_cases=(
+            'tests/e2e/test_conversation_video_upload.py::test_video_upload_early_send_and_native_range_playback[chromium]'
             'tests/e2e/test_conversation_signals.py::test_exact_conversation_signals_cross_runtime_stream_and_surfaces[chromium-desktop]'
             'tests/e2e/test_conversation_signals.py::test_combined_review_approval_reply_and_bounded_read_reach_canonical_writers[chromium]'
             'tests/e2e/test_conversation_signals.py::test_history_refused_row_keeps_unread_credit_until_latest_delivery[chromium]'
