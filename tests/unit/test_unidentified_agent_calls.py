@@ -245,24 +245,43 @@ def test_setting_absent_or_yaml_only_never_looks_up_or_refuses(
         assert sent == [{"type": "forwarded"}]
 
 
-@pytest.mark.parametrize(
-    "headers",
-    [
-        [(b"x-plan-actor", b"unattributed")],
-        [(b"X-Plan-Ticket-ID", b"t_worker")],
-        [(b"x-plan-manager-id", b"manager")],
-    ],
-)
-def test_any_identity_skips_lookup(
-    monkeypatch: pytest.MonkeyPatch, headers: list[tuple[bytes, bytes]]
-) -> None:
+def test_nonempty_actor_skips_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
     def unexpected(*args: Any, **kwargs: Any) -> bool:
-        raise AssertionError("identity calls must bypass proc")
+        raise AssertionError("actor calls must bypass proc")
 
     monkeypatch.setattr(calls, "resolve_loopback_peer", unexpected)
     scope = request_scope()
-    scope["headers"] = headers
+    scope["headers"] = [(b"X-Plan-Actor", b" unattributed ")]
     assert asyncio.run(invoke(scope, enabled=True)) == [{"type": "forwarded"}]
+
+
+def test_ids_without_actor_do_not_hide_agent_socket(
+    proc: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (proc / "101/cgroup").write_text(f"0::{WORKER}\n")
+    resolver = calls.resolve_loopback_peer
+
+    def resolve(client: tuple[str, int], server: tuple[str, int]) -> calls.PeerLookupResult:
+        return resolver(client, server, proc=proc)
+
+    monkeypatch.setattr(calls, "resolve_loopback_peer", resolve)
+    for header in (b"X-Plan-Ticket-ID", b"x-plan-manager-id"):
+        scope = request_scope()
+        scope["headers"] = [(header, b"orphan-id")]
+        sent = asyncio.run(invoke(scope, enabled=True))
+        assert sent[0]["status"] == 403
+        assert json.loads(sent[1]["body"])["error"]["code"] == "agent_forbidden"
+
+
+def test_nonloopback_http_and_websocket_never_look_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    def unexpected(*args: Any, **kwargs: Any) -> calls.PeerLookupResult:
+        raise AssertionError("nonloopback calls must bypass proc")
+
+    monkeypatch.setattr(calls, "resolve_loopback_peer", unexpected)
+    for kind in ("http", "websocket"):
+        scope = request_scope(kind)
+        scope["client"] = ("100.118.172.84", PEER[1])
+        assert asyncio.run(invoke(scope, enabled=True)) == [{"type": "forwarded"}]
 
 
 def test_trusted_owner_skips_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -275,11 +294,12 @@ def test_trusted_owner_skips_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
     assert asyncio.run(invoke(scope, enabled=True)) == [{"type": "forwarded"}]
 
 
-def test_blank_identity_headers_do_not_bypass_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_blank_first_actor_does_not_bypass_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(calls, "resolve_loopback_peer", lambda *args: calls.PeerLookupResult(False))
     scope = request_scope()
     scope["headers"] = [
         (b"x-plan-actor", b"\xa0"),
+        (b"x-plan-actor", b"chief"),
         (b"x-plan-ticket-id", b" \t"),
         (b"x-plan-manager-id", b" "),
     ]

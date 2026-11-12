@@ -17,7 +17,6 @@ from planner.core.authctx import AUTHENTICATED_OWNER_SCOPE_KEY
 
 _LOG = logging.getLogger(__name__)
 
-_IDENTITY_HEADERS = frozenset({b"x-plan-actor", b"x-plan-ticket-id", b"x-plan-manager-id"})
 _REFUSAL = "Unidentified caller refused. Restore PLAN_ACTOR and your Panels identity."
 
 
@@ -144,13 +143,29 @@ class UnidentifiedAgentCallsMiddleware:
             not self.enabled
             or scope["type"] not in {"http", "websocket"}
             or scope.get(AUTHENTICATED_OWNER_SCOPE_KEY) is True
-            or any(
-                name.lower() in _IDENTITY_HEADERS and value.decode("latin1").strip()
-                for name, value in scope.get("headers", ())
+            or next(
+                (
+                    value.decode("latin1").strip()
+                    for name, value in scope.get("headers", ())
+                    if name.lower() == b"x-plan-actor"
+                ),
+                "",
             )
         ):
             await self.app(scope, receive, send)
             return
+        client = scope.get("client")
+        if client is not None:
+            try:
+                address = ipaddress.ip_address(client[0])
+            except ValueError:
+                pass  # Unknown peers still need evidence, as do missing peers.
+            else:
+                if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+                    address = address.ipv4_mapped
+                if not address.is_loopback:
+                    await self.app(scope, receive, send)
+                    return
         result = await anyio.to_thread.run_sync(
             resolve_loopback_peer, scope.get("client"), scope.get("server")
         )

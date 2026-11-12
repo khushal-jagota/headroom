@@ -8,7 +8,9 @@ Khushal, Chief, Managers, and Workers all call the same routes. There is no sepa
 
 The server knows four kinds of caller: the **owner** (Khushal), **Chief**, a **Manager**, and a **Ticket** (its Worker). Goals have no agent. Old goal transcripts remain stored without a goal conversation interface. The authenticated browser is the owner. An agent's `panels` calls carry its identity, set by the conversation that launched it.
 
-The live service sets `PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS=1`. For calls without identity, the server checks the loopback socket's holders through `/proc`. It refuses callers inside `panels-live.service` or `panels-workers.slice` with `agent_forbidden` and asks them to restore `PLAN_ACTOR`. At least one readable holder must establish the caller's identity. Every readable holder must remain outside both agent cgroups. Calls with an identity and authenticated browser calls skip this check.
+The live service sets `PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS=1`. For loopback calls without a nonempty `X-Plan-Actor`, the server checks the socket's holders through `/proc`. Ticket or Manager IDs alone do not skip this check. It refuses callers inside `panels-live.service` or `panels-workers.slice` with `agent_forbidden` and asks them to restore `PLAN_ACTOR`. At least one readable holder must establish the caller's identity. Every readable holder must remain outside both agent cgroups.
+
+Calls with a nonempty actor, authenticated browser calls, and nonloopback callers retain their existing path without a socket lookup. Missing or unknown client addresses still require evidence.
 
 If a same-user process has unreadable descriptors, the server checks its cgroup. The server skips that process only if the cgroup is readable and outside both agent cgroups. Otherwise it refuses the call. The refusal detail and debug log include the number of skipped processes. Missing socket evidence or unreadable holder evidence also causes refusal. Other local callers remain the owner.
 
