@@ -298,7 +298,12 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         database,
         config,
         now: () => clock.now(),
-        providers: production_backend_providers(config.test_mode, one_shot_children),
+        providers: production_backend_providers(config.test_mode, {
+          database,
+          now: () => clock.now(),
+          read_codex_snapshot: () => backendServices!.backend_snapshots.snapshot('codex'),
+          one_shot_children,
+        }),
         one_shot_children,
       });
     const conversationSystem = options.conversationSystem ?? core;

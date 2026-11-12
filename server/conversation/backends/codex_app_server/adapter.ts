@@ -1154,12 +1154,11 @@ function steer_rejection_reason(rejected: CodexRequestRejected): R {
 export function create_codex_backend_child_factory(
   launch: CodexChildLaunch,
   options: {
-    remembered_login_rejection?: CodexLoginRejectionMemory;
+    remembered_login_rejection: CodexLoginRejectionMemory;
     client_factory?: ClientFactory;
-  } = {},
+  },
 ): B.BackendChildFactory {
-  const remembered_login_rejection =
-    options.remembered_login_rejection ?? new RememberedCodexLoginRejection();
+  const remembered_login_rejection = options.remembered_login_rejection;
   return (values) =>
     new CodexAppServerBackendChild({
       ...values,
