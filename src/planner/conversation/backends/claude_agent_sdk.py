@@ -105,6 +105,10 @@ from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITra
 from claude_agent_sdk._version import __version__ as claude_sdk_version
 from claude_agent_sdk.types import SystemPromptPreset, _configure_can_use_tool
 
+from planner.conversation.backends.cli_compatibility import (
+    BackendCliIncompatible,
+    ensure_cli_compatible,
+)
 from planner.conversation.backends.contracts import (
     AgentMessageCompleted,
     AgentMessageDelta,
@@ -441,6 +445,14 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
     async def connect(self) -> None:
         if self._cleanup_started:
             raise RuntimeError("a Claude transport cannot reconnect after cleanup")
+        if self._cli_path is None:
+            self._cli_path = await asyncio.to_thread(self._find_cli)
+        await ensure_cli_compatible(
+            "claude",
+            self._cli_path,
+            environment=self._options.env,
+            working_directory=Path(self._cwd) if self._cwd else None,
+        )
         with_tool_shell_kill_priority(self._options.env)
         # Use the role's explicit identity, never an inherited Worker identity.
         if self._options.env.get("PLAN_TICKET_ID"):
@@ -710,8 +722,8 @@ class _ClaudeProtocolTransport(Transport):
             raise PromptWriteFailed(
                 "claude did not confirm queued command cancellation"
             )
-        cancelled = _raw_uuid_set(payload.get("cancelled"))
-        still_queued = _raw_uuid_set(payload.get("still_queued"))
+        cancelled = _cancellation_uuid_set(payload.get("cancelled"))
+        still_queued = _cancellation_uuid_set(payload.get("still_queued"))
         return cancelled, still_queued
 
     async def close(self) -> None:
@@ -1415,7 +1427,7 @@ class ClaudeAgentSdkBackendChild:
                 # callback is there for the asks that reach it anyway.
                 warnings.simplefilter("ignore", CanUseToolShadowedWarning)
                 await client.connect()
-        except CLINotFoundError as no_executable:
+        except (CLINotFoundError, BackendCliIncompatible) as no_executable:
             raise BackendSpawnFailed(str(no_executable)) from no_executable
         except Exception as would_not_come_up:
             why = self._with_the_standard_error(str(would_not_come_up))
@@ -2403,6 +2415,13 @@ def _raw_uuid_set(value: Any) -> frozenset[str]:
     if not isinstance(value, list):
         return frozenset()
     return frozenset(item for item in value if isinstance(item, str))
+
+
+def _cancellation_uuid_set(value: Any) -> frozenset[str]:
+    """A missing or malformed receipt cannot prove that Claude emptied its queue."""
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise PromptWriteFailed("claude did not confirm queued command cancellation")
+    return frozenset(value)
 
 
 def _raw_user_message_uuids(message: dict[str, Any]) -> frozenset[str]:
