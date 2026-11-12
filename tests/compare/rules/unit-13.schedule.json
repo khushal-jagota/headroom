@@ -1,0 +1,11 @@
+{
+  "ignore": {
+    "attention_history_metadata.started_at": "Schema initialization reads real wall time."
+  },
+  "tokens": {
+    "navigation_view_meta.ordering_generation": "Approved backend-specific ICU/Intl collation generation; schedule comparison preserves all source rows."
+  },
+  "response_tokens": {},
+  "response_ignore": {},
+  "derived_tables": {}
+}
