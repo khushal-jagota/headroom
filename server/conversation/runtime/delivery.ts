@@ -87,7 +87,6 @@ async function ensure_child(
   // Retained remote child ownership belongs to the executor unit.
   if (child.stop_outside_lock)
     throw new BackendSpawnFailed('Backend did not retain its run identity');
-  state.local_child_retirement_proven = false;
   state.preparing_child = child;
   try {
     await host.native_operation(() =>

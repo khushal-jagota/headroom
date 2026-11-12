@@ -182,7 +182,6 @@ export async function detach_children(states: readonly ConversationState[]): Pro
     if (child === null) continue;
     try {
       await child.detach();
-      if (!child.stop_outside_lock) state.local_child_retirement_proven = true;
     } catch (error) {
       state.child = child;
       state.child_is_quarantined = true;

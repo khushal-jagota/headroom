@@ -19,6 +19,10 @@ import type { ConversationViewRuntime } from '../conversation/views/routes.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import { createConversationRoutes } from '../conversation/routes.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
+import { createBackendRoutes } from '../conversation/snapshot/routes.ts';
+import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
+import { create_backend_runtime } from '../conversation/snapshot/composition.ts';
+import { production_backend_providers } from '../conversation/snapshot/production.ts';
 import { run_automatic_recovery } from '../conversation/deploy_interruptions/coordinator.ts';
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 import type { EnvironmentRuntime } from '../environments/contracts.ts';
@@ -50,11 +54,13 @@ export interface ConversationCompositionContext extends Omit<
   revoke_signal(): void;
 }
 export interface TestCompositionContext extends ConversationCompositionContext {
+  backendServices?: BackendHttpRuntime;
   core?: SqliteProcessConversationSystem;
   conversationSystem?: ConversationSystem;
 }
 /** Shared process lifecycle for the normal entry point and comparison host. */
 export interface ServerOptions {
+  createBackendServices?: (context: ConversationCompositionContext) => BackendHttpRuntime;
   /** Off until Unit 21 explicitly composes the production lifecycle. */
   enableWorkerReadiness?: boolean;
   /** Unit 21 supplies UpdateService.poll. True suppresses this poll. */
@@ -93,6 +99,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   let background: ComposedBackgroundService | undefined;
   let publication: SignalPublicationCoordinator | undefined;
   let core: SqliteProcessConversationSystem | undefined;
+  let backendServices: BackendHttpRuntime | undefined;
   let app: FastifyInstance | undefined;
   let ownership_current = true;
   let signalRevoked = false;
@@ -133,6 +140,11 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         attempt(() => background?.close({ deadline })),
         attempt(() => environments?.close({ deadline })),
         attempt(() => environmentsStarting?.catch(() => {})),
+        attempt(() =>
+          backendServices?.shutdown
+            ? backendServices.shutdown()
+            : backendServices?.codex_sign_in?.shutdown(),
+        ),
       ]);
       await attempt(() => conversationWrites.drain());
       // Loop cancellation shares one deadline. Core and record settlement have
@@ -185,6 +197,14 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       revoke_signal: revokeSignal,
     };
     core = options.createConversationCore?.(context);
+    backendServices =
+      options.createBackendServices?.(context) ??
+      create_backend_runtime({
+        database,
+        config,
+        now: () => clock.now(),
+        providers: production_backend_providers(config.test_mode),
+      });
     const conversationSystem = options.conversationSystem ?? core;
     if (core) {
       const current = core;
@@ -198,7 +218,12 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     options.beforePublication?.(database);
     publication.initialize();
     areas.attachNavigation();
-    const testContext: TestCompositionContext = { ...context, core, conversationSystem };
+    const testContext: TestCompositionContext = {
+      ...context,
+      core,
+      conversationSystem,
+      backendServices,
+    };
     environments = await options.createEnvironments?.(testContext);
     const testAreas =
       typeof options.testAreas === 'function'
@@ -233,6 +258,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       areas: [
         ...areas.areas,
         ...(environments?.areas ?? []),
+        { prefix: '/api/conversation', routes: createBackendRoutes(backendServices) },
         ...(core
           ? [
               {

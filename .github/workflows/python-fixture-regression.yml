@@ -1,11 +1,11 @@
-name: TypeScript release proof
+name: Python fixture regression
 
 on:
   pull_request:
     branches: [feature/typescript-backend]
     paths:
       - tests/support/server_fixtures.py
-      - .github/workflows/typescript-backend-release.yml
+      - .github/workflows/python-fixture-regression.yml
   workflow_dispatch:
 
 permissions:
