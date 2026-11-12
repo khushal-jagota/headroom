@@ -7,6 +7,7 @@ import json
 import platform
 import shlex
 import shutil
+import time
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -15,7 +16,12 @@ from tests.support.update_apps import SHA_B, release
 from tests.support.update_apps import build_app as _app
 
 from planner.environments import runtime_admission as admission
-from planner.environments.app import AppValidationError, digest_app_artifact, validate_app_manifest
+from planner.environments.app import (
+    NODE_RUNTIME_FILES,
+    AppValidationError,
+    digest_app_artifact,
+    validate_app_manifest,
+)
 from planner.environments.runtime_contracts import (
     NodeRuntimeContract,
     RuntimeContract,
@@ -194,6 +200,10 @@ def node_app(root: Path) -> Path:
     """The shared app tree, re-sealed as a version 2 Node release with no private Python."""
     _app(root, SHA_B, "new")
     shutil.rmtree(root / ".venv")
+    for name in NODE_RUNTIME_FILES:
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text("{}")
+    (root / "server/package.json").write_text(json.dumps({"dependencies": DEPENDENCIES}))
     inventory = b'{"node": []}'
     contract = NodeRuntimeContract(runtime_bytes_digest(inventory))
     (root / "runtime/inventory.json").write_bytes(inventory)
@@ -205,43 +215,101 @@ def node_app(root: Path) -> Path:
     return root
 
 
-@pytest.mark.parametrize("node", ["v22.17.9", "v22.18.0"])
-def test_version_2_admission_needs_node_22_18_and_never_runs_python(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, node: str
+DEPENDENCIES = {"better-sqlite3": "1", "koffi": "1", "@anthropic-ai/claude-agent-sdk": "1"}
+
+
+def node_report(root: Path, **changes: object) -> dict[str, object]:
+    report: dict[str, object] = {
+        "node_version": "22.18.0",
+        "native": "passed",
+        "loaded_libraries": ["/usr/lib/x86_64-linux-gnu/libc.so.6"],
+        "package_paths": {
+            name: str(root.resolve() / "server/node_modules" / name / "index.js")
+            for name in DEPENDENCIES
+        },
+    }
+    return report | changes
+
+
+def test_version_2_admission_runs_the_trusted_probe_and_never_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Risk: a Node release needs a .venv it lacks, or runs on an older Node 22."""
+    """Risk: a Node release needs a .venv it lacks, runs a candidate entrypoint, or
+    runs its JavaScript tools on a Node other than the resolved host Node."""
     root = node_app(tmp_path / "app")
     manifest = validate_app_manifest(root / "manifest.json", require_runtime=True)
     assert isinstance(manifest.runtime_contract, NodeRuntimeContract)
-    monkeypatch.setattr(platform, "system", lambda: "Linux")
-    monkeypatch.setattr(platform, "machine", lambda: "x86_64")
-    monkeypatch.setattr(
-        platform, "freedesktop_os_release", lambda: {"ID": "debian", "VERSION_ID": "13"}
-    )
-    monkeypatch.setattr(platform, "libc_ver", lambda: ("glibc", "2.41"))
-    cpuinfo = "flags: " + " ".join(manifest.runtime_contract.cpu_features)
-    read_text = Path.read_text
-
-    def synthetic_cpuinfo(path: Path, *args: object, **kwargs: object) -> str:
-        if path == Path("/proc/cpuinfo"):
-            return cpuinfo
-        return read_text(path, *args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(Path, "read_text", synthetic_cpuinfo)
-    monkeypatch.setattr(ctypes, "CDLL", lambda name: None)
-    monkeypatch.setattr(shutil, "which", lambda *args, **kwargs: "/synthetic/tool")
+    monkeypatch.setattr(admission, "verify_runtime_host", lambda *args, **kwargs: None)
+    monkeypatch.setattr(admission, "_host_node", lambda: "/host/node")
+    probes: list[list[str]] = []
     commands: list[list[str]] = []
 
-    def run(command: list[str], **kwargs: object) -> str:
-        commands.append(command)
-        return node
+    def json_probe(command: list[str], **kwargs: object) -> object:
+        probes.append(command)
+        return node_report(root)
 
-    monkeypatch.setattr(admission, "_run_probe", run)
-    if node == "v22.17.9":
-        with pytest.raises(AppValidationError, match="22.18.0 or later"):
-            admission.admit_runtime(root, manifest)
-        return
+    monkeypatch.setattr(admission, "_run_json_probe", json_probe)
+    monkeypatch.setattr(
+        admission, "_run_probe", lambda command, **kwargs: commands.append(command) or ""
+    )
     admission.admit_runtime(root, manifest)
+    [probe] = probes
+    assert probe[:3] == ["/host/node", "--input-type=module", "-e"]
+    assert probe[3] == admission.node_probe_source(manifest.runtime_contract)
+    assert probe[4:] == [str(root.resolve())]
+    assert commands[0][0] == commands[1][0] == "/host/node"
     probed = " ".join(" ".join(command) for command in commands)
-    assert "@openai/codex/bin/codex.js" in probed
+    assert "server/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude" in probed
     assert ".venv" not in probed
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"extra": True},
+        {"native": "failed"},
+        {"node_version": "22.17.9"},
+        {"node_version": "24.1.0"},
+        {"loaded_libraries": ["libc.so.6"]},
+        {"package_paths": {name: "/usr/lib/node_modules/x/index.js" for name in DEPENDENCIES}},
+        {"package_paths": {"better-sqlite3": "/app/x.js"}},
+    ],
+)
+def test_version_2_refuses_a_probe_report_that_is_not_exact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: dict[str, object]
+) -> None:
+    """Risk: a malformed, failed, old-Node or outside-package report is accepted."""
+    root = node_app(tmp_path / "app")
+    contract = NodeRuntimeContract("f" * 64)
+    monkeypatch.setattr(
+        admission, "_run_json_probe", lambda command, **kwargs: node_report(root, **change)
+    )
+    with pytest.raises(AppValidationError):
+        admission._run_node_probe(
+            root, contract, node="/host/node", state=tmp_path, deadline=time.monotonic() + 60
+        )
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="host Node is not installed")
+def test_trusted_probe_refuses_a_package_that_resolves_outside_the_candidate(
+    tmp_path: Path,
+) -> None:
+    """Risk: a candidate dependency symlinked to a host install passes as candidate code.
+    This runs the real probe source on host Node; it fails before any native import."""
+    root = tmp_path / "app"
+    outside = tmp_path / "host-install/leak"
+    outside.mkdir(parents=True)
+    (outside / "package.json").write_text('{"name": "leak", "main": "index.js"}')
+    (outside / "index.js").write_text("module.exports = 1;\n")
+    (root / "server/node_modules").mkdir(parents=True)
+    (root / "server/node_modules/leak").symlink_to(outside)
+    (root / "server/package.json").write_text('{"dependencies": {"leak": "1"}}')
+    state = tmp_path / "state"
+    state.mkdir()
+    node = str(Path(str(shutil.which("node"))).resolve())
+    with pytest.raises(AppValidationError, match="resolves outside the candidate"):
+        admission._run_json_probe(
+            [node, "--input-type=module", "-e",
+             admission.node_probe_source(NodeRuntimeContract("f" * 64)), str(root)],
+            state=state, timeout=30,
+        )
