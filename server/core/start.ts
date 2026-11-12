@@ -19,6 +19,12 @@ import type { ConversationViewRuntime } from '../conversation/views/routes.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import { createConversationRoutes } from '../conversation/routes.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
+import { createBackendRoutes } from '../conversation/snapshot/routes.ts';
+import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
+import {
+  create_backend_runtime,
+  unavailable_backend_providers,
+} from '../conversation/snapshot/composition.ts';
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 
 import {
@@ -48,11 +54,13 @@ export interface ConversationCompositionContext extends Omit<
   revoke_signal(): void;
 }
 export interface TestCompositionContext extends ConversationCompositionContext {
+  backendServices?: BackendHttpRuntime;
   core?: SqliteProcessConversationSystem;
   conversationSystem?: ConversationSystem;
 }
 /** Shared process lifecycle for the normal entry point and comparison host. */
 export interface ServerOptions {
+  createBackendServices?: (context: ConversationCompositionContext) => BackendHttpRuntime;
   /** Off until Unit 21 explicitly composes the production lifecycle. */
   enableWorkerReadiness?: boolean;
   /** Unit 21 supplies UpdateService.poll. True suppresses this poll. */
@@ -85,6 +93,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   let background: ComposedBackgroundService | undefined;
   let publication: SignalPublicationCoordinator | undefined;
   let core: SqliteProcessConversationSystem | undefined;
+  let backendServices: BackendHttpRuntime | undefined;
   let app: FastifyInstance | undefined;
   let ownership_current = true;
   let signalRevoked = false;
@@ -123,6 +132,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       // Loop cancellation shares one deadline. Core and record settlement have
       // no deadline contract, so retain ownership through their final writes.
       await attempt(() => core?.shutdown());
+      await attempt(() => backendServices?.codex_sign_in?.shutdown());
       await attempt(() => areas.closeRecord());
       await attempt(() => app?.close());
       await attempt(() => areas.detachNavigation());
@@ -169,6 +179,14 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       revoke_signal: revokeSignal,
     };
     core = options.createConversationCore?.(context);
+    backendServices =
+      options.createBackendServices?.(context) ??
+      create_backend_runtime({
+        database,
+        config,
+        now: () => clock.now(),
+        providers: unavailable_backend_providers(),
+      });
     const conversationSystem = options.conversationSystem ?? core;
     if (core) {
       const current = core;
@@ -182,7 +200,12 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     options.beforePublication?.(database);
     publication.initialize();
     areas.attachNavigation();
-    const testContext: TestCompositionContext = { ...context, core, conversationSystem };
+    const testContext: TestCompositionContext = {
+      ...context,
+      core,
+      conversationSystem,
+      backendServices,
+    };
     const testAreas =
       typeof options.testAreas === 'function'
         ? options.testAreas(testContext)
@@ -209,6 +232,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       changes,
       areas: [
         ...areas.areas,
+        { prefix: '/api/conversation', routes: createBackendRoutes(backendServices) },
         ...(core
           ? [
               {
