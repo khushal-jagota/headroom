@@ -37,7 +37,8 @@ jobs:
           .venv/bin/python -m pip install --editable . --config-settings editable_mode=compat
           scripts/dev npm --prefix server ci
           scripts/dev npm --prefix web ci
-          scripts/dev npm --prefix web run build
+          scripts/dev check-node web
+          (cd web && node node_modules/vite/bin/vite.js build)
       - name: Python type check
         run: scripts/dev mypy
       - name: Check conversation contracts
