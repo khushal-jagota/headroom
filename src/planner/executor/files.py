@@ -161,11 +161,52 @@ def install_verified(source: Path, target: Path, manifest: FileManifest) -> None
             temporary.unlink(missing_ok=True)
 
 
-def file_digest(path: Path) -> tuple[str, int]:
+# A regular file's identity and last change: device, inode, length, and modification
+# and change times. A hash checked once names the inode that matched; an equal version
+# later shows that this inode is still the file at that path, unchanged, without reading
+# its bytes again.
+type FileVersion = tuple[int, int, int, int, int]
+
+
+def _version(status: os.stat_result) -> FileVersion:
+    return (status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns, status.st_ctime_ns)
+
+
+def file_version(path: Path) -> FileVersion | None:
+    """The version of the regular file at path itself, or None. Reads no bytes."""
+    try:
+        status = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    return _version(status) if stat.S_ISREG(status.st_mode) else None
+
+
+def verified_version(path: Path, manifest: FileManifest) -> FileVersion | None:
+    """Hash the file at path once; its version if it holds exactly the manifest's bytes.
+
+    None if it is absent, differs, or changed while it was read.
+    """
+    try:
+        with regular_descriptor(path) as incoming:
+            before = _version(os.fstat(incoming))
+            digest, count = _hash_descriptor(incoming)
+            after = _version(os.fstat(incoming))
+    except FileNotFoundError:
+        return None
+    if before != after or (digest, count) != (manifest.sha256, manifest.byte_count):
+        return None
+    return after if file_version(path) == after else None
+
+
+def _hash_descriptor(incoming: int) -> tuple[str, int]:
     digest = hashlib.sha256()
     count = 0
-    with regular_descriptor(path) as incoming:
-        while block := os.read(incoming, FILE_CHUNK_BYTES):
-            digest.update(block)
-            count += len(block)
+    while block := os.read(incoming, FILE_CHUNK_BYTES):
+        digest.update(block)
+        count += len(block)
     return digest.hexdigest(), count
+
+
+def file_digest(path: Path) -> tuple[str, int]:
+    with regular_descriptor(path) as incoming:
+        return _hash_descriptor(incoming)

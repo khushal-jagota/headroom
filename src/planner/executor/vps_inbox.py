@@ -16,7 +16,9 @@ import logging
 import os
 import re
 import sqlite3
-from collections.abc import Callable, Coroutine
+from collections.abc import AsyncIterator, Callable, Coroutine, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -30,16 +32,22 @@ from planner.conversation.backends.contracts import BackendEventValue, TurnToken
 from planner.core.clock import Clock
 from planner.core.config import MAC_ITEM_RETRY_LATER_SECONDS
 from planner.core.contracts import ErrorCode, PlannerError, PrincipalKind
+from planner.core.db import connect
 from planner.core.task_settlement import run_on_worker_thread, wait_for_settlement
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.clock import now_ms
-from planner.executor.configuration import MAX_ITEM_BATCH_ITEMS
+from planner.executor.configuration import (
+    MAX_FILES_PER_PUBLICATION_TRANSACTION,
+    MAX_ITEM_BATCH_ITEMS,
+)
 from planner.executor.files import (
+    FileVersion,
     contained_path,
     directory_descriptor,
-    file_digest,
+    file_version,
     install_verified,
     safe_component,
+    verified_version,
 )
 from planner.executor.protocol import (
     AcceptanceReceipt,
@@ -126,6 +134,33 @@ class MissingFiles(Exception):
         super().__init__("File dependencies are not durably published")
 
 
+@dataclass(frozen=True)
+class PublishedFile:
+    manifest: FileManifest
+    target: Path
+    version: FileVersion
+
+
+@dataclass(frozen=True)
+class PublishedFiles:
+    """An item's file dependencies, in its order, each at its served target. Each was
+    hashed once outside any SQLite writer; its version names the inode that matched."""
+
+    files: tuple[PublishedFile, ...]
+
+
+def _artifact_changed() -> PlannerError:
+    return PlannerError(
+        ErrorCode.retry_later, "An artifact changed while this item was saved; send it again"
+    )
+
+
+# Publishes the item's files (InboxStore.publish_file_dependencies) under its Ticket's
+# guard. Each handler calls it after its own checks, so a refused item leaves its
+# uploads in staging; None for an item without files.
+type PublishFiles = Callable[[], Coroutine[Any, Any, PublishedFiles | None]]
+
+
 class InboxStore(VpsDatabase):
     def __init__(self, db_path: str) -> None:
         super().__init__(db_path)
@@ -143,10 +178,17 @@ class InboxStore(VpsDatabase):
         *,
         identity: ExecutorIdentity,
         check_files: bool = True,
+        published: PublishedFiles | None = None,
     ) -> AcceptanceReceipt:
         with self._transaction() as connection:
             receipt, _ = self.accept_in_transaction(
-                connection, envelope, writer, now_ms, identity=identity, check_files=check_files
+                connection,
+                envelope,
+                writer,
+                now_ms,
+                identity=identity,
+                check_files=check_files,
+                published=published,
             )
             return receipt
 
@@ -159,8 +201,13 @@ class InboxStore(VpsDatabase):
         *,
         identity: ExecutorIdentity,
         check_files: bool = True,
+        published: PublishedFiles | None = None,
     ) -> tuple[AcceptanceReceipt, bool]:
-        """Apply once and record the receipt; the caller owns commit and publication."""
+        """Apply once and record the receipt; the caller owns commit and publication.
+
+        An item's files are already published (publish_file_dependencies). Under this
+        writer they are only checked to be unchanged, never read.
+        """
         if not connection.in_transaction:
             raise RuntimeError("inbox acceptance requires an open transaction")
         # The binding sender fence, in the transaction that writes the receipt: an item
@@ -169,12 +216,13 @@ class InboxStore(VpsDatabase):
         previous = self._prior_receipt(connection, envelope, identity)
         if previous is not None:
             return previous, False
+        if check_files:
+            self.require_unchanged_files(envelope, published)
         disposition = ReceiptDisposition.accepted
         connection.execute("SAVEPOINT domain_write")
         try:
-            self._validate_envelope(connection, envelope, check_files=check_files)
             if check_files:
-                self.install_files(envelope.file_dependencies)
+                self.require_file_owner(connection, envelope)
             result = writer(connection, envelope)
             if not connection.in_transaction:
                 raise RuntimeError("Executor domain writer committed its transaction")
@@ -234,46 +282,134 @@ class InboxStore(VpsDatabase):
         key = hashlib.sha256(_record(manifest).encode()).hexdigest()
         return Path(self.db_path).resolve().parent / "executor-uploads" / key
 
-    @staticmethod
-    def _matches(path: Path, manifest: FileManifest) -> bool:
-        try:
-            return file_digest(path) == (manifest.sha256, manifest.byte_count)
-        except FileNotFoundError:
-            return False
-
     def store_upload(self, manifest: FileManifest, source: Path) -> None:
         """Verify and flush into private staging, never into the served file tree."""
         target = self._staged_file(manifest)
         install_verified(source, target, manifest)
 
-    def install_files(self, manifests: tuple[FileManifest, ...]) -> None:
-        """Called under the receipt transaction, before any referenced effect."""
-        for manifest in manifests:
+    def publish_file_dependencies(
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity
+    ) -> PublishedFiles:
+        """Make every file dependency ready at its served target, before the receipt.
+
+        Bytes are hashed only here, once each, with no SQLite writer held. An uploaded
+        file is then renamed into place in groups of at most
+        MAX_FILES_PER_PUBLICATION_TRANSACTION. Each group is its own short write
+        transaction, which first rechecks the sender process, the item's receipt, and
+        the child's assignment, so other writers get turns between groups. A group that
+        is refused leaves earlier groups published, as a rename that survived a crash
+        is; the retry finds them at their targets.
+        """
+        connection = connect(self.db_path)
+        try:
+            self.require_file_owner(connection, envelope)
+        finally:
+            connection.close()
+        ready: list[PublishedFile | None] = []
+        uploaded: list[tuple[int, Path, PublishedFile]] = []
+        missing: list[FileManifest] = []
+        for manifest in envelope.file_dependencies:
             target = self.file_target(manifest)
-            if self._matches(target, manifest):
-                continue  # Rename survived a crash before the receipt committed.
+            version = verified_version(target, manifest)
+            if version is not None:
+                # Already published, by an earlier item or a rename before a crash.
+                ready.append(PublishedFile(manifest, target, version))
+                continue
             source = self._staged_file(manifest)
-            if not self._matches(source, manifest):
-                raise MissingFiles((manifest,))
-            with directory_descriptor(target.parent, create=True) as parent:
-                with directory_descriptor(source.parent) as staging:
-                    os.replace(source.name, target.name, src_dir_fd=staging, dst_dir_fd=parent)
-                    os.fsync(staging)
-                os.fsync(parent)
+            version = verified_version(source, manifest)
+            if version is None:
+                missing.append(manifest)
+            else:
+                uploaded.append((len(ready), source, PublishedFile(manifest, target, version)))
+            ready.append(None)
+        if missing:
+            raise MissingFiles(tuple(missing))
+        for parent in dict.fromkeys(file.target.parent for _, _, file in uploaded):
+            with directory_descriptor(parent, create=True):
+                pass
+        for start in range(0, len(uploaded), MAX_FILES_PER_PUBLICATION_TRANSACTION):
+            group = uploaded[start : start + MAX_FILES_PER_PUBLICATION_TRANSACTION]
+            for index, file in self._publish_group(envelope, identity, group):
+                ready[index] = file
+        return PublishedFiles(tuple(file for file in ready if file is not None))
+
+    def _publish_group(
+        self,
+        envelope: QueuedEnvelope,
+        identity: ExecutorIdentity,
+        group: Sequence[tuple[int, Path, PublishedFile]],
+    ) -> list[tuple[int, PublishedFile]]:
+        """Rename one bounded group into the served tree under the item's authority.
+
+        The writer covers the authority checks and the renames. The directory flushes
+        run after it is released: they need only finish before the item's receipt, and
+        they run even when the group fails part-way, for the renames already made.
+        """
+        published: list[tuple[int, PublishedFile]] = []
+        renamed_into: dict[Path, None] = {}
+        staging_path = group[0][1].parent
+        try:
+            with self._transaction() as connection:
+                require_current_incarnation_in_transaction(
+                    connection, identity.executor_incarnation
+                )
+                if self._prior_receipt(connection, envelope, identity) is not None:
+                    raise PlannerError(ErrorCode.retry_later, "This item was saved meanwhile")
+                self.require_file_owner(connection, envelope)
+                with directory_descriptor(staging_path) as staging:
+                    for index, source, file in group:
+                        if file_version(source) != file.version:
+                            raise _artifact_changed()
+                        with directory_descriptor(file.target.parent) as parent:
+                            os.replace(
+                                source.name,
+                                file.target.name,
+                                src_dir_fd=staging,
+                                dst_dir_fd=parent,
+                            )
+                        renamed_into[file.target.parent] = None
+                        installed = file_version(file.target)
+                        # A rename keeps the inode and its bytes; only its change time moves.
+                        if installed is None or installed[:4] != file.version[:4]:
+                            raise _artifact_changed()
+                        published.append(
+                            (index, PublishedFile(file.manifest, file.target, installed))
+                        )
+            return published
+        finally:
+            if renamed_into:
+                for directory in (staging_path, *renamed_into):
+                    with directory_descriptor(directory) as descriptor:
+                        os.fsync(descriptor)
+
+    @staticmethod
+    def require_unchanged_files(envelope: QueuedEnvelope, published: PublishedFiles | None) -> None:
+        """Under the receipt's writer: every dependency is still the version that was
+        checked outside it. Reads no bytes; a changed file makes the item retry later,
+        and its resend checks the file again outside the writer."""
+        if not envelope.file_dependencies:
+            return
+        if published is None or tuple(file.manifest for file in published.files) != (
+            envelope.file_dependencies
+        ):
+            raise RuntimeError("file dependencies must be published before their item")
+        if any(file_version(file.target) != file.version for file in published.files):
+            raise _artifact_changed()
 
     def preflight(
         self, envelope: QueuedEnvelope, *, identity: ExecutorIdentity
     ) -> AcceptanceReceipt | None:
-        """Validate prior result/order/files before a separately serialized native act.
+        """The item's stored receipt, if any, by a plain read: no writer, no file work.
 
-        This grants no accepted receipt. The endpoint retains the per-conversation
-        lock through native outcome recording and must preserve sender dedup IDs.
+        This grants nothing. The transaction that writes the receipt checks it again;
+        the endpoint retains the per-conversation lock across both, and through native
+        outcome recording, and must preserve sender dedup IDs.
         """
-        with self._transaction() as connection:
-            previous = self._prior_receipt(connection, envelope, identity)
-            if previous is None:
-                self._validate_envelope(connection, envelope)
-            return previous
+        connection = connect(self.db_path)
+        try:
+            return self._prior_receipt(connection, envelope, identity)
+        finally:
+            connection.close()
 
     def _prior_receipt(
         self, connection: sqlite3.Connection, envelope: QueuedEnvelope, identity: ExecutorIdentity
@@ -304,10 +440,13 @@ class InboxStore(VpsDatabase):
             stored.accepted_at_vps_ms,
         )
 
-    def _validate_envelope(
-        self, connection: sqlite3.Connection, envelope: QueuedEnvelope, *, check_files: bool = True
-    ) -> None:
-        if check_files and envelope.file_dependencies:
+    def require_file_owner(self, connection: sqlite3.Connection, envelope: QueuedEnvelope) -> None:
+        """The child's open assignment owns every file dependency. Reads rows only.
+
+        Path safety is checked once, where publish_file_dependencies resolves each
+        target, with no writer held: the writer guards rows, not the file tree.
+        """
+        if envelope.file_dependencies:
             reference = type_adapter(ChildReference).validate_python(
                 payload_child(envelope.payload)
             )
@@ -318,21 +457,12 @@ class InboxStore(VpsDatabase):
             ):
                 raise PlannerError(ErrorCode.agent_forbidden, "child has no VPS assignment", {})
             for manifest in envelope.file_dependencies:
-                self.file_target(manifest)
                 if (
                     reference.conversation_id != envelope.conversation_id
                     or assignment is None
                     or assignment != ("ticket", manifest.owner_id)
                 ):
                     raise _invalid("artifact belongs to another Ticket")
-            missing = tuple(
-                m
-                for m in envelope.file_dependencies
-                if not self._matches(self.file_target(m), m)
-                and not self._matches(self._staged_file(m), m)
-            )
-            if missing:
-                raise MissingFiles(missing)
 
 
 class MacInbox:
@@ -344,6 +474,9 @@ class MacInbox:
         self.conversations: MacInboxConversations
         self.agent_writes = AgentWrites(self.store, clock, runs)
         self._conversation_locks: dict[str, asyncio.Lock] = {}
+        # One item at a time publishes and accepts a Ticket's files, across its
+        # conversations. Taken before any SQLite writer, never while one is held.
+        self._file_publication_guards: dict[str, asyncio.Lock] = {}
         # An item whose answer ran out of time while its work could not stop part-way:
         # a message being delivered, or a write under way. By conversation.
         self._still_settling: dict[str, asyncio.Task[AcceptanceReceipt]] = {}
@@ -569,6 +702,24 @@ class MacInbox:
             refuse,
         )
 
+    @asynccontextmanager
+    async def _file_publication(
+        self, envelope: QueuedEnvelope, retry_later_at: float
+    ) -> AsyncIterator[None]:
+        """Hold the guards of the Tickets that own the item's files until it is saved."""
+        async with AsyncExitStack() as held:
+            for owner_id in sorted({manifest.owner_id for manifest in envelope.file_dependencies}):
+                guard = self._file_publication_guards.setdefault(owner_id, asyncio.Lock())
+                try:
+                    async with asyncio.timeout_at(retry_later_at):
+                        await guard.acquire()
+                except TimeoutError as error:
+                    raise PlannerError(
+                        ErrorCode.retry_later, "Another item is still saving this Ticket's files"
+                    ) from error
+                held.callback(guard.release)
+            yield
+
     async def _accept_envelope(
         self, envelope: QueuedEnvelope, identity: ExecutorIdentity, retry_later_at: float
     ) -> AcceptanceReceipt:
@@ -585,15 +736,24 @@ class MacInbox:
                         previous,
                     )
                 return previous
-            if envelope.kind is EnvelopeKind.backend_event:
-                return await self._apply_event(envelope, identity, retry_later_at)
-            if envelope.kind is EnvelopeKind.answer_application:
-                return await self._apply_answer(envelope, identity, retry_later_at)
-            handler = {
-                EnvelopeKind.cli_write: self.agent_writes.accept,
-                EnvelopeKind.child_stopped: self._apply_stop,
-            }[envelope.kind]
-            return await handler(envelope, identity)
+            async with self._file_publication(envelope, retry_later_at):
+
+                async def publish() -> PublishedFiles | None:
+                    if not envelope.file_dependencies:
+                        return None
+                    return await run_on_worker_thread(
+                        self.store.publish_file_dependencies, envelope, identity
+                    )
+
+                if envelope.kind is EnvelopeKind.backend_event:
+                    return await self._apply_event(envelope, identity, retry_later_at, publish)
+                if envelope.kind is EnvelopeKind.answer_application:
+                    return await self._apply_answer(envelope, identity, retry_later_at, publish)
+                handler = {
+                    EnvelopeKind.cli_write: self.agent_writes.accept,
+                    EnvelopeKind.child_stopped: self._apply_stop,
+                }[envelope.kind]
+                return await handler(envelope, identity, publish)
         except PlannerError as error:
             if error.code in (ErrorCode.retry_later, ErrorCode.executor_incarnation_not_current):
                 # Not a refusal: a refusal receipt would drop the item for good. A
@@ -638,6 +798,7 @@ class MacInbox:
         self,
         envelope: QueuedEnvelope,
         identity: ExecutorIdentity,
+        published: PublishedFiles | None,
         connection: sqlite3.Connection,
         take: EventTaken,
     ) -> AcceptedEvent:
@@ -647,11 +808,16 @@ class MacInbox:
             lambda conn, row: take(),
             now_ms(),
             identity=identity,
+            published=published,
         )
         return AcceptedEvent(as_object(receipt), taken)
 
     async def _apply_event(
-        self, envelope: QueuedEnvelope, identity: ExecutorIdentity, retry_later_at: float
+        self,
+        envelope: QueuedEnvelope,
+        identity: ExecutorIdentity,
+        retry_later_at: float,
+        publish: PublishFiles,
     ) -> AcceptanceReceipt:
         event = type_adapter(BackendEvent).validate_python(envelope.payload)
         await run_on_worker_thread(self.runs.authority, event.child)
@@ -665,22 +831,24 @@ class MacInbox:
                 event.child, retry_later_at=retry_later_at
             )
         decoded = decode_event_arguments(event)
+        published = await publish()
         result = await self.conversations.take_backend_event(
             event.turn,
             decoded,
-            in_commit=partial(self._record_event, envelope, identity),
+            in_commit=partial(self._record_event, envelope, identity, published),
             conversation_id=event.child.conversation_id,
             retry_later_at=retry_later_at,
         )
         return type_adapter(AcceptanceReceipt).validate_python(result.result)
 
     async def _apply_stop(
-        self, envelope: QueuedEnvelope, identity: ExecutorIdentity
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity, publish: PublishFiles
     ) -> AcceptanceReceipt:
         outcome = type_adapter(CommandOutcome).validate_python(envelope.payload)
         if outcome.child.conversation_id != envelope.conversation_id:
             raise ValueError("command outcome conversation conflicts with envelope")
         await run_on_worker_thread(self.runs.validate_stop, outcome)
+        published = await publish()
         receipt = await run_on_worker_thread(
             self.store.accept,
             envelope,
@@ -694,18 +862,24 @@ class MacInbox:
             ),
             now_ms(),
             identity=identity,
+            published=published,
         )
         if receipt.disposition is ReceiptDisposition.accepted:
             await self.runs.accept_stop_receipt(outcome, receipt)
         return receipt
 
     async def _apply_answer(
-        self, envelope: QueuedEnvelope, identity: ExecutorIdentity, retry_later_at: float
+        self,
+        envelope: QueuedEnvelope,
+        identity: ExecutorIdentity,
+        retry_later_at: float,
+        publish: PublishFiles,
     ) -> AcceptanceReceipt:
         application = type_adapter(AnswerApplication).validate_python(envelope.payload)
         await run_on_worker_thread(
             self._require_application_assignment, application, envelope.conversation_id
         )
+        published = await publish()
         return type_adapter(AcceptanceReceipt).validate_python(
             (
                 await self.conversations.take_answer_application(
@@ -713,7 +887,7 @@ class MacInbox:
                     application.answer_id,
                     application.ask.ask_id,
                     application.ask.kind.value,
-                    partial(self._record_event, envelope, identity),
+                    partial(self._record_event, envelope, identity, published),
                     retry_later_at=retry_later_at,
                 )
             ).result
