@@ -21,6 +21,7 @@ import {
   unavailable_backend_providers,
 } from './conversation/snapshot/composition.ts';
 import { TicketModelSnapshots } from './conversation/snapshot/testing/ticket_models.ts';
+import { makeUsageService } from './conversation/usage/composition.ts';
 
 if (process.env.PLAN_TEST_MODE !== '1') throw new Error('The comparison host requires test mode');
 
@@ -32,6 +33,8 @@ const registry = new ScriptedBackendRegistry();
 const ticket_choice_fault = new ScriptedTicketChoiceFault();
 
 await startServer({
+  createUsageService: ({ config, clock }) =>
+    makeUsageService(config, { now: () => clock.now(), ratesFetcher: () => null }),
   createEnvironments: create_test_environment_runtime,
   createBackendServices(context) {
     const runtime = create_backend_runtime({
