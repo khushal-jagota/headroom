@@ -15,7 +15,7 @@ from planner.files.logic.paths import ticket_files_root
 class WorkerScratch:
     def __init__(self, environment: Mapping[str, str]) -> None:
         # The executor replaces this path with its own local Ticket root on Mac.
-        root = Path(environment["PLAN_TICKET_FILES_DIR"]) / "tmp"
+        root = Path(environment["PLAN_TICKET_FILES_DIR"]).resolve() / "tmp"
         root.mkdir(parents=True, exist_ok=True)
         self.directory = Path(tempfile.mkdtemp(prefix=".t", dir=root))
         self.environment = dict(environment)
@@ -35,7 +35,9 @@ def with_worker_files_root(
     identity = dict(role.identity_environment_variables)
     if identity.get("PLAN_ACTOR") != "worker" or not identity.get("PLAN_TICKET_ID"):
         return start
-    identity["PLAN_TICKET_FILES_DIR"] = str(ticket_files_root(db_path) / identity["PLAN_TICKET_ID"])
+    identity["PLAN_TICKET_FILES_DIR"] = str(
+        (ticket_files_root(db_path) / identity["PLAN_TICKET_ID"]).resolve()
+    )
     return replace(start, role_materials=replace(
         role, identity_environment_variables=tuple(identity.items()),
     ))

@@ -447,10 +447,9 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
         try:
             await self._connect_worker()
         except BaseException:
-            if self._worker_unit is not None:
-                await self._worker_unit.stop()
-            if self._worker_scratch is not None:
-                self._worker_scratch.close()
+            # The SDK can fail after it creates its process. Preserve scratch until
+            # close confirms that this partial child is no longer alive.
+            await self.close()
             raise
 
     async def _connect_worker(self) -> None:

@@ -307,7 +307,12 @@ def _checkouts(root: Path) -> list[Path]:
     for directory, names, files in os.walk(root, followlinks=False, onerror=unreadable):
         if ".git" in names or ".git" in files:
             checkouts.append(Path(directory))
-        names[:] = [name for name in names if name not in _SKIP_DIRECTORIES]
+        names[:] = [
+            name for name in names
+            if name not in _SKIP_DIRECTORIES
+            and not (Path(directory) == root and name == "tmp"
+                     and (root / OWNERSHIP_FILE).is_file())
+        ]
     return checkouts
 
 

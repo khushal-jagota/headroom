@@ -81,16 +81,29 @@ def test_nonworker_does_not_inherit_parent_containment(monkeypatch: pytest.Monke
     asyncio.run(exercise())
 
 
-def test_partial_worker_start_failure_stops_unit(
+def test_failed_worker_start_closes_partial_sdk_process_before_scratch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def exercise() -> None:
-        unit = AsyncMock()
-        unit.environment = {}
-        monkeypatch.setattr(WorkerUnit, "create", AsyncMock(return_value=unit))
-        monkeypatch.setattr(
-            SubprocessCLITransport, "connect", AsyncMock(side_effect=RuntimeError("startup failed"))
-        )
+        monkeypatch.setattr(sys, "platform", "darwin")
+        process = AsyncMock()
+        process.returncode = None
+        scratch: Path | None = None
+
+        async def connect(self: SubprocessCLITransport) -> None:
+            nonlocal scratch
+            scratch = Path(self._options.env["TMPDIR"])
+            self._process = process
+            raise RuntimeError("startup failed")
+
+        async def close(self: SubprocessCLITransport) -> None:
+            assert scratch is not None and scratch.exists()
+            assert process.returncode is None
+            process.returncode = 0
+            self._process = None
+
+        monkeypatch.setattr(SubprocessCLITransport, "connect", connect)
+        monkeypatch.setattr(SubprocessCLITransport, "close", close)
         transport = _ClaudeCleanupTransport(
             "", ClaudeAgentOptions(cli_path="/claude", env={
                 "PLAN_TICKET_ID": "ticket", "PLAN_TICKET_FILES_DIR": str(tmp_path),
@@ -98,7 +111,7 @@ def test_partial_worker_start_failure_stops_unit(
         )
         with pytest.raises(RuntimeError, match="startup failed"):
             await transport.connect()
-        unit.stop.assert_awaited_once()
-        assert not list((tmp_path / "tmp").iterdir())
+        assert process.returncode == 0
+        assert scratch is not None and not scratch.exists()
 
     asyncio.run(exercise())
