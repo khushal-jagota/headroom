@@ -13,6 +13,10 @@ An unknown sender or unverifiable manager fails closed.
 A foreground launch accepts ordinary signals.
 On macOS, Python also accepts ordinary signals. It does not implement the Linux provenance guard there.
 
+This protects the supervisor signal boundary, not uninterrupted service.
+A broad stop can also terminate the application child. Python then exits with failure and systemd can restart the service.
+Refusal of the supervisor signal alone does not prevent that interruption.
+
 This protects against accidental signals, not hostile processes under the same Unix account.
 Those processes can send SIGKILL, request a service stop, or read that account's files.
 The existing restart socket also permits local application replacement. It is not a hostile-user isolation boundary.
@@ -86,6 +90,7 @@ The Manager must accept that policy before any Mac service adopts this guard.
 ## Proof required after design acceptance
 
 - Compare bare-signal refusal, valid intent plus signal, wrong capability, expired intent, and old-incarnation replay on isolated subprocesses.
+- Distinguish a supervisor-only signal from signals to both child and supervisor. Preserve the child-death failure and restart contract.
 - Preserve foreground shutdown and restart behavior, including a stalled application child.
 - Prove that child and agent environments contain no stop capability.
 - Prove ordered final writes and lock retention with one shutdown deadline.
