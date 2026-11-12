@@ -267,6 +267,30 @@ The fixed oracle still proves its full ten-case vocabulary locally. Its committe
 generator and the record README describe regeneration after a staging merge. The
 unreachable rows above do not receive a false claim of new HTTP coverage.
 
+## Managed files and exact response bytes (Unit 11)
+
+A list can set `"compare_managed_files": true` to compare the synthetic `files/`
+subtree after all requests. This extends the skills-tree mechanism. Both compare
+relative paths and exact bytes, including missing and extra files. Random record
+IDs in paths use the same identity map as the response and row comparison. File
+contents receive no normalization. The report lists `managed_files`; differences
+name `managed_file`. No live file or credential key enters either tree.
+
+Seed requests now copy the complete synthetic `files/` tree beside the seeded
+database, rather than only its `conversations/` subfolder. This preserves existing
+conversation attachment seeds and also supports files for Managers and goals.
+Restarts retain these same isolated files.
+
+For a non-JSON request, set `"response_bytes": true` on the request to compare
+`response.content` as a hex byte string under `body.bytes`. This avoids lossy text
+decoding for ranges and media. JSON responses still compare parsed. Existing lists
+keep text behavior unless they opt in. This does not add raw request bodies.
+The report retains these comparisons under `byte_answers`, with both statuses,
+selected headers (also Content-Length), and exact body bytes. ETag headers remain
+literal digests, rather than random IDs. Change-token rules support SQLite BLOBs
+through the existing hex encoding. Skills filenames remain exact; only managed
+record IDs in managed filenames use the identity map.
+
 ## Direct checks
 
 Add a `test_*.py` driver under `tests/compare/direct/` that compares current Python with an export-only TS companion under `server/`.
