@@ -1,6 +1,7 @@
+import { JsonNumber, parse_numeric_json } from '../core/http/numeric_json.ts';
 /** Manager and Chief document HTTP surface. */
 import { randomUUID } from 'node:crypto';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { AreaServices } from '../core/authority/register.ts';
 import { requireOwnerOrChief } from '../core/authority/identity.ts';
 import { TestClock } from '../core/clock.ts';
@@ -363,30 +364,72 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
       });
     },
   );
-  for (const kind of ['chief', 'manager'] as const) {
-    const path = kind === 'chief' ? '/chief/page' : '/managers/:item_id/page';
-    app.get<{ Params: { item_id?: string } }>(path, async (request) =>
-      database.read((sql) => read_page(sql, kind === 'chief' ? null : request.params.item_id!)),
+  // Only holder page intake retains numeric token kinds. Ordinary JSON routes stay unchanged.
+  await app.register(async (pageApp) => {
+    pageApp.removeAllContentTypeParsers();
+    const pageParser = (
+      _request: FastifyRequest,
+      body: string | Buffer,
+      done: (error: Error | null, value?: unknown) => void,
+    ): void => {
+      try {
+        done(null, body.length ? parse_numeric_json(String(body)) : undefined);
+      } catch (error) {
+        done(
+          Object.assign(error as Error, {
+            code: 'FST_ERR_CTP_INVALID_JSON_BODY',
+            jsonSource: String(body),
+          }),
+        );
+      }
+    };
+    pageApp.addContentTypeParser(
+      /^application\/(?:[^;]+\+)?json(?:;.*)?$/,
+      { parseAs: 'string' },
+      pageParser,
     );
-    app.patch<{ Params: { item_id?: string } }>(path, async (request, reply) => {
-      if (!dictionaryBody(request.body, reply)) return;
-      return database.write((tx) =>
-        write_page(
-          tx,
-          kind === 'chief' ? null : request.params.item_id!,
-          request.body as Record<string, unknown>,
+    pageApp.addContentTypeParser('*', { parseAs: 'string' }, (request, body, done) => {
+      if (!request.headers['content-type']) pageParser(request, body, done);
+      else done(null, body);
+    });
+    for (const kind of ['chief', 'manager'] as const) {
+      const path = kind === 'chief' ? '/chief/page' : '/managers/:item_id/page';
+      pageApp.get<{ Params: { item_id?: string } }>(path, async (request) =>
+        database.read((sql) => read_page(sql, kind === 'chief' ? null : request.params.item_id!)),
+      );
+      pageApp.patch<{ Params: { item_id?: string } }>(path, async (request, reply) => {
+        // Numeric metadata is an internal object, but its wire value is a scalar.
+        if (request.body instanceof JsonNumber) {
+          return reply.code(422).send({
+            detail: [
+              {
+                type: 'dict_type',
+                loc: ['body'],
+                msg: 'Input should be a valid dictionary',
+                input: request.body,
+              },
+            ],
+          });
+        }
+        if (!dictionaryBody(request.body, reply)) return;
+        return database.write((tx) =>
+          write_page(
+            tx,
+            kind === 'chief' ? null : request.params.item_id!,
+            request.body as Record<string, unknown>,
+          ),
+        );
+      });
+      pageApp.get<{ Params: { item_id?: string } }>(path + '/readings', async (request) =>
+        database.read((sql) =>
+          page_readings(
+            sql,
+            kind === 'chief' ? null : request.params.item_id!,
+            clock.now(),
+            clock instanceof TestClock ? clock.isoformat() : undefined,
+          ),
         ),
       );
-    });
-    app.get<{ Params: { item_id?: string } }>(path + '/readings', async (request) =>
-      database.read((sql) =>
-        page_readings(
-          sql,
-          kind === 'chief' ? null : request.params.item_id!,
-          clock.now(),
-          clock instanceof TestClock ? clock.isoformat() : undefined,
-        ),
-      ),
-    );
-  }
+    }
+  });
 };

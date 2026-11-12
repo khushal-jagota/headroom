@@ -6,6 +6,32 @@
   ],
   "requests": [
     {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/start",
+      "status": 200,
+      "json": {
+        "conversation_id": "${conversation}",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "/unit08-manager-workspace"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:10"
+      }
+    },
+    {
       "area": "managers",
       "method": "GET",
       "path": "/api/managers/launch-defaults",
@@ -22,19 +48,30 @@
       "json": "${defaults}"
     },
     {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
       "area": "managers",
       "method": "POST",
       "path": "/api/managers",
       "status": 200,
       "json": {
-        "title": "Manager route proof",
+        "title": "Disposable Manager creation",
         "project_id": "project_other",
-        "goal": "Carry this goal into the actual Manager prompt."
+        "goal": ""
       },
       "capture": {
-        "manager": "id",
-        "conversation": "startup.conversation_id"
+        "created_manager": "id"
       }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${created_manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D}",
+      "status": 200
     },
     {
       "area": "managers",
@@ -48,6 +85,12 @@
       "path": "/api/test/in-memory-conversations/${conversation}/complete",
       "status": 200,
       "json": {}
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
     },
     {
       "area": "managers",
@@ -64,6 +107,12 @@
       "path": "/api/managers/${manager}/launch-defaults",
       "status": 200,
       "json": "${choice}"
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
     },
     {
       "area": "managers",
@@ -119,6 +168,12 @@
       }
     },
     {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
       "area": "managers",
       "method": "PATCH",
       "path": "/api/managers/${manager}/settled",
@@ -126,6 +181,12 @@
       "json": {
         "settled": true
       }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
     },
     {
       "area": "managers",
@@ -141,6 +202,51 @@
       "json": {
         "settled": false
       }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/page",
+      "status": 422,
+      "json": 50.0
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/page",
+      "status": 422,
+      "json": 50
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/page",
+      "status": 422,
+      "json": 900719925474099312345
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
     },
     {
       "area": "managers",
@@ -171,8 +277,8 @@
                 ]
               ],
               "column_widths": [
-                1e-07,
-                99.9999999
+                50.0,
+                50.0
               ]
             }
           ]
@@ -181,6 +287,12 @@
       "capture": {
         "manager_page": "page"
       }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
     },
     {
       "area": "managers",
@@ -210,6 +322,12 @@
       }
     },
     {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
       "area": "managers",
       "method": "PATCH",
       "path": "/api/managers/${manager}/page",
@@ -217,6 +335,12 @@
       "json": {
         "page": null
       }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
     },
     {
       "area": "managers",
@@ -259,6 +383,12 @@
       }
     },
     {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
       "area": "managers",
       "method": "PATCH",
       "path": "/api/chief/page",
@@ -297,8 +427,8 @@
                     ]
                   ],
                   "column_widths": [
-                    1e-07,
-                    99.9999999
+                    50.0,
+                    50.0
                   ],
                   "cell_tones": [
                     [
@@ -315,6 +445,12 @@
       "capture": {
         "chief_page": "page"
       }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
     },
     {
       "area": "managers",
@@ -338,6 +474,12 @@
       }
     },
     {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
       "area": "managers",
       "method": "PATCH",
       "path": "/api/chief/page",
@@ -345,6 +487,12 @@
       "json": {
         "page": null
       }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
     },
     {
       "area": "managers",
@@ -366,6 +514,12 @@
       }
     },
     {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
       "area": "managers",
       "method": "PUT",
       "path": "/api/managers/launch-defaults",
@@ -377,6 +531,12 @@
       }
     },
     {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
       "area": "managers",
       "method": "PUT",
       "path": "/api/managers/launch-defaults",
@@ -386,6 +546,12 @@
         "X-Plan-Actor": "manager",
         "X-Plan-Manager-ID": "${manager}"
       }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
     },
     {
       "area": "managers",
@@ -400,6 +566,12 @@
       }
     },
     {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
       "area": "managers",
       "method": "PATCH",
       "path": "/api/managers/${manager}/settled",
@@ -407,6 +579,12 @@
       "json": {
         "settled": "yes"
       }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
     },
     {
       "area": "managers",
@@ -426,6 +604,12 @@
       }
     },
     {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
       "area": "managers",
       "method": "GET",
       "path": "/api/test/in-memory-conversations/${conversation}/state",
@@ -437,6 +621,12 @@
       "path": "/api/managers/${manager}/conversation/reset",
       "status": 200,
       "json": {}
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
     },
     {
       "area": "managers",
@@ -480,6 +670,12 @@
       }
     },
     {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
       "area": "managers",
       "method": "GET",
       "path": "/api/managers/${manager}/workspace",
@@ -492,15 +688,33 @@
       "status": 400
     },
     {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
       "area": "managers",
       "method": "DELETE",
       "path": "/api/tickets/${child}",
       "status": 200
     },
     {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
       "area": "managers",
       "method": "DELETE",
       "path": "/api/managers/${manager}",
+      "status": 200
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
       "status": 200
     },
     {
@@ -512,8 +726,47 @@
   ],
   "report_captures": [
     "manager",
+    "created_manager",
     "conversation",
     "manager_page",
     "chief_page"
-  ]
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Manager route proof",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "manager": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/managers/${manager}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "A durable Manager history prompt."
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "unit08-history-seed"
+      },
+      "capture": {
+        "conversation": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversation/conversations/${conversation}/kill",
+      "status": 204
+    }
+  ],
+  "candidate": "typescript"
 }

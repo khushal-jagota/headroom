@@ -1,4 +1,5 @@
 /** Manager readers and launch writer used by Ticket message delivery. */
+import { parse_numeric_json } from '../core/http/numeric_json.ts';
 import { newId } from '../core/ids.ts';
 import { validate_launch_configuration } from './launch_settings.ts';
 import { isDeepStrictEqual } from 'node:util';
@@ -7,7 +8,12 @@ import type { Principal } from '../core/contracts.ts';
 import type { Clock } from '../core/clock.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { require_conversation_backend_key } from '../conversation/contracts.ts';
-import type { Manager, ManagerLaunchConfiguration, ManagerRead } from './contracts.ts';
+import type {
+  Manager,
+  ManagerLaunchConfiguration,
+  ManagerRead,
+  ManagerPageDocument,
+} from './contracts.ts';
 interface ManagerRow {
   id: string;
   title: string;
@@ -45,7 +51,7 @@ export function read_manager(sql: ReadSql, id: string): ManagerRead {
     settled: Boolean(row.settled),
     created_at: row.created_at,
     updated_at: row.updated_at,
-    page: row.page ? JSON.parse(row.page) : null,
+    page: row.page ? (parse_numeric_json(row.page) as ManagerPageDocument) : null,
     page_revision: row.page_revision,
     launch_configuration_is_explicit: Boolean(row.launch_configuration_is_explicit),
     manager_launch_configuration: {

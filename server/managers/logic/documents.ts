@@ -1,8 +1,17 @@
+import {
+  JsonNumber,
+  clone_numeric_json,
+  numeric_value,
+  numeric_kind,
+} from '../../core/http/numeric_json.ts';
 /** Plain page-kit validation; chart preparation remains the goal unit's responsibility. */
-import type { PageDocument } from '../../../web/src/lib/goals/contracts.ts';
+import type { ManagerPageDocument as PageDocument } from '../contracts.ts';
 type ObjectValue = Record<string, unknown>;
 const object = (value: unknown): value is ObjectValue =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
+  value !== null &&
+  typeof value === 'object' &&
+  !Array.isArray(value) &&
+  !(value instanceof JsonNumber);
 const fail = (message: string): never => {
   throw new TypeError(message);
 };
@@ -128,14 +137,16 @@ function validate(value: unknown, schema: Schema, path: string): void {
     const values = schema.startsWith('=') ? [schema.slice(1)] : schema.split('|');
     if (
       !values.some((option) =>
-        /^[0-9]+$/.test(option) ? value === Number(option) : value === option,
+        /^[0-9]+$/.test(option)
+          ? numeric_kind(value) === 'integer' && numeric_value(value) === Number(option)
+          : value === option,
       )
     )
       fail(
         `${path}: unsupported value; supported values: ${values.map((item) => (/^[0-9]+$/.test(item) ? item : `'${item}'`)).join(', ')}`,
       );
   } else if (schema === 'number') {
-    if (typeof value !== 'number' || !Number.isFinite(value))
+    if (numeric_value(value) === undefined || !Number.isFinite(numeric_value(value)))
       fail(`${path}: expected a finite number`);
   } else if (typeof value !== schema) fail(`${path}: unexpected value type`);
 }
@@ -148,7 +159,7 @@ export function has_chart(value: unknown): boolean {
   );
 }
 export function prepare_plain_document(value: unknown, identity: () => string): PageDocument {
-  const document = structuredClone(value);
+  const document = clone_numeric_json(value);
   if (!object(document) || !Array.isArray(document.blocks))
     fail('page: expected a page-kit document');
   const assign = (items: unknown[]): void => {
@@ -211,7 +222,7 @@ export function prepare_plain_document(value: unknown, identity: () => string): 
             fail('table cell tones must match its rows and columns');
         }
         if ('column_widths' in block) {
-          const widths = block.column_widths as number[];
+          const widths = (block.column_widths as unknown[]).map((value) => numeric_value(value)!);
           if (
             widths.length !== columns.length ||
             widths.some((width) => width <= 0) ||

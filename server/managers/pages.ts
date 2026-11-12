@@ -1,8 +1,9 @@
 /** Canonical holder page storage. Rich dependencies enter through the goal-unit seam. */
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
+import { parse_numeric_json, stringify_python_json } from '../core/http/numeric_json.ts';
 import { newId } from '../core/ids.ts';
-import type { PageDocument } from '../../web/src/lib/goals/contracts.ts';
+import type { ManagerPageDocument as PageDocument } from './contracts.ts';
 import { manager_document_dependencies } from './document_dependencies.ts';
 import { prepare_plain_document, has_chart } from './logic/documents.ts';
 export function read_page(
@@ -19,7 +20,10 @@ export function read_page(
           [manager_id],
         );
   if (!row) throw new PlannerError('not_found', 'holder not found');
-  return { page: row.page ? JSON.parse(row.page) : null, page_revision: row.page_revision };
+  return {
+    page: row.page ? (parse_numeric_json(row.page) as PageDocument) : null,
+    page_revision: row.page_revision,
+  };
 }
 export function write_page(
   tx: TransactionSql,
@@ -48,32 +52,8 @@ export function write_page(
     ]);
   return read_page(tx, manager_id);
 }
-/** Python json.dumps ensure_ascii=False separators are canonical source bytes. */
-export function python_json(value: unknown): string {
-  if (typeof value === 'number' && !Number.isInteger(value)) {
-    // JSON.parse retains the value, but not the submitted integer/float token kind.
-    // Nonintegral numbers are unambiguously floats and use Python repr thresholds.
-    const magnitude = Math.abs(value);
-    const raw =
-      magnitude !== 0 && (magnitude < 1e-4 || magnitude >= 1e16)
-        ? value.toExponential()
-        : String(value);
-    return raw.replace(
-      /e([+-]?)(\d+)$/,
-      (_, sign: string, digits: string) => 'e' + (sign || '+') + digits.padStart(2, '0'),
-    );
-  }
-  if (Array.isArray(value)) return '[' + value.map(python_json).join(', ') + ']';
-  if (value !== null && typeof value === 'object')
-    return (
-      '{' +
-      Object.entries(value)
-        .map(([key, item]) => JSON.stringify(key) + ': ' + python_json(item))
-        .join(', ') +
-      '}'
-    );
-  return JSON.stringify(value);
-}
+/** Shared numeric-kind encoder also supplies Manager page character counts. */
+export const python_json = stringify_python_json;
 export function page_readings(
   sql: ReadSql,
   manager_id: string | null,

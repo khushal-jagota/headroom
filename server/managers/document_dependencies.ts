@@ -1,6 +1,6 @@
 /** Goal-unit composition seams. These calls stay open until Units 12/13 provide them. */
 import type { ReadSql } from '../core/database/contracts.ts';
-import type { PageDocument } from '../../web/src/lib/goals/contracts.ts';
+import type { ManagerPageDocument as PageDocument } from './contracts.ts';
 export interface ManagerDocumentDependencies {
   /** Python list_goals(holder_id) followed by goal_json at the same snapshot/date. */
   manager_goals(sql: ReadSql, manager_id: string, now: Date): Record<string, unknown>[];
