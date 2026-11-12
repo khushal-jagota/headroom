@@ -33,23 +33,33 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     if (!config.test_mode && config.dispatch_enabled) {
       dispatcher = acquireLock(config.dispatcher_lock_path);
     }
-    const app = await createApp(config, { database, changes, areas: [...areas, ...options.testAreas ?? []], clock: buildClock(config), signalAuthority, conversationSystem: options.conversationSystem, workspaceAdmission: options.conversationSystem?.workspace_admission });
+    const app = await createApp(config, {
+      database,
+      changes,
+      areas: [...areas, ...(options.testAreas ?? [])],
+      clock: buildClock(config),
+      signalAuthority,
+      conversationSystem: options.conversationSystem,
+      workspaceAdmission: options.conversationSystem?.workspace_admission,
+    });
     let closing: Promise<void> | undefined;
     const close = () => {
       if (closing) return closing;
       signalAuthority?.invalidate('shutdown');
       closeAreas();
-      return closing = app.close().finally(() => {
+      return (closing = app.close().finally(() => {
         database?.close();
         dispatcher?.close();
         ownership.close();
-      });
+      }));
     };
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-      process.once(signal, () => { void close().catch((error) => {
-        console.error(error);
-        process.exitCode = 1;
-      }); });
+      process.once(signal, () => {
+        void close().catch((error) => {
+          console.error(error);
+          process.exitCode = 1;
+        });
+      });
     }
     const inherited = process.env.PLAN_SERVER_LISTENER_FD;
     if (inherited !== undefined) {

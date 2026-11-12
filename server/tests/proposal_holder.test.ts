@@ -1,31 +1,316 @@
 // Ports the 10 existing Python holder cases. Transaction snapshots preserve rollback
 // checks. SQL wrappers replace Python-only authorizer and monkeypatch facilities.
-import {expect,test,vi,afterEach} from 'vitest';
-import {createHash} from 'node:crypto';
-import {OWNER,CHIEF,type Principal} from '../core/contracts.ts';
-import {admitCommand} from '../core/authority/intake.ts';
+import { expect, test, vi, afterEach } from 'vitest';
+import { createHash } from 'node:crypto';
+import { OWNER, CHIEF, type Principal } from '../core/contracts.ts';
+import { admitCommand } from '../core/authority/intake.ts';
 import * as authority from '../core/authority/service.ts';
 import * as attention from '../notifications/attention.ts';
 import * as data from '../tickets/data/index.ts';
-import {review_view} from '../tickets/views.ts';
-import type {Ticket,ReviewTransferNotice} from '../tickets/contracts.ts';
-import type {Database,TransactionSql} from '../core/database/index.ts';
-import {fixture,create,edit,propose,accept,read,row,dump,manager,now,worker} from './ticket_fixture.ts';
-afterEach(()=>vi.restoreAllMocks());
-function park(db:Database,holder:Principal,time=10):Ticket{return propose(db,create(db,{principal:holder,title:`Proposal for ${holder.kind}`,brief:'Agreed kickoff',stated_ceiling:'needs_what_changes',settle_kickoff:false,now:time}),'Success proposal',time+1);}
-function under(db:Database,id:string):Ticket{return propose(db,create(db,{now:10,title:'Addressed to its Manager',stated_ceiling:'needs_what_changes',settle_kickoff:false,manager_id:id,stated_holder:{kind:'manager',id}}),'Success proposal',11);}
-function review(db:Database):string[]{return db.read(sql=>(review_view(sql) as {items:{ticket_id:string}[]}).items.map(item=>item.ticket_id));}
-function guidanceDigest(db:Database,id:string):string{return db.read(sql=>createHash('sha256').update(sql.get<{guidance:Buffer}>('SELECT CAST(guidance AS BLOB) guidance FROM tickets WHERE id=?',[id])!.guidance).digest('hex'));}
-test('ticket_cannot_hold_or_decide_its_own_ceiling',()=>{const db=fixture(),t=park(db,OWNER),self=worker(t.id);expect(()=>accept(db,t,'what_changes','needs_implementation',null,self)).toThrow("ceiling holder must be the user or the Ticket's direct manager");expect(()=>db.read(sql=>admitCommand(sql,self,'POST','/api/tickets/{ticket_id}/accept/{field}',{ticket_id:t.id,field:'what_changes'},{}))).toThrow(expect.objectContaining({code:'agent_forbidden'}));});
-test('review_lists_only_owner_addressed_proposals',()=>{const db=fixture(),t=park(db,OWNER,10);park(db,CHIEF,20);expect(review(db)).toEqual([t.id]);});
-test('rejection_rolls_back_feedback_proposal_and_claim_together',()=>{const db=fixture(),t=park(db,OWNER);db.write(tx=>tx.run("UPDATE tickets SET conversation_id='c_atomic_rejection' WHERE id=?",[t.id]));vi.spyOn(attention,'capture_ticket_attention').mockImplementation(()=>{throw new Error('attention capture failed');});expect(()=>db.write(tx=>data.reject_proposal(tx,t.id,{message:'Keep all rejection writes atomic.',principal:OWNER,now:20}))).toThrow('attention capture failed');const unchanged=read(db,t.id);expect(unchanged.pending_proposal).toEqual(t.pending_proposal);expect(unchanged.worker_step_claim).toBe('none');expect(db.read(sql=>sql.get('SELECT * FROM ticket_revision_feedback WHERE ticket_id=?',[t.id]))).toBeUndefined();});
-test('the_holder_moves_while_a_proposal_is_parked',()=>{const db=fixture(),t=park(db,CHIEF);expect(t.pending_proposal).not.toBeNull();const handed=edit(db,t,{ceiling_holder:OWNER},CHIEF,12);expect(handed.ceiling_holder).toEqual(OWNER);expect(handed.ceiling).toBe(t.ceiling);expect(handed.pending_proposal).toEqual(t.pending_proposal);});
-test('a_move_puts_a_stranded_proposal_back_in_the_user_review',()=>{for(const previous of ['manager','chief']){const db=fixture(),left=manager(db,'Inbox triage'),joined=manager(db,'Sprint hygiene'),t=previous==='manager'?under(db,left):park(db,CHIEF),notices:ReviewTransferNotice[]=[];expect(review(db)).toEqual([]);db.write(tx=>tx.run('UPDATE tickets SET guidance=? WHERE id=?',['Historical move text λ',t.id]));const before=guidanceDigest(db,t.id);db.write(tx=>{const guarded:TransactionSql={get:(sql,p)=>{if(/\bguidance\b/i.test(sql))throw new Error('guidance access denied');return tx.get(sql,p);},all:(sql,p)=>{if(/\bguidance\b/i.test(sql))throw new Error('guidance access denied');return tx.all(sql,p);},run:(sql,p)=>{if(/\bguidance\b/i.test(sql))throw new Error('guidance access denied');return tx.run(sql,p);}};data.edit_ticket(guarded,t.id,{edit:{manager_id:joined},title_max_chars:200,principal:OWNER,now:30,review_transfer_notices:notices});});const moved=read(db,t.id);expect(moved.ceiling_holder).toEqual(OWNER);expect(moved.pending_proposal).toEqual(t.pending_proposal);expect(moved.updated_at).toBe(30);expect(moved.ceiling).toBe(t.ceiling);expect(notices).toHaveLength(1);expect(notices[0]).toMatchObject({previous_holder:t.ceiling_holder,new_holder:OWNER,notify_previous_holder:false});expect(db.read(sql=>sql.get<{active:number}>("SELECT active FROM notification_attention_state WHERE subject_id=? AND notification_type='awaiting_approval'",[t.id]))?.active).toBe(1);expect(review(db)).toEqual([t.id]);expect(guidanceDigest(db,t.id)).toBe(before);}});
-test('a_backlogged_ticket_is_excluded_from_the_review_queue',()=>{const db=fixture(),visible=park(db,OWNER,10),backlogged=park(db,OWNER,20);db.write(tx=>data.set_ticket_backlog(tx,backlogged.id,{is_backlogged:true,principal:OWNER,now:21}));expect(review(db)).toContain(visible.id);expect(review(db)).not.toContain(backlogged.id);});
-test('invalid_holder_edits_refuse_before_or_after_a_manager_move',()=>{const db=fixture(),left=manager(db,'Old Manager'),joined=manager(db,'New Manager'),t=under(db,left),before=dump(db),notices:ReviewTransferNotice[]=[];for(const e of [{ceiling_holder:{kind:'manager' as const,id:joined}},{manager_id:joined,ceiling_holder:t.ceiling_holder}]){expect(()=>edit(db,t,e,OWNER,30,notices)).toThrow('must be the user or');expect(dump(db)).toEqual(before);expect(notices).toEqual([]);}});
-test('historical_invalid_holders_remain_editable_and_repairable',()=>{for(const repair of ['edit','accept']){const db=fixture(),t=park(db,OWNER),stranger:Principal={kind:'manager',id:manager(db,'Unrelated Manager')};db.write(tx=>tx.run('UPDATE tickets SET ceiling_holder=? WHERE id=?',[JSON.stringify(stranger),t.id]));const historical=read(db,t.id);expect(historical.ceiling_holder).toEqual(stranger);const edited=edit(db,t,{recap:'Unrelated authorized update'},OWNER,20);expect(edited.recap).toBe('Unrelated authorized update');expect(edited.ceiling_holder).toEqual(stranger);expect(edit(db,t,{manager_id:historical.manager_id},OWNER,21).ceiling_holder).toEqual(stranger);const before=dump(db);expect(()=>edit(db,t,{ceiling_holder:stranger},OWNER,22)).toThrow('must be the user or');expect(dump(db)).toEqual(before);const repaired=repair==='edit'?edit(db,t,{ceiling_holder:OWNER},OWNER,23):accept(db,t,'what_changes','needs_implementation',null,OWNER,23);if(repair==='edit')expect(repaired.pending_proposal).toEqual(t.pending_proposal);else{expect(repaired.field_values.what_changes).toBe('Success proposal');expect(repaired.pending_proposal).toBeNull();}expect(repaired.ceiling_holder).toEqual(OWNER);}});
-test('declared_ticket_authority_never_admits_a_review_holder',()=>{const db=fixture(),reviewer=park(db,OWNER),holder=worker(reviewer.id),target=park(db,OWNER,20);// Python replaces chain_facts. Inject the same declaration at the pure-rule seam.
-const targetScope={kind:'ticket' as const,id:target.id};
-expect(db.read(sql=>authority.standsAbove(holder,targetScope,{...authority.chainFacts(sql,holder,targetScope),callerDeclaredTargets:[{kind:'ticket',id:'*'}]}))).toBe(true);
-const before=dump(db);for(const operation of ['create','edit','accept']){expect(()=>{if(operation==='create')create(db,{title:'Declared reviewer',brief:'Kickoff',stated_ceiling:'needs_what_changes',stated_holder:holder,settle_kickoff:false});else if(operation==='edit')edit(db,target,{ceiling_holder:holder},OWNER,30);else accept(db,target,'what_changes','needs_implementation',null,holder,30);}).toThrow('must be the user or');expect(dump(db)).toEqual(before);}});
-test('implicit_creator_holder_is_validated_against_assignment',()=>{const db=fixture(),id=manager(db,'Direct Manager'),m:Principal={kind:'manager',id},w=park(db,OWNER),before=dump(db);for(const [creator,assignment]of [[CHIEF,id],[m,null],[worker(w.id),null]] as const){expect(()=>create(db,{title:'Invalid implicit holder',brief:'Kickoff',principal:creator,manager_id:assignment,now:30,settle_kickoff:false})).toThrow('must be the user or');expect(dump(db)).toEqual(before);}const t=create(db,{title:'Chief delegates to Manager',brief:'Kickoff',principal:CHIEF,manager_id:id,stated_holder:m,now:31,settle_kickoff:false});expect(t.manager_id).toBe(id);expect(t.ceiling_holder).toEqual(m);});
+import { review_view } from '../tickets/views.ts';
+import type { Ticket, ReviewTransferNotice } from '../tickets/contracts.ts';
+import type { Database, TransactionSql } from '../core/database/index.ts';
+import {
+  fixture,
+  create,
+  edit,
+  propose,
+  accept,
+  read,
+  row,
+  dump,
+  manager,
+  now,
+  worker,
+} from './ticket_fixture.ts';
+afterEach(() => vi.restoreAllMocks());
+function park(db: Database, holder: Principal, time = 10): Ticket {
+  return propose(
+    db,
+    create(db, {
+      principal: holder,
+      title: `Proposal for ${holder.kind}`,
+      brief: 'Agreed kickoff',
+      stated_ceiling: 'needs_what_changes',
+      settle_kickoff: false,
+      now: time,
+    }),
+    'Success proposal',
+    time + 1,
+  );
+}
+function under(db: Database, id: string): Ticket {
+  return propose(
+    db,
+    create(db, {
+      now: 10,
+      title: 'Addressed to its Manager',
+      stated_ceiling: 'needs_what_changes',
+      settle_kickoff: false,
+      manager_id: id,
+      stated_holder: { kind: 'manager', id },
+    }),
+    'Success proposal',
+    11,
+  );
+}
+function review(db: Database): string[] {
+  return db.read((sql) =>
+    (review_view(sql) as { items: { ticket_id: string }[] }).items.map((item) => item.ticket_id),
+  );
+}
+function guidanceDigest(db: Database, id: string): string {
+  return db.read((sql) =>
+    createHash('sha256')
+      .update(
+        sql.get<{ guidance: Buffer }>(
+          'SELECT CAST(guidance AS BLOB) guidance FROM tickets WHERE id=?',
+          [id],
+        )!.guidance,
+      )
+      .digest('hex'),
+  );
+}
+test('ticket_cannot_hold_or_decide_its_own_ceiling', () => {
+  const db = fixture(),
+    t = park(db, OWNER),
+    self = worker(t.id);
+  expect(() => accept(db, t, 'what_changes', 'needs_implementation', null, self)).toThrow(
+    "ceiling holder must be the user or the Ticket's direct manager",
+  );
+  expect(() =>
+    db.read((sql) =>
+      admitCommand(
+        sql,
+        self,
+        'POST',
+        '/api/tickets/{ticket_id}/accept/{field}',
+        { ticket_id: t.id, field: 'what_changes' },
+        {},
+      ),
+    ),
+  ).toThrow(expect.objectContaining({ code: 'agent_forbidden' }));
+});
+test('review_lists_only_owner_addressed_proposals', () => {
+  const db = fixture(),
+    t = park(db, OWNER, 10);
+  park(db, CHIEF, 20);
+  expect(review(db)).toEqual([t.id]);
+});
+test('rejection_rolls_back_feedback_proposal_and_claim_together', () => {
+  const db = fixture(),
+    t = park(db, OWNER);
+  db.write((tx) =>
+    tx.run("UPDATE tickets SET conversation_id='c_atomic_rejection' WHERE id=?", [t.id]),
+  );
+  vi.spyOn(attention, 'capture_ticket_attention').mockImplementation(() => {
+    throw new Error('attention capture failed');
+  });
+  expect(() =>
+    db.write((tx) =>
+      data.reject_proposal(tx, t.id, {
+        message: 'Keep all rejection writes atomic.',
+        principal: OWNER,
+        now: 20,
+      }),
+    ),
+  ).toThrow('attention capture failed');
+  const unchanged = read(db, t.id);
+  expect(unchanged.pending_proposal).toEqual(t.pending_proposal);
+  expect(unchanged.worker_step_claim).toBe('none');
+  expect(
+    db.read((sql) => sql.get('SELECT * FROM ticket_revision_feedback WHERE ticket_id=?', [t.id])),
+  ).toBeUndefined();
+});
+test('the_holder_moves_while_a_proposal_is_parked', () => {
+  const db = fixture(),
+    t = park(db, CHIEF);
+  expect(t.pending_proposal).not.toBeNull();
+  const handed = edit(db, t, { ceiling_holder: OWNER }, CHIEF, 12);
+  expect(handed.ceiling_holder).toEqual(OWNER);
+  expect(handed.ceiling).toBe(t.ceiling);
+  expect(handed.pending_proposal).toEqual(t.pending_proposal);
+});
+test('a_move_puts_a_stranded_proposal_back_in_the_user_review', () => {
+  for (const previous of ['manager', 'chief']) {
+    const db = fixture(),
+      left = manager(db, 'Inbox triage'),
+      joined = manager(db, 'Sprint hygiene'),
+      t = previous === 'manager' ? under(db, left) : park(db, CHIEF),
+      notices: ReviewTransferNotice[] = [];
+    expect(review(db)).toEqual([]);
+    db.write((tx) =>
+      tx.run('UPDATE tickets SET guidance=? WHERE id=?', ['Historical move text λ', t.id]),
+    );
+    const before = guidanceDigest(db, t.id);
+    db.write((tx) => {
+      const guarded: TransactionSql = {
+        get: (sql, p) => {
+          if (/\bguidance\b/i.test(sql)) throw new Error('guidance access denied');
+          return tx.get(sql, p);
+        },
+        all: (sql, p) => {
+          if (/\bguidance\b/i.test(sql)) throw new Error('guidance access denied');
+          return tx.all(sql, p);
+        },
+        run: (sql, p) => {
+          if (/\bguidance\b/i.test(sql)) throw new Error('guidance access denied');
+          return tx.run(sql, p);
+        },
+      };
+      data.edit_ticket(guarded, t.id, {
+        edit: { manager_id: joined },
+        title_max_chars: 200,
+        principal: OWNER,
+        now: 30,
+        review_transfer_notices: notices,
+      });
+    });
+    const moved = read(db, t.id);
+    expect(moved.ceiling_holder).toEqual(OWNER);
+    expect(moved.pending_proposal).toEqual(t.pending_proposal);
+    expect(moved.updated_at).toBe(30);
+    expect(moved.ceiling).toBe(t.ceiling);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({
+      previous_holder: t.ceiling_holder,
+      new_holder: OWNER,
+      notify_previous_holder: false,
+    });
+    expect(
+      db.read((sql) =>
+        sql.get<{ active: number }>(
+          "SELECT active FROM notification_attention_state WHERE subject_id=? AND notification_type='awaiting_approval'",
+          [t.id],
+        ),
+      )?.active,
+    ).toBe(1);
+    expect(review(db)).toEqual([t.id]);
+    expect(guidanceDigest(db, t.id)).toBe(before);
+  }
+});
+test('a_backlogged_ticket_is_excluded_from_the_review_queue', () => {
+  const db = fixture(),
+    visible = park(db, OWNER, 10),
+    backlogged = park(db, OWNER, 20);
+  db.write((tx) =>
+    data.set_ticket_backlog(tx, backlogged.id, { is_backlogged: true, principal: OWNER, now: 21 }),
+  );
+  expect(review(db)).toContain(visible.id);
+  expect(review(db)).not.toContain(backlogged.id);
+});
+test('invalid_holder_edits_refuse_before_or_after_a_manager_move', () => {
+  const db = fixture(),
+    left = manager(db, 'Old Manager'),
+    joined = manager(db, 'New Manager'),
+    t = under(db, left),
+    before = dump(db),
+    notices: ReviewTransferNotice[] = [];
+  for (const e of [
+    { ceiling_holder: { kind: 'manager' as const, id: joined } },
+    { manager_id: joined, ceiling_holder: t.ceiling_holder },
+  ]) {
+    expect(() => edit(db, t, e, OWNER, 30, notices)).toThrow('must be the user or');
+    expect(dump(db)).toEqual(before);
+    expect(notices).toEqual([]);
+  }
+});
+test('historical_invalid_holders_remain_editable_and_repairable', () => {
+  for (const repair of ['edit', 'accept']) {
+    const db = fixture(),
+      t = park(db, OWNER),
+      stranger: Principal = { kind: 'manager', id: manager(db, 'Unrelated Manager') };
+    db.write((tx) =>
+      tx.run('UPDATE tickets SET ceiling_holder=? WHERE id=?', [JSON.stringify(stranger), t.id]),
+    );
+    const historical = read(db, t.id);
+    expect(historical.ceiling_holder).toEqual(stranger);
+    const edited = edit(db, t, { recap: 'Unrelated authorized update' }, OWNER, 20);
+    expect(edited.recap).toBe('Unrelated authorized update');
+    expect(edited.ceiling_holder).toEqual(stranger);
+    expect(edit(db, t, { manager_id: historical.manager_id }, OWNER, 21).ceiling_holder).toEqual(
+      stranger,
+    );
+    const before = dump(db);
+    expect(() => edit(db, t, { ceiling_holder: stranger }, OWNER, 22)).toThrow(
+      'must be the user or',
+    );
+    expect(dump(db)).toEqual(before);
+    const repaired =
+      repair === 'edit'
+        ? edit(db, t, { ceiling_holder: OWNER }, OWNER, 23)
+        : accept(db, t, 'what_changes', 'needs_implementation', null, OWNER, 23);
+    if (repair === 'edit') expect(repaired.pending_proposal).toEqual(t.pending_proposal);
+    else {
+      expect(repaired.field_values.what_changes).toBe('Success proposal');
+      expect(repaired.pending_proposal).toBeNull();
+    }
+    expect(repaired.ceiling_holder).toEqual(OWNER);
+  }
+});
+test('declared_ticket_authority_never_admits_a_review_holder', () => {
+  const db = fixture(),
+    reviewer = park(db, OWNER),
+    holder = worker(reviewer.id),
+    target = park(db, OWNER, 20); // Python replaces chain_facts. Inject the same declaration at the pure-rule seam.
+  const targetScope = { kind: 'ticket' as const, id: target.id };
+  expect(
+    db.read((sql) =>
+      authority.standsAbove(holder, targetScope, {
+        ...authority.chainFacts(sql, holder, targetScope),
+        callerDeclaredTargets: [{ kind: 'ticket', id: '*' }],
+      }),
+    ),
+  ).toBe(true);
+  const before = dump(db);
+  for (const operation of ['create', 'edit', 'accept']) {
+    expect(() => {
+      if (operation === 'create')
+        create(db, {
+          title: 'Declared reviewer',
+          brief: 'Kickoff',
+          stated_ceiling: 'needs_what_changes',
+          stated_holder: holder,
+          settle_kickoff: false,
+        });
+      else if (operation === 'edit') edit(db, target, { ceiling_holder: holder }, OWNER, 30);
+      else accept(db, target, 'what_changes', 'needs_implementation', null, holder, 30);
+    }).toThrow('must be the user or');
+    expect(dump(db)).toEqual(before);
+  }
+});
+test('implicit_creator_holder_is_validated_against_assignment', () => {
+  const db = fixture(),
+    id = manager(db, 'Direct Manager'),
+    m: Principal = { kind: 'manager', id },
+    w = park(db, OWNER),
+    before = dump(db);
+  for (const [creator, assignment] of [
+    [CHIEF, id],
+    [m, null],
+    [worker(w.id), null],
+  ] as const) {
+    expect(() =>
+      create(db, {
+        title: 'Invalid implicit holder',
+        brief: 'Kickoff',
+        principal: creator,
+        manager_id: assignment,
+        now: 30,
+        settle_kickoff: false,
+      }),
+    ).toThrow('must be the user or');
+    expect(dump(db)).toEqual(before);
+  }
+  const t = create(db, {
+    title: 'Chief delegates to Manager',
+    brief: 'Kickoff',
+    principal: CHIEF,
+    manager_id: id,
+    stated_holder: m,
+    now: 31,
+    settle_kickoff: false,
+  });
+  expect(t.manager_id).toBe(id);
+  expect(t.ceiling_holder).toEqual(m);
+});

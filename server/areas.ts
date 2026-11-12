@@ -14,9 +14,13 @@ import { createNavigationRuntime } from './navigation/index.ts';
 import { idle_publication } from './conversation/publication/idle.ts';
 
 const navigation = createNavigationRuntime(idle_publication);
-export const initializeAreas = (database: Database, authority: SignalNavigationAuthority, config: Config): void => {
+export const initializeAreas = (
+  database: Database,
+  authority: SignalNavigationAuthority,
+  config: Config,
+): void => {
   initialize_worker_settings(database, config);
-  database.write(tx => audit_ticket_registry_integrity(tx, {startup:true}));
+  database.write((tx) => audit_ticket_registry_integrity(tx, { startup: true }));
   navigation.initialize(database, authority);
 };
 export const closeAreas = (): void => navigation.close();
@@ -31,4 +35,8 @@ export const areas: readonly Area[] = [
   { prefix: '/api/navigation/view', routes: navigation.routes },
 ];
 /** Global order: signal publication, artifact links, navigation. */
-export const commitSteps: readonly CommitStep[] = [navigation.publicationCommitStep, artifactLinks, navigation.navigationCommitStep];
+export const commitSteps: readonly CommitStep[] = [
+  navigation.publicationCommitStep,
+  artifactLinks,
+  navigation.navigationCommitStep,
+];
