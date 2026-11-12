@@ -19,6 +19,8 @@ from typing import Final
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
+from planner.conversation.backends.cli_compatibility import ensure_cli_compatible
+
 # The whole probe — spawn, init handshake, stop — against a local child. Long enough
 # for a cold start on a slow machine, short enough that a card is never left waiting.
 MODEL_CATALOG_TIMEOUT_SECONDS: Final = 30.0
@@ -153,6 +155,7 @@ def _default_model_id(models: list[ClaudeModel], resolves_to: str | None) -> str
 
 
 async def _read_models_from_init(claude_executable: str) -> list[object]:
+    await ensure_cli_compatible("claude", claude_executable)
     options = ClaudeAgentOptions(cli_path=claude_executable, max_turns=1)
     async with ClaudeSDKClient(options=options) as client:
         info = await client.get_server_info()
