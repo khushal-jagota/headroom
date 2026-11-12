@@ -103,3 +103,8 @@ export function own_settlement<T>(state: ConversationState, task: Promise<T>): P
   void task.finally(() => state.settlement_tasks.delete(task)).catch(() => {});
   return task;
 }
+
+/** Upkeep never renews its own automatic-compaction eligibility. */
+export function turn_is_maintenance(running: RunningTurn): boolean {
+  return running.automatic_compaction || running.memory_notice_only;
+}

@@ -1,6 +1,7 @@
 /** Route-required memory reads. Automatic scans and notice dispatch belong to Unit 9. */
 import { randomUUID } from 'node:crypto';
 import { can_execute_locale } from '../tickets/locale_configuration.ts';
+import { automated_maintenance_suppression_reason } from '../tickets/data/index.ts';
 import type { ReadSql } from '../core/database/contracts.ts';
 export const WORKER_STEP_MESSAGE_PREFIX = 'worker_step_message_';
 export const ANSWERING_SENDER_MESSAGE_PREFIX = 'worker_step_';
@@ -47,6 +48,10 @@ export const MEMORY_NOTICE_MESSAGE_PREFIX = 'worker_step_memory_notice_';
 export function new_memory_notice_message_id(): string {
   return MEMORY_NOTICE_MESSAGE_PREFIX + randomUUID().replaceAll('-', '');
 }
+/** Delivery origin distinguishes maintenance from work, regardless of its text. */
+export function is_memory_notice_sender_message_id(sender_message_id: string | null): boolean {
+  return sender_message_id !== null && sender_message_id.startsWith(MEMORY_NOTICE_MESSAGE_PREFIX);
+}
 export function an_answer_is_already_waiting(
   held_prompts: Iterable<import('../conversation/contracts.ts').HeldPrompt>,
 ): boolean {
@@ -72,6 +77,11 @@ export function ticket_needs_memory_notice(sql: ReadSql, ticket_id: string): boo
   ]);
   if (!row || !can_execute_locale(sql, row.locale)) return false;
   if (!conversation_holds_an_unanswered_memory_loss(sql, row.conversation_id)) return false;
+  if (
+    row.conversation_id !== null &&
+    automated_maintenance_suppression_reason(sql, row.conversation_id) !== null
+  )
+    return false;
   return (
     sql.get(
       `SELECT 1 FROM conversation_events e JOIN conversations c USING(conversation_id)

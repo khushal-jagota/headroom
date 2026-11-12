@@ -819,6 +819,29 @@ export class ConversationStore
     });
   }
 
+  open_turn_holds_only_memory_notices(conversation_id: string): boolean {
+    return this.database.read((sql) => {
+      const rows = sql.all<{ sender_message_id: string | null }>(
+        "SELECT json_extract(payload,'$.sender_message_id') AS sender_message_id " +
+          "FROM conversation_events WHERE conversation_id=? AND kind IN ('prompt','prompt_delivery_uncertain') " +
+          'AND sequence>COALESCE((SELECT MAX(sequence) FROM conversation_events ' +
+          "WHERE conversation_id=? AND kind='turn_ended'),0) ORDER BY sequence",
+        [conversation_id, conversation_id],
+      );
+      return (
+        rows.length > 0 &&
+        rows.every((row) => this.#participants.is_memory_notice?.(row.sender_message_id) ?? false)
+      );
+    });
+  }
+
+  automated_maintenance_suppression_reason(conversation_id: string): string | null {
+    return this.database.read(
+      (sql) =>
+        this.#participants.automated_maintenance_suppression_reason?.(sql, conversation_id) ?? null,
+    );
+  }
+
   conversations_due_for_automatic_compaction(options: {
     due_at_or_before: number;
     activity_after: number;
@@ -832,6 +855,13 @@ export class ConversationStore
             'ORDER BY latest_agent_activity_at,conversation_id',
           [options.due_at_or_before, options.activity_after],
         )
+        .filter(
+          (row) =>
+            (this.#participants.automated_maintenance_suppression_reason?.(
+              sql,
+              row.conversation_id,
+            ) ?? null) === null,
+        )
         .map((row) => row.conversation_id),
     );
   }
@@ -841,6 +871,7 @@ export class ConversationStore
     messages: readonly PromptDiscardedEventPayload[],
     options: {
       lifecycle_if_all_suppressed?: readonly LifecycleFact[];
+      automatic_compaction?: boolean;
     } = {},
   ): readonly PromptDispatchDecision[] {
     return this.#write((tx) => {
@@ -862,6 +893,13 @@ export class ConversationStore
             recover(tx, conversation_id, message.recovery_references, this.integer_now()),
           );
         }
+        const memory_notice =
+          this.#participants.is_memory_notice?.(message.sender_message_id) ?? false;
+        if (reason === null && (options.automatic_compaction || memory_notice)) {
+          reason =
+            this.#participants.automated_maintenance_suppression_reason?.(tx, conversation_id) ??
+            null;
+        }
         if (reason !== null) {
           const previous = tx.get<{ payload: string }>(
             "SELECT payload FROM conversation_events WHERE conversation_id=? AND kind='prompt_discarded' " +
@@ -882,6 +920,7 @@ export class ConversationStore
           sender_message_id: message.sender_message_id,
           suppression_reason: reason,
           is_manager_notice: decision.is_manager_notice,
+          is_memory_notice: memory_notice,
         });
       });
       const lifecycle =
