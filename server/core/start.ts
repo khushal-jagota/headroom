@@ -201,9 +201,13 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       revoke_signal: revokeSignal,
     };
     core = options.createConversationCore?.(context);
-    if (core) credential_requests = new CredentialRequestOperations({
-      database, core, key_path: config.credential_key_path, now: () => clock.nowUnix(),
-    });
+    if (core)
+      credential_requests = new CredentialRequestOperations({
+        database,
+        core,
+        key_path: config.credential_key_path,
+        now: () => clock.nowUnix(),
+      });
     backendServices =
       options.createBackendServices?.(context) ??
       create_backend_runtime({

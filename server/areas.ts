@@ -16,7 +16,10 @@ import { routes as attention } from './attention/routes.ts';
 import { configure_goal_resources } from './goals/resource_versions.ts';
 import { configure_goal_manager_documents } from './goals/manager_documents.ts';
 import { routes as credentials } from './credentials/routes.ts';
-import { observe_events as observe_credential_requests, reconcile_deliveries as reconcile_credential_requests } from './credentials/requests/data.ts';
+import {
+  observe_events as observe_credential_requests,
+  reconcile_deliveries as reconcile_credential_requests,
+} from './credentials/requests/data.ts';
 import { ManagerWakeLoop } from './manager_wakes/runtime.ts';
 import {
   all_sender_messages_are_manager_notices,

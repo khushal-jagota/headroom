@@ -8,6 +8,7 @@ import * as actions from './actions.ts';
 import * as data from './data.ts';
 import { invalid, text } from './logic/validation.ts';
 import { numeric_kind, numeric_value, parse_numeric_json } from '../core/http/numeric_json.ts';
+import { decode_json_text } from '../core/http/json_bytes.ts';
 
 function body(value: unknown, keys: string[]): Record<string, unknown> {
   if (
@@ -21,9 +22,7 @@ function body(value: unknown, keys: string[]): Record<string, unknown> {
 }
 export function read_private_body(value: unknown): Record<string, unknown> {
   try {
-    const raw = Buffer.isBuffer(value)
-      ? new TextDecoder('utf-8', { fatal: true }).decode(value)
-      : value;
+    const raw = Buffer.isBuffer(value) ? decode_json_text(value) : value;
     const parsed: unknown = typeof raw === 'string' ? parse_numeric_json(raw) : raw;
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw invalid();
     return parsed as Record<string, unknown>;

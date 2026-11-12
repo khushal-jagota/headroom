@@ -20,8 +20,7 @@ export function createCredentialRequestRoutes(
       done(null, raw);
     });
     const active = (): CredentialRequestOperations => {
-      if (operations === null)
-        throw new HttpError(503, 'the conversation system is unavailable');
+      if (operations === null) throw new HttpError(503, 'the conversation system is unavailable');
       return operations;
     };
     const origin_for = (current: CredentialRequestOperations, request_id: string): string =>
@@ -84,7 +83,10 @@ export function createCredentialRequestRoutes(
         const origin = origin_for(current, request_id);
         return await current.shield_operation(async () => {
           const [, attempt] = await current.runtime.core.record_events_transaction(origin, (tx) =>
-            actions.reject(tx, request_id, { principal: ctx.principal, now: current.runtime.now() }),
+            actions.reject(tx, request_id, {
+              principal: ctx.principal,
+              now: current.runtime.now(),
+            }),
           );
           return await current.dispatch(request_id, attempt);
         });
@@ -100,7 +102,10 @@ export function createCredentialRequestRoutes(
         const origin = origin_for(current, request_id);
         return await current.shield_operation(async () =>
           current.runtime.core.record_events_transaction(origin, (tx) =>
-            actions.review(tx, request_id, { principal: ctx.principal, now: current.runtime.now() }),
+            actions.review(tx, request_id, {
+              principal: ctx.principal,
+              now: current.runtime.now(),
+            }),
           ),
         );
       },

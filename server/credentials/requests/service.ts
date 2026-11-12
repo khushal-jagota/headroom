@@ -70,10 +70,12 @@ export class CredentialRequestOperations {
       }
       return await conversation_link_lock(link_key).run(async (): Promise<Delivery> => {
         try {
-          database.read((sql) => actions.origin_conversation(sql, {
-            principal,
-            conversationId: origin,
-          }));
+          database.read((sql) =>
+            actions.origin_conversation(sql, {
+              principal,
+              conversationId: origin,
+            }),
+          );
         } catch (error) {
           if (!(error instanceof PlannerError)) throw error;
           return ['refused', 'requesting_conversation_retired'];
@@ -93,20 +95,23 @@ export class CredentialRequestOperations {
         if (fate instanceof PromptDeliveryStarted) return ['started', null];
         if (fate instanceof PromptDeliveryInjected) return ['injected', null];
         if (fate instanceof PromptDeliveryQueued) return ['queued', null];
-        if (fate instanceof PromptDeliveryRefused) return [
-          fate.refusal_reason === PromptDeliveryRefusalReason.write_to_backend_failed
-            ? 'uncertain' : 'refused',
-          fate.refusal_reason,
-        ];
+        if (fate instanceof PromptDeliveryRefused)
+          return [
+            fate.refusal_reason === PromptDeliveryRefusalReason.write_to_backend_failed
+              ? 'uncertain'
+              : 'refused',
+            fate.refusal_reason,
+          ];
         if (fate instanceof PromptDeliverySuppressed) return ['canceled', null];
         if (fate instanceof PromptDeliveryUncertain) return ['uncertain', null];
         throw new Error('unknown credential result delivery fate');
       });
     };
     // Match Manager deletion and ordinary addressed delivery: lifecycle before association.
-    const [status, reason] = principal.kind === 'manager'
-      ? await manager_lifecycle_lock(principal.id).run(deliver)
-      : await deliver();
+    const [status, reason] =
+      principal.kind === 'manager'
+        ? await manager_lifecycle_lock(principal.id).run(deliver)
+        : await deliver();
     return await core.record_events_transaction(origin, (tx) => {
       const event = data.settle_attempt(tx, attempt_id, status, reason, this.runtime.now());
       return { value: data.read(tx, request_id), payloads: event === null ? [] : [event] };
