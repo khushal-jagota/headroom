@@ -97,9 +97,10 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         self.sequence = sequence
         provenance = "unknown"
         scheduled = work.map { ![.sent, .changed].contains($0.state) } ?? false
-        proposalField = work?.proposal?.field
-        proposalRevision = work?.proposal?.revision
-        proposalCreatedAt = work?.proposal?.createdAt
+        let command = work?.protectedDecisionBody.flatMap { try? APIClient.decoder().decode(DecisionCommand.self, from: $0) }
+        proposalField = command?.field ?? work?.proposal?.field
+        proposalRevision = command?.expectedProposalRevision ?? work?.proposal?.revision
+        proposalCreatedAt = work?.protectedProposalCreatedAt ?? work?.proposal?.createdAt
         failure = work == nil ? "Saved outgoing work could not be decoded. Its original bytes remain on this phone." : nil
     }
 
@@ -251,6 +252,9 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
     }
     func allSummaries(server: String) throws -> [Summary] {
         try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.server == server }, sortBy: [SortDescriptor(\.sequence)])).map(Summary.init)
+    }
+    func decisionSummaries(server: String, ticketID: String) throws -> [Summary] {
+        try laneRows(server, "ticket:\(ticketID)").filter { ["approval", "sendBack"].contains($0.kind) }.map(Summary.init)
     }
     func decisionSummaries(server: String) throws -> [Summary] {
         let kinds = ["approval", "sendBack"]

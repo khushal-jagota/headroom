@@ -76,10 +76,36 @@ reads while its root is hidden or the app is not active. On return, it restores
 changed proposals, selected reply status and saved voice drafts.
 
 A decision is saved before its ask leaves the screen. Like desktop, Review shows no
-receipt or status row for a saved decision. Both queued writes first check that
-the proposal is still current. Both send the displayed revision to the server,
-which checks it in the same transaction as the decision. If it changed after the
-last read, the ask returns to the queue.
+receipt or status row for a saved decision. A new decision freezes its canonical
+command, operation identity and proposal identity once. It first looks up the
+original operation receipt, even if the Ticket already advanced. Only supported
+explicit receipt absence permits a POST with the same ID and exact frozen bytes.
+The server commits the decision and receipt together. A lost response recovers the
+receipt instead of a new decision. The receipt confirms the decision, not delivery
+to an agent's prompt.
+
+Proposal part identities include the known canonical revision as well as field
+and timestamp. Saved decisions mask only that exact known revision; a replacement
+created in the same second stays visible, and unknown revisions grant no masking.
+Cached and live proposal loads reject a different known item revision. Badge
+subtraction likewise requires an exact known proposal in the current Review
+window; unknown or unloaded identities stay counted.
+
+The live Ticket proposal card uses this same durable decision path. Opening its
+Approve or Send back sheet captures the displayed proposal, revision, timestamp,
+server and chosen text; a later page update cannot change that command. Proposal
+edits are saved as exact-proposal drafts while typing, and guidance is saved before
+enqueue. The sheet returns after durable enqueue; it does not wait behind other
+outgoing lanes. Exact pending decisions disable duplicate actions, and a refusal
+appears inside the existing proposal card. New native actions do not call the
+legacy Ticket decision adapters.
+
+A server refusal restores only its exact field, revision and proposal time. Its
+note uses the existing error surface, and saved edits and guidance remain. Before
+any possible POST, an unsupported server restores the card with a compatible
+server note. After an attempt, an ambiguous response remains uncertain. Bodyless
+legacy decisions never upgrade or replay, and there is no legacy endpoint fallback.
+A newer proposal on the same Ticket does not inherit an older refusal note.
 
 A proposal title opens its ticket in Workspace. Cross-tab navigation sets the destination without an
 intermediate Workspace-root animation. Every pushed route hides the tab bar;

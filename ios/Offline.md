@@ -103,17 +103,30 @@ crash or across an unknown newly created conversation.
 
 ## Decisions and recordings
 
-Approval and send-back first enter the local outbox. The ask leaves Review, and
-Review shows no row for the saved decision. Approvals send the original expected proposal
-revision. Send-backs also send the saved proposal revision. Both fetch the proposal
-immediately before posting and compare field, creation time and revision.
-A mismatch or a server refusal of the revision marks the decision as changed,
-and the ask returns to the queue.
+New approvals and send-backs freeze one canonical decision command in the local
+outbox before their ask leaves Review. Its operation ID, exact body bytes and
+proposal field, revision and creation time remain stable. New rows do not also
+retain duplicate proposal, approval or guidance bodies. Existing bodyless rows
+remain legacy and uncertain. Reading or saving one never upgrades it.
 
-The server checks the expected revision in the same transaction as either decision,
-so a change between the final read and the POST is refused. Neither decision endpoint
-has an operation receipt. A response lost after a decision starts is held for review,
-never automatically replayed.
+A protected decision first checks its original operation receipt, before any
+current-proposal read. An applied receipt settles that exact local operation. A
+refused receipt restores the exact proposal with the server's note and saved draft.
+Only a supported response with an explicit null receipt permits a POST with that
+same operation ID and frozen body. The first POST persists attempted provenance
+before the request. Restart recovery does not reset it to ordinary unattempted work.
+
+Before a possible POST, an unsupported server restores the card with a compatible
+server note and keeps its draft. Transient lookup failures remain pending. After
+an attempt, malformed, mismatched, unsupported and ambiguous HTTP responses remain
+uncertain. There is no fallback to legacy decision endpoints. A local save failure
+exposes the storage error and preserves the operation instead of classifying the
+server as unsupported.
+
+The server commits the decision and its receipt in one transaction, or refuses it
+without changing the proposal. Native receipt checks confirm the recorded decision
+outcome. They do not prove delivery to an agent's prompt. Applied receipts and
+terminal refusal notes belong only to their exact proposal identity.
 
 Review microphone recordings use files in Application Support, with an owning
 outbox record saved before recording starts. Stopping or leaving the composer

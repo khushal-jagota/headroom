@@ -377,15 +377,17 @@ import XCTest
         let proposal = try XCTUnwrap(detail.pendingProposal)
         let outbox = Outbox(store: store)
         let approval = ReviewApproval(expectedProposalRevision: proposal.revision, editedBody: "Edit", nextCeiling: "done", nextHolder: .init(kind: "owner", id: "owner"))
-        try outbox.save(PendingWork(id: "approve", created: .now, kind: .approval, ticketID: detail.id, proposal: proposal, approval: approval), server: server)
-        try outbox.save(PendingWork(id: "return", created: .now, kind: .sendBack, ticketID: detail.id, proposal: proposal, guidance: "Keep these words"), server: server)
+        try outbox.enqueue(PendingWork(id: "approve", created: .now, kind: .approval, ticketID: detail.id, proposal: proposal, approval: approval), api: api)
+        try outbox.enqueue(PendingWork(id: "return", created: .now, kind: .sendBack, ticketID: detail.id, proposal: proposal, guidance: "Keep these words"), api: api)
         OfflineProtocol.state.bumpRevision()
         await outbox.drain(api: api)
         XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
         XCTAssertEqual(outbox.entries(server).map(\.state), [.changed, .changed])
-        XCTAssertEqual(outbox.entries(server).last?.guidance, "Keep these words")
+        let frozen = try XCTUnwrap(outbox.entries(server).last?.protectedDecisionBody)
+        XCTAssertEqual(try APIClient.decoder().decode(DecisionCommand.self, from: frozen).message, "Keep these words")
+        XCTAssertEqual(OfflineProtocol.state.decisionOutcomes, 2)
     }
-    func testUnknownDecisionResponseNeverAutomaticallyReplays() async throws {
+    func testLegacyDecisionNeverGainsProtectedOrLegacyReplayAuthority() async throws {
         let detail = try APIClient.decoder().decode(TicketDetail.self, from: OfflineProtocol.state.ticket)
         let outbox = Outbox(store: store)
         try outbox.save(PendingWork(id: "return", created: .now, kind: .sendBack, ticketID: detail.id, proposal: detail.pendingProposal, guidance: "Change it"), server: server)
@@ -393,8 +395,111 @@ import XCTest
         await outbox.drain(api: api)
         let reopened = Outbox(store: LocalStore(url: directory.appendingPathComponent("test.store")))
         await reopened.drain(api: api)
-        XCTAssertEqual(OfflineProtocol.state.writes.count, 1)
+        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
+        XCTAssertTrue(OfflineProtocol.state.decisionBodies.isEmpty)
+        XCTAssertNil(reopened.entries(server).first?.protectedDecisionBody)
+        XCTAssertEqual(reopened.entries(server).first?.guidance, "Change it")
         XCTAssertEqual(reopened.entries(server).first?.state, .uncertain)
+    }
+    private func protectedDecision(_ id: String, kind: PendingWork.Kind = .approval) throws -> PendingWork {
+        let detail = try APIClient.decoder().decode(TicketDetail.self, from: OfflineProtocol.state.ticket)
+        let proposal = try XCTUnwrap(detail.pendingProposal)
+        return PendingWork(id: id, created: .now, kind: kind, ticketID: detail.id, proposal: proposal,
+            approval: kind == .approval ? ReviewApproval(expectedProposalRevision: proposal.revision, editedBody: "Edited once", nextCeiling: "needs_implementation", nextHolder: .init(kind: "owner", id: "owner")) : nil,
+            guidance: kind == .sendBack ? "Keep these exact words" : nil)
+    }
+    func testProtectedDecisionLostAfterCommitRestartsFromReceiptWithoutAnotherOutcome() async throws {
+        let outbox = Outbox(store: store)
+        let original = try protectedDecision("committed")
+        OfflineProtocol.state.loseDecisionAfterCommit = true
+        try outbox.enqueue(original, api: api)
+        await outbox.drain(api: api)
+        let frozen = try XCTUnwrap(outbox.work(server, id: original.id))
+        XCTAssertNil(frozen.proposal); XCTAssertNil(frozen.approval); XCTAssertNil(frozen.guidance)
+        XCTAssertNotNil(frozen.protectedDecisionBody)
+        XCTAssertEqual(frozen.protectedProposalCreatedAt, original.proposal?.createdAt)
+        XCTAssertEqual(frozen.state, .uncertain)
+        let raw = try XCTUnwrap(store.record(server: server, kind: "outbox", id: original.id)?.payload)
+        OfflineProtocol.state.bumpRevision() // Recovery must precede any current-proposal read.
+        let reopenedStore = LocalStore(url: directory.appendingPathComponent("test.store"))
+        let reopened = Outbox(store: reopenedStore)
+        await reopened.drain(api: api)
+        await reopened.drain(api: api)
+        XCTAssertEqual(reopened.work(server, id: original.id)?.state, .sent)
+        XCTAssertEqual(OfflineProtocol.state.decisionOutcomes, 1)
+        XCTAssertEqual(OfflineProtocol.state.decisionBodies.count, 1)
+        XCTAssertEqual(try reopenedStore.record(server: server, kind: "outbox", id: original.id)?.payload, raw)
+        XCTAssertFalse(OfflineProtocol.state.requests.contains("GET /api/tickets/\(original.ticketID!)"))
+    }
+    func testSupportedNullRetriesOnlyOriginalDecisionIDAndFrozenBytesAfterRestart() async throws {
+        let outbox = Outbox(store: store)
+        let original = try protectedDecision("null-retry", kind: .sendBack)
+        OfflineProtocol.state.loseDecisionBeforeCommit = true
+        try outbox.enqueue(original, api: api)
+        await outbox.drain(api: api)
+        let body = try XCTUnwrap(outbox.work(server, id: original.id)?.protectedDecisionBody)
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .uncertain)
+        XCTAssertEqual(try store.outgoing.summary(server: server, id: original.id)?.provenance, "attempted")
+        let reopened = Outbox(store: LocalStore(url: directory.appendingPathComponent("test.store")))
+        await reopened.drain(api: api)
+        XCTAssertEqual(reopened.work(server, id: original.id)?.state, .sent)
+        XCTAssertEqual(OfflineProtocol.state.decisionBodies.map { $0.0 }, [original.id, original.id])
+        XCTAssertEqual(OfflineProtocol.state.decisionBodies.map { $0.1 }, [body, body])
+        XCTAssertEqual(OfflineProtocol.state.decisionOutcomes, 1)
+        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty, "No legacy decision endpoint is available as fallback")
+    }
+    func testUnsupportedDecisionServerRestoresCardAndDraftAfterTransientPreflight() async throws {
+        let outbox = Outbox(store: store)
+        let original = try protectedDecision("unsupported")
+        store.saveDraft("Kept local guidance", server: server, id: "draft")
+        OfflineProtocol.state.lookupStatus = 503
+        OfflineProtocol.state.decisionLookup = Data(#"{"error":{"message":"Temporary failure"}}"#.utf8)
+        try outbox.enqueue(original, api: api)
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .waiting)
+        XCTAssertEqual(try store.outgoing.summary(server: server, id: original.id)?.provenance, "unattempted")
+        OfflineProtocol.state.lookupStatus = 200
+        OfflineProtocol.state.decisionLookup = Data("{}".utf8)
+        await outbox.drain(api: api)
+        let saved = try XCTUnwrap(outbox.work(server, id: original.id))
+        XCTAssertEqual(saved.state, .changed)
+        XCTAssertTrue(saved.note.contains("compatible server"))
+        XCTAssertEqual(store.draft(server: server, id: "draft"), "Kept local guidance")
+        XCTAssertTrue(OfflineProtocol.state.decisionBodies.isEmpty)
+        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
+        let item = ReviewItem(reviewItemType: "proposal", ticketId: original.ticketID!, field: original.proposal!.field, title: "Still needs review", waitingSince: original.proposal!.createdAt)
+        let card = ReviewCard(id: "card", ticketId: original.ticketID!, parts: [item])
+        let snapshot = ReviewSavedWork(outbox: outbox); snapshot.refresh(server)
+        XCTAssertEqual(ReviewSavedWork.cards([card], decisions: snapshot.decisions(server)).map(\.id), [card.id])
+    }
+    func testAttemptedDecisionMalformedMismatchedAndAmbiguousResponsesStayUncertain() async throws {
+        let outbox = Outbox(store: store)
+        let original = try protectedDecision("ambiguous")
+        OfflineProtocol.state.loseDecisionBeforeCommit = true
+        try outbox.enqueue(original, api: api)
+        await outbox.drain(api: api)
+        OfflineProtocol.state.decisionLookup = Data("{}".utf8)
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .uncertain)
+        XCTAssertEqual(OfflineProtocol.state.decisionBodies.count, 1)
+        let command = try APIClient.decoder().decode(DecisionCommand.self, from: XCTUnwrap(outbox.work(server, id: original.id)?.protectedDecisionBody))
+        let wrong = DecisionReceipt(operationId: "different-operation", ticketId: original.ticketID!, decision: command.decision, field: command.field,
+            expectedProposalRevision: command.expectedProposalRevision, outcome: "applied",
+            transition: DecisionTransition(stage: "needs_implementation", ceiling: "needs_implementation", ceilingHolder: .init(kind: "owner", id: "owner"), ticketStatus: "ready", pendingProposalRevision: 16), error: nil, createdAt: 100)
+        let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+        OfflineProtocol.state.decisionLookup = try encoder.encode(DecisionOperationResponse(receiptContract: 1, receipt: wrong))
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .uncertain)
+        XCTAssertEqual(OfflineProtocol.state.decisionBodies.count, 1)
+        OfflineProtocol.state.decisionLookup = nil // Explicit supported null permits only this same operation to retry.
+        OfflineProtocol.state.decisionPost = Data(#"{"error":{"message":"Conflict without a receipt"}}"#.utf8)
+        OfflineProtocol.state.decisionStatus = 409
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .uncertain)
+        XCTAssertEqual(OfflineProtocol.state.decisionBodies.map { $0.0 }, [original.id, original.id])
+        XCTAssertEqual(try store.outgoing.summary(server: server, id: original.id)?.provenance, "attempted")
+        XCTAssertEqual(OfflineProtocol.state.decisionOutcomes, 0)
+        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
     }
     func testTranscriptionPersistsDraftBeforeDeletingAudioAndDoesNotAppendTwice() async throws {
         let file = "test-\(UUID()).m4a"
@@ -437,6 +542,24 @@ private final class OfflineState: @unchecked Sendable {
     private var _requests: [String] = []
     private var _heldMessageID: String?
     private var receipts: Set<String> = []
+    private var decisionReceipts: [String: Data] = [:]
+    private var recordedDecisions: [(String, Data)] = []
+    private var _decisionOutcomes = 0
+    private var _decisionLookup: Data?
+    private var _decisionPost: Data?
+    private var _decisionStatus = 200
+    private var _lookupStatus = 200
+    private var _loseDecisionBeforeCommit = false
+    private var _loseDecisionAfterCommit = false
+    var decisionBodies: [(String, Data)] { lock.withLock { recordedDecisions } }
+    var decisionOutcomes: Int { lock.withLock { _decisionOutcomes } }
+    var decisionLookup: Data? { get { lock.withLock { _decisionLookup } } set { lock.withLock { _decisionLookup = newValue } } }
+    var decisionPost: Data? { get { lock.withLock { _decisionPost } } set { lock.withLock { _decisionPost = newValue } } }
+    var decisionStatus: Int { get { lock.withLock { _decisionStatus } } set { lock.withLock { _decisionStatus = newValue } } }
+    var lookupStatus: Int { get { lock.withLock { _lookupStatus } } set { lock.withLock { _lookupStatus = newValue } } }
+    var loseDecisionBeforeCommit: Bool { get { lock.withLock { _loseDecisionBeforeCommit } } set { lock.withLock { _loseDecisionBeforeCommit = newValue } } }
+    var loseDecisionAfterCommit: Bool { get { lock.withLock { _loseDecisionAfterCommit } } set { lock.withLock { _loseDecisionAfterCommit = newValue } } }
+    func status(_ request: URLRequest) -> Int { lock.withLock { request.url!.path.contains("/decision-operations/") ? (request.httpMethod == "POST" ? _decisionStatus : _lookupStatus) : 200 } }
     private var _holdLanes = false
     private var held: [@Sendable () -> Void] = []
     private var active = 0, peak = 0, lanePeak = 0
@@ -471,7 +594,7 @@ private final class OfflineState: @unchecked Sendable {
     var requests: [String] { lock.withLock { _requests } }
     var ticket: Data { lock.withLock { _ticket } }
     var writes: [String] { lock.withLock { _writes } }
-    func reset(ticket: Data) { lock.withLock { _ticket = ticket; _offline = false; _loseResponse = false; _writes = []; _requests = []; _heldMessageID = nil; receipts = [] } }
+    func reset(ticket: Data) { lock.withLock { _ticket = ticket; _offline = false; _loseResponse = false; _writes = []; _requests = []; _heldMessageID = nil; receipts = []; decisionReceipts = [:]; recordedDecisions = []; _decisionOutcomes = 0; _decisionLookup = nil; _decisionPost = nil; _decisionStatus = 200; _lookupStatus = 200; _loseDecisionBeforeCommit = false; _loseDecisionAfterCommit = false } }
     func bumpRevision() {
         lock.withLock {
             var value = try! JSONSerialization.jsonObject(with: _ticket) as! [String: Any]
@@ -481,11 +604,46 @@ private final class OfflineState: @unchecked Sendable {
             _ticket = try! JSONSerialization.data(withJSONObject: value)
         }
     }
+    private func requestBody(_ request: URLRequest) -> Data {
+        var data = request.httpBody ?? Data()
+        if let stream = request.httpBodyStream {
+            stream.open(); defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; data.append(buffer, count: count) }
+        }
+        return data
+    }
     func response(_ request: URLRequest) throws -> Data {
         try lock.withLock {
             let path = request.url!.path
             _requests.append("\(request.httpMethod ?? "GET") \(path)")
             if _offline { throw URLError(.notConnectedToInternet) }
+            if path.contains("/decision-operations/") {
+                let operationID = request.url!.lastPathComponent
+                if request.httpMethod != "POST" {
+                    return _decisionLookup ?? decisionReceipts[operationID] ?? Data(#"{"receipt_contract":1,"receipt":null}"#.utf8)
+                }
+                let data = requestBody(request)
+                recordedDecisions.append((operationID, data))
+                if _loseDecisionBeforeCommit { _loseDecisionBeforeCommit = false; throw URLError(.networkConnectionLost) }
+                if let override = _decisionPost { return override }
+                if let existing = decisionReceipts[operationID] { return existing }
+                let body = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+                let ticket = try JSONSerialization.jsonObject(with: _ticket) as! [String: Any]
+                let current = ticket["pending_proposal"] as? [String: Any]
+                let refused = (body["expected_proposal_revision"] as? Int) != (current?["revision"] as? Int)
+                let value: [String: Any] = ["receipt_contract": 1, "receipt": [
+                    "operation_id": operationID, "ticket_id": String(request.url!.path.split(separator: "/")[2]),
+                    "decision": body["decision"]!, "field": body["field"]!, "expected_proposal_revision": body["expected_proposal_revision"]!,
+                    "outcome": refused ? "refused" : "applied", "created_at": 100,
+                    "transition": refused ? NSNull() : ["stage": "needs_implementation", "ceiling": "needs_implementation", "ceiling_holder": ["kind": "owner", "id": "owner"], "ticket_status": "ready", "pending_proposal_revision": 16],
+                    "error": refused ? ["code": "changed_proposal", "message": "Proposal changed", "detail": [:]] : NSNull()
+                ]]
+                let response = try JSONSerialization.data(withJSONObject: value)
+                decisionReceipts[operationID] = response; _decisionOutcomes += 1
+                if _loseDecisionAfterCommit { _loseDecisionAfterCommit = false; throw URLError(.networkConnectionLost) }
+                return response
+            }
             if path.hasSuffix("/receipts") {
                 return try JSONSerialization.data(withJSONObject: ["receipts": receipts.map { ["sender_message_id": $0, "fate": "prompt"] }])
             }
@@ -519,7 +677,7 @@ private final class OfflineProtocol: URLProtocol, @unchecked Sendable {
         defer { Self.state.end(request) }
         do {
             let data = try Self.state.response(request)
-            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: Self.state.status(request), httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data); client?.urlProtocolDidFinishLoading(self)
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }

@@ -15,7 +15,7 @@ import XCTest
     }
     private func cards(_ count: Int) -> [ReviewCard] {
         (0..<count).map { index in
-            ReviewCard(id: "card-\(index)", ticketId: "ticket-\(index)", parts: [ReviewItem(reviewItemType: "proposal", ticketId: "ticket-\(index)", field: "brief", title: "Ticket", waitingSince: 1)])
+            ReviewCard(id: "card-\(index)", ticketId: "ticket-\(index)", parts: [ReviewItem(reviewItemType: "proposal", ticketId: "ticket-\(index)", field: "brief", title: "Ticket", waitingSince: 1, proposalRevision: 2)])
         }
     }
     func testQueueReadCountAndHostTimingsAcrossRetainedWorkloads() throws {
@@ -73,6 +73,22 @@ import XCTest
         snapshot.refresh("a")
         XCTAssertEqual(reads, 1)
         XCTAssertTrue(ReviewSavedWork.cards(cards(1), decisions: snapshot.decisions("a")).isEmpty)
+        let original = cards(1)[0].parts[0]
+        let replacement = ReviewItem(reviewItemType: "proposal", ticketId: original.ticketId, field: original.field,
+            title: original.title, waitingSince: original.waitingSince, proposalRevision: 3)
+        let unknown = ReviewItem(reviewItemType: "proposal", ticketId: original.ticketId, field: original.field,
+            title: original.title, waitingSince: original.waitingSince)
+        XCTAssertNotEqual(original.id, replacement.id, "Same-second replacement has its own identity")
+        let newer = ReviewCard(id: cards(1)[0].id, parts: [replacement])
+        XCTAssertEqual(ReviewSavedWork.cards([newer], decisions: snapshot.decisions("a")).first?.parts.first?.id, replacement.id)
+        XCTAssertEqual(ReviewSavedWork.cards([ReviewCard(id: "unknown", parts: [unknown])], decisions: snapshot.decisions("a")).count, 1)
+        XCTAssertEqual(ReviewSavedWork.pendingDecisionTickets(in: cards(1), decisions: snapshot.decisions("a")), [original.ticketId])
+        XCTAssertTrue(ReviewSavedWork.pendingDecisionTickets(in: [newer], decisions: snapshot.decisions("a")).isEmpty)
+        XCTAssertTrue(ReviewSavedWork.pendingDecisionTickets(in: [ReviewCard(id: "unknown", parts: [unknown])], decisions: snapshot.decisions("a")).isEmpty)
+        XCTAssertTrue(ReviewSavedWork.pendingDecisionTickets(in: [], decisions: snapshot.decisions("a")).isEmpty)
+        var queue = ReviewQueue()
+        queue.skip(cards(1)[0]); queue.resolve(original)
+        XCTAssertEqual(queue.current(in: [newer])?.parts.first?.id, replacement.id)
         XCTAssertTrue(snapshot.decisions("b").isEmpty)
         let revision = store.outgoingRevision("a")
         try outbox.save(work, server: "a")

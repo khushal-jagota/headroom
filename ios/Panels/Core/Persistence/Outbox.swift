@@ -39,7 +39,23 @@ import Observation
         try store.put(server: server, kind: "outbox", id: work.id, data: Self.encode(work))
     }
     func enqueue(_ work: PendingWork, api: APIClient) throws {
-        try save(work, server: LocalStore.server(api.baseURL))
+        var frozen = work
+        if work.kind == .approval || work.kind == .sendBack {
+            guard work.protectedDecisionBody == nil, let proposal = work.proposal, work.ticketID != nil else { throw OutgoingStore.StoreError.invalidTransition }
+            let command: DecisionCommand
+            if work.kind == .approval, let approval = work.approval {
+                guard approval.expectedProposalRevision == proposal.revision else { throw OutgoingStore.StoreError.invalidTransition }
+                command = DecisionCommand(decision: "approve", field: proposal.field, expectedProposalRevision: proposal.revision,
+                    editedBody: approval.editedBody, nextCeiling: approval.nextCeiling,
+                    nextHolder: DecisionHolder(kind: approval.nextHolder.kind, id: approval.nextHolder.id))
+            } else if work.kind == .sendBack {
+                command = DecisionCommand(decision: "send_back", field: proposal.field, expectedProposalRevision: proposal.revision, message: work.guidance)
+            } else { throw OutgoingStore.StoreError.invalidTransition }
+            frozen.protectedDecisionBody = try APIClient.encodeReviewDecision(command)
+            frozen.protectedProposalCreatedAt = proposal.createdAt
+            frozen.proposal = nil; frozen.approval = nil; frozen.guidance = nil
+        }
+        try store.outgoing.enqueue(frozen, server: LocalStore.server(api.baseURL))
         Task { await drain(api: api) }
     }
     func run(api: APIClient) async {
@@ -134,6 +150,10 @@ import Observation
     }
     private func process(_ id: String, api: APIClient, server: String) async {
         guard let work = work(server, id: id) else { return }
+        if work.kind == .approval || work.kind == .sendBack {
+            await processDecision(work, api: api, server: server)
+            return
+        }
         var writeStarted = false
         do {
             if case .goal = work.owner {
@@ -161,13 +181,6 @@ import Observation
                 }
                 return
             }
-            if let ticketID = work.ticketID, let expected = work.proposal {
-                let latest = try await api.ticket(ticketID)
-                guard let current = latest.pendingProposal, ReviewDecision.matches(expected, current) else {
-                    try store.outgoing.settle(server: server, id: id, state: .changed, note: "This changed, review again")
-                    return
-                }
-            }
             try store.outgoing.beginAttempt(server: server, id: id)
             if let message = work.message, let owner = work.owner {
                 writeStarted = true
@@ -189,11 +202,7 @@ import Observation
                 guard self.work(server, id: id) != nil else { return }
                 try store.outgoing.finishVoice(server: server, id: id, transcript: transcript)
                 if (try? store.outgoing.audioIsUnowned(file)) == true { try? FileManager.default.removeItem(at: LocalStore.directory.appendingPathComponent(file)) }
-            } else if let ticketID = work.ticketID, let expected = work.proposal {
-                writeStarted = true
-                if let approval = work.approval { try await api.approveReview(ticketID, field: expected.field, approval: approval) }
-                else { try await api.returnReview(ticketID, message: work.guidance ?? "", expectedProposalRevision: expected.revision) }
-                try store.outgoing.settle(server: server, id: id, state: .sent, note: work.kind == .approval ? "Approved" : "Sent back")
+
             }
         } catch {
             if let error = error as? APIError, error.isUpdateRequired, writeStarted {
@@ -209,4 +218,67 @@ import Observation
             }
         }
     }
+    private func processDecision(_ work: PendingWork, api: APIClient, server: String) async {
+        guard let body = work.protectedDecisionBody, let ticketID = work.ticketID,
+              let command = try? APIClient.decoder().decode(DecisionCommand.self, from: body) else {
+            // Bodyless legacy rows never gain protected-write authority on read.
+            try? store.outgoing.settle(server: server, id: work.id, state: .uncertain, note: "Delivery uncertain · check the ticket before another decision")
+            return
+        }
+        let fact: OutgoingStore.Summary
+        do {
+            guard let saved = try store.outgoing.summary(server: server, id: work.id) else { return }
+            fact = saved
+        } catch { store.saveError = error.localizedDescription; return }
+        var attempted = fact.provenance != "unattempted"
+        let existing: DecisionReceipt?
+        do {
+            existing = try await api.lookupReviewDecision(ticketID: ticketID, operationID: work.id, command: command)
+        } catch {
+            recordDecisionTransportFailure(error, work: work, server: server, attempted: attempted)
+            return
+        }
+        if let existing {
+            // Local save errors already expose the storage failure. They cannot prove
+            // that the server lacks support or turn its applied outcome into refusal.
+            do { try settleDecision(existing, work: work, server: server) } catch { return }
+            return
+        }
+        // Only an explicit supported null receipt permits this exact operation to POST.
+        if !attempted {
+            do { try store.outgoing.beginAttempt(server: server, id: work.id) } catch { return }
+            attempted = true
+        }
+        let result: DecisionReceipt
+        do {
+            result = try await api.submitReviewDecision(ticketID: ticketID, operationID: work.id, command: command, frozenBody: body)
+        } catch {
+            recordDecisionTransportFailure(error, work: work, server: server, attempted: attempted)
+            return
+        }
+        do { try settleDecision(result, work: work, server: server) } catch { return }
+    }
+    private func recordDecisionTransportFailure(_ error: Error, work: PendingWork, server: String, attempted: Bool) {
+        if attempted {
+            try? store.outgoing.settle(server: server, id: work.id, state: .uncertain,
+                note: "Decision outcome uncertain · waiting for its server receipt")
+        } else if let error = error as? APIError, error.isUpdateRequired {
+            try? store.outgoing.settle(server: server, id: work.id, state: .waiting, note: NativeBuildGate.message)
+        } else if error is URLError || error is CancellationError || (error as? APIError).map({ $0.status >= 500 || $0.status == 408 || $0.status == 429 }) == true {
+            // A transient lookup failure did not attempt the write or disprove support.
+            try? store.outgoing.settle(server: server, id: work.id, state: .waiting, note: "Waiting for connection")
+        } else {
+            try? store.outgoing.settle(server: server, id: work.id, state: .changed,
+                note: "Not sent · this server cannot confirm protected decisions. Use a compatible server and review again.")
+        }
+    }
+    private func settleDecision(_ receipt: DecisionReceipt, work: PendingWork, server: String) throws {
+        if receipt.outcome == "applied" {
+            try store.outgoing.settle(server: server, id: work.id, state: .sent, note: work.kind == .approval ? "Approved" : "Sent back")
+        } else {
+            try store.outgoing.settle(server: server, id: work.id, state: .changed,
+                note: "Not sent · " + (receipt.error?.message ?? "This decision was refused. Review again."))
+        }
+    }
+
 }

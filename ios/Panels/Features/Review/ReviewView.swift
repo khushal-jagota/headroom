@@ -106,7 +106,10 @@ struct ReviewView: View {
         for decision in decisions.values { decision.refreshVoiceDraft() }
         messageDecisions.refreshAttempts()
         for work in savedDecisions where work.state == "changed" {
-            if let card = queueCards.first(where: { $0.ticketId == work.ticketID }), let item = card.parts.first(where: { !$0.isMessage }) {
+            if let card = queueCards.first(where: { $0.ticketId == work.ticketID }),
+               let item = card.parts.first(where: { !$0.isMessage && $0.field == work.proposalField && $0.waitingSince == work.proposalCreatedAt && $0.proposalRevision != nil && $0.proposalRevision == work.proposalRevision }),
+               let proposal = decisions[item.id]?.proposal,
+               proposal.field == work.proposalField, proposal.revision == work.proposalRevision, proposal.createdAt == work.proposalCreatedAt {
                 queue.restore(item)
                 if decisions[item.id]?.resolved == true { decisions[item.id] = nil }
                 if displayedCard == nil { displayedCard = card }

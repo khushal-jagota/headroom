@@ -122,6 +122,15 @@ final class NavigationViewTests: XCTestCase {
         ]
         let source = [pending, current, historical, parentManager(), project("p", "Project")] + addresses
         let cards = NavigationPresentation(try snapshot(source).content.records).review
+        let nativeSnapshot = try snapshot(source)
+        let nativePart = try XCTUnwrap(NavigationPresentation(nativeSnapshot.content.records).reviewQueue(in: nativeSnapshot).cards.first?.parts.first)
+        XCTAssertEqual(nativePart.proposalRevision, 1)
+        let newerSource = source.map { $0["kind"] as? String == "ticket" ? ticket(["ticket_status": "awaiting_approval", "proposal_field": "plan", "proposal_revision": 2, "proposal_created_at": 2]) : $0 }
+        let newerSnapshot = try snapshot(newerSource)
+        let newerPart = try XCTUnwrap(NavigationPresentation(newerSnapshot.content.records).reviewQueue(in: newerSnapshot).cards.first?.parts.first)
+        XCTAssertEqual(newerPart.waitingSince, nativePart.waitingSince)
+        XCTAssertEqual(newerPart.proposalRevision, 2)
+        XCTAssertNotEqual(newerPart.id, nativePart.id)
         let message = NavigationReviewMessage(conversationId: "a-conversation", addressId: "current-worker", addressCurrent: true, ownerKind: "ticket", ownerId: "a", title: "A", waitingSince: 1, recap: "Worker recap", ownerReadThroughSequence: 0)
         XCTAssertEqual(cards, [
             .ticket(id: "a", title: "A", waitingSince: 1, proposal: NavigationReviewProposal(ticketId: "a", field: "plan", title: "A", waitingSince: 2, proposalField: "plan", proposalRevision: 1), messages: [message]),
@@ -154,7 +163,7 @@ final class NavigationViewTests: XCTestCase {
         let window = viewWindow("review", members: [["kind": "address", "id": "current-manager"], ["kind": "ticket", "id": "a"]], total: 3)
         let queue = NavigationPresentation(try snapshot(source).content.records).reviewQueue(in: try snapshot(source, windows: [window]))
         XCTAssertEqual(queue.cards.map(\.id), ["message:historical:2.0", "ticket:a"])
-        XCTAssertEqual(queue.cards.map { $0.parts.map(\.id) }, [["message:historical:2.0"], ["a:plan:2.0", "message:a-conversation:1.0"]])
+        XCTAssertEqual(queue.cards.map { $0.parts.map(\.id) }, [["message:historical:2.0"], ["a:plan:2.0:revision:1", "message:a-conversation:1.0"]])
         XCTAssertEqual(queue.items[0].owner, .manager("parent"))
         XCTAssertEqual(queue.unloadedCount, 1)
         XCTAssertEqual(queue.runningWorkerCount, 1)

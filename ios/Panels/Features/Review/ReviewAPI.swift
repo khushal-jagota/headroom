@@ -51,6 +51,75 @@ extension APIClient {
         _ = try await reviewWrite("/api/tickets/\(ticketID)/reject", body: Body(message: message, expectedProposalRevision: expectedProposalRevision))
     }
 
+    /// Encode once when the decision is saved. Recovery sends these exact bytes.
+    static func encodeReviewDecision(_ command: DecisionCommand) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(command)
+    }
+
+    func submitReviewDecision(ticketID: String, operationID: String, command: DecisionCommand,
+                              frozenBody: Data) async throws -> DecisionReceipt {
+        // Validate the full frozen intent, then send its original bytes unchanged.
+        let frozenCommand = try Self.decoder().decode(DecisionCommand.self, from: frozenBody)
+        guard frozenCommand == command else {
+            throw APIError(status: 0, message: "The saved decision does not match its frozen request.")
+        }
+        var request = try self.request(try url(decisionOperationPath(ticketID: ticketID, operationID: operationID)))
+        request.httpMethod = "POST"
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 25
+        request.httpBody = frozenBody
+        let (data, response) = try await session.data(for: request)
+        try Self.validate(response, data: data)
+        let value = try Self.decoder().decode(DecisionOperationResponse.self, from: data)
+        // A successful POST always confirms a terminal outcome. Null remains unknown.
+        guard let receipt = try Self.validateReviewDecisionResponse(value, ticketID: ticketID,
+            operationID: operationID, command: command, allowMissingReceipt: false) else {
+            throw APIError(status: 0, message: "The server did not confirm this decision.")
+        }
+        return receipt
+    }
+
+    func lookupReviewDecision(ticketID: String, operationID: String,
+                              command: DecisionCommand) async throws -> DecisionReceipt? {
+        // Receipt absence is never inferred from an ordinary response cache.
+        let (data, _) = try await responseData(decisionOperationPath(ticketID: ticketID, operationID: operationID))
+        let value = try Self.decoder().decode(DecisionOperationResponse.self, from: data)
+        return try Self.validateReviewDecisionResponse(value, ticketID: ticketID,
+            operationID: operationID, command: command, allowMissingReceipt: true)
+    }
+
+    private func decisionOperationPath(ticketID: String, operationID: String) -> String {
+        "/api/tickets/\(ticketID)/decision-operations/\(operationID)"
+    }
+
+    static func validateReviewDecisionResponse(_ response: DecisionOperationResponse, ticketID: String,
+        operationID: String, command: DecisionCommand, allowMissingReceipt: Bool) throws -> DecisionReceipt? {
+        guard response.receiptContract == 1 else {
+            throw APIError(status: 0, message: "The server cannot confirm decision operations.")
+        }
+        guard let receipt = response.receipt else {
+            if allowMissingReceipt { return nil }
+            throw APIError(status: 0, message: "The server did not confirm this decision.")
+        }
+        guard receipt.operationId == operationID, receipt.ticketId == ticketID,
+              receipt.decision == command.decision, receipt.field == command.field,
+              receipt.expectedProposalRevision == command.expectedProposalRevision else {
+            throw APIError(status: 0, message: "The server returned a different decision operation.")
+        }
+        switch receipt.outcome {
+        case "applied" where receipt.transition != nil && receipt.error == nil:
+            return receipt
+        case "refused" where receipt.transition == nil && receipt.error != nil:
+            return receipt
+        default:
+            throw APIError(status: 0, message: "The server returned an incomplete decision outcome.")
+        }
+    }
+
     func transcribeReviewAudio(_ audio: Data) async throws -> String {
         struct Body: Encodable { let audio: String; let mediaType: String }
         struct Response: Decodable { let transcript: String }

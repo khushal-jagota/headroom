@@ -14,6 +14,8 @@ struct PendingWork: Codable, Identifiable, Sendable {
     var proposal: TicketProposal?
     var approval: ReviewApproval?
     var guidance: String?
+    var protectedDecisionBody: Data?
+    var protectedProposalCreatedAt: Double?
     var audioFile: String?
     var draftID: String?
     var completed: Date?

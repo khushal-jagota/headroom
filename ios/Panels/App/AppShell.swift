@@ -102,11 +102,11 @@ struct AppShell: View {
     }
 
     private var reviewBadge: Int {
-        let pending = Set(savedReviewWork.decisions(LocalStore.server(store.baseURL)).filter {
-            ($0.kind == "approval" || $0.kind == "sendBack") && ["waiting", "sending"].contains($0.state)
-        }.compactMap(\.ticketID))
         let count = store.counts?.review ?? 0
-        return store.presentation?.reviewBadge(count: count, pendingDecisionTickets: pending) ?? max(0, count - pending.count)
+        guard let presentation = store.presentation, let review = store.review else { return count }
+        let pending = ReviewSavedWork.pendingDecisionTickets(in: review.cards,
+            decisions: savedReviewWork.decisions(LocalStore.server(store.baseURL)))
+        return presentation.reviewBadge(count: count, pendingDecisionTickets: pending)
     }
 
     private var moreTabImage: UIImage {

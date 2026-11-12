@@ -53,7 +53,8 @@ import Observation
         }
         guard !busy, !resolved, !Task.isCancelled else { return }
         if ticket == nil, let saved = api.cachedTicket(item.ticketId), let proposal = saved.pendingProposal,
-           proposal.field == item.field, proposal.createdAt == item.waitingSince {
+           proposal.field == item.field, proposal.createdAt == item.waitingSince,
+           item.proposalRevision == nil || proposal.revision == item.proposalRevision {
             ticket = saved
             manifest = saved.workflow.map(ReviewWorkerManifest.init(workflow:))
             restoreDrafts(api: api, ticket: saved, proposal: proposal)
@@ -64,7 +65,8 @@ import Observation
             let fetched = try await api.ticket(item.ticketId)
             guard !Task.isCancelled else { return }
             guard let incoming = fetched.pendingProposal, incoming.field == item.field,
-                  incoming.createdAt == item.waitingSince else {
+                  incoming.createdAt == item.waitingSince,
+                  item.proposalRevision == nil || incoming.revision == item.proposalRevision else {
                 changed = true
                 error = "This proposal is no longer waiting. Refresh Review for the latest queue."
                 return
@@ -82,7 +84,10 @@ import Observation
                 throw APIError(status: 0, message: "This proposal field is unavailable for its worker type.")
             }
             restoreDrafts(api: api, ticket: fetched, proposal: incoming, discard: discardDraft)
-            ticket = fetched; manifest = lifecycle; changed = false; error = nil
+            ticket = fetched; manifest = lifecycle; changed = false
+            let facts = (try? LocalStore.shared.outgoing.decisionSummaries(server: LocalStore.server(api.baseURL), ticketID: fetched.id)) ?? []
+            let terminal = facts.last { $0.proposalField == incoming.field && $0.proposalRevision == incoming.revision && $0.proposalCreatedAt == incoming.createdAt && $0.state == "changed" }
+            error = terminal?.note
         } catch {
             guard !Task.isCancelled else { return }
             self.error = error.localizedDescription
@@ -176,10 +181,19 @@ struct ReviewQueue {
     func decisions(_ server: String) -> [OutgoingStore.Summary] { key?.server == server ? saved : [] }
     func messages(_ server: String, conversationID: String) -> [PendingWork] { outbox.entries(server, conversationID: conversationID) }
     func voice(_ server: String, draftID: String) -> [PendingWork] { outbox.entries(server, draftID: draftID) }
+    /// Only a visible exact proposal can justify subtracting a pending card badge.
+    static func pendingDecisionTickets(in cards: [ReviewCard], decisions: [OutgoingStore.Summary]) -> Set<String> {
+        Set(cards.flatMap(\.parts).filter { item in
+            !item.isMessage && item.proposalRevision != nil && decisions.contains {
+                $0.ticketID == item.ticketId && $0.proposalField == item.field && $0.proposalCreatedAt == item.waitingSince
+                    && $0.proposalRevision == item.proposalRevision && ["waiting", "sending"].contains($0.state)
+            }
+        }.map(\.ticketId))
+    }
     static func cards(_ cards: [ReviewCard], decisions: [OutgoingStore.Summary]) -> [ReviewCard] {
         cards.compactMap { card in
             let parts = card.parts.filter { item in
-                !decisions.contains { $0.ticketID == item.ticketId && $0.proposalField == item.field && $0.proposalCreatedAt == item.waitingSince && ["waiting", "sending", "uncertain", "sent"].contains($0.state) }
+                !decisions.contains { item.proposalRevision != nil && $0.proposalRevision == item.proposalRevision && $0.ticketID == item.ticketId && $0.proposalField == item.field && $0.proposalCreatedAt == item.waitingSince && ["waiting", "sending", "uncertain", "sent"].contains($0.state) }
             }
             return parts.isEmpty ? nil : ReviewCard(id: card.id, ticketId: card.ticketId, parts: parts)
         }
