@@ -1,5 +1,9 @@
 import { routes as previews } from './previews/routes.ts';
 import { routes as files } from './files/routes.ts';
+import { routes as measures } from './measures/routes.ts';
+import { routes as datasets } from './datasets/routes.ts';
+import { admission as measure_admission } from './measures/routes.ts';
+import { configure_measure_resources } from './measures/resource_versions.ts';
 import { routes as credentials } from './credentials/routes.ts';
 import { ManagerWakeLoop } from './manager_wakes/runtime.ts';
 import type { OwnedAreaContext } from './core/authority/register.ts';
@@ -57,12 +61,19 @@ export function createAreasRuntime() {
     prepare(database: Database): void {
       database.write((tx) => audit_ticket_registry_integrity(tx, { startup: true }));
     },
-    initialize(database: Database, config: Config, clock: Clock): void {
+    initialize(
+      database: Database,
+      config: Config,
+      clock: Clock,
+      beforeRuntime: () => void = () => {},
+    ): void {
       database.write((tx) => initialize_notifications(tx, clock.nowUnix()));
       initialize_worker_settings(database, config);
       configure_conversation_start(database, config);
       configure_chief_resources(config);
       configure_manager_resources(clock);
+      configure_measure_resources(clock);
+      beforeRuntime();
       // The record owns the sole store, tail, reconciliation, and epoch rotation.
       conversation.initialize(database, config, {
         integer_now: () => clock.nowUnix(),
@@ -95,6 +106,8 @@ export function createAreasRuntime() {
     get areas(): readonly Area[] {
       return [
         { prefix: '', routes: previews },
+        { prefix: '/api', routes: measures, admission: measure_admission },
+        { prefix: '/api', routes: datasets, admission: measure_admission },
         { prefix: '', routes: files },
         { prefix: '/api', routes: credentials },
         { prefix: '/api', routes: managers },
@@ -145,10 +158,13 @@ export function composeAreaLoops(context: OwnedAreaContext, options: AreaLoopOpt
         workspace_root: context.config.workspace_root,
       },
     });
-    unsubscribe = context.changes.subscribe(() => wakes?.wake());
-    wakes.start(context.config.tick_seconds);
   }
   return {
+    start(): void {
+      if (!wakes) return;
+      unsubscribe = context.changes.subscribe(() => wakes?.wake());
+      wakes.start(context.config.tick_seconds);
+    },
     async stop(options: { deadline?: number } = {}): Promise<void> {
       unsubscribe?.();
       await wakes?.stop(options);

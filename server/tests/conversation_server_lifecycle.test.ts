@@ -115,6 +115,8 @@ test('partial startup failure drains the record and releases the exact lease', a
 // real navigation projection, and actual server shutdown with pending HTTP work.
 test('ordinary sends publish real core status and shutdown fences a blocked native receipt before lease release', async () => {
   const f = setup();
+  vi.stubEnv('PLAN_TEST_MODE', '0');
+  vi.stubEnv('PLAN_DISPATCH_ENABLED', 'true');
   const registry = new ScriptedBackendRegistry();
   const wakePoll = vi.spyOn(ManagerWakeLoop.prototype, 'poll_once');
   const wakeStop = vi.spyOn(ManagerWakeLoop.prototype, 'stop');

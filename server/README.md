@@ -2,6 +2,8 @@
 
 This package is the shared server shell for the backend migration. It runs `.ts` files directly on Node 22.18+ and Node 24. Python still creates and upgrades its database. The migration branch remains separate from staging and main.
 
+Accepted migration differences live in [DEVIATIONS.md](DEVIATIONS.md).
+
 From the repository root:
 
 ```sh

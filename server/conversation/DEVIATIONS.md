@@ -1,19 +1,11 @@
-# Accepted differences from Python
+# Conversation differences from Python
 
-This file records intentional differences that the migration Manager accepted. No new difference enters this file without that acceptance. Close an entry when Python adopts the same behavior.
+The accepted entries now live in the shared [migration registry](../DEVIATIONS.md).
+This compatibility path preserves existing conversation links. No new difference enters
+the registry without the migration Manager's acceptance.
 
-## Closed: accepted held prompts survive a secondary Ticket-model error
+The accepted-receipt correction is closed: Python commit `27e893ad8` and TypeScript now
+settle the receipt, phase, and sender identities before the secondary Ticket-model error.
+The registry records the exact order and the existing delivery regression test.
 
-The migration Manager accepted this difference during review of PR 712 on November 12, 2026.
-Python commit `27e893ad8` now supplies the same correction in the migration comparison baseline.
-
-Both cores commit the accepted receipt, settle the running phase and held sender identities,
-emit the change signal, then invoke the secondary Ticket-model writer. The reservation resolves
-in `finally`, including when that writer raises. The same secondary error propagates without
-another provider write or committed append. This is no longer an intentional difference.
-
-`server/tests/conversation_core_delivery.test.ts` pins this order in
-`publication failure after receipt commit does not append or deliver twice`. It also proves
-that a repeated sender identity returns its receipt and later backend news still persists.
-
-- Projection rebuild uses TEMP tables on the single writer connection in batches of 500 events. Python uses a second connection. Results match. Sustained-load latency is not measured.
+The registry also retains the accepted projection-rebuild difference and measured profile.
