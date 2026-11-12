@@ -22,7 +22,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
 from planner import __version__
-from planner.conversation.backends.codex_app_server import bindings_gen as bindings
+from planner.conversation.backends.codex_app_server import protocol
 from planner.conversation.backends.codex_app_server.adapter import (
     CLIENT_NAME,
     CLIENT_TITLE,
@@ -281,8 +281,8 @@ async def _read_codex_rate_limits(
     )
     await client.request(
         "initialize",
-        bindings.InitializeParams(
-            clientInfo=bindings.ClientInfo(
+        protocol.InitializeParams(
+            clientInfo=protocol.ClientInfo(
                 name=CLIENT_NAME, title=CLIENT_TITLE, version=__version__
             ),
             capabilities=INITIALIZE_CAPABILITIES,

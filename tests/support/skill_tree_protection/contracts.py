@@ -9,6 +9,7 @@ class ProtectionInventory:
     protected_paths: tuple[str, ...]
     symlink_targets: tuple[tuple[str, str], ...] = ()
     parent_resolutions: tuple[tuple[str, str], ...] = ()
+    manifest_exclusions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

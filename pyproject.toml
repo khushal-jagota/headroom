@@ -19,6 +19,7 @@ dependencies = [
   "httpx[http2]",
   "PyJWT[crypto]",
   "pydantic",
+  "packaging==26.2",
   "PyYAML",
   "PyICU==2.16.2",
   "pywebpush==2.3.0",

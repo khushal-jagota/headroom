@@ -310,7 +310,6 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   let catalogOwner=$state("t_catalog");
   (window as any).__catalogOwner=(owner:string)=>catalogOwner=owner;
   import ManagerHeader from "../src/components/ManagerHeader.svelte";
-  import InlineEdit from "../src/components/InlineEdit.svelte";
   import { workspaceHeaderDomMatches } from "../tests/support/managerWorkspaceDom";
   const managerLayoutOnly=new URLSearchParams(window.location.search).has("manager-layout");
   let layoutRecap=$state("The recap belongs below the title.");
@@ -828,7 +827,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   <main class="manager-column" style="max-width:768px;margin:auto;padding:0 32px" data-layout-proof>
     <ManagerHeader recap={layoutRecap}>
       {#snippet eyebrow()}<div class="page-eyebrow"><span>Panels</span><button class="page-settle" aria-label="Settle Workspace clarity">Settle</button></div>{/snippet}
-      {#snippet title()}<InlineEdit value={headerFacts.title} ariaLabel="Manager title" onSave={async()=>{}} />{/snippet}
+      {#snippet title()}{headerFacts.title}{/snippet}
     </ManagerHeader>
   </main>
 </QueryClientProvider>

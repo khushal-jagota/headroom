@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from planner.conversation.backends.codex_app_server import bindings_gen as bindings
+from planner.conversation.backends.codex_app_server import protocol
 from planner.conversation.backends.codex_app_server.catalog_config import (
     APP_HINT_COOLDOWN_SECONDS,
     APP_METADATA_BATCH_SIZE,
@@ -44,10 +44,10 @@ class CatalogCoordinator:
     def __init__(
         self,
         *,
-        read_skills: Callable[[], Awaitable[bindings.SkillsListResponse]],
-        read_plugins: Callable[[], Awaitable[bindings.PluginInstalledResponse]],
-        read_installed: Callable[[], Awaitable[bindings.AppsInstalledResponse]],
-        read_metadata: Callable[[list[str]], Awaitable[bindings.AppsReadResponse]],
+        read_skills: Callable[[], Awaitable[protocol.SkillsListResponse]],
+        read_plugins: Callable[[], Awaitable[protocol.PluginInstalledResponse]],
+        read_installed: Callable[[], Awaitable[protocol.AppsInstalledResponse]],
+        read_metadata: Callable[[list[str]], Awaitable[protocol.AppsReadResponse]],
         publish: Callable[[], Awaitable[None]],
         clock: Callable[[], float] | None = None,
     ) -> None:
@@ -61,10 +61,10 @@ class CatalogCoordinator:
         self._read_metadata = read_metadata
         self._publish = publish
         self._lanes = {name: _Lane() for name in self._reads}
-        self.skills: bindings.SkillsListResponse | None = None
-        self.plugins: bindings.PluginInstalledResponse | None = None
-        self.installed: bindings.AppsInstalledResponse | None = None
-        self.metadata: dict[str, tuple[float, bindings.ConnectorMetadata | None]] = {}
+        self.skills: protocol.SkillsListResponse | None = None
+        self.plugins: protocol.PluginInstalledResponse | None = None
+        self.installed: protocol.AppsInstalledResponse | None = None
+        self.metadata: dict[str, tuple[float, protocol.ConnectorMetadata | None]] = {}
         self._identities: frozenset[str] = frozenset()
         self._generation = 0
         self.closed = False
@@ -176,7 +176,7 @@ class CatalogCoordinator:
                 lane.pending = True
                 _log_failure(name, failure, delay)
 
-    def _set_installed(self, installed: bindings.AppsInstalledResponse | None) -> None:
+    def _set_installed(self, installed: protocol.AppsInstalledResponse | None) -> None:
         self.installed = installed
         identities = frozenset(
             app.id

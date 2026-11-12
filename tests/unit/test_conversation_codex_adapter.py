@@ -505,7 +505,18 @@ def test_early_output_waits_for_start_response_and_stale_turn_does_not_bind(tmp_
                     "started_turn_id": "stale-turn",
                     "response_order": "after_actions",
                     "actions": [
+                        {"do": "item_started", "item": {"type": "futureItem", "newField": 1}},
                         {"do": "agent_delta", "item_id": "a", "text": "early output"},
+                        {
+                            "do": "item_completed",
+                            "item": {
+                                "type": "agentMessage",
+                                "id": "a",
+                                "text": "early output",
+                                "futureField": {"anything": True},
+                            },
+                        },
+                        {"do": "item_completed", "item": {"type": "futureItem"}},
                         {"do": "complete", "status": "completed"},
                     ],
                 }
@@ -519,3 +530,66 @@ def test_early_output_waits_for_start_response_and_stale_turn_does_not_bind(tmp_
             assert len(scripted.sink.endings) == 1
 
     _run(exercise)
+
+
+def test_selective_codex_reads_preserve_strict_identities_outcomes_and_permissions() -> None:
+    """Selective reads cannot turn malformed control data into valid operations."""
+    from pydantic import BaseModel, ValidationError
+
+    from planner.conversation.backends.codex_app_server import protocol
+
+    malformed: list[tuple[type[BaseModel], dict[str, Any]]] = [
+        (protocol.ThreadStartResponse, {"thread": {"id": " ", "ephemeral": False}}),
+        (protocol.TurnSteerResponse, {"turnId": 1}),
+        (protocol.Turn, {"id": "turn", "status": "futureOutcome"}),
+        (protocol.ThreadGoalClearResponse, {"cleared": "false"}),
+        (protocol.CommandExecutionRequestApprovalResponse, {"decision": "futureApproval"}),
+        (
+            protocol.ToolRequestUserInputParams,
+            {"threadId": "thread", "turnId": "turn", "questions": []},
+        ),
+        (
+            protocol.ItemCompletedNotification,
+            {"threadId": "thread", "turnId": "turn", "item": {"type": []}},
+        ),
+        (
+            protocol.ItemCompletedNotification,
+            {
+                "threadId": "thread",
+                "turnId": "turn",
+                "item": {"type": "agentMessage", "text": "missing identity"},
+            },
+        ),
+    ]
+    for model, payload in malformed:
+        with pytest.raises(ValidationError):
+            model.model_validate(payload)
+
+    assert protocol.ThreadGoalGetResponse.model_validate({}).goal is None
+    changed = protocol.FileChangeThreadItem.model_validate(
+        {
+            "type": "fileChange",
+            "id": "file",
+            "status": "completed",
+            "changes": [{"path": "new-name", "kind": {"type": "futureRename"}}],
+        }
+    )
+    assert changed.changes[0].kind.type == "futureRename"
+
+    # Optional upstream diagnostics and unrelated required upstream fields do not bind us.
+    completed = protocol.TurnCompletedNotification.model_validate(
+        {
+            "threadId": "thread",
+            "turn": {
+                "id": "turn",
+                "status": "failed",
+                "futureField": True,
+                "error": {
+                    "message": "provider refused",
+                    "codexErrorInfo": {"newKind": {"value": 1}},
+                },
+            },
+        }
+    )
+    assert completed.turn.error is not None
+    assert completed.turn.error.message == "provider refused"
