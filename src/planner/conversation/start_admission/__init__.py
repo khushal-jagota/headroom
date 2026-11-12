@@ -91,7 +91,7 @@ class AutomaticStartAdmission:
     def try_start(self, request: StartRequest) -> bool:
         with self._lock:
             entry = self._requests.setdefault(request.identity, _Reservation(request))
-            if entry.phase == "queued":
+            if entry.phase in ("queued", "failed"):
                 return False
             return self._admit_group((request.identity,))
 
@@ -156,7 +156,9 @@ class AutomaticStartAdmission:
                 return
             permit = entry.permit
             refundable = entry.phase == "preparing"
-            entry.phase = "eligible" if eligible else "queued"
+            # A failed preparation waits for the existing retry offer, without queue priority.
+            if entry.phase != "failed":
+                entry.phase = "eligible" if eligible else "queued"
             if not eligible:
                 entry.eligible_order = None
             else:
@@ -201,6 +203,10 @@ class AutomaticStartAdmission:
     def begin_queued(self, identities: Iterable[str | None]) -> bool:
         with self._lock:
             keys = tuple(i for i in identities if i is not None and i in self._requests)
+            for identity in keys:
+                entry = self._requests[identity]
+                if entry.phase == "failed":
+                    entry.phase = "queued"
             self.mark_eligible(keys)
             return self._admit_group(keys)
 
@@ -285,7 +291,7 @@ class AutomaticStartAdmission:
                     r.request,
                     (
                         "queued"
-                        if r.phase == "queued"
+                        if r.phase == "queued" or (r.phase == "failed" and r.managed)
                         else (
                             "deferred" if not r.active else "uncertain" if r.uncertain else "active"
                         )

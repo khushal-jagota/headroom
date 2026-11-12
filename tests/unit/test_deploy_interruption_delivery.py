@@ -1198,7 +1198,7 @@ def test_legacy_upgrade_keeps_existing_update_recovery(tmp_path: Path) -> None:
             db.execute("DROP TABLE worker_step_dispatch_intents")
             db.execute("DROP TABLE automatic_start_bindings")
             db.execute(
-                "UPDATE alembic_version SET version_num='retire_executor_websocket_tables'"
+                "UPDATE alembic_version SET version_num='ticket_workspace_lifecycle'"
             )
             db.commit()
         upgrade = connect(str(path))
