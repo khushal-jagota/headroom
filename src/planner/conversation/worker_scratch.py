@@ -9,7 +9,7 @@ import shutil
 import stat
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 
@@ -47,7 +47,6 @@ def _disk_directory(path: Path) -> None:
         raise WorkerScratchError(f"Worker temporary storage must use disk: {path}")
 
 
-
 def _ticket_name(ticket_id: str) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", ticket_id):
         raise WorkerScratchError("Invalid Ticket identity for scratch")
@@ -62,13 +61,19 @@ def _prepare_root() -> Path:
     return root
 
 
-def _prune(root: Path, ticket_id: str, keep: Path | None = None) -> bool:
+def _prune(
+    root: Path, ticket_id: str, keep: Path | None = None, names: Sequence[str] | None = None,
+) -> bool:
     complete = True
-    for directory in root.iterdir():
+    candidates = root.iterdir() if names is None else (root / name for name in names)
+    for directory in candidates:
         if directory == keep:
             continue
         if re.fullmatch(re.escape(ticket_id) + r"-[0-9a-f]{6}", directory.name):
-            info = directory.lstat()
+            try:
+                info = directory.lstat()
+            except FileNotFoundError:
+                continue
             if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
                 complete = False
                 continue
@@ -76,12 +81,25 @@ def _prune(root: Path, ticket_id: str, keep: Path | None = None) -> bool:
     return complete
 
 
-def prune_ticket_scratch(ticket_id: str) -> bool:
-    """Remove this Ticket's disposable folders when its workspace retires."""
+def snapshot_ticket_scratch(ticket_id: str) -> list[str]:
+    """Capture exact run names while the existing workspace grant is held."""
     _ticket_name(ticket_id)
     if not _scratch_root().exists() and not _scratch_root().is_symlink():
+        return []
+    return sorted(
+        path.name for path in _prepare_root().iterdir()
+        if re.fullmatch(re.escape(ticket_id) + r"-[0-9a-f]{6}", path.name)
+    )
+
+
+def prune_ticket_scratch(ticket_id: str, names: Sequence[str]) -> bool:
+    """Remove only the names captured for this physical workspace's retirement."""
+    _ticket_name(ticket_id)
+    if any(not re.fullmatch(re.escape(ticket_id) + r"-[0-9a-f]{6}", name) for name in names):
+        return False
+    if not _scratch_root().exists() and not _scratch_root().is_symlink():
         return True
-    return _prune(_prepare_root(), ticket_id)
+    return _prune(_prepare_root(), ticket_id, names=names)
 
 
 class WorkerScratch:

@@ -41,7 +41,7 @@ The user units in `ops/panels-environments/` cover the live service, the deploym
 
 Panels owns each Ticket's workspace. Before repository work starts, it creates the branch and the `worktree/` folder inside that machine's Ticket files folder. The sibling `artifacts/` folder holds documents and evidence. Workers use the same workspace on later turns. They install dependencies, commit, push, open pull requests, and perform approved merges. They do not create worktrees or remove Ticket files.
 
-Every Worker backend on Linux and macOS gets a real, short disk folder at `~/.pw/<ticket-id>-<six hex characters>`. `TMPDIR`, `TMP`, and `TEMP` point there. The launcher removes that scratch when the backend process ends, including failed startup. The same rule applies to Codex, Claude, and Hermes independently of the Linux Worker unit. The short path leaves room for tool-created Unix sockets. A fresh backend folder replaces other scratch folders for the same Ticket. Ticket retirement removes the remaining folders.
+Codex, Claude, and Hermes use real disk scratch at `~/.pw/<ticket-id>-<six hex characters>` on Linux and macOS. This short path leaves room for Unix sockets. `TMPDIR`, `TMP`, and `TEMP` point there, and the launcher removes it when the backend process ends, including failed startup. A fresh backend folder replaces other scratch folders for the same Ticket. Retirement removes the scratch recorded before that workspace detached, so a later retry preserves fresh backend scratch.
 
 Scratch belongs to one backend process. Panels can remove scratch of a process that is no longer current.
 

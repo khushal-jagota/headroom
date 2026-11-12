@@ -59,7 +59,9 @@ def test_start_and_retirement_prune_only_other_same_ticket_folders(
     current = WorkerScratch({"PLAN_TICKET_ID": "ticket"})
     assert not stale.directory.exists()
     assert current.directory.exists() and other.directory.exists()
-    assert prune_ticket_scratch("ticket")
+    assert prune_ticket_scratch("ticket", [])
+    assert current.directory.exists()  # Older retirement records have no captured names.
+    assert prune_ticket_scratch("ticket", [current.directory.name])
     assert not current.directory.exists() and other.directory.exists()
     other.close()
 
@@ -73,7 +75,7 @@ def test_same_ticket_symlink_never_authorizes_deletion(
     outside = tmp_path / "outside"
     outside.mkdir()
     (root / "ticket-abcdef").symlink_to(outside, target_is_directory=True)
-    assert not prune_ticket_scratch("ticket")
+    assert not prune_ticket_scratch("ticket", ["ticket-abcdef"])
     assert outside.exists()
     assert (root / "ticket-abcdef").is_symlink()
 
