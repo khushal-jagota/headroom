@@ -9,7 +9,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 from planner.environments.app import AppValidationError
-from planner.environments.runtime_contracts import RuntimeContract
+from planner.platform_runtime.contracts import RuntimeRequirements
+from planner.platform_runtime.linux.runtime_contracts import RuntimeContract, RuntimeContractError
 from planner.platform_runtime.targets import LINUX_HOME
 
 
@@ -54,7 +55,7 @@ def verify_runtime_host(
         raise AppValidationError(f"runtime requires Node {contract.node_major}")
 
 
-def native_tool_commands(root: Path, contract: RuntimeContract) -> list[list[str]]:
+def native_tool_commands(root: Path, contract: RuntimeRequirements) -> list[list[str]]:
     """Offline startup probes for selected Linux packages, never agent sessions."""
     modules = root / "agent_backends/node_modules"
     site = root / ".venv/lib/python3.12/site-packages"
@@ -86,10 +87,17 @@ class LinuxRuntime:
 
         return complete_private_runtime(app_root)
 
-    def verify_host(self, contract: RuntimeContract, *, state: Path) -> None:
+    def parse_contract(self, value: object) -> RuntimeContract:
+        return RuntimeContract.from_dict(value)
+
+    def verify_host(self, contract: RuntimeRequirements, *, state: Path) -> None:
         from planner.environments.runtime_admission import _run_probe
 
+        if not isinstance(contract, RuntimeContract):
+            raise RuntimeContractError("unsupported runtime operating system or architecture")
         verify_runtime_host(contract, state=state, run_probe=_run_probe)
 
-    def native_tool_commands(self, root: Path, contract: RuntimeContract) -> list[list[str]]:
+    def native_tool_commands(
+        self, root: Path, contract: RuntimeRequirements
+    ) -> list[list[str]]:
         return native_tool_commands(root, contract)

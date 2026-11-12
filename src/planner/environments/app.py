@@ -17,10 +17,10 @@ from re import fullmatch
 from planner.environments.runtime_contracts import (
     RUNTIME_CONTRACT_PATH,
     RUNTIME_INVENTORY_PATH,
-    RuntimeContract,
     parse_optional_runtime_contract,
     runtime_bytes_digest,
 )
+from planner.platform_runtime.contracts import RuntimeRequirements, UnsupportedPlatformError
 
 APP_FORMAT = "panels-app-v1"
 FULL_SHA_PATTERN = r"[0-9a-f]{40}"
@@ -36,7 +36,7 @@ class AppManifest:
     app_sha: str
     source_digest: str
     artifact_digest: str
-    runtime_contract: RuntimeContract | None = None
+    runtime_contract: RuntimeRequirements | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -118,7 +118,7 @@ def validate_app_manifest(
                 != contract.inventory_sha256
             ):
                 raise ValueError("runtime inventory differs from contract")
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, UnsupportedPlatformError) as exc:
         raise AppValidationError(f"invalid runtime contract: {exc}") from exc
     return AppManifest(app_sha, source_digest, artifact_digest, contract)
 

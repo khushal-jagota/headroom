@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from planner.environments.app import AppManifest, AppValidationError
-from planner.environments.runtime_contracts import RuntimeContract
+from planner.platform_runtime.contracts import RuntimeRequirements
 from planner.platform_runtime.selection import select_home_runtime
 from planner.platform_runtime.targets import LINUX_HOME, RuntimeTarget
 
@@ -150,12 +150,12 @@ def _run_probe(
         raise AppValidationError(f"runtime probe failed: {exc}") from exc
 
 
-def verify_runtime_host(contract: RuntimeContract, *, state: Path) -> None:
+def verify_runtime_host(contract: RuntimeRequirements, *, state: Path) -> None:
     runtime = select_home_runtime(RuntimeTarget(contract.system, contract.architecture, "home"))
     runtime.verify_host(contract, state=state)
 
 
-def native_tool_commands(root: Path, contract: RuntimeContract) -> list[list[str]]:
+def native_tool_commands(root: Path, contract: RuntimeRequirements) -> list[list[str]]:
     return select_home_runtime(LINUX_HOME).native_tool_commands(root, contract)
 
 
