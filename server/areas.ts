@@ -50,14 +50,18 @@ import type { Area } from './core/authority/register.ts';
 import type { Database, CommitStep } from './core/database/index.ts';
 import { routes as projects } from './projects/routes.ts';
 import { routes as ideas } from './ideas/routes.ts';
-import { routes as resourceVersions } from './resource_versions/routes.ts';
+import { createRoutes as createResourceRoutes } from './resource_versions/routes.ts';
+import { providers as resourceProviders } from './resource_versions/registry.ts';
+import type { ResourceProvider } from './resource_versions/contracts.ts';
 import { createSignalNavigationRuntime } from './navigation/index.ts';
 import { createConversationRuntime } from './conversation/record/runtime.ts';
 import { deployment_participants } from './conversation/deploy_interruptions/participants.ts';
 import type { SignalPublicationCoordinator } from './conversation/publication/coordinator.ts';
 
 /** Each server owns one reconciled record and its publication attachment. */
-export function createAreasRuntime() {
+export function createAreasRuntime(
+  additionalResourceProviders: () => readonly ResourceProvider[] = () => [],
+) {
   const conversation = createConversationRuntime();
   let publication: SignalPublicationCoordinator | undefined;
   let navigation: ReturnType<typeof createSignalNavigationRuntime> | undefined;
@@ -157,7 +161,10 @@ export function createAreasRuntime() {
         { prefix: '/api', routes: projects },
         { prefix: '/api', routes: ideas },
         { prefix: '/api', routes: workerSettings },
-        { prefix: '/api', routes: resourceVersions },
+        {
+          prefix: '/api',
+          routes: createResourceRoutes([...resourceProviders, ...additionalResourceProviders()]),
+        },
         { prefix: '/api/navigation/view', routes: navigation!.routes },
         { prefix: '/api/conversation', routes: conversation.routes },
       ];
