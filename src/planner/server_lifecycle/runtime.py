@@ -34,7 +34,6 @@ async def application_runtime(
     shutdown_dependents: Callable[[], Awaitable[None]],
     defer_view_cleanup: bool = False,
     startup_audit: Callable[[sqlite3.Connection], None] | None = None,
-    home_server_url: str | None = None,
 ) -> AsyncIterator[ConversationRuntime]:
     """Enter phases synchronously, then yield one fully installed runtime.
 
@@ -52,7 +51,6 @@ async def application_runtime(
                 cleanup.callback(binding.close)
                 conversation = build_conversation_runtime(
                     db_path=db_path,
-                    home_server_url=home_server_url,
                     db_busy_timeout_ms=db_busy_timeout_ms,
                     sse_heartbeat_ms=sse_heartbeat_ms,
                     backend_child_factories=backend_child_factories,

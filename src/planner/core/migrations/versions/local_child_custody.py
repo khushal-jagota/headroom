@@ -12,7 +12,7 @@ def upgrade() -> None:
     op.execute(
         "CREATE TABLE conversation_child_custody ("
         "conversation_id TEXT PRIMARY KEY REFERENCES conversations(conversation_id) ON DELETE CASCADE,"
-        "generation TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('launch_pending','started','retired','legacy_unknown')),"
+        "generation TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('launch_pending','started','retired')),"
         "pid INTEGER,birth TEXT,boot TEXT,unit TEXT,runtime_epoch TEXT,occurrence_id TEXT,host TEXT)"
     )
     op.execute(

@@ -4,19 +4,17 @@ from __future__ import annotations
 
 import os
 import re
+import signal
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 from uuid import UUID
 
-from planner.conversation.deploy_interruptions.contracts import CapturedTurn
 from planner.conversation.local_child_contracts import LocalChildIdentity, LocalHostBootIdentity
-
-LEGACY_RECOVERY_DETAIL = (
-    "The previous agent has no verified stop record. "
-    "Use Restart Worker to inspect and repair its exact source."
-)
+from planner.conversation.worker_unit.config import CONTROL_TIMEOUT_SECONDS, WORKER_SLICE
+from planner.executor.configuration import ORPHAN_AGENT_TERMINATION_GRACE_SECONDS
 
 
 def _boot_identity() -> str | None:
@@ -29,8 +27,12 @@ def _boot_identity() -> str | None:
             # https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_sysctl.c
             # https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/kern/clock.c
             result = subprocess.run(
-                ["/usr/sbin/sysctl", "-n", "kern.bootsessionuuid"], capture_output=True,
-                text=True, timeout=5, check=False, env={**os.environ, "LC_ALL": "C"},
+                ["/usr/sbin/sysctl", "-n", "kern.bootsessionuuid"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+                env={**os.environ, "LC_ALL": "C"},
             )
             if result.returncode != 0:
                 return None
@@ -60,7 +62,10 @@ def host_boot_identity() -> LocalHostBootIdentity | None:
         elif sys.platform == "darwin":
             result = subprocess.run(
                 ["/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
-                capture_output=True, text=True, timeout=5, check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
                 env={**os.environ, "LC_ALL": "C"},
             )
             match = re.search(r'"IOPlatformUUID"\s*=\s*"([0-9A-Fa-f-]{36})"', result.stdout)
@@ -74,50 +79,8 @@ def host_boot_identity() -> LocalHostBootIdentity | None:
 def recorded_boot_ended(host: str | None, boot: str | None) -> bool:
     current = host_boot_identity()
     return (
-        current is not None and boot is not None
-        and current.host == host and current.boot != boot
+        current is not None and boot is not None and current.host == host and current.boot != boot
     )
-
-
-def observe_unknown_owners(conn: sqlite3.Connection, turns: tuple[CapturedTurn, ...]) -> None:
-    """Bind an unknown legacy source to an observation, never to invented cleanup proof."""
-    legacy = []
-    for turn in turns:
-        row = conn.execute(
-            "SELECT state FROM conversation_child_custody WHERE conversation_id=?",
-            (turn.conversation_id,),
-        ).fetchone()
-        if row is None or row[0] in {"legacy_unknown", "launch_pending"}:
-            legacy.append(turn)
-    if not legacy:
-        return
-    current = host_boot_identity()
-    for turn in legacy:
-        conn.execute(
-            "INSERT OR IGNORE INTO conversation_child_custody "
-            "(conversation_id,generation,state,runtime_epoch,occurrence_id) "
-            "VALUES (?,?,'legacy_unknown',?,?)",
-            (turn.conversation_id, f"legacy:{turn.runtime_epoch}:{turn.turn_number}",
-             turn.runtime_epoch, turn.occurrence_id),
-        )
-        if current is not None:
-            conn.execute(
-                "UPDATE conversation_child_custody SET host=?,boot=? "
-                "WHERE conversation_id=? AND state IN ('legacy_unknown','launch_pending') "
-                "AND (host IS NULL OR boot IS NULL) AND runtime_epoch IS ? AND occurrence_id IS ?",
-                (current.host, current.boot, turn.conversation_id,
-                 turn.runtime_epoch, turn.occurrence_id),
-            )
-
-
-def legacy_recovery_detail(conn: sqlite3.Connection, conversation_id: str) -> str | None:
-    row = conn.execute(
-        "SELECT state,host,boot FROM conversation_child_custody WHERE conversation_id=?",
-        (conversation_id,),
-    ).fetchone()
-    if row is None or row[0] not in {"legacy_unknown", "launch_pending"}:
-        return None
-    return LEGACY_RECOVERY_DETAIL
 
 
 def process_identity(pid: int, unit: str | None = None) -> LocalChildIdentity | None:
@@ -130,8 +93,11 @@ def process_identity(pid: int, unit: str | None = None) -> LocalChildIdentity | 
             birth = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
         elif sys.platform == "darwin":
             result = subprocess.run(
-                ["/bin/ps", "-o", "lstart=", "-p", str(pid)], capture_output=True,
-                text=True, timeout=5, check=False,
+                ["/bin/ps", "-o", "lstart=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
                 env={**os.environ, "LC_ALL": "C", "TZ": "UTC"},
             )
             if result.returncode != 0 or not result.stdout.strip():
@@ -153,7 +119,14 @@ def child_is_absent(identity: LocalChildIdentity, host: str | None = None) -> bo
         return recorded_boot_ended(host, identity.boot)
     current = process_identity(identity.pid)
     if current is not None and current.birth == identity.birth:
-        return False
+        try:
+            ended = sys.platform == "linux" and Path(
+                f"/proc/{identity.pid}/stat"
+            ).read_text().rsplit(")", 1)[1].split()[0] in {"Z", "X"}
+        except (OSError, IndexError):
+            return False
+        if not ended:
+            return False
     if current is None:
         try:
             os.kill(identity.pid, 0)
@@ -165,27 +138,99 @@ def child_is_absent(identity: LocalChildIdentity, host: str | None = None) -> bo
             return False
     if identity.unit is None:
         return True
+    return _unit_is_retired(identity.unit)
+
+
+def _unit_is_retired(unit: str) -> bool:
+    if re.fullmatch(r"panels-worker-[0-9a-f]{32}\.service", unit) is None:
+        return False
     try:
         result = subprocess.run(
             [
                 "systemctl",
                 "--user",
                 "show",
-                identity.unit,
-                "--property=LoadState",
-                "--property=ActiveState",
+                unit,
+                "--property=LoadState,ActiveState,SubState,Result,MainPID,ControlGroup,Slice,KillMode",
             ],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=CONTROL_TIMEOUT_SECONDS,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
+        properties = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        if properties.get("LoadState") == "not-found":
+            return True
+        if result.returncode != 0 or "ControlGroup" not in properties:
+            return False
+        if properties.get("ActiveState") not in {"inactive", "failed"}:
+            return False
+        group = properties["ControlGroup"]
+        if group:
+            if Path(group).name != unit:
+                return False
+            events = Path("/sys/fs/cgroup") / group.lstrip("/") / "cgroup.events"
+            return events.exists() and "populated 0" in events.read_text().splitlines()
+        return (
+            properties.get("MainPID") == "0"
+            and properties.get("ActiveState") == "inactive"
+            and properties.get("SubState") == "dead"
+            and properties.get("Result") == "success"
+            and properties.get("KillMode") == "control-group"
+            and properties.get("Slice") == WORKER_SLICE
+        )
+    except (OSError, subprocess.SubprocessError):
         return False
-    properties = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
-    return properties.get("LoadState") == "not-found" or (
-        result.returncode == 0 and properties.get("ActiveState") in {"inactive", "failed"}
-    )
+
+
+def stop_recorded_child(identity: LocalChildIdentity, host: str | None) -> bool:
+    """Explicit Stop owns only the exact durable child or Worker service, never an inventory."""
+    current_host = host_boot_identity()
+    if current_host is None or current_host.host != host:
+        return False
+    if current_host.boot != identity.boot or child_is_absent(identity, host):
+        return True
+    try:
+        if identity.unit is not None:
+            if re.fullmatch(r"panels-worker-[0-9a-f]{32}\.service", identity.unit) is None:
+                return False
+            result = subprocess.run(
+                ["systemctl", "--user", "stop", identity.unit],
+                capture_output=True,
+                timeout=CONTROL_TIMEOUT_SECONDS,
+                check=False,
+            )
+            if result.returncode != 0:
+                return False
+            subprocess.run(
+                ["systemctl", "--user", "reset-failed", identity.unit],
+                capture_output=True,
+                timeout=CONTROL_TIMEOUT_SECONDS,
+                check=False,
+            )
+            return _unit_is_retired(identity.unit)
+        if sys.platform != "linux":
+            # A surviving macOS child needs an operator stop, then the ordinary
+            # recorded-identity check on app restart. Never guess a PID lifetime.
+            return False
+        descriptor = os.pidfd_open(identity.pid)
+        try:
+            if process_identity(identity.pid) != identity:
+                return child_is_absent(identity, host)
+            signal.pidfd_send_signal(descriptor, signal.SIGTERM)
+            deadline = time.monotonic() + ORPHAN_AGENT_TERMINATION_GRACE_SECONDS
+            while time.monotonic() < deadline:
+                if child_is_absent(identity, host):
+                    return True
+                time.sleep(0.05)
+            signal.pidfd_send_signal(descriptor, signal.SIGKILL)
+            return child_is_absent(identity, host)
+        finally:
+            os.close(descriptor)
+    except ProcessLookupError:
+        return child_is_absent(identity, host)
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def write_pending(conn: sqlite3.Connection, conversation_id: str, generation: str) -> None:
@@ -195,8 +240,12 @@ def write_pending(conn: sqlite3.Connection, conversation_id: str, generation: st
         "VALUES (?,?,'launch_pending',?,?) ON CONFLICT(conversation_id) DO UPDATE SET "
         "generation=excluded.generation,state=excluded.state,pid=NULL,birth=NULL,"
         "boot=excluded.boot,host=excluded.host,unit=NULL",
-        (conversation_id, generation,
-         None if current is None else current.host, None if current is None else current.boot),
+        (
+            conversation_id,
+            generation,
+            None if current is None else current.host,
+            None if current is None else current.boot,
+        ),
     )
     bind_current_turn(conn, conversation_id)
 
@@ -205,7 +254,8 @@ def bind_current_turn(conn: sqlite3.Connection, conversation_id: str) -> None:
     """Bind custody to the immutable occurrence before a new turn can reach a child."""
     turn = conn.execute(
         "SELECT occurrence_id,runtime_epoch FROM conversation_turn_occurrences "
-        "WHERE conversation_id=? ORDER BY turn_number DESC LIMIT 1", (conversation_id,),
+        "WHERE conversation_id=? ORDER BY turn_number DESC LIMIT 1",
+        (conversation_id,),
     ).fetchone()
     if turn is not None:
         occurrence, epoch = turn
@@ -215,12 +265,15 @@ def bind_current_turn(conn: sqlite3.Connection, conversation_id: str) -> None:
         occurrence, epoch = None, _runtime_epoch(conn)
     conn.execute(
         "UPDATE conversation_child_custody SET occurrence_id=?,runtime_epoch=? "
-        "WHERE conversation_id=?", (occurrence, epoch, conversation_id),
+        "WHERE conversation_id=?",
+        (occurrence, epoch, conversation_id),
     )
 
 
 def occurrence_matches(
-    conn: sqlite3.Connection, conversation_id: str, occurrence_id: str | None,
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    occurrence_id: str | None,
     runtime_epoch: str | None,
 ) -> bool:
     row = conn.execute(
@@ -234,10 +287,18 @@ def occurrence_matches(
 def write_started(
     conn: sqlite3.Connection, conversation_id: str, generation: str, identity: LocalChildIdentity
 ) -> None:
+    if (
+        identity.pid <= 0 or not identity.birth.strip() or not identity.boot.strip()
+        or (identity.unit is not None
+            and re.fullmatch(r"panels-worker-[0-9a-f]{32}\.service", identity.unit) is None)
+    ):
+        return
     conn.execute(
         "UPDATE conversation_child_custody SET state='started',pid=?,birth=?,boot=?,unit=? "
-        "WHERE conversation_id=? AND generation=? AND state='launch_pending'",
-        (identity.pid, identity.birth, identity.boot, identity.unit, conversation_id, generation),
+        "WHERE conversation_id=? AND generation=? AND state='launch_pending' "
+        "AND host IS NOT NULL AND host!='' AND boot=?",
+        (identity.pid, identity.birth, identity.boot, identity.unit,
+         conversation_id, generation, identity.boot),
     )
 
 
@@ -251,16 +312,23 @@ def write_retired(conn: sqlite3.Connection, conversation_id: str, generation: st
 
 def retirement_proven(conn: sqlite3.Connection, conversation_id: str) -> bool:
     row = conn.execute(
-        "SELECT state,pid,birth,boot,unit,host FROM conversation_child_custody "
-        "WHERE conversation_id=?",
+        "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
         (conversation_id,),
     ).fetchone()
-    if row is None:
-        return False
-    if row[0] == "retired":
+    return row is not None and retirement_row_proven(row)
+
+
+def retirement_row_proven(row: sqlite3.Row) -> bool:
+    """Inspect the exact snapshot that the caller will later compare under its writer lock."""
+    if row["state"] == "retired":
         return True
-    if row[0] in {"legacy_unknown", "launch_pending"}:
-        return recorded_boot_ended(row[5], row[3])
+    if row["state"] == "launch_pending":
+        return recorded_boot_ended(row["host"], row["boot"])
+    if (
+        not isinstance(row["pid"], int) or row["pid"] <= 0
+        or not row["birth"] or not row["boot"] or not row["host"]
+    ):
+        return False
     return child_is_absent(
-        LocalChildIdentity(int(row[1]), str(row[2]), str(row[3]), row[4]), row[5]
+        LocalChildIdentity(row["pid"], row["birth"], row["boot"], row["unit"]), row["host"]
     )

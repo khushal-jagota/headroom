@@ -547,6 +547,7 @@ class _ConversationState:
     last_ended_turn_was_automatic_compaction: bool = False
     child: BackendChild | None = None
     local_child_retirement_proven: bool = False
+    local_preparation_cancelled: bool = False
     child_is_quarantined: bool = False
     retained_child_reference: ChildReference | None = None
     delivery_uncertain: bool = False
@@ -771,7 +772,7 @@ class SqliteProcessConversationSystem:
                 if record.conversation_id not in self._conversations:
                     with nullcontext() if self._signal is None else self._signal.runtime_registry():
                         self._conversations[record.conversation_id] = _ConversationState(
-                            record=record
+                            record=record, local_child_retirement_proven=True
                         )
 
     async def send(
@@ -1000,20 +1001,6 @@ class SqliteProcessConversationSystem:
 
         self.start_admission.handoff(sender_message_id)
         try:
-            legacy_detail = await self._store.legacy_recovery_detail(conversation_id)
-            if legacy_detail is not None:
-                async with state.lock:
-                    await self._append_event(
-                        state,
-                        _refused_row(
-                            message,
-                            mode=mode,
-                            refusal_reason=PromptDeliveryRefusalReason.backend_did_not_start,
-                            refusal_detail=legacy_detail,
-                        ),
-                        recording_receipt=recording_receipt,
-                    )
-                return PromptDeliveryRefused(PromptDeliveryRefusalReason.backend_did_not_start)
             if mode is PromptDeliveryMode.steer:
                 fate = await self._steer(state=state, message=message)
             elif mode is PromptDeliveryMode.send_now:
@@ -1192,20 +1179,6 @@ class SqliteProcessConversationSystem:
                 recording_receipt=recording_receipt,
             )
 
-    async def repair_legacy_source(self, conversation_id: str) -> bool:
-        """The existing explicit restart owns cleanup of this exact old source."""
-        state = await self._conversation_state(conversation_id)
-        if state is None or conversation_id not in self._store.blocked_local_conversations:
-            return False
-        async with state.lock:
-            if state.child is not None or state.retained_child_reference is not None:
-                return False
-            if not await self._store.repair_legacy_source(conversation_id):
-                return False
-            state.child_is_quarantined = False
-            state.local_child_retirement_proven = True
-            return True
-
     async def retirement_is_confirmed(self, conversation_id: str) -> bool:
         """Require an actual cleanup receipt or proof that no source ever started."""
         state = await self._conversation_state(conversation_id)
@@ -1222,10 +1195,7 @@ class SqliteProcessConversationSystem:
                 and (
                     remote_receipt
                     or state.local_child_retirement_proven
-                    or (
-                        not state.has_delivered_prompt
-                        and conversation_id not in self._store.blocked_local_conversations
-                    )
+                    or state.local_preparation_cancelled
                 )
             )
 
@@ -1259,6 +1229,27 @@ class SqliteProcessConversationSystem:
         state.being_killed = True
         try:
             await self._kill_owned(state)
+            if conversation_id in self._store.blocked_local_conversations:
+                result = await self._store.settle_recorded_source(conversation_id)
+                if result is None:
+                    raise PlannerError(
+                        ErrorCode.retry_later,
+                        "The previous agent still owns this conversation. "
+                        "Stop it before resetting it.",
+                    )
+                state.local_child_retirement_proven = result == "retired"
+                state.local_preparation_cancelled = result == "undelivered"
+                state.child_is_quarantined = False
+                token = self._store.settled_recorded_turn(conversation_id)
+                if token is not None:
+                    await run_on_worker_thread(
+                        self.start_admission.reject, self._store._db_path, token
+                    )
+            if state.child_is_quarantined:
+                raise PlannerError(
+                    ErrorCode.retry_later,
+                    "The previous agent did not stop. Keep this conversation until it stops.",
+                )
         finally:
             try:
                 # A task the killed child reported on its way out is dropped too. Shutdown
@@ -2295,7 +2286,16 @@ class SqliteProcessConversationSystem:
             position = len(state.held_prompts) - 1
         else:
             state.held_prompts.insert(position, held)
-        self.start_admission.queue(message.sender_message_id)
+        self.start_admission.queue(
+            message.sender_message_id,
+            eligible=(
+                state.phase is _ConversationPhase.idle
+                and not state.child_is_quarantined
+                and not state.late_steers
+                and not any(m.delivery_uncertain for m in state.held_prompts)
+                and held in leading_run_that_can_share_a_turn(state.held_prompts)
+            ),
+        )
         self._publish_held_prompts_changed(state)
         return PromptDeliveryQueued(queue_position=position + 1)
 
@@ -3149,6 +3149,21 @@ class SqliteProcessConversationSystem:
                 await run_on_worker_thread(
                     self.start_admission.bind_child, self._store._db_path, turn_token, reference
                 )
+            if not child_stops_outside_lock(attempted_child):
+                sink = state.child_event_sink
+                if not isinstance(
+                    sink, _CoreBackendEventSink
+                ) or not await self._store.check_local_child_started(
+                    state.record.conversation_id, sink.generation, turn_token.turn_number
+                ):
+                    await self._discard_child(state, attempted_child)
+                    return _PromptDeliveryAttempt(
+                        PromptDeliveryRefusalReason.backend_did_not_start,
+                        record_refusal=True,
+                        refusal_detail=(
+                            "The agent did not record its process identity. No prompt was sent."
+                        ),
+                    )
             self.start_admission.bind_source(turn_token, attempted_child)
             if attempted_reservation is not None and attempted_reservation.token == turn_token:
                 attempted_reservation.prompt_write_attempted = True
@@ -3626,7 +3641,7 @@ class SqliteProcessConversationSystem:
                             for message in self._conversations[identity].held_prompts
                         )
                         if identity in self._conversations
-                        else 1
+                        else (1, 0)
                     ),
                 )
                 for identity in pending:
@@ -3677,7 +3692,8 @@ class SqliteProcessConversationSystem:
                 # A steer sent before these may still go first; its watch drains after.
                 or state.late_steers
             ):
-                self._deprioritize_held(state)
+                if state.phase is not _ConversationPhase.draining:
+                    self._deprioritize_held(state)
                 return
             self._set_phase(state, _ConversationPhase.draining)
 
@@ -4350,6 +4366,7 @@ class SqliteProcessConversationSystem:
         self._ensure_backend_event_pump(state)
         start_reservation = state.reserved_turn
         state.local_child_retirement_proven = False
+        state.local_preparation_cancelled = False
         if not child_stops_outside_lock(child):
             await self._store.record_child_custody(state.record.conversation_id, sink.generation)
         await child.start(
@@ -5626,6 +5643,12 @@ class SqliteProcessConversationSystem:
             if record is None:
                 return None
             state = _ConversationState(record=record)
+            state.local_child_retirement_proven = (
+                await self._store.recorded_source_retirement_proven(conversation_id)
+            )
+            if not await self._store.has_recorded_source(conversation_id):
+                # Pre-custody conversations retain the existing startup reconciliation.
+                state.local_preparation_cancelled = True
             self._restore_retained_run(state)
             if conversation_id in self._store.blocked_local_conversations:
                 self._quarantine_child(state)
@@ -5774,6 +5797,8 @@ class SqliteProcessConversationSystem:
 
     def _publish_held_prompts_changed(self, state: _ConversationState) -> None:
         """Tell open readers that the process-owned queue snapshot changed."""
+        if state.phase is _ConversationPhase.idle:
+            self._mark_eligible_held(state)
         if self._live_tail is None:
             return
         self._live_tail.publish_frame(state.record.conversation_id, HeldPromptsChangedFrame())
@@ -5820,6 +5845,20 @@ class SqliteProcessConversationSystem:
             (_ConversationPhase.idle if state.running_turn is None else _ConversationPhase.running),
         )
 
+    def _mark_eligible_held(self, state: _ConversationState) -> None:
+        if (
+            state.phase not in (_ConversationPhase.idle, _ConversationPhase.draining)
+            or state.child_is_quarantined
+            or not state.held_prompts
+            or state.late_steers
+            or any(message.delivery_uncertain for message in state.held_prompts)
+        ):
+            return
+        head = leading_run_that_can_share_a_turn(state.held_prompts)
+        for message in tuple(state.held_prompts)[len(head) :]:
+            self.start_admission.wait_if_unadmitted(message.sender_message_id)
+        self.start_admission.mark_eligible(message.sender_message_id for message in head)
+
     def _deprioritize_held(self, state: _ConversationState) -> None:
         for held in state.held_prompts:
             if not held.delivery_uncertain:
@@ -5831,8 +5870,13 @@ class SqliteProcessConversationSystem:
 
     def _set_phase(self, state: _ConversationState, phase: _ConversationPhase) -> None:
         state.phase = phase
-        if phase is not _ConversationPhase.idle or state.child_is_quarantined:
+        if (
+            phase not in (_ConversationPhase.idle, _ConversationPhase.draining)
+            or state.child_is_quarantined
+        ):
             self._deprioritize_held(state)
+        else:
+            self._mark_eligible_held(state)
         if phase in (_ConversationPhase.idle, _ConversationPhase.running):
             state.phase_settled.set()
         else:

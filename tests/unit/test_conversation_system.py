@@ -53,6 +53,7 @@ from planner.conversation.backends.contracts import (
     UserInputRequested,
     VendorSessionCursorRebound,
 )
+from planner.conversation.child_custody import host_boot_identity
 from planner.conversation.contracts import (
     AnswerFate,
     ComposerCatalogEntry,
@@ -92,6 +93,7 @@ from planner.conversation.live_tail import (
     ConversationLiveTail,
     ConversationTailSubscription,
 )
+from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.conversation.message_content import (
     MessageContent,
     message_content_text,
@@ -231,6 +233,12 @@ class _FakeBackendChild:
     ) -> None:
         if self._backend.session_load_fails:
             raise SessionLoadFailed(self._backend.conversation_id)
+        # This adapter has no OS process. Its impossible PID must never name pytest.
+        host = host_boot_identity()
+        assert host is not None
+        await self._sink.record_local_child_custody(  # type: ignore[attr-defined]
+            LocalChildIdentity(pid=2_147_483_647, birth="test-child", boot=host.boot)
+        )
         self._backend.session_starts += 1
         self._backend.live_children += 1
         self._backend.most_live_children_at_once = max(
@@ -422,13 +430,10 @@ class _Harness:
         idle_child_stop_after_seconds: float = 30 * 60,
         idle_child_sweep_interval_seconds: float = 5 * 60,
         factory_wrapper: Callable[[BackendChildFactory], BackendChildFactory] | None = None,
-        home_server_url: str | None = None,
     ) -> None:
         self.db_path = db_path
         self.clock = _FakeMonotonicClock() if clock is None else clock
-        self.store = ConversationStore(
-            str(db_path), integer_now=lambda: int(self.clock.now), home_server_url=home_server_url
-        )
+        self.store = ConversationStore(str(db_path), integer_now=lambda: int(self.clock.now))
         self.backends: dict[str, _FakeBackend] = {}
         self.spawned_conversation_ids: list[str] = []
         self.resolved_starts: list[ResolvedConversationStart] = []
@@ -3757,5 +3762,63 @@ def test_queued_automatic_cancel_after_bind_before_wire_releases_slot_and_priori
             PromptDeliveryStarted,
         )
         assert harness.backend("worker").written_texts() == ("home work",)
+
+    _run(exercise)
+
+
+def test_oldest_eligible_held_worker_precedes_new_readiness_starts(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Risk: new readiness starts continually consume the held Worker's next instant.
+
+    Existing queue coverage proves slot release, but does not compete at this boundary.
+    The existing core host proves rank acquisition before its retry scanner runs.
+    """
+    from planner.conversation.start_admission import AutomaticStartAdmission
+    from planner.conversation.start_admission.contracts import StartRequest
+
+    async def exercise() -> None:
+        now = [0.0]
+        gate = AutomaticStartAdmission(clock=lambda: now[0])
+        harness.system.start_admission = gate
+        monkeypatch.setattr(harness.system, "_defer_start_drain", lambda _state: None)
+        await _start(harness, "old")
+        await _start(harness, "blocker")
+        await harness.system.send("old", text_message_content("incumbent"), sender_label="owner")
+        assert gate.try_start(StartRequest("old-head", "worker", "home"))
+        assert isinstance(
+            await harness.system.send(
+                "old",
+                text_message_content("old work"),
+                sender_label="Panels",
+                sender_message_id="old-head",
+            ),
+            PromptDeliveryQueued,
+        )
+        assert gate.try_start(StartRequest("blocker", "worker", "home"))
+        await harness.system.send(
+            "blocker",
+            text_message_content("use this instant"),
+            sender_label="Panels",
+            sender_message_id="blocker",
+        )
+        await harness.complete_turn("old")
+        state = harness.system._conversations["old"]
+        for instant in (0.25, 0.75):
+            now[0] = instant
+            await harness.system._drain_held_prompts(state)
+            assert len(harness.backend("old").writes) == 1
+        now[0] = 1.0
+        # The old head owns its rank already, even before another retry visits it.
+        assert not gate.try_start(StartRequest("new-readiness", "worker", "home"))
+        await harness.system._drain_held_prompts(state)
+        assert [write.text for write in harness.backend("old").writes] == [
+            "incumbent",
+            "old work",
+        ]
+        await harness.agent_message("old", text_message_content("accepted"))
+        now[0] = 2.0
+        assert gate.try_start(StartRequest("new-readiness", "worker", "home"))
+        gate.finish("new-readiness")
 
     _run(exercise)

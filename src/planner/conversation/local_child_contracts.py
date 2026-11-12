@@ -1,6 +1,7 @@
 """Durable identity for one local backend child and its optional service unit."""
 
 from dataclasses import dataclass
+from typing import Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,9 +18,4 @@ class LocalHostBootIdentity:
     boot: str
 
 
-@dataclass(frozen=True, slots=True)
-class LegacySourceContext:
-    database_path: str
-    conversation_id: str
-    identity_variables: tuple[tuple[str, str], ...]
-    server_url: str | None
+type RecordedSourceSettlement = Literal["retired", "undelivered"]

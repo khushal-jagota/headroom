@@ -43,6 +43,7 @@ class _Reservation:
     phase: ReservationPhase = "eligible"
     permit: str | None = None
     managed: bool = False
+    eligible_order: int | None = None
 
 
 class AutomaticStartAdmission:
@@ -56,6 +57,7 @@ class AutomaticStartAdmission:
         self._lock = threading.RLock()
         self._next_start = float("-inf")
         self._last_permit: str | None = None
+        self._eligibility_sequence = 0
         self._requests: dict[str, _Reservation] = {}
         self._observed_turns: dict[str, int] = {}
         self._reachable: Callable[[str], bool] = lambda destination: destination == "home"
@@ -64,10 +66,27 @@ class AutomaticStartAdmission:
         with self._lock:
             self._reachable = reachable
 
+    def _mark_eligible(self, reservation: _Reservation) -> None:
+        if reservation.eligible_order is None and self._reachable(reservation.request.destination):
+            self._eligibility_sequence += 1
+            reservation.eligible_order = self._eligibility_sequence
+
     def _refresh(self) -> None:
         for reservation in self._requests.values():
-            if reservation.active and not self._reachable(reservation.request.destination):
+            if not self._reachable(reservation.request.destination):
                 reservation.active = False
+                reservation.eligible_order = None
+            elif reservation.phase == "eligible":
+                self._mark_eligible(reservation)
+
+    def mark_eligible(self, identities: Iterable[str | None]) -> None:
+        """A queue head receives its rank when it can run, not when a scanner finds it."""
+        with self._lock:
+            for identity in identities:
+                entry = self._requests.get(identity) if identity is not None else None
+                if entry is not None and entry.phase in ("queued", "eligible"):
+                    entry.phase = "eligible"
+                    self._mark_eligible(entry)
 
     def try_start(self, request: StartRequest) -> bool:
         with self._lock:
@@ -83,6 +102,9 @@ class AutomaticStartAdmission:
             return True
         if not all(self._reachable(r.request.destination) for r in entries):
             return False
+        for entry in entries:
+            if not entry.active:
+                self._mark_eligible(entry)
         permits = {r.permit for r in entries if r.active}
         if permits:
             permit = next(iter(permits))
@@ -97,11 +119,22 @@ class AutomaticStartAdmission:
                 if any(
                     r.request.work_class == "supervisor"
                     and not r.active
-                    and r.phase == "eligible"
+                    and r.eligible_order is not None
                     and self._reachable(r.request.destination)
                     for r in self._requests.values()
                 ):
                     return False
+            work_class = "supervisor" if supervisor else "worker"
+            order = min(r.eligible_order for r in entries if r.eligible_order is not None)
+            if any(
+                r.request.work_class == work_class
+                and not r.active
+                and r.eligible_order is not None
+                and r.eligible_order < order
+                and self._reachable(r.request.destination)
+                for r in self._requests.values()
+            ):
+                return False
             permit = entries[0].request.identity
             self._last_permit = permit
             self._next_start = self._clock() + AUTOMATIC_START_INTERVAL_SECONDS
@@ -117,13 +150,17 @@ class AutomaticStartAdmission:
             if identity is not None and (entry := self._requests.get(identity)) is not None:
                 entry.managed = True
 
-    def queue(self, identity: str | None) -> None:
+    def queue(self, identity: str | None, *, eligible: bool = False) -> None:
         with self._lock:
             if identity is None or (entry := self._requests.get(identity)) is None:
                 return
             permit = entry.permit
             refundable = entry.phase == "preparing"
-            entry.phase = "queued"
+            entry.phase = "eligible" if eligible else "queued"
+            if not eligible:
+                entry.eligible_order = None
+            else:
+                self._mark_eligible(entry)
             entry.active = False
             entry.permit = None
             entry.turn = None
@@ -164,22 +201,21 @@ class AutomaticStartAdmission:
     def begin_queued(self, identities: Iterable[str | None]) -> bool:
         with self._lock:
             keys = tuple(i for i in identities if i is not None and i in self._requests)
-            for identity in keys:
-                entry = self._requests[identity]
-                if entry.phase == "queued":
-                    entry.phase = "eligible"
+            self.mark_eligible(keys)
             return self._admit_group(keys)
 
-    def priority(self, identities: Iterable[str | None]) -> int:
+    def priority(self, identities: Iterable[str | None]) -> tuple[int, int]:
         with self._lock:
             entries = [
                 self._requests[i] for i in identities if i is not None and i in self._requests
             ]
-            return (
+            role = (
                 0
                 if not entries or any(r.request.work_class == "supervisor" for r in entries)
                 else 1
             )
+            orders = [r.eligible_order for r in entries if r.eligible_order is not None]
+            return role, min(orders) if orders else self._eligibility_sequence + 1
 
     def transfer(self, preparation: str, request: StartRequest) -> bool:
         """Attach the actual committed claim identity without a second pacing charge."""
@@ -450,6 +486,7 @@ class AutomaticStartAdmission:
                 entry.turn = None
                 entry.source = None
                 entry.phase = "failed"
+                entry.eligible_order = None
                 self._requests[entry.request.identity] = entry
 
     def failed_sender(self, db_path: str, identity: str | None) -> None:

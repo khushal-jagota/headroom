@@ -68,7 +68,7 @@ def capture_stopped_database(db_path: Path, deployment_id: str, capture_id: str)
 
 def read_unresolved_turns(
     conn: sqlite3.Connection, *, conversation_ids: tuple[str, ...] | None = None,
-    include_claimed_unknown: bool = False,
+    include_custody_unavailable: bool = False,
 ) -> tuple[CapturedTurn, ...]:
     """Turns still intent or running, outside unresolved Mac runs, optionally for some
     conversations only."""
@@ -93,15 +93,18 @@ def read_unresolved_turns(
         else f"AND conversation_id IN ({','.join('?' for _ in conversation_ids)}) "
     )
     eligible = "status IN ('intent','running')"
-    if include_claimed_unknown:
+    if include_custody_unavailable:
         eligible += (
-            " OR (status='unavailable' AND EXISTS(SELECT 1 FROM tickets t "
-            "WHERE t.conversation_id=conversation_lifecycle_facts.conversation_id "
-            "AND t.worker_step_claim IN ('out','errored') AND t.stage!='done') "
-            "AND turn_number=(SELECT max(latest.turn_number) "
-            "FROM conversation_lifecycle_facts latest "
-            "WHERE latest.conversation_id=conversation_lifecycle_facts.conversation_id "
-            "AND latest.kind='turn'))"
+            " OR (status='unavailable' AND EXISTS(SELECT 1 FROM conversation_child_custody c "
+            "JOIN conversation_turn_occurrences o ON o.conversation_id=c.conversation_id "
+            "AND o.occurrence_id=c.occurrence_id AND o.runtime_epoch=c.runtime_epoch "
+            "WHERE c.conversation_id=conversation_lifecycle_facts.conversation_id "
+            "AND o.turn_number=conversation_lifecycle_facts.turn_number) "
+            "AND NOT EXISTS(SELECT 1 FROM conversation_lifecycle_facts cancelled "
+            "WHERE cancelled.conversation_id=conversation_lifecycle_facts.conversation_id "
+            "AND cancelled.turn_number=conversation_lifecycle_facts.turn_number "
+            "AND cancelled.kind='attempt' AND cancelled.operation='cancel' "
+            "AND cancelled.status='accepted'))"
         )
     facts = conn.execute(
         "SELECT conversation_id,turn_number,status FROM conversation_lifecycle_facts "

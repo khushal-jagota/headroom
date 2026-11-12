@@ -83,9 +83,7 @@ After a deploy or ordinary crash interrupts a session, an eligible conversation 
 
 Missing evidence, a live child, or a failed inspection keeps the conversation fenced. An unresolved owner never counts as an idle workspace.
 
-A normal update needs no recovery action from the owner. Update When Finished waits for idle work. Update Now pauses work, stops the old application, and captures its interrupted turns. Headroom accepts that stop only through the matching installer record and current source inspection. It then sends one inspection prompt.
-
-If an upgrade crashes before stop proof exists, the old source stays fenced. The existing Restart Worker action inspects its saved identity. It stops an exact matching Worker service or process, checks that the source is gone, and then restarts the Worker. An incomplete inspection keeps the fence and explains the required repair. A full home reboot remains an optional source of stop proof, not a normal update requirement.
+A pre-upgrade in-flight turn without a child ownership record keeps the existing restart rule. An Update Now capture still supplies its recovery prompt. The upgrade adds no inspection, fence, or repair requirement for that legacy turn. Every child launched by this version records ownership before it starts, so subsequent interruptions use the exact-source proof above. Stop, New Conversation, and Restart Worker can stop that exact recorded source on Linux. If a preparation never reached a prompt, Stop cancels it without a claim that the process died. On macOS, an agent that survives an application crash can require an operator to stop its recorded process. An application restart then checks its retirement.
 
 A restart of the Mac's executor process interrupts its turns the same way: once the Mac has sent everything it held for a conversation, that turn ends interrupted and gets the same one recovery prompt, which resumes the session in a fresh agent. A message the old process never fetched goes to the fresh agent instead, and nothing is interrupted. A steer the Mac does not take in time, or that later proves it never reached its turn, waits in the queue as the next message.
 

@@ -333,7 +333,7 @@ def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
     conn.close()
 
     async def exercise() -> None:
-        for _boot in range(2):
+        for boot in range(2):
             current = _Harness(path)
             try:
                 assert current.spawned_conversation_ids == []
@@ -344,21 +344,21 @@ def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
                     assert accounts[0]["detail"] == "Rollback capture timed out"
                     entries = accounts[0]["entries"]
                 by_name = {entry["display_name"]: entry for entry in entries}
-                assert len(entries) == 2
+                assert len(entries) == 3
                 assert by_name["Reused legacy"]["recovery_state"] == "historical"
                 assert by_name["Candidate"]["conversation_id"] is None
                 assert by_name["Candidate"]["recovery_state"] == "historical"
-                # The current source still lacks child retirement proof. Its matching
-                # capture waits, while unrelated historical evidence remains visible.
-                assert "Interrupted worker" not in by_name
-                from planner.conversation.contracts import PromptDeliveryRefused
-
-                refusal = await current.system.send(
+                assert by_name["Interrupted worker"]["recovery_state"] == (
+                    "awaiting_action" if boot == 0 else "resumed"
+                )
+                await current.system.send(
                     "c", text_message_content("continue"), sender_label="owner"
                 )
-                assert isinstance(refusal, PromptDeliveryRefused)
-                assert current.spawned_conversation_ids == []
-                assert current.system.workspace_activity() == "unknown"
+                wire = current.backend("c").written_texts()[0]
+                assert ("[Panels deployment interruption context]" in wire) == (boot == 0)
+                # Finish this new turn so this historical-attribution case does not
+                # create an unrelated custody-backed interruption on its next boot.
+                await current.complete_turn("c")
             finally:
                 await current.system.shutdown()
 
@@ -1112,6 +1112,12 @@ def test_live_source_keeps_exact_claim_and_prevents_replacement(tmp_path: Path) 
                         "SELECT worker_step_claim,worker_step_claim_revision "
                         "FROM tickets WHERE id='t'"
                     ).fetchone()) == ("out", 7)
+                # The same ordinary Stop action can now end only this exact
+                # recorded source after the no-false-release assertion above.
+                await restarted.system.kill("c")
+                source.wait(timeout=5)
+                assert source.returncode is not None
+                assert await restarted.system.retirement_is_confirmed("c")
             finally:
                 await restarted.system.shutdown()
         finally:
@@ -1169,144 +1175,55 @@ def test_ordinary_home_crash_recovers_once_with_durable_identity(tmp_path: Path)
     _run(exercise)
 
 
-def test_legacy_upgrade_recovers_checked_stop_and_repairs_crash_source(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import json
-    import os
-    import subprocess
-    import sys
-    from dataclasses import replace
-    from datetime import UTC, datetime
-    from uuid import uuid4
-
-    from planner.conversation import legacy_sources
-    from planner.conversation.contracts import ConversationRoleMaterials
+def test_legacy_upgrade_keeps_existing_update_recovery(tmp_path: Path) -> None:
     from planner.conversation.deploy_interruptions.coordinator import run_automatic_recovery
 
-    root = tmp_path / "installation"
-    path = root / "data/planner.db"
-    path.parent.mkdir(parents=True)
-    (root / "app").mkdir()
+    path = tmp_path / "upgrade.db"
     conn = connect(str(path))
     create_schema(conn)
     conn.close()
     original = _Harness(path)
-    orphan_id = "legacy-orphan-" + uuid4().hex
-    server_url = "http://127.0.0.1:19876"
-    role = (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "orphan-ticket"))
-    # This case uses an uncontained test process. No real Worker service exists.
-    monkeypatch.setattr(legacy_sources, "_control", lambda *args: "")
 
     async def exercise() -> None:
         await _start(original, "idle")
-        await _start(
-            original, role_materials=ConversationRoleMaterials(
-                "Worker", (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "t")),
-            ),
-        )
+        await _start(original)
         _ticket(path)
-        await original.system.send("c", text_message_content("stopped work"), sender_label="owner")
-        await _start(
-            original, orphan_id,
-            role_materials=ConversationRoleMaterials("Worker", role),
-        )
-        await original.system.send(
-            orphan_id, text_message_content("interrupted work"), sender_label="owner"
-        )
+        await original.system.send("c", text_message_content("old work"), sender_label="owner")
+        captured = _capture(path, owner_id="t")
+        await original.system.shutdown()
+        # The previous schema contains the live turn and its Update Now capture,
+        # but no child custody records. Upgrade it without adding ownership proof.
         with connect(str(path)) as db:
+            db.execute("DROP TABLE conversation_child_custody")
+            db.execute("DROP TABLE worker_step_dispatch_intents")
+            db.execute("DROP TABLE automatic_start_bindings")
             db.execute(
-                "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,"
-                "field_values,created_at,updated_at,conversation_id,worker_step_claim,"
-                "worker_step_claim_revision,workflow_json) VALUES "
-                "('orphan-ticket','Worker','coding','hermes','needs_implementation',"
-                "'needs_implementation','{}',0,0,?,'out',7,?)",
-                (orphan_id, preset_workflow_json(db)),
+                "UPDATE alembic_version SET version_num='retire_executor_websocket_tables'"
             )
             db.commit()
-        captured = replace(
-            _capture(path, owner_id="t"), deployment_id="update-owned-stop", captured_at=3
-        )
-        await original.system.shutdown()
-        environment = {**os.environ, **dict(role), "PLAN_CONVERSATION_ID": orphan_id,
-                       "PLAN_SERVER_URL": server_url}
-        # Hermes does not inherit PLAN_DB_PATH. The exact injected home URL scopes it.
-        environment.pop("PLAN_DB_PATH", None)
-        source = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(60)"], env=environment,
-        )
-        # Limit discovery to this case's owned child. Model its uncontained launcher
-        # without inspecting or controlling the real Worker's surrounding service.
-        monkeypatch.setattr(
-            legacy_sources, "_process_directories", lambda: (Path("/proc") / str(source.pid),)
-        )
-        monkeypatch.setattr(legacy_sources, "_process_unit", lambda path: None)
+        upgrade = connect(str(path))
+        create_schema(upgrade)
+        upgrade.close()
+        write_manifest(path, captured)
+        restarted = _Harness(path)
         try:
+            assert not restarted.store.blocked_local_conversations
             with connect(str(path)) as db:
-                db.execute("DROP TABLE conversation_child_custody")
-                db.execute("DROP TABLE worker_step_dispatch_intents")
-                db.execute("DROP TABLE automatic_start_bindings")
-                db.execute(
-                    "UPDATE alembic_version SET version_num='retire_executor_websocket_tables'"
-                )
-                # An old startup can already have settled the abandoned Worker turn.
-                db.execute(
-                    "UPDATE conversation_lifecycle_facts SET status='unavailable' "
-                    "WHERE conversation_id=? AND kind='turn'", (orphan_id,),
-                )
-                db.commit()
-            upgrade = connect(str(path))
-            create_schema(upgrade)
-            upgrade.close()
-            write_manifest(path, captured)
-            (root / "app/manifest.json").write_text(json.dumps({"app_sha": "b" * 40}))
-            steps = {
-                key: datetime.fromtimestamp(second, UTC).isoformat()
-                for key, second in (("work_paused", 0), ("installing", 1),
-                                    ("service_stopped", 2), ("interruptions_captured", 3),
-                                    ("app_swapped", 4))
-            }
-            (path.parent / "update-attempt.json").write_text(json.dumps({
-                "attempt_id": "update-owned-stop", "from_sha": "a" * 40,
-                "to_sha": "b" * 40, "state": "installing", "steps": steps,
-            }))
-            restarted = _Harness(path, home_server_url=server_url)
-            try:
-                assert "idle" not in restarted.store.blocked_local_conversations
-                assert "c" not in restarted.store.blocked_local_conversations
-                assert orphan_id in restarted.store.blocked_local_conversations
-                with connect(str(path)) as db:
-                    assert tuple(db.execute(
-                        "SELECT worker_step_claim,worker_step_claim_revision "
-                        "FROM tickets WHERE id='orphan-ticket'"
-                    ).fetchone()) == ("out", 7)
-                await run_automatic_recovery(restarted.system, restarted.store)
-                assert len(restarted.backend("c").writes) == 1
-                await run_automatic_recovery(restarted.system, restarted.store)
-                assert len(restarted.backend("c").writes) == 1
-                assert source.poll() is None
-
-                async def next_step() -> WorkerStepStartResult:
-                    return WorkerStepStartResult(started=False)
-
-                db = connect(str(path))
-                try:
-                    await restart_worker(
-                        restarted.system, db, OWNER_PRINCIPAL, "orphan-ticket",
-                        start_worker_step=next_step, now=lambda: 1001,
-                    )
-                finally:
-                    db.close()
-                source.wait(timeout=5)
-                assert source.returncode is not None
-                assert orphan_id not in restarted.store.blocked_local_conversations
-                await restarted.complete_turn("c")
-                assert restarted.system.workspace_activity() == "idle"
-            finally:
-                await restarted.system.shutdown()
+                assert db.execute(
+                    "SELECT count(*) FROM conversation_child_custody"
+                ).fetchone()[0] == 0
+                assert db.execute(
+                    "SELECT status FROM conversation_lifecycle_facts "
+                    "WHERE conversation_id='c' AND kind='turn'"
+                ).fetchone()[0] == "unavailable"
+            await run_automatic_recovery(restarted.system, restarted.store)
+            writes = restarted.backend("c").written_texts()
+            assert len(writes) == 1
+            assert "Inspect the interrupted work" in writes[0]
+            assert restarted.backend("idle").writes == []
+            await run_automatic_recovery(restarted.system, restarted.store)
+            assert len(restarted.backend("c").writes) == 1
         finally:
-            if source.poll() is None:
-                source.terminate()
-                source.wait(timeout=5)
+            await restarted.system.shutdown()
 
     _run(exercise)
