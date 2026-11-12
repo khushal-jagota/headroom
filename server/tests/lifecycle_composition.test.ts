@@ -360,7 +360,9 @@ test('startServer reconciles before core construction and a route collision star
   });
   const scratch_start = vi.fn();
   vi.spyOn(scratch, 'create_ticket_scratch_runtime').mockReturnValue({
-    start: scratch_start, close() {}, settled: async () => {},
+    start: scratch_start,
+    close() {},
+    settled: async () => {},
   });
   const producers = [
     vi.spyOn(PreviewService.prototype, 'start'),
@@ -373,7 +375,9 @@ test('startServer reconciles before core construction and a route collision star
     vi.spyOn(SqliteProcessConversationSystem.prototype, 'start_idle_child_janitor'),
   ];
   const background = vi.fn<BackgroundServiceFactory>(() => ({
-    start() { throw new Error('A producer started before readiness'); },
+    start() {
+      throw new Error('A producer started before readiness');
+    },
     close() {},
     settled: async () => {},
   }));
@@ -395,9 +399,14 @@ test('startServer reconciles before core construction and a route collision star
         createEnvironments: create_test_environment_runtime,
         notificationDelivery: background,
         stallChecker: background,
-        testAreas: [{ prefix: '', routes: async (app) => {
-          app.get('/api/health', async () => ({ collision: true }));
-        } }],
+        testAreas: [
+          {
+            prefix: '',
+            routes: async (app) => {
+              app.get('/api/health', async () => ({ collision: true }));
+            },
+          },
+        ],
       }),
     ).rejects.toThrow(/already declared/);
     for (const producer of producers) expect(producer).not.toHaveBeenCalled();

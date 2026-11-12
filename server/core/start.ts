@@ -188,10 +188,14 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
           return Promise.all([actual(), observed]);
         });
       };
-      producer('recorded usage', () => {
-        stopped_usage = recorded_usage;
-        return recorded_usage?.stop?.(stop);
-      }, () => stopped_usage?.finish_operations() ?? Promise.resolve());
+      producer(
+        'recorded usage',
+        () => {
+          stopped_usage = recorded_usage;
+          return recorded_usage?.stop?.(stop);
+        },
+        () => stopped_usage?.finish_operations() ?? Promise.resolve(),
+      );
       producer(
         'background services',
         () => background?.close(stop),
@@ -268,49 +272,82 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     if (core && core !== stopped_core) {
       stopped_core = core;
       try {
-        actuals.push(Promise.resolve(core.shutdown(stop_options!)).catch((error: unknown) => {
-          if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
-        }));
-      } catch (error) { actuals.push(Promise.reject(error)); }
-      try { actuals.push(core.settled()); }
-      catch (error) { actuals.push(Promise.reject(error)); }
+        actuals.push(
+          Promise.resolve(core.shutdown(stop_options!)).catch((error: unknown) => {
+            if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+          }),
+        );
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
+      try {
+        actuals.push(core.settled());
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
     }
     if (backendServices && backendServices !== stopped_backend) {
       stopped_backend = backendServices;
       try {
-        actuals.push(Promise.resolve(backendServices.shutdown
-          ? backendServices.shutdown()
-          : backendServices.codex_sign_in?.shutdown()));
-      } catch (error) { actuals.push(Promise.reject(error)); }
+        actuals.push(
+          Promise.resolve(
+            backendServices.shutdown
+              ? backendServices.shutdown()
+              : backendServices.codex_sign_in?.shutdown(),
+          ),
+        );
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
     }
     if (recorded_usage && recorded_usage !== stopped_usage) {
       stopped_usage = recorded_usage;
       try {
-        actuals.push(Promise.resolve(recorded_usage.stop?.(stop_options!)).catch((error: unknown) => {
-          if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
-        }));
-      } catch (error) { actuals.push(Promise.reject(error)); }
-      try { actuals.push(recorded_usage.finish_operations()); }
-      catch (error) { actuals.push(Promise.reject(error)); }
+        actuals.push(
+          Promise.resolve(recorded_usage.stop?.(stop_options!)).catch((error: unknown) => {
+            if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+          }),
+        );
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
+      try {
+        actuals.push(recorded_usage.finish_operations());
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
     }
     if (environments) {
       try {
-        actuals.push(Promise.resolve(environments.close(stop_options!)).catch((error: unknown) => {
-          if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
-        }));
-      } catch (error) { actuals.push(Promise.reject(error)); }
-      try { actuals.push(environments.settled()); }
-      catch (error) { actuals.push(Promise.reject(error)); }
+        actuals.push(
+          Promise.resolve(environments.close(stop_options!)).catch((error: unknown) => {
+            if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+          }),
+        );
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
+      try {
+        actuals.push(environments.settled());
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
     }
     if (app) {
-      try { actuals.push(app.close()); }
-      catch (error) { actuals.push(Promise.reject(error)); }
+      try {
+        actuals.push(app.close());
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
     }
     const results = await Promise.allSettled(actuals);
     const failures = results.filter((result) => result.status === 'rejected');
     if (failures.length) {
       setup_cleanup_failed = true;
-      setup_cleanup_failure = new AggregateError(failures.map((failure) => failure.reason), 'Late startup cleanup failed');
+      setup_cleanup_failure = new AggregateError(
+        failures.map((failure) => failure.reason),
+        'Late startup cleanup failed',
+      );
       throw setup_cleanup_failure;
     }
     throw new Error('Server closed during startup');
@@ -457,7 +494,9 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       stallChecker: options.stallChecker,
     });
     app = await createApp(config, {
-      own_app: (created) => { app = created; },
+      own_app: (created) => {
+        app = created;
+      },
       request_lifetime,
       database,
       changes,
@@ -573,7 +612,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   const setting_up = Promise.resolve().then(setup);
   void setting_up.then(
     () => settle_setup(),
-    () => setup_cleanup_failed ? fail_setup(setup_cleanup_failure) : settle_setup(),
+    () => (setup_cleanup_failed ? fail_setup(setup_cleanup_failure) : settle_setup()),
   );
   try {
     return started(await setting_up);

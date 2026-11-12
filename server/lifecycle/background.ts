@@ -108,19 +108,35 @@ export function compose_background_services(
           if (service !== closed_service) {
             closed_service = service;
             let resolve!: () => void, reject!: (error: unknown) => void;
-            late_cleanup = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+            late_cleanup = new Promise<void>((yes, no) => {
+              resolve = yes;
+              reject = no;
+            });
             void late_cleanup.catch(() => {});
             const actuals: Promise<unknown>[] = [];
             try {
-              actuals.push(Promise.resolve(service.close(stopping_options!)).catch((error: unknown) => {
-                if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
-              }));
-            } catch (error) { actuals.push(Promise.reject(error)); }
-            try { actuals.push(service.settled()); }
-            catch (error) { actuals.push(Promise.reject(error)); }
+              actuals.push(
+                Promise.resolve(service.close(stopping_options!)).catch((error: unknown) => {
+                  if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+                }),
+              );
+            } catch (error) {
+              actuals.push(Promise.reject(error));
+            }
+            try {
+              actuals.push(service.settled());
+            } catch (error) {
+              actuals.push(Promise.reject(error));
+            }
             void Promise.allSettled(actuals).then((results) => {
               const failures = results.filter((result) => result.status === 'rejected');
-              if (failures.length) reject(new AggregateError(failures.map((failure) => failure.reason), 'Late background cleanup failed'));
+              if (failures.length)
+                reject(
+                  new AggregateError(
+                    failures.map((failure) => failure.reason),
+                    'Late background cleanup failed',
+                  ),
+                );
               else resolve();
             });
           }
