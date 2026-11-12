@@ -1,3 +1,4 @@
+import { routes as previews } from './previews/routes.ts';
 import { routes as files } from './files/routes.ts';
 import { routes as credentials } from './credentials/routes.ts';
 import { ManagerWakeLoop } from './manager_wakes/runtime.ts';
@@ -61,6 +62,7 @@ export const closeAreas = async (): Promise<void> => {
 
 /** Add one area registration here. Core has no area identity branches. */
 export const areas: readonly Area[] = [
+  { prefix: '', routes: previews },
   { prefix: '', routes: files },
   { prefix: '/api', routes: credentials },
   { prefix: '/api', routes: managers },
