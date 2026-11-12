@@ -63,3 +63,29 @@ def test_scoped_rule_does_not_cross_payload_boundaries(tmp_path: Path) -> None:
     first = {"body": {"tickets": [{"field_values": {"record_sha256": "first"}}]}}
     second = {"body": {"tickets": [{"field_values": {"record_sha256": "second"}}]}}
     assert normalizer.normalize(first) != normalizer.normalize(second)
+
+
+def test_known_parent_rows_ignore_physical_insertion_order(tmp_path: Path) -> None:
+    import sqlite3
+
+    from tests.compare.runner import rows
+
+    conversation_ids = ["conv_" + "a" * 32, "conv_" + "b" * 32]
+    snapshots = []
+    for index, order in enumerate(((0, 1), (1, 0))):
+        path = tmp_path / f"{index}.db"
+        with sqlite3.connect(path) as conn:
+            conn.execute(
+                "CREATE TABLE conversation_turn_occurrences ("
+                "conversation_id TEXT, turn_number INTEGER, occurrence_id TEXT, "
+                "runtime_epoch TEXT, PRIMARY KEY(conversation_id, turn_number))"
+            )
+            for item in order:
+                conn.execute(
+                    "INSERT INTO conversation_turn_occurrences VALUES (?, 2, ?, ?)",
+                    (conversation_ids[item], f"{index * 2 + item + 1:032x}", "e" * 32),
+                )
+        normalizer = Normalizer({}, tmp_path)
+        normalizer.normalize(conversation_ids)
+        snapshots.append(rows(path, normalizer))
+    assert snapshots[0] == snapshots[1]
