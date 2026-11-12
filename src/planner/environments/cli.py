@@ -23,10 +23,7 @@ from planner.environments.contracts import (
     FixedEnvironmentPort,
     ResolvedEnvironmentInstance,
 )
-from planner.environments.hermes_home import (
-    provision_planner_home_skills,
-    resolve_hermes_python,
-)
+from planner.environments.hermes_home import resolve_hermes_python
 from planner.environments.logic.credentials import parse_environment_file
 from planner.environments.logic.launch_env import (
     build_environment_run_env,
@@ -50,7 +47,7 @@ from planner.environments.vps_status import (
     collect_cleanup_inventory,
     collect_vps_status,
 )
-from planner.skill_sources import provision_native_backend_skills
+from planner.skill_sources import provision_account_skills
 
 ExecFn = Callable[[str, list[str], Mapping[str, str]], object]
 ResolveInstanceFn = Callable[..., ResolvedEnvironmentInstance]
@@ -237,14 +234,12 @@ def provision_skills(
 ) -> None:
     """Reconcile Panels skills into each production agent home."""
     try:
-        provision_planner_home_skills(
-            hermes_home,
-            configured_database_parent=database_parent,
-        )
-        provision_native_backend_skills(codex_home, database_parent)
-        provision_native_backend_skills(claude_home, database_parent)
+        warning = provision_account_skills(database_parent, (hermes_home, codex_home, claude_home))
     except (OSError, RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
+    if warning is not None:
+        click.echo(warning, err=True)
+        return
     click.echo("provisioned Panels skills for Hermes, Codex, and Claude")
 
 
