@@ -8,8 +8,10 @@ import {
   composeAreaLoops,
 } from '../areas.ts';
 import { createApp } from '../app.ts';
-import { loadConfig } from './config.ts';
+import { loadConfig, SHUTDOWN_GRACE_SECONDS } from './config.ts';
 import { buildClock } from './clock.ts';
+import { prepare_background_loops, type BackgroundLoops } from './loops.ts';
+import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import type { Clock } from './clock.ts';
 import type { Config } from './config.ts';
 import { ChangeSignal } from './changes/index.ts';
@@ -41,6 +43,10 @@ export type BackgroundServiceFactory = (
 
 /** Shared process lifecycle for the normal entry point and comparison host. */
 export interface ServerOptions {
+  /** Off until Unit 21 explicitly composes the production lifecycle. */
+  enableWorkerReadiness?: boolean;
+  /** Unit 21 supplies UpdateService.poll. True suppresses this poll. */
+  beforeWorkerReadinessPoll?: () => boolean;
   testAreas?: readonly Area[];
   /** Factories execute only after this process owns the database. */
   ownedTestAreas?: readonly ((context: OwnedAreaContext) => Area)[];
@@ -59,6 +65,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
   let database: ReturnType<typeof createDatabase> | undefined;
   let ownsDatabase = true;
   let areaLoops: ReturnType<typeof composeAreaLoops> | undefined;
+  let loops: BackgroundLoops | undefined;
   let signalAuthority: SignalPublicationAuthority | undefined;
   const background: ComposedBackgroundService[] = [];
   const closeBackground = async () => {
@@ -96,6 +103,21 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     };
     const ownedTestAreas = (options.ownedTestAreas ?? []).map((factory) => factory(ownedContext));
     areaLoops = composeAreaLoops(ownedContext, options.areaLoops);
+    loops = prepare_background_loops({
+      enable_worker_readiness: options.enableWorkerReadiness ?? false,
+      test_mode: config.test_mode,
+      dispatch_enabled: config.dispatch_enabled,
+      dispatcher_owned: dispatcher !== null,
+      before_poll: options.beforeWorkerReadinessPoll,
+      worker: options.conversationSystem
+        ? {
+            connect_database: () => database!,
+            conversation_system: options.conversationSystem,
+            worker_type_registry: configured_worker_type_registry(),
+            now: () => clock.nowUnix(),
+          }
+        : null,
+    });
     const app = await createApp(config, {
       database,
       changes,
@@ -123,7 +145,9 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     const close = () => {
       if (closing) return closing;
       signalAuthority?.invalidate('shutdown');
-      return (closing = Promise.resolve(areaLoops?.stop())
+      const deadline = performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
+      return (closing = Promise.resolve(areaLoops?.stop({ deadline }))
+        .finally(() => loops?.stop({ deadline }))
         .finally(() => closeBackground())
         .finally(() => closeAreas())
         .finally(() => app.close())
@@ -132,6 +156,10 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
           dispatcher?.close();
           ownsDatabase = false;
           ownership.close();
+        })
+        .catch((error) => {
+          closing = undefined;
+          throw error;
         }));
     };
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
@@ -142,6 +170,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
         });
       });
     }
+    loops.start(config.tick_seconds, changes);
     const inherited = process.env.PLAN_SERVER_LISTENER_FD;
     if (inherited !== undefined) {
       const fd = Number(inherited);
@@ -152,10 +181,16 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     }
   } catch (error) {
     signalAuthority?.invalidate('shutdown');
+    const deadline = performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
     try {
-      await areaLoops?.stop();
+      await areaLoops?.stop({ deadline });
     } catch (cleanupError) {
       console.error('area loop cleanup failed', cleanupError);
+    }
+    try {
+      await loops?.stop({ deadline });
+    } catch (cleanupError) {
+      console.error('Worker loop cleanup failed', cleanupError);
     }
     try {
       await closeBackground();

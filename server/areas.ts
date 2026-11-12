@@ -97,9 +97,9 @@ export function composeAreaLoops(context: OwnedAreaContext, options: AreaLoopOpt
     wakes.start(context.config.tick_seconds);
   }
   return {
-    async stop(): Promise<void> {
+    async stop(options: { deadline?: number } = {}): Promise<void> {
       unsubscribe?.();
-      await wakes?.stop();
+      await wakes?.stop(options);
     },
   };
 }

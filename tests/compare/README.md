@@ -266,3 +266,9 @@ integration proofs.
 The fixed oracle still proves its full ten-case vocabulary locally. Its committed
 generator and the record README describe regeneration after a staging merge. The
 unreachable rows above do not receive a false claim of new HTTP coverage.
+
+## Direct checks
+
+Add a `test_*.py` driver under `tests/compare/direct/` that compares current Python with an export-only TS companion under `server/`.
+Build synthetic state, copy it before each side writes, compare answers and rows, and save evidence through `--compare-report-dir`.
+The comparison workflow runs this directory once on both Node versions, before list selection, so every staging merge regenerates Python answers.
