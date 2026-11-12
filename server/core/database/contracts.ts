@@ -14,6 +14,7 @@ export interface TransactionSql extends ReadSql {
 }
 export type CommitStep = (tx: TransactionSql) => void;
 export interface WriteOptions {
+  busyTimeoutMs?: number;
   changeSignal?: 'emit' | 'silent';
 }
 export interface WriteDoor {

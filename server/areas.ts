@@ -1,3 +1,4 @@
+import { routes as previews } from './previews/routes.ts';
 import { routes as files } from './files/routes.ts';
 import { routes as credentials } from './credentials/routes.ts';
 import { ManagerWakeLoop } from './manager_wakes/runtime.ts';
@@ -93,6 +94,7 @@ export function createAreasRuntime() {
     },
     get areas(): readonly Area[] {
       return [
+        { prefix: '', routes: previews },
         { prefix: '', routes: files },
         { prefix: '/api', routes: credentials },
         { prefix: '/api', routes: managers },

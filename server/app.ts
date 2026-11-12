@@ -55,6 +55,7 @@ export async function createApp(config: Config, services: AppServices): Promise<
       clock,
       conversationSystem: services.conversationSystem,
       signalAuthority: services.signalAuthority,
+      changes,
     });
   return app;
 }
