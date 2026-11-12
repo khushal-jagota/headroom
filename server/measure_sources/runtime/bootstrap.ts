@@ -58,8 +58,8 @@ function freeze(value: unknown): unknown {
 }
 class ScriptFailure extends Error {
   detail: RunFailure;
-  constructor(detail: RunFailure) {
-    super(detail.code);
+  constructor(detail: RunFailure, message: string = detail.code) {
+    super(message);
     this.detail = detail;
   }
 }
@@ -138,6 +138,10 @@ async function execute(config: Record<string, unknown>): Promise<void> {
       activeRequests++;
       try {
         const headers = new Headers(options.headers);
+        const public_headers = new Set(['accept', 'content-type']);
+        const credential_headers =
+          options.credential_ref !== undefined ||
+          [...headers.keys()].some((name) => !public_headers.has(name));
         if (options.credential_ref !== undefined) {
           const reference =
             typeof options.credential_ref === 'string'
@@ -161,27 +165,71 @@ async function execute(config: Record<string, unknown>): Promise<void> {
         }
         requests++;
         let response: Response;
+        const controller = new AbortController();
+        // HTTPX bounds idle network operations, rather than the entire response.
+        const network_read = async <T>(read: () => Promise<T>): Promise<T> => {
+          const timer = setTimeout(() => controller.abort(), limits.wall_seconds * 1000);
+          try {
+            return await read();
+          } finally {
+            clearTimeout(timer);
+          }
+        };
         try {
           if (options.json_body !== undefined) headers.set('Content-Type', 'application/json');
-          response = await fetch(url, {
-            method: options.method ?? 'GET',
-            headers,
-            body:
-              options.json_body === undefined
-                ? undefined
-                : stringify_python_json(options.json_body),
-            redirect: 'follow',
-          });
-        } catch {
+          let destination = new URL(url);
+          let method = (options.method ?? 'GET').toUpperCase();
+          let body =
+            options.json_body === undefined ? undefined : stringify_python_json(options.json_body);
+          for (let redirects = 0; ; redirects++) {
+            response = await network_read(() =>
+              fetch(destination, {
+                method,
+                headers,
+                body,
+                redirect: 'manual',
+                signal: controller.signal,
+              }),
+            );
+            const location = response.headers.get('location');
+            if (![301, 302, 303, 307, 308].includes(response.status) || location === null) break;
+            await response.body?.cancel();
+            if (redirects === 20) throw new Error('Too many redirects');
+            const next = new URL(location, destination);
+            if (next.origin !== destination.origin && credential_headers) {
+              throw new ScriptFailure(
+                failure('transport_failure'),
+                `Credential redirect refused for origin ${next.origin}`,
+              );
+            }
+            if (
+              (response.status === 303 && method !== 'HEAD') ||
+              (response.status === 302 && method !== 'HEAD') ||
+              (response.status === 301 && method === 'POST')
+            ) {
+              method = 'GET';
+              body = undefined;
+              headers.delete('content-length');
+              headers.delete('transfer-encoding');
+            }
+            headers.delete('cookie');
+            headers.delete('host');
+            destination = next;
+          }
+        } catch (error) {
+          controller.abort();
+          if (error instanceof ScriptFailure) throw error;
           throw new ScriptFailure(failure('transport_failure'));
         }
         const chunks: Uint8Array[] = [];
+        const reader = response.body?.getReader();
         try {
-          if (response.body)
-            for await (const chunk of response.body) {
+          if (reader)
+            for (;;) {
+              const { value: chunk, done } = await network_read(() => reader.read());
+              if (done) break;
               responseBytes += chunk.byteLength;
               if (responseBytes > limits.response_bytes) {
-                await response.body.cancel().catch(() => {});
                 throw new ScriptFailure(failure('budget_exhausted', { budget: 'response_bytes' }));
               }
               chunks.push(chunk);
@@ -189,6 +237,10 @@ async function execute(config: Record<string, unknown>): Promise<void> {
         } catch (error) {
           if (error instanceof ScriptFailure) throw error;
           throw new ScriptFailure(failure('transport_failure'));
+        } finally {
+          controller.abort();
+          await reader?.cancel().catch(() => {});
+          reader?.releaseLock();
         }
         const body = Buffer.concat(chunks).toString('utf8');
         return {

@@ -22,7 +22,10 @@ export function runtime_guidance(limits: RuntimeLimits = DEFAULT_LIMITS) {
         notes:
           'Uses a named local credential when supplied. The parent resolves the credential through a private channel. ' +
           'The response supplies status, headers, raise_for_status(), await json(), and await text(). ' +
-          'HTTP status does not raise automatically. Requests follow redirects and add no automatic retries. ' +
+          'HTTP status does not raise automatically. Requests follow at most 20 redirects and add no automatic retries. ' +
+          'With credential_ref or caller headers other than Accept and Content-Type, redirects must retain the scheme, host, and port. ' +
+          'A different origin causes transport_failure before the next request. The error message names only the refused origin. ' +
+          'Node fetch sets Host from the URL and ignores a caller-supplied Host, which Python HTTPX can retain. ' +
           'method, json_body, and headers support provider requests and pagination.',
       },
       record: {

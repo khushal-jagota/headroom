@@ -1,3 +1,4 @@
+import { testModeFromEnvironment } from './config.ts';
 /** Test processes must never open ambient application data. */
 import { lstatSync, readlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -21,7 +22,7 @@ export function register_test_root(root: string): () => void {
 
 /** Return the exact permitted path to open, without following outside symlinks. */
 export function assert_test_database_path(path: string): string {
-  if (process.env.VITEST !== 'true' && process.env.PLAN_TEST_MODE !== '1') return path;
+  if (process.env.VITEST !== 'true' && !testModeFromEnvironment()) return path;
   const roots = [resolve(tmpdir()), ...testRoots];
   const canonicalRoots = roots.map((root) => realpathSync(root));
   const refuse = (): never => {
