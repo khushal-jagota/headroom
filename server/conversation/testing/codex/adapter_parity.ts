@@ -1,7 +1,7 @@
 /** Shared scripted Codex child behind the actual TS conversation core and records. */
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createDatabase } from '../../../core/database/index.ts';
 import { ConversationStore } from '../../record/data/store.ts';
 import { SqliteProcessConversationSystem } from '../../system.ts';
@@ -182,12 +182,12 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
         }),
       }),
     );
-    await wait(
-      () => readFileSync(spec.trace, 'utf8').includes('app/installed'),
-      'initial catalog reads',
-    );
     let count = 0;
     const plain = await send('plain');
+    await wait(
+      () => existsSync(spec.trace) && readFileSync(spec.trace, 'utf8').includes('app/installed'),
+      'initial catalog reads',
+    );
     await ended(++count);
     await capture('plain', [plain]);
     const steerBase = await send('steer-base');
@@ -205,7 +205,9 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
     const permission = await send('permission');
     await wait(() => core.has_pending_permission_ask(id), 'permission ask');
     const ask = [...(await core.pending_permission_ask_ids(id))][0]!;
-    const permissionAnswer = await core.answer_permission_ask(id, ask, 'approve_once');
+    const permissionAnswer = await core.answer_permission_ask(id, ask, 'accept');
+    if (permissionAnswer !== 'applied')
+      throw new Error(`Permission answer refused: ${permissionAnswer}`);
     await ended(++count);
     await capture('permission', [permission, { answer_fate: permissionAnswer }]);
     const question = await send('question');
@@ -214,6 +216,7 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
     const questionAnswer = await core.answer_user_input(id, questionId, [
       new UserInputAnswer({ question_id: 'color', answers: ['Blue'] }),
     ]);
+    if (questionAnswer !== 'applied') throw new Error(`Question answer refused: ${questionAnswer}`);
     await ended(++count);
     await capture('question', [question, { answer_fate: questionAnswer }]);
     const interrupt = await send('interrupt-base');

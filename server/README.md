@@ -190,8 +190,8 @@ this helper's current contract.
 
 `conversation/backends/codex_app_server/` supplies the small consumed wire contracts,
 JSONL client, saved-login reader, inherited child environment, and bounded process-group
-ownership. This is the first part of the Codex port. It does not yet supply a configured
-Codex backend child or the model/sign-in/usage provider bindings.
+ownership. `adapter.ts` exports `create_codex_backend_child_factory` for the real core.
+The model/sign-in/usage provider bindings remain the next part of this port.
 
 The client checks the selected CLI version before it starts the app-server. Unknown
 notifications and item kinds remain unconsumed. A malformed consumed notification warns
@@ -234,3 +234,14 @@ The Manager requested documentation of these remaining wire differences:
 
 These limits do not change the strict checks for consumed identities, outcomes, and
 permission decisions. They are not hidden by broad comparison rules.
+
+The Codex child preserves correlated admission, provisional-event buffering, native thread
+resume, steer certainty, parked asks, catalog refresh, and generation-scoped login diagnosis.
+Its paired direct proof uses the same scripted app-server behind both real SQLite cores.
+Fifteen checkpoints compare ordered native requests, delivery fates, events, lifecycle facts,
+all five populated view tables, live output, and durable login rejection. The script supports
+numeric ask IDs, delayed JSONL fragments inside a UTF-8 character, and stdin EOF exit.
+
+The adapter bounds ask withdrawal before child shutdown, then always invokes client cleanup.
+The existing Python withdrawal wait is unbounded. This safety difference requires the
+Manager's acceptance with the Part 2 review before merge.

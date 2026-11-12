@@ -118,7 +118,16 @@ function coreMessage(message: Record<string, unknown>): boolean {
     );
     send({
       method: 'turn/started',
-      params: { threadId: nativeThread, turn: { id: nativeTurn, status: 'inProgress' } },
+      params: {
+        threadId: nativeThread,
+        turn: {
+          id:
+            message.method === 'review/start'
+              ? `review-nested-${nativeState.nextTurn}`
+              : nativeTurn,
+          status: 'inProgress',
+        },
+      },
     });
     if (message.method === 'thread/compact/start')
       nativeNotification('item/completed', { item: { type: 'contextCompaction' } });

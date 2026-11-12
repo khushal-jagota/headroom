@@ -23,8 +23,8 @@ from unittest.mock import patch
 
 import pytest
 
-from planner.conversation.api import delivery_fate_json
 from planner.conversation import backend_state
+from planner.conversation.api import delivery_fate_json
 from planner.conversation.backend_state import DurableCodexLoginRejection
 from planner.conversation.backends.codex_app_server import adapter as codex_adapter
 from planner.conversation.backends.codex_app_server.adapter import (
@@ -242,11 +242,12 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
         )
 
         async def catalog_read() -> bool:
-            return "app/installed" in Path(spec["trace"]).read_text()
+            trace = Path(spec["trace"])
+            return trace.exists() and "app/installed" in trace.read_text()
 
-        await wait(catalog_read, "initial catalog reads")
         count = 0
         plain = await send("plain")
+        await wait(catalog_read, "initial catalog reads")
         count += 1
         await ended(count)
         await capture("plain", [plain])
@@ -267,7 +268,8 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
         permission = await send("permission")
         await wait(lambda: core.has_pending_permission_ask(identity), "permission ask")
         ask = next(iter(await core.pending_permission_ask_ids(identity)))
-        answer = await core.answer_permission_ask(identity, ask, "approve_once")
+        answer = await core.answer_permission_ask(identity, ask, "accept")
+        assert str(answer) == "applied", answer
         count += 1
         await ended(count)
         await capture("permission", [permission, {"answer_fate": str(answer)}])
@@ -277,6 +279,7 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
         answer = await core.answer_user_input(
             identity, question_id, (UserInputAnswer("color", ("Blue",)),)
         )
+        assert str(answer) == "applied", answer
         count += 1
         await ended(count)
         await capture("question", [question, {"answer_fate": str(answer)}])
@@ -416,7 +419,8 @@ def test_unit17_adapter_real_core_parity(
         try:
             create_schema(connection)
             connection.execute(
-                "INSERT INTO conversation_runtime_epoch VALUES (1,?) ON CONFLICT(singleton) DO UPDATE SET epoch=excluded.epoch",
+                "INSERT INTO conversation_runtime_epoch VALUES (1,?) "
+                "ON CONFLICT(singleton) DO UPDATE SET epoch=excluded.epoch",
                 ("unit17-runtime",),
             )
             connection.commit()
@@ -480,14 +484,19 @@ def test_unit17_adapter_real_core_parity(
         "expected": expected,
         "actual": actual,
         "seconds": time.perf_counter() - started,
-        "boundary": "shared JSONL process -> actual Codex adapter -> real SQLite core -> all five views",
+        "boundary": (
+            "shared JSONL process -> actual Codex adapter -> real SQLite core -> all five views"
+        ),
         "not_proven": [
             "real provider",
             "browser/HTTP",
             "systemd execution",
             "provider bindings",
         ],
-        "identity_rule": "Only explicit random interaction/control/held identities map bijectively; content and hashes stay literal.",
+        "identity_rule": (
+            "Only explicit random interaction/control/held identities map bijectively; "
+            "content and hashes stay literal."
+        ),
     }
     destination = request.config.getoption("--compare-report-dir")
     if destination:
