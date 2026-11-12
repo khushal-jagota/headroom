@@ -13,3 +13,5 @@ Accepted by the migration Manager on November 12, 2026, during review of PR 712.
 **Reason:** This corrects a Python defect. A secondary bookkeeping error must not strand work that the provider accepted and the record committed. The Manager reports the Python defect to the Chief for staging. Close this entry after the Python fix reaches the migration comparison baseline.
 
 **Pinned by:** `server/tests/conversation_core_delivery.test.ts`, test `publication failure after receipt commit does not append or deliver twice`. The same fixture queues a model change, throws the exact secondary error after commit, checks one delivery and append, retries the sender identity, and proves that later backend news still persists.
+
+- Projection rebuild uses TEMP tables on the single writer connection in batches of 500 events. Python uses a second connection. Results match. Sustained-load latency is not measured.
