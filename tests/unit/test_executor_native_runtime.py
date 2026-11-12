@@ -1425,7 +1425,7 @@ def test_legacy_cleanup_runs_once_and_survivors_remain_unassigned(
         if pid == 103:
             states[pid] = None
 
-    monkeypatch.setattr(legacy.os, "kill", signal)
+    monkeypatch.setattr(os, "kill", signal)
     legacy.migrate_once(run)
     assert not old.exists()
     assert {pid for pid, _ in signals} == {101, 103}
@@ -1466,8 +1466,11 @@ def test_healthy_native_source_is_not_an_uncertain_cleanup_alarm(
         monkeypatch.setattr(cleanup_reconciliation, "cleanup_uncertainties", lambda *a, **k: (
             CleanupUncertainty("t_one", start.child.conversation_id, proof, reason),
         ))
+        def uncertainty_reasons() -> list[str]:
+            return [item.reason for item in registry.cleanup_uncertainties]
+
         await registry.refresh_worker_cleanup()
-        assert registry.cleanup_uncertainties == ()
+        assert uncertainty_reasons() == []
         # A healthy running source is not stopped. The explicit action must say so.
         recheck = ChildCommand(
             "inspect_running", start.child, ChildOperation.recheck_cleanup, None,
@@ -1476,10 +1479,10 @@ def test_healthy_native_source_is_not_an_uncertain_cleanup_alarm(
         assert not (await registry.run(recheck)).result["complete"]
         reason = "Worker cleanup evidence unavailable"
         await registry.refresh_worker_cleanup()
-        assert registry.cleanup_uncertainties[0].reason == reason
+        assert uncertainty_reasons() == [reason]
         reason = "Recorded Worker processes remain"
         registry._retiring_children.add(start.child.child_id)
         await registry.refresh_worker_cleanup()
-        assert registry.cleanup_uncertainties[0].reason == reason
+        assert uncertainty_reasons() == [reason]
 
     asyncio.run(run())

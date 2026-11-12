@@ -356,6 +356,13 @@ class MacRunner:
                 if child.reference.child_id in self._started_children
                 and child.reference.child_id not in self._retiring_children
             ),
+            preparing_sources=frozenset(
+                record.command.child for record in self._commands.values()
+                if record.command.operation is ChildOperation.start
+                and record.outcome is None
+                and record.task is not None and not record.task.done()
+                and record.command.child.child_id not in self._retiring_children
+            ),
         )
         self.cleanup_uncertainties = snapshot.uncertainties
         self.legacy_cleanup_notice = snapshot.notice

@@ -122,9 +122,13 @@ from planner.executor.clock import now_ms
 from planner.executor.diagnostics import ConnectionPhase, connection_diagnostics
 from planner.executor.protocol import ChildCommand, ItemBatch, ItemBatchReply
 from planner.executor.vps_transport import VpsExecutor
+from planner.platform_runtime.selection import get_platform_adapter
 from planner.stalls.checker import StallChecker
 from planner.stalls.contracts import TrackedWaitKind
 from planner.stalls.registry import WAITS
+from planner.worker_supervision import WorkerCleanupError, WorkerSupervisor
+from planner.worker_supervision import records as worker_records
+from planner.worker_supervision.contracts import WorkerProcess
 
 EXECUTOR_ID = "test-executor"
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -360,6 +364,7 @@ class CycleAgent:
         self._reader: asyncio.Task[None] | None = None
         self._replies: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self._next_id = 0
+        self._supervisor: WorkerSupervisor | None = None
 
     def stop_outside_lock(self) -> bool:
         return False
@@ -367,22 +372,28 @@ class CycleAgent:
     async def start(
         self, resolved_start: ResolvedConversationStart, *, vendor_session_cursor: str | None
     ) -> None:
-        del resolved_start, vendor_session_cursor
-        self._process = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-m",
-            "tests.support.executor_sleep_cycles",
-            "agent",
-            "--log",
-            str(self.logs / f"{self.conversation_id}.jsonl"),
-            "--conversation",
-            self.conversation_id,
-            "--parent",
-            str(os.getpid()),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            cwd=REPO_ROOT,
+        del vendor_session_cursor
+        environment = dict(os.environ)
+        if resolved_start.role_materials is not None:
+            environment.update(resolved_start.role_materials.identity_environment_variables)
+        environment["PLAN_CONVERSATION_ID"] = self.conversation_id
+        self._supervisor = await WorkerSupervisor.create(environment, REPO_ROOT)
+        assert self._supervisor is not None
+        command = (
+            sys.executable, "-m", "tests.support.executor_sleep_cycles", "agent",
+            "--log", str(self.logs / f"{self.conversation_id}.jsonl"),
+            "--conversation", self.conversation_id, "--parent", str(os.getpid()),
         )
+        try:
+            self._process = await asyncio.create_subprocess_exec(
+                *self._supervisor.argv(command), env=self._supervisor.environment,
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, cwd=REPO_ROOT,
+            )
+        except OSError:
+            await self._supervisor.cancel_unspawned()
+            raise
+        await self._supervisor.spawned(self._process.pid)
+        await self._supervisor.started(self._process.pid)
         self._reader = asyncio.create_task(self._read())
 
     async def write_prompt(
@@ -422,6 +433,15 @@ class CycleAgent:
         return AnswerFate.refused
 
     async def stop(self) -> None:
+        if self._supervisor is not None:
+            result = await self._supervisor.stop(native_stop=self._native_stop)
+            if not result.complete:
+                raise WorkerCleanupError(result.reason)
+            self._supervisor = None
+        else:
+            await self._native_stop()
+
+    async def _native_stop(self) -> None:
         process = self._process
         if process is None:
             return
@@ -1165,7 +1185,7 @@ class SleepCycles:
             )
         finally:
             log.close()
-        # Its own session, so its PGID is its PID; its agents inherit it.
+        # Its own session. WorkerSupervisor owns separate sessions for the agents.
         self.pgid = self.process.pid
 
         async def leased() -> bool:
@@ -1184,12 +1204,50 @@ class SleepCycles:
             code = None if self.process is None else self.process.returncode
             raise Violation(f"the test executor exited unexpectedly (code {code})")
 
+    def _owned_agents(self) -> tuple[WorkerProcess, ...]:
+        """Read only exact agent identities owned by this retained test executor."""
+        self._require_executor()
+        assert self.process is not None
+        primitives = get_platform_adapter().worker_processes()
+        deadline = time.monotonic() + 5
+        host = primitives.host_boot(deadline)
+        parent = primitives.snapshot(deadline).get(self.process.pid)
+        if parent is None:
+            raise Violation("The retained executor has no process incarnation")
+        owned: dict[tuple[int, str], WorkerProcess] = {}
+        for path in (self.mac_root / "run" / "worker-processes").glob("*.json"):
+            record = worker_records.read(path)
+            owner = record.get("owner")
+            if (not isinstance(owner, dict) or owner.get("pid") != parent.pid
+                    or owner.get("birth") != parent.birth or record.get("host") != host.host
+                    or record.get("boot") != host.boot):
+                continue
+            for raw in record["processes"]:
+                process = WorkerProcess(**raw)
+                owned[(process.pid, process.birth)] = process
+        return tuple(owned.values())
+
     def _signal(self, number: signal.Signals) -> None:
-        """Only the recorded group, and only while its leader is unreaped, so the PGID
-        cannot belong to anything else."""
+        """Simulate machine sleep for isolated agent sessions, using exact handles."""
         self._require_executor()
         assert self.pgid is not None
-        os.killpg(self.pgid, number)
+        primitives = get_platform_adapter().worker_processes()
+        if number is signal.SIGSTOP:
+            # Freeze the parent before discovery so it cannot admit another agent.
+            os.killpg(self.pgid, number)
+            agents = self._owned_agents()
+        else:
+            agents = self._owned_agents()
+        if number is signal.SIGKILL:
+            # The crash reaches the parent first, so it cannot settle EOF or emit
+            # another event while this harness stops the isolated agent sessions.
+            os.killpg(self.pgid, number)
+        for process in agents:
+            if not primitives.signal(process, number, time.monotonic() + 5):
+                raise Violation(f"Could not signal this test's agent {process.pid}")
+        if number not in {signal.SIGSTOP, signal.SIGKILL}:
+            # The group's unreaped leader is the Popen child this harness owns.
+            os.killpg(self.pgid, number)
 
     async def _kill_executor(self) -> None:
         self._signal(signal.SIGKILL)
@@ -1197,7 +1255,7 @@ class SleepCycles:
         killed = self.process.pid
         await asyncio.to_thread(self.process.wait, 30)
         self.process = None
-        # Its agents got the same SIGKILL; wait until this life's agent PIDs are gone.
+        # Exact agent signals and the parent-death guard end this executor's agents.
         for conversation_id in self.conversations:
             for record in read_records(self.agent_logs / f"{conversation_id}.jsonl"):
                 if record.get("t") == "life" and record.get("executor") == killed:
@@ -2137,8 +2195,7 @@ class SleepCycles:
         """Every process this harness started stops here, on success and on failure."""
         try:
             if self.process is not None and self.process.poll() is None:
-                assert self.pgid is not None
-                os.killpg(self.pgid, signal.SIGKILL)
+                self._signal(signal.SIGKILL)
                 await asyncio.to_thread(self.process.wait, 30)
             self.process = None
             for task in self.sends:

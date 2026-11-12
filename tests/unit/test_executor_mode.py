@@ -50,6 +50,8 @@ def test_executor_health_uses_configured_id_without_a_mode_flag(
             "queue_depth": None,
             "oldest_item_age_ms": None,
             "admission_stopped": False,
+            "cleanup_uncertainties": [],
+            "legacy_cleanup_notice": None,
             "connection_state": "disconnected",
         }
 

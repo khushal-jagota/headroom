@@ -1405,6 +1405,7 @@ class SqliteProcessConversationSystem:
                         self.start_admission.reject, self._store._db_path, token
                     )
             if (state.child is None and not state.local_preparation_cancelled
+                    and not state.local_child_retirement_proven
                     and await self._store.has_recorded_source(conversation_id)):
                 if not await self._store.retire_idle_recorded_source(conversation_id):
                     raise PlannerError(

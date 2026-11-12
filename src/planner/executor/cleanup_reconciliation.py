@@ -125,6 +125,7 @@ def _modern_sources(paths: ExecutorPaths) -> set[ChildReference]:
 def snapshot_cleanup(
     paths: ExecutorPaths, *, current_incarnation: str, revoke_pending: bool = False,
     healthy_sources: frozenset[ChildReference] = frozenset(),
+    preparing_sources: frozenset[ChildReference] = frozenset(),
 ) -> ExecutorCleanupSnapshot:
     """Observation can clear an old fence. It never signals an ambiguous legacy PID."""
     notices: list[str] = []
@@ -145,8 +146,13 @@ def snapshot_cleanup(
     for uncertain in cleanup_uncertainties(
         paths.run / "worker-processes", revoke_pending=revoke_pending,
     ):
-        if (uncertain.reason == "Recorded Worker processes remain"
-                and _record_source(uncertain.record_path) in healthy_sources):
+        source = _record_source(uncertain.record_path)
+        if (uncertain.reason == "Recorded Worker processes remain" and source in healthy_sources):
+            continue
+        if (source in preparing_sources and uncertain.reason in {
+            "Recorded Worker processes remain",
+            "Worker launch is still pending with its live owner",
+        }):
             continue
         if uncertain.ticket_id is not None and uncertain.conversation_id is not None:
             key = (uncertain.ticket_id, uncertain.conversation_id)
@@ -184,7 +190,8 @@ def snapshot_cleanup(
         stopped = set()
         notices.append(f"Worker stop evidence is unavailable: {error}")
     for source, ticket_id in sources.items():
-        if (source in healthy_sources or source in observed_records or source in stopped
+        if (source in healthy_sources or source in preparing_sources
+                or source in observed_records or source in stopped
                 or (source not in modern and legacy_attempted)):
             continue
         key = (ticket_id, source.conversation_id)

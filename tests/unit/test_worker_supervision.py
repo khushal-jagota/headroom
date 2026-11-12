@@ -559,13 +559,14 @@ def test_mac_signal_requires_immediate_microsecond_birth_match(
     import ctypes
     import errno
     from types import SimpleNamespace
+    from typing import Any
 
     from planner.platform_runtime.darwin import worker_processes as darwin
 
     birth = [10, 20]
     readable = [True]
 
-    def pidinfo(pid: int, flavor: int, arg: int, buffer: object, size: int) -> int:
+    def pidinfo(pid: int, flavor: int, arg: int, buffer: Any, size: int) -> int:
         if not readable[0]:
             ctypes.set_errno(errno.EPERM)
             return 0
@@ -574,7 +575,7 @@ def test_mac_signal_requires_immediate_microsecond_birth_match(
         return ctypes.sizeof(info)
 
     monkeypatch.setattr(
-        darwin.ctypes, "CDLL", lambda *args, **kwargs: SimpleNamespace(proc_pidinfo=pidinfo)
+        ctypes, "CDLL", lambda *args, **kwargs: SimpleNamespace(proc_pidinfo=pidinfo)
     )
     signals: list[tuple[int, int]] = []
     monkeypatch.setattr(

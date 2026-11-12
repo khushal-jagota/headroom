@@ -388,7 +388,8 @@ def test_cleanup_recheck_inspects_one_ticket_without_starting_even_after_it_ends
     starts = AsyncMock(side_effect=AssertionError("A cleanup recheck cannot start work"))
     monkeypatch.setattr(InMemoryConversationSystem, "start_conversation", starts)
     first = cli(server, "ticket", "recheck-worker-cleanup", ticket_id)
-    assert first == {"complete": False, "reason": "Recorded tool remains"}
+    scope = CleanupResult(False, "").scope
+    assert first == {"complete": False, "reason": "Recorded tool remains", "scope": scope}
     denied = api.client.post(f"/api/tickets/{ticket_id}/recheck-worker-cleanup", headers={
         "X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id,
     })
@@ -399,6 +400,6 @@ def test_cleanup_recheck_inspects_one_ticket_without_starting_even_after_it_ends
         conn.execute("UPDATE tickets SET stage='done' WHERE id=?", (ticket_id,))
         conn.commit()
     ended = cli(server, "ticket", "recheck-worker-cleanup", ticket_id)
-    assert ended == {"complete": True, "reason": "Recorded tool ended"}
+    assert ended == {"complete": True, "reason": "Recorded tool ended", "scope": scope}
     assert checks == [ticket_id, ticket_id]
     starts.assert_not_awaited()
