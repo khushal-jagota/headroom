@@ -18,3 +18,12 @@ export interface PresenceJudgement {
   presence: 'never' | 'refused' | 'asleep' | 'present' | 'not_heard_from';
   since_ms: number | null;
 }
+
+/** Only the lease fields used by the stall rule. Temporary Unit 10 projection. Unit 22 supplies full LeaseRequest validation. */
+export interface StallLease {
+  waiting_conversations: readonly { conversation_id: string; oldest_sequence: number }[];
+  working_turns: readonly { child: { conversation_id: string }; tool_running: boolean }[];
+}
+export interface StallPresenceRecord extends PresenceRecord {
+  lease: StallLease | null;
+}
