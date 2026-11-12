@@ -259,6 +259,7 @@ It refuses before a cross-origin hop with a transport failure that names the ref
 without the credential value. Requests without credential headers retain Python's redirect limit.
 At these three call sites, TypeScript limits the wait for headers and each body read without a total deadline.
 It does not time connect, write, and pool phases separately as HTTPX does.
+Node fetch sets Host from the URL and ignores a caller-supplied Host, which Python HTTPX can retain.
 
 `tests/compare/direct/test_cross_area_http.py` pins same-origin delivery, cross-origin refusal,
 and Python's contrasting header behavior with synthetic loopback servers.
