@@ -1,7 +1,6 @@
 /** Durable local rows and immutable blobs. Wire codecs and send loops belong to the host. */
-import { existsSync } from 'node:fs';
 import type { BigIntStats } from 'node:fs';
-import { readdir, lstat } from 'node:fs/promises';
+import { readdir, lstat, opendir } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
@@ -9,13 +8,16 @@ import {
   createDurableSidecarDatabase,
 } from '../../../core/database/index.ts';
 import type { Database } from '../../../core/database/contracts.ts';
-import { SHUTDOWN_GRACE_SECONDS } from '../../../core/config.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import { FilesService, contained_path, safe_component } from '../files.ts';
 import type { DirectoryHandle } from '../files.ts';
 import { error_code, file_error } from '../file_metadata.ts';
+import { acquire_process_lock } from '../platform.ts';
+import { MAX_ITEM_BATCH_ITEMS, MAX_LEASE_WAITING_CONVERSATIONS } from '../configuration.ts';
+import { OutboxResources } from './resources.ts';
+import { item_size_guard } from './size.ts';
 import { DATABASE_NAME, FORMAT_REFUSAL, OUTBOX_SCHEMA, SPOOL_FORMAT_VERSION } from './schema.ts';
 import type {
   CaptureRows,
@@ -27,6 +29,17 @@ import type {
   TicketFileRow,
 } from './contracts.ts';
 export type * from './contracts.ts';
+export type { OutboxCleanup } from './resources.ts';
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if (['ENOENT', 'ENOTDIR'].includes(error_code(error) ?? '')) return false;
+    throw error;
+  }
+}
 
 function synchronous<T>(value: T): T {
   if (
@@ -52,13 +65,14 @@ export class OutboxStore {
   private readonly files: FilesService;
   private readonly blobs: DirectoryHandle;
   private readonly clock: OutboxClock;
+  private readonly resources: OutboxResources;
   private closed = false;
   private callback_scope = 0;
   private capturing = 0;
   private readonly first_held = new Map<bigint, number>();
   private readonly capture_tails = new Map<string, Promise<void>>();
   private readonly operations = new Set<Promise<unknown>>();
-  private drained: Promise<unknown> | undefined;
+  private drained: Promise<void> | undefined;
   private cleanup: Promise<void> | undefined;
   private constructor(
     root: string,
@@ -66,28 +80,36 @@ export class OutboxStore {
     files: FilesService,
     blobs: DirectoryHandle,
     clock: OutboxClock,
+    resources: OutboxResources,
   ) {
     this.root = root;
     this.database = database;
     this.files = files;
     this.blobs = blobs;
     this.clock = clock;
+    this.resources = resources;
+    files.on_failure(() => {
+      this.closed = true;
+    });
     const sender = database.read((sql) =>
       sql.get<{ sender_id: string }>('SELECT sender_id FROM sender WHERE singleton=1'),
     );
     if (sender === undefined) throw new Error('outbox sender is absent');
     this.sender_id = sender.sender_id;
   }
-  static async open(root: string, clock: OutboxClock): Promise<OutboxStore> {
+  static async open(root: string, clock: OutboxClock, options: StopOptions): Promise<OutboxStore> {
     const path = join(root, DATABASE_NAME);
     const existed = assertDatabaseVersion(path, SPOOL_FORMAT_VERSION, FORMAT_REFUSAL);
-    if (!existed && existsSync(root) && (await readdir(root)).some((name) => name !== 'lock'))
+    if (!existed && (await exists(root)) && (await readdir(root)).some((name) => name !== 'lock'))
       throw file_error(FORMAT_REFUSAL);
     const files = new FilesService();
+    const resources = new OutboxResources(files);
     let database: Database | undefined;
     try {
-      const directory = await files.open_directory(root, { create: true });
-      await files.hold_process_lock(directory, 'lock');
+      await files.open_directory(root, { create: true });
+      files.assert_healthy();
+      resources.lock = acquire_process_lock(root);
+      files.assert_healthy();
       database = createDurableSidecarDatabase(path, {
         schemaVersion: SPOOL_FORMAT_VERSION,
         foreignKeys: true,
@@ -95,33 +117,44 @@ export class OutboxStore {
         initialize(tx) {
           for (const statement of OUTBOX_SCHEMA) tx.run(statement);
           tx.run('INSERT INTO sender VALUES(1,?)', [randomUUID().replaceAll('-', '')]);
+          files.assert_healthy();
         },
       });
+      resources.database = database;
       if (!existed) await files.fsync_directory(root);
       const blobs = await files.open_directory(join(root, 'blobs'), { create: true });
       await files.fsync_directory(root);
-      const store = new OutboxStore(root, database, files, blobs, clock);
+      const store = new OutboxStore(root, database, files, blobs, clock, resources);
+      files.assert_healthy();
       database.write((tx) => {
         tx.run('DELETE FROM items WHERE receipt_json IS NOT NULL');
+        files.assert_healthy();
       });
       const opened = clock.monotonic();
-      for (const row of store.pending()) store.first_held.set(row.sequence, opened);
+      const sequences = database.read((sql) =>
+        sql.all<{ sequence: bigint }>(
+          'SELECT sequence FROM items WHERE receipt_json IS NULL ORDER BY sequence',
+        ),
+      );
+      for (const row of sequences) store.first_held.set(row.sequence, opened);
       await store.sweep();
       return store;
     } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
       try {
-        database?.close();
-      } finally {
-        try {
-          await files.stop({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
-        } finally {
-          await files.settled();
-        }
+        await resources.stop(options);
+      } catch (cleanup_error) {
+        const outward =
+          cleanup_error instanceof Error ? cleanup_error : new Error(String(cleanup_error));
+        Object.assign(outward, { cause: failure });
+        if (!resources.is_settled) Object.assign(outward, { cleanup: resources });
+        throw outward;
       }
-      throw error;
+      throw failure;
     }
   }
   private admit(capture_append = false): void {
+    this.files.assert_healthy();
     if (this.closed && (!capture_append || this.callback_scope === 0))
       throw new ServerLifecycleError('outbox is closed');
   }
@@ -146,10 +179,18 @@ export class OutboxStore {
         sql.get<ItemRow>('SELECT * FROM items WHERE submission_id=?', [submission_id]) ?? null,
     );
   }
-  pending(): ItemRow[] {
+  pending(conversation_id?: string): ItemRow[] {
     this.admit();
     return this.database.read((sql) =>
-      sql.all<ItemRow>('SELECT * FROM items WHERE receipt_json IS NULL ORDER BY sequence'),
+      conversation_id === undefined
+        ? sql.all<ItemRow>(
+            'SELECT * FROM items WHERE receipt_json IS NULL ORDER BY sequence LIMIT ?',
+            [MAX_ITEM_BATCH_ITEMS],
+          )
+        : sql.all<ItemRow>(
+            'SELECT * FROM items WHERE receipt_json IS NULL AND conversation_id=? ORDER BY sequence LIMIT ?',
+            [safe_component(conversation_id), MAX_ITEM_BATCH_ITEMS],
+          ),
     );
   }
   pending_conversations(): readonly (readonly [string, bigint])[] {
@@ -157,7 +198,8 @@ export class OutboxStore {
     return this.database.read((sql) =>
       sql
         .all<{ conversation_id: string; oldest: bigint }>(
-          'SELECT conversation_id,MIN(sequence) AS oldest FROM items WHERE receipt_json IS NULL GROUP BY conversation_id ORDER BY MIN(sequence)',
+          'SELECT conversation_id,MIN(sequence) AS oldest FROM items WHERE receipt_json IS NULL GROUP BY conversation_id ORDER BY MIN(sequence) LIMIT ?',
+          [MAX_LEASE_WAITING_CONVERSATIONS + 1],
         )
         .map((row) => [row.conversation_id, row.oldest] as const),
     );
@@ -195,12 +237,15 @@ export class OutboxStore {
     }
     const submission = safe_component(columns.submission_id || randomUUID().replaceAll('-', ''));
     safe_component(columns.conversation_id);
+    const size_guard = item_size_guard(this.sender_id, columns, submission, payload);
+    this.files.assert_healthy();
     const row = this.database.write((tx) => {
       const result = tx.run(
         'INSERT INTO items(submission_id,conversation_id,child_id,kind,payload_json) VALUES(?,?,?,?,?)',
         [submission, columns.conversation_id, columns.child_id, columns.kind, payload],
       );
       const sequence = BigInt(result.lastInsertRowid);
+      size_guard(sequence);
       for (const file of files)
         tx.run('INSERT INTO item_files VALUES(?,?,?,?)', [
           sequence,
@@ -215,6 +260,7 @@ export class OutboxStore {
         );
       const held = tx.get<ItemRow>('SELECT * FROM items WHERE sequence=?', [sequence])!;
       synchronous(validate(held));
+      this.files.assert_healthy();
       return held;
     });
     this.first_held.set(row.sequence, this.clock.monotonic());
@@ -245,6 +291,9 @@ export class OutboxStore {
         this.capturing--;
         try {
           await this.sweep();
+        } catch (error) {
+          // Durable append success survives cleanup failure. Retry on a later sweep.
+          console.warn('Mac outbox capture cleanup deferred:', error);
         } finally {
           release();
           if (this.capture_tails.get(ticket_id) === tail) this.capture_tails.delete(ticket_id);
@@ -258,7 +307,7 @@ export class OutboxStore {
     const files: TicketFileRow[] = [],
       updates: TicketFileRow[] = [];
     const checked_ns = this.clock.now_ns();
-    const folders = existsSync(root) ? [root] : [];
+    const folders = (await exists(root)) ? [root] : [];
     while (folders.length) {
       const folder = folders.pop()!;
       let entries: string[];
@@ -336,6 +385,7 @@ export class OutboxStore {
       const row = this.held(submission_id);
       if (row === null) return;
       if (sender_id !== this.sender_id) throw file_error('receipt identity mismatch');
+      this.files.assert_healthy();
       this.database.write((tx) => {
         if (!accepted)
           for (const file of invalidated)
@@ -349,6 +399,7 @@ export class OutboxStore {
         else tx.run('DELETE FROM items WHERE submission_id=?', [submission_id]);
         if (row.kind === 'child_stopped')
           tx.run('DELETE FROM items WHERE child_id=? AND receipt_json IS NOT NULL', [row.child_id]);
+        this.files.assert_healthy();
       });
       this.first_held.delete(row.sequence);
       // The host can settle its waiter even when subsequent blob cleanup fails.
@@ -358,6 +409,14 @@ export class OutboxStore {
     return this.track(task);
   }
   private async sweep(): Promise<void> {
+    if (this.capturing) return;
+    const directory = await opendir(join(this.root, 'blobs'));
+    try {
+      if ((await directory.read()) === null) return;
+    } finally {
+      await directory.close();
+    }
+    // A capture can start during the asynchronous empty-directory observation.
     if (this.capturing) return;
     const keep = this.database.read((sql) =>
       sql
@@ -374,19 +433,11 @@ export class OutboxStore {
       // An admitted synchronous append must leave its writer scope before close.
       await Promise.resolve();
       while (this.operations.size) await Promise.allSettled([...this.operations]);
-      try {
-        this.database.close();
-      } catch (error) {
-        return error;
-      }
     })();
     // Delegate every stop attempt after the admitted work drains. A failed stop-frame
     // send remains retryable without sealing the file service during capture.
-    const attempt = this.drained.then(() => this.files.stop(options));
-    this.cleanup ??= this.drained.then(async (failure) => {
-      await this.files.settled();
-      if (failure !== undefined) throw failure;
-    });
+    const attempt = this.drained.then(() => this.resources.stop(options));
+    this.cleanup ??= this.drained.then(() => this.resources.settled());
     return observe_shutdown(
       Promise.all([attempt, this.cleanup]).then(() => undefined),
       options,
@@ -396,7 +447,7 @@ export class OutboxStore {
   async settled(): Promise<void> {
     if (this.cleanup !== undefined) return this.cleanup;
     while (this.operations.size) await Promise.allSettled([...this.operations]);
-    await this.files.settled();
+    await this.resources.settled();
     if (this.cleanup !== undefined) await this.cleanup;
   }
 }

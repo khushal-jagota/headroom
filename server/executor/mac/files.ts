@@ -22,16 +22,19 @@ export class FilesService {
   private closed = false;
   private failure: Error | undefined;
   private stop_requested = false;
+  private readonly failures = new Set<(error: Error) => void>();
   private readonly directories = new WeakSet<DirectoryHandle>();
   private readonly pending = new Map<
     number,
     { resolve(value: unknown): void; reject(error: Error): void }
   >();
   private seal(error: Error): void {
+    const first = this.failure === undefined;
     this.failure ??= error;
     this.closed = true;
     for (const request of this.pending.values()) request.reject(error);
     this.pending.clear();
+    if (first) for (const listener of this.failures) listener(error);
   }
   private start(): Worker {
     if (this.closed)
@@ -100,8 +103,14 @@ export class FilesService {
   fsync_directory(path: string) {
     return this.request('fsync_directory', [path]);
   }
-  async hold_process_lock(handle: DirectoryHandle, name: string): Promise<void> {
-    await this.request('hold_process_lock', [this.directory(handle), name]);
+  assert_healthy(): void {
+    if (this.closed || this.worker?.threadId === -1)
+      throw this.failure ?? new ServerLifecycleError('Executor file worker is unavailable.');
+  }
+  on_failure(listener: (error: Error) => void): () => void {
+    this.failures.add(listener);
+    if (this.failure !== undefined) listener(this.failure);
+    return () => this.failures.delete(listener);
   }
   async capture_file(source: string, blobs: DirectoryHandle, checked_ns: bigint) {
     return this.request('capture_file', [source, this.directory(blobs), checked_ns]);

@@ -1,14 +1,8 @@
 /** This owned thread serializes file operations and retains directory capabilities. */
-import { closeSync, constants, fstatSync, readdirSync } from 'node:fs';
+import { closeSync, readdirSync } from 'node:fs';
 import { parentPort } from 'node:worker_threads';
 import * as files from './file_worker_operations.ts';
-import { file_error } from './file_metadata.ts';
-import {
-  flock_descriptor,
-  open_relative,
-  sync_directory_descriptor,
-  unlink_relative,
-} from './platform.ts';
+import { sync_directory_descriptor, unlink_relative } from './platform.ts';
 import type {
   FileOperationResults,
   FileWorkerError,
@@ -17,7 +11,6 @@ import type {
 } from './file_worker_contracts.ts';
 const port = parentPort!;
 const directories = new Map<number, number>();
-const locks = new Set<number>();
 let sequence = 0;
 function descriptor(handle: number): number {
   const value = directories.get(handle);
@@ -28,28 +21,6 @@ function execute(
   message: Exclude<FileWorkerRequest, { operation: 'stop' }>,
 ): FileOperationResults[keyof FileOperationResults] {
   switch (message.operation) {
-    case 'hold_process_lock': {
-      const [handle, name] = message.arguments;
-      const fd = open_relative(
-        descriptor(handle),
-        name,
-        constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-        0o666,
-      );
-      try {
-        if (!fstatSync(fd).isFile()) throw file_error('outbox lock is not regular file');
-        if (!flock_descriptor(fd, 'try-exclusive'))
-          throw Object.assign(new Error('outbox is already owned'), {
-            code: 'EAGAIN',
-            name: 'BlockingIOError',
-          });
-        locks.add(fd);
-      } catch (error) {
-        closeSync(fd);
-        throw error;
-      }
-      return;
-    }
     case 'capture_file': {
       const [source, handle, checked_ns] = message.arguments;
       return files.capture_file(source, descriptor(handle), checked_ns);
@@ -112,14 +83,6 @@ function close_handles(): unknown {
   let failure: unknown;
   for (const [handle, fd] of directories) {
     directories.delete(handle);
-    try {
-      closeSync(fd);
-    } catch (error) {
-      failure ??= error;
-    }
-  }
-  for (const fd of locks) {
-    locks.delete(fd);
     try {
       closeSync(fd);
     } catch (error) {

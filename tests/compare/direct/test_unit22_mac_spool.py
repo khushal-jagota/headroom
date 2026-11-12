@@ -1,8 +1,4 @@
-"""Populated storage parity and one real pre-commit process death, without a host.
-
-Python supplies its fresh opaque codec bytes. TS must independently capture files
-and preserve every canonical row, immutable blob, receipt, and ordering decision.
-"""
+"""Fresh populated parity, TS-created rollback compatibility, and one precommit crash."""
 
 from __future__ import annotations
 
@@ -20,52 +16,58 @@ from typing import Any
 import pytest
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
+from planner.executor.configuration import MAX_ENVELOPE_BYTES
 from planner.executor.mac_outbox import MacOutbox, OutboxEntry
 from planner.executor.protocol import (
     AcceptanceReceipt,
     EnvelopeKind,
+    ItemSubmission,
     JsonObject,
+    QueuedEnvelope,
     ReceiptDisposition,
+    encode_bounded,
     type_adapter,
 )
 
 ROOT = Path(__file__).resolve().parents[3]
 NOW_NS = 1_700_000_010_000_000_000
+PRAGMAS = (
+    "user_version journal_mode synchronous fullfsync trusted_schema "
+    "foreign_keys recursive_triggers auto_vacuum"
+).split()
 
 
 def _rows(root: Path) -> dict[str, Any]:
     with closing(
         sqlite3.connect(f"{(root / 'spool/outbox.sqlite3').as_uri()}?mode=ro", uri=True)
     ) as db:
-        result: dict[str, Any] = {}
-        for table, order in (
-            ("sender", "singleton"),
-            ("items", "sequence"),
-            ("item_files", "sequence,relative_path"),
-            ("ticket_files", "ticket_id,relative_path"),
-            ("sqlite_sequence", "name"),
-        ):
-            result[table] = [
+        result: dict[str, Any] = {
+            table: [
                 [v.hex() if isinstance(v, bytes) else v for v in row]
                 for row in db.execute(f"SELECT * FROM {table} ORDER BY {order}")
             ]
-        result["version"] = db.execute("PRAGMA user_version").fetchone()[0]
+            for table, order in (
+                ("sender", "singleton"),
+                ("items", "sequence"),
+                ("item_files", "sequence,relative_path"),
+                ("ticket_files", "ticket_id,relative_path"),
+                ("sqlite_sequence", "name"),
+            )
+        }
     result["blobs"] = {
         p.name: p.read_bytes().hex() for p in sorted((root / "spool/blobs").iterdir())
     }
     return result
 
 
-def _row(box: MacOutbox, submission: str) -> dict[str, Any] | None:
-    item = box._db.execute("SELECT * FROM items WHERE submission_id=?", (submission,)).fetchone()
-    if item is None:
-        return None
-    return {
-        key: (
-            value.hex() if isinstance(value, bytes) else str(value) if key == "sequence" else value
-        )
-        for key, value in dict(item).items()
-    }
+def _receipt(box: MacOutbox, submission: str, accepted: bool) -> AcceptanceReceipt:
+    return AcceptanceReceipt(
+        box.sender_id,
+        submission,
+        ReceiptDisposition.accepted if accepted else ReceiptDisposition.refused,
+        {"original": True},
+        1,
+    )
 
 
 def _reference(
@@ -76,7 +78,8 @@ def _reference(
     monkeypatch: pytest.MonkeyPatch,
 ) -> dict[str, Any]:
     clock = [opened]
-    trace = []
+    captures: list[Any] = []
+    receipts: list[Any] = []
     with monkeypatch.context() as patch:
         patch.setattr(time, "time_ns", lambda: NOW_NS)
         patch.setattr(time, "monotonic", lambda: clock[0])
@@ -86,22 +89,12 @@ def _reference(
                 operation = step["operation"]
                 if operation == "recent":
                     (root / "artifacts/tickets/ticket/recent.txt").write_bytes(b"recent-B\n")
-                    continue
-                if operation == "orphan":
+                elif operation == "orphan":
                     (root / "spool/blobs/.tmp-orphan").write_bytes(b"uncommitted")
-                    continue
-                if operation == "acknowledge":
+                elif operation == "acknowledge":
                     held = box.lookup(step["submission_id"])
                     assert held is not None
-                    receipt = AcceptanceReceipt(
-                        box.sender_id,
-                        step["submission_id"],
-                        ReceiptDisposition.accepted
-                        if step["accepted"]
-                        else ReceiptDisposition.refused,
-                        {"original": True},
-                        1,
-                    )
+                    receipt = _receipt(box, step["submission_id"], step["accepted"])
                     step["receipt_hex"] = type_adapter(AcceptanceReceipt).dump_json(receipt).hex()
                     step["invalidated"] = [
                         {
@@ -112,68 +105,74 @@ def _reference(
                         for m in held.envelope.file_dependencies
                     ]
                     box.acknowledge(receipt)
-                    trace.append(_row(box, step["submission_id"]))
-                    continue
-                columns = step["columns"]
-                payload: JsonObject = {
-                    "child": {"child_id": columns["child_id"]},
-                    "marker": columns["submission_id"],
-                }
-                if step.get("duplicate"):
-                    payload["marker"] = "changed duplicate must not replace original"
-                envelope = box.add(
-                    OutboxEntry(
-                        columns["conversation_id"],
-                        EnvelopeKind(columns["kind"]),
-                        payload,
-                        columns["submission_id"],
-                    ),
-                    ticket_id="ticket" if step.get("capture") else None,
-                )
-                result = _row(box, envelope.submission_id)
-                assert result is not None
-                step["payload_hex"] = (
-                    json.dumps(
-                        {"payload": payload, "files": []}, sort_keys=True, separators=(",", ":")
+                    row = box._db.execute(
+                        "SELECT receipt_json FROM items WHERE submission_id=?",
+                        (step["submission_id"],),
+                    ).fetchone()
+                    receipts.append(None if row is None else row[0].hex())
+                else:
+                    columns = step["columns"]
+                    payload: JsonObject = {
+                        "child": {"child_id": columns["child_id"]},
+                        "marker": columns["submission_id"],
+                    }
+                    if step.get("duplicate"):
+                        payload["marker"] = "changed duplicate must not replace original"
+                    envelope = box.add(
+                        OutboxEntry(
+                            columns["conversation_id"],
+                            EnvelopeKind(columns["kind"]),
+                            payload,
+                            columns["submission_id"],
+                        ),
+                        ticket_id="ticket" if step.get("capture") else None,
                     )
-                    .encode()
-                    .hex()
-                    if step.get("duplicate")
-                    else result["payload_json"]
-                )
-                observation: dict[str, Any] = {"row": result}
-                if step.get("capture"):
-                    observation["captured"] = [
-                        dict(
-                            box._db.execute(
-                                "SELECT * FROM ticket_files "
-                                "WHERE ticket_id='ticket' AND relative_path=?",
-                                (manifest.relative_path,),
-                            ).fetchone()
+                    original = box._db.execute(
+                        "SELECT payload_json FROM items WHERE submission_id=?",
+                        (envelope.submission_id,),
+                    ).fetchone()[0]
+                    step["payload_hex"] = (
+                        json.dumps(
+                            {"payload": payload, "files": []}, sort_keys=True, separators=(",", ":")
+                        ).encode()
+                        if step.get("duplicate")
+                        else original
+                    ).hex()
+                    if step.get("capture"):
+                        files = [
+                            dict(
+                                box._db.execute(
+                                    "SELECT * FROM ticket_files "
+                                    "WHERE ticket_id='ticket' AND relative_path=?",
+                                    (m.relative_path,),
+                                ).fetchone()
+                            )
+                            for m in envelope.file_dependencies
+                        ]
+                        captures.append(
+                            [
+                                {k: str(v) if isinstance(v, int) else v for k, v in f.items()}
+                                for f in files
+                            ]
                         )
-                        for manifest in envelope.file_dependencies
-                    ]
-                    for file in observation["captured"]:
-                        file["byte_count"], file["modified_ns"] = (
-                            str(file["byte_count"]),
-                            str(file["modified_ns"]),
-                        )
-                trace.append(observation)
             clock[0] = observed
+            profile = {p: str(box._db.execute(f"PRAGMA {p}").fetchone()[0]) for p in PRAGMAS}
             return {
                 "sender": box.sender_id,
-                "trace": trace,
-                "pending": [_row(box, item.submission_id) for item in box.pending()],
+                "captures": captures,
+                "receipts": receipts,
+                "pending": [[e.submission_id, str(e.sequence)] for e in box.pending()],
                 "conversations": [
-                    [row[0], str(row[1])]
-                    for row in box._db.execute(
+                    [r[0], str(r[1])]
+                    for r in box._db.execute(
                         "SELECT conversation_id,MIN(sequence) FROM items "
-                        "WHERE receipt_json IS NULL "
-                        "GROUP BY conversation_id ORDER BY MIN(sequence)"
+                        "WHERE receipt_json IS NULL GROUP BY conversation_id ORDER BY MIN(sequence)"
                     )
                 ],
                 "count": str(box.pending_count()),
                 "age": box.lease_backlog().oldest_item_age_ms,
+                "writer_profile": profile,
+                "reader_profile": {p: profile[p] for p in ("trusted_schema", "foreign_keys")},
             }
         finally:
             box.close()
@@ -190,29 +189,21 @@ def _node(
     specification = root / "driver-input.json"
     specification.write_text(
         json.dumps(
-            {
-                "root": str(root),
-                "steps": steps,
-                "now_ns": str(NOW_NS),
-                "opened_at": opened,
-                "observed_at": observed,
-            }
+            dict(
+                root=str(root),
+                steps=steps,
+                now_ns=str(NOW_NS),
+                opened_at=opened,
+                observed_at=observed,
+            )
         )
     )
     provider_keys = {"HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "HERMES_HOME"}
     environment = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith("PLAN_") and key not in provider_keys
+        k: v for k, v in os.environ.items() if not k.startswith("PLAN_") and k not in provider_keys
     }
     environment.update(homes)
-    environment.update(
-        {
-            "PLAN_TEST_MODE": "1",
-            "PLAN_EXECUTOR_ROOT": str(root),
-            "PLAN_SERVER_URL": "http://127.0.0.1:1",
-        }
-    )
+    environment.update(PLAN_TEST_MODE="1", PLAN_EXECUTOR_ROOT=str(root))
     process = subprocess.Popen(
         [
             "node",
@@ -221,7 +212,8 @@ def _node(
             "import {readFileSync} from 'node:fs';"
             "const {spool_parity}=await import(process.argv[1]);"
             "const input=JSON.parse(readFileSync(process.argv[2],'utf8'));"
-            "process.stdout.write(JSON.stringify(await spool_parity(input)));",
+            "process.stdout.write(JSON.stringify(await spool_parity(input),"
+            "(_k,v)=>typeof v==='bigint'?v.toString():v));",
             (ROOT / "server/executor/mac/storage/testing/parity.ts").as_uri(),
             str(specification),
         ],
@@ -235,7 +227,7 @@ def _node(
     try:
         stdout, stderr = process.communicate(timeout=30)
     except subprocess.TimeoutExpired:
-        if process.returncode is None:  # No wait/poll reaped this owned leader.
+        if process.returncode is None:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
@@ -255,12 +247,9 @@ def _append(
 ) -> dict[str, Any]:
     return {
         "operation": "append",
-        "columns": {
-            "submission_id": submission,
-            "conversation_id": conversation,
-            "child_id": child,
-            "kind": kind,
-        },
+        "columns": dict(
+            submission_id=submission, conversation_id=conversation, child_id=child, kind=kind
+        ),
         **extra,
     }
 
@@ -270,10 +259,10 @@ def test_unit22_mac_spool_rows_capture_receipts_and_crash(
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
 ) -> None:
-    started = time.perf_counter()
-    tmp_path = tmp_path.resolve(strict=True)
+    started, tmp_path = time.perf_counter(), tmp_path.resolve(strict=True)
     homes = create_synthetic_homes(tmp_path)
-    seed = tmp_path / "seed"
+    snapshots: list[dict[str, Any]] = []
+    seed, py, ts = (tmp_path / name for name in ("seed", "py", "ts"))
     with synthetic_home_environment(homes):
         _reference(
             seed,
@@ -285,8 +274,7 @@ def test_unit22_mac_spool_rows_capture_receipts_and_crash(
             1,
             monkeypatch,
         )
-        for name in ("py", "ts"):
-            root = tmp_path / name
+        for root in (py, ts):
             shutil.copytree(seed, root)
             folder = root / "artifacts/tickets/ticket"
             folder.mkdir(parents=True)
@@ -296,17 +284,22 @@ def test_unit22_mac_spool_rows_capture_receipts_and_crash(
             os.utime(folder / "recent.txt", ns=(NOW_NS, NOW_NS - 500_000_123))
             (root / "outside").write_bytes(b"do not capture symlink targets")
             (folder / "link.txt").symlink_to(root / "outside")
-        py, ts = tmp_path / "py", tmp_path / "ts"
+
+        def paired(steps: list[dict[str, Any]], opened: float) -> None:
+            expected = _reference(py, steps, opened, opened + 0.375, monkeypatch)
+            assert _node(ts, steps, homes, opened, opened + 0.375) == expected
+            canonical = _rows(py)
+            assert _rows(ts) == canonical
+            snapshots.append(canonical)
+
+        # Python must run before the candidate: it supplies fresh opaque codec bytes.
         first = [
             _append("capture_one", capture=True),
             _append("capture_one", duplicate=True),
             {"operation": "recent"},
             _append("capture_two", capture=True),
         ]
-        expected = _reference(py, first, 100, 100.375, monkeypatch)
-        assert _node(ts, first, homes, 100, 100.375) == expected
-        before_receipts = _rows(py)
-        assert _rows(ts) == before_receipts
+        paired(first, 100)
         second = [
             {"operation": "acknowledge", "submission_id": "capture_one", "accepted": False},
             _append("capture_three", capture=True),
@@ -317,39 +310,87 @@ def test_unit22_mac_spool_rows_capture_receipts_and_crash(
             {"operation": "acknowledge", "submission_id": "other_receipt", "accepted": True},
             {"operation": "orphan"},
         ]
-        expected = _reference(py, second, 200, 200.5, monkeypatch)
-        assert _node(ts, second, homes, 200, 200.5) == expected
-        before_restart = _rows(py)
-        assert _rows(ts) == before_restart
+        paired(second, 200)
         committed = [_append("committed", "c_crash", "crash")]
         _reference(py, committed, 300, 300, monkeypatch)
         crash = _append("uncommitted", "c_crash", "crash")
         crash.update(operation="crash", payload_hex=committed[0]["payload_hex"])
         _node(ts, committed + [crash], homes, 300, 300, exit_code=71)
-        expected = _reference(py, [], 400, 400.125, monkeypatch)
-        assert _node(ts, [], homes, 400, 400.125) == expected
+        paired([], 400)
         recovered = _rows(py)
-        assert _rows(ts) == recovered
         submissions = [row[1] for row in recovered["items"]]
         assert "committed" in submissions and "uncommitted" not in submissions
-        assert "other_receipt" not in submissions
-        assert ".tmp-orphan" not in recovered["blobs"]
+        assert "other_receipt" not in submissions and ".tmp-orphan" not in recovered["blobs"]
         assert (ts / "outside").read_bytes() == b"do not capture symlink targets"
+        fresh = tmp_path / "typescript-created"
+        fresh.mkdir()
+        near, rejected, refusal_messages = [], [], []
+        for sequence, character in enumerate(("x", "🦉"), 1):
+            sub = f"fresh_{sequence}"
+            payload: JsonObject = {"text": "", "numbers": [1e-7, 1e-5, 1e16, 1.0, -0.0]}
+            envelope = QueuedEnvelope(
+                "s" * 32, "fresh", sequence, sub, EnvelopeKind.backend_event, payload
+            )
+            overhead = len(encode_bounded(ItemSubmission(envelope)))
+            payload["text"] = character * (
+                (MAX_ENVELOPE_BYTES - overhead) // len(character.encode())
+            )
+            step = _append(sub, "fresh", "", "backend_event")
+            step["payload_hex"] = (
+                json.dumps({"files": [], "payload": payload}, sort_keys=True, separators=(",", ":"))
+                .encode()
+                .hex()
+            )
+            step["encoded_size"] = len(encode_bounded(ItemSubmission(envelope)))
+            near.append(step)
+            payload["text"] = str(payload["text"]) + character
+            try:
+                encode_bounded(ItemSubmission(envelope))
+            except ValueError as error:
+                refusal_messages.append(str(error))
+            else:
+                pytest.fail("the fresh Python encoder admitted an oversized fixture")
+            oversized = _append(sub + "_over", "fresh", "", "backend_event", reject=True)
+            oversized["payload_hex"] = (
+                json.dumps({"files": [], "payload": payload}, sort_keys=True, separators=(",", ":"))
+                .encode()
+                .hex()
+            )
+            rejected.append(oversized)
+        created = _node(fresh, near + rejected, homes, 500, 500)
+        assert created is not None and created["refusals"] == refusal_messages
+        reverse = MacOutbox(fresh / "spool")
+        try:
+            pending = reverse.pending()
+            assert created["writer_profile"] == {
+                p: str(reverse._db.execute(f"PRAGMA {p}").fetchone()[0]) for p in PRAGMAS
+            }
+            assert reverse.sender_id == created["sender"]
+            assert [e.submission_id for e in pending] == [
+                s["columns"]["submission_id"] for s in near
+            ]
+            assert [len(encode_bounded(ItemSubmission(e))) for e in pending] == [
+                s["encoded_size"] for s in near
+            ]
+            reverse.acknowledge(_receipt(reverse, pending[0].submission_id, True))
+            assert [e.submission_id for e in reverse.pending()] == [pending[1].submission_id]
+        finally:
+            reverse.close()
     report = request.config.getoption("--compare-report-dir")
     if report:
         destination = Path(report)
         destination.mkdir(parents=True, exist_ok=True)
         (destination / "unit-22-mac-spool.json").write_text(
             json.dumps(
-                {
-                    "kind": "direct",
-                    "equal": True,
-                    "before_receipts": before_receipts,
-                    "before_restart": before_restart,
-                    "recovered": recovered,
-                    "crash_exit_code": 71,
-                    "elapsed_seconds": time.perf_counter() - started,
-                },
+                dict(
+                    kind="direct",
+                    equal=True,
+                    snapshots=snapshots,
+                    recovered=recovered,
+                    typescript_created=created,
+                    crash_exit_code=71,
+                    elapsed_seconds=time.perf_counter() - started,
+                ),
                 indent=2,
             )
         )

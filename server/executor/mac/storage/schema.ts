@@ -1,6 +1,6 @@
 /** Outbox format 5, unchanged from the Python executor. */
 export const DATABASE_NAME = 'outbox.sqlite3';
-export { SPOOL_FORMAT_VERSION } from '../../../execution_configuration.ts';
+export { SPOOL_FORMAT_VERSION } from '../../wire.generated.ts';
 export const FORMAT_REFUSAL = 'unsupported outbox format; preserve the spool for compatible Panels';
 export const OUTBOX_SCHEMA = [
   'CREATE TABLE sender (singleton INTEGER PRIMARY KEY CHECK(singleton=1), sender_id TEXT NOT NULL)',

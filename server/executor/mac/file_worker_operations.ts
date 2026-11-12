@@ -1,7 +1,7 @@
 /** Immutable snapshots and bounded byte transfers, relative to retained directory inodes. */
-import { closeSync, constants, fstatSync, openSync, readSync, writeSync } from 'node:fs';
+import { closeSync, constants, fstatSync, readSync, writeSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { basename, dirname, isAbsolute } from 'node:path';
+import { basename, dirname } from 'node:path';
 import { isMainThread } from 'node:worker_threads';
 import {
   file_error as invalid,
@@ -15,8 +15,7 @@ import { FILE_CHUNK_BYTES } from './configuration.ts';
 import { FILE_MODIFIED_WINDOW_NS } from './configuration.ts';
 import type { CapturedBlob } from './file_worker_contracts.ts';
 import {
-  directory_open_flags,
-  mkdir_relative,
+  open_directory_descriptor,
   open_relative,
   rename_relative,
   require_relative_component,
@@ -28,35 +27,7 @@ import {
 if (isMainThread)
   throw new Error('Executor file operations require the owned FilesService worker.');
 /** The caller owns the returned descriptor. Reject '..' before path normalization. */
-export function directory_descriptor(path: string, options: { create?: boolean } = {}): number {
-  if (path.includes('\0')) throw invalid('embedded null byte');
-  const raw_parts = path.split('/');
-  if (raw_parts.includes('..')) throw invalid('unsafe directory component');
-  const parts = (isAbsolute(path) ? raw_parts : [...process.cwd().split('/'), ...raw_parts]).filter(
-    (part) => part !== '' && part !== '.',
-  );
-  let descriptor = openSync('/', directory_open_flags);
-  try {
-    for (const part of parts) {
-      if (options.create) {
-        try {
-          mkdir_relative(descriptor, part);
-          sync_file_descriptor(descriptor);
-        } catch (error) {
-          if (error_code(error) !== 'EEXIST') throw error;
-        }
-      }
-      const child = open_relative(descriptor, part, directory_open_flags);
-      const previous = descriptor;
-      descriptor = child;
-      closeSync(previous);
-    }
-    return descriptor;
-  } catch (error) {
-    closeSync(descriptor);
-    throw error;
-  }
-}
+export const directory_descriptor = open_directory_descriptor;
 export function regular_descriptor(path: string): number {
   const parent = directory_descriptor(dirname(path));
   let descriptor: number;

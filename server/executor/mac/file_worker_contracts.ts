@@ -10,7 +10,6 @@ export interface CapturedBlob {
   modified_ns: bigint;
 }
 export interface FileOperationArguments {
-  hold_process_lock: [directory: number, name: string];
   capture_file: [source: string, blobs: number, checked_ns: bigint];
   sweep_directory: [directory: number, path: string, keep: readonly string[]];
   file_digest: [path: string];
@@ -36,7 +35,6 @@ export interface FileOperationArguments {
   ];
 }
 export interface FileOperationResults {
-  hold_process_lock: void;
   capture_file: CapturedBlob | null;
   sweep_directory: void;
   file_digest: readonly [string, number];
