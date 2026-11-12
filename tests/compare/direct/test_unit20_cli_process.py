@@ -339,10 +339,43 @@ def _transport_proof(
                 for answer in outcomes:
                     assert answer["exit_code"] == 2 and answer["stdout"] == ""
                     assert json.loads(answer["stderr"])["error"]["code"] == "connection"
-                assert (
-                    json.loads(outcomes[1]["stderr"])["error"]["message"]
-                    == "self-signed certificate"
+                # The accepted contract retains this runtime's native TLS wording.
+                # Reuse the same owned listener and its empty effective CA set.
+                driver.CliHost(
+                    replace(
+                        fault, base=tls.replace("https:", "http:"), port=description["tlsPort"]
+                    ),
+                    root,
+                ).check()
+                oracle_started = time.perf_counter()
+                native = subprocess.run(
+                    [
+                        "node",
+                        "--input-type=module",
+                        "-e",
+                        "import {get} from 'node:https';"
+                        "get(process.argv[1],{ca:[],agent:false,servername:''},response=>{"
+                        "response.resume();process.stderr.write('Expected native TLS rejection');"
+                        "process.exitCode=1;}).on('error',error=>{"
+                        "process.stdout.write(JSON.stringify({node:process.versions.node,"
+                        "code:error.code,message:error.message}));});",
+                        tls,
+                    ],
+                    cwd=driver.ROOT,
+                    env=child_env,
+                    input=b"",
+                    capture_output=True,
+                    timeout=40,
+                    check=False,
                 )
+                assert native.returncode == 0, native.stderr.decode()
+                oracle = json.loads(native.stdout)
+                evidence["tls_native_oracle"] = {
+                    **oracle,
+                    "seconds": time.perf_counter() - oracle_started,
+                }
+                assert oracle["code"] == "DEPTH_ZERO_SELF_SIGNED_CERT"
+                assert json.loads(outcomes[1]["stderr"])["error"]["message"] == oracle["message"]
                 assert json.loads(outcomes[0]["stderr"])["error"]["message"].startswith(
                     "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
                     "self-signed certificate ("
