@@ -75,3 +75,26 @@ it('frames stderr chunks, right-trims, ignores blanks and isolates callback fail
   stderr.write(Buffer.from('ignored after cancellation'));
   expect(lines).toEqual([' first', '🦊', 'tail']);
 });
+
+it('retains lexical result usage kinds without changing tool inputs or forwarded bytes', async () => {
+  const observed: Record<string, unknown>[] = [];
+  const forwarded: Buffer[] = [];
+  const stream = new ObservedStdout((frame) => observed.push(frame));
+  stream.on('data', (chunk: Buffer) => forwarded.push(chunk));
+  const result =
+    '{"type":"result","uuid":"counts","usage":{"input_tokens":5.0,"output_tokens":5,"cache_read_input_tokens":5e0},"total_cost_usd":5.0,"tool_metadata":{"input_tokens":5.0}}';
+  const tool =
+    '{"type":"assistant","message":{"content":[{"type":"tool_use","input":{"input_tokens":5.0,"output_tokens":5e0,"cache_read_input_tokens":5}}]}}';
+  const wire = result + '\n' + tool + '\n';
+  stream.end(wire);
+  await once(stream, 'end');
+  expect(observed[0]).toEqual({
+    type: 'result',
+    uuid: 'counts',
+    usage: { input_tokens: null, output_tokens: 5, cache_read_input_tokens: null },
+    total_cost_usd: 5,
+    tool_metadata: { input_tokens: 5 },
+  });
+  expect(observed[1]).toEqual(JSON.parse(tool));
+  expect(Buffer.concat(forwarded).toString('utf8')).toBe(wire);
+});

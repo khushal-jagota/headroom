@@ -44,7 +44,7 @@ See [the measure README](measures/README.md) for the fixed policy and proof comm
 
 The Manager accepted prior authenticated stop intent followed by the exact supervisor signal instead of Python's kernel-sender and verified-manager check. This preserves accidental bare-signal refusal without a compiled wrapper. Foreground behavior stays ordinary. Implementation remains pending, with the capability, restart-race, and hosted failure proofs listed in [the lifecycle deviation](lifecycle/DEVIATIONS.md).
 
-## Claude SDK identity in the child environment
+## Claude SDK identity and argument serialization
 
 The migration Manager accepted these two differences on November 12, 2026, for Unit 18:
 
@@ -59,13 +59,26 @@ there is no blanket SDK-variable normalization. The public spawn hook preserves 
 inherited-environment policy, including removal of `CLAUDECODE`, rather than forwarding the TS
 SDK's additional flags or filtered environment.
 
+The Manager also accepted these SDK argument facts on November 12, 2026:
+
+- TS adds `--allow-dangerously-skip-permissions`, required for its bypass-permissions mode.
+- Python separates the values of `--model`, `--effort`, `--permission-prompt-tool`, and
+  `--permission-mode`. TS uses the equals form for those four options.
+- The SDKs use different fixed option orders. The paired check asserts each complete
+  argument template, with only the correlated session UUID substituted. Both use `--resume=X`.
+- TS prefixes a script executable with `node`. Python executes its shebang path directly.
+
+Raw argument arrays remain in the evidence. No generic option parser, sorting, wildcard,
+or unknown argument is accepted by the comparison.
+
 `conversation/backends/claude_sdk_environment.test.ts` pins the two TS values through the real
 pinned SDK and the catalog's public spawn hook. It compares the entire child environment,
 including inherited values and the removal of `CLAUDECODE`. Every process API is blocked before
-SDK import, and the synthetic launch stops at the hook without a process.
+SDK import, and the synthetic launch stops at the hook without a process. The same check
+asserts that import and query construction leave the server environment unchanged.
 
 Source inspection found no Panels storage, view, usage, catalog, or session-path consumer of
 either variable. Panels reads usage and cost from result fields, models from the handshake,
 and the session cursor from `session_id`. Provider-private session-file effects remain unverified;
 no provider session file or owner executable was inspected for this check. The adapter follows
-this accepted policy in Unit 18's next part.
+this accepted policy.

@@ -1,15 +1,20 @@
-/** Every process and system-manager boundary is mocked before the client loads. */
+/** Manager calls are mocked. The stdin failure case owns one plain Node child. */
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 import { afterEach, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Options, SpawnedProcess, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { WorkerUnit } from '../../worker_unit/index.ts';
-import { claude_sdk_client } from './query.ts';
+import { CLAUDE_PERMISSION_ORDER, claude_sdk_client } from './query.ts';
+import { CLAUDE_AGENT_SDK_VERSION } from '../claude_sdk.ts';
+
+const { query } = vi.hoisted(() => ({
+  query: vi.fn<(typeof import('@anthropic-ai/claude-agent-sdk'))['query']>(),
+}));
 
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query: vi.fn() }));
+vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query }));
 vi.mock('../cli_compatibility.ts', () => ({ ensure_cli_compatible: vi.fn() }));
 vi.mock('../../worker_unit/index.ts', () => ({ WorkerUnit: { create: vi.fn() } }));
 afterEach(() => {
@@ -17,29 +22,36 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function setup(environment: Record<string, string> = {}, can_use_tool?: Options['canUseTool']) {
+function setup(
+  environment: Record<string, string> = {},
+  can_use_tool?: Options['canUseTool'],
+  owned_process?: ChildProcessWithoutNullStreams,
+) {
   const writes: ((cause?: Error | null) => void)[] = [];
   const received: string[] = [];
-  const child = Object.assign(new EventEmitter(), {
-    stdin: new Writable({
-      write(chunk, _encoding, callback) {
-        received.push(chunk.toString());
-        writes.push(callback);
-      },
-    }),
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    killed: false,
-    exitCode: null as number | null,
-    signalCode: null as NodeJS.Signals | null,
-    kill: vi.fn(() => true),
-  });
+  const child =
+    owned_process ??
+    Object.assign(new EventEmitter(), {
+      stdin: new Writable({
+        write(chunk, _encoding, callback) {
+          received.push(chunk.toString());
+          writes.push(callback);
+        },
+      }),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      killed: false,
+      exitCode: null as number | null,
+      signalCode: null as NodeJS.Signals | null,
+      kill: vi.fn(() => true),
+    });
   vi.mocked(spawn).mockReturnValue(child as never);
   let spawned: SpawnedProcess;
   let pumping: Promise<void> = Promise.resolve();
   let finish_reader: () => void = () => {};
   let wake_reader: () => void = () => {};
   let reader_closed = false;
+  let reader_failure: unknown = null;
   const reader_values: Record<string, unknown>[] = [];
   finish_reader = () => {
     reader_closed = true;
@@ -51,6 +63,10 @@ function setup(environment: Record<string, string> = {}, can_use_tool?: Options[
   };
   const close = vi.fn(() => {
     finish_reader();
+    if (owned_process) {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+      return;
+    }
     child.exitCode = 0;
     child.stdout.end();
     child.stderr.end();
@@ -76,7 +92,10 @@ function setup(environment: Record<string, string> = {}, can_use_tool?: Options[
             yield reader_values.shift()!;
             continue;
           }
-          if (reader_closed) return;
+          if (reader_closed) {
+            if (reader_failure !== null) throw reader_failure;
+            return;
+          }
           await new Promise<void>((resolve) => {
             wake_reader = resolve;
           });
@@ -112,6 +131,10 @@ function setup(environment: Record<string, string> = {}, can_use_tool?: Options[
     close,
     finish_reader,
     yield_message,
+    fail_reader: (error: unknown) => {
+      reader_failure = error;
+      finish_reader();
+    },
     pumping: () => pumping,
   };
 }
@@ -145,6 +168,42 @@ it('waits for actual stdin completion and does not inherit a Worker containment 
   } finally {
     vi.unstubAllEnvs();
   }
+});
+
+it('pins native permission-order classification to the inspected SDK version', () => {
+  expect(CLAUDE_AGENT_SDK_VERSION).toBe('0.3.316');
+  expect(CLAUDE_PERMISSION_ORDER.sdk_version).toBe(CLAUDE_AGENT_SDK_VERSION);
+  expect(CLAUDE_PERMISSION_ORDER.message_types).toEqual([
+    'assistant',
+    'user',
+    'result',
+    'stream_event',
+    'system',
+    'rate_limit_event',
+    'conversation_reset',
+  ]);
+  expect(CLAUDE_PERMISSION_ORDER.sdk_skipped_types).toEqual([
+    'control_request',
+    'control_response',
+    'control_cancel_request',
+    'keep_alive',
+    'transcript_mirror',
+  ]);
+  expect(CLAUDE_PERMISSION_ORDER.system_subtypes).toContain('init');
+  expect(CLAUDE_PERMISSION_ORDER.system_subtypes).not.toContain('future_extension');
+});
+
+it('cancels before a delayed init frame when the correlated native receipt proves an empty queue', async () => {
+  const { client, child, writes, pumping } = setup();
+  await client.connect();
+  const cancel = client.interrupt_and_cancel_queued();
+  writes.shift()!();
+  child.stdout.write(
+    '{"type":"control_response","response":{"request_id":"cancel-id","response":{"cancelled":[],"still_queued":[]}}}\n',
+  );
+  expect(await cancel).toEqual([new Set(), new Set()]);
+  await client.disconnect();
+  await pumping();
 });
 
 it('validates the correlated raw cancel payload before the SDK can filter malformed members', async () => {
@@ -342,5 +401,226 @@ it('releases a permission barrier on callback abort and disconnect', async () =>
   });
   const next = reader.next();
   await Promise.all([disconnect, next]);
+  await pumping();
+});
+
+it('fails a later prompt immediately after an owned live child loses stdin', async () => {
+  const native = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+  const owned = native.spawn(
+    process.execPath,
+    [
+      '-e',
+      'require("node:fs").closeSync(0); process.stdout.write("READY\\n"); setInterval(() => {}, 1000);',
+    ],
+    {
+      cwd: process.env.HOME,
+      env: { HOME: process.env.HOME, PATH: '/usr/bin:/bin' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    },
+  );
+  let closed = false;
+  const exited = new Promise<void>((resolve) =>
+    owned.once('close', () => {
+      closed = true;
+      resolve();
+    }),
+  );
+  const ready = new Promise<void>((resolve, reject) => {
+    owned.stdout.once('data', (chunk: Buffer) =>
+      chunk.toString() === 'READY\n'
+        ? resolve()
+        : reject(new Error('Unexpected owned child readiness')),
+    );
+    owned.once('error', reject);
+  });
+  const { client, pumping } = setup({}, undefined, owned);
+  try {
+    await ready;
+    await client.connect();
+    await expect(client.query('first write')).rejects.toMatchObject({ code: 'EPIPE' });
+    expect(owned.exitCode).toBeNull();
+    let settled = false;
+    const later = client.query('later write').catch((error: unknown) => {
+      settled = true;
+      return error;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(true);
+    expect(await later).toMatchObject({ code: 'EPIPE' });
+  } finally {
+    await client.disconnect();
+    if (!closed) owned.kill('SIGKILL');
+    await exited;
+    await pumping();
+  }
+});
+
+it('does not wait for SDK-unknown frames and releases ordering barriers after a turn result', async () => {
+  const callback = vi.fn(async () => ({ behavior: 'deny' as const, message: 'scripted' }));
+  const { client, child, yield_message, pumping } = setup({}, callback);
+  await client.connect();
+  const reader = client.receive_messages()[Symbol.asyncIterator]();
+  const first = reader.next();
+  child.stdout.write(
+    JSON.stringify({ type: 'future_extension' }) +
+      '\n' +
+      JSON.stringify({
+        type: 'control_request',
+        request_id: 'after-unknown',
+        request: { subtype: 'can_use_tool' },
+      }) +
+      '\n',
+  );
+  const options = vi.mocked(query).mock.calls.at(-1)![0].options!;
+  await options.canUseTool!(
+    'Read',
+    {},
+    { signal: new AbortController().signal, toolUseID: 'call', requestId: 'after-unknown' },
+  );
+  expect(callback).toHaveBeenCalledTimes(1);
+  const result = { type: 'result', uuid: 'turn-result' };
+  child.stdout.write(
+    JSON.stringify(result) +
+      '\n' +
+      JSON.stringify({
+        type: 'control_request',
+        request_id: 'after-result',
+        request: { subtype: 'can_use_tool' },
+      }) +
+      '\n',
+  );
+  const after_result = options.canUseTool!(
+    'Read',
+    {},
+    { signal: new AbortController().signal, toolUseID: 'call', requestId: 'after-result' },
+  );
+  yield_message(result);
+  expect((await first).value).toEqual(result);
+  const next = reader.next();
+  expect(await after_result).toEqual({ behavior: 'deny', message: 'scripted' });
+  expect(callback).toHaveBeenCalledTimes(2);
+  await client.disconnect();
+  await next;
+  await pumping();
+});
+
+it('bounds a permission barrier when a consumed native frame never reaches the iterator', async () => {
+  vi.useFakeTimers();
+  const callback = vi.fn(async () => ({ behavior: 'deny' as const, message: 'scripted' }));
+  const { client, child, pumping } = setup({}, callback);
+  await client.connect();
+  const reader = client.receive_messages()[Symbol.asyncIterator]();
+  const next = reader.next();
+  child.stdout.write(
+    '{"type":"assistant"}\n{"type":"control_request","request_id":"lost-frame","request":{"subtype":"can_use_tool"}}\n',
+  );
+  const options = vi.mocked(query).mock.calls.at(-1)![0].options!;
+  const answer = options.canUseTool!(
+    'Read',
+    {},
+    { signal: new AbortController().signal, toolUseID: 'call', requestId: 'lost-frame' },
+  );
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(await answer).toEqual({ behavior: 'deny', message: 'scripted' });
+  expect(callback).toHaveBeenCalledTimes(1);
+  await client.disconnect();
+  await next;
+  await pumping();
+});
+
+it('translates only SDK-owned numeric exit failures to the full Python process error', async () => {
+  const { client, fail_reader, pumping } = setup();
+  await client.connect();
+  const next = client.receive_messages()[Symbol.asyncIterator]().next();
+  fail_reader(
+    Object.assign(new Error('Claude Code process exited with code 7. stderr: owned tail'), {
+      errorClass: 'process_exited_nonzero',
+      exitCode: 7,
+    }),
+  );
+  await expect(next).rejects.toThrow(
+    'Command failed with exit code 7 (exit code: 7)\nError output: Check stderr output for details',
+  );
+  await client.disconnect();
+  await pumping();
+});
+
+it('keeps raw token-count numeric kinds on matching results without rewriting wire input', async () => {
+  const { client, child, yield_message, pumping } = setup();
+  await client.connect();
+  child.stdout.write(
+    '{"type":"result","uuid":"float-counts","usage":{"input_tokens":5.0,"output_tokens":5e0,"cache_read_input_tokens":7}}\n',
+  );
+  yield_message({
+    type: 'result',
+    uuid: 'float-counts',
+    usage: { input_tokens: 5, output_tokens: 5, cache_read_input_tokens: 7, unrelated: 1.5 },
+  });
+  const result = await client.receive_messages()[Symbol.asyncIterator]().next();
+  expect(result.value).toMatchObject({
+    usage: { input_tokens: null, output_tokens: null, cache_read_input_tokens: 7, unrelated: 1.5 },
+  });
+  await client.disconnect();
+  await pumping();
+});
+
+it('reaches the ask callback on an unknown system frame and does not retain its stale target', async () => {
+  const callback = vi.fn(async () => ({ behavior: 'deny' as const, message: 'scripted' }));
+  const { client, child, pumping } = setup({}, callback);
+  await client.connect();
+  const reader = client.receive_messages()[Symbol.asyncIterator]();
+  const next = reader.next();
+  child.stdout.write(
+    '{"type":"assistant"}\n{"type":"control_request","request_id":"before-extension","request":{"subtype":"can_use_tool"}}\n',
+  );
+  const options = vi.mocked(query).mock.calls.at(-1)![0].options!;
+  const waiting = options.canUseTool!(
+    'Read',
+    {},
+    { signal: new AbortController().signal, toolUseID: 'call', requestId: 'before-extension' },
+  );
+  await Promise.resolve();
+  expect(callback).not.toHaveBeenCalled();
+  child.stdout.write('{"type":"system","subtype":"future_extension"}\n');
+  expect(await waiting).toEqual({ behavior: 'deny', message: 'scripted' });
+  child.stdout.write(
+    '{"type":"control_request","request_id":"after-extension","request":{"subtype":"can_use_tool"}}\n',
+  );
+  await options.canUseTool!(
+    'Read',
+    {},
+    { signal: new AbortController().signal, toolUseID: 'call', requestId: 'after-extension' },
+  );
+  expect(callback).toHaveBeenCalledTimes(2);
+  await client.disconnect();
+  await next;
+  await pumping();
+});
+
+it('rejects an async prompt released after stdin fails before any message is registered', async () => {
+  const { client, child, received, pumping } = setup();
+  await client.connect();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  async function* delayed(): AsyncGenerator<SDKUserMessage> {
+    await held;
+    yield {
+      type: 'user',
+      message: { role: 'user', content: 'late input' },
+      parent_tool_use_id: null,
+      session_id: 'default',
+    };
+  }
+  const failure = new Error('owned synthetic stdin failed');
+  const pending = client.query(delayed());
+  const rejected = expect(pending).rejects.toBe(failure);
+  await Promise.resolve();
+  child.stdin.emit('error', failure);
+  release();
+  await rejected;
+  expect(received).toEqual([]);
+  await client.disconnect();
   await pumping();
 });

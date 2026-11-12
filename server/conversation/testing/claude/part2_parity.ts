@@ -8,7 +8,7 @@ import { ConversationStartRequest, ConversationRoleMaterials } from '../../contr
 import { AgentMessageDeltaFrame, UserInputAnswer } from '../../events.ts';
 import { text_message_content } from '../../message_content.ts';
 import { delivery_fate_json } from '../../http.ts';
-import { create_claude_backend_child_factory } from '../../backends/claude_agent_sdk/adapter.ts';
+import { install_owned_launch_boundary } from './part2_containment.ts';
 
 export interface Part2Spec {
   database: string;
@@ -31,6 +31,10 @@ const rowOrders: Readonly<Record<string, string>> = {
   conversation_view_lookups: 'conversation_id,lookup_kind,source_sequence,lookup_id',
 };
 export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
+  const serverEnvironmentBefore = { ...process.env };
+  const restoreLaunchBoundary = await install_owned_launch_boundary(spec);
+  const { create_claude_backend_child_factory } =
+    await import('../../backends/claude_agent_sdk/adapter.ts');
   const database = createDatabase(spec.database);
   database.write((tx) =>
     tx.run(
@@ -41,7 +45,10 @@ export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
   const store = new ConversationStore(database, { integer_now: () => 100 });
   const factory = create_claude_backend_child_factory({
     claude_executable: spec.executable,
-    environment_overrides: [['UNIT18_TRACE', spec.trace]],
+    environment_overrides: [
+      ['UNIT18_TRACE', spec.trace],
+      ['UNIT18_WRAPPED_FILE', `${spec.trace}.wrapped.json`],
+    ],
   });
   const plainLiveText: { type: string; text_delta: string }[] = [];
   const core = new SqliteProcessConversationSystem({
@@ -59,6 +66,10 @@ export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
   const checkpoints: unknown[] = [];
   let malformedCancelSeconds = 0;
   let malformedAssistantSeconds = 0;
+  let successfulResumeSeconds = 0;
+  let delayedInitSeconds = 0;
+  let workerContainmentSeconds = 0;
+  let crashSeconds = 0;
   let sender = 0;
   const send = async (scenario: string, mode: 'queue' | 'steer' = 'queue') =>
     delivery_fate_json(
@@ -145,10 +156,16 @@ export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
     await core.interrupt(id);
     await ended(6);
     await capture('interrupt', [interrupt]);
+    const resumeStarted = performance.now();
+    await core.kill(id);
+    const successfulResume = await send('resume-success');
+    await ended(7);
+    await capture('successful-resume', [successfulResume]);
+    successfulResumeSeconds = (performance.now() - resumeStarted) / 1000;
     const malformedStarted = performance.now();
     const malformed = await send('malformed-cancel-base');
     await core.interrupt(id);
-    await ended(7);
+    await ended(8);
     await capture('malformed-cancel-receipt', [malformed]);
     malformedCancelSeconds = (performance.now() - malformedStarted) / 1000;
     const resume = await send('resume-must-fail');
@@ -188,15 +205,107 @@ export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
     }, 'malformed assistant fails its turn');
     await capture('malformed-assistant', [malformedAssistant]);
     malformedAssistantSeconds = (performance.now() - malformedAssistantStarted) / 1000;
+    const delayedStarted = performance.now();
+    const delayedId = 'unit18-delayed-init';
+    await core.start_conversation(
+      new ConversationStartRequest({
+        conversation_id: delayedId,
+        backend_key: 'claude',
+        model: 'haiku',
+        reasoning_effort: 'low',
+        workspace_folder: spec.workspace,
+        workspace_path_policy: 'absolute',
+        role_materials: new ConversationRoleMaterials({
+          role_text: 'Synthetic owner',
+          identity_environment_variables: [
+            ['PLAN_ACTOR', 'owner'],
+            ['UNIT18_DELAY_INIT', '1'],
+          ],
+        }),
+      }),
+    );
+    const delayed = delivery_fate_json(
+      await core.send(delayedId, text_message_content('[CASE:delayed-init-base]'), {
+        sender_label: 'Owner',
+        sender_message_id: 'delayed-input',
+      }),
+    );
+    await core.interrupt(delayedId);
+    await wait(async () => {
+      const endings = database.read(
+        (sql) =>
+          sql.get<{ count: number }>(
+            "SELECT count(*) AS count FROM conversation_events WHERE conversation_id=? AND kind='turn_ended'",
+            [delayedId],
+          )!.count,
+      );
+      return endings === 1 && !(await core.is_running(delayedId));
+    }, 'Stop before native system/init');
+    await capture('stop-before-system-init', [delayed]);
+    delayedInitSeconds = (performance.now() - delayedStarted) / 1000;
+    for (const [extraId, scenario, worker] of [
+      ['unit18-contained', 'worker', true],
+      ['unit18-crash', 'crash7', false],
+    ] as const) {
+      const started = performance.now();
+      const role: [string, string][] = worker
+        ? [
+            ['PLAN_ACTOR', 'worker'],
+            ['PLAN_TICKET_ID', 'unit18-synthetic-worker'],
+          ]
+        : [['PLAN_ACTOR', 'owner']];
+      await core.start_conversation(
+        new ConversationStartRequest({
+          conversation_id: extraId,
+          backend_key: 'claude',
+          model: 'haiku',
+          reasoning_effort: 'low',
+          workspace_folder: spec.workspace,
+          workspace_path_policy: 'absolute',
+          role_materials: new ConversationRoleMaterials({
+            role_text: worker ? 'Synthetic worker' : 'Synthetic owner',
+            identity_environment_variables: role,
+          }),
+        }),
+      );
+      const fate = delivery_fate_json(
+        await core.send(extraId, text_message_content(`[CASE:${scenario}]`), {
+          sender_label: 'Owner',
+          sender_message_id: `${scenario}-input`,
+        }),
+      );
+      await wait(async () => {
+        const endings = database.read(
+          (sql) =>
+            sql.get<{ count: number }>(
+              "SELECT count(*) AS count FROM conversation_events WHERE conversation_id=? AND kind='turn_ended'",
+              [extraId],
+            )!.count,
+        );
+        return endings === 1 && !(await core.is_running(extraId));
+      }, `${scenario} ending`);
+      await core.kill(extraId);
+      await capture(worker ? 'worker-containment' : 'process-exit7', [fate]);
+      if (worker) workerContainmentSeconds = (performance.now() - started) / 1000;
+      else crashSeconds = (performance.now() - started) / 1000;
+    }
   } finally {
     await core.shutdown();
     database.close();
+    restoreLaunchBoundary();
   }
   return {
     checkpoints,
+    node_executable: process.execPath,
+    server_environment_before: serverEnvironmentBefore,
+    server_environment_after: { ...process.env },
     plain_live_text: plainLiveText,
     malformed_cancel_seconds: malformedCancelSeconds,
     malformed_assistant_seconds: malformedAssistantSeconds,
+    successful_resume_seconds: successfulResumeSeconds,
+    delayed_init_seconds: delayedInitSeconds,
+    worker_containment_seconds: workerContainmentSeconds,
+    crash_seconds: crashSeconds,
     trace: readFileSync(spec.trace, 'utf8')
       .trim()
       .split('\n')

@@ -3,10 +3,11 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
-import { load_claude_sdk } from '../claude_sdk.ts';
+import { CLAUDE_AGENT_SDK_VERSION, load_claude_sdk } from '../claude_sdk.ts';
 import type {
   Query,
   SDKUserMessage,
+  SDKMessage,
   SpawnedProcess,
   SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -17,6 +18,7 @@ import { with_tool_shell_kill_priority } from '../../tool_shell_kill_priority.ts
 import {
   CLAUDE_CANCEL_QUEUED_TIMEOUT_SECONDS,
   CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS,
+  CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS,
 } from './configuration.ts';
 import type { ClaudeSdkClient, ClaudeSdkOptions, ClaudeSdkMessage } from './query_contracts.ts';
 import { ClaudeReceipts } from './receipts.ts';
@@ -79,6 +81,92 @@ interface CancelAttempt {
   response: Pending<Record<string, unknown> | null>;
 }
 
+// SDK 0.3.316 readMessages consumes control/keep-alive/mirror/host-only frames.
+// Count only the native message families that the Python adapter can consume.
+// The version assertion in query.test.ts forces review when the SDK pin changes.
+const ORDERED_SYSTEM_SUBTYPES = {
+  api_retry: true,
+  background_tasks_changed: true,
+  commands_changed: true,
+  compact_boundary: true,
+  control_request_progress: true,
+  elicitation_complete: true,
+  files_persisted: true,
+  hook_progress: true,
+  hook_response: true,
+  hook_started: true,
+  informational: true,
+  local_command_output: true,
+  memory_recall: true,
+  mirror_error: true,
+  model_refusal_fallback: true,
+  model_refusal_no_fallback: true,
+  notification: true,
+  permission_denied: true,
+  plugin_install: true,
+  session_state_changed: true,
+  status: true,
+  init: true,
+  task_notification: true,
+  task_progress: true,
+  task_started: true,
+  task_updated: true,
+  thinking_tokens: true,
+  worker_shutting_down: true,
+} satisfies Record<Extract<SDKMessage, { type: 'system' }>['subtype'], true>;
+export const CLAUDE_PERMISSION_ORDER = {
+  sdk_version: CLAUDE_AGENT_SDK_VERSION,
+  message_types: [
+    'assistant',
+    'user',
+    'result',
+    'stream_event',
+    'system',
+    'rate_limit_event',
+    'conversation_reset',
+  ],
+  system_subtypes: Object.keys(ORDERED_SYSTEM_SUBTYPES),
+  sdk_skipped_types: [
+    'control_request',
+    'control_response',
+    'control_cancel_request',
+    'keep_alive',
+    'transcript_mirror',
+  ],
+} as const;
+const ORDERED_MESSAGE_TYPES = new Set<string>(CLAUDE_PERMISSION_ORDER.message_types);
+function ordered_message(message: Record<string, unknown>): boolean {
+  return (
+    typeof message.type === 'string' &&
+    ORDERED_MESSAGE_TYPES.has(message.type) &&
+    !(
+      message.type === 'system' &&
+      message.subtype === 'session_state_changed' &&
+      message.sdk_host_only === true
+    ) &&
+    (message.type !== 'system' ||
+      (typeof message.subtype === 'string' &&
+        Object.hasOwn(ORDERED_SYSTEM_SUBTYPES, message.subtype)))
+  );
+}
+function native_exit_failure(cause: unknown): unknown {
+  if (!(cause instanceof Error)) return cause;
+  const native = cause as Error & { errorClass?: string; exitCode?: number };
+  const match = /^Claude Code process exited with code (-?\d+)(?:\. stderr: [\s\S]*)?$/.exec(
+    cause.message,
+  );
+  if (
+    native.errorClass !== 'process_exited_nonzero' ||
+    !match ||
+    !Number.isInteger(native.exitCode) ||
+    Number(match[1]) !== native.exitCode
+  )
+    return cause;
+  return new Error(
+    `Command failed with exit code ${native.exitCode} (exit code: ${native.exitCode})\nError output: Check stderr output for details`,
+  );
+}
+
 class ObservedClaudeSdkClient implements ClaudeSdkClient {
   private readonly options: ClaudeSdkOptions;
   private readonly receipts = new ClaudeReceipts();
@@ -95,13 +183,14 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
   private cleanup_started = false;
   private stream_failure: Error | null = null;
   private cancel_attempt: CancelAttempt | null = null;
-  private cancel_capability = false;
   private wire_message_count = 0;
   private delivered_message_count = 0;
   private processed_message_count = 0;
+  private permission_fallback_floor = 0;
   private reader_started = false;
   private readonly permission_targets = new Map<string, number>();
   private readonly permission_waiters = new Set<{ target: number; ready: Pending<boolean> }>();
+  private readonly raw_result_usage = new Map<string | null, Record<string, unknown>[]>();
 
   constructor(options: ClaudeSdkOptions) {
     this.options = options;
@@ -126,7 +215,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     Object.assign(environment, overrides);
     // These are the two explicitly accepted migration differences from Python.
     environment.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts';
-    environment.CLAUDE_AGENT_SDK_VERSION = '0.3.316';
+    environment.CLAUDE_AGENT_SDK_VERSION = CLAUDE_AGENT_SDK_VERSION;
     if (this.options.cwd) environment.PWD = this.options.cwd;
     if (this.options.enableFileCheckpointing)
       environment.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING = 'true';
@@ -147,7 +236,11 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
               : async (tool, input, permission) => {
                   const target = this.permission_targets.get(permission.requestId) ?? 0;
                   this.permission_targets.delete(permission.requestId);
-                  if (!(await this.wait_for_processing(target, permission.signal))) {
+                  if (
+                    !(await this.wait_for_processing(target, permission.signal)) ||
+                    this.cleanup_started ||
+                    permission.signal.aborted
+                  ) {
                     return {
                       behavior: 'deny',
                       message: 'The turn ended before this was answered.',
@@ -162,7 +255,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       this.info = object(info) ? info : null;
     } catch (cause) {
       await this.stop_worker_unit();
-      throw cause;
+      throw native_exit_failure(cause);
     }
   }
 
@@ -195,10 +288,11 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     const stdout = new ObservedStdout((message) => {
       this.receipts.observe(message);
       this.observe_permission_order(message);
-      if (message.type === 'system' && message.subtype === 'init') {
-        this.cancel_capability =
-          Array.isArray(message.capabilities) &&
-          message.capabilities.includes('interrupt_cancel_queued_v1');
+      if (message.type === 'result' && object(message.usage)) {
+        const key = typeof message.uuid === 'string' ? message.uuid : null;
+        const queued = this.raw_result_usage.get(key) ?? [];
+        queued.push({ ...message.usage });
+        this.raw_result_usage.set(key, queued);
       }
     });
     stdout.on('error', (cause) => {
@@ -261,21 +355,27 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
           if (completed !== null) this.active_writes.add(completed);
           child.stdin.write(chunk, encoding, (cause) => {
             if (completed !== null) this.active_writes.delete(completed);
-            if (cause) completed?.reject(cause);
-            else completed?.resolve();
+            if (cause) {
+              completed?.reject(cause);
+              this.break_writes(cause);
+            } else completed?.resolve();
             callback(cause);
           });
         } catch (cause) {
           const error = cause instanceof Error ? cause : new Error(String(cause));
           if (completed !== null) this.active_writes.delete(completed);
           completed?.reject(error);
+          this.break_writes(error);
           callback(error);
         }
       },
       final: (callback) => child.stdin.end(callback),
     });
-    stdin.on('error', (cause) => this.fail_writes(cause));
-    child.stdin.on('error', (cause) => stdin.destroy(cause));
+    stdin.on('error', (cause) => this.break_writes(cause));
+    child.stdin.on('error', (cause) => {
+      this.break_writes(cause);
+      stdin.destroy(cause);
+    });
     // Custom SDK spawns must consume stderr themselves. Exit follows stream closure.
     return {
       stdin,
@@ -311,7 +411,10 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
         message.request.subtype === 'can_use_tool' &&
         !this.permission_targets.has(message.request_id)
       ) {
-        this.permission_targets.set(message.request_id, this.wire_message_count);
+        this.permission_targets.set(
+          message.request_id,
+          this.wire_message_count <= this.permission_fallback_floor ? 0 : this.wire_message_count,
+        );
       }
       return;
     }
@@ -320,26 +423,29 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
         this.permission_targets.delete(message.request_id);
       return;
     }
-    // SDK 0.3.316 readMessages consumes these without yielding them to its iterator.
-    if (
-      message.type === 'control_response' ||
-      message.type === 'keep_alive' ||
-      message.type === 'transcript_mirror'
-    )
-      return;
-    if (
-      message.type === 'system' &&
-      message.subtype === 'session_state_changed' &&
-      message.sdk_host_only === true
-    )
-      return;
-    this.wire_message_count += 1;
-  }
-  private release_permission_waiters(closed = false): void {
-    for (const waiter of this.permission_waiters) {
-      if (closed || this.processed_message_count >= waiter.target) waiter.ready.resolve(!closed);
+    if (ordered_message(message)) this.wire_message_count += 1;
+    else if (
+      !(
+        typeof message.type === 'string' &&
+        (CLAUDE_PERMISSION_ORDER.sdk_skipped_types as readonly string[]).includes(message.type)
+      ) &&
+      !(
+        message.type === 'system' &&
+        message.subtype === 'session_state_changed' &&
+        message.sdk_host_only === true
+      )
+    ) {
+      // An extension may not reach the iterator. Do not hold asks behind it.
+      this.permission_fallback_floor = this.wire_message_count;
+      this.release_permission_waiters(false, true);
     }
-    if (closed) this.permission_targets.clear();
+  }
+  private release_permission_waiters(closed = false, fallback = false): void {
+    for (const waiter of this.permission_waiters) {
+      if (closed || fallback || this.processed_message_count >= waiter.target)
+        waiter.ready.resolve(!closed);
+    }
+    if (closed || fallback) this.permission_targets.clear();
   }
   private async wait_for_processing(target: number, signal: AbortSignal): Promise<boolean> {
     if (this.cleanup_started || signal.aborted) return false;
@@ -349,7 +455,8 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     this.permission_waiters.add(waiter);
     signal.addEventListener('abort', cancelled, { once: true });
     try {
-      return await waiter.ready.promise;
+      const ready = await bounded(waiter.ready.promise, CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS);
+      return ready.timed_out ? !this.cleanup_started && !signal.aborted : ready.value;
     } finally {
       signal.removeEventListener('abort', cancelled);
       this.permission_waiters.delete(waiter);
@@ -370,13 +477,23 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     for (const pending of this.active_writes) pending.reject(cause);
     this.active_writes.clear();
   }
+  private break_writes(cause: unknown): void {
+    this.stream_failure ??= cause instanceof Error ? cause : new Error(String(cause));
+    this.fail_writes(this.stream_failure);
+    this.release_permission_waiters(true);
+  }
   async get_server_info(): Promise<Record<string, unknown> | null> {
     return this.info;
   }
   async query(prompt: string | AsyncIterable<SDKUserMessage>): Promise<void> {
     if (this.cli === null || this.cleanup_started)
       throw new Error('Not connected. Call connect() first.');
+    if (this.stream_failure !== null) throw this.stream_failure;
     const send = async (message: SDKUserMessage) => {
+      // The prompt iterator can suspend across a broken stdin or disconnect.
+      if (this.cli === null || this.cleanup_started)
+        throw new Error('Not connected. Call connect() first.');
+      if (this.stream_failure !== null) throw this.stream_failure;
       const pending: PendingWrite = { uuid: message.uuid, completed: new Pending<void>() };
       this.pending_writes.push(pending);
       try {
@@ -403,23 +520,44 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     this.reader_started = true;
     try {
       for await (const message of this.cli) {
-        const sequence = ++this.delivered_message_count;
+        const sequence =
+          object(message) && ordered_message(message) ? ++this.delivered_message_count : null;
         try {
-          if (object(message) && typeof message.type === 'string')
+          if (object(message) && typeof message.type === 'string') {
+            if (message.type === 'result') {
+              const key = typeof message.uuid === 'string' ? message.uuid : null;
+              const queued = this.raw_result_usage.get(key);
+              const usage = queued?.shift();
+              if (queued?.length === 0) this.raw_result_usage.delete(key);
+              if (usage !== undefined) {
+                const counts = Object.fromEntries(
+                  ['input_tokens', 'output_tokens', 'cache_read_input_tokens']
+                    .filter((field) => Object.hasOwn(usage, field))
+                    .map((field) => [field, usage[field]]),
+                );
+                yield {
+                  ...message,
+                  usage: { ...(object(message.usage) ? message.usage : {}), ...counts },
+                } as ClaudeSdkMessage;
+                continue;
+              }
+            }
             yield message as ClaudeSdkMessage;
+          }
         } finally {
           // Resumption means the adapter finished take_in for the previous yield.
-          this.processed_message_count = sequence;
-          this.release_permission_waiters();
+          if (sequence !== null) this.processed_message_count = sequence;
+          this.release_permission_waiters(false, object(message) && message.type === 'result');
         }
       }
       if (this.stream_failure !== null) throw this.stream_failure;
     } catch (cause) {
-      throw this.stream_failure ?? cause;
+      throw this.stream_failure ?? native_exit_failure(cause);
     } finally {
       this.reader_started = false;
       this.release_permission_waiters(true);
       this.receipts.stream_ended();
+      this.raw_result_usage.clear();
       await this.stop_worker_unit();
     }
   }
@@ -445,7 +583,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
   async interrupt_and_cancel_queued(): Promise<
     readonly [ReadonlySet<string>, ReadonlySet<string>]
   > {
-    if (this.cli === null || !this.cancel_capability || this.cancel_attempt !== null)
+    if (this.cli === null || this.cancel_attempt !== null)
       throw new PromptWriteFailed('claude did not confirm queued command cancellation');
     const attempt: CancelAttempt = { request_id: null, response: new Pending() };
     this.cancel_attempt = attempt;
@@ -501,6 +639,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     if (close_failure !== undefined) throw close_failure;
     if (this.cli !== null) await this.cli.return(undefined);
     this.receipts.clear();
+    this.raw_result_usage.clear();
     this.cli = null;
     this.child = null;
     this.child_exit = null;
