@@ -57,7 +57,8 @@ contracts. These language-boundary changes preserve Python behavior:
 - Bucket order uses Unicode code points rather than locale collation. Model
   normalization uses Python's whitespace set.
 - Database paths resolve filesystem symlinks before composition chooses the cache
-  parent. Missing path tails retain Python's non-strict resolution behavior.
+  parent through `core/path_resolution.ts`. Missing path tails retain Python's
+  non-strict resolution behavior. A DB-file symlink places `usage` beside its target.
 - Transcript home paths retain pathlib's lexical `..` segments. They do not use
   Node's collapsing path join before source fingerprints and filesystem reads.
 - Persisted cache documents use strict UTF-8 decoding and reject text BOMs.

@@ -253,6 +253,8 @@ test('notification deadline fences late web and native results and bounds adapte
   const { context, database } = setup();
   const web = done<WebPushResult>();
   const native = done<APNsResult>();
+  const webEntered = done<void>();
+  const nativeEntered = done<void>();
   const close = done<void>();
   vi.spyOn(notificationData, 'queue_deliveries').mockReturnValue(1);
   vi.spyOn(notificationData, 'read_web_push_identity').mockReturnValue({
@@ -293,22 +295,34 @@ test('notification deadline fences late web and native results and bounds adapte
   ]);
   const webRecord = vi.spyOn(notificationData, 'record_delivery_result');
   const nativeRecord = vi.spyOn(apnsData, 'record_result');
-  const nativeSend = vi.fn(() => native.promise);
+  const nativeSend = vi.fn(() => {
+    nativeEntered.resolve();
+    return native.promise;
+  });
   const loop = new NotificationLoop({
     database,
     clock: context.clock,
     canonical_origin: 'https://unit21.invalid',
-    adapter: { send: () => web.promise },
+    adapter: {
+      send: () => {
+        webEntered.resolve();
+        return web.promise;
+      },
+    },
     apns_adapter: { send: nativeSend, close: () => close.promise },
   });
   const pass = loop.poll_once();
-  await expect(loop.stop({ deadline: performance.now() / 1000 + 0.01 })).rejects.toBeInstanceOf(
-    ShutdownDeadlineExceeded,
-  );
-  web.resolve({ delivered: true });
-  close.resolve();
-  await pass;
-  await loop.settled();
+  try {
+    await webEntered.promise;
+    await expect(loop.stop({ deadline: performance.now() / 1000 + 0.01 })).rejects.toBeInstanceOf(
+      ShutdownDeadlineExceeded,
+    );
+  } finally {
+    web.resolve({ delivered: true });
+    close.resolve();
+    await pass;
+    await loop.settled();
+  }
   expect(webRecord).not.toHaveBeenCalled();
   expect(nativeSend).not.toHaveBeenCalled();
   expect(await loop.poll_once()).toBe(0);
@@ -322,12 +336,16 @@ test('notification deadline fences late web and native results and bounds adapte
     apns_adapter: { send: nativeSend, close() {} },
   });
   const nativePass = nativeLoop.poll_once();
-  await expect(
-    nativeLoop.stop({ deadline: performance.now() / 1000 + 0.01 }),
-  ).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
-  native.resolve({ delivered: true });
-  await nativePass;
-  await nativeLoop.settled();
+  try {
+    await nativeEntered.promise;
+    await expect(
+      nativeLoop.stop({ deadline: performance.now() / 1000 + 0.01 }),
+    ).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
+  } finally {
+    native.resolve({ delivered: true });
+    await nativePass;
+    await nativeLoop.settled();
+  }
   expect(nativeRecord).not.toHaveBeenCalled();
 });
 
@@ -485,6 +503,10 @@ test('composed Worker and Manager sends share a deadline and leave no late datab
     expect(managerStop).toHaveBeenCalledWith({ deadline });
     expect(acquireLock(path + '.held-dispatcher')).toBeNull();
     await expect(closing).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
+    // The parent deadline observer can run before this producer's cancellation callback.
+    await expect(managerStop.mock.results[0]!.value).rejects.toBeInstanceOf(
+      ShutdownDeadlineExceeded,
+    );
     expect(read(database, ticket.id)).toMatchObject({
       conversation_id: departure.conversation_id,
       worker_step_claim: 'out',

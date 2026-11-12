@@ -318,8 +318,11 @@ part, as Python does. Nonzero microseconds retain six digits.
 
 `conversation/backends/hermes_acp/` supplies the Hermes backend:
 the backend child, launch values, ordered ACP transport, and process ownership.
-`create_hermes_backend_child_factory` is exported from `adapter.ts`. The catalog
-binding and production selection remain separate work. Hermes retains Python's exact child environment,
+`create_hermes_backend_child_factory` is exported from `adapter.ts`.
+`HermesModelCatalogOwner` and `hermes_model_catalog_launch` in `catalog.ts` supply
+the retained inventory script binding. The lifecycle owner must retain the catalog
+owner and call `shutdown()` when the server stops. Production selection remains
+separate work. Hermes retains Python's exact child environment,
 including the absence of an automatic `BASH_ENV` override.
 
 The adapter pins `@agentclientprotocol/sdk` to `2.6.0` and uses its ACP v1

@@ -181,11 +181,24 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         actual: () => Promise<void>,
       ) => {
         stages.own(name, () => {
-          const observed = Promise.resolve(begin()).catch((error: unknown) => {
-            if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
-          });
+          const flights: Promise<unknown>[] = [];
+          for (const operation of [begin, actual]) {
+            try {
+              flights.push(Promise.resolve(operation()));
+            } catch (error) {
+              flights.push(Promise.reject(error));
+            }
+          }
           // The bounded observer is NEVER the proof of actual settlement.
-          return Promise.all([actual(), observed]);
+          return Promise.allSettled(flights).then((results) => {
+            const failures = results.flatMap((result, index) =>
+              result.status === 'rejected' &&
+              !(index === 0 && result.reason instanceof ShutdownDeadlineExceeded)
+                ? [result.reason]
+                : [],
+            );
+            if (failures.length) throw new AggregateError(failures, `${name} shutdown failed`);
+          });
         });
       };
       producer(
@@ -194,7 +207,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
           stopped_usage = recorded_usage;
           return recorded_usage?.stop?.(stop);
         },
-        () => stopped_usage?.finish_operations() ?? Promise.resolve(),
+        () => stopped_usage?.settled() ?? Promise.resolve(),
       );
       producer(
         'background services',
@@ -207,12 +220,14 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         () => environments?.settled() ?? Promise.resolve(),
       );
       stages.own('environment setup', () => environmentsStarting?.catch(() => {}));
-      stages.own('backend services', () => {
-        stopped_backend = backendServices;
-        return backendServices?.shutdown
-          ? backendServices.shutdown()
-          : backendServices?.codex_sign_in?.shutdown();
-      });
+      producer(
+        'backend services',
+        () => {
+          stopped_backend = backendServices;
+          return backendServices?.shutdown?.(stop);
+        },
+        () => stopped_backend?.settled() ?? Promise.resolve(),
+      );
       // Core cancellation/detach begins before any HTTP/raw-provider wait.
       producer(
         'conversation core',
@@ -232,7 +247,11 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       stages.own('HTTP work', () => request_lifetime.settled());
       stages.own('media cleanup', () => video_cleanup_work);
       stages.own('HTTP writes', () => conversationWrites.drain());
-      stages.own('credential requests', () => credential_requests?.finish_operations());
+      producer(
+        'credential requests',
+        () => credential_requests?.finish_operations(stop),
+        () => credential_requests?.settled() ?? Promise.resolve(),
+      );
       stages.own('startup recovery', () =>
         recovery?.catch((error: unknown) => {
           if (!(error instanceof Error && error.name === 'AbortError')) throw error;
@@ -290,12 +309,15 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       stopped_backend = backendServices;
       try {
         actuals.push(
-          Promise.resolve(
-            backendServices.shutdown
-              ? backendServices.shutdown()
-              : backendServices.codex_sign_in?.shutdown(),
-          ),
+          Promise.resolve(backendServices.shutdown?.(stop_options!)).catch((error: unknown) => {
+            if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+          }),
         );
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
+      try {
+        actuals.push(backendServices.settled());
       } catch (error) {
         actuals.push(Promise.reject(error));
       }
@@ -312,7 +334,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         actuals.push(Promise.reject(error));
       }
       try {
-        actuals.push(recorded_usage.finish_operations());
+        actuals.push(recorded_usage.settled());
       } catch (error) {
         actuals.push(Promise.reject(error));
       }
@@ -512,6 +534,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
                 await conversationWrites.run(() => usage.readSummary(input)),
               refreshRates: async () => await conversationWrites.run(() => usage.refreshRates()),
               finish_operations: () => usage.finish_operations(),
+              settled: () => usage.settled(),
             },
             backend_state: backendServices.backend_state,
           }),
@@ -522,11 +545,17 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         },
         {
           prefix: '/api/conversation',
-          routes: createVoiceRoutes({ signal: media_lifetime.signal }),
+          routes: createVoiceRoutes({ signal: media_lifetime.signal, writes: conversationWrites }),
         },
         ...(environments?.areas ?? []),
 
-        { prefix: '/api/conversation', routes: createBackendRoutes(backendServices) },
+        {
+          prefix: '/api/conversation',
+          routes: createBackendRoutes(backendServices, {
+            available: conversationSystem !== undefined,
+            writes: conversationWrites,
+          }),
+        },
         ...(core
           ? [
               {

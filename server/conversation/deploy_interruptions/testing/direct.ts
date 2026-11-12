@@ -8,18 +8,32 @@ import {
   read_summary,
   admit_recovery,
 } from '../data.ts';
-import { manifest_from_dict, read_manifests } from '../files.ts';
+import { manifest_from_dict, manifest_root, read_manifests } from '../files.ts';
+import { relative } from 'node:path';
+import { makeUsageService } from '../../usage/composition.ts';
+import { VideoUploadService } from '../../video_uploads/service.ts';
+import type { Config } from '../../../core/config.ts';
 import type { LifecycleStatus } from '../../record/lifecycle.ts';
 interface Spec {
   readonly cases: readonly { path: string; status: LifecycleStatus | 'restart' }[];
   readonly manifest: unknown;
 }
-export function inspect_capture_evidence(db_path: string) {
+export function inspect_capture_evidence(db_path: string, fixture_root: string) {
   const manifests = read_manifests(db_path);
   const database = createDatabase(db_path);
   try {
+    const usage = makeUsageService({ db_path, test_mode: true } as Config, {
+      ratesFetcher: () => null,
+      transcriptDirs: [],
+    });
+    const video = new VideoUploadService(database, db_path);
     database.write((tx) => reconcile(tx, manifests, 100));
     return {
+      folders: {
+        usage: relative(fixture_root, usage.stateDir),
+        deploy: relative(fixture_root, manifest_root(db_path)),
+        video: relative(fixture_root, video.root),
+      },
       manifests,
       accounts: database.read(read_summary),
       rows: database.read((sql) =>

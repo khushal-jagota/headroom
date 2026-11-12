@@ -14,9 +14,188 @@ import { createApp } from '../app.ts';
 import { loadConfig } from '../core/config.ts';
 import { BackendUsageService } from '../conversation/backend_usage/service.ts';
 import { createBackendRoutes } from '../conversation/snapshot/routes.ts';
+import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
+import { createVoiceRoutes } from '../conversation/voice_transcription/routes.ts';
 import { production_backend_providers } from '../conversation/snapshot/production.ts';
 import { SubprocessBackendProbeEnvironment } from '../conversation/snapshot/environment.ts';
 import { http_get_usage } from '../conversation/backend_usage/http.ts';
+
+// Gap: successful HTTP comparisons cannot prove the shared shutdown seal retains
+// admitted catalog/voice work and prevents either route from starting new I/O.
+test('backend and voice HTTP work share admission and remain owned until both settle', async () => {
+  const database = fixture();
+  const writes = new ConversationHttpWriteScope();
+  const catalog_entered = new Deferred<void>();
+  const voice_entered = new Deferred<void>();
+  const release = new Deferred<void>();
+  let probes = 0;
+  let trims = 0;
+  let posts = 0;
+  const snapshots = new BackendSnapshotService({
+    environment: machine(),
+    read_codex_login_standing: login,
+    probe: async (key) => {
+      probes++;
+      catalog_entered.resolve();
+      await release.promise;
+      return { ...card(), backend_key: key };
+    },
+  });
+  const config = loadConfig(undefined, {
+    PLAN_TEST_MODE: '1',
+    PLAN_DB_PATH: fixture_path(database),
+  });
+  config.voice_transcription_api_key = 'synthetic-key';
+  const app = await createApp(config, {
+    database,
+    areas: [
+      {
+        prefix: '/api/conversation',
+        routes: createBackendRoutes(
+          {
+            settled: () => writes.drain(),
+            database,
+            backend_snapshots: snapshots,
+            backend_usage: new BackendUsageService({}),
+            backend_state: null,
+            codex_sign_in: null,
+            machine_catalog: () => null,
+          },
+          { available: true, writes },
+        ),
+      },
+      {
+        prefix: '/api/conversation',
+        routes: createVoiceRoutes({
+          writes,
+          adapters: {
+            async trim_surrounding_silence(audio) {
+              trims++;
+              voice_entered.resolve();
+              await release.promise;
+              return [audio, false];
+            },
+            async http_post() {
+              posts++;
+              return { status_code: 200, json: () => ({ text: 'Recorded words.' }) };
+            },
+          },
+        }),
+      },
+    ],
+  });
+  const backend_request = app
+    .inject({ method: 'GET', url: '/api/conversation/backends' })
+    .then((value) => value);
+  const voice_request = app
+    .inject({
+      method: 'POST',
+      url: '/api/conversation/voice-transcriptions',
+      payload: { audio: 'aGVsbG8=', media_type: 'audio/webm' },
+    })
+    .then((value) => value);
+  try {
+    await Promise.all([catalog_entered.promise, voice_entered.promise]);
+    writes.seal();
+    let drained = false;
+    const drain = writes.drain().then(() => {
+      drained = true;
+    });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+    const already_started = probes;
+    expect(
+      (await app.inject({ method: 'GET', url: '/api/conversation/backends' })).statusCode,
+    ).toBe(503);
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/conversation/voice-transcriptions',
+          payload: { audio: 'aGVsbG8=' },
+        })
+      ).statusCode,
+    ).toBe(503);
+    expect(probes).toBe(already_started);
+    expect(trims).toBe(1);
+    expect(posts).toBe(0);
+    release.resolve();
+    expect((await backend_request).statusCode).toBe(200);
+    expect((await voice_request).statusCode).toBe(200);
+    await drain;
+    expect(drained).toBe(true);
+    expect(posts).toBe(1);
+  } finally {
+    release.resolve();
+    writes.seal();
+    await writes.drain();
+    await Promise.allSettled([backend_request, voice_request]);
+    await app.close();
+  }
+});
+
+// Gap: injected services can answer without a core unless every backend route
+// preserves Python's shared Runtime dependency before route-level validation.
+test('all eight backend routes require the conversation runtime before validated work', async () => {
+  const database = fixture();
+  const writes = new ConversationHttpWriteScope();
+  const probe = vi.fn(async () => card());
+  const snapshots = new BackendSnapshotService({
+    environment: machine(),
+    read_codex_login_standing: login,
+    probe,
+  });
+  const app = await createApp(
+    loadConfig(undefined, {
+      PLAN_TEST_MODE: '1',
+      PLAN_DB_PATH: fixture_path(database),
+    }),
+    {
+      database,
+      areas: [
+        {
+          prefix: '/api/conversation',
+          routes: createBackendRoutes(
+            {
+              settled: () => writes.drain(),
+              database,
+              backend_snapshots: snapshots,
+              backend_usage: new BackendUsageService({}),
+              backend_state: null,
+              codex_sign_in: null,
+              machine_catalog: () => null,
+            },
+            { available: false, writes },
+          ),
+        },
+      ],
+    },
+  );
+  try {
+    const requests = [
+      { method: 'GET', url: '/api/conversation/backends?refresh=bad' },
+      { method: 'POST', url: '/api/conversation/backends', payload: {} },
+      { method: 'POST', url: '/api/conversation/backends/refresh' },
+      {
+        method: 'PUT',
+        url: '/api/conversation/backends/unknown/models/model/enablement',
+        payload: {},
+      },
+      { method: 'POST', url: '/api/conversation/backends/unknown/update' },
+      { method: 'POST', url: '/api/conversation/backends/unknown/sign-in' },
+      { method: 'GET', url: '/api/conversation/backends/unknown/sign-in' },
+      { method: 'DELETE', url: '/api/conversation/backends/unknown/sign-in/session' },
+    ] as const;
+    for (const request of requests) {
+      const response = await app.inject(request);
+      expect(response.statusCode).toBe(503);
+      expect(response.json()).toEqual({ detail: 'the conversation system is unavailable' });
+    }
+    expect(probe).not.toHaveBeenCalled();
+  } finally {
+    await app.close();
+  }
+});
 import { ClaudeUsageAdapter } from '../conversation/backend_usage/claude.ts';
 const login = () => ({
   stored: {
@@ -191,6 +370,7 @@ test('a failed replacement of allowance windows preserves the previous successfu
 // Distinct gap: successful route comparisons cannot prove cleanup after catalog failure.
 test('catalog failure cancels and joins the outstanding allowance read', async () => {
   const database = fixture();
+  const writes = new ConversationHttpWriteScope();
   const entered = new Deferred<void>();
   let cancelled = false;
   const usage = new BackendUsageService({
@@ -229,14 +409,18 @@ test('catalog failure cancels and joins the outstanding allowance read', async (
       areas: [
         {
           prefix: '/api/conversation',
-          routes: createBackendRoutes({
-            database,
-            backend_snapshots: snapshots,
-            backend_usage: usage,
-            backend_state: null,
-            codex_sign_in: null,
-            machine_catalog: () => null,
-          }),
+          routes: createBackendRoutes(
+            {
+              settled: () => writes.drain(),
+              database,
+              backend_snapshots: snapshots,
+              backend_usage: usage,
+              backend_state: null,
+              codex_sign_in: null,
+              machine_catalog: () => null,
+            },
+            { available: true, writes },
+          ),
         },
       ],
     },
