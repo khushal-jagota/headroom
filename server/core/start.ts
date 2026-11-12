@@ -18,6 +18,7 @@ import type { ConversationSystem } from '../conversation/contracts.ts';
 import type { ConversationViewRuntime } from '../conversation/views/routes.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import { createConversationRoutes } from '../conversation/routes.ts';
+import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 
 import {
@@ -78,6 +79,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   config.db_path = assert_test_database_path(config.db_path);
   const ownership = acquireRuntimeOwnership(config.db_path);
   const areas = createAreasRuntime();
+  const conversationWrites = new ConversationHttpWriteScope();
   let dispatcher: ReturnType<typeof acquireLock> = null;
   let database: ReturnType<typeof createDatabase> | undefined;
   let background: ComposedBackgroundService | undefined;
@@ -103,6 +105,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   };
   const close = (): Promise<void> => {
     if (closing) return closing;
+    conversationWrites.seal();
     revokeSignal();
     areas.closeSubscriptions();
     const deadline = performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
@@ -116,6 +119,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     };
     closing = (async () => {
       await attempt(() => background?.close({ deadline }));
+      await attempt(() => conversationWrites.drain());
       // Loop cancellation shares one deadline. Core and record settlement have
       // no deadline contract, so retain ownership through their final writes.
       await attempt(() => core?.shutdown());
@@ -209,7 +213,11 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
           ? [
               {
                 prefix: '/api/conversation',
-                routes: createConversationRoutes({ core, record: context.record }),
+                routes: createConversationRoutes({
+                  core,
+                  record: context.record,
+                  writes: conversationWrites,
+                }),
               },
             ]
           : []),

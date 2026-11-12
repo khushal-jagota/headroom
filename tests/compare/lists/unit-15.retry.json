@@ -1,0 +1,114 @@
+{
+  "source_roots": [
+    "src/planner/conversation/api.py",
+    "src/planner/conversation/system.py",
+    "src/planner/conversation/logic/",
+    "src/planner/conversation/storage.py"
+  ],
+  "external_proofs": [
+    {
+      "source_test": "test_vps_only_write_failure_retries_in_order_with_growing_delay_until_it_succeeds",
+      "coverage": "8 real selected terminal transaction candidate rollbacks; actual logged delays; ordered late-news disposal and ninth success; 120s concurrent stream deadline"
+    }
+  ],
+  "requests": [
+    {
+      "area": "test_vps_only_write_failure_retries_in_order_with_growing_delay_until_it_succeeds",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-retry",
+        "model": "a-model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_vps_only_write_failure_retries_in_order_with_growing_delay_until_it_succeeds",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-retry/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "work"
+          }
+        ],
+        "sender_label": "owner",
+        "sender_message_id": "retry-one"
+      }
+    },
+    {
+      "area": "test_vps_only_write_failure_retries_in_order_with_growing_delay_until_it_succeeds",
+      "method": "POST",
+      "path": "/api/test/signals/u15-retry/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "ToolCallStarted",
+            "values": {
+              "tool_call_id": "live",
+              "title": "Read a file",
+              "tool_kind": "read"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "area": "test_vps_only_write_failure_retries_in_order_with_growing_delay_until_it_succeeds",
+      "method": "POST",
+      "path": "/api/test/signals/u15-retry/terminal-save/arm",
+      "status": 200
+    },
+    {
+      "area": "test_vps_only_write_failure_retries_in_order_with_growing_delay_until_it_succeeds",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-retry/tail?after=2",
+      "status": 200,
+      "capture": {
+        "retry_live_tail": ""
+      },
+      "kind": "stream",
+      "frames": 2,
+      "deadline_seconds": 120,
+      "after_open": [
+        {
+          "method": "POST",
+          "path": "/api/test/signals/u15-retry/terminal-save/begin",
+          "status": 200,
+          "capture": {
+            "retry_before_recovery": ""
+          }
+        }
+      ]
+    },
+    {
+      "area": "test_vps_only_write_failure_retries_in_order_with_growing_delay_until_it_succeeds",
+      "method": "POST",
+      "path": "/api/test/signals/u15-retry/terminal-save/join",
+      "status": 200,
+      "capture": {
+        "retry_observed_attempts": ""
+      }
+    },
+    {
+      "area": "test_vps_only_write_failure_retries_in_order_with_growing_delay_until_it_succeeds",
+      "method": "GET",
+      "path": "/api/test/signals/u15-retry/inspect",
+      "status": 200,
+      "capture": {
+        "retry_recovered": ""
+      }
+    }
+  ],
+  "report_captures": [
+    "retry_live_tail",
+    "retry_before_recovery",
+    "retry_observed_attempts",
+    "retry_recovered"
+  ],
+  "candidate": "typescript"
+}

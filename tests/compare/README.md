@@ -71,6 +71,11 @@ scripts/dev pytest tests/compare --compare-list tests/compare/lists/unit-NN.json
 
 Repeat `--compare-list` to select several lists. Without that option, pytest discovers every list. Four cheap oracle tests also run. Each report contains differences, route reach, source table counts, loop results, and the applied rules.
 
+The source sort-key tokens are `navigation_view_memberships.title_key` and `navigation_view_memberships.id_key`.
+A list can carry the two sort-key tokens only if it also compares the ordered members of the same windows in both locales.
+
+For the Unit15 route, closure and session lists, the full en-US/de-DE windows compare exact member IDs, order, totals, records, window IDs and content hashes. Only the two source operand representations and the public comparator-generation label differ; no table, hash, content or continuation exception applies.
+
 ## Candidate selection in branch CI
 
 After a list passes against TypeScript, add `"candidate": "typescript"` at its

@@ -15,6 +15,9 @@ import {
 import { decode_scripted_event } from './scripted_protocol.ts';
 import type { ScriptedBehavior, ScriptedEvent } from './scripted_protocol.ts';
 import type { ScriptedBackendRegistry } from './scripted_registry.ts';
+import { live_status_before_adoption, PendingSteerProbe } from './scripted_probes.ts';
+import { TerminalSaveProbe } from './scripted_terminal_save.ts';
+import type { ScriptedTicketChoiceFault } from './scripted_ticket_choice.ts';
 
 const event_names: Readonly<Record<string, string>> = {
   tool_call_started: 'ToolCallStarted',
@@ -81,17 +84,104 @@ function record_rows(sql: ReadSql, id: string) {
 export function scriptedConversationControls(
   context: TestCompositionContext,
   registry: ScriptedBackendRegistry,
+  ticket_choice_fault: ScriptedTicketChoiceFault,
 ): readonly Area[] {
   const core = context.core;
   if (!core) throw new Error('Scripted controls require the real conversation core');
+  const pending = new PendingSteerProbe(context, registry);
+  const terminal = new TerminalSaveProbe(context, registry);
   return [
     {
       prefix: '/api/test',
       routes: async (app) => {
-        app.addHook('onClose', () => registry.close());
+        app.addHook('onClose', async () => {
+          ticket_choice_fault.close();
+          await pending.close();
+          await terminal.close();
+          await registry.close();
+        });
         const settle = () => core.wait_until_quiescent();
         const identity = (request: { params: unknown }) =>
           (request.params as { conversation_id: string }).conversation_id;
+        app.post('/signals/:conversation_id/ticket-choice-failure', async (request) =>
+          ticket_choice_fault.arm(identity(request)),
+        );
+        app.get('/signals/:conversation_id/ticket-choice-failure', async (request) =>
+          ticket_choice_fault.observe(identity(request)),
+        );
+        app.get('/signals/:conversation_id/live-status-before-adoption', async (request) =>
+          live_status_before_adoption(context, identity(request)),
+        );
+        app.post<{ Body: { text: string; recipient: Principal; barrier: string } }>(
+          '/signals/:conversation_id/pending-steer/begin',
+          async (request) => pending.begin(identity(request), request.body),
+        );
+        app.get('/signals/:conversation_id/pending-steer/observe', async (request) =>
+          pending.observe(identity(request)),
+        );
+        app.post('/signals/:conversation_id/pending-steer/release', async (request) =>
+          pending.release(identity(request)),
+        );
+        app.post('/signals/:conversation_id/terminal-save/arm', async (request) =>
+          terminal.arm(identity(request)),
+        );
+        app.post('/signals/:conversation_id/terminal-save/begin', async (request) =>
+          terminal.begin(identity(request)),
+        );
+        app.post('/signals/:conversation_id/terminal-save/join', async (request) =>
+          terminal.join(identity(request)),
+        );
+        app.post<{ Body: { enabled: boolean } }>(
+          '/signals/:conversation_id/saved-model-enablement',
+          async (request) => {
+            const record = context.record.store.read_conversation(identity(request));
+            if (!record) throw new Error('No conversation for saved model enablement');
+            context.database.write((tx) =>
+              tx.run(
+                'INSERT INTO backend_model_enablement(backend_key,model_id,enabled) VALUES(?,?,?) ' +
+                  'ON CONFLICT(backend_key,model_id) DO UPDATE SET enabled=excluded.enabled',
+                [record.backend_key, record.model, request.body.enabled ? 1 : 0],
+              ),
+            );
+            return { configured: true };
+          },
+        );
+        app.post<{ Body: { ticket_id: string } }>(
+          '/signals/:conversation_id/maintenance-mixed-messages',
+          async (request) => {
+            const ticket: Principal = { kind: 'ticket', id: request.body.ticket_id };
+            await core.send(identity(request), text_message_content('owner message'), {
+              sender_label: 'owner',
+              sender: OWNER,
+              recipient: ticket,
+            });
+            await core.send(identity(request), text_message_content('worker opener'), {
+              sender_label: `Ticket ${ticket.id}`,
+              sender: ticket,
+              recipient: OWNER,
+            });
+            await settle();
+            return { ok: true };
+          },
+        );
+        app.post<{ Body: { ticket_id: string } }>(
+          '/signals/:conversation_id/discard-source-messages',
+          async (request) => {
+            await core.send(identity(request), text_message_content('first held'), {
+              sender_label: 'owner',
+              sender_message_id: 'message-one',
+              sent_at_unix_milliseconds: 1234,
+              sender: { kind: 'ticket', id: request.body.ticket_id },
+              recipient: { kind: 'chief', id: 'chief' },
+            });
+            await core.send(identity(request), text_message_content('second held'), {
+              sender_label: 'owner',
+              sender_message_id: 'message-two',
+            });
+            await settle();
+            return { ok: true };
+          },
+        );
         app.post('/signals/:conversation_id/finish', async (request) => {
           await registry.child(identity(request)).finish();
           await settle();
@@ -114,9 +204,11 @@ export function scriptedConversationControls(
             text?: string;
             sender_message_id?: string | null;
             sent_at_unix_milliseconds?: number | null;
+            settle?: boolean;
           };
         }>('/signals/:conversation_id/message', async (request, reply) => {
           const body = request.body;
+          if (body.settle === false) pending.require(identity(request));
           try {
             await core.record_message_to_owner(
               identity(request),
@@ -138,13 +230,14 @@ export function scriptedConversationControls(
             }
             return reply.code(422).send({ detail: error.message });
           }
-          await settle();
+          if (body.settle !== false) await settle();
           return { ok: true };
         });
-        app.post<{ Body: { events: Record<string, unknown>[]; turn?: null } }>(
+        app.post<{ Body: { events: Record<string, unknown>[]; turn?: null; settle?: boolean } }>(
           '/signals/:conversation_id/backend-news',
           async (request, reply) => {
             const child = registry.child(identity(request));
+            if (request.body.settle === false) pending.require(identity(request));
             const snapshot = await child.inspect();
             const session = 'turn' in request.body;
             if (session && request.body.turn !== null) {
@@ -158,8 +251,18 @@ export function scriptedConversationControls(
                 session ? null : snapshot.token,
               );
             }
-            await child.flush_events();
-            await settle();
+            if (request.body.settle === false) {
+              pending.ending(
+                identity(request),
+                (async () => {
+                  await child.flush_events();
+                  await settle();
+                })(),
+              );
+            } else {
+              await child.flush_events();
+              await settle();
+            }
             return { reported: request.body.events.length };
           },
         );
