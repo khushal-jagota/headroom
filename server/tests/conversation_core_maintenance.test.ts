@@ -15,6 +15,7 @@ import {
 import { message_content_text, text_message_content } from '../conversation/message_content.ts';
 import { Deferred } from '../conversation/runtime/state.ts';
 import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
+import { ConversationStartAborted } from '../runtime/abort.ts';
 function maintenance_setup() {
   let now = 100;
   const fixture = setup({
@@ -141,6 +142,12 @@ test('shutdown detaches retiring children concurrently and retains an unconfirme
   const [retiring, unconfirmed] = f.children;
   const state = f.core.conversations.get('core')!;
   const other = f.core.conversations.get('other')!;
+  let reject_business!: (error: unknown) => void;
+  const cancelled_business = new Promise<void>((_resolve, reject) => {
+    reject_business = reject;
+  });
+  void cancelled_business.catch(() => {});
+  state.settlement_tasks.add(cancelled_business);
   const token = other.running_turn!.token;
   const before = f.store.read_events_after('other', 0);
   const stop_entered = new Deferred<void>(),
@@ -168,6 +175,7 @@ test('shutdown detaches retiring children concurrently and retains an unconfirme
     await stop_entered.promise;
     expect(state.child).toBeNull();
     const shutdown = f.core.shutdown({ deadline: performance.now() / 1000 + 0.05 });
+    reject_business(new ConversationStartAborted());
     const expired = expect(shutdown).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
     await detach_entered.promise;
     expect(first_detach).toHaveBeenCalledOnce();
@@ -182,6 +190,11 @@ test('shutdown detaches retiring children concurrently and retains an unconfirme
     expect(quiescent).toBe(false);
     detach_release.resolve();
     await expect(actual).rejects.toThrow('Conversation core did not shut down cleanly');
+    const failure: unknown = await actual.catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).not.toContainEqual(
+      expect.any(ConversationStartAborted),
+    );
     expect(other.child).toBe(unconfirmed);
     expect(other.child_is_quarantined).toBe(true);
     expect(other.backend_event_pump).toBeNull();
@@ -202,6 +215,7 @@ test('shutdown detaches retiring children concurrently and retains an unconfirme
   } finally {
     detach_release.resolve();
     raw_stop.resolve();
+    reject_business(new ConversationStartAborted());
     await discarding;
     // The existing core fixture terminates its exact scripted children in afterEach.
   }

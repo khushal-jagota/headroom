@@ -25,7 +25,7 @@ export interface ShutdownFailure {
   readonly error: unknown;
 }
 export interface ShutdownState {
-  readonly kind: 'running' | 'stopping' | 'retained' | 'closed';
+  readonly kind: 'running' | 'stopping' | 'closed';
   readonly pending: readonly string[];
   readonly failures: readonly ShutdownFailure[];
 }
@@ -34,8 +34,24 @@ export interface ShutdownOwner {
   readonly shutdown_state: ShutdownState;
   /** Actual already-begun work only, without any automatic finalization. */
   readonly shutdown_settled: Promise<void>;
-  /** Internal disposal. Refuses unless all old work settled without failures. */
-  finish_shutdown(options: StopOptions): Promise<void>;
+}
+/** An invocation-created service, independently of its systemd-run wrapper. */
+export interface OwnedWorkerUnit {
+  readonly name: string;
+  /** Fulfillment confirms inactivity/natural completion or proven never launched. */
+  readonly finished: Promise<void>;
+}
+export interface OwnedChildProcesses {
+  spawn(
+    command: string,
+    args: readonly string[],
+    options: SpawnOptionsWithoutStdio,
+  ): ChildProcessWithoutNullStreams;
+  spawn(command: string, args: readonly string[], options: SpawnOptions): ChildProcess;
+  retain_worker_unit(unit: OwnedWorkerUnit): void;
+  settled(): Promise<void>;
+  /** All guarded groups, then one bounded exact-owned unit batch. */
+  force_kill(force_deadline: number): void;
 }
 /** One invocation-owned scope for short-lived probes, separate from core children. */
 export interface OwnedOneShotChildren {

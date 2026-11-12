@@ -1,4 +1,4 @@
-import { OneShotChildren } from '../../lifecycle/one_shot_children.ts';
+import { OneShotChildren, stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
 import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import { statfs, opendir, stat } from 'node:fs/promises';
 import { platform } from 'node:os';
@@ -61,7 +61,7 @@ async function command(
       const decoder = new StringDecoder('utf8');
       let output = '';
       const timer = setTimeout(() => {
-        child.kill('SIGKILL');
+        stop_one_shot_child(child);
         reject(new Error('status probe timed out'));
       }, PROBE_TIMEOUT_MILLISECONDS);
       child.stdout!.on('data', (chunk: Buffer) => {

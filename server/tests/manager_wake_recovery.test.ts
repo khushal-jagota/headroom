@@ -116,7 +116,7 @@ test('an interrupted offering stays uncertain until its exact durable prompt exi
 
 // Neither the HTTP fake nor a settled receipt proves a hung provider cannot retain
 // the wake observer past shutdown or cause a late write after database ownership ends.
-test('the wake deadline records uncertainty and detaches a hung send without a late write', async () => {
+test('wake stop records uncertainty immediately and retains a hung send without a late write', async () => {
   const source = fixture();
   const ticket = create(source);
   let access_count = 0;
@@ -203,10 +203,7 @@ test('the wake deadline records uncertainty and detaches a hung send without a l
       database.read((sql) => sql.get<{ status: string }>('SELECT status FROM manager_wake_batches'))
         ?.status,
     ).toBe('offering');
-    await expect(loop.stop({ deadline: performance.now() / 1000 + 0.02 })).rejects.toBeInstanceOf(
-      ShutdownDeadlineExceeded,
-    );
-    expect(await pass).toBeInstanceOf(ConversationStartAborted);
+    const stopping = loop.stop({ deadline: performance.now() / 1000 + 0.02 });
     expect(
       database.read((sql) =>
         sql.get('SELECT status,conversation_id,process_token FROM manager_wake_batches'),
@@ -216,6 +213,8 @@ test('the wake deadline records uncertainty and detaches a hung send without a l
       conversation_id: 'hung-wake',
       process_token: loop.process_token,
     });
+    await expect(stopping).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
+    expect(await pass).toBeInstanceOf(ConversationStartAborted);
     expect(
       database.read((sql) =>
         sql.get<{ closed_at: number | null }>('SELECT closed_at FROM manager_wakes'),

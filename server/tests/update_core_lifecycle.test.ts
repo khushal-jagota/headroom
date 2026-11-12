@@ -261,10 +261,7 @@ async function owned_server(installer?: Partial<InstallerOperations>) {
       status,
       async close() {
         try {
-          if (server.shutdown_state.kind === 'retained') {
-            await server.shutdown_settled;
-            await server.finish_shutdown({ deadline: performance.now() / 1000 + 2 });
-          } else if (server.shutdown_state.kind !== 'closed') await server.close();
+          await server.close();
         } catch (error) {
           throw shutdown_failure(error);
         } finally {
@@ -356,7 +353,7 @@ test('real core completion admits an idle update, refuses HTTP writes without mu
   }
 }, 20_000);
 
-test('forced update retains ownership through a raw provider beyond the shared shutdown deadline', async () => {
+test('forced update finalizes automatically after a raw provider outlives shutdown grace', async () => {
   const loops_stop = vi.spyOn(BackgroundLoops.prototype, 'stop');
   const metrics_stop = vi.spyOn(MetricsRuntime.prototype, 'stop');
   const updates_stop = vi.spyOn(UpdateService.prototype, 'stop');
@@ -462,28 +459,34 @@ test('forced update retains ownership through a raw provider beyond the shared s
     expect(() => acquireRuntimeOwnership(owned.path)).toThrow('ConversationRuntimeAlreadyOwned');
     expect(returned).toBe(false);
     await child.release('owned-detach');
-    await expect(closing!).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
+    let closed = false;
+    void closing!.then(() => {
+      closed = true;
+    });
+    // Observe the actual core's bounded observer, rather than sleep until grace.
+    await expect(owned.context.core!.shutdown({ deadline })).rejects.toBeInstanceOf(
+      ShutdownDeadlineExceeded,
+    );
     await pending;
+    expect(closed).toBe(false);
     expect(returned).toBe(false);
-    expect(owned.server.shutdown_state).toMatchObject({ kind: 'retained', failures: [] });
+    expect(owned.server.shutdown_state).toMatchObject({ kind: 'stopping', failures: [] });
     expect(owned.server.shutdown_state.pending).toContain('conversation core');
     expect(() => acquireRuntimeOwnership(owned.path)).toThrow('ConversationRuntimeAlreadyOwned');
-    await expect(
-      owned.server.finish_shutdown({ deadline: performance.now() / 1000 + 1 }),
-    ).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
     const retained_rows = canonical_rows(owned.context.database);
     receipt.resolve();
     await reached(provider_return!, 'raw provider return while original ownership remains held');
-    await owned.server.shutdown_settled.catch((error: unknown) => {
+    await closing!.catch((error: unknown) => {
       throw shutdown_failure(error);
     });
     expect(returned).toBe(true);
-    expect(canonical_rows(owned.context.database)).toEqual(retained_rows);
-    await owned.server.finish_shutdown({ deadline: performance.now() / 1000 + 2 });
+    expect(closed).toBe(true);
+    expect(owned.server.shutdown_state.kind).toBe('closed');
     const successor = acquireRuntimeOwnership(owned.path);
     const successor_reads = createReadAccess(owned.path);
     try {
       const before = canonical_rows(successor_reads);
+      expect(before).toEqual(retained_rows);
       const access_counts = accesses.map((spy) => spy.mock.calls.length);
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(accesses.map((spy) => spy.mock.calls.length)).toEqual(access_counts);

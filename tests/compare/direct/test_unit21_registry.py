@@ -243,15 +243,20 @@ def test_unit21_registry_fixture_and_lifecycle_parity(
         "PLAN_DB_PATH": "private.sqlite",
         "PLAN_CONFIG_PATH": "config.json",
         "PLAN_DATA_DIR": "data",
+        "PLAN_LOGS_DIR": "logs",
+        "PLAN_BACKUP_DIR": "backups",
         "PLAN_WORKSPACE_ROOT": "workspace",
         "PLAN_DISPATCHER_LOCK_PATH": "dispatcher.lock",
         "PLAN_SERVER_CONTROL_SOCKET": "control.sock",
         "PLAN_APP_ROOT": "app",
         "PLAN_KEY_PATH": "key",
+        "PLAN_CREDENTIAL_KEY_PATH": "credential-key",
+        "PLAN_SERVER_LIFECYCLE_LEASE_PATH": "lifecycle.lock",
     }.items():
         environment[name] = str(tmp_path / relative)
     Path(environment["PLAN_WORKSPACE_ROOT"]).mkdir()
     environment["PLAN_TEST_MODE"] = "1"
+    environment["PLAN_SERVER_URL"] = "http://127.0.0.1:0"
     with monkeypatch.context() as private:
         for name in list(os.environ):
             private.delenv(name)
@@ -312,6 +317,13 @@ def test_unit21_registry_fixture_and_lifecycle_parity(
                 "reset": "environment instance is running",
                 "remove": "environment instance is running",
             }
+            assert actual.pop("probe_before_start") is False
+            assert actual.pop("probe_files_unchanged") is True
+            mutation_authority = actual.pop("mutation_authority")
+            assert mutation_authority == {
+                phase: {"refused": True, "producer_starts": 0, "data_parent_recreated": False}
+                for phase in ("reset", "remove")
+            }
             assert actual == python
             assert (
                 actual["fixture_unchanged"]
@@ -341,6 +353,7 @@ def test_unit21_registry_fixture_and_lifecycle_parity(
                     ),
                     "result": actual,
                     "server_owner": server_owner,
+                    "mutation_authority": mutation_authority,
                 },
                 indent=2,
             )

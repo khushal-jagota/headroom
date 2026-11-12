@@ -1,3 +1,4 @@
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
@@ -82,6 +83,7 @@ test.skipIf(process.platform !== 'linux')(
     `;
     const started = performance.now();
     const owned = await spawn_codex_process([process.execPath, '-e', leader], {
+      child_processes: new ChildProcesses(),
       environment: Object.fromEntries(
         Object.entries(process.env).filter(
           (entry): entry is [string, string] => entry[1] !== undefined,

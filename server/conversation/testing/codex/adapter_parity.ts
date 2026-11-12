@@ -1,4 +1,5 @@
 /** Shared scripted Codex child behind the actual TS conversation core and records. */
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { existsSync, readFileSync } from 'node:fs';
@@ -89,6 +90,7 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
     },
     {
       remembered_login_rejection: rejection,
+      child_processes: new ChildProcesses(),
       client_factory: (options) =>
         new CodexAppServerClient({
           ...options,

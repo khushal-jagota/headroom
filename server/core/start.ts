@@ -1,3 +1,4 @@
+import { writeSync } from 'node:fs';
 import { assert_test_database_path } from './test_paths.ts';
 import type { FastifyInstance, FastifyListenOptions } from 'fastify';
 import { createAreasRuntime } from '../areas.ts';
@@ -36,10 +37,18 @@ import { CLEANUP_INTERVAL_SECONDS } from '../conversation/video_uploads/configur
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 import type { EnvironmentRuntime } from '../environments/contracts.ts';
 import { HttpRequestScope } from './http/lifetime.ts';
+import { ChildProcesses } from '../lifecycle/owned_processes.ts';
+import { SHUTDOWN_HARD_SECONDS } from '../lifecycle/configuration.ts';
+import { is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
 import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
 import { ShutdownCoordinator } from '../lifecycle/shutdown.ts';
 import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
-import type { OwnedOneShotChildren, ShutdownOwner, StopOptions } from '../lifecycle/contracts.ts';
+import type {
+  OwnedChildProcesses,
+  OwnedOneShotChildren,
+  ShutdownOwner,
+  StopOptions,
+} from '../lifecycle/contracts.ts';
 
 import {
   compose_background_services,
@@ -67,6 +76,7 @@ export interface ConversationCompositionContext extends Omit<
   require_runtime_ownership(): void;
   revoke_signal(): void;
   one_shot_children: OwnedOneShotChildren;
+  child_processes: OwnedChildProcesses;
 }
 export interface TestCompositionContext extends ConversationCompositionContext {
   backendServices?: BackendHttpRuntime;
@@ -104,7 +114,8 @@ export interface StartedServer extends ShutdownOwner {
 export async function startServer(options: ServerOptions = {}): Promise<StartedServer> {
   const media_lifetime = new AbortController();
   const request_lifetime = new HttpRequestScope();
-  const one_shot_children = new OneShotChildren();
+  const child_processes = new ChildProcesses();
+  const one_shot_children = new OneShotChildren(child_processes);
   let video_cleanup_timer: ReturnType<typeof setInterval> | undefined;
   let video_cleanup_work: Promise<unknown> | undefined;
   const config = loadConfig();
@@ -142,9 +153,49 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   };
   const shutdown = new ShutdownCoordinator({
     grace_seconds: SHUTDOWN_GRACE_SECONDS,
+    hard_seconds: SHUTDOWN_HARD_SECONDS,
+    grace_expired(stages) {
+      const state = shutdown.shutdown_state;
+      try {
+        writeSync(
+          2,
+          `Shutdown grace expired; pending: ${state.pending.join(', ')}; failed: ${state.failures.map((failure) => failure.name).join(', ')}\n`,
+        );
+      } catch {
+        /* A closed log sink must not skip cancellation. */
+      }
+      stages.own('HTTP connection cutoff', () => request_lifetime.force_close_connections());
+      stages.own('media cancellation', () =>
+        media_lifetime.abort(new Error('Media processing stopped after shutdown grace')),
+      );
+    },
+    hard_stop(state, force_deadline) {
+      // This path never awaits adapter cleanup or runs database/record finalizers.
+      try {
+        try {
+          writeSync(
+            2,
+            `Shutdown hard bound; pending: ${state.pending.join(', ')}; failed: ${state.failures.map((failure) => failure.name).join(', ')}\n`,
+          );
+        } catch {
+          /* Attempt force even when stderr is closed. */
+        }
+        try {
+          child_processes.force_kill(force_deadline);
+        } catch (error) {
+          try {
+            writeSync(2, `Shutdown force was not fully confirmed: ${String(error)}\n`);
+          } catch {
+            /* Logging cannot prevent the terminal exit. */
+          }
+        }
+      } finally {
+        process.exit(1);
+      }
+    },
     begin(stages, stop) {
       // Independent fences all run, even if one throws. The coordinator publishes
-      // its latch/deadline/refed retention before entering this callback.
+      // its latch/deadlines and referenced hard timer before entering this callback.
       stages.own('HTTP admission', () => request_lifetime.seal());
       stages.own('conversation write admission', () => conversationWrites.seal());
       stages.own('video admission', () => video_uploads?.seal());
@@ -156,9 +207,6 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       stages.own('video timer', () => clearInterval(video_cleanup_timer));
       stages.own('publication', revokeSignal);
       stages.own('record admission and subscriptions', () => areas.sealRecord());
-      stages.own('media cancellation', () =>
-        media_lifetime.abort(new Error('Media processing stopped at shutdown')),
-      );
       const producer = (
         name: string,
         begin: () => void | Promise<void>,
@@ -229,9 +277,16 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       );
       stages.own('startup recovery', () =>
         recovery?.catch((error: unknown) => {
-          if (!(error instanceof Error && error.name === 'AbortError')) throw error;
+          if (!is_shutdown_business_cancellation(error)) throw error;
         }),
       );
+      // Producer cleanup can publish additional native control children. Take this
+      // snapshot only AFTER every producer begins, then make a FRESH native join.
+      const producer_actual = shutdown.shutdown_settled;
+      stages.own('native processes and worker units', async () => {
+        await producer_actual.catch(() => {}); // Individual stages retain their failures.
+        await child_processes.settled();
+      });
     },
     finalize: [
       { name: 'conversation record', run: () => areas.closeRecord() },
@@ -265,7 +320,6 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     get shutdown_settled() {
       return shutdown.shutdown_settled;
     },
-    finish_shutdown: (stop) => shutdown.finish_shutdown(stop),
   });
   try {
     const changes = new ChangeSignal();
@@ -298,6 +352,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       require_runtime_ownership: requireOwnership,
       revoke_signal: revokeSignal,
       one_shot_children,
+      child_processes,
     };
     core = options.createConversationCore?.(context);
     if (core)
@@ -330,6 +385,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
           now: () => clock.now(),
           read_codex_snapshot: () => backendServices!.backend_snapshots.snapshot('codex'),
           one_shot_children,
+          child_processes,
         }),
         one_shot_children,
       });
@@ -466,7 +522,16 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         }),
       );
 
-      void recovery.catch((error) => console.error('Conversation startup recovery failed', error));
+      const active_recovery = recovery;
+      void active_recovery.then(
+        () => {
+          if (recovery === active_recovery) recovery = undefined;
+        },
+        (error) => {
+          console.error('Conversation startup recovery failed', error);
+          if (recovery === active_recovery) recovery = undefined;
+        },
+      );
     }
     // Publish the owned flight before setup can synchronously request shutdown.
     environmentsStarting = Promise.resolve().then(() => {

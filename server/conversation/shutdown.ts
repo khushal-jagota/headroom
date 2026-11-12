@@ -2,6 +2,17 @@
 import { SHUTDOWN_GRACE_SECONDS } from '../core/config.ts';
 import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
+import { ConversationStartAborted } from '../runtime/abort.ts';
+import { DeliveryCancelled } from './backends/contracts.ts';
+
+/** Expected caller cancellation during stop is not an excuse for cleanup failure. */
+export function is_shutdown_business_cancellation(error: unknown): boolean {
+  return (
+    error instanceof ConversationStartAborted ||
+    error instanceof DeliveryCancelled ||
+    (error instanceof DOMException && error.name === 'AbortError')
+  );
+}
 
 export async function observe_shutdown(
   settlement: Promise<unknown>,

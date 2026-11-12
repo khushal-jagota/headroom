@@ -179,24 +179,33 @@ Core factories must also bind `on_held_model_change` to `write_held_ticket_confi
 Without a core factory, the server supplies record reads and real publication from durable facts, with no local turn or substitute provider.
 An explicitly selected in-memory instrument remains separate. The idle authority helpers remain for their isolated tests.
 
-Shutdown seals all request admission and revokes publication before any wait.
-It begins every independent stop, including core cancellation, HTTP closure, background services, uploads, recovery, and one-shot children.
-The request scope retains actual handlers, hooks, and iterator operations after a client disconnect.
-The core retains native provider calls separately from their canceled observers and begins child detaches before their shared wait.
+Shutdown seals new request/write admission and stops new connections before any wait.
+It closes event streams immediately. Ordinary admitted responses and media work can finish during the shared grace.
+At grace expiry it logs named pending stages, closes remaining connections, and aborts remaining media work.
+Handlers, hooks, iterator operations, provider work, and native resources remain owned after a connection closes.
+Worker readiness and Manager wakes cancel at stop start. Every independent stop begins before drain waits.
 
-Every stage observes one absolute monotonic deadline. The default application budget is 30 seconds.
-A deadline ends the caller's wait. It does not prove that the underlying work stopped.
-If work remains or cleanup fails, the server logs the pending or failed stages and retains its database, locks, and process lifetime.
-The record and database close only after all actual work settles, and only within the same budget.
-Repeated signals reuse the original stop attempt and deadline.
-Node timers cannot interrupt synchronous JavaScript or SQLite, so this policy does not promise a hard bound during an event-loop stall.
+All service observers receive one absolute monotonic deadline. Their required `settled()` joins report actual work and cleanup.
+The application keeps waiting after grace. When every actual stage and native resource settles, it runs ordered finalizers automatically.
+Settled failures do not prevent safe finalization. Clean completion exits 0; collected failures produce a non-zero result.
+There is no manual finish operation and no renewed budget on repeated signals.
+A rejected detach cannot prove a child stopped: the invocation also owns actual process close and Worker-unit confirmation.
 
-An embedding host can explicitly call `finish_shutdown({deadline})` after a timeout.
-This internal operation requires every old flight to be already settled and every cleanup failure to be absent.
-It bounds only the remaining finalization and never restarts stop stages. Signals do not call it.
-An unresolved or failed stage retains ownership for operator intervention.
-Registry reset and removal hold both the supervisor lifecycle lease and the same database owner lock that `startServer` holds.
-Python also separates the supervisor lease from the application database lock.
+The canonical values in `lifecycle/configuration.ts` are **30 seconds grace, 45 seconds hard-phase trigger, and 60 seconds supervisor timeout**.
+At the hard phase, the application logs named pending stages, kills still-owned unreaped groups, and attempts one batch of exact owned Worker units.
+That control attempt has at most the existing 10-second budget and original stop +55 seconds. It logs an unconfirmed force failure honestly.
+Then the application exits non-zero without database/record/lock finalizers under pending work.
+The 45-second value starts forced termination; it does not claim unconditional process exit at exactly 45 seconds.
+Node timers cannot interrupt synchronous JavaScript or SQLite. The separate supervisor fallback is required for a blocked application loop.
+New TypeScript packaging must consume the exported 60-second timeout; the legacy Python rehearsal's 30-second unit is not its rehearsal route.
+Real new-unit/supervisor timeout proofs remain part of the later packaging work.
+
+Registry mutation and direct startup share a stable database-derived authority outside the instance tree.
+Reset/remove hold it through the complete swap, walk, and manifest publication. They also retain the legacy supervisor and DB locks.
+Inspection observes existing kernel lock evidence without creating or acquiring locks. It is a point-in-time report, not mutation permission.
+Normal Python supervisor launches remain excluded through the existing port lease.
+An unmodified legacy Python direct launch does not take the new stable guard after its old DB sidecar moves; that mixed-version race is not claimed solved.
+The service/interface hand-over explains the shared `child_processes` and `one_shot_children` ownership arguments.
 
 To compare the in-memory instrument against TypeScript, run:
 

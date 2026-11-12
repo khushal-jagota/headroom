@@ -1,3 +1,4 @@
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { expect, test, vi } from 'vitest';
 import { JsonNumber } from '../../../core/http/numeric_json.ts';
 import { ASK_WITHDRAWAL_TIMEOUT_SECONDS } from './adapter_configuration.ts';
@@ -63,6 +64,7 @@ async function setup() {
     role_materials: null,
   });
   const child = new CodexAppServerBackendChild({
+    child_processes: new ChildProcesses(),
     launch: { argv: ['/never/run/codex', 'app-server'] },
     resolved_start: start,
     event_sink: { report },

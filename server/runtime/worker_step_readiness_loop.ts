@@ -5,6 +5,7 @@ import {
   observe_conversation_operation,
 } from './abort.ts';
 import { observe_shutdown } from '../lifecycle/deadline.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { Database } from '../core/database/contracts.ts';
 import {
@@ -410,21 +411,16 @@ export class WorkerStepReadinessLoop {
     if (this.closing) return this.closing;
     this.stop_requested = true;
     clearTimeout(this.timer);
-    const deadline = options.deadline ?? performance.now() / 1000 + 10;
+    const deadline = options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
     this.shutdown_settlement = Promise.allSettled([this.drain(), ...this.actual]).then(
       (results) => {
         const failure = results.find((result) => result.status === 'rejected');
         if (failure?.status === 'rejected') throw failure.reason;
       },
     );
-    this.closing = observe_shutdown(
-      this.shutdown_settlement,
-      { deadline },
-      'worker readiness',
-    ).catch((error: unknown) => {
-      for (const controller of this.controllers.values()) controller.abort();
-      throw error;
-    });
+    this.closing = observe_shutdown(this.shutdown_settlement, { deadline }, 'worker readiness');
+    // Cancel caller observers now. Their raw operation scopes remain owned above.
+    for (const controller of this.controllers.values()) controller.abort();
     return this.closing;
   }
 }

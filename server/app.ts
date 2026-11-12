@@ -33,7 +33,7 @@ export async function createApp(config: Config, services: AppServices): Promise<
     logger: false,
     exposeHeadRoutes: false,
     bodyLimit: Number.MAX_SAFE_INTEGER,
-    forceCloseConnections: true,
+    forceCloseConnections: false,
   });
   const clock = services.clock ?? buildClock(config);
   const request_lifetime = install_request_lifetime(app, services.request_lifetime);

@@ -1,7 +1,5 @@
 import type { ShutdownFailure, ShutdownOwner, ShutdownState, StopOptions } from './contracts.ts';
-import { ShutdownDeadlineExceeded } from './contracts.ts';
-import { observe_shutdown } from './deadline.ts';
-import { OWNERSHIP_RETENTION_INTERVAL_MS } from './configuration.ts';
+import { CONTROL_TIMEOUT_SECONDS } from '../conversation/worker_unit/configuration.ts';
 
 interface Stage {
   name: string;
@@ -10,26 +8,32 @@ interface Stage {
   failure?: ShutdownFailure;
 }
 export interface ShutdownStages {
-  /** Reserves ownership before calling an operation that can reenter shutdown. */
+  /** Reserve ownership before an operation can reenter shutdown. */
   own(name: string, operation: () => unknown | Promise<unknown>): Promise<void>;
 }
 export interface ShutdownComposition {
   grace_seconds: number;
-  /** Every synchronous fence and independent stop begins here before any wait. */
+  hard_seconds: number;
+  /** All fences and independent stops begin before any wait. */
   begin(stages: ShutdownStages, options: StopOptions): void;
-  /** Ordered destructive phases. Each begins at most once, only after actual quiescence. */
+  grace_expired(stages: ShutdownStages): void;
+  /** Terminal synchronous log/force/exit. No destructive finalizers run here. */
+  hard_stop(state: ShutdownState, force_deadline: number): never;
   finalize: readonly { name: string; run(): unknown | Promise<unknown> }[];
 }
 
+/** Grace limits ordinary work; actual settlement, rather than timeout, permits disposal. */
 export class ShutdownCoordinator implements ShutdownOwner, ShutdownStages {
   readonly #composition: ShutdownComposition;
   readonly #stages: Stage[] = [];
   #kind: ShutdownState['kind'] = 'running';
   #closing: Promise<void> | undefined;
-  #finishing: Promise<void> | undefined;
-  #retention: ReturnType<typeof setInterval> | undefined;
-  #next_finalizer = 0;
-  #logged = false;
+  #grace_timer: ReturnType<typeof setTimeout> | undefined;
+  #hard_timer: ReturnType<typeof setTimeout> | undefined;
+  #soft_deadline = Infinity;
+  #hard_deadline = Infinity;
+  #grace_started = false;
+  #hard_started = false;
   constructor(composition: ShutdownComposition) {
     this.#composition = composition;
   }
@@ -42,12 +46,11 @@ export class ShutdownCoordinator implements ShutdownOwner, ShutdownStages {
   }
   get shutdown_settled(): Promise<void> {
     return Promise.allSettled(this.#stages.map((stage) => stage.actual)).then((results) => {
-      const failures = results.filter((result) => result.status === 'rejected');
+      const failures = results.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : [],
+      );
       if (failures.length)
-        throw new AggregateError(
-          failures.map((failure) => failure.reason),
-          'Shutdown stages failed after actual settlement',
-        );
+        throw new AggregateError(failures, 'Shutdown stages failed after actual settlement');
     });
   }
   own(name: string, operation: () => unknown | Promise<unknown>): Promise<void> {
@@ -78,23 +81,63 @@ export class ShutdownCoordinator implements ShutdownOwner, ShutdownStages {
   }
   close(options?: StopOptions): Promise<void> {
     if (this.#closing) return this.#closing;
-    const stop = options ?? {
-      deadline: performance.now() / 1000 + this.#composition.grace_seconds,
-    };
+    const started = performance.now() / 1000;
+    this.#soft_deadline = Math.min(
+      options?.deadline ?? Infinity,
+      started + this.#composition.grace_seconds,
+    );
+    this.#hard_deadline = started + this.#composition.hard_seconds;
     let resolve!: () => void, reject!: (error: unknown) => void;
-    // Publish ALL latches before a fence/provider callback can synchronously reenter.
+    // Publish the stop flight and referenced deadline timers before user callbacks.
     this.#closing = new Promise<void>((yes, no) => {
       resolve = yes;
       reject = no;
     });
     void this.#closing.catch(() => {});
     this.#kind = 'stopping';
-    this.#retention = setInterval(() => {}, OWNERSHIP_RETENTION_INTERVAL_MS);
-    this.#run(stop).then(resolve, (error) => {
-      this.#retain(error);
-      reject(error);
-    });
+    this.#grace_timer = setTimeout(
+      () => this.#grace(),
+      Math.max(0, (this.#soft_deadline - started) * 1000),
+    );
+    this.#hard_timer = setTimeout(
+      () => this.#hard(),
+      Math.max(0, (this.#hard_deadline - started) * 1000),
+    );
+    this.#run({ deadline: this.#soft_deadline }).then(resolve, reject);
     return this.#closing;
+  }
+  #grace(): void {
+    if (this.#grace_started || this.#kind === 'closed') return;
+    this.#grace_started = true;
+    try {
+      this.#composition.grace_expired(this);
+    } catch (error) {
+      this.own('grace actions', () => {
+        throw error;
+      });
+    }
+  }
+  #hard(): never {
+    this.#hard_started = true;
+    // The control attempt is capped at the ORIGINAL hard trigger plus ten seconds.
+    return this.#composition.hard_stop(
+      this.shutdown_state,
+      this.#hard_deadline + CONTROL_TIMEOUT_SECONDS,
+    );
+  }
+  #check_time(): void {
+    if (this.#hard_started || performance.now() / 1000 >= this.#hard_deadline) this.#hard();
+    if (performance.now() / 1000 >= this.#soft_deadline) this.#grace();
+  }
+  async #drain(): Promise<void> {
+    let count: number;
+    do {
+      this.#check_time();
+      count = this.#stages.length;
+      await Promise.allSettled(this.#stages.map((stage) => stage.actual));
+      // A late completion microtask cannot outrun an overdue hard timer.
+      this.#check_time();
+    } while (count !== this.#stages.length);
   }
   async #run(stop: StopOptions): Promise<void> {
     try {
@@ -104,71 +147,25 @@ export class ShutdownCoordinator implements ShutdownOwner, ShutdownStages {
         throw error;
       });
     }
-    await this.#observe(stop);
-    await this.#finalize(stop);
-  }
-  #failure(): Error | null {
-    const state = this.shutdown_state;
-    if (state.failures.length)
-      return new AggregateError(
-        state.failures.map((failure) => failure.error),
-        `Shutdown failed; ownership retained: ${state.failures.map((failure) => failure.name).join(', ')}` +
-          (state.pending.length ? `; pending: ${state.pending.join(', ')}` : ''),
-      );
-    if (state.pending.length) return new ShutdownDeadlineExceeded(state.pending);
-    return null;
-  }
-  async #observe(stop: StopOptions): Promise<void> {
-    try {
-      await observe_shutdown(
-        Promise.allSettled(this.#stages.map((stage) => stage.actual)),
-        stop,
-        'shutdown',
-      );
-    } catch (error) {
-      throw this.#failure() ?? error;
-    }
-    const failure = this.#failure();
-    if (failure) throw failure;
-  }
-  async #finalize(stop: StopOptions): Promise<void> {
-    while (this.#next_finalizer < this.#composition.finalize.length) {
-      if (performance.now() / 1000 >= stop.deadline)
-        throw new ShutdownDeadlineExceeded([this.#composition.finalize[this.#next_finalizer].name]);
-      const finalizer = this.#composition.finalize[this.#next_finalizer++];
+    await this.#drain();
+    for (const finalizer of this.#composition.finalize) {
+      this.#check_time();
       this.own(finalizer.name, () => finalizer.run());
-      await this.#observe(stop);
+      // A settled failure is recorded; later safe finalizers still run.
+      await this.#drain();
     }
+    this.#check_time();
     this.#kind = 'closed';
-    clearInterval(this.#retention);
-    this.#retention = undefined;
-  }
-  #retain(error: unknown): void {
-    this.#kind = 'retained';
-    if (!this.#logged) {
-      this.#logged = true;
-      console.error(error);
-    }
-  }
-  finish_shutdown(options: StopOptions): Promise<void> {
-    if (this.#finishing) return this.#finishing;
-    if (this.#kind === 'closed') return Promise.resolve();
-    const failure = this.#failure();
-    if (this.#kind !== 'retained' || failure)
-      return Promise.reject(
-        failure ?? new Error('Shutdown is not ready for explicit finalization'),
+    clearTimeout(this.#grace_timer);
+    clearTimeout(this.#hard_timer);
+    const failures = this.shutdown_state.failures;
+    if (failures.length) {
+      const error = new AggregateError(
+        failures.map((failure) => failure.error),
+        `Shutdown failed after settlement: ${failures.map((failure) => failure.name).join(', ')}`,
       );
-    // Reserve the shared finish flight before any destructor can reenter.
-    let resolve!: () => void, reject!: (error: unknown) => void;
-    this.#finishing = new Promise<void>((yes, no) => {
-      resolve = yes;
-      reject = no;
-    });
-    void this.#finishing.catch(() => {});
-    this.#finalize(options).then(resolve, (error) => {
-      this.#retain(error);
-      reject(error);
-    });
-    return this.#finishing;
+      console.error(error);
+      throw error;
+    }
   }
 }

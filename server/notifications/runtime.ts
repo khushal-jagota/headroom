@@ -127,13 +127,11 @@ export class NotificationLoop {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     const deadline = options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
-    const actuals: Promise<unknown>[] = [
-      Promise.allSettled([...this.pending, ...(this.active ? [this.active] : [])]),
-    ];
+    const sends = Promise.allSettled([...this.pending, ...(this.active ? [this.active] : [])]);
     this.shutdown_settlement = Promise.resolve().then(async () => {
-      const results = await Promise.allSettled(actuals);
-      const failure = results.find((result) => result.status === 'rejected');
-      if (failure?.status === 'rejected') throw failure.reason;
+      await sends;
+      // A live send still owns the adapter. Close only after every send actually ended.
+      await this.options.apns_adapter?.close();
     });
     this.closing = observe_shutdown(
       this.shutdown_settlement,
@@ -143,12 +141,6 @@ export class NotificationLoop {
       // A late transport result remains owned, but cannot use the database again.
       this.expired = true;
     });
-    // Begin transport closure before awaiting either send or close settlement.
-    try {
-      actuals.push(Promise.resolve(this.options.apns_adapter?.close()));
-    } catch (error) {
-      actuals.push(Promise.reject(error));
-    }
     return this.closing;
   }
 }

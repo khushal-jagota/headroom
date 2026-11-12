@@ -17,6 +17,8 @@ import {
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { relative } from 'node:path';
+import type { ChildProcess } from 'node:child_process';
+import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import { control } from './control.ts';
 import { SLICE_CPU_WEIGHT_MAX, WORKER_SLICE, WORKER_TEMP_ROOT } from './configuration.ts';
 import { WorkerUnitError } from './contracts.ts';
@@ -72,9 +74,23 @@ export class WorkerUnit {
   readonly environment: Record<string, string>;
   readonly working_directory: string;
   readonly slice_name: string;
-  private finished = false;
+  readonly finished: Promise<void>;
+  private resolve_finished!: () => void;
+  private readonly child_processes: OwnedChildProcesses;
+  private cleanup_finished = false;
+  private stop_requested = false;
+  private stopping: Promise<void> | null = null;
+  private launching = false;
+  private wrapper_ready: Promise<void> | null = null;
+  private publish_wrapper: (() => void) | null = null;
+  private wrapper: { child: ChildProcess; exited: Promise<void>; closed: Promise<void> } | null =
+    null;
 
   constructor(values: WorkerUnitValues) {
+    this.child_processes = values.child_processes;
+    this.finished = new Promise<void>((resolve) => {
+      this.resolve_finished = resolve;
+    });
     this.name = values.name;
     this.directory = values.directory;
     this.environment = values.environment;
@@ -85,7 +101,7 @@ export class WorkerUnit {
   static async create(
     environment: Readonly<Record<string, string>>,
     working_directory: string,
-    options: { slice_name?: string } = {},
+    options: { child_processes: OwnedChildProcesses; slice_name?: string },
   ): Promise<WorkerUnit | null> {
     if (process.platform !== 'linux' || !environment.PLAN_TICKET_ID) return null;
     const slice_name = options.slice_name ?? WORKER_SLICE;
@@ -93,6 +109,7 @@ export class WorkerUnit {
       throw new WorkerUnitError('Invalid Worker slice name');
     }
     const [code, text] = await control(
+      options.child_processes,
       'show',
       slice_name,
       '--property=LoadState',
@@ -108,6 +125,7 @@ export class WorkerUnit {
     }
     if (slice_name === WORKER_SLICE) {
       const [parent_code, parent_text] = await control(
+        options.child_processes,
         'show',
         'panels.slice',
         '--property=LoadState',
@@ -146,13 +164,16 @@ export class WorkerUnit {
       } finally {
         closeSync(file);
       }
-      return new WorkerUnit({
+      const unit = new WorkerUnit({
+        child_processes: options.child_processes,
         name: `panels-worker-${randomUUID().replaceAll('-', '')}.service`,
         directory,
         environment: child_environment,
         working_directory,
         slice_name,
       });
+      options.child_processes.retain_worker_unit(unit);
+      return unit;
     } catch (error) {
       rmSync(directory, { recursive: true });
       throw error;
@@ -160,6 +181,7 @@ export class WorkerUnit {
   }
 
   argv(original: readonly string[]): readonly string[] {
+    if (this.stop_requested) throw new WorkerUnitError('Worker launch admission is closed');
     if (!original.length) throw new WorkerUnitError('The Worker command is empty');
     let executable = original[0];
     if (executable.includes('/')) {
@@ -203,22 +225,89 @@ export class WorkerUnit {
     ];
   }
 
-  async stop(): Promise<void> {
-    if (this.finished) return;
-    const [code, text] = await control('show', this.name, '--property=LoadState');
+  begin_launch(): void {
+    if (this.stop_requested) throw new WorkerUnitError('Worker launch admission is closed');
+    if (this.launching) throw new WorkerUnitError('Worker unit already owns a launcher');
+    this.launching = true;
+    this.wrapper_ready = new Promise<void>((resolve) => {
+      this.publish_wrapper = resolve;
+    });
+  }
+  launch_failed_before_spawn(): void {
+    this.resolve_finished(); // The reserved spawn threw without returning any child.
+    this.publish_wrapper?.();
+  }
+  track_wrapper(child: ChildProcess): void {
+    let exit!: () => void, close!: () => void;
+    const exited = new Promise<void>((resolve) => {
+      exit = resolve;
+    });
+    const closed = new Promise<void>((resolve) => {
+      close = resolve;
+    });
+    child.once('exit', (code, signal) => {
+      if (code === 0 && signal === null) this.resolve_finished();
+      exit();
+    });
+    child.on('error', () => {
+      if (child.pid === undefined) {
+        this.resolve_finished();
+        exit();
+      }
+    });
+    child.once('close', close);
+    this.wrapper = { child, exited, closed };
+    this.publish_wrapper?.();
+  }
+  stop(): Promise<void> {
+    this.stop_requested = true;
+    if (this.cleanup_finished) return Promise.resolve();
+    if (this.stopping) return this.stopping;
+    const actual = Promise.resolve().then(() => this.stop_once());
+    this.stopping = actual;
+    void actual.catch(() => {
+      if (this.stopping === actual) this.stopping = null;
+    });
+    return actual;
+  }
+  private async stop_once(): Promise<void> {
+    if (this.wrapper_ready) await this.wrapper_ready;
+    let [code, text] = await control(
+      this.child_processes,
+      'show',
+      this.name,
+      '--property=LoadState',
+    );
+    if (
+      ((!code && properties(text).LoadState !== 'loaded') ||
+        (code && (text.includes('not found') || text.includes('not loaded')))) &&
+      this.wrapper
+    ) {
+      // An earlier not-loaded result is insufficient while the launcher can create its unit.
+      const { child, exited, closed } = this.wrapper;
+      if (child.exitCode === null && child.signalCode === null && child.pid !== undefined)
+        child.kill('SIGKILL');
+      await exited;
+      child.stdin?.destroy();
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      await closed;
+      [code, text] = await control(this.child_processes, 'show', this.name, '--property=LoadState');
+    }
     if (!code && properties(text).LoadState === 'loaded') {
-      const [stop_code, stop_text] = await control('stop', this.name);
+      const [stop_code, stop_text] = await control(this.child_processes, 'stop', this.name);
       if (stop_code)
         throw new WorkerUnitError(`Cannot stop Worker unit ${this.name}: ${stop_text}`);
-      await control('reset-failed', this.name);
+      this.resolve_finished(); // Confirmed inactive, even if later bookkeeping fails.
+      await control(this.child_processes, 'reset-failed', this.name);
     } else if (code && !text.includes('not found') && !text.includes('not loaded')) {
       throw new WorkerUnitError(`Cannot inspect Worker unit ${this.name}: ${text}`);
-    }
+    } else this.resolve_finished();
     try {
       rmSync(this.directory, { recursive: true, force: true });
     } catch {
       // Python's rmtree(ignore_errors=True) does not turn file cleanup into stop failure.
     }
-    this.finished = true;
+    this.cleanup_finished = true;
   }
 }

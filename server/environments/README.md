@@ -35,9 +35,9 @@ The real-core proofs now cover idle-update admission after a native turn complet
 continued reads, and admission reopening after installer launch failure. They use ordinary routes and scripted external operations.
 A second case forces an update while the real core is busy. Its external installer adapter requests actual application shutdown.
 The Manager's later stop policy supersedes its original ownership-transfer expectation.
-The revised case holds a raw provider beyond the shared 0.5-second observer deadline. The deadline rejects and database ownership stays held.
-Premature finalization refuses. After actual provider and child settlement, explicit finalization closes the database and permits a successor.
-The focused case passes in 1.458 seconds, with a 4.99-second runner process. Its exact owned children close before exit.
+The revised case holds a raw provider beyond its shared 0.5-second grace. Ownership stays held while actual work remains.
+After actual provider and child settlement, the original close flight finalizes automatically and permits a successor.
+The revised forced case is included in the focused lifecycle run; its exact owned children close before exit.
 The real installer/systemd path, vendor SDK behavior, loop-provider cancellation, and an absolute total shutdown bound remain unproven.
 
 ## Retained metrics and status
@@ -76,7 +76,7 @@ Review removed five repeated state vectors and sixteen repeated caller combinati
 | Collector: 3 | Existing fake proc/sys fixture: full sample sequences and PID race. Scripted child: output/time bounds, retained pipe, exact settlement, and process clock continuity. | Sequence 0.42 s; PID 0.24 s; command/clock 2.33 s including cleanup; clock extension 0.22 s. |
 | Configuration: 1 | Direct grammar/path parity and accepted TS integer boundary; Python's extreme-value answer remains informational. | 0.14 s. |
 | Auxiliary: 7; composition: 2 | Existing Vitest database/server fixtures: schema/rollback/maintenance scope, resources, both poll hooks, ownership through re-entrant startup/shutdown. | Bodies 1.456 s + 0.765 s; prior shared 24-test process 3.43 s. |
-| Real core: 2 | Existing server/database fixtures and real conversation core with scripted backends/adapters. The forced-now case now proves retained ownership after deadline expiry and safe explicit finalization after actual settlement. | Earlier idle body 1975 ms. Revised forced case 1458 ms; focused runner 4.99 s. |
+| Real core: 2 | Existing server/database fixtures and real conversation core with scripted backends/adapters. The forced-now case proves ownership after grace expiry and automatic finalization after actual settlement. | Earlier idle body 1975 ms. Revised forced case 1458 ms; focused runner 4.99 s. |
 | Historical browser: 1, outside default CI | Existing host/frontend, Chromium, 21 Python-written samples, actual queries/chart/workload. | 3.24 s. |
 
 Small durable reports: [store compatibility](evidence/metrics-store.json), [command/clock proof](evidence/collector-command-clock.json),

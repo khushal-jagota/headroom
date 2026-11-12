@@ -1,8 +1,13 @@
 import type { Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../../lifecycle/contracts.ts';
 
 /** Public SDK types omit native command lifecycle and some consumed result fields. */
 export type ClaudeSdkMessage = Record<string, unknown> & { type: string };
-export type ClaudeSdkOptions = Options & { pathToClaudeCodeExecutable: string };
+export type ClaudeSdkOptions = Options & {
+  pathToClaudeCodeExecutable: string;
+  child_processes: OwnedChildProcesses;
+  one_shot_children: OwnedOneShotChildren;
+};
 export interface ClaudeSdkClient {
   connect(): Promise<void>;
   get_server_info(): Promise<Record<string, unknown> | null>;

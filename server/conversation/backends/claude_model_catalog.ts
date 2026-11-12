@@ -1,6 +1,6 @@
 /** Model choices come from the selected CLI's startup handshake, without a prompt. */
 import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
-import { OneShotChildren } from '../../lifecycle/one_shot_children.ts';
+import { OneShotChildren, stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
 import type { ChildProcess } from 'node:child_process';
 import { load_claude_sdk, CLAUDE_AGENT_SDK_VERSION } from './claude_sdk.ts';
 import type { Query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
@@ -217,7 +217,7 @@ export async function probe_claude_model_catalog(
     release_input();
     if (state.child !== null && state.child.exitCode === null && state.child.signalCode === null) {
       try {
-        state.child.kill('SIGKILL');
+        stop_one_shot_child(state.child);
       } catch (cause) {
         if (!failed) {
           failed = true;

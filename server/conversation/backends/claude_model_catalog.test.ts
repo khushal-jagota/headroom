@@ -12,7 +12,7 @@ const { query } = vi.hoisted(() => ({
   query: vi.fn<(typeof import('@anthropic-ai/claude-agent-sdk'))['query']>(),
 }));
 
-vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
+vi.mock('node:child_process', () => ({ spawn: vi.fn(), spawnSync: vi.fn() }));
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query }));
 vi.mock('./cli_compatibility.ts', () => ({ ensure_cli_compatible: vi.fn() }));
 await load_claude_sdk();
@@ -62,8 +62,10 @@ it('closes the exact probe on timeout and reaps only its recorded child', async 
   vi.useFakeTimers();
   const children = new OneShotChildren();
   const initialization = new Deferred<unknown>();
+  const signal_group = vi.spyOn(process, 'kill').mockReturnValue(true);
   vi.mocked(ensure_cli_compatible).mockResolvedValue(undefined);
   const child = Object.assign(new EventEmitter(), {
+    pid: 424242,
     exitCode: null as number | null,
     signalCode: null as string | null,
     kill: vi.fn(() => true),
@@ -91,7 +93,7 @@ it('closes the exact probe on timeout and reaps only its recorded child', async 
   );
   await vi.advanceTimersByTimeAsync(30_000);
   expect(close).toHaveBeenCalled();
-  expect(child.kill).toHaveBeenCalledExactlyOnceWith('SIGKILL');
+  expect(signal_group).toHaveBeenCalledExactlyOnceWith(-child.pid, 'SIGKILL');
   expect(settled).toBe(false);
   expect(ensure_cli_compatible).toHaveBeenCalledWith('claude', '/synthetic/selected-cli', {
     children,
@@ -111,6 +113,7 @@ it('closes the exact probe on timeout and reaps only its recorded child', async 
       CLAUDE_AGENT_SDK_VERSION: '0.3.316',
     }),
     stdio: ['pipe', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
   });
 });
 
@@ -130,13 +133,15 @@ it('leaves malformed catalog transformation errors outside the startup error wra
 it('retains the startup failure and reaps its child if SDK close also fails', async () => {
   vi.mocked(ensure_cli_compatible).mockResolvedValue(undefined);
   const child = Object.assign(new EventEmitter(), {
+    pid: 424242,
     exitCode: null as number | null,
     signalCode: null as string | null,
-    kill: vi.fn(() => {
-      child.signalCode = 'SIGKILL';
-      queueMicrotask(() => child.emit('close', null));
-      return true;
-    }),
+    kill: vi.fn(),
+  });
+  const signal_group = vi.spyOn(process, 'kill').mockImplementation(() => {
+    child.signalCode = 'SIGKILL';
+    queueMicrotask(() => child.emit('close', null));
+    return true;
   });
   vi.mocked(spawn).mockReturnValue(child as never);
   vi.mocked(query).mockImplementation((options) => {
@@ -158,5 +163,5 @@ it('retains the startup failure and reaps its child if SDK close also fails', as
   await expect(probe_claude_model_catalog('/synthetic/selected-cli')).rejects.toThrow(
     'primary startup failure',
   );
-  expect(child.kill).toHaveBeenCalledExactlyOnceWith('SIGKILL');
+  expect(signal_group).toHaveBeenCalledExactlyOnceWith(-child.pid, 'SIGKILL');
 });
