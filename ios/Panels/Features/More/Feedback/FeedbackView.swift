@@ -5,6 +5,7 @@ struct FeedbackView: View {
     @Environment(ReviewSavedWork.self) private var savedReviewWork
     @State private var model = FeedbackModel()
     @State private var handled = false
+    private var resource: ResourceHandle<FeedbackResponse> { store.resources.handle(FeedbackResources.notes) }
 
     var body: some View {
         ScrollView {
@@ -34,7 +35,8 @@ struct FeedbackView: View {
         .panelsNavigationTitle("Feedback")
         .navigationBarTitleDisplayMode(.large)
         .panelsRefreshable { await model.load(using: store.client) }
-        .task(id: "\(store.baseURL):\(store.connectionSession)") { await model.load(using: store.client) }
+        .resourceDemand(resource)
+        .task(id: store.baseURL.absoluteString) { model.connect(store.resources) }
     }
 
     private func tabTitle(_ title: String, count: Int?) -> String {

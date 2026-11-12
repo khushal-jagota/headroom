@@ -1,24 +1,30 @@
 # Saved data and interrupted connections
 
-The phone keeps recently read Workspace, Review, ticket, orchestrator, Chief and
-conversation responses in one SwiftData database in Application Support. Workspace
-and Review restore from the last saved navigation view, and from the last one that
-carried Workspace, so a relaunch after Review still shows Workspace. Each view
-stream's first snapshot is what is saved; the stream then catches the screen up. A screen
-restores its saved response before starting a fresh read. New responses apply
-immediately, including changes that move rows. If the server cannot be reached,
-the app replaces the current screen with a Tailscale reminder and Try again,
-keeping saved responses and drafts on the phone. Retry or returning to the app
-reads again. Other failed refreshes keep the last successful response visible.
-A screen with no saved response shows still, rough blocks only after 300 milliseconds. The blocks never replace existing content.
+The phone keeps recently read Workspace, Review, Ticket, Manager, Chief, and
+conversation display in one SwiftData database in Application Support. Workspace
+and Review restore admitted navigation display, including reduced patches.
+Conversation display retains bounded history. Saved display remains stale and
+supplies neither stream coverage nor read credit. Fresh streams establish their
+own authority. Navigation and conversation owners checkpoint during updates and
+on background entry.
 
-Successful cached reads are saved by a serial background writer before the read
-finishes. An identical response still refreshes its saved date, so it keeps its
-place in eviction order. Cache reads use a fresh database context to see the
-latest completed save. Drafts and outgoing messages keep their separate main-thread
-writer. Outgoing work raises the saved-work observation signal. A plain draft save
-does not, because each key press saves the draft. A draft saved together with
-outgoing work, such as a voice transcript, still raises it.
+Saved responses can supply display while fresh reads run. New responses apply immediately,
+including changes that move rows. If the server cannot be reached, a Tailscale
+reminder covers the current screen with Try again. The underlying routes keep
+unfinished Goal and holder edits. Covered conversations earn no read credit.
+The cover stops Review voice capture and preserves its recording for recovery.
+Conversation dictation follows the existing cancellation behavior: the cover discards
+the in-progress dictation session. Text already committed to the composer remains saved.
+Retry or return to the app reads again. Other failed refreshes keep successful
+content visible. With no saved response, rough blocks appear after 300 milliseconds.
+
+Successful reads publish before serial background cache writes. Bounded pending
+work coalesces replacements by server and key. An identical response still refreshes
+its saved date. Cache reads use a fresh database context for completed saves.
+Cache errors remain separate from durable-save errors. Drafts and outgoing messages
+keep their separate main-thread writer. Outgoing work raises the saved-work signal.
+A plain draft save does not, because each key press saves the draft. A draft saved
+together with outgoing work, such as a voice transcript, still raises it.
 
 Review and its badge share an in-memory snapshot. A separate server-specific revision
 refreshes it only after an outgoing payload changes or a record is removed. An

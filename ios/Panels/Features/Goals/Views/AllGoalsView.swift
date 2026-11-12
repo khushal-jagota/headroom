@@ -3,21 +3,24 @@ import SwiftUI
 struct AllGoalsView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
-    @State private var goals: [GoalRecord] = []
-    @State private var managers: [ManagerSummary] = []
-    @State private var projects: [GoalJSON] = []
-    @State private var sessions: [String: PageSession] = [:]
+    @State private var goalsHandle: ResourceHandle<GoalsResponse>?
+    @State private var managersHandle: ResourceHandle<ManagersResponse>?
+    @State private var projectsHandle: ResourceHandle<GoalJSON>?
+    private var goals: [GoalRecord] { goalsHandle?.value?.goals ?? [] }
+    private var managers: [ManagerSummary] { managersHandle?.value?.managers ?? [] }
+    private var projects: [GoalJSON] { projectsHandle?.value?["projects"].array ?? [] }
+    @State private var sessions = PageSessionCollection()
     @State private var filters = GoalFilters()
     @State private var draft = GoalFilters()
     @State private var selectedFilter: Int?
     @State private var sheet = false
-    @State private var loaded = false
-    @State private var nextRefreshAt: Double?
-    @State private var error: String?
+    private var loaded: Bool { goalsHandle?.value != nil }
+    private var nextRefreshAt: Double? { goalsHandle?.value?.nextRefreshAt }
+    private var error: String? { goalsHandle?.error ?? managersHandle?.error ?? projectsHandle?.error }
     private let columns = ["Goal", "Current", "Target", "Project", "Due", "State"]
     private func readings(_ goal: GoalRecord) -> (Double?, Double?) {
         if let checklist = GoalPresentation.primaryChecklist(goal) { return (Double(checklist["items"].array.filter { $0["state"].text == "done" }.count), Double(checklist["items"].array.count)) }
-        guard let session = sessions[goal.id], let block = GoalPresentation.primaryChart(goal), block.kind != "binary" else { return (nil, nil) }
+        guard let session = sessions.session(goal.id, server: store.baseURL), let block = GoalPresentation.primaryChart(goal), block.kind != "binary" else { return (nil, nil) }
         let projection = session.readings?.charts[block.id] ?? .null
         let data = GoalChartPresentation.data(block, values: session.readings?.values ?? [], range: "all", projection: projection)
         let headline = GoalChartPresentation.headline(block, data: data, projection: projection)
@@ -49,8 +52,9 @@ struct AllGoalsView: View {
         }.panelsScreen().panelsNavigationTitle("All goals").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
             .screenLoadState("goals", hasContent: loaded, error: error) { await load() }
             .panelsRefreshable { await load() }
-            .task(id: "\(store.baseURL):\(store.revision):\(scenePhase == .active)") { if scenePhase == .active { await load() } }
-            .modifier(GoalBoundaryRefresh(at: nextRefreshAt, refresh: load))
+            .task(id: "\(store.baseURL):\(scenePhase == .active)") { if scenePhase == .active { await follow() } }
+            .task(id: "\(store.baseURL):\(goals.map(\.id)):\(scenePhase == .active)") { if scenePhase == .active { await followReadings() } }
+            .onChange(of: sessions.unfinishedKeys) { _, _ in sessions.prune() }
             .sheet(isPresented: $sheet) { filterSheet }
             .accessibilityIdentifier("all-goals-screen")
     }
@@ -135,19 +139,26 @@ struct AllGoalsView: View {
         default: draft.state = "all"; draft.completion = "all"
         }
     }
+    private func follow() async {
+        let list = store.resources.handle(GoalResources.list), managers = store.resources.handle(GoalResources.managers), projects = store.resources.handle(GoalResources.projects)
+        goalsHandle = list; managersHandle = managers; projectsHandle = projects
+        list.acquire(); managers.acquire(); projects.acquire()
+        defer { list.release(); managers.release(); projects.release() }
+        await load()
+        do { try await Task.sleep(for: .seconds(365 * 24 * 60 * 60)) } catch { }
+    }
+    private func followReadings() async {
+        let active = sessions.update(goals, api: store.client, resources: store.resources)
+        active.forEach { $0.acquire() }; defer { active.forEach { $0.release() } }
+        await withTaskGroup(of: Void.self) { group in
+            for session in active { group.addTask { await session.refresh() } }
+        }
+        do { try await Task.sleep(for: .seconds(365 * 24 * 60 * 60)) } catch { }
+    }
     private func load() async {
-        let api = store.client
-        do {
-            async let response = api.goals()
-            async let managerResponse = api.managers()
-            async let projectResponse = api.goalProjects()
-            let (list, projects, managers) = try await (response, projectResponse, managerResponse); try Task.checkCancellation()
-            guard api.baseURL == store.baseURL else { return }
-            self.managers = managers.managers; goals = list.goals; nextRefreshAt = list.nextRefreshAt; self.projects = projects["projects"].array; loaded = true; error = nil
-            for goal in goals { sessions[goal.id] = PageSession.session(id: goal.id, api: api, initial: goal) }
-            await withTaskGroup(of: Void.self) { group in
-                for session in sessions.values { group.addTask { await session.refresh() } }
-            }
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        async let list: () = goalsHandle?.refresh() ?? ()
+        async let managers: () = managersHandle?.refresh() ?? ()
+        async let projects: () = projectsHandle?.refresh() ?? ()
+        _ = await (list, managers, projects)
     }
 }

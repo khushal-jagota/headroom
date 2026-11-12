@@ -32,7 +32,7 @@ import XCTest
         XCTAssertEqual(try store.record(server: "a", kind: "cache", id: "same")?.payload, Data([1]))
         store.saveError = "Couldn’t save on this phone: temporary failure"
         try await store.cacheResponse(server: "a", id: "same", data: Data([1]), updated: Date(timeIntervalSince1970: 3))
-        XCTAssertNil(store.saveError)
+        XCTAssertEqual(store.saveError, "Couldn’t save on this phone: temporary failure")
         XCTAssertEqual(try store.record(server: "a", kind: "cache", id: "same")?.updated, Date(timeIntervalSince1970: 3))
         try await store.cacheResponse(server: "a", id: "same", data: Data([2]), updated: Date(timeIntervalSince1970: 4))
         XCTAssertEqual(try store.record(server: "a", kind: "cache", id: "same")?.payload, Data([2]))
@@ -42,6 +42,78 @@ import XCTest
         XCTAssertEqual(try reopened.record(server: "a", kind: "cache", id: "same")?.payload, Data([2]))
         XCTAssertEqual(reopened.draft(server: "a", id: "draft"), "Keep")
     }
+    func testFailedBackgroundCacheKeepsLiveResourceDraftAndDurableError() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = LocalStore(url: directory.appendingPathComponent("phone.store"), cacheWrite: { throw CocoaError(.fileWriteUnknown) })
+        let api = APIClient(baseURL: URL(string: "https://cache-failure.invalid")!)
+        let server = LocalStore.server(api.baseURL)
+        store.saveDraft("Unfinished words", server: server, id: "composer")
+        store.saveError = "An earlier durable save failed."
+        let transport = ResourceTransport(versions: { _, keys in
+            ResourceVersions(epoch: "epoch", resources: keys.map { .init(key: $0, revision: "1") })
+        }, read: { _, _, _ in ResourceRead(data: Data("\"Live content\"".utf8), epoch: "epoch", revision: "1") })
+        let owner = ResourceOwner(api: api, transport: transport, cacheStore: store)
+        let handle = owner.handle(ResourceRegistration<String>(key: "/api/example"))
+        handle.acquire(); defer { handle.release(); owner.stop() }
+        await handle.refresh()
+        XCTAssertEqual(handle.value, "Live content")
+        await store.flushCache()
+        for _ in 0..<100 where store.cacheErrors[server] == nil { await Task.yield() }
+        XCTAssertNotNil(store.cacheErrors[server])
+        XCTAssertNil(handle.error, "A cache failure is not a failed authoritative read")
+        XCTAssertEqual(handle.value, "Live content")
+        XCTAssertEqual(store.draft(server: server, id: "composer"), "Unfinished words")
+        XCTAssertEqual(store.saveError, "An earlier durable save failed.")
+    }
+
+    func testRestoredResourceEnvelopeIsStaleAndFailedLookupCannotReturnOldContent() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = LocalStore(url: directory.appendingPathComponent("phone.store"))
+        let api = APIClient(baseURL: URL(string: "https://restored-resource.invalid")!)
+        let key = "/api/example"
+        let transport = ResourceTransport(versions: { _, keys in
+            ResourceVersions(epoch: "epoch", resources: keys.map { .init(key: $0, revision: "1") })
+        }, read: { _, _, _ in ResourceRead(data: Data("\"Live content\"".utf8), epoch: "epoch", revision: "1") })
+        let first = ResourceOwner(api: api, transport: transport, cacheStore: store)
+        let original = first.handle(ResourceRegistration<String>(key: key))
+        await original.refresh(); await store.flushCache(); first.stop()
+        let failing = ResourceTransport(versions: { _, _ in throw URLError(.timedOut) },
+                                        read: { _, _, _ in throw URLError(.timedOut) })
+        let restored = ResourceOwner(api: api, transport: failing, cacheStore: store)
+        let handle = restored.handle(ResourceRegistration<String>(key: key))
+        XCTAssertNil(handle.value, "Acquiring a cold handle does not fetch or decode saved data on main")
+        handle.acquire(); handle.release()
+        await handle.entry.restoring?.value
+        XCTAssertEqual(handle.value, "Live content", "A quick departure cannot strand async cache restoration")
+        XCTAssertNil(handle.entry.restoring)
+        XCTAssertTrue(handle.isStale)
+        do {
+            let _: String = try await restored.read(ResourceRegistration<String>(key: key))
+            XCTFail("A failed fresh lookup cannot return saved content as current")
+        } catch { XCTAssertNotNil(handle.error) }
+        XCTAssertEqual(handle.value, "Live content", "Saved display remains useful after the failed read")
+        restored.stop()
+    }
+
+    func testReplaceableCacheQueueBoundsPendingBytesAndCoalescesExactServerKeys() {
+        let pending = ResponseCacheWriter.Pending(entryLimit: 2, byteLimit: 4)
+        func write(_ server: String, _ id: String, _ bytes: [UInt8]) -> ResponseCacheWriter.Write {
+            .init(server: server, id: id, data: Data(bytes), updated: .now)
+        }
+        XCTAssertTrue(pending.append(write("a", "same", [1, 1])))
+        XCTAssertFalse(pending.append(write("a", "same", [2])))
+        XCTAssertEqual(pending.count, 1)
+        XCTAssertEqual(pending.byteCount, 1)
+        XCTAssertFalse(pending.append(write("b", "same", [3, 3])))
+        XCTAssertEqual(pending.count, 2)
+        XCTAssertFalse(pending.append(write("a", "new", [4, 4, 4])))
+        XCTAssertEqual(pending.count, 1)
+        XCTAssertEqual(pending.byteCount, 3)
+        XCTAssertEqual(pending.next()?.id, "new")
+        XCTAssertNil(pending.next())
+        XCTAssertTrue(pending.append(write("a", "after-idle", [5])))
+    }
+
     func testBackgroundCacheEvictsByRefreshedAgeAndBytesWithoutTouchingWork() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

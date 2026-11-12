@@ -4,6 +4,7 @@ import Observation
 @MainActor @Observable final class AppStore {
     var baseURL: URL
     private let session: URLSession
+    @ObservationIgnored lazy var resources = ResourceOwner(api: client)
     var client: APIClient { APIClient(baseURL: baseURL, session: session) }
     /// Workspace rows from the last view that carried the rail windows. A scope
     /// without them, such as Review alone, keeps the last coherent Workspace.
@@ -13,16 +14,22 @@ import Observation
     /// Per Workspace card (manager id, or "chief"), the active tickets its rail window
     /// counts but did not load: the shared row budget can cut a card short.
     var workspaceHidden: [String: Int] = [:]
-    var chief: ChiefDetail?
+    private var chiefResource: ResourceHandle<ChiefDetail> { resources.handle(ChiefResources.settings) }
+    private var deploymentResource: ResourceHandle<DeploymentStatus> { resources.handle(ChiefResources.deployment) }
+    private var healthResource: ResourceHandle<ExecutorHealth> { resources.handle(ChiefResources.executorHealth) }
+    var chief: ChiefDetail? { chiefResource.value }
     var chiefSignal: ConversationSignal?
     var review: ReviewResponse?
     var counts: ViewCounts?
     /// The last admitted view; screens read window paging facts from it.
     private(set) var view: ViewSnapshot?
-    var executorHealth: ExecutorHealth?
-    var deployment: DeploymentStatus?
+    var executorHealth: ExecutorHealth? { healthResource.value }
+    var deployment: DeploymentStatus? { deploymentResource.value }
     var errors: [String: ServerReadFailure] = [:]
-    var serverUnreachable: Bool { errors.values.contains { $0.isServerUnreachable } }
+    var serverUnreachable: Bool {
+        errors.values.contains { $0.isServerUnreachable } || chiefResource.failure?.isServerUnreachable == true ||
+            deploymentResource.failure?.isServerUnreachable == true
+    }
     var isLoading = false
     /// The view stream's health: "Following changes" once the current stream delivered
     /// its snapshot, "Reconnecting" after a failure until the next snapshot.
@@ -51,7 +58,6 @@ import Observation
     private var reconnectRequested = false
     private var viewReading = false
     private var viewReadsStarted = 0
-    private var resourceVersions = ResourceVersionState()
 
     init(baseURL suppliedBaseURL: URL? = nil, session: URLSession = .shared) {
         self.session = session
@@ -75,38 +81,82 @@ import Observation
     }
 
     func configure(baseURL: URL) {
+        runGeneration += 1
+        displayGeneration += 1
+        displaySaveTask?.cancel(); displaySaveTask = nil; pendingDisplays = [:]; lastDisplaySave = .distantPast
         self.baseURL = baseURL
+        resources.configure(api: client)
         UserDefaults.standard.set(baseURL.absoluteString, forKey: "panels.baseURL")
-        managers = []; tickets = []; workspaceLoaded = false; workspaceHidden = [:]; chief = nil; chiefSignal = nil; review = nil; counts = nil; view = nil
+        managers = []; tickets = []; workspaceLoaded = false; workspaceHidden = [:]; chiefSignal = nil; review = nil; counts = nil; view = nil
         presentation = nil; recordStamps = [:]
-        deployment = nil; errors = [:]; executorHealth = nil
-        resourceVersions = ResourceVersionState()
+        errors = [:]
         restore()
     }
 
     // MARK: Saved views
 
-    /// The latest view, and separately the latest one that carried Workspace, so a
-    /// relaunch restores both even when Review was the last screen. Each stream's
-    /// snapshot is saved as read; patches between them are not.
+    /// The reduced current display is replaceable. It never supplies a stream base.
+    private var pendingDisplays: [String: ViewSnapshot] = [:]
+    private var displaySaveTask: Task<Void, Never>?
+    private var displayEncodingTask: Task<Void, Never>?
+    private var lastDisplaySave = Date.distantPast
+    private var displayGeneration = 0
+    private var displayCheckpointSequence = 0
     private func savedViewID(_ name: String) -> String { baseURL.absoluteString + "/api/navigation/view/snapshot#" + name }
 
     private func restore() {
         let server = LocalStore.server(baseURL)
         for name in ["workspace", "latest"] {
             guard let data = try? LocalStore.shared.record(server: server, kind: "cache", id: savedViewID(name))?.payload,
-                  case .snapshot(let snapshot)? = try? APIClient.decoder().decode(ViewFrame.self, from: data) else { continue }
-            admit(snapshot)
+                  let snapshot = try? APIClient.decoder().decode(ViewSnapshot.self, from: data),
+                  snapshot.wireVersion == NavigationViewVersion.wire,
+                  snapshot.projectionVersion == NavigationViewVersion.projection else { continue }
+            admit(snapshot.savedDisplay, persist: false)
         }
-        chief = client.cached("/api/workers/chief-of-staff/settings")
     }
 
-    private func save(_ snapshot: ViewSnapshot, data: Data, api: APIClient) async {
-        let server = LocalStore.server(api.baseURL)
-        try? await LocalStore.shared.cacheResponse(server: server, id: savedViewID("latest"), data: data)
-        if snapshot.window("rail_parents") != nil {
-            try? await LocalStore.shared.cacheResponse(server: server, id: savedViewID("workspace"), data: data)
+    private func checkpointNavigation(_ snapshot: ViewSnapshot) {
+        pendingDisplays["latest"] = snapshot
+        if snapshot.window("rail_parents") != nil { pendingDisplays["workspace"] = snapshot }
+        let delay = max(0, DisplayCacheConfiguration.checkpointInterval - Date().timeIntervalSince(lastDisplaySave))
+        guard displaySaveTask == nil else { return }
+        let generation = displayGeneration
+        displaySaveTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard let self, generation == self.displayGeneration else { return }
+            self.displaySaveTask = nil
+            await self.saveNavigationDisplay()
         }
+    }
+    func saveNavigationDisplay() async {
+        displaySaveTask?.cancel(); displaySaveTask = nil
+        // An explicit checkpoint also waits for the automatic checkpoint already
+        // in progress, so a following disk barrier includes its admitted bytes.
+        await displayEncodingTask?.value
+        let displays = pendingDisplays
+        guard !displays.isEmpty else { return }
+        pendingDisplays = [:]; lastDisplaySave = .now
+        displayCheckpointSequence += 1
+        let sequence = displayCheckpointSequence, generation = displayGeneration
+        let server = LocalStore.server(baseURL)
+        let ids = displays.keys.reduce(into: [String: String]()) { $0[$1] = savedViewID($1) }
+        let task = Task { [weak self] in
+            let encoded = await Task.detached(priority: .utility) {
+                let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+                return displays.compactMap { name, snapshot -> (String, Data)? in
+                    guard let data = try? encoder.encode(snapshot.savedDisplay) else { return nil }
+                    return (name, data)
+                }
+            }.value
+            guard let self, generation == self.displayGeneration, sequence == self.displayCheckpointSequence else { return }
+            for (name, data) in encoded {
+                guard let id = ids[name] else { continue }
+                LocalStore.shared.enqueueCacheResponse(server: server, id: id, data: data)
+            }
+        }
+        displayEncodingTask = task
+        await task.value
+        if sequence == displayCheckpointSequence { displayEncodingTask = nil }
     }
 
     // MARK: Scope
@@ -153,7 +203,7 @@ import Observation
         if let viewConsumer { viewConsumer.cancel() } else { reconnectRequested = true }
     }
 
-    private func admit(_ snapshot: ViewSnapshot) {
+    private func admit(_ snapshot: ViewSnapshot, persist: Bool = true) {
         let presentation = NavigationPresentation(snapshot.content.records)
         if let managers = presentation.workspaceManagers(in: snapshot), let tickets = presentation.workspaceTickets(in: snapshot) {
             self.managers = managers; self.tickets = tickets; workspaceLoaded = true
@@ -167,6 +217,7 @@ import Observation
         if stamps != recordStamps { recordStamps = stamps }
         self.presentation = presentation
         view = snapshot
+        if persist { checkpointNavigation(snapshot) }
     }
 
     // MARK: Reload identities
@@ -210,14 +261,19 @@ import Observation
         runGeneration += 1
         let generation = runGeneration
         running = true
+        let chief = chiefResource, deployment = deploymentResource, health = healthResource
+        chief.acquire(); deployment.acquire(); health.acquire()
+        resources.start()
         if hasRun { connectionSession += 1 }
         hasRun = true
         defer {
-            if runGeneration == generation { running = false; viewConsumer = nil; streamRequest = nil }
+            chief.release(); deployment.release(); health.release()
+            if runGeneration == generation {
+                Task { await saveNavigationDisplay() }
+                resources.stop(); running = false; viewConsumer = nil; streamRequest = nil
+            }
         }
-        async let settings: () = followSettings()
         await followView()
-        await settings
     }
 
     fileprivate enum ViewStreamEnd { case cancelled, ended(admitted: Bool), refused(admitted: Bool), failed }
@@ -257,12 +313,13 @@ import Observation
     }
 
     private func consume(_ request: ViewRequest, api: APIClient) async -> ViewStreamEnd {
+        let generation = runGeneration
         // Frames apply to this stream's own snapshot, never to a restored or older view.
         var current: ViewSnapshot?
         var admitted = false
         do {
-            for try await (frame, data) in api.navigationViewEvents(request) {
-                guard !Task.isCancelled, api.baseURL == baseURL else { return .cancelled }
+            for try await (frame, _) in api.navigationViewEvents(request) {
+                guard !Task.isCancelled, generation == runGeneration, api.baseURL == baseURL else { return .cancelled }
                 if let generation = frame.scopeGeneration, generation != request.scopeGeneration { return .refused(admitted: admitted) }
                 guard case .success(let next) = NavigationViewFrames.apply(current, frame) else { return .refused(admitted: admitted) }
                 current = next
@@ -274,7 +331,6 @@ import Observation
                     if connection == "Reconnecting" { connectionSession += 1 }
                     connection = "Following changes"
                     errors["Navigation"] = nil
-                    Task { await self.save(next, data: data, api: api) }
                     Task { await Outbox.shared.drain(api: api) }
                 default: admit(next)
                 }
@@ -283,30 +339,11 @@ import Observation
                 if let owner = selections.last?.owner, request.selected != owner,
                    recordStamps[RecordKey(kind: owner.kind, id: owner.id)] == nil { return .cancelled }
             }
-            return Task.isCancelled ? .cancelled : .ended(admitted: admitted)
+            return Task.isCancelled || generation != runGeneration ? .cancelled : .ended(admitted: admitted)
         } catch {
-            if Task.isCancelled || api.baseURL != baseURL { return .cancelled }
+            if Task.isCancelled || generation != runGeneration || api.baseURL != baseURL { return .cancelled }
             errors["Navigation"] = ServerReadFailure(error)
             return .failed
-        }
-    }
-
-    /// Chief settings and deployment status are outside the view, and deployment status
-    /// is not a navigation change at all, so these two small versioned reads keep the
-    /// payload-free change stream. Wakes are coalesced to one probe a second.
-    private func followSettings() async {
-        await readSettings(probing: false)
-        while !Task.isCancelled {
-            do {
-                for try await _ in client.changes() {
-                    try Task.checkCancellation()
-                    await readSettings(probing: true)
-                    try await Task.sleep(for: .seconds(1))
-                }
-            } catch {
-                if Task.isCancelled { return }
-            }
-            do { try await Task.sleep(for: .seconds(3)) } catch { return }
         }
     }
 
@@ -326,20 +363,15 @@ import Observation
         if errors.isEmpty { Task { await Outbox.shared.drain(api: api) } }
     }
 
-    /// Probing reads a body only when its version moved; otherwise both bodies read.
+    /// Shell documents use the same owner as every mounted detail.
     func readSettings(probing: Bool) async {
-        let api = client
-        let keys = ["/api/workers/chief-of-staff/settings", "/api/deployment-status"]
-        let probe = probing ? try? await api.resourceVersions(keys) : nil
-        guard !Task.isCancelled, api.baseURL == baseURL else { return }
-        async let chiefRead: () = readVersioned("Chief", path: keys[0], api: api, probe: probe, force: !probing) { self.chief = $0 }
-        async let deployRead: () = readVersioned("Deployment", path: keys[1], api: api, probe: probe, force: !probing) { self.deployment = $0 }
-        async let machineRead = api.executorHealth()
-        _ = await (chiefRead, deployRead)
-        let health = try? await machineRead
-        guard !Task.isCancelled, api.baseURL == baseURL else { return }
-        executorHealth = health
-        revision += 1
+        if probing { await resources.reconcile() }
+        else {
+            async let chief: Void = chiefResource.refresh()
+            async let deployment: Void = deploymentResource.refresh()
+            async let health: Void = healthResource.refresh()
+            _ = await (chief, deployment, health)
+        }
     }
 
     /// One bounded snapshot for the current scope, when no stream runs. A read that starts
@@ -354,43 +386,17 @@ import Observation
         viewReadsStarted += 1
         defer { viewReading = false }
         let request = viewRequest
+        let generation = runGeneration
         do {
-            let (snapshot, data) = try await api.navigationViewSnapshot(request)
-            guard !Task.isCancelled, api.baseURL == baseURL else { return }
+            let (snapshot, _) = try await api.navigationViewSnapshot(request)
+            guard !Task.isCancelled, generation == runGeneration, api.baseURL == baseURL else { return }
             guard snapshot.scopeGeneration == request.scopeGeneration else { throw APIError(status: 0, message: "The navigation view answered another scope.") }
             admit(snapshot)
             errors["Navigation"] = nil
-            await save(snapshot, data: data, api: api)
         } catch {
-            guard !Task.isCancelled, api.baseURL == baseURL else { return }
+            guard !Task.isCancelled, generation == runGeneration, api.baseURL == baseURL else { return }
             errors["Navigation"] = ServerReadFailure(error)
         }
     }
 
-    private func readVersioned<T: Decodable & Sendable>(_ label: String, path: String, api: APIClient, probe: ResourceVersions?, force: Bool, apply: @MainActor @Sendable (T) -> Void) async {
-        if !force, errors[label] == nil, resourceVersions.isCurrent(path, probe: probe) { return }
-        do {
-            let result: ResourceBody<T> = try await api.resourceBody(path)
-            guard !Task.isCancelled, api.baseURL == baseURL else { return }
-            apply(result.body)
-            resourceVersions.accept(result)
-            errors[label] = nil
-        } catch {
-            guard !Task.isCancelled, api.baseURL == baseURL else { return }
-            // Older servers and unregistered resources retain ordinary refresh.
-            resourceVersions.invalidate(path)
-            await read(label, from: api, fetch: { try await api.get(path) }, apply: apply)
-        }
-    }
-
-    private func read<T: Sendable>(_ key: String, from api: APIClient, fetch: @Sendable () async throws -> T, apply: @MainActor @Sendable (T) -> Void) async {
-        do {
-            let value = try await fetch()
-            guard !Task.isCancelled, api.baseURL == baseURL else { return }
-            apply(value); errors[key] = nil
-        } catch {
-            guard !Task.isCancelled, api.baseURL == baseURL else { return }
-            errors[key] = ServerReadFailure(error)
-        }
-    }
 }

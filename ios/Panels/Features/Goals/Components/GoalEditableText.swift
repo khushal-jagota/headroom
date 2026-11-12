@@ -33,11 +33,7 @@ struct GoalEditableText: View {
                     .accessibilityAction(named: "Edit " + label) { if editable { begin() } }
             }
         }
-        .onChange(of: session.revision) { _, _ in
-            if session.saveError == nil, session.submittedTextKey == key {
-                session.textDrafts[key] = nil; session.submittedTextKey = nil; focused = false
-            }
-        }
+        .onChange(of: session.textDrafts[key] == nil) { _, absent in if absent { focused = false } }
         .onDisappear { if draft != nil, session.saveError == nil { commit() } }
         .onChange(of: focused) { old, current in if old && !current && draft != nil && session.saveError == nil { commit() } }
     }
@@ -49,10 +45,10 @@ struct GoalEditableText: View {
         guard let draft, !session.busy, session.saveError == nil else { return }
         if draft.text == value { session.textDrafts[key] = nil; return }
         let text = draft.text, revision = draft.revision
-        session.submittedTextKey = key
+        let submission = GoalTextSubmission(key: key, text: text, revision: revision)
         Task {
-            if let blockID { await session.updateBlock(blockID, revision: revision) { $0.replacing(path: path, with: .string(text)) } }
-            else if let field = path.first { await session.save([field: .string(text)], revision: revision) }
+            if let blockID { await session.updateBlock(blockID, revision: revision, textSubmission: submission) { $0.replacing(path: path, with: .string(text)) } }
+            else if let field = path.first { await session.save([field: .string(text)], revision: revision, textSubmission: submission) }
         }
     }
 }

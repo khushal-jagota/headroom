@@ -53,3 +53,10 @@ enum SettingsServerAddress {
         return components.url
     }
 }
+
+enum SettingsResources {
+    static let workers = ResourceRegistration<SettingsWorkers>(key: "/api/workers", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
+    static let skills = ResourceRegistration<SettingsSkills>(key: "/api/skills", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
+    static let schedules = ResourceRegistration<SettingsSchedules>(key: "/api/schedules", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
+    static let notifications = ResourceRegistration<SettingsNotifications>(key: "/api/notifications/settings", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
+}

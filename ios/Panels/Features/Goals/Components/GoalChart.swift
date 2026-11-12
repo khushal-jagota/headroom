@@ -23,7 +23,7 @@ struct GoalChart: View {
         return PanelsTheme.Goal.tone(GoalChartPresentation.tone(block, headline: headline))
     }
     var body: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 4) {
             if block.kind == "binary" {
                 VStack(alignment: .leading, spacing: 20) {
                     GoalCompletion(done: session.goal?.completed ?? false, status: session.goal?.status ?? "neutral")
@@ -37,7 +37,11 @@ struct GoalChart: View {
             } else {
                 chart
             }
-        }.accessibilityElement(children: .contain).accessibilityIdentifier("goal-chart-\(block.id)")
+            if session.readingsAreStale, !preview, block.kind != "binary" {
+                Text("Previous readings · refresh needed").font(.caption2).foregroundStyle(PanelsTheme.Goal.faint)
+            }
+        }
+        .accessibilityElement(children: .contain).accessibilityIdentifier("goal-chart-\(block.id)")
     }
     private var chart: some View {
         VStack(alignment: .leading, spacing: 20) {

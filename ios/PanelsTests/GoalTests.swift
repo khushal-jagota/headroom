@@ -128,6 +128,129 @@ import XCTest
         XCTAssertNil(ConversationOwner.goal("g").path)
         XCTAssertEqual(NotificationRouting.destination("#/workspace/goal/g"), .goal("g"))
     }
+    /// A route owns unfinished edits after a Goal leaves its visible membership.
+    /// Existing refresh tests keep the row mounted and do not prove this boundary.
+    func testRouteSessionCollectionRetainsRemovedEditsAndPrunesCleanSessions() async throws {
+        GoalProtocol.state.reset(try goal())
+        let api = client(), resources = ResourceOwner(api: client()), sessions = PageSessionCollection()
+        func record(_ id: String) throws -> GoalRecord {
+            try APIClient.decoder().decode(GoalRecord.self, from: Data(Self.goalWire.replacingOccurrences(of: "\"id\":\"g\"", with: "\"id\":\"\(id)\"").utf8))
+        }
+        let records = try ["text", "manual", "pending", "clean"].map(record)
+        let active = sessions.update(records, api: api, resources: resources)
+        active[0].textDrafts["title"] = GoalTextDraft(text: "Unfinished title", revision: 5)
+        let block = GoalJSON.object(["measure_id": .string("m"), "manual": .object(["model": .string("daily_quota")])])
+        active[1].manual(block).draft = "12"
+        let command = active[2].manual(block)
+        command.accept(try APIClient.decoder().decode(GoalManualState.self, from: Data(GoalProtocolState.manualState.utf8)))
+        await command.write(value: 12)
+        XCTAssertNotNil(command.pending, "The fixture retains an uncertain manual command")
+        sessions.update([], api: api, resources: resources)
+        for id in ["text", "manual", "pending"] { XCTAssertNotNil(sessions.session(id, server: api.baseURL)) }
+        XCTAssertNil(sessions.session("clean", server: api.baseURL))
+        let returned = sessions.update([records[0]], api: api, resources: resources)
+        XCTAssertTrue(returned[0] === active[0])
+        XCTAssertEqual(returned[0].textDrafts["title"]?.text, "Unfinished title")
+        sessions.update([], api: api, resources: resources)
+        active[0].textDrafts = [:]; active[1].manual(block).draft = nil
+        sessions.prune()
+        XCTAssertNil(sessions.session("text", server: api.baseURL))
+        XCTAssertNil(sessions.session("manual", server: api.baseURL))
+        XCTAssertNotNil(sessions.session("pending", server: api.baseURL), "Membership never discards an unresolved command")
+    }
+    /// Replaceable child views ask their parent route for the same edit owner.
+    /// List membership coverage does not prove document/holder acquisition or server isolation.
+    func testRouteOwnerReusesDocumentAndHolderEditsAcrossChildRecreation() async throws {
+        GoalProtocol.state.reset(try goal())
+        let api = client(), resources = ResourceOwner(api: client()), route = PageSessionRoute()
+        var child: PageSession? = route.goal("g", api: api, resources: resources)
+        weak var retained = child
+        child?.textDrafts["title"] = GoalTextDraft(text: "Unfinished", revision: 5)
+        let block = try json(#"{"measure_id":"m","manual":{"model":"daily_quota"}}"#)
+        let editor = try XCTUnwrap(child).manual(block)
+        editor.draft = "12"
+        editor.accept(try APIClient.decoder().decode(GoalManualState.self, from: Data(GoalProtocolState.manualState.utf8)))
+        await editor.write(value: 12)
+        await child?.save(["title": .string("Unfinished")], revision: 5)
+        child = nil // The old document view and its local state disappear.
+        let replacement = route.goal("g", api: api, resources: resources)
+        XCTAssertTrue(replacement === retained)
+        XCTAssertEqual(replacement.textDrafts["title"]?.text, "Unfinished")
+        XCTAssertTrue(replacement.hasPendingEdit)
+        XCTAssertTrue(replacement.manual(block) === editor)
+        XCTAssertNotNil(editor.pending)
+        let holder = route.holder(.manager("holder-test"), api: api, resources: resources)
+        holder.textDrafts["block"] = GoalTextDraft(text: "Holder draft", revision: 4)
+        XCTAssertTrue(route.holder(.manager("holder-test"), api: api, resources: resources) === holder)
+        let otherAPI = APIClient(baseURL: URL(string: "https://other.example")!)
+        let other = route.goal("g", api: otherAPI, resources: ResourceOwner(api: otherAPI))
+        XCTAssertFalse(other === replacement)
+        XCTAssertTrue(route.goal("g", api: api, resources: resources) === replacement)
+        XCTAssertEqual(route.retainedCount, 2, "Only the two dirty sessions survive selection changes")
+        replacement.textDrafts = [:]; await replacement.discard(); await editor.discard()
+        holder.textDrafts = [:]
+        route.prune()
+        XCTAssertEqual(route.retainedCount, 1, "Clean inactive sessions do not accumulate")
+    }
+    /// An accepted document can advance before its separate readings endpoint succeeds.
+    /// Preserve the prior projection through both the revision gap and a failed refresh.
+    func testReadingsStayVisibleAndStaleUntilCurrentRevisionArrives() async throws {
+        GoalProtocol.state.reset(try goal())
+        GoalProtocol.state.setReadings(revision: 5)
+        let api = client()
+        // Model a supported coherent envelope. The older-server fallback intentionally
+        // lacks a revision stamp and remains stale, even after a successful body read.
+        let transport = ResourceTransport(versions: { _, _ in throw URLError(.unsupportedURL) }, read: { api, key, _ in
+            ResourceRead(data: try await api.responseData(key).0, epoch: "goal-test", revision: "accepted")
+        })
+        let session = PageSession(id: "g", api: api, goal: try goal(), resources: ResourceOwner(api: api, transport: transport))
+        await session.refresh()
+        XCTAssertEqual(session.readings?.revision, 5)
+        XCTAssertFalse(session.readingsAreStale)
+        GoalProtocol.state.conflictGoal()
+        await session.refresh()
+        XCTAssertEqual(session.goal?.revision, 9)
+        XCTAssertEqual(session.readings?.revision, 5)
+        XCTAssertEqual(session.readings?.charts["chart"]?["current"].number, 12)
+        XCTAssertTrue(session.readingsAreStale)
+        GoalProtocol.state.setReadings(revision: 9, fails: true)
+        await session.refresh()
+        XCTAssertEqual(session.readings?.revision, 5)
+        XCTAssertEqual(session.readings?.charts["chart"]?["current"].number, 12)
+        XCTAssertTrue(session.readingsAreStale)
+        XCTAssertNotNil(session.readError)
+        GoalProtocol.state.setReadings(revision: 9)
+        await session.refresh()
+        XCTAssertEqual(session.readings?.revision, 9)
+        XCTAssertFalse(session.readingsAreStale)
+        XCTAssertNil(session.readError)
+    }
+    func testIndependentRefreshCannotClearSubmittedTextAndConfirmedSavePreservesNewerTyping() async throws {
+        GoalProtocol.state.reset(try goal()); GoalProtocol.state.acceptGoalWrites()
+        let session = PageSession(id: "g", api: client(), goal: try goal())
+        let key = "header:title"
+        session.textDrafts[key] = GoalTextDraft(text: "Submitted", revision: 5)
+        let first = Task {
+            await session.save(["title": .string("Submitted")], revision: 5,
+                textSubmission: GoalTextSubmission(key: key, text: "Submitted", revision: 5))
+        }
+        for _ in 0..<100 {
+            if !GoalProtocol.state.writes().isEmpty { break }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        await session.refresh()
+        XCTAssertEqual(session.goal?.revision, 6)
+        XCTAssertEqual(session.textDrafts[key]?.text, "Submitted", "A new accepted revision is not this save's receipt")
+        session.textDrafts[key]?.text = "Newer typing"
+        await first.value
+        XCTAssertNil(session.saveError)
+        XCTAssertEqual(session.textDrafts[key]?.text, "Newer typing")
+        XCTAssertEqual(session.textDrafts[key]?.revision, 6)
+        await session.save(["title": .string("Newer typing")], revision: 6,
+            textSubmission: GoalTextSubmission(key: key, text: "Newer typing", revision: 6))
+        XCTAssertNil(session.saveError)
+        XCTAssertNil(session.textDrafts[key], "Only confirmed acceptance clears the unchanged submitted text")
+    }
     func testConflictingTextRetryKeepsCapturedRevisionAndDiscardUsesAcceptedGoal() async throws {
         GoalProtocol.state.reset(try goal())
         let api = client(); let session = PageSession(id: "g", api: api, goal: try goal())
@@ -213,6 +336,59 @@ import XCTest
         XCTAssertEqual(GoalProtocol.state.writes().count, 2)
     }
 
+    /// The server test replays this same fixture through the repaired transactions.
+    /// Existing stubs alone cannot prove that native request shape reaches that door.
+    func testNativeDocumentRequestsMatchRepairedTransactionFixtureAndKeepCapturedRevision() async throws {
+#if SWIFT_PACKAGE
+        let fixtureURL = try XCTUnwrap(Bundle.module.url(forResource: "document-revision-requests", withExtension: "json", subdirectory: "Fixtures"))
+#else
+        let fixtureURL = try XCTUnwrap(Bundle(for: GoalTests.self).url(forResource: "document-revision-requests", withExtension: "json"))
+#endif
+        let fixture = try JSONDecoder().decode(GoalJSON.self, from: Data(contentsOf: fixtureURL))
+        for item in fixture["cases"].array {
+            let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+            var initial = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(try goal())) as? [String: Any])
+            var page = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(fixture["page"])) as? [String: Any])
+            var blocks = try XCTUnwrap(page["blocks"] as? [[String: Any]])
+            blocks[0]["text"] = "Before native edit"; page["blocks"] = blocks; initial["page"] = page
+            let record = try APIClient.decoder().decode(GoalRecord.self, from: JSONSerialization.data(withJSONObject: initial))
+            GoalProtocol.state.reset(record); GoalProtocol.state.acceptGoalWrites()
+            let api = client()
+            let session: PageSession
+            switch item["kind"].text {
+            case "goal": session = PageSession(id: "g", api: api, goal: record)
+            case "chief": session = PageSession.holder(.chief, api: api)
+            default: session = PageSession.holder(.manager("holder-test"), api: api)
+            }
+            await session.refresh()
+            let captured = try XCTUnwrap(item["expected_revision"].number)
+            XCTAssertEqual(session.revision, Int(captured))
+            await session.updateBlock("native-text", revision: Int(captured)) { $0.setting("text", .string("Native submitted")) }
+            XCTAssertNil(session.saveError)
+            XCTAssertEqual(session.revision, Int(captured) + 1)
+            // Even a no-op body must reject the captured revision after acceptance.
+            await session.updateBlock("native-text", revision: Int(captured)) { $0.setting("text", .string("Native submitted")) }
+            XCTAssertNotNil(session.saveError)
+            await session.retry()
+            let expected = GoalJSON.object(["page": fixture["page"], "expected_revision": .number(captured)])
+            XCTAssertEqual(GoalProtocol.state.writes(), [expected, expected, expected], "A failed retry never rebases the captured edit")
+            for bytes in GoalProtocol.state.wireWrites() {
+                let wire = String(decoding: bytes, as: UTF8.self)
+                // The repaired server rejects 5.0. This checks emitted protocol bytes,
+                // rather than JSON numeric equality, which conflates 5 and 5.0.
+                let integerToken = #""expected_revision"\s*:\s*"# + String(Int(captured)) + #"(?=\s*[,}])"#
+                XCTAssertNotNil(wire.range(of: integerToken, options: .regularExpression))
+            }
+            let path = item["path"].text.replacingOccurrences(of: "{goal_id}", with: "g").replacingOccurrences(of: "{manager_id}", with: "holder-test")
+            XCTAssertEqual(GoalProtocol.state.patchRequests().map { $0.url?.path }, [path, path, path])
+            for request in GoalProtocol.state.patchRequests() {
+                XCTAssertEqual(request.httpMethod, "PATCH")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "X-Panels-iOS-Build"), NativeBuildGate.build)
+            }
+        }
+    }
+
     func testGoalConversationUsesTheHolderCurrentConversationAndSendDoor() async throws {
         GoalProtocol.state.reset(try goal())
         let api = client()
@@ -272,8 +448,12 @@ private final class GoalProtocol: URLProtocol, @unchecked Sendable {
     override func startLoading() {
         do {
             let (status, data) = try Self.state.response(request)
-            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data); client?.urlProtocolDidFinishLoading(self)
+            let deliver: @Sendable () -> Void = { [self] in
+                client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
+                client?.urlProtocol(self, didLoad: data); client?.urlProtocolDidFinishLoading(self)
+            }
+            if request.httpMethod == "PATCH", Self.state.delaysAcceptedWrites { DispatchQueue.global().asyncAfter(deadline: .now() + 0.05, execute: deliver) }
+            else { deliver() }
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
     override func stopLoading() { }
@@ -282,14 +462,22 @@ private final class GoalProtocolState: @unchecked Sendable {
     let lock = NSLock()
     private var goal: GoalRecord?
     private var goalWrites: [GoalJSON] = []
+    private var encodedGoalWrites: [Data] = []
     private var commands: [GoalJSON] = []
     private var recordedRequests: [URLRequest] = []
     private var holderRevision = 4
     private var document: GoalJSON = .null
+    private var acceptsGoalWrites = false
+    private var readingsRevision = 9
+    private var readingsFail = false
+    func setReadings(revision: Int, fails: Bool = false) { lock.lock(); defer { lock.unlock() }; readingsRevision = revision; readingsFail = fails }
+    var delaysAcceptedWrites: Bool { lock.lock(); defer { lock.unlock() }; return acceptsGoalWrites }
+    func acceptGoalWrites() { lock.lock(); defer { lock.unlock() }; acceptsGoalWrites = true }
     func requests() -> [String] { lock.lock(); defer { lock.unlock() }; return recordedRequests.compactMap { $0.url?.path } }
     func lastRequest() -> URLRequest? { lock.lock(); defer { lock.unlock() }; return recordedRequests.last }
+    func patchRequests() -> [URLRequest] { lock.lock(); defer { lock.unlock() }; return recordedRequests.filter { $0.httpMethod == "PATCH" } }
     static let manualState = #"{"measure_id":"m","definition_revision":1,"write_revision":1,"timezone":"UTC","current_date":"2026-11-04","date":"2026-11-04","observation":{"value":5},"latest_observation":{"value":5}}"#
-    func reset(_ value: GoalRecord) { lock.lock(); defer { lock.unlock() }; goal = value; goalWrites = []; commands = []; recordedRequests = []; holderRevision = 4; document = value.page }
+    func reset(_ value: GoalRecord) { lock.lock(); defer { lock.unlock() }; goal = value; goalWrites = []; encodedGoalWrites = []; commands = []; recordedRequests = []; acceptsGoalWrites = false; readingsRevision = 9; readingsFail = false; holderRevision = 4; document = value.page }
     func conflictGoal() {
         lock.lock(); defer { lock.unlock() }
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -298,6 +486,7 @@ private final class GoalProtocolState: @unchecked Sendable {
         goal = try! APIClient.decoder().decode(GoalRecord.self, from: JSONSerialization.data(withJSONObject: fields))
     }
     func writes() -> [GoalJSON] { lock.lock(); defer { lock.unlock() }; return goalWrites }
+    func wireWrites() -> [Data] { lock.lock(); defer { lock.unlock() }; return encodedGoalWrites }
     func manualWrites() -> [GoalJSON] { lock.lock(); defer { lock.unlock() }; return commands }
     private func bodyData(_ request: URLRequest) -> Data {
         if let body = request.httpBody { return body }
@@ -312,6 +501,8 @@ private final class GoalProtocolState: @unchecked Sendable {
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
         let path = request.url!.path
         recordedRequests.append(request)
+        // This domain fixture exercises the ordinary endpoints. It does not serve envelopes.
+        if path == "/api/resource-body" { return (404, Data(#"{"error":{"message":"Resource endpoint unavailable"}}"#.utf8)) }
         if path == "/api/projects" { return (200, Data(#"{"projects":[{"id":"project_personal","name":"Personal"}]}"#.utf8)) }
         if path == "/api/chief/conversation" { return (200, Data(#"{"conversation_id":"chief-current"}"#.utf8)) }
         if path == "/api/managers/holder-test/workspace" {
@@ -331,12 +522,13 @@ private final class GoalProtocolState: @unchecked Sendable {
             guard body["conversation_id"].text == expected else { throw URLError(.badServerResponse) }
             return (200, Data("{\"conversation_id\":\"\(expected)\",\"fate\":\"injected\"}".utf8))
         }
-        if path == "/api/managers/holder-test/page/readings" {
+        if path == "/api/managers/holder-test/page/readings" || path == "/api/chief/page/readings" {
             return (200, Data("{\"goal_id\":\"holder-test\",\"revision\":\(holderRevision),\"status\":\"neutral\",\"status_date\":\"2026-11-05\",\"next_refresh_at\":1794000000,\"values\":[],\"sources\":[],\"charts\":{}}".utf8))
         }
-        if path == "/api/managers/holder-test/page" {
+        if path == "/api/managers/holder-test/page" || path == "/api/chief/page" {
             if request.httpMethod == "PATCH" {
-                let body = try JSONDecoder().decode(GoalJSON.self, from: bodyData(request)); goalWrites.append(body)
+                let data = bodyData(request)
+                let body = try JSONDecoder().decode(GoalJSON.self, from: data); goalWrites.append(body); encodedGoalWrites.append(data)
                 if body["expected_revision"].number != Double(holderRevision) { return (409, Data(#"{"error":{"message":"Holder page changed"}}"#.utf8)) }
                 document = body["page"]; holderRevision += 1
             }
@@ -351,10 +543,24 @@ private final class GoalProtocolState: @unchecked Sendable {
             return (200, Data(reply.utf8))
         }
         if request.httpMethod == "PATCH" {
-            goalWrites.append(try JSONDecoder().decode(GoalJSON.self, from: bodyData(request)))
+            let data = bodyData(request)
+            let body = try JSONDecoder().decode(GoalJSON.self, from: data); goalWrites.append(body); encodedGoalWrites.append(data)
+            if acceptsGoalWrites, let current = goal, body["expected_revision"].number == Double(current.revision) {
+                var fields = try JSONSerialization.jsonObject(with: encoder.encode(current)) as! [String: Any]
+                if case .object(let patch) = body {
+                    if let title = patch["title"] { fields["title"] = title.text }
+                    if let page = patch["page"] { fields["page"] = try JSONSerialization.jsonObject(with: encoder.encode(page)) }
+                }
+                fields["revision"] = current.revision + 1
+                goal = try APIClient.decoder().decode(GoalRecord.self, from: JSONSerialization.data(withJSONObject: fields))
+                return (200, try encoder.encode(goal))
+            }
             return (409, Data(#"{"error":{"message":"Goal changed; refresh before editing"}}"#.utf8))
         }
-        if path.hasSuffix("/readings") { return (200, Data(#"{"goal_id":"g","revision":9,"status":"attention","status_date":"2026-11-04","next_refresh_at":1793836800,"values":[],"sources":[],"charts":{}}"#.utf8)) }
+        if path.hasSuffix("/readings") {
+            if readingsFail { throw URLError(.timedOut) }
+            return (200, Data("{\"goal_id\":\"g\",\"revision\":\(readingsRevision),\"status\":\"attention\",\"status_date\":\"2026-11-04\",\"next_refresh_at\":1793836800,\"values\":[],\"sources\":[],\"charts\":{\"chart\":{\"current\":12}}}".utf8))
+        }
         return (200, try encoder.encode(goal))
     }
 }
