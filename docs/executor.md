@@ -97,7 +97,7 @@ The executor uses the same Worker supervisor as the home. It records exact proce
 
 The old aggregate `agent-processes.json` keeps its accepted old-version rule once. The first upgraded start attempts its matched-process cleanup, then removes the file. A survivor stays visible as unassigned PID evidence and fences no Ticket. Later inspection clears that notice after the process ends. New records use Ticket-specific cleanup proof.
 
-**Updates.** One press of Update covers both machines ([Deployment](deployment.md#the-card-and-the-mac)). If the new runtime does not lease in time, the supervisor reverts. The VPS accepts one protocol version; an older Mac is refused with "Mac needs update".
+**Updates.** One press of Update covers both machines ([Deployment](deployment.md#the-card-and-the-mac)). If the new runtime does not lease in time, the supervisor reverts. The VPS accepts one protocol version; an older Mac is refused with "Mac needs update". The lease checks the stable identity before it requires current cleanup evidence, so an old Mac still receives the update offer. Current and stored leases still require explicit cleanup evidence.
 
 Claude and Codex use the Mac's external CLI installations. A runtime update preserves that selection. It does not replace their versions with the copies inside the archive. An explicit external Claude executable remains an operator choice.
 

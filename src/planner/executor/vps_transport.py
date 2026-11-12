@@ -189,6 +189,11 @@ class VpsExecutor:
             incarnation_header=incarnation_header, protocol_header=protocol_header
         )
 
+    async def refuse_lease_version(self, identity: ExecutorIdentity) -> LeaseRefused | None:
+        return await self._owned_work(
+            self.presence.refuse_lease_version(identity), answer_within=LEASE_SERVER_LIMIT_SECONDS
+        )
+
     async def lease(self, request: LeaseRequest) -> LeaseReply | LeaseRefused:
         """Route 1."""
         return await self._owned_work(

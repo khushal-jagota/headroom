@@ -148,10 +148,9 @@ class MacPresenceService:
             PROTOCOL_VERSION, self.application_revision, SPOOL_FORMAT_VERSION, "", 0
         )
 
-    async def accept_lease(self, request: LeaseRequest) -> LeaseReply | LeaseRefused:
-        """Route 1. A refusal answers 409 with its LeaseRefused body."""
+    async def refuse_lease_version(self, identity: ExecutorIdentity) -> LeaseRefused | None:
+        """Judge the stable identity before a lease needs the current body shape."""
         now = self._clock()
-        identity = request.identity
         try:
             validate_identity(identity, check_versions=False)
         except ProtocolRefused as error:
@@ -178,6 +177,14 @@ class MacPresenceService:
             return LeaseRefused(
                 version_error.to_payload()["error"], refusal, await self._update_check()
             )
+        return None
+
+    async def accept_lease(self, request: LeaseRequest) -> LeaseReply | LeaseRefused:
+        """Route 1. A refusal answers 409 with its LeaseRefused body."""
+        refusal = await self.refuse_lease_version(request.identity)
+        if refusal is not None:
+            return refusal
+        identity = request.identity
         try:
             accepted, settled, now = await run_on_worker_thread(self._write_lease, request)
         except PlannerError as error:
