@@ -116,3 +116,7 @@ scripts/dev pytest tests/compare/test_compare.py --compare-list tests/compare/li
 Lists for units 7 through 10 select both in-memory systems with `"conversation_system": "in_memory"`. Omit that setting when unit 15 supplies the real core. The comparison fixture passes the selection to both processes explicitly, rather than through ambient `PLAN_*` variables. The runner's default candidate remains Python for its reference calibration and existing CI job; `--compare-right-module tests.compare.ts_launcher` selects the TS comparison.
 
 The shared `startServer` lifecycle accepts `createSignalAuthority(database)` for the real coordinator or an isolated test source. Its default factory, `createIdlePublicationAuthority`, reuses the persisted source scope and creates fresh runtime, installation, and delivery identities. The lifecycle invokes the factory only after runtime ownership and database access are ready. Factories return the structural public authority interface, so replacement coordinators do not inherit the idle class.
+
+Vitest removes all `PLAN_*`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and `HERMES_HOME` variables before test files load.
+Each test file starts with a fresh temporary `HOME`, which tests can override explicitly.
+Vitest and `PLAN_TEST_MODE=1` hosts can only open databases inside the OS temp folder or an explicitly registered test root.
