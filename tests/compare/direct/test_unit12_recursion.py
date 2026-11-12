@@ -17,9 +17,11 @@ import time
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TypedDict
 
 import pytest
 from fastapi.testclient import TestClient
+from httpx import Response
 from tests.support.api_app import _app
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
@@ -31,7 +33,19 @@ DAY = "2026-12-31"
 NOW = int(datetime(2026, 12, 31, 12, tzinfo=UTC).timestamp())
 
 
-def wrapped(formula: dict, count: int, branch: bool = False) -> dict:
+class ArithmeticCase(TypedDict):
+    label: str
+    root: str
+    independent: str
+    weight: int
+    gate_python_parity: bool
+
+
+def wrapped(
+    formula: dict[str, object],
+    count: int,
+    branch: bool = False,
+) -> dict[str, object]:
     for _ in range(count):
         formula = (
             {
@@ -46,7 +60,11 @@ def wrapped(formula: dict, count: int, branch: bool = False) -> dict:
     return formula
 
 
-def insert_measure(conn: sqlite3.Connection, identifier: str, formula: dict | None) -> None:
+def insert_measure(
+    conn: sqlite3.Connection,
+    identifier: str,
+    formula: dict[str, object] | None,
+) -> None:
     conn.execute(
         "INSERT INTO measures(id,project_id,name,unit,origin,kind,timezone,formula,"
         "definition_revision,created_at,updated_at) VALUES(?, 'project_vylo',?,'items',"
@@ -70,7 +88,11 @@ def insert_measure(conn: sqlite3.Connection, identifier: str, formula: dict | No
         )
 
 
-def python_projection(response, *, goal: bool = False):
+def python_projection(
+    response: Response,
+    *,
+    goal: bool = False,
+) -> list[dict[str, object]] | dict[str, object]:
     """Retain informational boundary failures without turning them into a test gate."""
     if response.status_code != 200:
         return {"http": response.status_code, "body": response.text}
@@ -92,7 +114,7 @@ def python_projection(response, *, goal: bool = False):
 
 def test_unit12_arithmetic_recursion_parity(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     started = time.perf_counter()
-    cases = []
+    cases: list[ArithmeticCase] = []
     homes = create_synthetic_homes(tmp_path)
     with synthetic_home_environment(homes), closing(connect(str(tmp_path / "seed.sqlite"))) as conn:
         create_schema(conn)
@@ -169,7 +191,7 @@ def test_unit12_arithmetic_recursion_parity(tmp_path: Path, request: pytest.Fixt
         conn.commit()
         app = _app(conn)
         app.state.clock = FakeClock(datetime(2026, 12, 31, 12, tzinfo=UTC))
-        expected = []
+        expected: list[dict[str, object]] = []
         with TestClient(app, raise_server_exceptions=False) as client:
             for case in cases:
                 measures = client.post(
@@ -200,10 +222,13 @@ def test_unit12_arithmetic_recursion_parity(tmp_path: Path, request: pytest.Fixt
                                     "id": label,
                                     "kind": "line",
                                     "title": label,
-                                    "measure_id": case[key],
+                                    "measure_id": measure_id,
                                     "expectation": {"op": "constant", "value": 9},
                                 }
-                                for label, key in (("deep", "root"), ("independent", "independent"))
+                                for label, measure_id in (
+                                    ("deep", case["root"]),
+                                    ("independent", case["independent"]),
+                                )
                             ],
                         },
                     },
@@ -447,7 +472,7 @@ def test_unit12_mixed_formula_admission_parity(
                     "(SELECT id FROM measures WHERE name='Admission proof')"
                 )
                 conn.execute("DELETE FROM measures WHERE name='Admission proof'")
-                leaf = {"op": kind}
+                leaf: dict[str, object] = {"op": kind}
                 if kind == "constant":
                     leaf["value"] = 3.0
                 else:
