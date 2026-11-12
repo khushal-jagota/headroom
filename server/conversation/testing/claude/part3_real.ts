@@ -646,7 +646,7 @@ export async function run_part3_turn(spec: Part3Spec): Promise<unknown> {
     fallback_required: fallbackRequired,
     fallback: fallbackCleanup,
   };
-  const environmentPreserved = isDeepStrictEqual(environmentBefore, process.env);
+  const environmentPreserved = isDeepStrictEqual(environmentBefore, { ...process.env });
   const success =
     stopReason === null &&
     completed &&
