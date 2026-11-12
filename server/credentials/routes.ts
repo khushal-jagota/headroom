@@ -7,6 +7,7 @@ import type { CredentialAuthKind, CredentialSecret, CredentialWrite } from './co
 import * as actions from './actions.ts';
 import * as data from './data.ts';
 import { invalid, text } from './logic/validation.ts';
+import { numeric_kind, numeric_value, parse_numeric_json } from '../core/http/numeric_json.ts';
 
 function body(value: unknown, keys: string[]): Record<string, unknown> {
   if (
@@ -18,15 +19,20 @@ function body(value: unknown, keys: string[]): Record<string, unknown> {
     throw invalid();
   return value as Record<string, unknown>;
 }
-function private_body(value: unknown, keys: string[]): Record<string, unknown> {
+export function read_private_body(value: unknown): Record<string, unknown> {
   try {
     const raw = Buffer.isBuffer(value)
       ? new TextDecoder('utf-8', { fatal: true }).decode(value)
       : value;
-    return body(typeof raw === 'string' ? JSON.parse(raw) : raw, keys);
+    const parsed: unknown = typeof raw === 'string' ? parse_numeric_json(raw) : raw;
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw invalid();
+    return parsed as Record<string, unknown>;
   } catch {
     throw invalid();
   }
+}
+export function private_body(value: unknown, keys: string[]): Record<string, unknown> {
+  return body(read_private_body(value), keys);
 }
 function secret(value: unknown, kind: CredentialAuthKind): CredentialSecret {
   if (kind === 'bearer') {
@@ -45,9 +51,10 @@ function secret(value: unknown, kind: CredentialAuthKind): CredentialSecret {
   };
 }
 function revision(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1)
+  const number = numeric_value(value);
+  if (numeric_kind(value) !== 'integer' || number === undefined || number < 1)
     throw invalid('invalid credential revision');
-  return value;
+  return number;
 }
 export const routes: FastifyPluginAsync<AreaServices> = async (app, services) => {
   // Python reads these private bodies itself and never reflects a malformed secret in errors.

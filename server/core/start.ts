@@ -23,6 +23,8 @@ import { createBackendRoutes } from '../conversation/snapshot/routes.ts';
 import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
 import { create_backend_runtime } from '../conversation/snapshot/composition.ts';
 import { production_backend_providers } from '../conversation/snapshot/production.ts';
+import { CredentialRequestOperations } from '../credentials/requests/service.ts';
+import { createCredentialRequestRoutes } from '../credentials/requests/routes.ts';
 import { run_automatic_recovery } from '../conversation/deploy_interruptions/coordinator.ts';
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 
@@ -93,6 +95,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   let publication: SignalPublicationCoordinator | undefined;
   let core: SqliteProcessConversationSystem | undefined;
   let backendServices: BackendHttpRuntime | undefined;
+  let credential_requests: CredentialRequestOperations | null = null;
   let app: FastifyInstance | undefined;
   let ownership_current = true;
   let signalRevoked = false;
@@ -134,6 +137,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       );
       await attempt(() => background?.close({ deadline }));
       await attempt(() => conversationWrites.drain());
+      await attempt(() => credential_requests?.finish_operations());
       // Loop cancellation shares one deadline. Core and record settlement have
       // no deadline contract, so retain ownership through their final writes.
       await attempt(() => core?.shutdown());
@@ -184,6 +188,9 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       revoke_signal: revokeSignal,
     };
     core = options.createConversationCore?.(context);
+    if (core) credential_requests = new CredentialRequestOperations({
+      database, core, key_path: config.credential_key_path, now: () => clock.nowUnix(),
+    });
     backendServices =
       options.createBackendServices?.(context) ??
       create_backend_runtime({
@@ -237,6 +244,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       changes,
       areas: [
         ...areas.areas,
+        { prefix: '/api', routes: createCredentialRequestRoutes(credential_requests) },
         { prefix: '/api/conversation', routes: createBackendRoutes(backendServices) },
         ...(core
           ? [
