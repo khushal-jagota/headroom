@@ -136,3 +136,5 @@ Nested requests use the same captures and substitutions as ordinary requests. Ne
 After each `after_open` write, the runner also executes the list's read probes. Each probe requires HTTP 200. These reads do not consume a stream frame or advance the next action. Their compared answers live under `after_open.*.probes.*`, with response bodies under `after_open.*.probes.*.body`. A normalization rule for those bodies needs that full path. The ordinary stream frames remain under `body.*.data`.
 
 For review evidence, `report_captures` can name existing captures to include in the report. It changes no comparison or substitution behavior. Navigation uses this to retain ordered overview windows and the actual stream frames.
+
+The shared `navigation_view_ordered` index is a TypeScript-only representation. The runner classifies that single table explicitly as derived storage for every list and includes the reason in each report. This prevents unrelated domain comparisons from treating the index as a canonical source table. Navigation's populated list compares its member IDs, order, paging, counts, and closures.

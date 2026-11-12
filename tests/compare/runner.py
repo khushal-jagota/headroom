@@ -27,6 +27,12 @@ ID = re.compile(
     r"[0-9a-f]{32}|[0-9a-f]{32}|"
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![\w])"
 )
+# Shared navigation owns this TS-only collation index. Its order is proved through
+# scoped routes, not compared as storage bytes by unrelated domain lists.
+SHARED_DERIVED_TABLES = {
+    "navigation_view_ordered": "TS-only Intl order index; ordered IDs and paging are compared through navigation routes (Unit 4).",
+}
+
 HEADERS = (
     "content-type",
     "cache-control",
@@ -331,6 +337,7 @@ def run_list(
     spec = json.loads(list_path.read_text())
     rule_path = list_path.parent.parent / "rules" / list_path.name
     rules = json.loads(rule_path.read_text())
+    rules["derived_tables"] = {**SHARED_DERIVED_TABLES, **rules.get("derived_tables", {})}
     root.mkdir(parents=True, exist_ok=True)
     seed = root / "seed.db"
     (root / "seed-home").mkdir()

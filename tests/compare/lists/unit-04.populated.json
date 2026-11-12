@@ -859,6 +859,48 @@
     },
     {
       "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Agent claim",
+        "project_id": "${p1}",
+        "ceiling": "needs_implementation",
+        "worker_type": "coding",
+        "manager": {
+          "kind": "manager",
+          "id": "${ma}"
+        },
+        "brief": "Ready for the synthetic step",
+        "employee_backend": "codex",
+        "employee_launch_model": "gpt-6.1-sol"
+      },
+      "capture": {
+        "agent": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/run-step/${agent}",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "method": "GET",
+      "path": "/api/tickets?detail=full&id=${agent}",
+      "status": 200,
+      "capture": {
+        "agentconv": "conversation_id",
+        "agent_seed_status": "ticket_status"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversation/conversations/${agentconv}/interrupt",
+      "status": 204,
+      "json": {}
+    },
+    {
+      "method": "POST",
       "path": "/api/tickets/${a2}/conversation/send",
       "status": 200,
       "json": {
@@ -1007,6 +1049,12 @@
     },
     {
       "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22agent%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A10%7D%5D%7D",
+      "status": 200,
+      "area": "populated-navigation"
+    },
+    {
+      "method": "GET",
       "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22waiting_to_closeout%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A10%7D%5D%7D",
       "status": 200,
       "area": "populated-navigation"
@@ -1079,6 +1127,12 @@
     },
     {
       "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22agent%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A10%7D%5D%7D",
+      "status": 200,
+      "area": "populated-navigation"
+    },
+    {
+      "method": "GET",
       "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22waiting_to_closeout%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A10%7D%5D%7D",
       "status": 200,
       "area": "populated-navigation"
@@ -1109,7 +1163,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22awaiting_answer%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22awaiting_reply%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22agent%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%5D%7D",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22awaiting_answer%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22awaiting_reply%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%5D%7D",
       "status": 200,
       "area": "populated-navigation"
     },
@@ -1215,6 +1269,12 @@
     },
     {
       "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22de-DE%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22agent%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A10%7D%5D%7D",
+      "status": 200,
+      "area": "populated-navigation"
+    },
+    {
+      "method": "GET",
       "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22de-DE%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22waiting_to_closeout%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A10%7D%5D%7D",
       "status": 200,
       "area": "populated-navigation"
@@ -1287,6 +1347,12 @@
     },
     {
       "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22de-DE%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22agent%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A10%7D%5D%7D",
+      "status": 200,
+      "area": "populated-navigation"
+    },
+    {
+      "method": "GET",
       "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22de-DE%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22waiting_to_closeout%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A10%7D%5D%7D",
       "status": 200,
       "area": "populated-navigation"
@@ -1317,7 +1383,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22de-DE%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22awaiting_answer%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22awaiting_reply%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22agent%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%5D%7D",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22de-DE%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22awaiting_answer%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22awaiting_reply%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%2C%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22${ma}%22%7D%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0%7D%5D%7D",
       "status": 200,
       "area": "populated-navigation"
     },
@@ -1500,6 +1566,8 @@
   "report_captures": [
     "overview_en-US",
     "overview_de-DE",
-    "live_frames"
-  ]
+    "live_frames",
+    "agent_seed_status"
+  ],
+  "candidate": "typescript"
 }
