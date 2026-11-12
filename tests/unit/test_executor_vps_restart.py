@@ -12,7 +12,7 @@ scripted `RetainedBackendChildFactory` (the executor half has its own tests). Re
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
@@ -62,9 +62,11 @@ from planner.execution_identity import ChildReference
 RECOVERY_TEXT = "Inspect the interrupted work and continue the current authorized step."
 
 
-def _present_harness(*args, **kwargs) -> _Harness:
+def _present_harness(
+    db_path: Path, *, factory_wrapper: Callable[[BackendChildFactory], BackendChildFactory]
+) -> _Harness:
     """The retained-factory bench models a present executor, like server wiring does."""
-    harness = _Harness(*args, **kwargs)
+    harness = _Harness(db_path, factory_wrapper=factory_wrapper)
     harness.system.start_admission.configure_destinations(
         lambda destination: destination in {"home", "macos"}
     )

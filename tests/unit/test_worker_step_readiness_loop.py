@@ -1290,7 +1290,9 @@ def test_custom_guidance_reaches_first_payload_but_not_later_stage(
     )
 
 
-def test_silent_remote_starts_leave_home_admission_and_durable_commands_intact(world: _World):
+def test_silent_remote_starts_leave_home_admission_and_durable_commands_intact(
+    world: _World,
+) -> None:
     # Existing readiness tests do not join shared admission with retained remote commands.
     from tests.support.executor_presence import lease_request, mac_identity
 
@@ -1300,7 +1302,12 @@ def test_silent_remote_starts_leave_home_admission_and_durable_commands_intact(w
     from planner.executor.protocol import ChildCommand, ChildOperation, WritePrompt
     from planner.executor.vps_transport import VpsExecutor
 
-    async def exercise():
+    class AdmissionConversations(InMemoryConversationSystem):
+        def __init__(self, starts: AutomaticStartAdmission) -> None:
+            super().__init__()
+            self.start_admission = starts
+
+    async def exercise() -> None:
         endpoint = VpsExecutor(world.db_path, world.clock)
         endpoint.presence.returned = None
         identity = mac_identity()
@@ -1309,7 +1316,7 @@ def test_silent_remote_starts_leave_home_admission_and_durable_commands_intact(w
         present = [True]
         starts = AutomaticStartAdmission(clock=lambda: now[0])
         starts.configure_destinations(lambda destination: destination == "home" or present[0])
-        world.conversations.start_admission = starts
+        world.conversations = AdmissionConversations(starts)
         remote_ids = []
         for number in range(3):
             ticket_id = await asyncio.to_thread(world.ready_ticket, title=f"remote-{number}")
