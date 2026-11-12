@@ -357,6 +357,23 @@ function notice_is_current(sql: ReadSql, row: WakeRow): boolean {
     ) !== undefined
   );
 }
+/** Restore dispatch admission when a held notice leaves the core queue. */
+export function mark_notices_leaving_queue(
+  sql: TransactionSql,
+  conversation_id: string,
+  sender_message_ids: readonly string[],
+  now: number,
+): number {
+  let changed = 0;
+  for (const sender_message_id of sender_message_ids)
+    changed += sql.run(
+      "UPDATE manager_wake_batches SET status='dispatching',updated_at=? " +
+        "WHERE conversation_id=? AND sender_message_id=? AND status IN ('offering','accepted')",
+      [now, conversation_id, sender_message_id],
+    ).changes;
+  return changed;
+}
+
 export function admit_notice_batch(
   sql: TransactionSql,
   options: { conversation_id: string; sender_message_id: string | null; now: number },

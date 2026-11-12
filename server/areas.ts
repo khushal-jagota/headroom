@@ -20,6 +20,7 @@ import { ManagerWakeLoop } from './manager_wakes/runtime.ts';
 import {
   all_sender_messages_are_manager_notices,
   admit_notice_batch,
+  mark_notices_leaving_queue,
   create_ticket_failure_notice,
 } from './manager_wakes/data.ts';
 import { PromptDispatchDecision } from './conversation/contracts.ts';
@@ -103,6 +104,7 @@ export function createAreasRuntime(
         ...deployment_participants(config.db_path),
         integer_now: () => clock.nowUnix(),
         all_are_notices: all_sender_messages_are_manager_notices,
+        mark_notices_leaving_queue,
         failure_notice: create_ticket_failure_notice,
         admit_notice(tx, conversation_id, sender_message_id, now) {
           const [is_manager_notice, suppression_reason] = admit_notice_batch(tx, {
