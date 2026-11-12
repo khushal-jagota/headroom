@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Synthetic Codex JSONL executable shared by the Python and TS parity drivers. */
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
 if (process.argv.includes('--version')) {
@@ -10,17 +11,387 @@ if (process.argv.includes('--version')) {
 if (process.argv[2] !== 'app-server') throw new Error('Only scripted app-server mode is supported');
 const trace = process.env.UNIT17_TRACE;
 if (!trace) throw new Error('The scripted child requires its synthetic trace path');
+let outgoing = Promise.resolve();
 function send(message: unknown): void {
-  process.stdout.write(JSON.stringify(message) + '\n');
+  const line = Buffer.from(JSON.stringify(message) + '\n');
+  if (process.env.UNIT17_CORE_PROOF !== '1') {
+    process.stdout.write(line);
+    return;
+  }
+  outgoing = outgoing.then(async () => {
+    const split = line.indexOf(Buffer.from('☃'));
+    if (split < 0) {
+      process.stdout.write(line);
+      return;
+    }
+    // One frame crosses both a JSONL chunk and a UTF-8 character boundary.
+    process.stdout.write(line.subarray(0, split + 1));
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    process.stdout.write(line.subarray(split + 1));
+  });
 }
 let first: Record<string, unknown> | null = null;
 let exchange: unknown = null;
 const answered = new Set<string>();
 const identity = { threadId: 'scripted-thread', turnId: 'scripted-turn' };
+
+const coreProof = process.env.UNIT17_CORE_PROOF === '1';
+const statePath = `${trace}.state.json`;
+interface NativeState {
+  nextTurn: number;
+  resumes: number;
+  memory: string;
+  interrupt_settled?: boolean;
+}
+const nativeState: NativeState =
+  coreProof && existsSync(statePath)
+    ? (JSON.parse(readFileSync(statePath, 'utf8')) as NativeState)
+    : { nextTurn: 0, resumes: 0, memory: '' };
+const saveNative = () => writeFileSync(statePath, JSON.stringify(nativeState));
+const nativeThread = 'unit17-thread';
+let nativeTurn = '';
+let pendingAsk: number | null = null;
+const note = (kind: string) =>
+  appendFileSync(`${trace}.children`, JSON.stringify({ kind, pid: process.pid }) + '\n');
+if (coreProof) {
+  note('launch');
+  process.once('exit', () => note('exit'));
+  process.once('SIGTERM', () => process.exit(0));
+}
+function nativeNotification(method: string, extra: Record<string, unknown>): void {
+  send({ method, params: { threadId: nativeThread, turnId: nativeTurn, ...extra } });
+}
+function nativeEnded(status = 'completed', error?: string): void {
+  send({
+    method: 'turn/completed',
+    params: {
+      threadId: nativeThread,
+      turn: {
+        id: nativeTurn,
+        status,
+        error: error ? { message: error } : null,
+      },
+    },
+  });
+}
+function nativeText(text: string): void {
+  nativeNotification('item/agentMessage/delta', { itemId: `message-${nativeTurn}`, delta: text });
+  nativeNotification('item/completed', {
+    item: { type: 'agentMessage', id: `message-${nativeTurn}`, text },
+  });
+}
+function coreMessage(message: Record<string, unknown>): boolean {
+  if (!coreProof) return false;
+  const params = (message.params ?? {}) as Record<string, unknown>;
+  const answer = (result: unknown) => send({ id: message.id, result });
+  if (message.method === 'initialize') answer({ userAgent: 'scripted-codex' });
+  else if (message.method === 'initialized') {
+    /* one-way handshake */
+  } else if (message.method === 'thread/start')
+    answer({ thread: { id: nativeThread, ephemeral: false } });
+  else if (message.method === 'thread/resume') {
+    nativeState.resumes += 1;
+    saveNative();
+    answer({
+      thread: {
+        id: nativeState.resumes === 1 ? nativeThread : 'substituted-thread',
+        ephemeral: false,
+      },
+    });
+  } else if (message.method === 'skills/list')
+    answer({
+      data: [
+        {
+          skills: [
+            {
+              name: 'synthetic-skill',
+              path: '/synthetic/skills/review/SKILL.md',
+              enabled: true,
+              description: 'Review synthetic input',
+              interface: {
+                displayName: 'Synthetic Skill',
+                shortDescription: 'Synthetic skill description',
+              },
+            },
+          ],
+        },
+      ],
+    });
+  else if (message.method === 'plugin/installed')
+    answer({
+      marketplaces: [
+        {
+          name: 'synthetic-market',
+          plugins: [
+            {
+              name: 'synthetic-tools',
+              installed: true,
+              enabled: true,
+              interface: {
+                displayName: 'Synthetic Tools',
+                shortDescription: 'Synthetic plugin description',
+              },
+            },
+          ],
+        },
+      ],
+    });
+  else if (message.method === 'app/installed')
+    answer({
+      apps: [
+        {
+          id: 'calendar.synthetic',
+          enabled: true,
+          callable: true,
+          runtimeName: 'Runtime Calendar',
+        },
+      ],
+    });
+  else if (message.method === 'app/read')
+    answer({
+      apps: [
+        {
+          id: 'calendar.synthetic',
+          name: 'Synthetic Calendar',
+          description: 'Synthetic calendar description',
+        },
+      ],
+    });
+  else if (message.method === 'thread/goal/get')
+    answer({
+      goal: {
+        objective: 'Synthetic objective',
+        status: 'active',
+        timeUsedSeconds: 3,
+        tokenBudget: 99,
+        tokensUsed: 7,
+      },
+    });
+  else if (message.method === 'thread/compact/start' || message.method === 'review/start') {
+    nativeTurn = `turn-${++nativeState.nextTurn}`;
+    saveNative();
+    answer(
+      message.method === 'review/start' ? { turn: { id: nativeTurn, status: 'inProgress' } } : {},
+    );
+    send({
+      method: 'turn/started',
+      params: {
+        threadId: nativeThread,
+        turn: {
+          id:
+            message.method === 'review/start'
+              ? `review-nested-${nativeState.nextTurn}`
+              : nativeTurn,
+          status: 'inProgress',
+        },
+      },
+    });
+    if (message.method === 'thread/compact/start')
+      nativeNotification('item/completed', { item: { type: 'contextCompaction' } });
+    else nativeText('review output');
+    nativeEnded();
+  } else if (message.method === 'turn/start') {
+    nativeTurn = `turn-${++nativeState.nextTurn}`;
+    saveNative();
+    const content = (params.input as { type: string; text?: string }[])
+      .map((piece) => piece.text ?? '')
+      .join('\n');
+    const scenario = /\[CASE:([^\]]+)\]/.exec(content)?.[1] ?? 'native';
+    if (scenario === 'exit-before-reply') {
+      process.stderr.write('codex_login::auth: invalid_grant before admission\n', () =>
+        process.exit(7),
+      );
+      return true;
+    }
+    if (scenario === 'rejected-after-output') {
+      const frames = [
+        { method: 'skills/changed', params: {} },
+        {
+          method: 'item/agentMessage/delta',
+          params: {
+            threadId: nativeThread,
+            turnId: nativeTurn,
+            itemId: 'provisional',
+            delta: 'unadmitted output',
+          },
+        },
+        { id: message.id, error: { code: -32000, message: 'rejected after provisional activity' } },
+      ];
+      outgoing = outgoing.then(() => {
+        process.stdout.write(frames.map((frame) => JSON.stringify(frame)).join('\n') + '\n');
+      });
+      return true;
+    }
+    const started = {
+      method: 'turn/started',
+      params: { threadId: nativeThread, turn: { id: nativeTurn, status: 'inProgress' } },
+    };
+    if (scenario === 'plain') {
+      send({
+        method: 'item/agentMessage/delta',
+        params: {
+          threadId: nativeThread,
+          turnId: 'stale-turn',
+          itemId: 'stale',
+          delta: 'STALE_OUTPUT',
+        },
+      });
+      send(started);
+    }
+    answer({ turn: { id: nativeTurn, status: 'inProgress' } });
+    if (scenario !== 'plain') send(started);
+    if (['steer-base', 'steer-race-base', 'queue-base', 'interrupt-base'].includes(scenario))
+      return true;
+    if (scenario === 'permission') {
+      pendingAsk = 1000 + nativeState.nextTurn;
+      send({
+        id: pendingAsk,
+        method: 'item/commandExecution/requestApproval',
+        params: {
+          threadId: nativeThread,
+          turnId: nativeTurn,
+          itemId: 'command',
+          command: 'printf synthetic',
+          cwd: '/synthetic',
+        },
+      });
+    } else if (scenario === 'question') {
+      pendingAsk = 2000 + nativeState.nextTurn;
+      send({
+        id: pendingAsk,
+        method: 'item/tool/requestUserInput',
+        params: {
+          threadId: nativeThread,
+          turnId: nativeTurn,
+          itemId: 'question-tool',
+          questions: [
+            {
+              id: 'color',
+              header: 'Color',
+              question: 'Choose a color?',
+              options: [{ label: 'Blue', description: 'Blue color' }],
+            },
+          ],
+        },
+      });
+    } else if (scenario === 'auth-failure' || scenario === 'auth-refresh') {
+      if (scenario === 'auth-refresh') {
+        const home = process.env.CODEX_HOME;
+        if (!home) throw new Error('Synthetic auth refresh requires a synthetic home');
+        writeFileSync(
+          join(home, 'auth.json'),
+          JSON.stringify({
+            tokens: { account_id: 'synthetic-account' },
+            last_refresh: 'new-generation',
+          }),
+        );
+      }
+      if (scenario === 'auth-failure') {
+        nativeNotification('error', { error: { message: 'invalid_grant' }, willRetry: false });
+        nativeNotification('error', {
+          error: { message: 'retryable transport fault' },
+          willRetry: true,
+        });
+        nativeEnded('failed');
+      } else {
+        process.stderr.write('codex_login::auth: invalid_grant\n');
+        nativeEnded('failed', 'invalid_grant');
+      }
+    } else {
+      if (scenario === 'plain') {
+        nativeState.memory = 'codex-memory-token';
+        saveNative();
+        nativeNotification('item/started', { item: { type: 'reasoning' } });
+        nativeNotification('item/started', {
+          item: {
+            type: 'commandExecution',
+            id: 'tool',
+            command: 'printf synthetic',
+            cwd: '/synthetic',
+            status: 'inProgress',
+          },
+        });
+        nativeNotification('item/commandExecution/outputDelta', {
+          itemId: 'tool',
+          delta: 'tool output',
+        });
+        nativeNotification('item/completed', {
+          item: {
+            type: 'commandExecution',
+            id: 'tool',
+            command: 'printf synthetic',
+            cwd: '/synthetic',
+            status: 'completed',
+            aggregatedOutput: 'tool output',
+          },
+        });
+        const file = {
+          type: 'fileChange',
+          id: 'file',
+          changes: [{ path: '/synthetic/changed.txt', kind: { type: 'update' } }],
+        };
+        nativeNotification('item/started', { item: { ...file, status: 'inProgress' } });
+        nativeNotification('item/completed', { item: { ...file, status: 'completed' } });
+        const mcp = { type: 'mcpToolCall', id: 'mcp', server: 'synthetic', tool: 'inspect' };
+        nativeNotification('item/started', { item: { ...mcp, status: 'inProgress' } });
+        nativeNotification('item/mcpToolCall/progress', { itemId: 'mcp', message: 'MCP progress' });
+        nativeNotification('item/completed', {
+          item: { ...mcp, status: 'failed', error: { message: 'synthetic MCP failure' } },
+        });
+        nativeNotification('turn/plan/updated', {
+          plan: [{ step: 'Synthetic step', status: 'completed' }],
+        });
+        nativeNotification('thread/tokenUsage/updated', {
+          tokenUsage: { total: { inputTokens: 11, outputTokens: 5, cachedInputTokens: 2 } },
+        });
+      }
+      if (scenario === 'malformed')
+        nativeNotification('item/agentMessage/delta', { itemId: 'bad', delta: false });
+      nativeText(
+        scenario === 'resume-success'
+          ? nativeState.memory
+          : scenario === 'plain'
+            ? 'plain ☃ output'
+            : `${scenario} output`,
+      );
+      if (scenario === 'steer-refused')
+        setTimeout(
+          () => process.stderr.write('synthetic child exit midturn\n', () => process.exit(7)),
+          20,
+        );
+      else nativeEnded();
+    }
+  } else if (message.method === 'turn/steer') {
+    if (JSON.stringify(params.input).includes('[CASE:steer-refused]')) {
+      nativeEnded();
+      send({ id: message.id, error: { code: -32600, message: 'no active turn to steer' } });
+    } else {
+      answer({ turnId: nativeTurn });
+      nativeText('steered output');
+      nativeEnded();
+    }
+  } else if (message.method === 'turn/interrupt') {
+    nativeState.interrupt_settled = false;
+    saveNative();
+    answer({});
+    setTimeout(() => {
+      nativeState.interrupt_settled = true;
+      saveNative();
+      nativeEnded('interrupted');
+    }, 20);
+  } else if (message.id === pendingAsk) {
+    pendingAsk = null;
+    nativeText('answer received');
+    nativeEnded();
+  } else throw new Error(`Unsupported core proof method ${String(message.method)}`);
+  return true;
+}
+
 const reader = createInterface({ input: process.stdin });
 reader.on('line', (line) => {
   const message = JSON.parse(line) as Record<string, unknown>;
   appendFileSync(trace, JSON.stringify(message) + '\n');
+  if (coreMessage(message)) return;
   if (message.method === 'initialize') {
     send({ id: message.id, result: { userAgent: 'scripted-codex' } });
   } else if (message.method === 'wire/first') {
@@ -83,4 +454,8 @@ reader.on('line', (line) => {
       exchange = null;
     }
   }
+});
+
+reader.once('close', () => {
+  void outgoing.finally(() => process.exit(0));
 });

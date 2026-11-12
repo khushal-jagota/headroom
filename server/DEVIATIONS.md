@@ -229,3 +229,11 @@ on November 12, 2026. On Linux, Python sets `BASH_ENV` to
 `server/conversation/tool_shell_startup.bash` through the shared TypeScript helper.
 The paired startup check asserts each exact path and identical script bytes. Every other
 child environment value and launch argument compares exactly.
+
+## Codex ask withdrawal at shutdown
+
+The migration Manager accepted this difference in the Part 2 review on November 12, 2026.
+TypeScript bounds ask withdrawal before shutdown to two seconds. When that bound expires,
+client stop breaks the wire and stops and joins the owned child. Python waits for the
+withdrawal without this bound. The bound prevents a parked ask or blocked write from
+holding process cleanup open.
