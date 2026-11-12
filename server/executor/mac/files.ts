@@ -168,22 +168,27 @@ export class FilesService {
     this.closed = true;
     this.request_stop();
     return observe_shutdown(
-      this.exit,
+      this.settled(),
       options,
       'Executor file work remains unfinished at the shutdown deadline.',
     );
   }
   private request_stop(): void {
     if (this.stop_requested || this.worker === undefined) return;
+    this.stop_requested = true;
     try {
       this.worker.postMessage({ operation: 'stop' } satisfies FileWorkerRequest);
-      this.stop_requested = true;
     } catch (error) {
       // Leave this retryable. A failed send is not evidence that the thread exited.
-      this.seal(error instanceof Error ? error : new Error(String(error)));
+      try {
+        this.seal(error instanceof Error ? error : new Error(String(error)));
+      } finally {
+        this.stop_requested = false;
+      }
     }
   }
-  settled(): Promise<void> {
-    return this.exit;
+  async settled(): Promise<void> {
+    await this.exit;
+    if (this.failure) throw this.failure;
   }
 }

@@ -11,6 +11,7 @@ import { JournalEngine } from './journal_engine.ts';
 import type { EncodedJournalRow } from './journal_engine.ts';
 import { journal_error, journal_error_properties } from './journal_worker_contracts.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
+import type { DurableSidecarOpenFailure } from '../../../core/database/contracts.ts';
 import type {
   JournalAction,
   JournalMainMessage,
@@ -114,7 +115,16 @@ async function execute(action: JournalAction): Promise<unknown> {
     case 'open':
       await callback('permission');
       if (sealed) throw new Error('journal opening was stopped');
-      if (engine!.open(data.root)) await callback('flush');
+      try {
+        if (engine!.open(data.root)) await callback('flush');
+      } catch (error) {
+        if (error instanceof Error && 'database_cleanup' in error)
+          port.postMessage({
+            kind: 'cleanup_failure',
+            error: journal_error((error as DurableSidecarOpenFailure).cleanup_error),
+          } satisfies JournalWorkerMessage);
+        throw error;
+      }
       if (sealed) throw new Error('journal opening was stopped');
       engine!.recover();
       return;

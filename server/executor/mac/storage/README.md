@@ -48,7 +48,12 @@ That last behavior deliberately fixes Python's post-commit cleanup failure. It i
 Worker loss seals admission, and every write checks worker health synchronously before its transaction.
 Stop drains admitted captures and confirmations, closes SQLite, then releases the worker and main-owned lock.
 If database close fails, resources stay owned and `settled()` stays pending. A later stop retries close.
+After every resource closes, `settled()` rejects retained fatal faults and physical cleanup failures, including a close failure before a successful retry.
+A rejected child actual join still permits the root to close its remaining database, worker, and lock.
+Ordinary request refusals and the accepted deferred-capture cleanup policy do not become fatal shutdown history.
 The shared deadline observes actual cleanup without replacing it.
+Its typed deadline failure does not enter actual failure history. Other child stop failures remain visible even if the child's actual join succeeds.
+The root joins both results before final settlement. Clean late cleanup succeeds without a renewed budget.
 If startup cleanup fails or exceeds that deadline, its outward error preserves the startup error as `cause`.
 While resources remain, that error also exposes `cleanup.stop(options)` and `cleanup.settled()` for continuation.
 Successful startup cleanup rethrows the original startup error unchanged.
