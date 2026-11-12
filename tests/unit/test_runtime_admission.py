@@ -249,9 +249,11 @@ def test_version_2_admission_runs_the_trusted_probe_and_never_python(
         return node_report(root)
 
     monkeypatch.setattr(admission, "_run_json_probe", json_probe)
-    monkeypatch.setattr(
-        admission, "_run_probe", lambda command, **kwargs: commands.append(command) or ""
-    )
+    def tool_probe(command: list[str], **kwargs: object) -> str:
+        commands.append(command)
+        return ""
+
+    monkeypatch.setattr(admission, "_run_probe", tool_probe)
     admission.admit_runtime(root, manifest)
     [probe] = probes
     assert probe[:3] == ["/host/node", "--input-type=module", "-e"]
