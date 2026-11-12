@@ -42,31 +42,33 @@ fresh stream, whose first frame is a fresh snapshot. A stream that was current
 reconnects after one second, as the web does; failures retry after 1, 2, 4 and
 then 8 seconds and show Reconnecting. Then saved work drains, as before.
 
-Chief settings and deployment status are outside the view, and deployment status
-is not a navigation change at all, so those two keep the payload-free change
-stream and the resource-version API: a wake probes both versions, at most once a
-second, and unchanged versions need no body read. A body is accepted with the
-version from the same server snapshot. A failed or unknown version check keeps a
-full read, and servers without that API keep ordinary reads. Manual refresh reads
-both again and reconnects a view stream that is not current.
+Ordinary responses have one shared owner per server and exact resource key. Mounted
+screens acquire handles for their documents. A payload-free change signal probes
+active keys and reads changed bodies. Each body carries its own epoch and revision.
+Generation checks reject late responses after a newer probe or server change.
+Explicit refresh and confirmed writes reconcile affected reads immediately.
+Foreground return and reconnect reconcile active demand. Domain deadlines cover
+calendar changes without a database write.
 
-A detail page reads its own detail when it opens, after a return to the
-foreground or a recovered connection, and otherwise only when its own records in
-the view change or leave it: a Ticket and its step pages on the Ticket record;
-an orchestrator on its record and its children window; Chief on its record, its
-active children and its settings. Working and unread marks on those pages come
-from the view, so a mark change needs no detail read. A Review proposal reloads
-when its Ticket's record changes. Settled reads again when the settled count
-changes. An inline artifact list reads on expansion and when its owner's file
-count changes. Settings, Usage, Feedback and Ideas read when opened, on return
-to the foreground, after a recovered connection and on pull-to-refresh.
+Goals, their readings, holder pages, and catalogs use this owner. Local edits and
+manual commands remain separate from accepted responses. Goal details use the
+addressed document revision; lists retain their shared revision. Readings also
+retain shared measure and calendar dependencies, including datasets and formulas.
+Ticket, Chief, Manager, settings, and deployment details use domain registrations.
+Unversioned reads retain explicit active fallbacks. Artifact inventory still reads
+on selection; previews retain Reload. Metrics retain their foreground sampling.
 
-`ResourceRefreshTests` adds one host test for the stream, which no earlier test
-reached: a patch applies without a read, a gap opens a fresh stream, a new detail
-scope opens its own stream, a withdrawal opens none, and a record's reload stamp
-moves only with that record. It reuses the existing URLProtocol fixture in the
-offline host package. The offline simulator stub serves the events stream as a
-snapshot frame each second.
+Inactive resource responses have count, byte, and age bounds. The serial cache
+writer coalesces bounded replacement work. Live publication does not wait for disk.
+Restored responses remain stale. Cache errors do not clear durable user-work errors.
+Drafts and commands stay outside this replaceable queue.
+
+Navigation and conversation owners checkpoint admitted display at five-second
+intervals during updates and on background entry. Restored display stays stale and never supplies
+stream coverage or read credit. Conversation display retains at most 300 items
+and 512 KiB of inline and expanded bodies. Visible rows keep their neighborhood.
+Older paging remains available; Latest returns to the current edge after trimming.
+Collapsed conversations request status without transcript content.
 
 The view code lives in `Core/Navigation`. The wire subset is hand-written Codable,
 pinned to projection 7 and wire 3, and ignores fields the server adds. Ticket,
@@ -77,8 +79,8 @@ snapshot) is a pure unit that each stream applies to its own snapshot.
 The server bounds a view to 256 rows and 60 per window. Mounted screens share
 that budget the way the web owner shares it. Workspace asks for every card's tickets in one
 scope, so with many cards each loads fewer rows; a card cut short ends with
-“+N more”, which opens its page. Orchestrator and Chief pages keep
-their own detail reads, which also supply goals, recaps and artifacts. Settled
+“+N more”, which opens its page. Orchestrator and Chief pages acquire shared
+resource handles for their goals, recaps, and detail documents. Settled
 keeps its paged list read, and reads only while open; its count comes from the
 view.
 

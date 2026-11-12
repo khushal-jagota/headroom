@@ -10,6 +10,7 @@
 		0307B26ABAB3340A50EA35E2 /* ticket-full.json in Resources */ = {isa = PBXBuildFile; fileRef = 050F4E53EA9313A8C93AC324 /* ticket-full.json */; };
 		063C8A6F11DADE62594FDDFE /* FeedbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 709DA5E0A464CEA464F27E8A /* FeedbackTests.swift */; };
 		08D15B3F0F82160557E48E7C /* ReviewStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4BC4A569A9BE591B3AB6938 /* ReviewStyle.swift */; };
+		0925E5A5AA7330A8DCA9B070 /* DisplayCacheConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90CAD532B73AB084BECB713B /* DisplayCacheConfiguration.swift */; };
 		0AE16E726FF265A73904D807 /* ServerReachabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D5D7CF666EF2C6A3586CEE9 /* ServerReachabilityTests.swift */; };
 		0CE5D4B0948725B787F18E43 /* AgentPageActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9428B2AEE2977E04B59E09A2 /* AgentPageActions.swift */; };
 		0D2B1D8396EB175C79C660B6 /* NotificationDeviceSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5FB15C0EB196481A5DF82E1 /* NotificationDeviceSettings.swift */; };
@@ -35,6 +36,7 @@
 		3928D5B5C68E2937ED9DA943 /* GoalMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05DD5FF34DA3FF7E97C54502 /* GoalMotion.swift */; };
 		393BC7B57A96BF21E9AC1124 /* NotificationRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5623D2160B5E97DEE120DA17 /* NotificationRouting.swift */; };
 		393FBA5885D00171B0A48284 /* RingSpinner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34B24A1AA8C73389437FE3B3 /* RingSpinner.swift */; };
+		394DA82D62A90E17276327BE /* ConversationRetention.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62D3E4F0A5ED9E7BA7AEE70E /* ConversationRetention.swift */; };
 		397C054454D53D07F27B46A8 /* ArtifactFileRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA3C5CFBD0D7EA7E6423717B /* ArtifactFileRow.swift */; };
 		3A4F11BA595CDD3DBBFB589A /* IdeasAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69F9EF972A1EF8BB5CC7F4BF /* IdeasAPI.swift */; };
 		3ADFC2950F07324E9DCD0E50 /* GoalChartPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = D34C5C331FE4FBB2EE5C1CFA /* GoalChartPresentation.swift */; };
@@ -263,6 +265,7 @@
 		5EF91EC755B620A43025D183 /* LocalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalStore.swift; sourceTree = "<group>"; };
 		61464E0DA3E99724D3937A70 /* ResourceRefreshTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResourceRefreshTests.swift; sourceTree = "<group>"; };
 		6258808F539E587009BDF96A /* GoalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalView.swift; sourceTree = "<group>"; };
+		62D3E4F0A5ED9E7BA7AEE70E /* ConversationRetention.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationRetention.swift; sourceTree = "<group>"; };
 		653B40D7674C0AFF22B990D6 /* ReviewVoiceCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewVoiceCapture.swift; sourceTree = "<group>"; };
 		668C2DFA0E0ED6BE99EF7C44 /* WorkspaceAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceAPI.swift; sourceTree = "<group>"; };
 		66AC93A517A2F5EEDFC4097F /* GoalIndicators.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalIndicators.swift; sourceTree = "<group>"; };
@@ -302,6 +305,7 @@
 		8E10E3E0DF0562F29BABAD85 /* ConversationNavigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationNavigation.swift; sourceTree = "<group>"; };
 		8E5FBB5EFD5C2312A346A617 /* MoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreView.swift; sourceTree = "<group>"; };
 		8E696C19246E372D81D50EB6 /* GoalPlacements.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalPlacements.swift; sourceTree = "<group>"; };
+		90CAD532B73AB084BECB713B /* DisplayCacheConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayCacheConfiguration.swift; sourceTree = "<group>"; };
 		915822ADC1565248F5088336 /* AppShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShell.swift; sourceTree = "<group>"; };
 		9428B2AEE2977E04B59E09A2 /* AgentPageActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPageActions.swift; sourceTree = "<group>"; };
 		9559468E71BEF0FF1726730A /* ReviewDecision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewDecision.swift; sourceTree = "<group>"; };
@@ -518,6 +522,7 @@
 		3AD7E61760E5FCC11A00DA7E /* Logic */ = {
 			isa = PBXGroup;
 			children = (
+				62D3E4F0A5ED9E7BA7AEE70E /* ConversationRetention.swift */,
 				E245C58EC140AA088CD70E99 /* ConversationScrollPolicy.swift */,
 			);
 			path = Logic;
@@ -747,6 +752,7 @@
 		778C13D771EF14F3C8CB4C1E /* Persistence */ = {
 			isa = PBXGroup;
 			children = (
+				90CAD532B73AB084BECB713B /* DisplayCacheConfiguration.swift */,
 				5EF91EC755B620A43025D183 /* LocalStore.swift */,
 				5574028784B1364AC14E4E65 /* Outbox.swift */,
 				8AB84F951EB55C8971F8B529 /* ResponseCacheWriter.swift */,
@@ -1249,9 +1255,11 @@
 				66BD8ED02BC7D0693ABC694D /* ConversationContracts.swift in Sources */,
 				A024AC45EA335509FC4BEADA /* ConversationModel.swift in Sources */,
 				B07E40DDAB3BC7D1E8E698A5 /* ConversationNavigation.swift in Sources */,
+				394DA82D62A90E17276327BE /* ConversationRetention.swift in Sources */,
 				B248F12AE7337F05EFB130B3 /* ConversationScrollPolicy.swift in Sources */,
 				20C309706CC5E0D237E32796 /* ConversationSpeech.swift in Sources */,
 				85EB4A27FABBB5B9E9C7224E /* DeploymentStrip.swift in Sources */,
+				0925E5A5AA7330A8DCA9B070 /* DisplayCacheConfiguration.swift in Sources */,
 				C9F696AD1D9B408F44AFA6F6 /* FeedbackAPI.swift in Sources */,
 				18B3FBCD4CC57EEAB99D6336 /* FeedbackContracts.swift in Sources */,
 				B24400AA059945ADEF9116AE /* FeedbackModel.swift in Sources */,

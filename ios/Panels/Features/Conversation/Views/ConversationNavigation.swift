@@ -92,10 +92,12 @@ private struct ConversationSurface: View {
             model.restore(owner: owner, api: store.client)
             if case .ticket(let id) = owner {
                 let api = store.client
-                model.machineLocale = api.cachedTicket(id)?.locale
-                let ticket = try? await api.ticket(id)
+                let ticket = store.resources.handle(TicketResources.detail(id))
+                ticket.acquire()
+                defer { ticket.release() }
+                await ticket.refresh()
                 guard !Task.isCancelled, api.baseURL == store.baseURL else { return }
-                if let ticket { model.machineLocale = ticket.locale }
+                model.machineLocale = ticket.value?.detail.locale
             }
             if owner == .chief, model.conversationID == nil {
                 let currentID = try? await store.client.chiefConversation().conversationId
@@ -114,12 +116,13 @@ private struct ConversationSurface: View {
             guard active, !store.serverUnreachable, scenePhase == .active, let id = model.conversationID else { return }
             var misses = 0
             while !Task.isCancelled {
-                model.beginTail()
+                let generation = model.beginTail()
+                defer { model.endTail(generation: generation) }
                 var applied = false, failed = false
                 do {
-                    for try await frame in store.client.conversationTail(id, lens: model.lens) {
+                    for try await frame in store.client.conversationTail(id, lens: model.lens, transcript: isPage) {
                         let before = configurationFacts
-                        guard await model.applyTail(frame, using: store.client) else { break }
+                        guard await model.applyTail(frame, transcript: isPage, generation: generation, using: store.client) else { break }
                         // Held prompts, the read boundary and the running model change with a
                         // new owner message, a turn edge or a held prompt's arrival, and are
                         // read once per connection.
@@ -148,7 +151,7 @@ private struct ConversationSurface: View {
             // A saved message can be held by the server; its queue lives in the configuration.
             if active, !store.serverUnreachable, scenePhase == .active, model.outgoing != before { Task { await readConfiguration() } }
         }
-        .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel() } }
+        .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel(); model.saveDisplay(force: true) } }
         .onDisappear { speech.cancel() }
         .onChange(of: store.baseURL) { _, _ in speech.cancel() }
     }
@@ -348,7 +351,8 @@ struct ConversationThread: View {
             }
             .accessibilityIdentifier("conversation-thread")
             .onAppear { appeared = true }
-            .onDisappear { appeared = false; visibleRowIDs = [] }
+            .onDisappear { appeared = false; visibleRowIDs = []; model.setVisibleRows([]) }
+            .onChange(of: visibleRowIDs) { _, ids in model.setVisibleRows(ids) }
             .onChange(of: model.conversationID) { _, _ in visibleRowIDs = [] }
             .onChange(of: model.lens) { _, _ in visibleRowIDs = [] }
             .task(id: readBoundary) {
@@ -391,8 +395,11 @@ struct ConversationThread: View {
             }
             .overlay(alignment: .bottomTrailing) {
                 ZStack {
-                    if scrollPolicy.showLatest {
+                    if scrollPolicy.showLatest || model.hasNewerHistory {
                         Button {
+                            Task {
+                                if model.hasNewerHistory { await model.returnToLatest(using: store.client) }
+                            }
                             scrollPolicy.returnToLatest()
                             withAnimation(reduceMotion ? nil : PanelsTheme.Motion.entrance, completionCriteria: .removed) {
                                 position.scrollTo(edge: .bottom)

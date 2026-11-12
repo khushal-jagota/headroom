@@ -53,6 +53,10 @@ Every send returns a fate. The fate is about delivery, not about whether the mod
 
 What happens to a Worker step after each fate belongs to [Worker steps](worker-steps.md).
 
+The phone keeps at most 300 transcript items and 512 KiB of inline and expanded bodies. The reader preserves the visible neighborhood. Older ranges remain available through Earlier messages, and Latest returns to the newest window. Native history uses one timeline scope, below the design limit of 20 scopes.
+
+The collapsed phone dock requests status only. The full conversation acquires transcript demand and a fresh stream snapshot. The reader saves bounded display through the background cache writer. Saved rows start stale and supply neither stream coverage nor read credit. Only visible decoded remote rows from the current reader can mark messages read. Drafts and audio keep their separate owners.
+
 ## Charts in messages
 
 Chief, Manager, and Worker messages use the same Markdown surface. Ordinary Markdown tables already work. A closed `panels-chart` fence draws an inline bar or line chart with the shared goal chart plots. Chat charts omit range controls and the headline number. Charts with multiple series show a compact legend in the plot colors. The message supplies snapshot numbers, without a saved goal or a live measurement binding.

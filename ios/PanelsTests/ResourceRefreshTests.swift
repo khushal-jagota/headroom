@@ -105,6 +105,21 @@ import XCTest
         XCTAssertNotEqual(store.ticketStamp("B"), stamp("B", in: original), "B's own change reloads B's page")
         XCTAssertEqual(store.presentation?.ticketsById["B"]?.title, "B\u{2028}two", "A line separator inside a frame does not split it")
         XCTAssertNotNil(store.managerStamp("m"))
+        // Persist the reduced patch, not the initial frame. Restoration grants no runtime authority.
+        store.saveNavigationDisplay()
+        await LocalStore.shared.flushCache()
+        let restored = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        XCTAssertEqual(restored.view?.contentVersion, "2")
+        XCTAssertEqual(restored.presentation?.ticketsById["B"]?.title, "B\u{2028}two")
+        XCTAssertNil(restored.presentation?.ticketsById["A"]?.signal.working)
+        let savedView = try XCTUnwrap(restored.view)
+        XCTAssertEqual(savedView.mode, "saved")
+        let checkpoint = ViewCheckpoint(viewId: savedView.viewId, scopeGeneration: savedView.scopeGeneration,
+            orderingGeneration: savedView.orderingGeneration, coverage: savedView.coverage, previousCoverage: savedView.coverage,
+            contentVersion: savedView.contentVersion, authority: savedView.authority)
+        if case .success = NavigationViewFrames.apply(savedView, .checkpoint(checkpoint)) {
+            XCTFail("Restored display cannot seed stream admission")
+        }
         // The gap opens stream 2, whose first frame is a fresh snapshot.
         try await until { store.view?.contentVersion == "7" }
         XCTAssertEqual(store.connection, "Following changes")

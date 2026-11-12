@@ -81,6 +81,9 @@ import Observation
     }
 
     func configure(baseURL: URL) {
+        runGeneration += 1
+        displayGeneration += 1
+        displaySaveTask?.cancel(); displaySaveTask = nil; pendingDisplays = [:]; lastDisplaySave = .distantPast
         self.baseURL = baseURL
         resources.configure(api: client)
         UserDefaults.standard.set(baseURL.absoluteString, forKey: "panels.baseURL")
@@ -92,26 +95,47 @@ import Observation
 
     // MARK: Saved views
 
-    /// The latest view, and separately the latest one that carried Workspace, so a
-    /// relaunch restores both even when Review was the last screen. Each stream's
-    /// snapshot is saved as read; patches between them are not.
+    /// The reduced current display is replaceable. It never supplies a stream base.
+    private var pendingDisplays: [String: ViewSnapshot] = [:]
+    private var displaySaveTask: Task<Void, Never>?
+    private var lastDisplaySave = Date.distantPast
+    private var displayGeneration = 0
     private func savedViewID(_ name: String) -> String { baseURL.absoluteString + "/api/navigation/view/snapshot#" + name }
 
     private func restore() {
         let server = LocalStore.server(baseURL)
         for name in ["workspace", "latest"] {
             guard let data = try? LocalStore.shared.record(server: server, kind: "cache", id: savedViewID(name))?.payload,
-                  case .snapshot(let snapshot)? = try? APIClient.decoder().decode(ViewFrame.self, from: data) else { continue }
-            admit(snapshot)
+                  let snapshot = try? APIClient.decoder().decode(ViewSnapshot.self, from: data),
+                  snapshot.wireVersion == NavigationViewVersion.wire,
+                  snapshot.projectionVersion == NavigationViewVersion.projection else { continue }
+            admit(snapshot.savedDisplay, persist: false)
         }
     }
 
-    private func save(_ snapshot: ViewSnapshot, data: Data, api: APIClient) async {
-        let server = LocalStore.server(api.baseURL)
-        try? await LocalStore.shared.cacheResponse(server: server, id: savedViewID("latest"), data: data)
-        if snapshot.window("rail_parents") != nil {
-            try? await LocalStore.shared.cacheResponse(server: server, id: savedViewID("workspace"), data: data)
+    private func checkpointNavigation(_ snapshot: ViewSnapshot) {
+        pendingDisplays["latest"] = snapshot
+        if snapshot.window("rail_parents") != nil { pendingDisplays["workspace"] = snapshot }
+        let delay = max(0, DisplayCacheConfiguration.checkpointInterval - Date().timeIntervalSince(lastDisplaySave))
+        if delay == 0 { saveNavigationDisplay(); return }
+        guard displaySaveTask == nil else { return }
+        let generation = displayGeneration
+        displaySaveTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard let self, generation == self.displayGeneration else { return }
+            self.displaySaveTask = nil
+            self.saveNavigationDisplay()
         }
+    }
+    func saveNavigationDisplay() {
+        displaySaveTask?.cancel(); displaySaveTask = nil
+        let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+        for (name, snapshot) in pendingDisplays {
+            guard let data = try? encoder.encode(snapshot.savedDisplay) else { continue }
+            LocalStore.shared.enqueueCacheResponse(server: LocalStore.server(baseURL), id: savedViewID(name), data: data)
+        }
+        if !pendingDisplays.isEmpty { lastDisplaySave = .now }
+        pendingDisplays = [:]
     }
 
     // MARK: Scope
@@ -158,7 +182,7 @@ import Observation
         if let viewConsumer { viewConsumer.cancel() } else { reconnectRequested = true }
     }
 
-    private func admit(_ snapshot: ViewSnapshot) {
+    private func admit(_ snapshot: ViewSnapshot, persist: Bool = true) {
         let presentation = NavigationPresentation(snapshot.content.records)
         if let managers = presentation.workspaceManagers(in: snapshot), let tickets = presentation.workspaceTickets(in: snapshot) {
             self.managers = managers; self.tickets = tickets; workspaceLoaded = true
@@ -172,6 +196,7 @@ import Observation
         if stamps != recordStamps { recordStamps = stamps }
         self.presentation = presentation
         view = snapshot
+        if persist { checkpointNavigation(snapshot) }
     }
 
     // MARK: Reload identities
@@ -222,7 +247,7 @@ import Observation
         hasRun = true
         defer {
             chief.release(); deployment.release(); health.release()
-            if runGeneration == generation { resources.stop(); running = false; viewConsumer = nil; streamRequest = nil }
+            if runGeneration == generation { saveNavigationDisplay(); resources.stop(); running = false; viewConsumer = nil; streamRequest = nil }
         }
         await followView()
     }
@@ -264,12 +289,13 @@ import Observation
     }
 
     private func consume(_ request: ViewRequest, api: APIClient) async -> ViewStreamEnd {
+        let generation = runGeneration
         // Frames apply to this stream's own snapshot, never to a restored or older view.
         var current: ViewSnapshot?
         var admitted = false
         do {
-            for try await (frame, data) in api.navigationViewEvents(request) {
-                guard !Task.isCancelled, api.baseURL == baseURL else { return .cancelled }
+            for try await (frame, _) in api.navigationViewEvents(request) {
+                guard !Task.isCancelled, generation == runGeneration, api.baseURL == baseURL else { return .cancelled }
                 if let generation = frame.scopeGeneration, generation != request.scopeGeneration { return .refused(admitted: admitted) }
                 guard case .success(let next) = NavigationViewFrames.apply(current, frame) else { return .refused(admitted: admitted) }
                 current = next
@@ -281,7 +307,6 @@ import Observation
                     if connection == "Reconnecting" { connectionSession += 1 }
                     connection = "Following changes"
                     errors["Navigation"] = nil
-                    Task { await self.save(next, data: data, api: api) }
                     Task { await Outbox.shared.drain(api: api) }
                 default: admit(next)
                 }
@@ -290,9 +315,9 @@ import Observation
                 if let owner = selections.last?.owner, request.selected != owner,
                    recordStamps[RecordKey(kind: owner.kind, id: owner.id)] == nil { return .cancelled }
             }
-            return Task.isCancelled ? .cancelled : .ended(admitted: admitted)
+            return Task.isCancelled || generation != runGeneration ? .cancelled : .ended(admitted: admitted)
         } catch {
-            if Task.isCancelled || api.baseURL != baseURL { return .cancelled }
+            if Task.isCancelled || generation != runGeneration || api.baseURL != baseURL { return .cancelled }
             errors["Navigation"] = ServerReadFailure(error)
             return .failed
         }
@@ -314,7 +339,7 @@ import Observation
         if errors.isEmpty { Task { await Outbox.shared.drain(api: api) } }
     }
 
-    /// Explicit refresh reads the three shell resources; probes share the owner.
+    /// Shell documents use the same owner as every mounted detail.
     func readSettings(probing: Bool) async {
         if probing { await resources.reconcile() }
         else {
@@ -337,15 +362,15 @@ import Observation
         viewReadsStarted += 1
         defer { viewReading = false }
         let request = viewRequest
+        let generation = runGeneration
         do {
-            let (snapshot, data) = try await api.navigationViewSnapshot(request)
-            guard !Task.isCancelled, api.baseURL == baseURL else { return }
+            let (snapshot, _) = try await api.navigationViewSnapshot(request)
+            guard !Task.isCancelled, generation == runGeneration, api.baseURL == baseURL else { return }
             guard snapshot.scopeGeneration == request.scopeGeneration else { throw APIError(status: 0, message: "The navigation view answered another scope.") }
             admit(snapshot)
             errors["Navigation"] = nil
-            await save(snapshot, data: data, api: api)
         } catch {
-            guard !Task.isCancelled, api.baseURL == baseURL else { return }
+            guard !Task.isCancelled, generation == runGeneration, api.baseURL == baseURL else { return }
             errors["Navigation"] = ServerReadFailure(error)
         }
     }

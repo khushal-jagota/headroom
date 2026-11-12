@@ -574,6 +574,110 @@ import XCTest
         XCTAssertEqual(ConversationRequestStub.request?.httpMethod, "DELETE")
     }
 
+    func testSavedDisplayIsStaleAndCannotAcknowledgeBeforeFreshAdmission() async throws {
+        let id = "display-" + UUID().uuidString
+        let api = APIClient(baseURL: URL(string: "https://display.invalid")!)
+        var row = Self.item("saved", kind: "agent_message", text: "Saved words")
+        row["source_sequence"] = 8
+        let snapshot = try APIClient.decoder().decode(ConversationSnapshot.self, from: Data(Self.snapshot([row], ownerSequence: 8).utf8))
+        let stale = ConversationStatus(authority: "stale", turnRunning: nil, liveOutput: nil, rest: snapshot.status.rest)
+        let saved = ConversationDisplaySnapshot(schema: 1, conversationID: id, lens: "focus", page: snapshot.page, status: stale)
+        try await LocalStore.shared.cacheResponse(server: LocalStore.server(api.baseURL), id: "conversation-display:v1:" + id + ":focus", data: JSONEncoder().encode(saved))
+        let model = ConversationModel(); model.conversationID = id
+        model.restore(owner: .chief, api: api)
+        XCTAssertEqual(model.rows.first?.text, "Saved words")
+        XCTAssertEqual(model.status?.authority, "stale")
+        XCTAssertNil(model.visibleReadBoundary(rowIDs: ["saved"], active: true))
+        let service = ConversationStub(fate: "started")
+        await service.setSnapshot(Self.snapshot([row], ownerSequence: 8))
+        await model.refresh(using: service, transcript: true)
+        XCTAssertEqual(model.visibleReadBoundary(rowIDs: ["saved"], active: true)?.throughSequence, 8)
+        let generation = model.beginTail()
+        let gap = ConversationTailChanges(lens: "focus", fromSequence: 0, coverage: .init(throughSequence: 1), upserts: [], scopeChanges: [], removedKeys: [], invalidatedScopes: [], status: snapshot.status)
+        let admitted = await model.applyTail(.changes(gap), generation: generation, using: service)
+        XCTAssertFalse(admitted, "Saved display is never a stream patch base")
+        XCTAssertNil(model.visibleReadBoundary(rowIDs: ["saved"], active: true))
+    }
+
+    func testCollapsedDemandDoesNotReadOrAdmitTranscriptAndObsoleteTailCannotWin() async throws {
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        let service = ConversationStub(fate: "started")
+        let live: [String: Any] = ["turn_key": "turn", "reference": ["body_id": "live", "version": "v1", "byte_count": 10, "media_type": "text/plain"]]
+        let snapshot = try APIClient.decoder().decode(ConversationSnapshot.self, from: Data(Self.snapshot([Self.item("hidden", kind: "agent_message", text: "Hidden")], live: live).utf8))
+        let oldGeneration = model.beginTail()
+        let generation = model.beginTail()
+        let obsolete = await model.applyTail(.snapshot(snapshot), transcript: true, generation: oldGeneration, using: service)
+        XCTAssertFalse(obsolete)
+        let admitted = await model.applyTail(.snapshot(snapshot), transcript: false, generation: generation, using: service)
+        XCTAssertTrue(admitted)
+        XCTAssertTrue(model.items.isEmpty)
+        let reads = await service.liveReads
+        XCTAssertEqual(reads, 0, "Status-only demand never downloads transcript live output")
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ConversationRequestStub.self]
+        let api = APIClient(baseURL: URL(string: "https://conversation.invalid")!, session: URLSession(configuration: configuration))
+        for try await _ in api.conversationTail("conv_1", lens: .focus, transcript: false) {}
+        let query = URLComponents(url: try XCTUnwrap(ConversationRequestStub.request?.url), resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertEqual(query?.first { $0.name == "transcript" }?.value, "false")
+    }
+
+    func testReaderGenerationRejectsAnOldResponseAfterReturningToSameLens() async throws {
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        let service = ConversationStub(fate: "started")
+        await service.holdNextSnapshot()
+        let pending = Task { await model.refresh(using: service, transcript: true) }
+        while !(await service.snapshotHeld) { await Task.yield() }
+        model.lens = .full; model.lens = .focus
+        await service.releaseSnapshot()
+        await pending.value
+        XCTAssertTrue(model.items.isEmpty)
+    }
+
+    func testHistoryBoundsKeepVisibleAnchorAndExposeOlderAndLatestRecovery() async throws {
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        let service = ConversationStub(fate: "started")
+        let records: [[String: Any]] = (1...320).map { index in
+            var row = Self.item("row-\(index)", kind: "agent_message", text: "Words \(index)")
+            row["order"] = ["sequence": index, "slot": 0]
+            return row
+        }
+        await service.setSnapshot(Self.snapshot(records))
+        await model.refresh(using: service, transcript: true)
+        XCTAssertEqual(model.items.count, 300)
+        XCTAssertEqual(model.older?.order.sequence, 21)
+        model.setVisibleRows(["row-21"])
+        let page = ConversationPage(items: try APIClient.decoder().decode(ConversationSnapshot.self, from: Data(Self.snapshot(Array(records.prefix(20))).utf8)).page.items, older: nil)
+        await service.setPage(page)
+        await model.loadOlder(using: service)
+        XCTAssertEqual(model.items.count, 300)
+        XCTAssertTrue(model.items.contains { $0.id == "row-21" })
+        XCTAssertEqual(model.items.first?.id, "row-1")
+        XCTAssertTrue(model.hasNewerHistory)
+        await model.returnToLatest(using: service)
+        XCTAssertEqual(model.items.last?.id, "row-320")
+        XCTAssertFalse(model.hasNewerHistory)
+        let large = try APIClient.decoder().decode(ConversationBody.self, from: JSONSerialization.data(withJSONObject: ["kind": "agent_message", "content": [["piece": "text", "text": String(repeating: "x", count: 120 * 1024)]]]))
+        let expanded = Dictionary((21...26).map { ("row-\($0)", large) }, uniquingKeysWith: { _, last in last })
+        let deferred = model.items.map { item in
+            guard expanded[item.key] != nil else { return item }
+            return ConversationItem(kind: item.kind, key: item.key, senderMessageId: item.senderMessageId, turnKey: item.turnKey,
+                sourceSequence: item.sourceSequence, body: .init(kind: "deferred", value: nil,
+                    reference: .init(bodyId: item.key, version: "v", byteCount: 120 * 1024, mediaType: "application/json")), order: item.order)
+        }
+        let retained = ConversationRetention.retain(deferred, bodies: expanded, visible: ["row-26"], preferOlder: false)
+        XCTAssertNotNil(retained.bodies["row-26"], "The visible expansion wins the shared body budget")
+        XCTAssertLessThan(retained.bodies.count, expanded.count, "Decoded expansions share the inline-body budget")
+        XCTAssertNotNil(retained.items.first { $0.id == "row-21" }?.body?.reference, "Evicted expanded content retains its server reference")
+        let pressure = (1...5).map { index in
+            ConversationItem(kind: "row", key: "inline-\(index)", senderMessageId: nil, turnKey: nil,
+                sourceSequence: nil, body: .init(kind: "inline", value: large, reference: nil), order: nil)
+        } + [deferred.first { $0.key == "row-26" }!]
+        let visibleExpansion = ConversationRetention.retain(pressure, bodies: ["row-26": large], visible: ["row-26"], preferOlder: false)
+        XCTAssertNotNil(visibleExpansion.bodies["row-26"], "Offscreen inline rows yield space to a visible expansion")
+        XCTAssertTrue(visibleExpansion.removedOldest)
+        XCTAssertEqual(visibleExpansion.items.last?.key, "row-26")
+    }
+
     private static func item(_ id: String, kind: String, text: String, sender: String? = nil) -> [String: Any] {
         var item: [String: Any] = ["kind": "row", "key": id, "body": ["kind": "inline", "value": ["kind": kind, "content": [["piece": "text", "text": text]]]]]
         if let sender { item["sender_message_id"] = sender }
@@ -582,7 +686,7 @@ import XCTest
     private static func snapshot(_ items: [[String: Any]], live: [String: Any]? = nil, ownerSequence: Int = 0) -> String {
         var status: [String: Any] = ["authority": "current", "turn_running": live != nil, "rest": ["plan_progress": [:], "latest_owner_message_sequence": ownerSequence]]
         if let live { status["live_output"] = live }
-        let object: [String: Any] = ["page": ["items": items, "older": NSNull()], "status": status]
+        let object: [String: Any] = ["page": ["items": items, "older": NSNull(), "projection_version": 4], "status": status]
         return String(decoding: try! JSONSerialization.data(withJSONObject: object), as: UTF8.self)
     }
 
@@ -602,6 +706,8 @@ private actor ConversationStub: ConversationServing {
     var calls = 0
     var senderID = ""
     var snapshot: String?
+    var page: ConversationPage?
+    func setPage(_ value: ConversationPage) { page = value }
     var receipt: String?
     var liveReads = 0
     var requestedLenses: [ConversationLens] = []
@@ -627,7 +733,7 @@ private actor ConversationStub: ConversationServing {
         let json = #"{"page":{"items":[{"kind":"row","key":"row-1","sender_message_id":"SENDER","body":{"kind":"inline","value":{"kind":"prompt","content":[{"piece":"text","text":"Hello"}]}}}],"older":null},"status":{"authority":"current","turn_running":true,"rest":{"latest_happened":null,"latest_tool":{"kind":"tool_call","title":"Reading the code"},"permission_title_excerpt":null,"plan_progress":{"current_text_excerpt":null}}}}"#.replacingOccurrences(of: "SENDER", with: senderID)
         return try APIClient.decoder().decode(ConversationSnapshot.self, from: Data((snapshot ?? json).utf8))
     }
-    func conversationPage(_ id: String, cursor: ConversationCursor) async throws -> ConversationPage { throw URLError(.unsupportedURL) }
+    func conversationPage(_ id: String, cursor: ConversationCursor) async throws -> ConversationPage { if let page { return page }; throw URLError(.unsupportedURL) }
     func conversationBody(_ id: String, reference: ConversationBodyReference) async throws -> ConversationBody { throw URLError(.unsupportedURL) }
 }
 private final class ConversationRequestStub: URLProtocol, @unchecked Sendable {
