@@ -39,8 +39,13 @@ struct PendingWork: Codable, Identifiable, Sendable {
     func entries(_ server: String) -> [PendingWork] {
         ((try? store.records(server: server, kind: "outbox")) ?? []).compactMap { try? JSONDecoder().decode(PendingWork.self, from: $0.payload) }.sorted { $0.created < $1.created }
     }
+    static func encode(_ work: PendingWork) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return try encoder.encode(work)
+    }
     func save(_ work: PendingWork, server: String) throws {
-        try store.put(server: server, kind: "outbox", id: work.id, data: JSONEncoder().encode(work))
+        try store.put(server: server, kind: "outbox", id: work.id, data: Self.encode(work))
     }
     func enqueue(_ work: PendingWork, api: APIClient) throws {
         try save(work, server: LocalStore.server(api.baseURL))
@@ -183,7 +188,7 @@ struct PendingWork: Codable, Identifiable, Sendable {
                     let result = draft.isEmpty ? transcript : draft + "\n\n" + transcript
                     // Transcript and completion share the transaction, so relaunch cannot append twice.
                     work.state = .sent; work.note = "Transcribed"; work.completed = .now
-                    try store.put(server: server, kind: "outbox", id: work.id, data: JSONEncoder().encode(work), draft: (draftID, result))
+                    try store.put(server: server, kind: "outbox", id: work.id, data: Self.encode(work), draft: (draftID, result))
                     try? FileManager.default.removeItem(at: LocalStore.directory.appendingPathComponent(file))
                     continue
                 } else if let ticketID = work.ticketID, let expected = work.proposal {

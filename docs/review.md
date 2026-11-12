@@ -19,6 +19,8 @@ An approval note must reach the Worker before approval proceeds. The browser kee
 
 If the index is not yet trustworthy, Review says it is unavailable instead of showing an empty queue that might be wrong.
 
+On iPhone, Review and its badge share a snapshot of saved outgoing work. Only changes to outgoing work refresh that snapshot. Hidden Review screens do no store work. The visible queue uses memory and preserves the current decision and reply rules.
+
 ## Where it shows up
 
 Review is a primary destination in the browser, with a count. [Notifications](notifications.md) are a separate path. They tell Khushal that something newly needs him, and link to the Ticket.
@@ -33,5 +35,6 @@ Review is a primary destination in the browser, with a count. [Notifications](no
 
 - `src/planner/navigation/`: the index, and Review's membership and ordering (`review.py`, `review_logic.py`).
 - `web/src/routes/ReviewRoute.svelte` and `web/src/components/Review*.svelte`: the pass and its cards.
+- `ios/Panels/Features/Review/`: the native pass and its saved-work snapshot.
 
-_Last verified: 2026-11-08._
+_Last verified: 2026-11-12._

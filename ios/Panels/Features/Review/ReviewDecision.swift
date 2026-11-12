@@ -152,3 +152,35 @@ struct ReviewQueue {
     mutating func restore(_ item: ReviewItem) { resolved.remove(item.id); skipped[item.id] = nil }
     mutating func revisit() { skipped.removeAll() }
 }
+
+/// One snapshot for Review and its badge. Rendering reads memory, never the store.
+@MainActor @Observable final class ReviewSavedWork {
+    struct Key: Equatable {
+        let server: String
+        let revision: Int
+    }
+    @ObservationIgnored private let outbox: Outbox
+    @ObservationIgnored private let read: (String) -> [PendingWork]
+    private(set) var key: Key?
+    private var saved: [PendingWork] = []
+    init(outbox: Outbox = .shared, read: ((String) -> [PendingWork])? = nil) {
+        self.outbox = outbox
+        self.read = read ?? outbox.entries
+    }
+    func refresh(_ server: String) {
+        let next = Key(server: server, revision: outbox.store.outgoingRevision(server))
+        guard next != key else { return }
+        saved = read(server)
+        key = next
+    }
+    func entries(_ server: String) -> [PendingWork] { key?.server == server ? saved : [] }
+    func decisions(_ server: String) -> [PendingWork] { entries(server).filter { $0.kind == .approval || $0.kind == .sendBack } }
+    static func cards(_ cards: [ReviewCard], decisions: [PendingWork]) -> [ReviewCard] {
+        cards.compactMap { card in
+            let parts = card.parts.filter { item in
+                !decisions.contains { $0.ticketID == item.ticketId && $0.proposal?.field == item.field && $0.proposal?.createdAt == item.waitingSince && [.waiting, .sending, .uncertain, .sent].contains($0.state) }
+            }
+            return parts.isEmpty ? nil : ReviewCard(id: card.id, ticketId: card.ticketId, parts: parts)
+        }
+    }
+}
