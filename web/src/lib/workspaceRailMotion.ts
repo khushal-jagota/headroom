@@ -54,6 +54,17 @@ function snapshot(root: HTMLElement | null): Map<string, Part> {
   }));
 }
 
+/** Windows whose page changed. Rows that enter or leave a page are windowing, not Ticket changes. */
+function turnedWindows(previous: readonly ViewWindow[] = [], next: readonly ViewWindow[] = []): Set<string> {
+  const turned = new Set<string>();
+  for (const { request } of next) {
+    const old = previous.find((window) => window.request.section === request.section && window.request.owner?.id === request.owner?.id)?.request;
+    if (old && (old.anchor !== request.anchor || old.direction !== request.direction))
+      turned.add(request.section === "rail_tickets" ? request.owner?.id ?? "chief" : request.section);
+  }
+  return turned;
+}
+
 /** Defer structure during motion or hover; conversation facts stay live during hover. */
 export function createRailMotionController(root: () => HTMLElement | null,
   read: () => WorkspaceRailPresentation, apply: (presentation: WorkspaceRailPresentation) => void,
@@ -206,6 +217,10 @@ export function createRailMotionController(root: () => HTMLElement | null,
     const section = railRoot?.querySelector<HTMLElement>(".settled");
     const oldCount = railRoot?.querySelector<HTMLElement>("[data-settled-count]")?.textContent;
     const beforeExit = measure();
+    // A page turn changes membership and layout without any Ticket changing. It stays still.
+    const turned = turnedWindows(previous.scrollPublication?.windows, next.scrollPublication?.windows);
+    const quiet = (key: string, part: Part) => turned.size > 0 && (key.startsWith("card:") || (key.startsWith("settled:")
+      ? turned.has("settled") : turned.has(part.parent?.slice("card:".length) ?? "")));
     // Exit while the old space still exists. Headings leave with their last row.
     const remaining = new Set<string>(["card:chief", "settled-section", ...next.rail.items.map((item) => `card:${item.id}`)]);
     for (const [id, groups] of [["chief", next.rail.chiefGroups], ...next.rail.items.map((item) => [item.id, item.groups] as const)] as const) {
@@ -219,7 +234,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
 
     }
     const settledPart = (key: string) => key.startsWith("settled:");
-    const exits = [...beforeExit].filter(([key]) => !remaining.has(key) && !(directFold() && settledPart(key)));
+    const exits = [...beforeExit].filter(([key, part]) => !remaining.has(key) && !(directFold() && settledPart(key)) && !quiet(key, part));
     await Promise.all(exits.map(([, part]) => animate(part.node, [{ opacity: 1 }, { opacity: 0 }], RAIL_MOTION.exit, 0, false, RAIL_MOTION.leave)));
     if (disposed) return;
     // A pointer can arrive during an exit. Restore it, and defer the whole structure.
@@ -272,12 +287,12 @@ export function createRailMotionController(root: () => HTMLElement | null,
     const rowExit = [...first.keys()].some((key) => isRow(key) && !last.has(key) && !(directFold() && settledPart(key)));
     const resizedCards = [...last].filter(([key, part]) => {
       const old = first.get(key);
-      return key.startsWith("card:") && old?.node === part.node && Math.abs(old.rect.height - part.rect.height) > .5;
+      return key.startsWith("card:") && !quiet(key, part) && old?.node === part.node && Math.abs(old.rect.height - part.rect.height) > .5;
     });
     const duration = resizedCards.length || rowExit || rowArrival ? RAIL_MOTION.space : railMoveDuration(distance);
     for (const [key, part] of resizedCards) plays.push(resizeCard(part.node, first.get(key)!.rect.height, part.rect.height));
     for (const [key, part] of last) {
-      if (key === "settled-section" || (directFold() && settledPart(key))) continue;
+      if (key === "settled-section" || (directFold() && settledPart(key)) || quiet(key, part)) continue;
       const old = first.get(key);
       if (!old) {
         plays.push(animate(part.node, [{ opacity: 0, transform: "translateY(-4px)" }, { opacity: 1, transform: "none" }],

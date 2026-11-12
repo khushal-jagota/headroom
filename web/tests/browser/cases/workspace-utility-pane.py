@@ -854,6 +854,16 @@ def verify_rail_pagination(page, url, fixture, evidence):
     scroll = page.locator('[data-active-work-scroll]')
     page.mouse.move(900, 600)
     proof = []
+    # Record every rail animation. Turning a page must start none; a real change still starts one.
+    hook = """() => { window.__railAnimations = []; const orig = Element.prototype.animate;
+      Element.prototype.animate = function(frames, opts) { const key = this.dataset?.railMotion;
+        if (key) window.__railAnimations.push(key);
+        return orig.call(this, frames, opts); }; }"""
+    page.add_init_script(f"({hook})()")
+    page.evaluate(hook)
+
+    def animations():
+        return page.evaluate("window.__railAnimations.splice(0)")
 
     def window(section):
         return page.evaluate("""section => window.__navigationFrames.flatMap(frame=>frame.content.windows)
@@ -891,6 +901,7 @@ def verify_rail_pagination(page, url, fixture, evidence):
         return window(section)
 
     # A native scroll requests a child overlap before the visible half disappears.
+    animations()
     prior = window('rail_tickets')
     anchor = '[data-ticket-id="page_worker_17"]'
     before = scroll.evaluate("""(surface,selector)=>{
@@ -900,6 +911,7 @@ def verify_rail_pagination(page, url, fixture, evidence):
     after_view = page_changed('rail_tickets', prior)
     assert abs(top(anchor)-before) < 1.5, (before, top(anchor), after_view)
     assert after_view['request']['direction'] == 'after' and after_view['request']['anchor'] == prior['forward_overlap']
+    assert animations() == []
     proof.append({"name":"card-forward-native-scroll","before":before,"after":top(anchor),"request":after_view['request'],"members":members('rail_tickets')})
 
     # Home at the physical boundary requests the backward page. The first visible
@@ -985,44 +997,9 @@ def verify_rail_pagination(page, url, fixture, evidence):
             'members':members('rail_tickets')},indent=2))
         page.mouse.move(900, 600)
         if queued:
-            page.wait_for_function("""()=>document.querySelector('[data-ticket-id="page_worker_00"]')?.getAnimations()
-              .some(a=>a.playState==='running' && a.effect?.getKeyframes().some(k=>'opacity' in k))""")
-            bounds = scroll.bounding_box()
-            page.mouse.move(bounds['x']+1,bounds['y']+30)
-            scroll.evaluate("""n=>{
-              window.__exitScrollSamples=[];window.__captureExitScroll=true;
-              n.addEventListener('wheel',event=>window.__exitWheel={ms:performance.now(),trusted:event.isTrusted,
-                before:n.scrollTop,deltaY:event.deltaY},{once:true,capture:true});
-              n.addEventListener('scroll',event=>{
-                const row=document.querySelector('[data-ticket-id="page_worker_17"]');
-                const exit=document.querySelector('[data-ticket-id="page_worker_00"]');
-                const exitRunning=exit?.getAnimations().some(a=>a.playState==='running'&&a.effect?.getKeyframes().some(k=>'opacity' in k))??false;
-                window.__exitContinued={top:row.getBoundingClientRect().top,scrollTop:n.scrollTop,ms:performance.now(),
-                  trusted:event.isTrusted,exitRunning,wheel:window.__exitWheel};
-                window.__exitScrollTake=()=>{
-                  const row=document.querySelector('[data-ticket-id="page_worker_17"]');
-                  window.__exitScrollSamples.push({ms:performance.now(),top:row?.getBoundingClientRect().top,
-                    scrollTop:n.scrollTop,range:n.scrollHeight-n.clientHeight,transform:row?getComputedStyle(row).transform:null,
-                    published:!document.querySelector('[data-ticket-id="page_worker_00"]'),busy:Boolean(document.querySelector('[data-rail-motion-busy]'))});
-                };
-                const sample=()=>{if(!window.__captureExitScroll)return;window.__exitScrollTake();
-                  requestAnimationFrame(sample);};sample();
-              },{once:true,capture:true});
-            }""")
-            page.mouse.wheel(0,36)
-            page.wait_for_function('window.__exitContinued')
-            continued = page.evaluate('window.__exitContinued')
-            assert continued['exitRunning'] and continued['wheel']['trusted'] and continued['wheel']['deltaY']>0, continued
-            assert continued['scrollTop']-continued['wheel']['before']>20 and continued['ms']>=continued['wheel']['ms'], continued
+            # Leaving the row releases the held page. It turns without any fade.
+            page.wait_for_function("""()=>!document.querySelector('[data-ticket-id="page_worker_00"]')""")
         after_view = page_changed('rail_tickets', prior)
-        if queued:
-            page.evaluate('window.__exitScrollTake();window.__captureExitScroll=false')
-            exit_samples = page.evaluate('window.__exitScrollSamples')
-            (evidence / 'queued-publication-scroll-during-exit.json').write_text(json.dumps({
-                'continued':continued,'samples':exit_samples},indent=2))
-            assert not exit_samples[0]['published'] and exit_samples[-1]['published'] and not exit_samples[-1]['busy'], exit_samples
-            assert exit_samples[0]['range']-exit_samples[-1]['range']>5, exit_samples
-            assert all(abs(sample['top']-continued['top'])<1.5 for sample in exit_samples), (continued,exit_samples)
         assert abs(top(anchor)-continued['top']) < 1.5, (queued,continued,top(anchor),after_view)
         policy = scroll.evaluate("n=>({value:n.style.getPropertyValue('overflow-anchor'),priority:n.style.getPropertyPriority('overflow-anchor')})")
         assert policy == {'value':'auto','priority':'important'}, policy
@@ -1082,6 +1059,7 @@ def verify_rail_pagination(page, url, fixture, evidence):
     assert (window('rail_tickets')['request']['anchor'],window('rail_tickets')['request']['direction']) == (chief_request['anchor'],chief_request['direction']), (chief_request,window('rail_tickets')['request'])
 
     # Parent pages use the same physical scroller, with a different surviving row.
+    animations()
     prior = window('rail_parents')
     anchor = '[data-manager="page_manager_35"]'
     before = scroll.evaluate("""(surface,selector)=>{
@@ -1096,8 +1074,10 @@ def verify_rail_pagination(page, url, fixture, evidence):
     },indent=2))
     assert after_view['request']['direction'] == 'after' and after_view['request']['anchor'] == prior['forward_overlap']
     assert abs(top(anchor)-before) < 1.5, (before, top(anchor), after_view)
+    assert animations() == []
     proof.append({"name":"parent-forward-native-scroll","before":before,"after":top(anchor),"request":after_view['request'],"members":members('rail_parents')})
 
+    animations()
     prior = window('rail_parents')
     first_id = members('rail_parents')[0]
     anchor = f'[data-manager="{first_id}"]'
@@ -1116,6 +1096,14 @@ def verify_rail_pagination(page, url, fixture, evidence):
     assert after_view['request']['direction'] == 'before' and after_view['request']['anchor'] == prior['backward_overlap']
     assert abs(top(anchor)-before) < 1.5, (before, top(anchor), after_view)
     proof.append({"name":"parent-backward-wheel","before":before,"after":top(anchor),"request":after_view['request'],"members":members('rail_parents')})
+    assert animations() == []
+    # A real change still moves: a finished Ticket coming back to work fades in.
+    page.mouse.move(900, 600)
+    chief_rows[5].update(stage='needs_implementation', ticket_status='agent')
+    page.evaluate('async()=>{await window.__refreshNavigation();await new Promise(requestAnimationFrame)}')
+    expect(page.locator('[data-ticket-id="page_worker_05"]')).to_have_count(1)
+    settled()
+    assert 'row:page_worker_05' in animations()
     page.mouse.move(900, 600)
     page.screenshot(path=str(evidence / 'rail-pagination-final.png'))
     (evidence / 'rail-pagination.json').write_text(json.dumps({
