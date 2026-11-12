@@ -26,7 +26,9 @@ The home uses one platform contract for service identity, app-child launch, proc
 
 An Apple Silicon Mac can run a home from source in the owner's login session. Its launchd job owns the supervisor and app process group, so a hard supervisor crash does not leave the app behind. Private short sockets support long installation paths. A separate launchd job takes verified backups through the existing backup command. Logout stops the home, and sleep makes it unreachable. See the [Mac source-install procedure](../ops/mac-home/installation.md).
 
-A real home provisions its managed skills in the provider account folders. One operating system account supports one Panels instance. If another instance owns the Panels skill links, the second home starts but leaves those links unchanged. Setup output and the server log explain the conflict and the account limit. Its Workers cannot receive their own home's skills through that account. Use a separate operating system account for a second instance. The disposable test option disables provisioning and can read the existing instance's skills. That exception is for tests only.
+A real home provisions its managed skills in the provider account folders. One operating system account supports one Panels instance. If another instance owns the Panels skill links, the second home starts but leaves those links unchanged. Setup output and the server log explain the conflict and the account limit. Its Workers cannot receive their own home's skills through that account. Use a separate operating system account for a second instance.
+
+The disposable test option disables provisioning and can read the existing instance's skills. That exception is for tests only.
 
 The Mac home does not yet support release installs, updates, previews, native metrics, or maintenance and watchdog schedules. Other POSIX source servers retain their existing foreground lifecycle. The Mac executor remains separate. Linux checks do not prove Mac behavior.
 
