@@ -1191,6 +1191,320 @@
       }
     },
     {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-ticket-choice-normal",
+        "backend_key": "codex",
+        "model": "before-model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/test/connected/bind",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "${ticket_choice_normal}",
+        "conversation_id": "u15-ticket-choice-normal"
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/tickets/${ticket_choice_normal}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "u15-ticket-choice-normal",
+        "content": [
+          {
+            "piece": "text",
+            "text": "incumbent"
+          }
+        ],
+        "sender_label": "Owner"
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/tickets/${ticket_choice_normal}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "u15-ticket-choice-normal",
+        "content": [
+          {
+            "piece": "text",
+            "text": "selected"
+          }
+        ],
+        "sender_label": "Owner",
+        "mode": "queue",
+        "model": "selected-model",
+        "reasoning_effort": "high",
+        "sender_message_id": "selected-id"
+      },
+      "capture": {
+        "ticket_choice_normal_queued_fate": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-ticket-choice-normal",
+      "status": 200,
+      "capture": {
+        "ticket_choice_normal_held_state": "",
+        "ticket_choice_normal_held_id": "held_prompts.0.held_prompt_id"
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/tickets?id=${ticket_choice_normal}&detail=full",
+      "status": 200,
+      "capture": {
+        "ticket_choice_normal_ticket_before": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-ticket-choice-normal/held-prompts/${ticket_choice_normal_held_id}/promote",
+      "status": 200,
+      "json": {
+        "mode": "send_now"
+      },
+      "capture": {
+        "ticket_choice_normal_promote_result": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/test/signals/u15-ticket-choice-normal/inspect",
+      "status": 200,
+      "capture": {
+        "ticket_choice_normal_after_promote": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/tickets?id=${ticket_choice_normal}&detail=full",
+      "status": 200,
+      "capture": {
+        "ticket_choice_normal_ticket_after": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/test/signals/u15-ticket-choice-normal/finish",
+      "status": 200
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-ticket-choice-failure",
+        "backend_key": "codex",
+        "model": "before-model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/test/connected/bind",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "${ticket_choice_failure}",
+        "conversation_id": "u15-ticket-choice-failure"
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/tickets/${ticket_choice_failure}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "u15-ticket-choice-failure",
+        "content": [
+          {
+            "piece": "text",
+            "text": "incumbent"
+          }
+        ],
+        "sender_label": "Owner"
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/tickets/${ticket_choice_failure}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "u15-ticket-choice-failure",
+        "content": [
+          {
+            "piece": "text",
+            "text": "selected"
+          }
+        ],
+        "sender_label": "Owner",
+        "mode": "queue",
+        "model": "selected-model",
+        "reasoning_effort": "high",
+        "sender_message_id": "selected-id"
+      },
+      "capture": {
+        "ticket_choice_failure_queued_fate": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-ticket-choice-failure",
+      "status": 200,
+      "capture": {
+        "ticket_choice_failure_held_state": "",
+        "ticket_choice_failure_held_id": "held_prompts.0.held_prompt_id"
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/tickets?id=${ticket_choice_failure}&detail=full",
+      "status": 200,
+      "capture": {
+        "ticket_choice_failure_ticket_before": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/test/signals/u15-ticket-choice-failure/ticket-choice-failure",
+      "status": 200
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-ticket-choice-failure/held-prompts/${ticket_choice_failure_held_id}/promote",
+      "status": 500,
+      "json": {
+        "mode": "send_now"
+      },
+      "capture": {
+        "ticket_choice_failure_promote_result": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/test/signals/u15-ticket-choice-failure/ticket-choice-failure",
+      "status": 200,
+      "capture": {
+        "ticket_choice_failure_injection": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/test/signals/u15-ticket-choice-failure/inspect",
+      "status": 200,
+      "capture": {
+        "ticket_choice_failure_after_promote": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/tickets?id=${ticket_choice_failure}&detail=full",
+      "status": 200,
+      "capture": {
+        "ticket_choice_failure_ticket_after": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/test/signals/u15-ticket-choice-failure/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "ToolCallStarted",
+            "values": {
+              "tool_call_id": "after-error",
+              "title": "Read a file",
+              "tool_kind": "read"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/tickets/${ticket_choice_failure}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "u15-ticket-choice-failure",
+        "content": [
+          {
+            "piece": "text",
+            "text": "selected"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "selected-id"
+      },
+      "capture": {
+        "ticket_choice_failure_duplicate_fate": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/test/signals/u15-ticket-choice-failure/inspect",
+      "status": 200,
+      "capture": {
+        "ticket_choice_failure_after_duplicate": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/tickets?id=${ticket_choice_failure}&detail=full",
+      "status": 200,
+      "capture": {
+        "ticket_choice_failure_ticket_after_duplicate": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/test/signals/u15-ticket-choice-failure/finish",
+      "status": 200
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/test/signals/u15-ticket-choice-failure/inspect",
+      "status": 200,
+      "capture": {
+        "ticket_choice_failure_finished": ""
+      }
+    },
+    {
       "area": "navigation-operand-public-order",
       "method": "GET",
       "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22review%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3A{%22kind%22%3A%22ticket%22%2C%22id%22%3A%22${promote_owner_accepted_ticket}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3A{%22kind%22%3A%22ticket%22%2C%22id%22%3A%22${promote_owner_uncertain_ticket}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%5D}",
@@ -1265,6 +1579,34 @@
       "capture": {
         "promote_chief_uncertain_ticket": "id"
       }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Held Ticket choice normal",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "brief": "Observe real held model and effort bookkeeping after receipt."
+      },
+      "capture": {
+        "ticket_choice_normal": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Held Ticket choice failure",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "brief": "Observe real held model and effort bookkeeping after receipt."
+      },
+      "capture": {
+        "ticket_choice_failure": "id"
+      }
     }
   ],
   "report_captures": [
@@ -1315,6 +1657,30 @@
     "disabled_model_fate",
     "disabled_model_refused",
     "reenabled_model_fate",
-    "reenabled_model_started"
-  ]
+    "reenabled_model_started",
+    "ticket_choice_normal_queued_fate",
+    "ticket_choice_normal_held_state",
+    "ticket_choice_normal_held_id",
+    "ticket_choice_normal_ticket_before",
+    "ticket_choice_normal_promote_result",
+    "ticket_choice_normal_after_promote",
+    "ticket_choice_normal_ticket_after",
+    "ticket_choice_failure_queued_fate",
+    "ticket_choice_failure_held_state",
+    "ticket_choice_failure_held_id",
+    "ticket_choice_failure_ticket_before",
+    "ticket_choice_failure_promote_result",
+    "ticket_choice_failure_injection",
+    "ticket_choice_failure_after_promote",
+    "ticket_choice_failure_ticket_after",
+    "ticket_choice_failure_duplicate_fate",
+    "ticket_choice_failure_after_duplicate",
+    "ticket_choice_failure_ticket_after_duplicate",
+    "ticket_choice_failure_finished"
+  ],
+  "source_drift_proof": {
+    "source_test": "test_ticket_model_write_failure_keeps_accepted_held_delivery_live",
+    "coverage": "Separate from the original22: normal associated held model/effort promotion reaches the real canonical Ticket writer; one selected secondary writer failure occurs before preference commit after conversation receipt, HTTP500 leaves Ticket choice unchanged and native turn alive; late news and receipt replay continue without a second prompt/provider delivery."
+  },
+  "candidate": "typescript"
 }

@@ -4,11 +4,13 @@ import { managerWakeTestArea } from './manager_wakes/testing.ts';
 import { readinessTestRoutes } from './runtime/testing.ts';
 import type { Area } from './core/authority/register.ts';
 import { startServer } from './core/start.ts';
+import { write_held_ticket_configuration } from './runtime/conversation_start.ts';
 import { SqliteProcessConversationSystem } from './conversation/system.ts';
 import { ConversationMessageFiles } from './conversation/record/message_files.ts';
 import { ScriptedBackendRegistry } from './conversation/testing/scripted_registry.ts';
 import { scriptedConversationControls } from './conversation/testing/scripted_controls.ts';
 import { browserConversationControls } from './conversation/testing/browser_controls.ts';
+import { ScriptedTicketChoiceFault } from './conversation/testing/scripted_ticket_choice.ts';
 import { InMemoryConversationSystem } from './conversation/in_memory_conversation_system.ts';
 import { inMemoryConversationRoutes } from './conversation/testing/routes.ts';
 import { rebuild_conversation_view } from './conversation/views/data/writer.ts';
@@ -20,6 +22,7 @@ const conversationSystem =
     ? new InMemoryConversationSystem()
     : undefined;
 const registry = new ScriptedBackendRegistry();
+const ticket_choice_fault = new ScriptedTicketChoiceFault();
 
 await startServer({
   conversationSystem,
@@ -41,6 +44,16 @@ await startServer({
           publish_frame: (id, frame) => record.live_tail.publish_frame(id, frame),
           publish_status_changed: (id) => record.live_tail.views.publish_status_changed(id),
           emit_change: () => changes.emit(),
+          on_held_model_change: ticket_choice_fault.wrap(
+            (conversation_id, model, reasoning_effort) =>
+              write_held_ticket_configuration(
+                database,
+                conversation_id,
+                model,
+                reasoning_effort,
+                clock.nowUnix(),
+              ),
+          ),
           model_is_enabled: (backend_key, model_id) =>
             database.read((sql) => {
               const row = sql.get<{ enabled: number }>(
@@ -58,7 +71,7 @@ await startServer({
     ...(conversationSystem
       ? inMemoryConversationRoutes(conversationSystem)
       : [
-          ...scriptedConversationControls(context, registry),
+          ...scriptedConversationControls(context, registry, ticket_choice_fault),
           ...browserConversationControls(context, registry),
         ]),
   ],

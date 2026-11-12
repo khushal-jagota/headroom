@@ -141,6 +141,7 @@ Only committed rows reach the tail. The five status readers also check the curre
 
 The `createConversationCore(context)` factory receives the shared publication coordinator.
 Core adapters pass `context.publication.save_attempt`, a `current_read` callback, and `context.revoke_signal` through the corresponding core options.
+Core factories must also bind `on_held_model_change` to `write_held_ticket_configuration` from `runtime/conversation_start.ts`, with the same database and clock. The test host supplies this binding. After an accepted held model/effort change, it calls the existing guarded Ticket writer for the active conversation; it does not change the backend or repeat the prompt. A secondary Ticket-write error propagates after the accepted receipt settles. Future provider factories need this same binding.
 Without a core factory, the server supplies record reads and real publication from durable facts, with no local turn or substitute provider.
 An explicitly selected in-memory instrument remains separate. The idle authority helpers remain for their isolated tests.
 

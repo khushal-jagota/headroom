@@ -386,11 +386,12 @@
           "json": {
             "events": [
               {
-                "kind": "ToolCallFinished",
+                "kind": "ToolCallStarted",
                 "values": {
-                  "tool_call_id": "tail-tool",
-                  "tool_call_status": "completed",
-                  "detail": "committed after open"
+                  "tool_call_id": "view-new-tool",
+                  "title": "New committed tool",
+                  "tool_kind": "read",
+                  "detail": "appended after open"
                 }
               }
             ]
@@ -960,5 +961,6 @@
     "local_worker_wire",
     "navigation_routes_en_us",
     "navigation_routes_de_de"
-  ]
+  ],
+  "candidate": "typescript"
 }

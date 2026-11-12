@@ -17,6 +17,7 @@ import type { ScriptedBehavior, ScriptedEvent } from './scripted_protocol.ts';
 import type { ScriptedBackendRegistry } from './scripted_registry.ts';
 import { live_status_before_adoption, PendingSteerProbe } from './scripted_probes.ts';
 import { TerminalSaveProbe } from './scripted_terminal_save.ts';
+import type { ScriptedTicketChoiceFault } from './scripted_ticket_choice.ts';
 
 const event_names: Readonly<Record<string, string>> = {
   tool_call_started: 'ToolCallStarted',
@@ -83,6 +84,7 @@ function record_rows(sql: ReadSql, id: string) {
 export function scriptedConversationControls(
   context: TestCompositionContext,
   registry: ScriptedBackendRegistry,
+  ticket_choice_fault: ScriptedTicketChoiceFault,
 ): readonly Area[] {
   const core = context.core;
   if (!core) throw new Error('Scripted controls require the real conversation core');
@@ -93,6 +95,7 @@ export function scriptedConversationControls(
       prefix: '/api/test',
       routes: async (app) => {
         app.addHook('onClose', async () => {
+          ticket_choice_fault.close();
           await pending.close();
           await terminal.close();
           await registry.close();
@@ -100,6 +103,12 @@ export function scriptedConversationControls(
         const settle = () => core.wait_until_quiescent();
         const identity = (request: { params: unknown }) =>
           (request.params as { conversation_id: string }).conversation_id;
+        app.post('/signals/:conversation_id/ticket-choice-failure', async (request) =>
+          ticket_choice_fault.arm(identity(request)),
+        );
+        app.get('/signals/:conversation_id/ticket-choice-failure', async (request) =>
+          ticket_choice_fault.observe(identity(request)),
+        );
         app.get('/signals/:conversation_id/live-status-before-adoption', async (request) =>
           live_status_before_adoption(context, identity(request)),
         );

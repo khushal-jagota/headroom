@@ -874,5 +874,6 @@
     "canonical_manager_next",
     "navigation_sessions_en_us",
     "navigation_sessions_de_de"
-  ]
+  ],
+  "candidate": "typescript"
 }

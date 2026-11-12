@@ -25,6 +25,7 @@ from tests.compare.scripted.scripted_child import decode_scripted_event
 from tests.compare.scripted.scripted_probes import PendingSteerProbe, live_status_before_adoption
 from tests.compare.scripted.scripted_registry import ScriptedBackendRegistry
 from tests.compare.scripted.scripted_terminal_save import TerminalSaveProbe
+from tests.compare.scripted.scripted_ticket_choice import ScriptedTicketChoiceFault
 from tests.e2e.conversation_signals_server import NoInstalledBackends
 from tests.e2e.ticket_model_controls import TicketModelSnapshots
 from tests.support.in_memory_conversation_system import InMemoryConversationSystem
@@ -214,6 +215,7 @@ def _scripted_routes(
     """Drive the existing scripted child through the real Python core for shared seeds."""
     pending = PendingSteerProbe(lambda: app.state.conversation.system, registry, db_path)
     terminal = TerminalSaveProbe(lambda: app.state.conversation.system, registry, db_path)
+    ticket_choice_fault = ScriptedTicketChoiceFault()
 
     async def settled() -> None:
         await app.state.conversation.system.wait_until_quiescent()
@@ -221,6 +223,14 @@ def _scripted_routes(
     @app.get("/api/test/signals/{conversation_id}/live-status-before-adoption")
     async def live_status(conversation_id: str) -> dict[str, Any]:
         return await live_status_before_adoption(app.state.conversation.system, conversation_id)
+
+    @app.post("/api/test/signals/{conversation_id}/ticket-choice-failure")
+    async def arm_ticket_choice_failure(conversation_id: str) -> dict[str, bool]:
+        return ticket_choice_fault.arm(conversation_id)
+
+    @app.get("/api/test/signals/{conversation_id}/ticket-choice-failure")
+    async def observe_ticket_choice_failure(conversation_id: str) -> dict[str, bool | int | str]:
+        return ticket_choice_fault.observe(conversation_id)
 
     @app.post("/api/test/signals/{conversation_id}/pending-steer/begin")
     async def begin_steer(conversation_id: str, body: dict[str, Any]) -> dict[str, bool]:
@@ -422,8 +432,11 @@ def _scripted_routes(
         return {"configured": True}
 
     async def close_probes() -> None:
-        await pending.close()
-        await terminal.close()
+        try:
+            await pending.close()
+            await terminal.close()
+        finally:
+            ticket_choice_fault.close()
 
     return close_probes
 

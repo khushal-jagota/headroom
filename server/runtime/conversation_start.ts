@@ -95,6 +95,27 @@ const contexts = new WeakMap<Database, WorkspaceContext>();
 export function configure_conversation_start(database: Database, context: WorkspaceContext): void {
   contexts.set(database, context);
 }
+/** Record an accepted held delivery's choice on its still-active Ticket. */
+export function write_held_ticket_configuration(
+  database: Database,
+  conversation_id: string,
+  model: string,
+  reasoning_effort: string | null,
+  now: number,
+): void {
+  const ticket = database.read((sql) =>
+    sql.get<{ id: string }>('SELECT id FROM tickets WHERE conversation_id=?', [conversation_id]),
+  );
+  if (ticket === undefined) return;
+  database.write((tx) =>
+    tickets.write_ticket_last_chosen_configuration(tx, ticket.id, {
+      expected_conversation_id: conversation_id,
+      model,
+      reasoning_effort,
+      now: Math.trunc(now),
+    }),
+  );
+}
 function context(database: Database, overrides: Partial<WorkspaceContext> = {}): WorkspaceContext {
   const registered = contexts.get(database);
   const db_path = overrides.db_path ?? registered?.db_path;
