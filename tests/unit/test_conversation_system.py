@@ -1470,8 +1470,11 @@ def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
 # --- killing a conversation's activity ----------------------------------------------------
 
 
+@pytest.mark.parametrize("mode", [
+    PromptDeliveryMode.queue, PromptDeliveryMode.send_now, PromptDeliveryMode.steer,
+])
 def test_a_message_sent_while_a_kill_is_running_is_not_swallowed_by_it(
-    harness: _Harness,
+    harness: _Harness, mode: PromptDeliveryMode,
 ) -> None:
     """A kill holds the conversation still, so a send either loses its message to the
     kill or starts a turn — never waits behind a queue nothing will ever drain."""
@@ -1490,7 +1493,7 @@ def test_a_message_sent_while_a_kill_is_running_is_not_swallowed_by_it(
             harness.system.send(
                 "c",
                 text_message_content("sent during the kill"),
-                sender_label="owner",
+                sender_label="owner", mode=mode,
             )
         )
         for _ in range(_SCHEDULING_TURNS_TO_LET_THE_QUEUE_CATCH_UP):

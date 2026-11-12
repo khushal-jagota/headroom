@@ -1419,6 +1419,9 @@ class SqliteProcessConversationSystem:
                     )
             finally:
                 state.being_killed = False
+        # A new message can arrive while the old child stops. Only its proven
+        # retirement permits that message to start a successor child.
+        await self._drain_held_prompts(state)
 
     async def _kill_owned(self, state: _ConversationState) -> None:
         state.last_touched_monotonic = self._monotonic_now()
@@ -1450,7 +1453,6 @@ class SqliteProcessConversationSystem:
         cleanup = state.retirement_task
         if cleanup is not None and not cleanup.done():
             await asyncio.shield(cleanup)
-        await self._drain_held_prompts(state)
 
     async def _kill_initial_delivery(self, state: _ConversationState) -> bool:
         """Own local disposition without waiting for an unacknowledged native operation."""
@@ -2392,7 +2394,8 @@ class SqliteProcessConversationSystem:
             # Held if anything at all is going on, and held if anything is already
             # waiting: a message that arrived later never runs earlier.
             if (
-                state.child_is_quarantined
+                state.being_killed
+                or state.child_is_quarantined
                 or state.phase is not _ConversationPhase.idle
                 or state.held_prompts
                 or state.late_steers
@@ -2449,6 +2452,7 @@ class SqliteProcessConversationSystem:
             message.sender_message_id,
             eligible=(
                 state.phase is _ConversationPhase.idle
+                and not state.being_killed
                 and not state.child_is_quarantined
                 and not state.late_steers
                 and not any(m.delivery_uncertain for m in state.held_prompts)
@@ -2513,7 +2517,7 @@ class SqliteProcessConversationSystem:
         try:
             try:
                 running = state.running_turn
-                if state.child_is_quarantined or any(
+                if state.being_killed or state.child_is_quarantined or any(
                     held.delivery_uncertain for held in state.held_prompts
                 ):
                     return self._hold_prompt(state=state, message=message)
@@ -2616,7 +2620,9 @@ class SqliteProcessConversationSystem:
         try:
             running = state.running_turn
             child = state.child
-            if (
+            if state.being_killed:
+                queued = self._hold_prompt(state=state, message=message)
+            elif (
                 not state.child_is_quarantined
                 and state.phase is _ConversationPhase.idle
                 and not state.held_prompts
@@ -3847,7 +3853,8 @@ class SqliteProcessConversationSystem:
 
         async with state.lock:
             if (
-                state.child_is_quarantined
+                state.being_killed
+                or state.child_is_quarantined
                 or state.phase is not _ConversationPhase.idle
                 or not state.held_prompts
                 or any(held.delivery_uncertain for held in state.held_prompts)

@@ -189,7 +189,7 @@ def test_claude_stop_result_controls_canonical_retirement(
             if fails:
                 monkeypatch.setattr(client, "disconnect", disconnect_failure)
             if fails:
-                with pytest.raises(PlannerError, match="previous agent did not stop"):
+                with pytest.raises(PlannerError, match="Recheck Worker cleanup"):
                     await system.kill("c_cleanup")
             else:
                 await system.kill("c_cleanup")
