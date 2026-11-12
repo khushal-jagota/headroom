@@ -19,6 +19,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
+from urllib.parse import urlsplit
+from urllib.request import getproxies_environment, proxy_bypass_environment
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytest
@@ -320,6 +322,13 @@ def _report(
 
 
 def _reader(spec: dict[str, Any]) -> dict[str, Any]:
+    home_paths = [str(Path(value["path"]).expanduser() / value["child"]) for value in spec["homes"]]
+    proxy_choices = []
+    for value in spec["proxy_inputs"]:
+        with patch.dict(os.environ, value["environment"], clear=True):
+            proxies = getproxies_environment()
+        target = urlsplit(value["target"])
+        proxy_choices.append(None if proxy_bypass_environment(target.netloc, proxies) else proxies.get(target.scheme))
     inventory = [
         {
             "provider": source["provider"],
@@ -409,6 +418,8 @@ def _reader(spec: dict[str, Any]) -> dict[str, Any]:
         "inventory": inventory,
         "fork": {"cold": fork_cold, "encoded": fork_encoded, "resumed": fork_resumed},
         "composition": composition,
+        "home_paths": home_paths,
+        "proxy_choices": proxy_choices,
         "cold": cold,
         "resumed": resumed,
         "rejected_guard": rejected,
@@ -437,6 +448,15 @@ def test_unit19_usage_reader_and_cache(
     link.parent.mkdir()
     link.symlink_to(target)
     spec = {
+        "homes": [
+            {"path": str(tmp_path) + "/native/link/../codex", "child": "sessions"},
+            {"path": str(tmp_path) + "/native//./claude/../configured", "child": "projects"},
+        ],
+        "proxy_inputs": [
+            {"target": "https://raw.githubusercontent.com/rates.json", "environment": {"HTTPS_PROXY": "http://recorded-upper:8080"}},
+            {"target": "https://raw.githubusercontent.com/rates.json", "environment": {"HTTPS_PROXY": "http://recorded-upper:8080", "https_proxy": "http://recorded-lower:8081"}},
+            {"target": "https://raw.githubusercontent.com/rates.json", "environment": {"https_proxy": "http://recorded-lower:8081", "no_proxy": ".githubusercontent.com"}},
+        ],
         "composition_db_link": str(link),
         "fork_append_hex": (_codex(300, "2026-11-12T00:00:05Z") + "\n").encode().hex(),
         "sources": sources,
@@ -628,6 +648,11 @@ def _operations() -> list[dict[str, Any]]:
             "path": summary + "&resolution=hour",
             "status": 422,
         },
+        {
+            "name": "absent-conversation-runtime", "method": "GET",
+            "path": "/api/conversation/usage/limits", "status": 503,
+            "runtime_available": False,
+        },
     ]
 
 
@@ -738,7 +763,17 @@ def _python_http(spec: dict[str, Any], homes: dict[str, str]) -> dict[str, Any]:
                 if operation.get("restart"):
                     current = make()
                     app.state.recorded_usage = current
-                response = client.request(operation["method"], operation["path"])
+                if operation.get("runtime_available") is False:
+                    original_runtime = app.state.conversation
+                    original_override = app.dependency_overrides.pop(conversation_api._runtime)
+                    app.state.conversation = None
+                    try:
+                        response = client.request(operation["method"], operation["path"])
+                    finally:
+                        app.state.conversation = original_runtime
+                        app.dependency_overrides[conversation_api._runtime] = original_override
+                else:
+                    response = client.request(operation["method"], operation["path"])
                 assert response.status_code == operation["status"], (
                     operation["name"],
                     operation["path"],

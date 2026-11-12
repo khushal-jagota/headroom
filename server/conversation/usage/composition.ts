@@ -12,6 +12,14 @@ export interface UsageCompositionOptions extends Omit<UsageServiceOptions, 'now'
   readonly transcriptDirs?: TranscriptDirectories;
   readonly stateDir?: string;
 }
+/** pathlib removes empty and '.' segments, but deliberately retains '..'. */
+export function transcript_home(path: string, child: string): string {
+  const expanded = expand_path(path);
+  const root = expanded.startsWith('//') && !expanded.startsWith('///') ? '//'
+    : expanded.startsWith('/') ? '/' : '';
+  const parts = expanded.split('/').filter((part) => part !== '' && part !== '.');
+  return root + [...parts, child].join('/');
+}
 /** Path.resolve(strict=False) follows links before a later '..', and permits missing tails. */
 function resolvedDatabasePath(path: string): string {
   function walk(value: string, base: string, active: Set<string>): string {
@@ -70,14 +78,11 @@ export function makeUsageService(
       : [
           {
             provider: 'codex' as const,
-            dir: join(expand_path(process.env.CODEX_HOME || join(homedir(), '.codex')), 'sessions'),
+            dir: transcript_home(process.env.CODEX_HOME || join(homedir(), '.codex'), 'sessions'),
           },
           {
             provider: 'claude' as const,
-            dir: join(
-              expand_path(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')),
-              'projects',
-            ),
+            dir: transcript_home(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects'),
           },
         ]);
   return new UsageService(stateDir, transcriptDirs, {

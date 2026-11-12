@@ -17,7 +17,8 @@ import {
 } from '../usageScanCache.ts';
 import type { CachedFile, ScanCache } from '../usageScanCache.ts';
 import { UsageService } from '../UsageService.ts';
-import { makeUsageService } from '../composition.ts';
+import { makeUsageService, transcript_home } from '../composition.ts';
+import { rates_proxy_for } from '../proxy.ts';
 import { createUsageRoutes } from '../routes.ts';
 import { BackendStateStore } from '../../backend_state.ts';
 import { createApp } from '../../../app.ts';
@@ -31,6 +32,8 @@ interface Source {
   fileName?: string;
 }
 interface ReaderSpec {
+  homes: readonly { path: string; child: string }[];
+  proxy_inputs: readonly { target: string; environment: Readonly<Record<string, string>> }[];
   sources: readonly Source[];
   selected: Readonly<Record<UsageProviderKind | 'fork', string>>;
   composition_db_link: string;
@@ -131,6 +134,8 @@ export async function compare_reader(spec: ReaderSpec) {
     inventory,
     fork: { cold: forkCold, encoded: forkEncoded, resumed: forkResumed },
     composition,
+    home_paths: spec.homes.map((value) => transcript_home(value.path, value.child)),
+    proxy_choices: spec.proxy_inputs.map((value) => rates_proxy_for(value.target, value.environment)),
     cold,
     resumed,
     rejected_guard,
@@ -154,6 +159,7 @@ interface Operation {
   settings?: UsageSettings;
   restart?: boolean;
   corrupt_cache?: boolean;
+  runtime_available?: boolean;
 }
 interface HttpSpec {
   db_path: string;
@@ -168,6 +174,7 @@ export async function compare_http(spec: HttpSpec) {
   const database = createDatabase(spec.db_path);
   let now = spec.now_ms;
   let settings: UsageSettings = {};
+  let runtimeAvailable = true;
   const calls: { now: number; result: number }[] = [];
   const services: UsageService[] = [];
   const make = () => {
@@ -196,6 +203,7 @@ export async function compare_http(spec: HttpSpec) {
         {
           prefix: '/api/conversation/usage',
           routes: createUsageRoutes({
+            get conversation_runtime_available() { return runtimeAvailable; },
             recorded_usage: {
               readSummary: (input: UsageSummaryInput) => current.readSummary(input),
               refreshRates: () => current.refreshRates(),
@@ -210,6 +218,7 @@ export async function compare_http(spec: HttpSpec) {
   try {
     const answers = [];
     for (const operation of spec.operations) {
+      runtimeAvailable = operation.runtime_available ?? true;
       now += operation.advance_ms ?? 0;
       if (operation.settings !== undefined) settings = operation.settings;
       if (operation.corrupt_cache) {

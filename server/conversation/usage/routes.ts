@@ -4,9 +4,9 @@ import type { AreaServices } from '../../core/authority/register.ts';
 import { HttpError } from '../../core/http/errors.ts';
 import { scalarQueries } from '../../list_reads/http.ts';
 import { calendar_date } from '../../measures/logic/dates.ts';
-import { timezone, UnmappedUsageTimeZone } from './timeZone.ts';
+import { timezone } from './timeZone.ts';
 import { ConversationBackendKey } from '../contracts.ts';
-import { UsageReadError } from './contracts.ts';
+import { UsageReadError, UsageServiceStopped } from './contracts.ts';
 import type { UsageHttpRuntime, UsageSummaryInput } from './contracts.ts';
 import { presentProviderLimits } from './providerLimits.ts';
 
@@ -81,8 +81,7 @@ function summary_input(raw: Record<string, unknown>): UsageSummaryInput {
       });
       calendar_date(normalized);
     }
-  } catch (error) {
-    if (error instanceof UnmappedUsageTimeZone) throw error;
+  } catch {
     throw new HttpError(422, 'Invalid usage date or time zone');
   }
   return {
@@ -102,6 +101,7 @@ export function createUsageRoutes(runtime: UsageHttpRuntime): FastifyPluginAsync
       try {
         return await runtime.recorded_usage.readSummary(input);
       } catch (error) {
+        if (error instanceof UsageServiceStopped) throw new HttpError(503, error.message);
         if (
           error instanceof UsageReadError ||
           error instanceof RangeError ||
@@ -112,6 +112,8 @@ export function createUsageRoutes(runtime: UsageHttpRuntime): FastifyPluginAsync
       }
     });
     app.get('/limits', async () => {
+      if (!runtime.conversation_runtime_available)
+        throw new HttpError(503, 'the conversation system is unavailable');
       if (runtime.backend_state === null) return {};
       const result: Record<string, ReturnType<typeof presentProviderLimits>> = {};
       for (const backend of Object.values(ConversationBackendKey)) {
@@ -126,7 +128,14 @@ export function createUsageRoutes(runtime: UsageHttpRuntime): FastifyPluginAsync
       scope.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, body, done) =>
         done(null, body),
       );
-      scope.post('/rates/refresh', async () => runtime.recorded_usage.refreshRates());
+      scope.post('/rates/refresh', async () => {
+        try {
+          return await runtime.recorded_usage.refreshRates();
+        } catch (error) {
+          if (error instanceof UsageServiceStopped) throw new HttpError(503, error.message);
+          throw error;
+        }
+      });
     });
   };
 }

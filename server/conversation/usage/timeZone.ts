@@ -2,13 +2,6 @@
 import { closeSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
 import { delimiter, isAbsolute, join, relative, sep } from 'node:path';
 
-export class UnmappedUsageTimeZone extends Error {
-  readonly key: string;
-  constructor(key: string) {
-    super(`Installed ZoneInfo key has no ICU mapping: ${key}`);
-    this.key = key;
-  }
-}
 const STANDARD_ROOTS = [
   '/usr/share/zoneinfo',
   '/usr/lib/zoneinfo',
@@ -78,6 +71,7 @@ export function timezone(key: string): string {
       /* Try the canonical symlink target. */
     }
   }
-  // A real source key must not silently become UTC or an ordinary invalid-input answer.
-  throw new UnmappedUsageTimeZone(key);
+  // Accepted zone-data deviation: retain admission of an installed key even
+  // when Node's ICU cannot name it, and bucket it in UTC instead of failing.
+  return 'UTC';
 }

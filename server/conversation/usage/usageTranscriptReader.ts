@@ -7,7 +7,6 @@
  * bytes. The reader retains a provisional tail and a bounded resume guard.
  */
 import * as NodeFSP from 'node:fs/promises';
-import * as NodePath from 'node:path';
 import type { Dirent } from 'node:fs';
 
 import type { UsageProviderKind } from './contracts.ts';
@@ -109,7 +108,8 @@ export async function listTranscriptFiles(
       return;
     }
     for (const entry of entries) {
-      const child = NodePath.join(dir, entry.name);
+      // Python os.path.join retains '..' until the filesystem follows symlinks.
+      const child = dir.endsWith('/') ? dir + entry.name : dir + '/' + entry.name;
       if (entry.isDirectory()) {
         await walk(child);
         continue;

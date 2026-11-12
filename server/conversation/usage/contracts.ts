@@ -105,6 +105,13 @@ export class UsageReadError extends Error {
     this.detail = detail;
   }
 }
+/** The service no longer admits work after lifecycle shutdown starts. */
+export class UsageServiceStopped extends Error {
+  constructor() {
+    super('Usage service is stopping.');
+    this.name = 'UsageServiceStopped';
+  }
+}
 export interface UsageModelPriceOverride {
   readonly inputCostPerMillionTokens: number;
   readonly outputCostPerMillionTokens: number;
@@ -136,8 +143,11 @@ export interface RecordedUsageService {
   readSummary(input: UsageSummaryInput): Promise<UsageSummary>;
   refreshRates(): Promise<UsagePricing>;
   finish_operations(): Promise<void>;
+  /** Shared absolute monotonic deadline, in performance.now()/1000 seconds. */
+  stop?(options: { readonly deadline: number }): Promise<void>;
 }
 export interface UsageHttpRuntime {
+  readonly conversation_runtime_available: boolean;
   readonly recorded_usage: RecordedUsageService;
   readonly backend_state: BackendStateStore | null;
 }

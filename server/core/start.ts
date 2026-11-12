@@ -157,6 +157,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       // Fence every producer before awaiting either drain. Ownership also covers
       // environment setup that was already pending when shutdown began.
       const producers = Promise.all([
+        attempt(() => recorded_usage?.stop?.({ deadline })),
         attempt(() => background?.close({ deadline })),
         attempt(() => environments?.close({ deadline })),
         attempt(() => environmentsStarting?.catch(() => {})),
@@ -310,6 +311,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         {
           prefix: '/api/conversation/usage',
           routes: createUsageRoutes({
+            conversation_runtime_available: conversationSystem !== undefined,
             recorded_usage: {
               readSummary: async (input) =>
                 await conversationWrites.run(() => usage.readSummary(input)),

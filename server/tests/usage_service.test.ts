@@ -1,14 +1,18 @@
 /** Direct parity owns parsing. These gates prove shared work and cache ownership. */
 import { afterEach, expect, test, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
+import { Worker } from 'node:worker_threads';
 import { Deferred } from '../conversation/runtime/state.ts';
-import { UsageService } from '../conversation/usage/UsageService.ts';
+import { UsageEngine as UsageService } from '../conversation/usage/UsageEngine.ts';
+import { UsageService as WorkerUsageService } from '../conversation/usage/UsageService.ts';
 import type { UsageSettings, UsageSummaryInput } from '../conversation/usage/contracts.ts';
+import { UsageServiceStopped } from '../conversation/usage/contracts.ts';
 import type { TranscriptParseResult } from '../conversation/usage/usageTranscriptReader.ts';
 import { RATES_TIMEOUT_MS } from '../conversation/usage/configuration.ts';
+import { timezone } from '../conversation/usage/timeZone.ts';
 
 const hooks = vi.hoisted(() => ({
   read: undefined as ((path: unknown) => Promise<Buffer> | undefined) | undefined,
@@ -66,6 +70,30 @@ const window: UsageSummaryInput = {
 };
 const now = Date.parse('2026-08-01T12:00:00Z');
 const rates = { 'test-model': { input_cost_per_token: 0.01, output_cost_per_token: 0.02 } };
+
+// Gap: ordinary IANA names cannot prove the accepted installed-but-ICU-unknown fallback.
+test('an installed custom zone uses the accepted UTC fallback without admitting missing keys', async () => {
+  const paths = fixture();
+  const zones = join(paths.root, 'zones');
+  mkdirSync(zones);
+  // One small public fixed-offset file. Its +14 offset would move the fixture to August 2.
+  copyFileSync('/usr/share/zoneinfo/Etc/GMT-14', join(zones, 'PanelsCustom'));
+  vi.stubEnv('PYTHONTZPATH', zones);
+  const service = new UsageService(paths.state, [['claude', paths.transcripts]], {
+    now: () => now, ratesFetcher: () => rates,
+  });
+  try {
+    expect(timezone('PanelsCustom')).toBe('UTC');
+    expect(() => timezone('MissingCustom')).toThrow('Invalid usage time zone');
+    const summary = await service.readSummary({ ...window, timeZone: 'PanelsCustom' });
+    expect(summary.timeZone).toBe('PanelsCustom');
+    expect(summary.buckets[0]?.day).toBe('2026-08-01');
+  } finally {
+    await service.finish_operations();
+    vi.unstubAllEnvs();
+  }
+});
+
 afterEach(() => {
   hooks.read = undefined;
   hooks.write = undefined;
@@ -263,5 +291,125 @@ test('the service bounds an injected fetcher and releases retained work after ti
     release.resolve(null);
     await service.finish_operations();
     vi.useRealTimers();
+  }
+});
+
+// Gap: engine-only concurrency checks do not prove that shutdown owns the actual worker.
+test('shutdown aborts the injected rate operation and joins the worker within the shared deadline', async () => {
+  const paths = fixture();
+  const entered = new Deferred<void>();
+  const release = new Deferred<unknown>();
+  let signal: AbortSignal | undefined;
+  const service = new WorkerUsageService(paths.state, [], {
+    ratesFetcher: (options) => {
+      signal = options?.signal;
+      entered.resolve();
+      return release.promise;
+    },
+  });
+  const result = service.refreshRates().then(() => null, (error: unknown) => error);
+  try {
+    await entered.promise;
+    const started = performance.now();
+    await service.stop({ deadline: performance.now() / 1000 + 2 });
+    expect(signal?.aborted).toBe(true);
+    expect(await result).toBeInstanceOf(UsageServiceStopped);
+    await service.finish_operations();
+    await expect(service.refreshRates()).rejects.toBeInstanceOf(UsageServiceStopped);
+    await expect(service.readSummary(window)).rejects.toBeInstanceOf(UsageServiceStopped);
+    console.info(JSON.stringify({ usage_worker_stop_ms: performance.now() - started }));
+  } finally {
+    release.resolve(null);
+    await service.stop({ deadline: performance.now() / 1000 + 2 });
+  }
+});
+
+// Gap: tiny transcript comparisons cannot detect a cache-size-dependent event-loop stall.
+// The record-bearing cache is generated inside the worker, never cloned or written.
+test('synthetic 30000-file cache serialization leaves the main event loop responsive', async () => {
+  const cacheModule = new URL('../conversation/usage/usageScanCache.ts', import.meta.url).href;
+  const worker = new Worker(`
+    const { parentPort, workerData } = require('node:worker_threads');
+    (async () => {
+      const { encodeScanCache, decodeScanCache } = await import(workerData);
+      parentPort.once('message', () => {
+        const start = performance.now();
+        const cache = new Map();
+        for (let index = 0; index < 30000; index++) cache.set('/synthetic/' + index + '.jsonl', {
+          size: 8000, mtimeMs: 1785585600000, provider: 'claude',
+          records: Array.from({ length: 8 }, (_, slot) => ({
+            provider: 'claude', timestampMs: 1785585600000 + slot,
+            model: 'synthetic-model-' + (slot % 4), sessionId: 'session-' + index + '-' + slot,
+            dedupeKey: 'request-' + index + '-' + slot, reportedCostUsd: null,
+            totals: { uncachedInputTokens: 100, cachedInputTokens: 50,
+              cacheCreationTokens: 5, outputTokens: 20, reasoningTokens: 0 }
+          })), tailRecords: [],
+          position: { resumeOffset: 0, guardLength: 0, guardHash: 0, codexState: null }
+        });
+        const constructed = performance.now();
+        const bytes = JSON.stringify(encodeScanCache(cache));
+        const encoded = performance.now();
+        cache.clear();
+        const decoded = decodeScanCache(JSON.parse(bytes));
+        const finished = performance.now();
+        let records = 0;
+        for (const entry of decoded.values()) records += entry.records.length;
+        parentPort.postMessage({ files: decoded.size, records, bytes: Buffer.byteLength(bytes),
+          construction_ms: constructed - start, encode_ms: encoded - constructed,
+          decode_ms: finished - encoded, elapsed_ms: finished - start });
+      });
+      parentPort.postMessage('ready');
+    })().catch(error => { throw error; });
+  `, { eval: true, workerData: cacheModule });
+  let ticks = 0;
+  let largestGap = 0;
+  let last = performance.now();
+  let timer: ReturnType<typeof setInterval> | undefined;
+  try {
+    type Measurement = { files: number; records: number; bytes: number; construction_ms: number; encode_ms: number; decode_ms: number; elapsed_ms: number };
+    const measurement = await new Promise<Measurement>((resolve, reject) => {
+      worker.on('error', reject);
+      worker.on('message', (message: 'ready' | Measurement) => {
+        if (message !== 'ready') {
+          largestGap = Math.max(largestGap, performance.now() - last);
+          resolve(message);
+          return;
+        }
+        last = performance.now();
+        timer = setInterval(() => {
+          const current = performance.now();
+          largestGap = Math.max(largestGap, current - last);
+          last = current;
+          ticks++;
+        }, 1);
+        worker.postMessage('run');
+      });
+    });
+    expect(measurement.files).toBe(30000);
+    expect(measurement.records).toBe(240000);
+    expect(ticks).toBeGreaterThan(0);
+    console.info(JSON.stringify({ usage_cache_worker: measurement, main_loop_ticks: ticks, largest_tick_gap_ms: largestGap }));
+  } finally {
+    clearInterval(timer);
+    await worker.terminate();
+  }
+}, 15000);
+
+// One controlled line exercises the production worker, without any native provider files.
+test('a multi-megabyte native line is parsed by the owned worker', async () => {
+  const paths = fixture();
+  const line = {
+    type: 'assistant', timestamp: '2026-08-01T10:00:00Z', sessionId: 'synthetic-line', requestId: 'synthetic-request',
+    message: { id: 'synthetic-message', model: 'test-model', usage: { input_tokens: 10, output_tokens: 5 }, content: 'x'.repeat(2 * 1024 * 1024) },
+  };
+  writeFileSync(join(paths.transcripts, 'session.jsonl'), JSON.stringify(line) + '\n');
+  const service = new WorkerUsageService(paths.state, [['claude', paths.transcripts]], {
+    now: () => now, ratesFetcher: () => rates,
+  });
+  try {
+    const summary = await service.readSummary(window);
+    expect(summary.buckets[0]?.totals.outputTokens).toBe(5);
+  } finally {
+    await service.stop({ deadline: performance.now() / 1000 + 2 });
   }
 });
