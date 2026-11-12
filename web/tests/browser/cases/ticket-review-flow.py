@@ -987,7 +987,7 @@ def run(browser, urls):
     runtime_working = True
     drive("window.__batch()")
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Canonical masthead")
-    expect(page.locator("[data-ticket-identity]")).to_have_text("Current Project · Personal")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("VPS Current Project · Personal")
     expect(page.locator(".ticket-title [data-conversation-id]")).to_have_attribute(
         "data-conversation-id", "masthead-current"
     )
