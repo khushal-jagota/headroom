@@ -37,8 +37,9 @@ export function acquireLock(path: string): LockHandle | null {
 }
 function canonical_database_path(path: string): string {
   const absolute = resolve(path);
-  try { return realpathSync(absolute); }
-  catch (error) {
+  try {
+    return realpathSync(absolute);
+  } catch (error) {
     if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
   }
   // Python resolves a missing DB non-strictly. Follow an existing dangling link
