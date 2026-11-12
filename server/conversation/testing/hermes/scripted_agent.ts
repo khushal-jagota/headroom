@@ -14,6 +14,7 @@ const scenario = process.env.UNIT16_CASE!;
 if (!trace || !statePath || !controlPath || !scenario)
   throw new Error('Synthetic fixture configuration required');
 const session = `scripted-${scenario}`;
+const observedShape = scenario === 'plain' || scenario === 'resume';
 type State = { model: string; load: boolean; prompts: number };
 const all: Record<string, State> = existsSync(statePath)
   ? JSON.parse(readFileSync(statePath, 'utf8'))
@@ -90,9 +91,31 @@ async function finish(text = 'finished', stopReason = 'end_turn') {
   const pending = active;
   active = null;
   if (text) await chunk(text);
+  // Cost-free occupancy is context state, never this turn's expenditure.
+  if (observedShape)
+    await notify({
+      sessionUpdate: 'usage_update',
+      used: scenario === 'plain' ? 1571 : state.prompts === 1 ? 1578 : 1715,
+      size: 272000,
+    });
+  const [inputTokens, outputTokens, cachedReadTokens]: [number, number, number] =
+    scenario === 'plain'
+      ? [1232, 10, 0]
+      : scenario === 'resume'
+        ? state.prompts === 1
+          ? [1243, 7, 0]
+          : [1276, 7, 1024]
+        : [12, 7, 3];
   await pending.responder.respond({
     stopReason,
-    usage: { inputTokens: 12, outputTokens: 7, totalTokens: 19, cachedReadTokens: 3 },
+    usage: {
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+      cachedReadTokens,
+      // Native thought counts were zero. This proves shape acceptance only.
+      ...(observedShape ? { thoughtTokens: 0 } : {}),
+    },
   });
 }
 async function commands() {
@@ -103,6 +126,12 @@ async function commands() {
       { name: 'native', description: 'Native command', input: { hint: 'argument' } },
     ],
   });
+  if (observedShape)
+    await notify({
+      sessionUpdate: 'usage_update',
+      used: state.prompts === 0 ? 0 : 139,
+      size: 272000,
+    });
 }
 async function prompt(responder: Rpc.RequestResponder, params: Record<string, any>) {
   if (active) throw new Error('Prompt overlapped an active turn');
@@ -117,6 +146,9 @@ async function prompt(responder: Rpc.RequestResponder, params: Record<string, an
     /\[CASE:([^\]]+)\]/.exec(text)?.[1] ??
     (text === '/compress' ? 'compact' : text.startsWith('/native') ? 'native' : 'plain');
   log({ kind: 'prompt', scenario, name, text });
+  // Representative ordinary metadata: native evidence captured its type only.
+  if (observedShape && state.prompts === 1)
+    await notify({ sessionUpdate: 'session_info_update', title: 'Synthetic ordinary session' });
   if (name === 'hold' || name === 'steer-base') return;
   if (name === 'compact') {
     await notify({
@@ -264,7 +296,7 @@ const connection = rpc.Connection.builder()
         await commands();
         await message.responder.respond({
           sessionId: session,
-          configOptions: option(),
+          ...(observedShape ? {} : { configOptions: option() }),
           _meta: metadata(),
         });
       } else if (message.method === 'session/load') {
@@ -273,9 +305,18 @@ const connection = rpc.Connection.builder()
             new RequestError(-32000, 'synthetic session load refused'),
           );
         else {
+          if (observedShape)
+            await notify({
+              sessionUpdate: 'user_message_chunk',
+              messageId: 'replay-user',
+              content: { type: 'text', text: 'REPLAY_MUST_NOT_APPEAR user' },
+            });
           await chunk('REPLAY_MUST_NOT_APPEAR');
           await commands();
-          await message.responder.respond({ configOptions: option(), _meta: metadata() });
+          await message.responder.respond({
+            ...(observedShape ? {} : { configOptions: option() }),
+            _meta: metadata(),
+          });
         }
       } else if (message.method === 'session/set_mode') await message.responder.respond({});
       else if (message.method === 'session/set_model') {
