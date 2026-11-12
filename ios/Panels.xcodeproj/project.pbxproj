@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A7DDA71271634AF76DC57401 /* review-decision-requests.json in Resources */ = {isa = PBXBuildFile; fileRef = 7D78E3AC2EAA0E3DCC74F883 /* review-decision-requests.json */; };
 		0307B26ABAB3340A50EA35E2 /* ticket-full.json in Resources */ = {isa = PBXBuildFile; fileRef = 050F4E53EA9313A8C93AC324 /* ticket-full.json */; };
 		063C8A6F11DADE62594FDDFE /* FeedbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 709DA5E0A464CEA464F27E8A /* FeedbackTests.swift */; };
 		08D15B3F0F82160557E48E7C /* ReviewStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4BC4A569A9BE591B3AB6938 /* ReviewStyle.swift */; };
@@ -185,6 +186,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		7D78E3AC2EAA0E3DCC74F883 /* review-decision-requests.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "review-decision-requests.json"; sourceTree = "<group>"; };
 		00A2277712C82F0C394DF3F8 /* GoalPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalPresentation.swift; sourceTree = "<group>"; };
 		0183025ADA6376946E45B42C /* GoalChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalChart.swift; sourceTree = "<group>"; };
 		01D73A7F608F5039244AFEEC /* ArtifactMarkdown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactMarkdown.swift; sourceTree = "<group>"; };
@@ -437,6 +439,7 @@
 				84958E18FFD4BF0F350CDDA3 /* manager.json */,
 				D00C1733528B6700CE613C4A /* managers.json */,
 				050F4E53EA9313A8C93AC324 /* ticket-full.json */,
+				7D78E3AC2EAA0E3DCC74F883 /* review-decision-requests.json */,
 				490342327C1A28E38841549F /* tickets.json */,
 			);
 			path = Fixtures;
@@ -1159,6 +1162,7 @@
 				D8759A19CECC7DF6FE887A2F /* manager.json in Resources */,
 				3E90EAD8718A7CC68F1E9D6B /* managers.json in Resources */,
 				0307B26ABAB3340A50EA35E2 /* ticket-full.json in Resources */,
+				A7DDA71271634AF76DC57401 /* review-decision-requests.json in Resources */,
 				C021BC02393459A9D0BA8C95 /* tickets.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

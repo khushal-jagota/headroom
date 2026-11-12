@@ -19,7 +19,7 @@
     manager: { id: string; title: string } | null;
     onAccept: (body: Record<string, unknown>) => Promise<unknown>;
     onScope: (body: Record<string,unknown>) => Promise<void>;
-    onReturn: (message: string) => Promise<unknown>;
+    onReturn: (message: string, expectedProposalRevision: number) => Promise<unknown>;
     canReturn?: boolean;
     disabled?: boolean;
     /** The Review screen's voice-enabled note field beside the decision controls.
@@ -110,8 +110,9 @@
     if (proposal.field === "brief" || disabled || !canReturn || busy || resolved || holdDecisions || !message) return;
     busy = true; error = null;
     const key = noteKey;
+    const revision = proposal.revision;
     try {
-      await onReturn(message);
+      await onReturn(message, revision);
       forgetReviewNote(key);
       if (!mounted || noteKey !== key) return;
       revisionText = "";

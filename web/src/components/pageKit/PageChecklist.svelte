@@ -18,6 +18,7 @@
   async function persist(id: string, state: "done" | "open") {
     const request = ++requestSequence;
     const blockId = block.id;
+    const revision = context?.revision;
     const session = context?.checklistSession?.(blockId, id);
     localRequests.set(id, request);
     pending = { ...pending, [id]: { state, request } };
@@ -30,7 +31,7 @@
         const write = () => context.updateBlock!(blockId, old => {
           if (old.type !== "checklist" || !old.items.some(item => item.id === id)) throw new Error("This checklist item no longer exists.");
           return { ...old, items: old.items.map(item => item.id === id ? { ...item, state } : item) };
-        });
+        }, revision);
         await (session ? session.run({ state }, write) : write());
       } else {
         // The component gallery has no writer. Its interactions accept local state.

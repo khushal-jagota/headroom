@@ -267,8 +267,8 @@
       section.detail.pending_proposal?.field === "brief" &&
       Boolean(section.detail.employee_configuration_editable)
   );
-  function returnProposal(message:string):Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/reject`,{method:"POST",body:{message}});
+  function returnProposal(message:string,expectedProposalRevision:number):Promise<unknown> {
+    return mutateJson(`/api/tickets/${stableId}/reject`,{method:"POST",body:{message,expected_proposal_revision:expectedProposalRevision}});
   }
 
   async function removeBlocker(blockerTicketId: string): Promise<void> {

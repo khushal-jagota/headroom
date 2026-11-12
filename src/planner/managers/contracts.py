@@ -62,6 +62,7 @@ class HolderPageEditBody(TypedDict):
     """CLI input for replacement of a Manager or Chief page document."""
 
     page: PageDocument | None
+    expected_revision: NotRequired[int]
 
 
 class ManagerWorkspaceDocument(TypedDict):
