@@ -152,7 +152,10 @@
       "area": "files",
       "method": "GET",
       "path": "/api/artifact-catalog/manager/${manager}",
-      "status": 200
+      "status": 200,
+      "capture": {
+        "catalog_0": ""
+      }
     },
     {
       "area": "files",
@@ -236,7 +239,10 @@
       "area": "files",
       "method": "GET",
       "path": "/api/artifact-catalog/manager/${manager}",
-      "status": 200
+      "status": 200,
+      "capture": {
+        "catalog_1": ""
+      }
     },
     {
       "area": "files",
@@ -282,25 +288,37 @@
       "area": "files",
       "method": "GET",
       "path": "/api/artifact-catalog/manager/${manager}",
-      "status": 200
+      "status": 200,
+      "capture": {
+        "catalog_2": ""
+      }
     },
     {
       "area": "files",
       "method": "GET",
       "path": "/api/artifact-catalog/manager/${manager}?directory=nested",
-      "status": 200
+      "status": 200,
+      "capture": {
+        "catalog_3": ""
+      }
     },
     {
       "area": "files",
       "method": "GET",
       "path": "/api/artifact-catalog/manager/${manager}?limit=1&offset=1",
-      "status": 200
+      "status": 200,
+      "capture": {
+        "catalog_4": ""
+      }
     },
     {
       "area": "files",
       "method": "GET",
       "path": "/api/artifact-catalog/ticket/${ticket}",
-      "status": 200
+      "status": 200,
+      "capture": {
+        "catalog_5": ""
+      }
     },
     {
       "area": "files",
@@ -390,7 +408,10 @@
       "area": "files",
       "method": "GET",
       "path": "/api/artifact-catalog/goal/${goal}",
-      "status": 200
+      "status": 200,
+      "capture": {
+        "catalog_6": ""
+      }
     },
     {
       "area": "files",
@@ -402,13 +423,19 @@
       "area": "files",
       "method": "GET",
       "path": "/api/artifact-catalog/goal/${goal}",
-      "status": 200
+      "status": 200,
+      "capture": {
+        "catalog_7": ""
+      }
     },
     {
       "area": "files",
       "method": "GET",
       "path": "/api/artifact-catalog/manager/${manager}?directory=constructor",
-      "status": 200
+      "status": 200,
+      "capture": {
+        "catalog_8": ""
+      }
     },
     {
       "area": "files",
@@ -485,5 +512,16 @@
   "probes": [
     "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22blocked%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D"
   ],
-  "candidate": "typescript"
+  "candidate": "typescript",
+  "report_captures": [
+    "catalog_0",
+    "catalog_1",
+    "catalog_2",
+    "catalog_3",
+    "catalog_4",
+    "catalog_5",
+    "catalog_6",
+    "catalog_7",
+    "catalog_8"
+  ]
 }

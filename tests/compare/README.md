@@ -251,3 +251,8 @@ For a non-JSON request, set `"response_bytes": true` on the request to compare
 `response.content` as a hex byte string under `body.bytes`. This avoids lossy text
 decoding for ranges and media. JSON responses still compare parsed. Existing lists
 keep text behavior unless they opt in. This does not add raw request bodies.
+The report retains these comparisons under `byte_answers`, with both statuses,
+selected headers (also Content-Length), and exact body bytes. ETag headers remain
+literal digests, rather than random IDs. Change-token rules support SQLite BLOBs
+through the existing hex encoding. Skills filenames remain exact; only managed
+record IDs in managed filenames use the identity map.

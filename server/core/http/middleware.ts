@@ -171,8 +171,6 @@ export function installMiddleware(
     )
       return payload;
     if (payload instanceof Readable) {
-      const length = reply.getHeader('content-length');
-      if (length !== undefined && Number(length) < 1024) return payload;
       const vary = reply.getHeader('vary');
       reply.header('vary', vary ? `${vary}, Accept-Encoding` : 'Accept-Encoding');
       if (!String(request.headers['accept-encoding'] ?? '').includes('gzip')) return payload;

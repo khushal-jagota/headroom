@@ -1,9 +1,27 @@
-import { readFile, stat, realpath } from 'node:fs/promises';
+import { open, readFile, stat, realpath } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { resolve, sep, extname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { createHash, randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+// Starlette FileResponse emits chunks of this size. A final small chunk retains
+// the ordinary (non-streaming) gzip length and threshold behavior.
+const FILE_CHUNK_BYTES = 64 * 1024;
+async function readSlice(file: string, start: number, end: number): Promise<Buffer> {
+  const handle = await open(file, 'r');
+  try {
+    const bytes = Buffer.alloc(end - start);
+    let length = 0;
+    while (length < bytes.length) {
+      const result = await handle.read(bytes, length, bytes.length - length, start + length);
+      if (!result.bytesRead) break;
+      length += result.bytesRead;
+    }
+    return bytes.subarray(0, length);
+  } finally {
+    await handle.close();
+  }
+}
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -153,7 +171,9 @@ export async function sendFile(
         .send(
           request.method === 'HEAD' || end === start
             ? Buffer.alloc(0)
-            : createReadStream(file, { start, end: end - 1 }),
+            : end - start < FILE_CHUNK_BYTES
+              ? await readSlice(file, start, end)
+              : createReadStream(file, { start, end: end - 1, highWaterMark: FILE_CHUNK_BYTES }),
         );
       await reply;
       return;
@@ -176,7 +196,13 @@ export async function sendFile(
     await reply.send(Readable.from(chunks));
     return;
   }
-  await reply.send(request.method === 'HEAD' ? Buffer.alloc(0) : createReadStream(file));
+  await reply.send(
+    request.method === 'HEAD'
+      ? Buffer.alloc(0)
+      : info.size < FILE_CHUNK_BYTES
+        ? await readFile(file)
+        : createReadStream(file, { highWaterMark: FILE_CHUNK_BYTES }),
+  );
 }
 export async function mountStatic(
   app: FastifyInstance,

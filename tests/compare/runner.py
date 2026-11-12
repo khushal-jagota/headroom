@@ -380,6 +380,7 @@ def run_list(
     servers = []
     modules = ["tests.compare.host", right_module]
     differences: list[dict[str, Any]] = []
+    byte_answers: list[dict[str, Any]] = []
     reach: dict[str, set[str]] = {}
     try:
         for name, module in zip(("python", "candidate"), modules, strict=True):
@@ -480,7 +481,9 @@ def run_list(
                                 assert response.status_code == resolved["status"], (
                                     index, side, resolved, response.status_code, response.text,
                                 )
-                            if "application/json" in response.headers.get("content-type", ""):
+                            if resolved["method"].upper() == "HEAD":
+                                body = response.content
+                            elif "application/json" in response.headers.get("content-type", ""):
                                 body = response.json()
                             else:
                                 body = (response.content
@@ -489,7 +492,7 @@ def run_list(
                                 "status": response.status_code,
                                 "headers": {
                                     h: response.headers[h]
-                                    for h in (*HEADERS, *(("content-length",) if resolved.get("response_bytes") is True else ())) if h in response.headers
+                                    for h in (*HEADERS, *(("content-length", "content-encoding", "vary") if resolved.get("response_bytes") is True else ())) if h in response.headers
                                 },
                                 "body": body,
                             }
@@ -525,6 +528,8 @@ def run_list(
                         reach.setdefault(call.get("area", "unspecified"), set()).add(
                             method + " " + path
                         )
+                    if call.get("response_bytes") is True:
+                        byte_answers.append({"step": index, "path": call["path"], "answers": answers})
                     if answers[0] != answers[1]:
                         differences.append({"step": index, "call": call, "answers": answers})
         snapshots = [rows(s.db_path, n) for s, n in zip(servers, norms, strict=True)]
@@ -572,6 +577,7 @@ def run_list(
             "loop_results": loop_results,
             "rules": rules,
             **file_reports,
+            **({"byte_answers": byte_answers} if byte_answers else {}),
         }
     finally:
         for server in reversed(servers):

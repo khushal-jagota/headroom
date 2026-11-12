@@ -86,6 +86,7 @@ function scope<T>(
   work: (sql: TransactionSql) => T,
 ): T {
   let active = true;
+  const clearFunctions: (() => void)[] = [];
   function prepare(sql: string): BetterSqlite3.Statement {
     if (!active) throw new TypeError('database SQL scope is no longer active');
     assertScopedStatement(sql);
@@ -106,9 +107,14 @@ function scope<T>(
     : reader;
   functionScopes.set(capability, (name, callback) => {
     if (!active) throw new TypeError('database SQL scope is no longer active');
+    let current: typeof callback | undefined = callback;
+    clearFunctions.push(() => {
+      current = undefined;
+    });
     connection.function(name, { varargs: true }, (...values: SqlValue[]) => {
-      if (!active) throw new TypeError('database SQL function scope is no longer active');
-      return callback(...values);
+      if (!active || !current)
+        throw new TypeError('database SQL function scope is no longer active');
+      return current(...values);
     });
   });
   try {
@@ -116,6 +122,7 @@ function scope<T>(
   } finally {
     functionScopes.delete(capability);
     active = false;
+    for (const clear of clearFunctions) clear();
   }
 }
 
@@ -198,8 +205,6 @@ export function createDatabase(
       let result: T;
       let changed = false;
       try {
-        if (writeOptions?.busyTimeoutMs !== undefined)
-          writer.pragma(`busy_timeout = ${writeOptions.busyTimeoutMs}`);
         writer.exec('BEGIN IMMEDIATE');
         const before = writer.prepare('SELECT total_changes() AS count').get() as { count: number };
         result = scope(writer, true, work);
@@ -211,8 +216,6 @@ export function createDatabase(
         if (writer.inTransaction) writer.exec('ROLLBACK');
         throw error;
       } finally {
-        if (writeOptions?.busyTimeoutMs !== undefined)
-          writer.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
         writing = false;
       }
       if (changed && writeOptions?.changeSignal !== 'silent') {
