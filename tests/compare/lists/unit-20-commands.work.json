@@ -1,0 +1,1124 @@
+{
+  "source_roots": [
+    "src/planner/cli/",
+    "src/planner/projects/",
+    "src/planner/managers/",
+    "src/planner/tickets/",
+    "src/planner/worker_types/",
+    "src/planner/worker_settings/"
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "CLI populated Manager",
+        "project_id": "project_other",
+        "goal": "A durable purpose."
+      },
+      "capture": {
+        "manager": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "CLI disposable Manager",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "disposable_manager": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "CLI ticket",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "manager": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "ticket": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "CLI blocker",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "manager": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "blocker": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "CLI user gate",
+        "worker_type": "coding",
+        "workflow": {
+          "label": "User gate",
+          "guidance": "",
+          "fields": [
+            {
+              "id": "brief",
+              "label": "Brief"
+            },
+            {
+              "id": "consequences",
+              "label": "Consequences"
+            }
+          ],
+          "stages": [
+            {
+              "id": "needs_brief",
+              "label": "Brief",
+              "gating_field": "brief",
+              "is_terminal": false,
+              "ownership_mode": "user",
+              "instructions": ""
+            },
+            {
+              "id": "needs_consequences",
+              "label": "Consequences",
+              "gating_field": "consequences",
+              "is_terminal": false,
+              "ownership_mode": "worker",
+              "instructions": ""
+            },
+            {
+              "id": "done",
+              "label": "Done",
+              "gating_field": null,
+              "is_terminal": true,
+              "ownership_mode": null,
+              "instructions": ""
+            }
+          ]
+        },
+        "manager": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "user_ticket": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets/${blocker}/backlog",
+      "status": 200,
+      "json": {}
+    }
+  ],
+  "requests": [
+    {
+      "kind": "cli",
+      "area": "cli-project",
+      "argv": [
+        "project",
+        "create",
+        "--name",
+        "CLI proof",
+        "--summary",
+        "Résumé and “quotes”."
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Creates a named project with non-ASCII summary.",
+      "assert_json": {
+        "name": "CLI proof"
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-project",
+      "argv": [
+        "project",
+        "list",
+        "--limit",
+        "2",
+        "--offset",
+        "0"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Lists real project rows and bounded pagination."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-project",
+      "argv": [
+        "project",
+        "show",
+        "project_cli_proof",
+        "summary"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Shows the populated summary through the record projection."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-project",
+      "argv": [
+        "project",
+        "set",
+        "project_cli_proof",
+        "summary",
+        "--body-file",
+        "@file:summary.txt"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Reads field text from an exact UTF-8 file.",
+      "files": {
+        "summary.txt": "Updated\nsummary.\n"
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-worker-type",
+      "argv": [
+        "worker-type",
+        "save"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Saves a complete Worker type declaration from stdin.",
+      "stdin": "{\"fields\": [{\"id\": \"brief\", \"label\": \"Brief\"}, {\"id\": \"what_changes\", \"label\": \"What Changes\"}, {\"id\": \"implementation\", \"label\": \"Implementation\"}, {\"id\": \"consequences\", \"label\": \"Consequences\"}], \"label\": \"CLI comparison Worker\", \"profile\": {\"default_backend\": \"codex\", \"default_model\": \"gpt-6.1-sol\", \"default_reasoning_effort\": \"medium\", \"specialist_skill\": \"unit20-cli-worker\", \"toolset_profile\": \"default\"}, \"stages\": [{\"gating_field\": \"brief\", \"id\": \"needs_brief\", \"is_terminal\": false, \"label\": \"Brief\", \"ownership_mode\": \"worker\"}, {\"gating_field\": \"what_changes\", \"id\": \"needs_what_changes\", \"is_terminal\": false, \"label\": \"What Changes\", \"ownership_mode\": \"worker\"}, {\"gating_field\": \"implementation\", \"id\": \"needs_implementation\", \"is_terminal\": false, \"label\": \"Implementation\", \"ownership_mode\": \"worker\"}, {\"gating_field\": \"consequences\", \"id\": \"needs_consequences\", \"is_terminal\": false, \"label\": \"Consequences\", \"ownership_mode\": \"worker\"}, {\"gating_field\": null, \"id\": \"done\", \"is_terminal\": true, \"label\": \"Done\", \"ownership_mode\": null}], \"worker_type\": \"unit20_cli\", \"guidance\": \"Keep exact prose.\\n\", \"skill\": {\"description\": \"Synthetic CLI specialist.\"}}"
+    },
+    {
+      "kind": "cli",
+      "area": "cli-worker-type",
+      "argv": [
+        "worker-type",
+        "list"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Lists the saved Worker type with the shipped types."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-worker-type",
+      "argv": [
+        "worker-type",
+        "show",
+        "unit20_cli"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Shows the complete saved type record.",
+      "assert_json": {
+        "worker_type": "unit20_cli"
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-worker-type",
+      "argv": [
+        "worker-type",
+        "skill",
+        "unit20_cli",
+        "--description",
+        "Changed specialist."
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Edits the specialist description while generated workflow guidance remains unchanged."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-skill",
+      "argv": [
+        "skill",
+        "apply",
+        "--input-json",
+        "-"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Atomically creates a standalone managed skill.",
+      "stdin": "{\"skills\": [{\"name\": \"unit20-cli-notes\", \"source_text\": \"---\\nname: unit20-cli-notes\\ndescription: Synthetic notes.\\n---\\n\\n# Notes\\n\\nUse `panels missing-unit20-command`.\\n\"}]}"
+    },
+    {
+      "kind": "cli",
+      "area": "cli-skill",
+      "argv": [
+        "skill",
+        "list"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Lists populated managed skill rows."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-skill",
+      "argv": [
+        "skill",
+        "show",
+        "unit20-cli-notes"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Shows the exact stored Markdown body.",
+      "assert_json": {
+        "name": "unit20-cli-notes"
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-skill",
+      "argv": [
+        "skill",
+        "edit",
+        "unit20-cli-notes",
+        "--description",
+        "Changed notes."
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Edits both description and redirected Markdown.",
+      "stdin": "# Notes\n\nUse `panels missing-unit20-command`.\n"
+    },
+    {
+      "kind": "cli",
+      "area": "cli-skill",
+      "argv": [
+        "skill",
+        "write-file",
+        "unit20-cli-notes",
+        "notes/example.txt"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Writes a supporting file through the skill command.",
+      "stdin": "Résumé\nsecond line.\n"
+    },
+    {
+      "kind": "cli",
+      "area": "cli-skill",
+      "argv": [
+        "skill",
+        "check"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Reports the deliberately stale command reference from populated skill text."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "create",
+        "--title",
+        "CLI created Manager",
+        "--project-id",
+        "project_other"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Creates an idle Manager and prints its lifecycle receipt.",
+      "capture": {
+        "created_manager": "id"
+      },
+      "capture_text": {
+        "created_manager": "(si_[a-z0-9]{8})"
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "set",
+        "${manager}",
+        "recap",
+        "--body-file",
+        "-"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Sets a Manager field from redirected stdin.",
+      "stdin": "Current recap\n"
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "artifact",
+        "write",
+        "${manager}",
+        "report.txt",
+        "--body-file",
+        "@file:artifact.txt"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Writes artifact bytes with BOM, CRLF and final newline.",
+      "files": {
+        "artifact.txt": "﻿Résumé\r\nsecond line\r\n"
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "artifact",
+        "list",
+        "${manager}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Lists the real report artifact from the workspace tree."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "artifact",
+        "read",
+        "${manager}",
+        "report.txt"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Reads the artifact with exact BOM and CRLF bytes.",
+      "assert_json": {
+        "content": "﻿Résumé\r\nsecond line\r\n"
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "add-ticket",
+        "${manager}",
+        "${ticket}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Adds the seeded Ticket to a real Manager collection."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "list",
+        "--search",
+        "CLI"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Lists populated Manager summaries and settled state."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "show",
+        "${manager}",
+        "goal,recap"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Shows populated authored parts and the Manager header."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "artifact",
+        "delete",
+        "${manager}",
+        "report.txt"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Deletes an artifact that the sequence wrote and read."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "workspace",
+        "${manager}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Shows the populated Manager purpose, recap and child Ticket after artifact deletion."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "remove-ticket",
+        "${manager}",
+        "${ticket}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Removes a real membership created earlier."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "conversation",
+        "send",
+        "${manager}",
+        "--body-file",
+        "-"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Sends redirected text through the compatibility route.",
+      "stdin": "Synthetic conversation message\n"
+    },
+    {
+      "kind": "cli",
+      "area": "cli-send-message",
+      "argv": [
+        "send-message",
+        "--manager",
+        "${manager}",
+        "--body-file",
+        "@file:message.txt"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Sends a multiline message to an existing Manager conversation.",
+      "files": {
+        "message.txt": "| value |\n| --- |\n| 4 |\n"
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "conversation",
+        "reset",
+        "${manager}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Resets the existing synthetic Manager conversation."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "settle",
+        "${disposable_manager}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Sets the owner-controlled settled state on a real Manager."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "delete",
+        "${created_manager}",
+        "--yes"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Deletes the empty Manager created by the CLI."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "create",
+        "--input-json",
+        "@file:ticket.json"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Creates a Ticket from a file and returns the supervision receipt.",
+      "files": {
+        "ticket.json": "{\"title\": \"CLI created Ticket\", \"worker_type\": \"coding\", \"manager\": {\"kind\": \"chief\", \"id\": \"chief\"}}"
+      },
+      "capture": {
+        "created_ticket": "id"
+      },
+      "capture_text": {
+        "created_ticket": "(t_[a-z0-9]{8})"
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "list",
+        "--search",
+        "CLI"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Lists real Ticket summaries with pagination facts.",
+      "assert_json": {
+        "page.match_count": 4,
+        "page.return_count": 4
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "show",
+        "${ticket}",
+        "brief,workflow"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Shows a real Ticket and its complete workflow declaration."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "edit",
+        "${ticket}",
+        "--input-json",
+        "-"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Applies two fields from stdin as one edit.",
+      "stdin": "{\"title\": \"CLI renamed Ticket\", \"recap\": \"Nonempty recap.\"}"
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "employee-configuration",
+        "${ticket}",
+        "--backend",
+        "codex",
+        "--model",
+        "gpt-6.1-sol",
+        "--reasoning-effort",
+        "medium"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Writes an explicit backend, model and effort."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "backlog",
+        "${ticket}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Defers an existing Ticket without deleting its records."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "resume",
+        "${ticket}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Resumes the Ticket under its unchanged gate."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "block",
+        "${ticket}",
+        "--by",
+        "${blocker}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Creates a blocker relationship between existing Tickets."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "unblock",
+        "${ticket}",
+        "--by",
+        "${blocker}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Removes the blocker created by the preceding command."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "assign",
+        "${ticket}",
+        "--manager",
+        "${manager}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Assigns a real Ticket to an explicit Manager."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "complete",
+        "${user_ticket}",
+        "brief",
+        "--body-file",
+        "-"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Completes a populated user-owned gate from stdin.",
+      "stdin": "Owner completed brief\n"
+    },
+    {
+      "kind": "cli",
+      "area": "cli-worker",
+      "argv": [
+        "worker",
+        "my-ticket",
+        "brief,recap"
+      ],
+      "identity": {
+        "actor": "worker",
+        "ticket_id": "${ticket}"
+      },
+      "exit_code": 0,
+      "proof": "Reads the seeded Ticket through its synthetic Worker identity."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-worker",
+      "argv": [
+        "worker",
+        "recap"
+      ],
+      "identity": {
+        "actor": "worker",
+        "ticket_id": "${ticket}"
+      },
+      "exit_code": 0,
+      "proof": "Writes the Worker recap from redirected stdin.",
+      "stdin": "Worker current recap.\n"
+    },
+    {
+      "kind": "cli",
+      "area": "cli-worker",
+      "argv": [
+        "worker",
+        "propose"
+      ],
+      "identity": {
+        "actor": "worker",
+        "ticket_id": "${ticket}"
+      },
+      "exit_code": 0,
+      "proof": "Submits a nonempty proposal as the assigned Worker.",
+      "stdin": "Review this concrete brief.\n"
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "proposal",
+        "${ticket}",
+        "accept",
+        "--ceiling",
+        "needs_what_changes",
+        "--holder",
+        "me"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Accepts the pending brief proposal through current workflow data."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-worker",
+      "argv": [
+        "worker",
+        "request-help",
+        "--owner"
+      ],
+      "identity": {
+        "actor": "worker",
+        "ticket_id": "${ticket}"
+      },
+      "exit_code": 0,
+      "proof": "Records and delivers a Worker help request.",
+      "stdin": "Synthetic request for input.\n"
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "request-help",
+        "${ticket}",
+        "--owner"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Uses the actor-neutral help route for a real Ticket.",
+      "stdin": "Synthetic owner request for input.\n"
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "restart-worker",
+        "${ticket}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Runs recovery on the existing Ticket and prints its exact outcome."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "history",
+        "${ticket}",
+        "--limit",
+        "2"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Reads the current synthetic Worker conversation event page."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "delete",
+        "${created_ticket}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Deletes the unused Ticket created by this sequence."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-skill",
+      "argv": [
+        "skill",
+        "delete",
+        "unit20-cli-notes"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Deletes the standalone skill and its supporting file."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-worker-type",
+      "argv": [
+        "worker-type",
+        "delete",
+        "unit20_cli"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Deletes the unreferenced synthetic Worker type."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-project",
+      "argv": [
+        "project",
+        "set",
+        "project_cli_proof",
+        "name",
+        "--clear"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "proof": "Preserves the group’s client-validation error envelope and exit code."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-worker-type",
+      "argv": [
+        "worker-type",
+        "save"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "proof": "Preserves the group’s client-validation error envelope and exit code."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-skill",
+      "argv": [
+        "skill",
+        "edit",
+        "unit20-cli-worker"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "proof": "Preserves the group’s client-validation error envelope and exit code."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "delete",
+        "${manager}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "proof": "Preserves the group’s client-validation error envelope and exit code."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-send-message",
+      "argv": [
+        "send-message",
+        "--owner"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "proof": "Preserves the group’s client-validation error envelope and exit code."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "edit",
+        "${ticket}",
+        "--input-json",
+        "-"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "proof": "Preserves the group’s client-validation error envelope and exit code.",
+      "stdin": "{}"
+    },
+    {
+      "kind": "cli",
+      "area": "cli-worker",
+      "argv": [
+        "worker",
+        "propose"
+      ],
+      "identity": {
+        "actor": "worker",
+        "ticket_id": "${ticket}"
+      },
+      "exit_code": 1,
+      "proof": "Preserves the group’s client-validation error envelope and exit code."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "artifact",
+        "read",
+        "${manager}",
+        "missing-unit20.txt"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "proof": "Preserves the artifact subgroup’s missing-file error for an existing Manager."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-manager",
+      "argv": [
+        "manager",
+        "conversation",
+        "send",
+        "${manager}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "proof": "Preserves the conversation subgroup’s missing-message validation error."
+    }
+  ],
+  "probes": [],
+  "known_gaps": [
+    {
+      "command": "manager workspace",
+      "variant": "Workspace with a nonempty artifact tree",
+      "owner": "Python source owner through migration Manager",
+      "reason": "The Python CLI reads artifact[\"path\"] while the workspace API returns nodes with opens and children. It raises KeyError even with --json because it constructs the human output first. The success sequence exercises populated purpose, recap and membership after artifact deletion; artifact write/list/read/delete independently exercise real artifact bytes."
+    }
+  ]
+}
