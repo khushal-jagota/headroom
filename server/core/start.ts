@@ -205,6 +205,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       credential_requests = new CredentialRequestOperations({
         database,
         core,
+        writes: conversationWrites,
         key_path: config.credential_key_path,
         now: () => clock.nowUnix(),
       });

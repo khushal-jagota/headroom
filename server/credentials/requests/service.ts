@@ -30,11 +30,13 @@ export class CredentialRequestOperations {
   }
 
   async shield_operation<T>(operation: () => Promise<T>): Promise<T> {
-    const task = Promise.resolve().then(() =>
-      this.runtime.core.workspace_admission.operation(async (admitted) => {
-        if (!admitted) throw new Error('Workspace admission is closed for an owner update.');
-        return await operation();
-      }),
+    const task = this.runtime.writes.run(() =>
+      Promise.resolve().then(() =>
+        this.runtime.core.workspace_admission.operation(async (admitted) => {
+          if (!admitted) throw new Error('Workspace admission is closed for an owner update.');
+          return await operation();
+        }),
+      ),
     );
     this.tasks.add(task);
     void task.then(

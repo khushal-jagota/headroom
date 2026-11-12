@@ -55,10 +55,12 @@ It checks the original association again under that lock before the send. A
 retired origin receives `requesting_conversation_retired`, rather than a delivery
 to a newer conversation.
 
-`shield_operation` retains admitted operations in the runtime's task set. Browser
-departure does not cancel committed work. Workspace admission still gates each
-operation. Shutdown calls `finish_operations` before the core closes, so retained
-writes and sends finish under the same runtime ownership.
+`shield_operation` admits each complete action and dispatch through the same
+`ConversationHttpWriteScope` as the conversation routes. Shutdown seals that scope
+before it drains. A late request cannot start another credential mutation, while
+an admitted operation remains tracked through its final delivery settlement.
+Browser departure does not cancel that work. Workspace admission still gates each
+operation. `finish_operations` joins the retained task set before the core closes.
 
 ## Privacy and resource boundary
 
@@ -77,6 +79,7 @@ conversation event and view pipeline.
 `tests/compare/direct/test_unit_19_credential_requests.py` passes against Python.
 It compares exact returned events and source rows for receipt races, obsolete
 attempts, write failures, and startup recovery. It uses synthetic rows and a fixed
-SQL clock, without a listener or provider. The complete HTTP proof through the
-real core and the hosted credential-wire browser proof remain pending for this
-package. Those proofs own actual prompt delivery and the visible attention flow.
+SQL clock, without a listener or provider. The complete HTTP comparison through
+the real core passes with no differences. It proves actual prompt delivery, card
+projections, and persisted attention. The unchanged hosted credential-wire browser
+proof remains pending for reload and private-wire behavior.
