@@ -1,0 +1,1686 @@
+{
+  "source_roots": [
+    "src/planner/conversation/api.py",
+    "src/planner/conversation/system.py",
+    "src/planner/conversation/logic/",
+    "src/planner/conversation/storage.py"
+  ],
+  "external_proofs": [
+    {
+      "source_test": "test_a_refused_owner_steer_keeps_its_original_admission_position",
+      "coverage": "source boundary driven through real core and new route; closure pending semantic verification"
+    },
+    {
+      "source_test": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "coverage": "source boundary driven through real core and new route; closure pending semantic verification"
+    },
+    {
+      "source_test": "test_one_waiting_message_can_be_taken_back_and_the_rest_still_run",
+      "coverage": "source boundary driven through real core and new route; closure pending semantic verification"
+    },
+    {
+      "source_test": "test_promoted_send_now_claims_one_message_and_preserves_fifo",
+      "coverage": "source boundary driven through real core and new route; closure pending semantic verification"
+    },
+    {
+      "source_test": "test_a_promoted_command_goes_back_to_the_line_instead_of_being_thrown_away",
+      "coverage": "source boundary driven through real core and new route; closure pending semantic verification"
+    },
+    {
+      "source_test": "test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position",
+      "coverage": "source boundary driven through real core and new route; closure pending semantic verification"
+    },
+    {
+      "source_test": "test_a_promoted_steer_joins_the_target_turn_while_it_remains_active",
+      "coverage": "source boundary driven through real core and new route; closure pending semantic verification"
+    },
+    {
+      "source_test": "test_disabled_saved_model_refuses_dispatch_until_reenabled",
+      "coverage": "test-only fixture updates actual saved-record backend/model policy, using the reference writer and same TS upsert; ordinary send refuses with zero native writes, then admits one prompt after live reenable on the same saved model. No catalog/production enablement route claim."
+    }
+  ],
+  "requests": [
+    {
+      "area": "test_a_refused_owner_steer_keeps_its_original_admission_position",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-blocked-steer",
+        "model": "a-model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_a_refused_owner_steer_keeps_its_original_admission_position",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-blocked-steer/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "incumbent"
+          }
+        ],
+        "sender_label": "system"
+      }
+    },
+    {
+      "area": "test_a_refused_owner_steer_keeps_its_original_admission_position",
+      "method": "POST",
+      "path": "/api/test/signals/u15-blocked-steer/configure",
+      "status": 200,
+      "json": {
+        "command": "steer",
+        "behavior": {
+          "barrier": "owner-steer",
+          "result": {
+            "fate": "refused",
+            "refusal_reason": "backend_rejected_steer"
+          }
+        }
+      }
+    },
+    {
+      "area": "test_a_refused_owner_steer_keeps_its_original_admission_position",
+      "method": "POST",
+      "path": "/api/test/signals/u15-blocked-steer/pending-steer/begin",
+      "status": 200,
+      "json": {
+        "text": "owner steer",
+        "recipient": {
+          "kind": "ticket",
+          "id": "t_worker"
+        },
+        "barrier": "owner-steer"
+      }
+    },
+    {
+      "area": "test_a_refused_owner_steer_keeps_its_original_admission_position",
+      "method": "POST",
+      "path": "/api/test/signals/u15-blocked-steer/message",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "t_worker",
+        "label": "Worker",
+        "text": "reply while steer was in flight",
+        "settle": false
+      }
+    },
+    {
+      "area": "test_a_refused_owner_steer_keeps_its_original_admission_position",
+      "method": "POST",
+      "path": "/api/test/signals/u15-blocked-steer/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "TurnEnded",
+            "values": {
+              "ending": "completed",
+              "error_summary": null,
+              "standard_error_tail": null
+            }
+          }
+        ],
+        "settle": false
+      }
+    },
+    {
+      "area": "test_a_refused_owner_steer_keeps_its_original_admission_position",
+      "method": "GET",
+      "path": "/api/test/signals/u15-blocked-steer/pending-steer/observe",
+      "status": 200,
+      "capture": {
+        "blocked_steer_before_release": ""
+      }
+    },
+    {
+      "area": "test_a_refused_owner_steer_keeps_its_original_admission_position",
+      "method": "POST",
+      "path": "/api/test/signals/u15-blocked-steer/pending-steer/release",
+      "status": 200,
+      "capture": {
+        "blocked_steer_release": ""
+      }
+    },
+    {
+      "area": "test_a_refused_owner_steer_keeps_its_original_admission_position",
+      "method": "GET",
+      "path": "/api/test/signals/u15-blocked-steer/inspect",
+      "status": 200,
+      "capture": {
+        "blocked_steer_after_release": ""
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-input",
+        "model": "a-model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-input/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "work"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "POST",
+      "path": "/api/test/signals/u15-input/questions",
+      "status": 200
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-input",
+      "status": 200,
+      "capture": {
+        "input_pending": "",
+        "input_request_id": "pending_user_input.request_id"
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-input/user-input-answers",
+      "status": 200,
+      "json": {
+        "request_id": "${input_request_id}",
+        "answers": {
+          "scope": {
+            "answers": [
+              "Composer"
+            ]
+          }
+        }
+      },
+      "capture": {
+        "input_incomplete_fate": ""
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-input",
+      "status": 200,
+      "capture": {
+        "input_after_incomplete": ""
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-input/user-input-answers",
+      "status": 200,
+      "json": {
+        "request_id": "${input_request_id}",
+        "answers": {
+          "proof": {
+            "answers": [
+              "Browser test"
+            ]
+          },
+          "scope": {
+            "answers": [
+              "Composer",
+              "Transcript"
+            ]
+          }
+        }
+      },
+      "capture": {
+        "input_complete_fate": ""
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-input",
+      "status": 200,
+      "capture": {
+        "input_after_complete": ""
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-input/answers",
+      "status": 200,
+      "capture": {
+        "input_actual_answers": ""
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-input/inspect",
+      "status": 200,
+      "capture": {
+        "input_answer_rows": ""
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "POST",
+      "path": "/api/test/signals/u15-input/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "UserInputRequested",
+            "values": {
+              "request": {
+                "request_id": "saved-input",
+                "questions": [
+                  {
+                    "question_id": "scope",
+                    "header": "Scope",
+                    "question": "Which surface?",
+                    "options": [],
+                    "multi_select": false,
+                    "allow_other": true
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-input",
+      "status": 200,
+      "capture": {
+        "saved_input_request_id": "pending_user_input.request_id"
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "POST",
+      "path": "/api/test/signals/u15-input/configure",
+      "status": 200,
+      "json": {
+        "command": "answer_user_input",
+        "behavior": {
+          "result": "saved"
+        }
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-input/user-input-answers",
+      "status": 200,
+      "json": {
+        "request_id": "${saved_input_request_id}",
+        "answers": {
+          "scope": {
+            "answers": [
+              "Backend"
+            ]
+          }
+        }
+      },
+      "capture": {
+        "input_saved_fate": ""
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-input/inspect",
+      "status": 200,
+      "capture": {
+        "input_saved_actual": ""
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-input/user-input-answers",
+      "status": 200,
+      "json": {
+        "request_id": "${saved_input_request_id}",
+        "answers": {
+          "scope": {
+            "answers": [
+              "Backend"
+            ]
+          }
+        }
+      },
+      "capture": {
+        "input_saved_repeat": ""
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "POST",
+      "path": "/api/test/signals/u15-input/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "UserInputRequested",
+            "values": {
+              "request": {
+                "request_id": "expired-input",
+                "questions": [
+                  {
+                    "question_id": "scope",
+                    "header": "Scope",
+                    "question": "Which surface?",
+                    "options": [],
+                    "multi_select": false,
+                    "allow_other": true
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-input",
+      "status": 200,
+      "capture": {
+        "expired_request_id": "pending_user_input.request_id"
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-input/interrupt",
+      "status": 204
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-input/user-input-answers",
+      "status": 200,
+      "json": {
+        "request_id": "${expired_request_id}",
+        "answers": {
+          "scope": {
+            "answers": [
+              "Backend"
+            ]
+          }
+        }
+      },
+      "capture": {
+        "input_expired_fate": ""
+      }
+    },
+    {
+      "area": "test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-input",
+      "status": 200,
+      "capture": {
+        "input_after_death": ""
+      }
+    },
+    {
+      "area": "test_one_waiting_message_can_be_taken_back_and_the_rest_still_run",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-discard",
+        "model": "a-model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_one_waiting_message_can_be_taken_back_and_the_rest_still_run",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-discard/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "incumbent"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_one_waiting_message_can_be_taken_back_and_the_rest_still_run",
+      "method": "POST",
+      "path": "/api/test/signals/u15-discard/discard-source-messages",
+      "status": 200,
+      "json": {
+        "ticket_id": "${promote_owner_accepted_ticket}"
+      }
+    },
+    {
+      "area": "test_one_waiting_message_can_be_taken_back_and_the_rest_still_run",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-discard",
+      "status": 200,
+      "capture": {
+        "discard_id": "held_prompts.0.held_prompt_id"
+      }
+    },
+    {
+      "area": "test_one_waiting_message_can_be_taken_back_and_the_rest_still_run",
+      "method": "DELETE",
+      "path": "/api/conversation/conversations/u15-discard/held-prompts/${discard_id}",
+      "status": 200,
+      "capture": {
+        "discard_result": ""
+      }
+    },
+    {
+      "area": "test_one_waiting_message_can_be_taken_back_and_the_rest_still_run",
+      "method": "GET",
+      "path": "/api/test/signals/u15-discard/inspect",
+      "status": 200,
+      "capture": {
+        "discard_before_finish": ""
+      }
+    },
+    {
+      "area": "test_one_waiting_message_can_be_taken_back_and_the_rest_still_run",
+      "method": "POST",
+      "path": "/api/test/signals/u15-discard/finish",
+      "status": 200
+    },
+    {
+      "area": "test_one_waiting_message_can_be_taken_back_and_the_rest_still_run",
+      "method": "GET",
+      "path": "/api/test/signals/u15-discard/inspect",
+      "status": 200,
+      "capture": {
+        "discard_survivor": ""
+      }
+    },
+    {
+      "area": "test_promoted_send_now_claims_one_message_and_preserves_fifo",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-promote-now",
+        "model": "a-model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_promoted_send_now_claims_one_message_and_preserves_fifo",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-promote-now/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "incumbent"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_promoted_send_now_claims_one_message_and_preserves_fifo",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-promote-now/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "first"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_promoted_send_now_claims_one_message_and_preserves_fifo",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-promote-now/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "selected"
+          }
+        ],
+        "sender_label": "owner",
+        "model_change": "selected-model"
+      }
+    },
+    {
+      "area": "test_promoted_send_now_claims_one_message_and_preserves_fifo",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-promote-now/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "last"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_promoted_send_now_claims_one_message_and_preserves_fifo",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-promote-now",
+      "status": 200,
+      "capture": {
+        "promote_now_id": "held_prompts.1.held_prompt_id"
+      }
+    },
+    {
+      "area": "test_promoted_send_now_claims_one_message_and_preserves_fifo",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-promote-now/held-prompts/${promote_now_id}/promote",
+      "status": 200,
+      "json": {
+        "mode": "send_now"
+      },
+      "capture": {
+        "promoted_now_fate": ""
+      }
+    },
+    {
+      "area": "test_promoted_send_now_claims_one_message_and_preserves_fifo",
+      "method": "GET",
+      "path": "/api/test/signals/u15-promote-now/inspect",
+      "status": 200,
+      "capture": {
+        "promoted_now_selected": ""
+      }
+    },
+    {
+      "area": "test_promoted_send_now_claims_one_message_and_preserves_fifo",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-promote-now/held-prompts/${promote_now_id}/promote",
+      "status": 200,
+      "json": {
+        "mode": "send_now"
+      },
+      "capture": {
+        "promoted_now_repeat": ""
+      }
+    },
+    {
+      "area": "test_promoted_send_now_claims_one_message_and_preserves_fifo",
+      "method": "POST",
+      "path": "/api/test/signals/u15-promote-now/finish",
+      "status": 200
+    },
+    {
+      "area": "test_promoted_send_now_claims_one_message_and_preserves_fifo",
+      "method": "GET",
+      "path": "/api/test/signals/u15-promote-now/inspect",
+      "status": 200,
+      "capture": {
+        "promoted_now_fifo": ""
+      }
+    },
+    {
+      "area": "test_a_promoted_command_goes_back_to_the_line_instead_of_being_thrown_away",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-promote-command",
+        "model": "a-model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_a_promoted_command_goes_back_to_the_line_instead_of_being_thrown_away",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-promote-command/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "incumbent"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_a_promoted_command_goes_back_to_the_line_instead_of_being_thrown_away",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-promote-command/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "/compact"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_a_promoted_command_goes_back_to_the_line_instead_of_being_thrown_away",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-promote-command",
+      "status": 200,
+      "capture": {
+        "promote_command_id": "held_prompts.0.held_prompt_id"
+      }
+    },
+    {
+      "area": "test_a_promoted_command_goes_back_to_the_line_instead_of_being_thrown_away",
+      "method": "POST",
+      "path": "/api/test/signals/u15-promote-command/configure",
+      "status": 200,
+      "json": {
+        "command": "steer",
+        "behavior": {
+          "result": {
+            "fate": "refused",
+            "refusal_reason": "command_cannot_join_running_turn"
+          }
+        }
+      }
+    },
+    {
+      "area": "test_a_promoted_command_goes_back_to_the_line_instead_of_being_thrown_away",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-promote-command/held-prompts/${promote_command_id}/promote",
+      "status": 200,
+      "json": {
+        "mode": "steer"
+      },
+      "capture": {
+        "promoted_command_fate": ""
+      }
+    },
+    {
+      "area": "test_a_promoted_command_goes_back_to_the_line_instead_of_being_thrown_away",
+      "method": "GET",
+      "path": "/api/test/signals/u15-promote-command/inspect",
+      "status": 200,
+      "capture": {
+        "promoted_command_waiting": ""
+      }
+    },
+    {
+      "area": "test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-promote-owner-accepted",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "/tmp",
+        "role_text": "Bounded synthetic Ticket worker for the browser proof.",
+        "identity_environment_variables": {
+          "PLAN_ACTOR": "worker",
+          "PLAN_TICKET_ID": "${promote_owner_accepted_ticket}"
+        }
+      }
+    },
+    {
+      "area": "test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position",
+      "method": "POST",
+      "path": "/api/test/signals/u15-promote-owner-accepted/start",
+      "status": 200,
+      "json": {
+        "ticket_id": "${promote_owner_accepted_ticket}"
+      }
+    },
+    {
+      "area": "test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position",
+      "method": "POST",
+      "path": "/api/tickets/${promote_owner_accepted_ticket}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "u15-promote-owner-accepted",
+        "content": [
+          {
+            "piece": "text",
+            "text": "owner prompt"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-promote-owner-accepted",
+      "status": 200,
+      "capture": {
+        "owner_accepted_held": "held_prompts.0.held_prompt_id"
+      }
+    },
+    {
+      "area": "test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position",
+      "method": "POST",
+      "path": "/api/test/signals/u15-promote-owner-accepted/message",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "${promote_owner_accepted_ticket}",
+        "label": "Worker",
+        "text": "later unseen reply"
+      }
+    },
+    {
+      "area": "test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position",
+      "method": "POST",
+      "path": "/api/test/signals/u15-promote-owner-accepted/configure",
+      "status": 200,
+      "json": {
+        "command": "steer",
+        "behavior": {
+          "result": {
+            "fate": "accepted",
+            "composed_content_delivered": true
+          }
+        }
+      }
+    },
+    {
+      "area": "test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-promote-owner-accepted/held-prompts/${owner_accepted_held}/promote",
+      "status": 200,
+      "json": {
+        "mode": "steer"
+      },
+      "capture": {
+        "owner_accepted_fate": ""
+      }
+    },
+    {
+      "area": "test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position",
+      "method": "GET",
+      "path": "/api/test/signals/u15-promote-owner-accepted/inspect",
+      "status": 200,
+      "capture": {
+        "promoted_owner_accepted": ""
+      }
+    },
+    {
+      "area": "test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-promote-owner-uncertain",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "/tmp",
+        "role_text": "Bounded synthetic Ticket worker for the browser proof.",
+        "identity_environment_variables": {
+          "PLAN_ACTOR": "worker",
+          "PLAN_TICKET_ID": "${promote_owner_uncertain_ticket}"
+        }
+      }
+    },
+    {
+      "area": "test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position",
+      "method": "POST",
+      "path": "/api/test/signals/u15-promote-owner-uncertain/start",
+      "status": 200,
+      "json": {
+        "ticket_id": "${promote_owner_uncertain_ticket}"
+      }
+    },
+    {
+      "area": "test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position",
+      "method": "POST",
+      "path": "/api/tickets/${promote_owner_uncertain_ticket}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "u15-promote-owner-uncertain",
+        "content": [
+          {
+            "piece": "text",
+            "text": "owner prompt"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-promote-owner-uncertain",
+      "status": 200,
+      "capture": {
+        "owner_uncertain_held": "held_prompts.0.held_prompt_id"
+      }
+    },
+    {
+      "area": "test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position",
+      "method": "POST",
+      "path": "/api/test/signals/u15-promote-owner-uncertain/message",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "${promote_owner_uncertain_ticket}",
+        "label": "Worker",
+        "text": "later unseen reply"
+      }
+    },
+    {
+      "area": "test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position",
+      "method": "POST",
+      "path": "/api/test/signals/u15-promote-owner-uncertain/configure",
+      "status": 200,
+      "json": {
+        "command": "steer",
+        "behavior": {
+          "result": {
+            "fate": "uncertain",
+            "composed_content_delivered": null
+          }
+        }
+      }
+    },
+    {
+      "area": "test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-promote-owner-uncertain/held-prompts/${owner_uncertain_held}/promote",
+      "status": 200,
+      "json": {
+        "mode": "steer"
+      },
+      "capture": {
+        "owner_uncertain_fate": ""
+      }
+    },
+    {
+      "area": "test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position",
+      "method": "GET",
+      "path": "/api/test/signals/u15-promote-owner-uncertain/inspect",
+      "status": 200,
+      "capture": {
+        "promoted_owner_uncertain": ""
+      }
+    },
+    {
+      "area": "test_a_promoted_steer_joins_the_target_turn_while_it_remains_active",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-promote-chief-accepted",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "/tmp",
+        "role_text": "Bounded synthetic Ticket worker for the browser proof.",
+        "identity_environment_variables": {
+          "PLAN_ACTOR": "worker",
+          "PLAN_TICKET_ID": "${promote_chief_accepted_ticket}"
+        }
+      }
+    },
+    {
+      "area": "test_a_promoted_steer_joins_the_target_turn_while_it_remains_active",
+      "method": "POST",
+      "path": "/api/test/signals/u15-promote-chief-accepted/start",
+      "status": 200,
+      "json": {
+        "ticket_id": "${promote_chief_accepted_ticket}"
+      }
+    },
+    {
+      "area": "test_a_promoted_steer_joins_the_target_turn_while_it_remains_active",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 200,
+      "json": {
+        "target": {
+          "kind": "ticket",
+          "id": "${promote_chief_accepted_ticket}"
+        },
+        "message": "addressed promotion",
+        "mode": "queue"
+      },
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "area": "test_a_promoted_steer_joins_the_target_turn_while_it_remains_active",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-promote-chief-accepted",
+      "status": 200,
+      "capture": {
+        "chief_accepted_held": "held_prompts.0.held_prompt_id"
+      }
+    },
+    {
+      "area": "test_a_promoted_steer_joins_the_target_turn_while_it_remains_active",
+      "method": "POST",
+      "path": "/api/test/signals/u15-promote-chief-accepted/configure",
+      "status": 200,
+      "json": {
+        "command": "steer",
+        "behavior": {
+          "result": {
+            "fate": "accepted",
+            "composed_content_delivered": true
+          }
+        }
+      }
+    },
+    {
+      "area": "test_a_promoted_steer_joins_the_target_turn_while_it_remains_active",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-promote-chief-accepted/held-prompts/${chief_accepted_held}/promote",
+      "status": 200,
+      "json": {
+        "mode": "steer"
+      },
+      "capture": {
+        "chief_accepted_fate": ""
+      }
+    },
+    {
+      "area": "test_a_promoted_steer_joins_the_target_turn_while_it_remains_active",
+      "method": "GET",
+      "path": "/api/test/signals/u15-promote-chief-accepted/inspect",
+      "status": 200,
+      "capture": {
+        "promoted_chief_accepted": ""
+      }
+    },
+    {
+      "area": "test_a_promoted_steer_joins_the_target_turn_while_it_remains_active",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-promote-chief-uncertain",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "/tmp",
+        "role_text": "Bounded synthetic Ticket worker for the browser proof.",
+        "identity_environment_variables": {
+          "PLAN_ACTOR": "worker",
+          "PLAN_TICKET_ID": "${promote_chief_uncertain_ticket}"
+        }
+      }
+    },
+    {
+      "area": "test_a_promoted_steer_joins_the_target_turn_while_it_remains_active",
+      "method": "POST",
+      "path": "/api/test/signals/u15-promote-chief-uncertain/start",
+      "status": 200,
+      "json": {
+        "ticket_id": "${promote_chief_uncertain_ticket}"
+      }
+    },
+    {
+      "area": "test_a_promoted_steer_joins_the_target_turn_while_it_remains_active",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 200,
+      "json": {
+        "target": {
+          "kind": "ticket",
+          "id": "${promote_chief_uncertain_ticket}"
+        },
+        "message": "addressed promotion",
+        "mode": "queue"
+      },
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "area": "test_a_promoted_steer_joins_the_target_turn_while_it_remains_active",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-promote-chief-uncertain",
+      "status": 200,
+      "capture": {
+        "chief_uncertain_held": "held_prompts.0.held_prompt_id"
+      }
+    },
+    {
+      "area": "test_a_promoted_steer_joins_the_target_turn_while_it_remains_active",
+      "method": "POST",
+      "path": "/api/test/signals/u15-promote-chief-uncertain/configure",
+      "status": 200,
+      "json": {
+        "command": "steer",
+        "behavior": {
+          "result": {
+            "fate": "uncertain",
+            "composed_content_delivered": null
+          }
+        }
+      }
+    },
+    {
+      "area": "test_a_promoted_steer_joins_the_target_turn_while_it_remains_active",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-promote-chief-uncertain/held-prompts/${chief_uncertain_held}/promote",
+      "status": 200,
+      "json": {
+        "mode": "steer"
+      },
+      "capture": {
+        "chief_uncertain_fate": ""
+      }
+    },
+    {
+      "area": "test_a_promoted_steer_joins_the_target_turn_while_it_remains_active",
+      "method": "GET",
+      "path": "/api/test/signals/u15-promote-chief-uncertain/inspect",
+      "status": 200,
+      "capture": {
+        "promoted_chief_uncertain": ""
+      }
+    },
+    {
+      "area": "test_disabled_saved_model_refuses_dispatch_until_reenabled",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-disabled-saved-model",
+        "backend_key": "codex",
+        "model": "exact-provider-model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_disabled_saved_model_refuses_dispatch_until_reenabled",
+      "method": "POST",
+      "path": "/api/test/signals/u15-disabled-saved-model/saved-model-enablement",
+      "status": 200,
+      "json": {
+        "enabled": false
+      }
+    },
+    {
+      "area": "test_disabled_saved_model_refuses_dispatch_until_reenabled",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-disabled-saved-model/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "blocked"
+          }
+        ],
+        "sender_label": "Owner"
+      },
+      "capture": {
+        "disabled_model_fate": ""
+      }
+    },
+    {
+      "area": "test_disabled_saved_model_refuses_dispatch_until_reenabled",
+      "method": "GET",
+      "path": "/api/test/signals/u15-disabled-saved-model/inspect",
+      "status": 200,
+      "capture": {
+        "disabled_model_refused": ""
+      }
+    },
+    {
+      "area": "test_disabled_saved_model_refuses_dispatch_until_reenabled",
+      "method": "POST",
+      "path": "/api/test/signals/u15-disabled-saved-model/saved-model-enablement",
+      "status": 200,
+      "json": {
+        "enabled": true
+      }
+    },
+    {
+      "area": "test_disabled_saved_model_refuses_dispatch_until_reenabled",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-disabled-saved-model/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "allowed"
+          }
+        ],
+        "sender_label": "Owner"
+      },
+      "capture": {
+        "reenabled_model_fate": ""
+      }
+    },
+    {
+      "area": "test_disabled_saved_model_refuses_dispatch_until_reenabled",
+      "method": "GET",
+      "path": "/api/test/signals/u15-disabled-saved-model/inspect",
+      "status": 200,
+      "capture": {
+        "reenabled_model_started": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-ticket-choice-normal",
+        "backend_key": "codex",
+        "model": "before-model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/test/connected/bind",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "${ticket_choice_normal}",
+        "conversation_id": "u15-ticket-choice-normal"
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/tickets/${ticket_choice_normal}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "u15-ticket-choice-normal",
+        "content": [
+          {
+            "piece": "text",
+            "text": "incumbent"
+          }
+        ],
+        "sender_label": "Owner"
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/tickets/${ticket_choice_normal}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "u15-ticket-choice-normal",
+        "content": [
+          {
+            "piece": "text",
+            "text": "selected"
+          }
+        ],
+        "sender_label": "Owner",
+        "mode": "queue",
+        "model": "selected-model",
+        "reasoning_effort": "high",
+        "sender_message_id": "selected-id"
+      },
+      "capture": {
+        "ticket_choice_normal_queued_fate": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-ticket-choice-normal",
+      "status": 200,
+      "capture": {
+        "ticket_choice_normal_held_state": "",
+        "ticket_choice_normal_held_id": "held_prompts.0.held_prompt_id"
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/tickets?id=${ticket_choice_normal}&detail=full",
+      "status": 200,
+      "capture": {
+        "ticket_choice_normal_ticket_before": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-ticket-choice-normal/held-prompts/${ticket_choice_normal_held_id}/promote",
+      "status": 200,
+      "json": {
+        "mode": "send_now"
+      },
+      "capture": {
+        "ticket_choice_normal_promote_result": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/test/signals/u15-ticket-choice-normal/inspect",
+      "status": 200,
+      "capture": {
+        "ticket_choice_normal_after_promote": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/tickets?id=${ticket_choice_normal}&detail=full",
+      "status": 200,
+      "capture": {
+        "ticket_choice_normal_ticket_after": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/test/signals/u15-ticket-choice-normal/finish",
+      "status": 200
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-ticket-choice-failure",
+        "backend_key": "codex",
+        "model": "before-model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/test/connected/bind",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "${ticket_choice_failure}",
+        "conversation_id": "u15-ticket-choice-failure"
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/tickets/${ticket_choice_failure}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "u15-ticket-choice-failure",
+        "content": [
+          {
+            "piece": "text",
+            "text": "incumbent"
+          }
+        ],
+        "sender_label": "Owner"
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/tickets/${ticket_choice_failure}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "u15-ticket-choice-failure",
+        "content": [
+          {
+            "piece": "text",
+            "text": "selected"
+          }
+        ],
+        "sender_label": "Owner",
+        "mode": "queue",
+        "model": "selected-model",
+        "reasoning_effort": "high",
+        "sender_message_id": "selected-id"
+      },
+      "capture": {
+        "ticket_choice_failure_queued_fate": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-ticket-choice-failure",
+      "status": 200,
+      "capture": {
+        "ticket_choice_failure_held_state": "",
+        "ticket_choice_failure_held_id": "held_prompts.0.held_prompt_id"
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/tickets?id=${ticket_choice_failure}&detail=full",
+      "status": 200,
+      "capture": {
+        "ticket_choice_failure_ticket_before": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/test/signals/u15-ticket-choice-failure/ticket-choice-failure",
+      "status": 200
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-ticket-choice-failure/held-prompts/${ticket_choice_failure_held_id}/promote",
+      "status": 500,
+      "json": {
+        "mode": "send_now"
+      },
+      "capture": {
+        "ticket_choice_failure_promote_result": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/test/signals/u15-ticket-choice-failure/ticket-choice-failure",
+      "status": 200,
+      "capture": {
+        "ticket_choice_failure_injection": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/test/signals/u15-ticket-choice-failure/inspect",
+      "status": 200,
+      "capture": {
+        "ticket_choice_failure_after_promote": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/tickets?id=${ticket_choice_failure}&detail=full",
+      "status": 200,
+      "capture": {
+        "ticket_choice_failure_ticket_after": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/test/signals/u15-ticket-choice-failure/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "ToolCallStarted",
+            "values": {
+              "tool_call_id": "after-error",
+              "title": "Read a file",
+              "tool_kind": "read"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/tickets/${ticket_choice_failure}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "u15-ticket-choice-failure",
+        "content": [
+          {
+            "piece": "text",
+            "text": "selected"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "selected-id"
+      },
+      "capture": {
+        "ticket_choice_failure_duplicate_fate": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/test/signals/u15-ticket-choice-failure/inspect",
+      "status": 200,
+      "capture": {
+        "ticket_choice_failure_after_duplicate": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/tickets?id=${ticket_choice_failure}&detail=full",
+      "status": 200,
+      "capture": {
+        "ticket_choice_failure_ticket_after_duplicate": ""
+      }
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "POST",
+      "path": "/api/test/signals/u15-ticket-choice-failure/finish",
+      "status": 200
+    },
+    {
+      "area": "ticket_model_choice_http_after_receipt",
+      "method": "GET",
+      "path": "/api/test/signals/u15-ticket-choice-failure/inspect",
+      "status": 200,
+      "capture": {
+        "ticket_choice_failure_finished": ""
+      }
+    },
+    {
+      "area": "navigation-operand-public-order",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22review%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3A{%22kind%22%3A%22ticket%22%2C%22id%22%3A%22${promote_owner_accepted_ticket}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3A{%22kind%22%3A%22ticket%22%2C%22id%22%3A%22${promote_owner_uncertain_ticket}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_closures_en_us": ""
+      }
+    },
+    {
+      "area": "navigation-operand-public-order",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22de-DE%22%2C%22selected%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22review%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3A{%22kind%22%3A%22ticket%22%2C%22id%22%3A%22${promote_owner_accepted_ticket}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3A{%22kind%22%3A%22ticket%22%2C%22id%22%3A%22${promote_owner_uncertain_ticket}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_closures_de_de": ""
+      }
+    }
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Promotion owner accepted",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "brief": "Addressed promotion proof"
+      },
+      "capture": {
+        "promote_owner_accepted_ticket": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Promotion owner uncertain",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "brief": "Addressed promotion proof"
+      },
+      "capture": {
+        "promote_owner_uncertain_ticket": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Promotion chief accepted",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "brief": "Addressed promotion proof"
+      },
+      "capture": {
+        "promote_chief_accepted_ticket": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Promotion chief uncertain",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "brief": "Addressed promotion proof"
+      },
+      "capture": {
+        "promote_chief_uncertain_ticket": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Held Ticket choice normal",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "brief": "Observe real held model and effort bookkeeping after receipt."
+      },
+      "capture": {
+        "ticket_choice_normal": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Held Ticket choice failure",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "brief": "Observe real held model and effort bookkeeping after receipt."
+      },
+      "capture": {
+        "ticket_choice_failure": "id"
+      }
+    }
+  ],
+  "report_captures": [
+    "blocked_steer_before_release",
+    "blocked_steer_release",
+    "blocked_steer_after_release",
+    "input_pending",
+    "input_request_id",
+    "input_after_incomplete",
+    "input_after_complete",
+    "input_actual_answers",
+    "input_answer_rows",
+    "expired_request_id",
+    "input_after_death",
+    "discard_id",
+    "discard_before_finish",
+    "discard_survivor",
+    "promote_now_id",
+    "promoted_now_selected",
+    "promoted_now_fifo",
+    "promote_command_id",
+    "promoted_command_waiting",
+    "owner_accepted_held",
+    "promoted_owner_accepted",
+    "owner_uncertain_held",
+    "promoted_owner_uncertain",
+    "chief_accepted_held",
+    "promoted_chief_accepted",
+    "chief_uncertain_held",
+    "promoted_chief_uncertain",
+    "saved_input_request_id",
+    "input_saved_actual",
+    "input_incomplete_fate",
+    "input_complete_fate",
+    "input_saved_fate",
+    "input_saved_repeat",
+    "input_expired_fate",
+    "discard_result",
+    "promoted_now_fate",
+    "promoted_now_repeat",
+    "promoted_command_fate",
+    "owner_accepted_fate",
+    "owner_uncertain_fate",
+    "chief_accepted_fate",
+    "chief_uncertain_fate",
+    "navigation_closures_en_us",
+    "navigation_closures_de_de",
+    "disabled_model_fate",
+    "disabled_model_refused",
+    "reenabled_model_fate",
+    "reenabled_model_started",
+    "ticket_choice_normal_queued_fate",
+    "ticket_choice_normal_held_state",
+    "ticket_choice_normal_held_id",
+    "ticket_choice_normal_ticket_before",
+    "ticket_choice_normal_promote_result",
+    "ticket_choice_normal_after_promote",
+    "ticket_choice_normal_ticket_after",
+    "ticket_choice_failure_queued_fate",
+    "ticket_choice_failure_held_state",
+    "ticket_choice_failure_held_id",
+    "ticket_choice_failure_ticket_before",
+    "ticket_choice_failure_promote_result",
+    "ticket_choice_failure_injection",
+    "ticket_choice_failure_after_promote",
+    "ticket_choice_failure_ticket_after",
+    "ticket_choice_failure_duplicate_fate",
+    "ticket_choice_failure_after_duplicate",
+    "ticket_choice_failure_ticket_after_duplicate",
+    "ticket_choice_failure_finished"
+  ],
+  "source_drift_proof": {
+    "source_test": "test_ticket_model_write_failure_keeps_accepted_held_delivery_live",
+    "coverage": "Separate from the original22: normal associated held model/effort promotion reaches the real canonical Ticket writer; one selected secondary writer failure occurs before preference commit after conversation receipt, HTTP500 leaves Ticket choice unchanged and native turn alive; late news and receipt replay continue without a second prompt/provider delivery."
+  },
+  "candidate": "typescript"
+}

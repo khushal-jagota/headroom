@@ -18,6 +18,7 @@ import type { ConversationSystem } from '../conversation/contracts.ts';
 import type { ConversationViewRuntime } from '../conversation/views/routes.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import { createConversationRoutes } from '../conversation/routes.ts';
+import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 import type { EnvironmentRuntime } from '../environments/contracts.ts';
 
@@ -85,6 +86,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   let environments: EnvironmentRuntime | undefined;
   let environmentsStarting: Promise<void> | undefined;
   const areas = createAreasRuntime(() => environments?.resourceProviders ?? []);
+  const conversationWrites = new ConversationHttpWriteScope();
   let dispatcher: ReturnType<typeof acquireLock> = null;
   let database: ReturnType<typeof createDatabase> | undefined;
   let background: ComposedBackgroundService | undefined;
@@ -110,6 +112,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   };
   const close = (): Promise<void> => {
     if (closing) return closing;
+    conversationWrites.seal();
     revokeSignal();
     areas.closeSubscriptions();
     const deadline = performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
@@ -129,6 +132,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         attempt(() => environments?.close({ deadline })),
         attempt(() => environmentsStarting?.catch(() => {})),
       ]);
+      await attempt(() => conversationWrites.drain());
       // Loop cancellation shares one deadline. Core and record settlement have
       // no deadline contract, so retain ownership through their final writes.
       await attempt(() => core?.shutdown());
@@ -230,7 +234,11 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
           ? [
               {
                 prefix: '/api/conversation',
-                routes: createConversationRoutes({ core, record: context.record }),
+                routes: createConversationRoutes({
+                  core,
+                  record: context.record,
+                  writes: conversationWrites,
+                }),
               },
             ]
           : []),
