@@ -42,6 +42,13 @@ export interface AuxiliaryDatabaseOptions {
   maxBytes: number;
   busyTimeoutMs?: number;
 }
+/** A frozen durable format. Existing version zero is incompatible, not a fresh store. */
+export interface DurableSidecarDatabaseOptions {
+  schemaVersion: number;
+  initialize(tx: TransactionSql): void;
+  foreignKeys: boolean;
+  refusalMessage: string;
+}
 export interface AuxiliaryTransactionSql extends TransactionSql {
   incrementalVacuum(pages: number): void;
 }

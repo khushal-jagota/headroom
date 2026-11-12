@@ -18,6 +18,7 @@ import type {
   CheckpointResult,
   ApplicationSchemaSeed,
   FreshDatabaseBootstrap,
+  DurableSidecarDatabaseOptions,
 } from './contracts.ts';
 export type * from './contracts.ts';
 const functionScopes = new WeakMap<
@@ -111,13 +112,15 @@ function scope<T, Sql extends ReadSql = TransactionSql>(
   writable: boolean,
   work: (sql: Sql) => T,
   auxiliary = false,
+  safeIntegers = false,
 ): T {
   let active = true;
   const clearFunctions: (() => void)[] = [];
   function prepare(sql: string): BetterSqlite3.Statement {
     if (!active) throw new TypeError('database SQL scope is no longer active');
     assertScopedStatement(sql);
-    return connection.prepare(sql);
+    const statement = connection.prepare(sql);
+    return safeIntegers ? statement.safeIntegers(true) : statement;
   }
   const reader: ReadSql = Object.freeze({
     get: <Row>(sql: string, parameters?: SqlParameters): Row | undefined =>
@@ -171,6 +174,14 @@ export function createReadAccess(
   path: string,
   options: { busyTimeoutMs?: number } = {},
 ): ReadAccess {
+  return createConfiguredReadAccess(path, options);
+}
+
+function createConfiguredReadAccess(
+  path: string,
+  options: { busyTimeoutMs?: number },
+  durable?: { foreignKeys: boolean },
+): ReadAccess {
   path = assert_test_database_path(path);
   const connection = new BetterSqlite3(path, {
     readonly: true,
@@ -179,8 +190,13 @@ export function createReadAccess(
   });
   try {
     connection.pragma('query_only = ON');
-    connection.pragma('foreign_keys = ON');
-    connection.pragma('recursive_triggers = ON');
+    if (durable) {
+      connection.pragma(`foreign_keys = ${durable.foreignKeys ? 'ON' : 'OFF'}`);
+      connection.pragma('trusted_schema = OFF');
+    } else {
+      connection.pragma('foreign_keys = ON');
+      connection.pragma('recursive_triggers = ON');
+    }
   } catch (error) {
     connection.close();
     throw error;
@@ -195,7 +211,7 @@ export function createReadAccess(
       reading = true;
       try {
         connection.exec('BEGIN');
-        const result = scope(connection, false, work);
+        const result = scope(connection, false, work, false, durable !== undefined);
         connection.exec('COMMIT');
         return result;
       } catch (error) {
@@ -317,6 +333,7 @@ function createOwnedDatabase<Tx extends TransactionSql>(
     commitSteps?: readonly CommitStep[];
     onChange?: () => void;
     auxiliary?: boolean;
+    safeIntegers?: boolean;
   },
 ) {
   const commitSteps = [...(options.commitSteps ?? [])];
@@ -340,7 +357,7 @@ function createOwnedDatabase<Tx extends TransactionSql>(
           writer.pragma(`busy_timeout = ${writeOptions.busyTimeoutMs}`);
         writer.exec('BEGIN IMMEDIATE');
         const before = writer.prepare('SELECT total_changes() AS count').get() as { count: number };
-        result = scope(writer, true, work, options.auxiliary);
+        result = scope(writer, true, work, options.auxiliary, options.safeIntegers);
         for (const step of commitSteps) scope(writer, true, step);
         const after = writer.prepare('SELECT total_changes() AS count').get() as { count: number };
         changed = after.count !== before.count;
@@ -400,6 +417,76 @@ function createOwnedDatabase<Tx extends TransactionSql>(
     database,
     outsideTransaction,
   };
+}
+
+function requireDatabaseVersion(
+  connection: BetterSqlite3.Database,
+  expectedVersion: number,
+  refusalMessage: string,
+): void {
+  if (Number(connection.pragma('user_version', { simple: true })) !== expectedVersion)
+    throw Object.assign(new Error(refusalMessage), { name: 'ValueError' });
+}
+
+/** Check an existing format before its caller creates directories or takes a process lock. */
+export function assertDatabaseVersion(
+  path: string,
+  expectedVersion: number,
+  refusalMessage: string,
+): boolean {
+  path = assert_test_database_path(path);
+  integer(expectedVersion, 'schemaVersion', 1, 2147483647);
+  if (!existsSync(path)) return false;
+  const connection = new BetterSqlite3(path, {
+    readonly: true,
+    fileMustExist: true,
+    timeout: BUSY_TIMEOUT_MS,
+  });
+  try {
+    requireDatabaseVersion(connection, expectedVersion, refusalMessage);
+    return true;
+  } finally {
+    connection.close();
+  }
+}
+
+/** Frozen sidecars reuse the writer engine, with exact versions and lossless integer rows. */
+export function createDurableSidecarDatabase(
+  path: string,
+  options: DurableSidecarDatabaseOptions,
+): Database {
+  path = assert_test_database_path(path);
+  const expectedVersion = integer(options.schemaVersion, 'schemaVersion', 1, 2147483647);
+  const existed = assertDatabaseVersion(path, expectedVersion, options.refusalMessage);
+  // The caller owns its parent directory and process lock. Never claim another creator's file.
+  if (!existed) closeSync(openSync(path, 'wx', 0o644));
+  const writer = new BetterSqlite3(path, { fileMustExist: true, timeout: BUSY_TIMEOUT_MS });
+  let reader: ReadAccess | undefined;
+  try {
+    // Existing version zero is refused. Only our exclusive creation can initialize version zero.
+    requireDatabaseVersion(writer, existed ? expectedVersion : 0, options.refusalMessage);
+    writer.pragma('journal_mode = WAL');
+    writer.pragma('synchronous = FULL');
+    writer.pragma('fullfsync = ON');
+    writer.pragma('trusted_schema = OFF');
+    writer.pragma(`foreign_keys = ${options.foreignKeys ? 'ON' : 'OFF'}`);
+    reader = createConfiguredReadAccess(path, { busyTimeoutMs: BUSY_TIMEOUT_MS }, options);
+    const owned = createOwnedDatabase<TransactionSql>(writer, reader, {
+      busyTimeoutMs: BUSY_TIMEOUT_MS,
+      safeIntegers: true,
+    });
+    if (!existed) {
+      owned.database.write((tx) => {
+        assertSynchronous(options.initialize(tx));
+        writer.pragma(`user_version = ${expectedVersion}`);
+      });
+    }
+    return owned.database;
+  } catch (error) {
+    reader?.close();
+    writer.close();
+    throw error;
+  }
 }
 
 /** Domain-owned sidecar schema; application schema creation remains Python-owned. */
