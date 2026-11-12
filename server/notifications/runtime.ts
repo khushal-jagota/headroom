@@ -3,6 +3,8 @@ import type { Database } from '../core/database/contracts.ts';
 import type { Clock } from '../core/clock.ts';
 import type { WorkspaceAdmission } from '../conversation/workspace_admission.ts';
 import type { APNsAdapter, WebPushAdapter } from './contracts.ts';
+import type { StopOptions } from '../lifecycle/contracts.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../core/config.ts';
 import { canonical_server_origin } from './apns.ts';
 import * as data from './data.ts';
 import * as apns_data from './apns_data.ts';
@@ -20,6 +22,10 @@ export class NotificationLoop {
   private active: Promise<number> | null = null;
   private stopped = true;
   private interval = 60;
+  private stop_requested = false;
+  private expired = false;
+  private readonly pending = new Set<Promise<number>>();
+  private closing: Promise<void> | undefined;
   private wake_pending = false;
   constructor(options: NotificationLoopOptions) {
     this.options = options;
@@ -27,7 +33,13 @@ export class NotificationLoop {
   reconcile_imported_state(): void {
     this.options.database.write((sql) => data.reconcile_attention(sql));
   }
-  async poll_once(): Promise<number> {
+  poll_once(): Promise<number> {
+    if (this.stop_requested) return Promise.resolve(0);
+    const task = this.deliver_once();
+    this.pending.add(task);
+    return task.finally(() => this.pending.delete(task));
+  }
+  private async deliver_once(): Promise<number> {
     const admission = this.options.workspace_admission?.operation();
     if (admission && !admission.admitted) {
       admission.release();
@@ -40,16 +52,21 @@ export class NotificationLoop {
       const identity = database.read((sql) => data.read_web_push_identity(sql));
       const deliveries = database.read((sql) => data.pending_deliveries(sql, now));
       for (const delivery of deliveries) {
+        if (this.stop_requested) return 0;
         const result = await adapter.send(delivery.subscription, delivery.intent, identity, {
           subject: this.options.canonical_origin || 'https://localhost',
         });
+        if (this.expired) return 0;
         database.write((sql) => data.record_delivery_result(sql, delivery, { ...result, now }));
       }
+      if (this.stop_requested) return deliveries.length;
       const native = database.write((sql) => apns_data.pending_deliveries(sql, now));
       const origin = canonical_server_origin(this.options.canonical_origin);
       if (apns_adapter && origin) {
         for (const delivery of native) {
+          if (this.stop_requested) return deliveries.length;
           const result = await apns_adapter.send(delivery, { server_url: origin, now });
+          if (this.expired) return deliveries.length;
           database.write((sql) => apns_data.record_result(sql, delivery, result, now));
         }
         return deliveries.length + native.length;
@@ -60,7 +77,8 @@ export class NotificationLoop {
     }
   }
   start(interval: number): void {
-    if (this.timer || this.active) throw new Error('notification loop already started');
+    if (this.timer || this.active || this.stop_requested)
+      throw new Error('notification loop already started or stopped');
     this.stopped = false;
     this.interval = interval;
     this.run();
@@ -77,7 +95,8 @@ export class NotificationLoop {
   }
   private run(): void {
     if (this.stopped) return;
-    this.active = this.poll_once();
+    // Install the in-flight latch before a queue write can emit a commit wake.
+    this.active = Promise.resolve().then(() => this.poll_once());
     void this.active
       .catch((error) => console.error('notification poll failed', error))
       .finally(() => {
@@ -92,11 +111,36 @@ export class NotificationLoop {
         }
       });
   }
-  async stop(): Promise<void> {
+  stop(options: Partial<StopOptions> = {}): Promise<void> {
+    if (this.closing) return this.closing;
+    this.stop_requested = true;
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
-    await this.active?.catch(() => {});
-    await this.options.apns_adapter?.close();
+    const deadline = options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
+    this.closing = (async () => {
+      try {
+        await until_deadline(Promise.allSettled([...this.pending]), deadline);
+      } finally {
+        // A late transport result can finish, but it cannot use the database again.
+        this.expired = true;
+        const close = Promise.resolve().then(() => this.options.apns_adapter?.close());
+        await until_deadline(close, deadline);
+      }
+    })();
+    return this.closing;
+  }
+}
+async function until_deadline(operation: Promise<unknown>, deadline: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      operation,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, Math.max(0, deadline * 1000 - performance.now()));
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }

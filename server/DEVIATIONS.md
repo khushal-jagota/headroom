@@ -16,7 +16,7 @@ another provider write or committed append. This is no longer an intentional dif
 `publication failure after receipt commit does not append or deliver twice`. It also proves
 that a repeated sender identity returns its receipt and later backend news still persists.
 
-- Projection rebuild uses TEMP tables on the single writer connection in batches of 500 events. Python uses a second connection. Results match. Sustained-load latency is not measured.
+- Projection rebuild uses TEMP tables on the single writer connection in batches of 500 events. Python uses a second connection. Results match. The Manager accepted 373.7 seconds in TS versus 94.5 seconds in Python for 200,000 events (about 3.96 times as long). The follow-up must precede the first projection-version change after cutover ([measured profile](https://github.com/khushal-jagota/headroom/blob/a201941e82dde385572a87602f127e0ae18e379d/server/lifecycle/REBUILD_PROFILE.md)). Sustained-load latency is not measured.
 
 ## Fixed measure and Goal depth budgets
 
@@ -39,3 +39,7 @@ The first applicable TypeScript budget determines the boundary error. At total g
 Python also crashes during response serialization for a sufficiently deep accepted formula. In the measured JsonDict response, AST depth 253 succeeds. Depth 254 commits the definition, then returns HTTP 500. TypeScript preserves the committed row and returns the same status, content type, and text through a deliberate, handled response-depth error. It does not reproduce an unhandled Pydantic exception. Request-validation errors retain their separate response path.
 
 See [the measure README](measures/README.md) for the fixed policy and proof commands. Unit 12's Part 2 still supplies the Goal HTTP routes and populated Manager/Chief page checks. The independent-root seam proof does not claim those routes exist in Part 1.
+
+## Managed Linux supervisor stop
+
+The Manager accepted prior authenticated stop intent followed by the exact supervisor signal instead of Python's kernel-sender and verified-manager check. This preserves accidental bare-signal refusal without a compiled wrapper. Foreground behavior stays ordinary. Implementation remains pending, with the capability, restart-race, and hosted failure proofs listed in [the lifecycle deviation](lifecycle/DEVIATIONS.md).

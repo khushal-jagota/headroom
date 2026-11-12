@@ -61,13 +61,19 @@ export function createAreasRuntime() {
     prepare(database: Database): void {
       database.write((tx) => audit_ticket_registry_integrity(tx, { startup: true }));
     },
-    initialize(database: Database, config: Config, clock: Clock): void {
+    initialize(
+      database: Database,
+      config: Config,
+      clock: Clock,
+      beforeRuntime: () => void = () => {},
+    ): void {
       database.write((tx) => initialize_notifications(tx, clock.nowUnix()));
       initialize_worker_settings(database, config);
       configure_conversation_start(database, config);
       configure_chief_resources(config);
       configure_manager_resources(clock);
       configure_measure_resources(clock);
+      beforeRuntime();
       // The record owns the sole store, tail, reconciliation, and epoch rotation.
       conversation.initialize(database, config, {
         integer_now: () => clock.nowUnix(),
@@ -152,10 +158,13 @@ export function composeAreaLoops(context: OwnedAreaContext, options: AreaLoopOpt
         workspace_root: context.config.workspace_root,
       },
     });
-    unsubscribe = context.changes.subscribe(() => wakes?.wake());
-    wakes.start(context.config.tick_seconds);
   }
   return {
+    start(): void {
+      if (!wakes) return;
+      unsubscribe = context.changes.subscribe(() => wakes?.wake());
+      wakes.start(context.config.tick_seconds);
+    },
     async stop(options: { deadline?: number } = {}): Promise<void> {
       unsubscribe?.();
       await wakes?.stop(options);
