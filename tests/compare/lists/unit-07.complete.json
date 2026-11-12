@@ -437,7 +437,8 @@
       "json": {},
       "capture": {
         "restarted": "conversation_id",
-        "restart_started": "started"
+        "restart_started": "started",
+        "restart_result": ""
       }
     },
     {
@@ -478,7 +479,8 @@
       "status": 200,
       "capture": {
         "revision_conversation": "conversation_id",
-        "restart_started": "started"
+        "restart_started": "started",
+        "revision_restart_result": ""
       },
       "json": {}
     },
@@ -705,6 +707,8 @@
     "manager_observations",
     "restart_started",
     "revision_prompt",
-    "member_workspace"
+    "member_workspace",
+    "restart_result",
+    "revision_restart_result"
   ]
 }

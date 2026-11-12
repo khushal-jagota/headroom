@@ -8,11 +8,28 @@ import {
   read_summary,
   admit_recovery,
 } from '../data.ts';
-import { manifest_from_dict } from '../files.ts';
+import { manifest_from_dict, read_manifests } from '../files.ts';
 import type { LifecycleStatus } from '../../record/lifecycle.ts';
 interface Spec {
   readonly cases: readonly { path: string; status: LifecycleStatus | 'restart' }[];
   readonly manifest: unknown;
+}
+export function inspect_capture_evidence(db_path: string) {
+  const manifests = read_manifests(db_path);
+  const database = createDatabase(db_path);
+  try {
+    database.write((tx) => reconcile(tx, manifests, 100));
+    return {
+      manifests,
+      accounts: database.read(read_summary),
+      rows: database.read((sql) =>
+        sql.all('SELECT * FROM deploy_interruption_accounts ORDER BY capture_id'),
+      ),
+      eligible: Object.fromEntries(database.read(select_recoveries)),
+    };
+  } finally {
+    database.close();
+  }
 }
 export function run(spec: Spec) {
   return spec.cases.map((entry) => {
