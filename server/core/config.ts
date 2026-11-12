@@ -5,7 +5,7 @@ import { isAbsolute, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { parse } from 'yaml';
 import { PlannerError } from './contracts.ts';
-import { strip } from './unidentified_agent_calls/logic.ts';
+import { strip } from './whitespace.ts';
 export const HOST = '127.0.0.1';
 export const SSE_HEARTBEAT_MS = 15000;
 export const DB_BUSY_TIMEOUT_MS = 5000;

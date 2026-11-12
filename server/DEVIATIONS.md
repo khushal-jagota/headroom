@@ -332,3 +332,17 @@ Whole-update validation uses the official SDK JSON schema before its best-effort
 Notifications during a prompt write follow Python's existing current-turn/no-turn guard. A successful actual prompt write remains accepted if stop races its continuation. Stderr retains whole lines with Python's final character cap. Fresh direct traces compare initialization exactly: the Python serializer uses `exclude_defaults=True`, so its empty default `clientCapabilities` does not appear on the wire. These are parity fixes, not additional deviations.
 
 The raw backend callback diagnostics compare exact payloads, turn attribution, counts, and order within each event type. Their cross-type order is not a parity claim. Canonical core events, lifecycle/view rows, live frames, and ACP requests keep exact ordered comparison.
+
+## Separate Mac executor state
+
+The Manager required these safety differences during the Mac slice 1 review on November 12, 2026.
+TypeScript defaults to `~/Library/Application Support/Panels/executor-typescript`.
+Python defaults to the sibling `executor` directory.
+TypeScript refuses a resolved root equal to or inside that Python root, including aliases through symlinks.
+It also refuses an empty or relative `HOME`, before it opens storage.
+The installation keeps its own app, supervisor, and explicit state root.
+
+TypeScript opens artifact sources with `O_NONBLOCK`, then requires a regular file through `fstat`.
+A FIFO therefore refuses instead of blocking the event loop before that check, as Python can do.
+Large copy, hash, and strict flush operations run in an owned worker with the shared shutdown deadline.
+The file formats, hashes, and successful publication behavior retain the Python contract.
