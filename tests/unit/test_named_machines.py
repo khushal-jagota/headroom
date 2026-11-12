@@ -43,7 +43,9 @@ from planner.tickets import data
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
-def _create(conn: sqlite3.Connection, **kwargs: str) -> object:
+def _create(
+    conn: sqlite3.Connection, *, machine_id: str | None = None, locale: str | None = None
+) -> object:
     return data.create_ticket(
         conn,
         title="Destination",
@@ -51,7 +53,8 @@ def _create(conn: sqlite3.Connection, **kwargs: str) -> object:
         principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,
-        **kwargs,
+        machine_id=machine_id,
+        locale=locale,
     )
 
 
