@@ -1,0 +1,216 @@
+name: Pull request browser checks
+'on':
+  pull_request:
+    branches:
+    - feature/home-setup
+    types:
+    - opened
+    - synchronize
+    - reopened
+    - ready_for_review
+    - edited
+permissions:
+  contents: read
+jobs:
+  browser_checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+        - e2e
+        - browser
+    env:
+      PANELS_REHEARSAL: 'true'
+      PANELS_SUITE: ${{ matrix.suite }}
+      PANELS_REPORT_DIR: ${{ github.workspace }}/reports
+      PANELS_CANDIDATE_SOURCE: ${{ github.workspace }}/source
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+        ref: ${{ github.sha }}
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        path: source
+        persist-credentials: false
+        fetch-depth: 0
+    - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+      with:
+        python-version: '3.12'
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '22'
+    - name: Bootstrap disposable hosted runner
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bubblewrap dbus-user-session ffmpeg patchelf binutils libtk8.6
+        # Hosted Ubuntu's AppArmor policy otherwise denies unprivileged bwrap.
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        sudo loginctl enable-linger "$USER"
+        sudo systemctl start "user@$(id -u).service"
+        echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+        echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> "$GITHUB_ENV"
+        sudo mkdir -p /home/vps/Deployments/Panels
+        sudo chown "$(id -u):$(id -g)" /home/vps/Deployments/Panels
+    - name: Prepare isolated source and dependencies
+      run: |
+        set -euo pipefail
+        mkdir -p "$PANELS_REPORT_DIR" "$HOME/t" "$GITHUB_WORKSPACE/artifact-shadow"
+        cd source
+        python3 -m venv .venv
+        .venv/bin/python -m pip install -r requirements.txt
+        .venv/bin/python -m pip install --editable .
+        npm ci --prefix web
+        npm install --prefix agent_backends --package-lock=false --save=false @anthropic-ai/claude-code@latest @openai/codex@latest
+        .venv/bin/python -m playwright install --with-deps chromium
+        codex_bin="$(.venv/bin/python scripts/deployment_codex.py setup --source-root "$PWD")"
+        echo "$codex_bin" >> "$GITHUB_PATH"
+        export PATH="$codex_bin:$PATH"
+        npm --prefix web run build
+    - name: Establish authenticated E2E user manager
+      if: ${{ matrix.suite == 'e2e' }}
+      run: |
+        exec > >(tee -a "$PANELS_REPORT_DIR/e2e.log") 2>&1
+        python3 - <<'PYTHON'
+        import json
+        import os
+        import subprocess
+        import time
+        from pathlib import Path
+
+        if (os.environ.get("PANELS_REHEARSAL") != "true"
+                or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted"):
+            raise RuntimeError("E2E user manager setup requires a disposable hosted runner")
+        uid = os.getuid()
+        unit = f"user@{uid}.service"
+        expected_pid = int(subprocess.check_output(
+            ["systemctl", "show", unit, "--property=MainPID", "--value"], text=True).strip())
+        if expected_pid <= 1:
+            raise RuntimeError("system user unit has no live manager PID")
+        print(json.dumps({"expected_manager_pid": expected_pid, "expected_uid": uid}), flush=True)
+        try:
+            executable = Path(f"/proc/{expected_pid}/exe")
+            metadata = executable.stat()
+            print(json.dumps({"manager_exe": os.readlink(executable),
+                              "device": metadata.st_dev, "inode": metadata.st_ino}), flush=True)
+        except OSError as error:
+            print(json.dumps({"manager_exe_error": str(error)}), flush=True)
+        command = [
+            "/usr/bin/busctl", f"--address=unix:path=/run/user/{uid}/bus", "--json=short",
+            "call", "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+            "GetConnectionCredentials", "s", "org.freedesktop.systemd1",
+        ]
+        started = time.monotonic()
+
+        def query(label):
+            attempt = time.monotonic()
+            try:
+                result = subprocess.run(command, capture_output=True, text=True, timeout=1.0)
+                print(json.dumps({"query": label, "elapsed_seconds": time.monotonic() - started,
+                                  "duration_seconds": time.monotonic() - attempt,
+                                  "exit": result.returncode, "stdout": result.stdout,
+                                  "stderr": result.stderr}), flush=True)
+                if result.returncode:
+                    return False
+                value = json.loads(result.stdout)
+                credentials = value["data"][0]
+                return (value["type"] == "a{sv}"
+                        and credentials["ProcessID"] == {"type": "u", "data": expected_pid}
+                        and credentials["UnixUserID"] == {"type": "u", "data": uid})
+            except subprocess.TimeoutExpired as error:
+                print(json.dumps({"query": label, "elapsed_seconds": time.monotonic() - started,
+                                  "duration_seconds": time.monotonic() - attempt,
+                                  "exit": None, "timeout": True, "stdout": str(error.stdout),
+                                  "stderr": str(error.stderr)}), flush=True)
+            except (ValueError, KeyError, TypeError, IndexError) as error:
+                print(json.dumps({"query": label, "credentials_error": str(error)}), flush=True)
+            return False
+
+        query("before-start")
+        subprocess.run(["systemctl", "--user", "start", "dbus.service"],
+                       check=True, timeout=10)
+        deadline = time.monotonic() + 20
+        attempt = 0
+        while time.monotonic() < deadline:
+            attempt += 1
+            if query(f"readiness-{attempt}"):
+                current_pid = int(subprocess.check_output(
+                    ["systemctl", "show", unit, "--property=MainPID", "--value"],
+                    text=True).strip())
+                if current_pid != expected_pid:
+                    raise RuntimeError("system user manager changed during readiness")
+                print(json.dumps({"authenticated_manager_ready": True, "attempts": attempt,
+                                  "elapsed_seconds": time.monotonic() - started}), flush=True)
+                break
+            time.sleep(0.25)
+        else:
+            raise RuntimeError("E2E user manager did not acquire authenticated DBus credentials")
+        PYTHON
+    - name: Run full suite at exact source
+      run: |
+        set -euo pipefail
+        for key in $(compgen -e); do
+          case "$key" in PLAN_*|PANELS_REAL_*|HERMES_HOME|CODEX_HOME|CLAUDE_CONFIG_DIR) unset "$key" ;; esac
+        done
+        export TMPDIR="$HOME/t"
+        export PATH="$PANELS_CANDIDATE_SOURCE/.venv/bin:$PATH"
+        export PANELS_E2E_FAILURE_DIR="$PANELS_REPORT_DIR/failure"
+        export PANELS_UI_PROOF_DIR="$PANELS_REPORT_DIR/success"
+        cd source
+        git rev-parse HEAD | tee "$PANELS_REPORT_DIR/revision.txt"
+        if [ "$PANELS_SUITE" = e2e ]; then
+          .venv/bin/python scripts/deployment_codex.py verify --source-root "$PWD"
+          bwrap --bind / / --dev-bind /dev /dev --bind "$GITHUB_WORKSPACE/artifact-shadow" /home/vps/Deployments/Panels --chdir "$PWD" --     .venv/bin/pytest tests/e2e -n 4 --basetemp "$HOME/t/p" --junitxml="$PANELS_REPORT_DIR/e2e.xml" 2>&1 | tee "$PANELS_REPORT_DIR/run.log"
+        else
+          bwrap --bind / / --dev-bind /dev /dev --bind "$GITHUB_WORKSPACE/artifact-shadow" /home/vps/Deployments/Panels --chdir "$PWD/web" --     node tests/browser/run.mjs --report "$PANELS_REPORT_DIR/browser.json" --revision "$(git rev-parse HEAD)" 2>&1 | tee "$PANELS_REPORT_DIR/run.log"
+        fi
+    - name: Upload comparison evidence
+      if: ${{ always() }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: browser-checks-${{ matrix.suite }}-${{ github.sha }}
+        path: reports
+        retention-days: 7
+    - name: Print exact failed test names
+      if: ${{ always() }}
+      run: |
+        python3 - <<'PYTHON'
+        import json
+        import os
+        from pathlib import Path
+        import xml.etree.ElementTree as ET
+
+        suite = os.environ["PANELS_SUITE"]
+        reports = Path(os.environ["PANELS_REPORT_DIR"])
+        try:
+            if suite == "e2e":
+                root = ET.parse(reports / "e2e.xml").getroot()
+                cases = list(root.iter("testcase"))
+                if not cases:
+                    raise ValueError("JUnit report contains no test cases")
+                failed = [case for case in cases
+                          if case.find("failure") is not None or case.find("error") is not None]
+                names = [case.attrib["classname"].replace(".", "/") + ".py::" + case.attrib["name"]
+                         for case in failed]
+            else:
+                receipt = json.loads((reports / "browser.json").read_text())
+                catalog = json.loads((Path(os.environ["PANELS_CANDIDATE_SOURCE"])
+                                      / "web/tests/browser/catalog.json").read_text())
+                identities = {case: entry["id"] + "/" + case
+                              for entry in catalog["entries"] for case in entry["cases"]}
+                cases = receipt["cases"]
+                if not cases:
+                    raise ValueError("browser receipt contains no cases")
+                names = [identities[case["id"]] for case in cases if case["status"] == "failed"]
+            if names:
+                print("Failed tests:", flush=True)
+                for name in names:
+                    print(name, flush=True)
+            else:
+                print("No failed test names in the report. The suite step determines the job result.", flush=True)
+        except (OSError, ValueError, KeyError, TypeError, ET.ParseError) as error:
+            print(f"suite report unavailable: {error}", flush=True)
+        PYTHON
