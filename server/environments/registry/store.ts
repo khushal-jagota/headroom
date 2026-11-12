@@ -36,6 +36,13 @@ export const MANIFEST_FILENAME = 'manifest.json';
 export const FAKE_FIXTURE_VERSION = 'fake-fixture-v1';
 const libc = koffi.load(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6');
 const flock = libc.func('int flock(int fd, int operation)');
+function registry_flock(descriptor: number, operation: number): number {
+  let result: number;
+  do {
+    result = flock(descriptor, operation);
+  } while (result !== 0 && koffi.errno() === 4); // EINTR: Python retries the interrupted syscall.
+  return result;
+}
 
 export async function with_registry_lock<T>(root: string, action: () => Promise<T>): Promise<T> {
   const resolved = await validate_absolute_environment_root(root);
@@ -46,7 +53,7 @@ export async function with_registry_lock<T>(root: string, action: () => Promise<
     0o600,
   );
   try {
-    if (flock(descriptor, 2) !== 0) {
+    if (registry_flock(descriptor, 2) !== 0) {
       const error = koffi.errno();
       if ([11, 13, 35].includes(error))
         throw new EnvironmentValidationError(`environment registry is locked: ${resolved}`);
@@ -55,7 +62,7 @@ export async function with_registry_lock<T>(root: string, action: () => Promise<
     return await action();
   } finally {
     try {
-      flock(descriptor, 8);
+      registry_flock(descriptor, 8);
     } finally {
       closeSync(descriptor);
     }

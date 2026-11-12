@@ -2,6 +2,15 @@
 
 This file records intentional differences that the migration Manager accepted. No new difference enters this file without that acceptance. Close an entry when Python adopts the same behavior.
 
+## Unknown managed root in a verified backup
+
+The migration Manager accepted this difference during Unit 21 Part 3 source review.
+Python indexes its fixed destination-root map with each recorded root name. An unknown name raises an uncaught `KeyError`.
+TypeScript reports an operational error instead. The plain environment restore handler returns exit code 1 and an error on stderr.
+It does not reproduce the Python fault. Snapshot verification and the database/managed-root restore order retain their existing behavior.
+
+The existing `test_unit21_restore_refusals_and_failed_swaps_preserve_owned_files` comparison pins this accepted refusal.
+
 ## Backend discovery in test mode
 
 The migration Manager accepted this safer rule during Unit 19's backend review.

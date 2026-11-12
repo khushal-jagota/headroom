@@ -2,6 +2,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getSystemErrorMap } from 'node:util';
+import koffi from 'koffi';
 import { jsonFailure } from '../core/http/json.ts';
 import { JsonNumber, stringify_python_json } from '../core/http/numeric_json.ts';
 import { create_database_backup } from './backup/capture.ts';
@@ -46,11 +47,48 @@ const success = (stdout: string, stderr = ''): Result => ({
 const failed = (error: Error, stderr = ''): Result => ({
   exit_code: 1,
   stdout: '',
-  stderr: stderr + `Error: ${error.message}\n`,
+  stderr: stderr + `Error: ${error_message(error)}\n`,
 });
 const json = (value: unknown) =>
   stringify_python_json(value, { sort_keys: true, ensure_ascii: true });
 const os_error_codes = new Set([...getSystemErrorMap().values()].map(([name]) => name));
+const os_error_numbers = new Map(
+  [...getSystemErrorMap()].map(([number, [name]]) => [name, Math.abs(number)]),
+);
+let native_strerror: ((number: number) => string) | undefined;
+function path_repr(path: string): string {
+  const quote = path.includes("'") && !path.includes('"') ? '"' : "'";
+  let result = quote;
+  for (const character of path) {
+    const point = character.codePointAt(0)!;
+    if (character === quote || character === '\\') result += `\\${character}`;
+    else if (character === '\n') result += '\\n';
+    else if (character === '\r') result += '\\r';
+    else if (character === '\t') result += '\\t';
+    else if (character !== ' ' && /[\p{C}\p{Z}]/u.test(character)) {
+      const width = point <= 0xff ? 2 : point <= 0xffff ? 4 : 8;
+      result += `\\${width === 2 ? 'x' : width === 4 ? 'u' : 'U'}${point.toString(16).padStart(width, '0')}`;
+    } else result += character;
+  }
+  return result + quote;
+}
+function error_message(error: Error): string {
+  if (!('code' in error) || typeof error.code !== 'string') return error.message;
+  const known_number = os_error_numbers.get(error.code);
+  if (known_number === undefined) return error.message;
+  const number =
+    'errno' in error && typeof error.errno === 'number' ? Math.abs(error.errno) : known_number;
+  native_strerror ??= koffi
+    .load(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6')
+    .func('const char *strerror(int error)');
+  let message = `[Errno ${number}] ${native_strerror(number)}`;
+  if ('path' in error && typeof error.path === 'string') {
+    message += `: ${path_repr(error.path)}`;
+    if ('dest' in error && typeof error.dest === 'string')
+      message += ` -> ${path_repr(error.dest)}`;
+  }
+  return message;
+}
 const os_error = (error: unknown): boolean =>
   error instanceof Error &&
   (('code' in error && typeof error.code === 'string' && os_error_codes.has(error.code)) ||
@@ -175,7 +213,7 @@ export async function environment_backup_current(
           (error instanceof AppManifestValidationFailure && error.category === 'value'))
       ))
         throw error;
-      warning = `Warning: ${error.message}. Backup will continue.\n`;
+      warning = `Warning: ${error_message(error)}. Backup will continue.\n`;
     }
     // Backup's domain RuntimeErrors are distinct from unexpected validator errors.
     try {

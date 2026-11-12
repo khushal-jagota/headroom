@@ -14,10 +14,20 @@ import { prune } from '../navigation/delivery/retention.ts';
 export function bootstrap_application(tx: TransactionSql, initialized_at: number): void {
   const epoch = randomUUID();
   tx.run('INSERT INTO chief_page(singleton) VALUES(1)');
-  tx.run('INSERT INTO navigation_meta VALUES(1,?,7,?,0)', [randomUUID(), epoch]);
-  tx.run('INSERT INTO navigation_delivery_retention VALUES(1,?,0)', [epoch]);
-  tx.run("INSERT INTO manager_launch_defaults VALUES(1,'codex','gpt-6.1-sol','medium')");
-  tx.run('INSERT INTO attention_history_metadata VALUES(1,?)', [initialized_at]);
+  tx.run(
+    'INSERT INTO navigation_meta(singleton,scope,schema_version,epoch,revision) VALUES(1,?,7,?,0)',
+    [randomUUID(), epoch],
+  );
+  tx.run(
+    'INSERT INTO navigation_delivery_retention(singleton,epoch,floor_revision) VALUES(1,?,0)',
+    [epoch],
+  );
+  tx.run(
+    "INSERT INTO manager_launch_defaults(singleton,employee_backend,employee_launch_model,employee_launch_reasoning_effort) VALUES(1,'codex','gpt-6.1-sol','medium')",
+  );
+  tx.run('INSERT INTO attention_history_metadata(singleton,started_at) VALUES(1,?)', [
+    initialized_at,
+  ]);
   seed_shipped_notification_preferences(tx);
   const navigation = createNavigationRegistry();
   navigation.rebuild(tx);

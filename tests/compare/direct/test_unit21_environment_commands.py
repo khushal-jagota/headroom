@@ -15,7 +15,7 @@ import sqlite3
 import subprocess
 import tempfile
 import time
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -140,9 +140,12 @@ def test_unit21_environment_command_function_parity(
         **create_synthetic_homes(tmp_path),
         "PLAN_TEST_MODE": "1",
     }
-    with tempfile.TemporaryDirectory(
-        prefix="p21-cli-", dir=Path(tempfile.gettempdir()).resolve()
-    ) as temporary:
+    with (
+        tempfile.TemporaryDirectory(
+            prefix="p21-cli-", dir=Path(tempfile.gettempdir()).resolve()
+        ) as temporary,
+        ExitStack() as cleanup,
+    ):
         root = Path(temporary)
         source = _seed(root)
         (root / "workspace").mkdir()
@@ -195,6 +198,11 @@ def test_unit21_environment_command_function_parity(
             source_digest="b" * 64,
             artifact_digest="c" * 64,
         )
+        denied = root / "denied'app-\té"
+        denied.mkdir()
+        (denied / "manifest.json").write_text(json.dumps(app))
+        cleanup.callback(denied.chmod, 0o700)
+        denied.chmod(0)
         (root / "corrupt.sqlite").write_bytes(b"not a SQLite database\n")
         calls = [
             dict(command="status", args=dict(json=True)),
@@ -242,6 +250,7 @@ def test_unit21_environment_command_function_parity(
                 )
                 for category in ("os", "runtime", "unexpected")
             ],
+            dict(command="backup-current", args={**current, "current_app": str(denied)}),
             *[
                 dict(command="backup-current", args=current, manifest=manifest)
                 for manifest in (
@@ -281,7 +290,22 @@ def test_unit21_environment_command_function_parity(
                 "import{readFileSync}from'node:fs';"
                 "const{command_probe}=await import(process.argv[2]);"
                 "const s=JSON.parse(readFileSync(process.argv[3],'utf8'));"
-                "console.log(JSON.stringify(await command_probe(s.root,s.calls)));"
+                "const result=await command_probe(s.root,s.calls);"
+                "const{default:koffi}=await import("
+                "new URL('../../node_modules/koffi/index.js',process.argv[2]));"
+                "const load=koffi.load;let injected=0,acquire_calls=0,actions=0,registry;"
+                "koffi.load=(...args)=>new Proxy(load(...args),{get(lib,key){"
+                "if(key!=='func')return Reflect.get(lib,key);"
+                "return(...signature)=>{const fn=lib.func(...signature);"
+                "if(signature[0]!=='int flock(int fd, int operation)')return fn;"
+                "return(fd,operation)=>{if(operation===2){acquire_calls++;"
+                "if(!injected){injected++;koffi.errno(4);return -1;}}"
+                "return fn(fd,operation);};};}});"
+                "try{registry=await import(new URL('../registry/store.ts?eintr',process.argv[2]));}"
+                "finally{koffi.load=load;}"
+                "await registry.with_registry_lock(s.root+'/eintr-registry',async()=>{actions++;});"
+                "console.log(JSON.stringify({...result,"
+                "interrupted_lock:{injected,acquire_calls,actions}}));"
             )
             completed = subprocess.run(
                 [
@@ -299,6 +323,7 @@ def test_unit21_environment_command_function_parity(
             )
         assert completed.returncode == 0, completed.stderr
         actual = json.loads(completed.stdout)
+        assert actual["interrupted_lock"] == dict(injected=1, acquire_calls=2, actions=1)
 
         def stable(value: Any) -> str:
             return re.sub(
@@ -363,6 +388,9 @@ def test_unit21_environment_command_function_parity(
         assert actual["results"][5]["stderr"].startswith(
             "Warning: app artifact digest does not match its manifest."
         )
+        assert expected[16]["stderr"] == (
+            f"Error: [Errno 13] Permission denied: {str(denied / 'manifest.json')!r}\n"
+        )
         assert [result.get("thrown") for result in actual["results"][-9:-1]] == [
             None,
             "KeyError",
@@ -386,6 +414,7 @@ def test_unit21_environment_command_function_parity(
                         "No parser/help, real app validator, dispatcher or host-service acceptance."
                     ),
                     "results": actual["results"],
+                    "interrupted_lock": actual["interrupted_lock"],
                 },
                 indent=2,
             )

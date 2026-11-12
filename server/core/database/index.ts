@@ -251,7 +251,10 @@ export async function onlineBackup(sourcePath: string, destinationPath: string):
     timeout: BUSY_TIMEOUT_MS,
   });
   try {
-    await source.backup(destinationPath);
+    // A source write between bounded steps restarts SQLite's online copy. Transfer
+    // the largest positive SQLite int in one read step instead of yielding per 100 pages.
+    // better-sqlite3 clamps negative callback results to zero, so -1 cannot request all.
+    await source.backup(destinationPath, { progress: () => 0x7fffffff });
   } finally {
     source.close();
   }

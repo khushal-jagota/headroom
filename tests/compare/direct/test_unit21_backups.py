@@ -25,6 +25,7 @@ from tests.unit.test_database_backups import _legacy_snapshot, _seed_database, _
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import connect, create_schema
 from planner.environments import backup
+from planner.environments.cli import restore
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import Ticket
 from planner.tickets.views import ticket_json
@@ -42,6 +43,8 @@ def _node(root: Path, **spec: Any) -> dict[str, Any]:
     }
     env.update(homes)
     env.update(PLAN_TEST_MODE="1", PLAN_DB_PATH=str(root / "synthetic.sqlite"))
+    if "temporary_root" in spec:
+        env["TMPDIR"] = str(spec.pop("temporary_root"))
     request = root / "request.json"
     request.write_text(json.dumps({"root": str(root), **spec}))
     launcher = root / "probe.mjs"
@@ -143,9 +146,14 @@ def test_unit21_fresh_schema_bootstrap_is_complete_unique_and_atomic(
             dict(row) for row in connection.execute("SELECT * FROM notification_preferences")
         ]
         expected_revision = connection.execute("SELECT revision FROM navigation_meta").fetchone()[0]
+        expected_pragmas = {
+            name: connection.execute(f"PRAGMA {name}").fetchone()[0]
+            for name in ("page_size", "auto_vacuum", "user_version", "journal_mode")
+        }
     for state in actual["states"]:
         assert state["schema"] == expected_schema
         assert state["inventory"] == inventory
+        assert state["file_pragmas"] == expected_pragmas
         assert state["revision"] == {"version_num": seed["alembicRevision"]}
         assert state["navigation"]["schema_version"] == 7
         assert state["navigation"]["revision"] == expected_revision
@@ -201,6 +209,8 @@ def test_unit21_backup_v2_cross_language_wal_roots_and_retention(
             worker_type="coding",
         )
     _seed_managed_tree(source.parent, "canonical")
+    for name in ("éclair.txt", "2", "10"):
+        (source.parent / "skills" / name).write_text("synthetic non-ASCII evidence\n")
     (source.parent / "skills/dangling").symlink_to("missing")
     (source.parent / "skills/inner").symlink_to("panels", target_is_directory=True)
     # Root links are followed by copytree. Descendant links remain links.
@@ -218,10 +228,19 @@ def test_unit21_backup_v2_cross_language_wal_roots_and_retention(
             now=now + 1,
         )
         assert Path(str(source) + "-wal").stat().st_size > 0
-        result = _node(tmp_path, action="backup", source=str(source))
+        revision = "révision-雪"
+        result = _node(tmp_path, action="backup", source=str(source), revision=revision)
         snapshot = Path(result["snapshot"])
         assert backup.is_verified_snapshot(snapshot)
         metadata = json.loads((snapshot / "metadata.json").read_text())
+        assert metadata["deployed_revision"] == revision
+        for path in (snapshot / "metadata.json", snapshot / "files/manifest.json"):
+            assert path.read_bytes() == (
+                json.dumps(
+                    json.loads(path.read_bytes()), sort_keys=True, indent=2, ensure_ascii=True
+                )
+                + "\n"
+            ).encode("ascii")
         assert re.fullmatch(
             r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{6})?\+00:00", metadata["created_at"]
         )
@@ -309,9 +328,15 @@ def test_unit21_backup_v2_cross_language_wal_roots_and_retention(
         started,
         verified=len(verified),
         ticket=ticket_result,
+        evidence_json={
+            "deployed_revision": revision,
+            "created_at": metadata["created_at"],
+            "python_sorted_ascii_indent": True,
+        },
         boundary=(
             "Real WAL online backup, TS→Python and Python→TS restore, root/inner symlinks, "
-            "legacy files, retention and unpublished failure cleanup. Real application schema "
+            "legacy files, retention, exact sorted ASCII Python JSON bytes and unpublished "
+            "failure cleanup. Real application schema "
             "and populated Ticket before/after ordinary Python/TS readers and canonical writers, "
             "closed and reopened without destination bootstrap. No process/HTTP startup claim."
         ),
@@ -327,6 +352,56 @@ def test_unit21_restore_refusals_and_failed_swaps_preserve_owned_files(
     _seed_database(source)
     _seed_managed_tree(source.parent, "new")
     snapshot = backup.create_database_backup(source, tmp_path / "python-backups", "python")
+    narrow = tmp_path / "narrow-temporary"
+    narrow.mkdir()
+    guarded_snapshot = narrow / "verified-snapshot"
+    shutil.copytree(snapshot, guarded_snapshot, symlinks=True)
+    assert backup.is_verified_snapshot(guarded_snapshot)
+    wrong_destination = tmp_path / "outside-narrow/absent/database.sqlite"
+    assert not wrong_destination.parent.exists()
+    guarded = _node(
+        tmp_path,
+        action="restore",
+        snapshot=str(guarded_snapshot),
+        destination=str(wrong_destination),
+        temporary_root=str(narrow),
+    )
+    assert "Tests can only use databases" in guarded["error"]
+    assert not wrong_destination.parent.exists()
+    unknown = tmp_path / "unknown-root-snapshot"
+    shutil.copytree(snapshot, unknown, symlinks=True)
+    (unknown / "files/mystery").mkdir()
+    (unknown / "files/mystery/owned.txt").write_text("owned\n")
+    manifest_path = unknown / "files/manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["mystery"] = {"owned.txt": hashlib.sha256(b"owned\n").hexdigest()}
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n")
+    metadata_path = unknown / "metadata.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["managed_files"]["roots"] = sorted(manifest)
+    metadata["managed_files"]["manifest_sha256"] = hashlib.sha256(
+        manifest_path.read_bytes()
+    ).hexdigest()
+    metadata_path.write_text(json.dumps(metadata, sort_keys=True, indent=2) + "\n")
+    assert backup.is_verified_snapshot(unknown)
+    assert restore.callback is not None
+    with pytest.raises(KeyError, match="mystery"):
+        restore.callback(
+            snapshot=unknown,
+            destination_db=tmp_path / "unknown-python/database.sqlite",
+            live_stopped=True,
+        )
+    unknown_result = _node(
+        tmp_path,
+        action="restore-command",
+        snapshot=str(unknown),
+        destination=str(tmp_path / "unknown-typescript/database.sqlite"),
+    )
+    assert unknown_result == {
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "Error: unknown managed root: mystery\n",
+    }
     destination = tmp_path / "destination/database.sqlite"
     _seed_database(destination)
     _seed_managed_tree(destination.parent, "old")
@@ -398,6 +473,47 @@ def test_unit21_restore_refusals_and_failed_swaps_preserve_owned_files(
         started,
         boundary=(
             "Stopped assertion, checksum/integrity refusal, DB replacement/sidecar rollback, "
-            "second-root rollback after DB replacement. No whole-restore transaction is claimed."
+            "second-root rollback after DB replacement and early synthetic path guard. "
+            "Accepted unknown-root difference: Python KeyError vs TS clean operational exit1. "
+            "No whole-restore transaction is claimed."
+        ),
+    )
+
+
+def test_unit21_backup_finishes_with_commits_between_every_partial_step(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """Default100-page yields can restart forever under real committed writes."""
+    started = time.perf_counter()
+    source = tmp_path / "concurrent.sqlite"
+    with sqlite3.connect(source) as connection:
+        connection.execute("CREATE TABLE padding(value BLOB)")
+        connection.executemany("INSERT INTO padding VALUES (?)", [(b"x" * 8192,)] * 96)
+        connection.execute("CREATE TABLE snapshot_counter(value INTEGER)")
+        connection.execute("INSERT INTO snapshot_counter VALUES(0)")
+        connection.execute(
+            "CREATE TABLE snapshot_audit(sequence INTEGER PRIMARY KEY,value INTEGER)"
+        )
+        assert connection.execute("PRAGMA page_count").fetchone()[0] > 100
+    actual = _node(
+        tmp_path,
+        action="concurrent",
+        source=str(source),
+        destination=str(tmp_path / "copied.sqlite"),
+    )
+    assert "error" not in actual, actual
+    assert actual["integrity"] == {"integrity_check": "ok"}
+    assert 0 < actual["counter"] == actual["audit"]["count"] == actual["audit"]["maximum"]
+    assert actual["audit"]["inconsistent"] == 0
+    assert actual["commits"] == actual["counter"]
+    _report(
+        request,
+        "unit-21-concurrent-backup.json",
+        started,
+        result=actual,
+        boundary=(
+            "Actual second canonical writer commits between every partial native backup step; "
+            "snapshot integrity and transaction coherence, not a rate assertion. "
+            "Five-yield deterministic bound, no IPC/thread or timing-ratio check."
         ),
     )

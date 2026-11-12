@@ -22,9 +22,11 @@ import { read_ticket, edit_ticket } from '../../../tickets/data/index.ts';
 import { with_worker_runtime_definitions } from '../../../worker_types/configuration.ts';
 import type { Ticket } from '../../../tickets/contracts.ts';
 import { ticket_json } from '../../../tickets/views.ts';
+import { backup_with_interleaved_commits } from '../../../core/database/testing/backup_interleaving.ts';
+import { environment_restore } from '../../cli.ts';
 
 interface Request {
-  action: 'backup' | 'restore' | 'fresh' | 'retention';
+  action: 'backup' | 'restore' | 'fresh' | 'retention' | 'concurrent' | 'restore-command';
   root: string;
   source?: string;
   destination?: string;
@@ -50,6 +52,14 @@ export async function backup_probe(request: Request): Promise<unknown> {
     return rename(source, destination);
   };
   try {
+    if (request.action === 'concurrent')
+      return await backup_with_interleaved_commits(request.source!, request.destination!);
+    if (request.action === 'restore-command')
+      return await environment_restore({
+        snapshot: request.snapshot!,
+        destination_db: request.destination!,
+        live_stopped: true,
+      });
     if (request.action === 'backup')
       return {
         snapshot: await create_database_backup(
@@ -151,6 +161,12 @@ function fresh_probe(root: string): unknown {
         return {
           schema,
           inventory,
+          file_pragmas: Object.fromEntries(
+            ['page_size', 'auto_vacuum', 'user_version', 'journal_mode'].map((name) => [
+              name,
+              Object.values(sql.get(`SELECT ${name} FROM pragma_${name}`)!)[0],
+            ]),
+          ),
           revision: sql.get('SELECT version_num FROM alembic_version'),
           navigation: sql.get('SELECT * FROM navigation_meta'),
           retention: sql.all('SELECT * FROM navigation_delivery_retention'),

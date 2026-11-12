@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { verifyDatabaseIntegrity } from '../../core/database/index.ts';
+import { assert_test_database_path } from '../../core/test_paths.ts';
 import type { ManagedFilesEvidence, ManagedRootName, RestoreOptions } from './contracts.ts';
 import { copy_managed_tree, managed_file_roots } from './capture.ts';
 import {
@@ -91,11 +92,12 @@ export async function restore_database_snapshot(
   options: RestoreOptions,
 ): Promise<void> {
   if (!options.live_stopped) throw new Error('live environment must be stopped before restore');
+  const admitted = assert_test_database_path(expand_path(destinationDatabase));
+  const destination = await resolved_path(admitted);
   snapshot = expand_path(snapshot);
   if ((await is_symlink(snapshot)) || !(await is_verified_snapshot(snapshot)))
     throw new Error('snapshot is not verified');
   snapshot = await resolved_path(snapshot);
-  const destination = await resolved_path(destinationDatabase);
   const image = join(snapshot, 'database.sqlite');
   let metadata: unknown;
   try {
