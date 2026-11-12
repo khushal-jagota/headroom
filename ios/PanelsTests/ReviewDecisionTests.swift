@@ -105,6 +105,8 @@ import XCTest
             title: item.title, waitingSince: item.waitingSince, proposalRevision: try XCTUnwrap(decision.proposal?.revision))
         ReviewStub.state.bumpRevision()
         await decision.load(item: item, api: api)
+        // GET caching is asynchronous; prove the replacement cache, not a still-valid A cache.
+        await LocalStore.shared.flushCache()
         let strictOld = ReviewDecision()
         await strictOld.load(item: exactOld, api: api)
         XCTAssertTrue(strictOld.changed, "A same-second replacement cannot bind the old queue item")

@@ -73,3 +73,10 @@ Deletion removes the goal, its page and files, and its own completion and outcom
 - `web/src/components/goals/` and `web/src/lib/goals/`: the page, rail, previews, and overview.
 
 _Last verified: 2026-11-11._
+
+The iPhone shares accepted Goal lists, documents, readings, and holder pages through
+one resource owner. Each mounted page retains its unfinished edits separately.
+A document edit invalidates that Goal and the global list. Reading freshness keeps
+shared measurement, dataset, formula, and local-calendar dependencies. A measurement
+change can therefore refresh several active Goals. An inactive Goal does not fetch
+because another page changed.

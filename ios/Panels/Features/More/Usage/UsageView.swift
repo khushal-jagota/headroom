@@ -6,12 +6,14 @@ struct UsageView: View {
     @State private var metric = "Limits"
     @State private var days = 1
     @State private var provider = "All"
-    @State private var summary: UsageSummary?
-    @State private var backends: [UsageBackend] = []
-    @State private var error: String?
-    @State private var loading = false
+    private var backendResource: ResourceHandle<UsageBackends> { store.resources.handle(UsageResources.backends) }
+    private var summaryResource: ResourceHandle<RecordedUsageSummary> { store.resources.handle(UsageResources.summary(days: days)) }
+    private var summary: UsageSummary? { summaryResource.value.map { UsageSummary($0, days: days) } }
+    private var backends: [UsageBackend] { (backendResource.value?.backends ?? []).filter { ["codex", "claude"].contains($0.backendKey) } }
+    @State private var refreshError: String?
+    private var error: String? { refreshError ?? (metric == "Limits" ? backendResource.error : summaryResource.error) }
+    private var loading: Bool { metric == "Limits" ? backendResource.value == nil : summary == nil }
     @State private var refreshing = false
-    @State private var readGeneration = 0
     private let metrics = ["Limits", "Tokens", "Cost"]
     private var selectedMetrics: UsageMetrics? {
         provider == "All" ? summary?.totals : summary?.providers.first { $0.provider == provider.lowercased() }
@@ -28,7 +30,8 @@ struct UsageView: View {
             if let error { Section { LoadErrorView(message: error) { await refresh() } } }
         }
         .panelsNavigationTitle("Usage", role: .usage).panelsScreen()
-        .task(id: "\(store.baseURL):\(metric):\(days):\(store.connectionSession)") { await load() }
+        .resourceDemand(backendResource, active: metric == "Limits")
+        .resourceDemand(summaryResource, active: metric != "Limits")
         .panelsRefreshable { await refresh() }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -144,51 +147,33 @@ struct UsageView: View {
     @MainActor private func refresh() async {
         guard !refreshing else { return }
         refreshing = true
-        readGeneration += 1
         Haptics.light()
         defer { refreshing = false }
         let client = store.client
-        let requestedDays = days
         async let allowanceRead = client.refreshUsageBackends()
         async let recordedRead: Void = client.refreshRecordedUsage()
         var failures: [String] = []
         do {
             let result = try await allowanceRead
             guard store.baseURL == client.baseURL else { return }
-            backends = result.backends.filter { ["codex", "claude"].contains($0.backendKey) }
             if let failure = result.failure { failures.append(failure) }
         } catch { failures.append(error.localizedDescription) }
         do {
             try await recordedRead
         } catch { failures.append(error.localizedDescription) }
-        do {
-            let result = try await client.usage(days: requestedDays)
-            guard store.baseURL == client.baseURL else { return }
-            if days == requestedDays { summary = result }
-        } catch { failures.append(error.localizedDescription) }
+        guard store.baseURL == client.baseURL else { return }
+        store.resources.invalidate([backendResource.key, summaryResource.key])
+        async let backends: Void = backendResource.refresh()
+        async let summary: Void = summaryResource.refresh()
+        _ = await (backends, summary)
+        if let failure = backendResource.error ?? summaryResource.error { failures.append(failure) }
         guard store.baseURL == client.baseURL, !Task.isCancelled else { return }
-        error = failures.isEmpty ? nil : failures.joined(separator: " ")
+        refreshError = failures.isEmpty ? nil : failures.joined(separator: " ")
         if failures.isEmpty { Haptics.success() } else { Haptics.error() }
     }
     @MainActor private func load() async {
-        guard !refreshing else { return }
-        let generation = readGeneration
-        loading = true
-        if metric != "Limits", summary?.days != days { summary = nil }
-        defer { loading = false }
-        do {
-            if metric == "Limits" {
-                let result = try await store.client.usageBackends()
-                try Task.checkCancellation()
-                guard !refreshing, generation == readGeneration else { return }
-                backends = result.backends.filter { ["codex", "claude"].contains($0.backendKey) }
-            } else {
-                let result = try await store.client.usage(days: days)
-                try Task.checkCancellation()
-                guard !refreshing, generation == readGeneration else { return }
-                summary = result
-            }
-            error = nil
-        } catch { if !Task.isCancelled, generation == readGeneration { self.error = error.localizedDescription } }
+        if metric == "Limits" { await backendResource.refresh() }
+        else { await summaryResource.refresh() }
+        refreshError = backendResource.error ?? summaryResource.error
     }
 }

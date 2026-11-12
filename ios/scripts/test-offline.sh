@@ -4,7 +4,7 @@ cd "$(dirname "$0")/../.."
 build=$(mktemp -d "${TMPDIR:-/tmp}/panels-offline-tests.XXXXXX")
 trap 'rm -rf "$build"' EXIT
 mkdir -p "$build/Sources/Panels" "$build/Tests/PanelsTests"
-cp ios/Panels/Core/Networking/APIClient.swift ios/Panels/Core/Networking/ResourceVersions.swift ios/Panels/Core/Networking/ChangeStream.swift ios/Panels/Core/State/AppStore.swift ios/Panels/Core/Navigation/*.swift ios/Panels/Core/Persistence/*.swift ios/Panels/Models/*.swift \
+cp ios/Panels/Core/Networking/APIClient.swift ios/Panels/Core/Networking/ResourceVersions.swift ios/Panels/Core/Networking/ResourceOwner.swift ios/Panels/Core/Networking/ResourceRead.swift ios/Panels/Core/Networking/ChangeStream.swift ios/Panels/Core/State/AppStore.swift ios/Panels/Core/Navigation/*.swift ios/Panels/Core/Persistence/*.swift ios/Panels/Models/*.swift \
   ios/Panels/Features/Conversation/Models/*.swift ios/Panels/Features/Conversation/Networking/*.swift \
   ios/Panels/Features/Conversation/Logic/*.swift ios/Panels/Features/Conversation/State/ConversationModel.swift ios/Panels/Features/Review/ReviewAPI.swift \
   ios/Panels/Features/Review/ReviewDecision.swift ios/Panels/Features/Review/ReviewMessageDecision.swift "$build/Sources/Panels/"

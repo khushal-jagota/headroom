@@ -4,7 +4,7 @@ struct ReviewView: View {
     let savedWork: ReviewSavedWork
     var isActive = true
     @State private var appeared = false
-    private var active: Bool { isActive && appeared && scenePhase == .active }
+    private var active: Bool { isActive && appeared && scenePhase == .active && !store.serverUnreachable }
     var openTicket: ((String) -> Void)? = nil
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
@@ -654,7 +654,7 @@ private struct ReviewReturnComposer: View {
             if let error = decision.error ?? voice.error { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error) }
         }.padding(.bottom, PanelsTheme.Space.md)
             .onChange(of: isActive, initial: true) { _, active in
-                guard active else { return }
+                guard active else { voice.preserve(); return }
                 savedWork.refresh(LocalStore.server(api.baseURL))
                 decision.refreshVoiceDraft(); focused = true
                 voice.restore(api: api, draftID: decision.revisionDraftID, savedWork: decision.revisionDraftID.map { savedWork.voice(LocalStore.server(api.baseURL), draftID: $0) } ?? [])

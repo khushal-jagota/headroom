@@ -13,11 +13,16 @@ struct AppShell: View {
     @State private var morePath: [AppRoute] = []
 
     var body: some View {
-        Group {
+        tabs
+        // Keep route edit owners mounted beneath the connection reminder.
+        .allowsHitTesting(!store.serverUnreachable)
+        .accessibilityHidden(store.serverUnreachable)
+        .overlay {
             if store.serverUnreachable {
                 ServerUnreachableView { await store.refresh() }
-            } else {
-                tabs
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(PanelsTheme.surface)
+                    .ignoresSafeArea()
             }
         }
         .task {
@@ -63,7 +68,10 @@ struct AppShell: View {
             if let error = LocalStore.shared.outgoingError ?? LocalStore.shared.saveError { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error).padding(8) }
         }
         .onChange(of: Outbox.shared.networkAvailable) { _, available in
-            if available, scenePhase == .active { Task { await store.refresh() } }
+            if available, scenePhase == .active {
+                store.resources.resumeActiveReads()
+                Task { await store.refresh() }
+            }
         }
         .task(id: "outbox:\(store.baseURL):\(scenePhase == .active)") {
             if scenePhase == .active { await Outbox.shared.run(api: store.client) }
@@ -76,7 +84,7 @@ struct AppShell: View {
     private var tabs: some View {
         TabView(selection: $selectedTab) {
             NavigationStack(path: $reviewPath) {
-                ReviewView(savedWork: savedReviewWork, isActive: selectedTab == .review && reviewPath.isEmpty && scenePhase == .active, openTicket: { id in
+                ReviewView(savedWork: savedReviewWork, isActive: selectedTab == .review && reviewPath.isEmpty && scenePhase == .active && !store.serverUnreachable, openTicket: { id in
                     var transaction = Transaction(animation: nil)
                     transaction.disablesAnimations = true
                     withTransaction(transaction) {

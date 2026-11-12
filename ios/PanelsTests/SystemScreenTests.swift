@@ -15,6 +15,41 @@ final class SystemScreenTests: XCTestCase {
         XCTAssertEqual(UsagePresentation.cost(nil), "—")
         XCTAssertNotEqual(UsagePresentation.number(0), "—")
     }
+    // Gap: the usage API test does not exercise cached resource identity or day rollover.
+    @MainActor func testUsageRegistrationReusesSelectionAndRollsAtLocalMidnightAcrossDST() throws {
+        let format = ISO8601DateFormatter()
+        func date(_ value: String) throws -> Date { try XCTUnwrap(format.date(from: value)) }
+        let london = try XCTUnwrap(TimeZone(identifier: "Europe/London"))
+        for (start, next, hours) in [("2026-03-29T00:00:00Z", "2026-03-29T23:00:00Z", 23.0),
+                                      ("2026-10-24T23:00:00Z", "2026-10-26T00:00:00Z", 25.0)] {
+            let start = try date(start), next = try date(next)
+            let registration = UsageResources.summary(days: 7, now: start, timeZone: london)
+            let cached = try XCTUnwrap(UsageResources.cachedSummary)
+            XCTAssertEqual(cached.day.duration, hours * 3600)
+            for offset in [1.0, hours * 3600 - 1] {
+                XCTAssertEqual(UsageResources.summary(days: 7, now: start.addingTimeInterval(offset), timeZone: london).key, registration.key)
+                XCTAssertTrue(UsageResources.cachedSummary === cached, "Repeated view reads must reuse the prepared request")
+            }
+            let rolled = UsageResources.summary(days: 7, now: next, timeZone: london)
+            XCTAssertFalse(UsageResources.cachedSummary === cached)
+            XCTAssertNotEqual(rolled.key, registration.key, "The exact end of a day belongs to the next request")
+            let query = try XCTUnwrap(URLComponents(string: rolled.key)?.queryItems)
+            let until = hours == 23 ? "2026-03-30" : "2026-10-26"
+            let since = hours == 23 ? "2026-03-24" : "2026-10-20"
+            XCTAssertEqual(query.first { $0.name == "untilDay" }?.value, until)
+            XCTAssertEqual(query.first { $0.name == "sinceDay" }?.value, since)
+            let current = try XCTUnwrap(UsageResources.cachedSummary)
+            let oneDay = UsageResources.summary(days: 1, now: next, timeZone: london)
+            XCTAssertEqual(URLComponents(string: oneDay.key)?.queryItems?.first { $0.name == "sinceDay" }?.value, until)
+            XCTAssertFalse(UsageResources.cachedSummary === current, "Range changes replace the single retained request")
+            let changedRange = try XCTUnwrap(UsageResources.cachedSummary)
+            let utc = TimeZone(secondsFromGMT: 0)!
+            let changedZone = UsageResources.summary(days: 1, now: next, timeZone: utc)
+            XCTAssertFalse(UsageResources.cachedSummary === changedRange)
+            XCTAssertEqual(URLComponents(string: changedZone.key)?.queryItems?.first { $0.name == "timeZone" }?.value, utc.identifier)
+            XCTAssertEqual(URLComponents(string: changedZone.key)?.queryItems?.first { $0.name == "untilDay" }?.value, hours == 23 ? "2026-03-29" : "2026-10-26")
+        }
+    }
     // New boundary: model catalogues must follow the Ticket, never the phone or VPS.
     func testTicketCatalogueAndUsageUseCurrentServerContracts() async throws {
         let config = URLSessionConfiguration.ephemeral

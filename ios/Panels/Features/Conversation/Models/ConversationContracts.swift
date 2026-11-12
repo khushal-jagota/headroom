@@ -13,26 +13,28 @@ enum ConversationOwner: Codable, Hashable, Sendable {
     }
 }
 enum ConversationLens: String, CaseIterable, Sendable { case focus, full }
-struct ConversationSnapshot: Decodable, Sendable {
+struct ConversationSnapshot: Codable, Sendable {
     let page: ConversationPage
     let status: ConversationStatus
     /// The tail's cursor: a following changes frame continues from this sequence.
     var coverage: ConversationCoverage? = nil
 }
-struct ConversationCoverage: Decodable, Equatable, Sendable { let throughSequence: Int }
-struct ConversationPage: Decodable, Sendable {
+struct ConversationCoverage: Codable, Equatable, Sendable { let throughSequence: Int }
+struct ConversationPage: Codable, Sendable {
     let items: [ConversationItem]
     let older: ConversationCursor?
+    var projectionVersion: Int? = nil
+    var scope: ConversationCursor.Scope? = nil
 }
 struct ConversationCursor: Codable, Sendable {
     let projectionVersion: Int
     let lens: String
     let scope: Scope
     let order: Order
-    struct Scope: Codable, Sendable { let kind: String; let key: String? }
+    struct Scope: Codable, Hashable, Sendable { let kind: String; let key: String? }
     struct Order: Codable, Equatable, Sendable { let sequence: Int; let slot: Int }
 }
-struct ConversationItem: Equatable, Decodable, Identifiable, Sendable {
+struct ConversationItem: Equatable, Codable, Identifiable, Sendable {
     let kind: String
     let key: String
     let senderMessageId: String?
@@ -42,7 +44,7 @@ struct ConversationItem: Equatable, Decodable, Identifiable, Sendable {
     var order: ConversationCursor.Order? = nil
     var id: String { senderMessageId ?? key }
 }
-struct ConversationDeliveredBody: Equatable, Decodable, Sendable {
+struct ConversationDeliveredBody: Equatable, Codable, Sendable {
     let kind: String
     let value: ConversationBody?
     let reference: ConversationBodyReference?
@@ -57,7 +59,7 @@ struct ConversationBodyChunk: Decodable, Sendable {
     let text: String
     let nextOffset: Int?
 }
-struct ConversationBody: Equatable, Decodable, Sendable {
+struct ConversationBody: Equatable, Codable, Sendable {
     let kind: String
     let content: [Piece]?
     let title: String?
@@ -78,8 +80,8 @@ struct ConversationBody: Equatable, Decodable, Sendable {
         default: nil
         }
     }
-    struct Piece: Equatable, Decodable, Sendable { let piece: String; let text: String?; let fileName: String? }
-    struct Question: Equatable, Decodable, Sendable { let question: String }
+    struct Piece: Equatable, Codable, Sendable { let piece: String; let text: String?; let fileName: String? }
+    struct Question: Equatable, Codable, Sendable { let question: String }
     var text: String {
         if let content { return content.map { $0.text ?? "[\($0.fileName ?? $0.piece)]" }.joined(separator: "\n") }
         return title ?? questions?.map(\.question).joined(separator: "\n") ?? errorSummary ?? detail ?? (kind == "deferred" ? "Long message — open on the web to read in full" : "")
@@ -87,7 +89,7 @@ struct ConversationBody: Equatable, Decodable, Sendable {
     var isPrompt: Bool { kind.hasPrefix("prompt") }
     var isOwnerPrompt: Bool { isPrompt && (senderLabel == nil || ["You", "owner"].contains(senderLabel!)) }
 }
-struct ConversationStatus: Equatable, Decodable, Sendable {
+struct ConversationStatus: Equatable, Codable, Sendable {
     let authority: String
     let turnRunning: Bool?
     let liveOutput: ConversationLiveOutput?
@@ -95,15 +97,15 @@ struct ConversationStatus: Equatable, Decodable, Sendable {
     /// A change of either needs a fresh tail snapshot, as on the web.
     var stoppedWithoutEnding: Bool? = nil
     var runtimeEpoch: String? = nil
-    struct Rest: Equatable, Decodable, Sendable {
+    struct Rest: Equatable, Codable, Sendable {
         let latestHappened: Happened?
         let latestOwnerMessageSequence: Int?
         let latestTool: Happened?
         let permissionTitleExcerpt: String?
         let planProgress: Plan
     }
-    struct Happened: Equatable, Decodable, Sendable { let kind: String; let excerpt: String?; let title: String? }
-    struct Plan: Equatable, Decodable, Sendable { let currentTextExcerpt: String? }
+    struct Happened: Equatable, Codable, Sendable { let kind: String; let excerpt: String?; let title: String? }
+    struct Plan: Equatable, Codable, Sendable { let currentTextExcerpt: String? }
     var line: String {
         if authority != "current" { return "Connection status unavailable" }
         if let title = rest.permissionTitleExcerpt { return title }
@@ -314,7 +316,7 @@ struct ConversationTailParser {
     }
 }
 
-struct ConversationLiveOutput: Equatable, Decodable, Sendable {
+struct ConversationLiveOutput: Equatable, Codable, Sendable {
     let turnKey: String
     let reference: ConversationBodyReference
 }

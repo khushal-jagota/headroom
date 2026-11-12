@@ -5,8 +5,8 @@ An open Headroom screen moves when the record moves, without a manual refresh. L
 ## What it is made of
 
 - **The change signal.** Every ordinary database commit announces that something was written. The announcement names no record and carries no data.
-- **The change stream.** The browser hears the signal over one stream. It asks which of the resources mounted on screen have a new revision, and refetches only those. A body and its revision enter the browser's cache together, from one read.
-- **The navigation index.** The rail, Review membership and order, attention marks, and masthead signals are a derived index with its own feed. The browser requests the mounted scope and follows its snapshots and changes. The sidebar briefly keeps an existing Ticket in its previous Agent or approval group during an Empty handoff. Its facts stay current, and a persistent Empty wait appears after the bounded grace period. The phone requests its own mounted scope and follows its stream the same way while it is in the foreground; each detail page reloads only when its own records in that view change. The signal speeds that feed up, and polling backs it.
+- **The change stream.** The browser and phone hear the signal through their resource owners. Each owner checks the revisions of active resources and reads only changed bodies. A body and its revision enter shared state together, from one read. Each domain registers its reads and explicit fallbacks.
+- **The navigation index.** The rail, Review membership and order, attention marks, and masthead signals are a derived index with its own feed. The browser requests the mounted scope and follows its snapshots and changes. The sidebar briefly keeps an existing Ticket in its previous Agent or approval group during an Empty handoff. Its facts stay current, and a persistent Empty wait appears after the bounded grace period. The phone requests its own mounted scope and follows its stream the same way while it is in the foreground; ordinary detail bodies have their own resource demand and revisions. The signal speeds that feed up, and polling backs it.
 - **The conversation tail.** Each open conversation pane has its own stream of the running turn's text and new rows. It does not wait for the shared signal.
 
 ```
@@ -19,7 +19,7 @@ An open Headroom screen moves when the record moves, without a manual refresh. L
 
 ## How it behaves
 
-After the person acts, the reads that action touched refresh at once. Passive wakes are gathered into short bursts, so a busy agent's stream of commits does not stampede the browser. A hidden tab waits until it is visible again. A dropped connection shows Reconnecting on the shell status, and the reconnect reconciles. Drafts and outgoing messages live outside the cache, so a refetch never overwrites what the person is typing.
+After the person acts, the reads that action touched refresh at once. Passive wakes are gathered into short bursts, so a busy agent's stream of commits does not stampede the browser. A hidden tab waits until it is visible again. A dropped connection shows Reconnecting on the shell status, and the reconnect reconciles. Drafts and outgoing messages live outside the cache, so a refetch never overwrites what the person types. The phone publishes successful reads before replaceable disk writes. A cache failure does not replace a durable-save error.
 
 A few writers commit quietly on purpose: skill history, and conversation rows that only an open pane reads, which that pane already receives through its tail.
 
@@ -29,7 +29,7 @@ The browser uses server messages directly. TypeScript types describe them during
 
 ## What does not move by itself
 
-A screen that is not mounted keeps its last body until it opens. A file written straight into a Ticket's artifact folder has no database revision, so the artifact list refreshes when that Ticket is selected, not because a commit named the file.
+Inactive ordinary responses remain only within the cache budget. A screen reconciles its resource when it opens. A file written straight into a Ticket's artifact folder has no database revision, so the artifact list refreshes when that Ticket is selected, not because a commit named the file.
 
 The browser uses server messages directly, with TypeScript types during development and no second runtime validation table. The Ticket screen uses its loaded detail and Worker configuration. The server checks saves and approvals.
 
@@ -47,6 +47,7 @@ The browser uses server messages directly, with TypeScript types during developm
 - `src/planner/core/change_signal.py`: the signal. `src/planner/core/db.py`: the connection that announces commits, and the quiet commit. `src/planner/core/sse.py`: the change stream.
 - `src/planner/navigation/`: the navigation index and its feed.
 - `web/src/lib/changeStream.ts` and `web/src/lib/resourceVersions/`: the browser's stream and revision check.
+- `ios/Panels/Core/Networking/ResourceOwner.swift`: the phone's ordinary resources, active demand, and revision admission.
 - `web/src/lib/conversation/view/`: the conversation tail reader.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-12._

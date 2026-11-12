@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 @MainActor @Observable final class ConversationModel {
     var machineLocale: String?
-    var conversationID: String?
+    var conversationID: String? { didSet { if oldValue != conversationID { invalidateReader() } } }
     var draft = "" { didSet { saveDraft() } }
     private var persistenceAPI: APIClient?
     private var persistenceOwner: ConversationOwner?
@@ -19,18 +19,156 @@ import UniformTypeIdentifiers
         guard persistenceAPI?.baseURL != api.baseURL || persistenceOwner != owner || customDraftID != draftID else { syncOutbox(savedWork: savedWork); return }
         persistenceAPI = api; persistenceOwner = owner; customDraftID = draftID; restoring = true
         defer { restoring = false }
+        items = []; expandedBodies = [:]; status = nil; older = nil
+        loadedConversationID = nil; loadedLens = nil; pageProjectionVersion = nil
+        visibleRows = []; rowOrder = []; liveRow = nil; liveReference = nil; liveTurnKey = nil
+        displayByteSizes = [:]; attachments = []; lastDisplaySave = .distantPast; hasNewerHistory = false
         draft = LocalStore.shared.draft(server: LocalStore.server(api.baseURL), id: draftKey) ?? ""
         if let data = try? LocalStore.shared.record(server: LocalStore.server(api.baseURL), kind: "attachments", id: draftKey)?.payload {
             attachments = (try? JSONDecoder().decode([ConversationSend.Piece].self, from: data)) ?? []
         }
+        invalidateReader()
         if let id = conversationID,
-           let snapshot: ConversationSnapshot = api.cached("/api/conversation/conversations/\(id)/view", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: "true")]) {
-            if status != snapshot.status { status = snapshot.status }; items = snapshot.page.items; older = snapshot.page.older; loadedLens = lens
-            loadedConversationID = id
+           let data = try? LocalStore.shared.record(server: LocalStore.server(api.baseURL), kind: "cache", id: displayID(id))?.payload,
+           let saved = try? JSONDecoder().decode(ConversationDisplaySnapshot.self, from: data),
+           saved.schema == 1, saved.conversationID == id, saved.lens == lens.rawValue {
+            status = saved.status
+            items = saved.page.items; older = saved.page.older
+            loadedLens = lens; loadedConversationID = id; pageProjectionVersion = saved.page.projectionVersion
+            admitHistoryScope(saved.page.scope ?? .init(kind: "timeline", key: nil), keys: Set(items.map(\.key)))
+            retainDisplay()
             rememberRows(items.map(\.id))
         }
         syncOutbox(savedWork: savedWork)
     }
+    private var readerGeneration = 0
+    private var tailGeneration = 0
+    private var historyGeneration = 0
+    private var oversizedBodyKey: String?
+    private var historyScopes = ConversationHistoryScopes()
+    private struct DisplayWrite: Sendable {
+        let snapshot: ConversationDisplaySnapshot
+        let server: String
+        let id: String
+        let generation: Int
+    }
+    @ObservationIgnored private var displayEncodingTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingDisplayWrite: DisplayWrite?
+    private var pageProjectionVersion: Int?
+    private var currentRemoteKeys: Set<String> = []
+    private var visibleRows: Set<String> = []
+    private var lastDisplaySave = Date.distantPast
+    private var displayByteSizes: [String: (body: ConversationBody, count: Int)] = [:]
+    @ObservationIgnored private let displayByteEncoder = JSONEncoder()
+    private var replaceHistoryOnSnapshot = false
+    private(set) var hasNewerHistory = false
+
+    private func invalidateReader() {
+        readerGeneration += 1
+        historyGeneration += 1
+        releaseOversizedBody()
+        tailGeneration += 1
+        pendingDisplayWrite = nil
+        bodyErrors = [:]
+        historyScopes = ConversationHistoryScopes()
+        currentRemoteKeys = []; tailCoverage = nil; tailFirstOrder = nil
+        if let current = status { status = ConversationStatus(authority: "stale", turnRunning: nil, liveOutput: nil, rest: current.rest) }
+    }
+    private func displayID(_ id: String) -> String { "conversation-display:v1:" + id + ":" + lens.rawValue }
+    private func releaseOversizedBody() {
+        guard let key = oversizedBodyKey else { return }
+        expandedBodies[key] = nil
+        displayByteSizes["expanded:" + key] = nil
+        oversizedBodyKey = nil
+        // The cached row text shares this large string too.
+        projectedRows = []; projectedRevision = -1
+    }
+    func setVisibleRows(_ ids: Set<String>) {
+        visibleRows = ids.union(items.filter { ids.contains(retryAliases[$0.id] ?? $0.id) }.map(\.key))
+        if let key = oversizedBodyKey, !visibleRows.contains(key) {
+            releaseOversizedBody()
+        }
+    }
+    func returnToLatest(using service: any ConversationServing) async {
+        replaceHistoryOnSnapshot = true
+        await refresh(using: service, transcript: true)
+    }
+    private func admitHistoryScope(_ scope: ConversationCursor.Scope, keys: Set<String>) {
+        let discarded = historyScopes.admit(scope, keys: keys, visibleKeys: visibleRows,
+            active: .init(kind: "timeline", key: nil))
+        guard !discarded.isEmpty else { return }
+        items.removeAll { discarded.contains($0.key) }
+        expandedBodies = expandedBodies.filter { !discarded.contains($0.key) }
+    }
+    /// Compute unseen inline sizes before admission, without serializing on main.
+    private func bodySizes(for incoming: [ConversationItem]) async -> [String: (body: ConversationBody, count: Int)] {
+        var unseen: [String: ConversationBody] = [:]
+        for item in incoming {
+            guard let body = item.body?.value else { continue }
+            let key = "inline:" + item.key
+            if displayByteSizes[key]?.body != body { unseen[key] = body }
+        }
+        guard !unseen.isEmpty else { return [:] }
+        return await Task.detached(priority: .utility) { [unseen] in
+            let encoder = JSONEncoder()
+            return unseen.mapValues { body in (body: body, count: (try? encoder.encode(body).count) ?? 0) }
+        }.value
+    }
+    private func retainDisplay(preferOlder: Bool = false) {
+        let retained = ConversationRetention.retain(items, bodies: expandedBodies, visible: visibleRows, preferOlder: preferOlder, oversizedKey: oversizedBodyKey) { [self] key, body in
+            if let previous = displayByteSizes[key], previous.body == body { return previous.count }
+            let count = (try? displayByteEncoder.encode(body).count) ?? 0
+            displayByteSizes[key] = (body, count)
+            return count
+        }
+        if retained.removedOldest, let first = retained.items.first?.order, let projection = pageProjectionVersion ?? older?.projectionVersion {
+            older = ConversationCursor(projectionVersion: projection, lens: lens.rawValue,
+                scope: .init(kind: "timeline", key: nil), order: first)
+        }
+        if retained.removedNewest { hasNewerHistory = true }
+        items = retained.items; expandedBodies = retained.bodies
+        if let key = oversizedBodyKey, retained.bodies[key] == nil { releaseOversizedBody() }
+        let keys = Set(items.map(\.key))
+        currentRemoteKeys.formIntersection(keys)
+        bodyErrors = bodyErrors.filter { keys.contains($0.key) }
+        historyScopes.retain(keys)
+        displayByteSizes = displayByteSizes.filter { key, _ in
+            if key.hasPrefix("inline:") { return keys.contains(String(key.dropFirst(7))) }
+            return retained.bodies[String(key.dropFirst(9))] != nil
+        }
+        let rowIDs = Set(items.map { retryAliases[$0.id] ?? $0.id })
+            .union(outgoing.map { retryAliases[$0.id] ?? $0.id }).union(liveRow.map { [$0.id] } ?? [])
+        rowOrder.removeAll { !rowIDs.contains($0) }
+    }
+    func saveDisplay(force: Bool = false) {
+        guard let api = persistenceAPI, let id = conversationID, let status,
+              loadedConversationID == id, loadedLens == lens,
+              force || Date().timeIntervalSince(lastDisplaySave) >= DisplayCacheConfiguration.checkpointInterval else { return }
+        let stale = ConversationStatus(authority: "stale", turnRunning: nil, liveOutput: nil, rest: status.rest)
+        let saved = ConversationDisplaySnapshot(schema: 1, conversationID: id, lens: lens.rawValue,
+            page: ConversationPage(items: items, older: older, projectionVersion: pageProjectionVersion), status: stale)
+        let write = DisplayWrite(snapshot: saved, server: LocalStore.server(api.baseURL), id: displayID(id), generation: readerGeneration)
+        lastDisplaySave = .now
+        if displayEncodingTask != nil { pendingDisplayWrite = write }
+        else { encodeDisplay(write) }
+    }
+    /// One encode plus one replaceable pending snapshot. Encoding runs off main,
+    /// then the reader generation decides whether its bytes can enter the cache.
+    private func encodeDisplay(_ write: DisplayWrite) {
+        displayEncodingTask = Task { [weak self] in
+            let data = await Task.detached(priority: .utility) { try? JSONEncoder().encode(write.snapshot) }.value
+            guard let self else { return }
+            if let data, write.generation == self.readerGeneration {
+                LocalStore.shared.enqueueCacheResponse(server: write.server, id: write.id, data: data)
+            }
+            self.displayEncodingTask = nil
+            if let pending = self.pendingDisplayWrite {
+                self.pendingDisplayWrite = nil
+                self.encodeDisplay(pending)
+            }
+        }
+    }
+
     func syncOutbox(savedWork: [PendingWork]? = nil) {
         guard let api = persistenceAPI, let owner = persistenceOwner else { return }
         let server = LocalStore.server(api.baseURL)
@@ -69,9 +207,10 @@ import UniformTypeIdentifiers
         }
         rememberRows(saved.map { retryAliases[$0.id] ?? $0.id })
     }
-    var lens: ConversationLens = .focus
+    var lens: ConversationLens = .focus { didSet { if oldValue != lens { invalidateReader() } } }
     var items: [ConversationItem] = [] { didSet { if oldValue != items { projectionRevision += 1 } } }
     var expandedBodies: [String: ConversationBody] = [:] { didSet { if oldValue != expandedBodies { projectionRevision += 1 } } }
+    private(set) var bodyErrors: [String: String] = [:]
     var status: ConversationStatus?
     var hasUnread = false
     private var readThroughSequence = 0
@@ -248,9 +387,9 @@ import UniformTypeIdentifiers
     /// Only a rendered, visible remote row supplies evidence. Status/tail sequence
     /// and local outgoing rows cannot acknowledge content the person did not see.
     func visibleReadBoundary(rowIDs: Set<String>, active: Bool) -> ConversationReadBoundary? {
-        guard active, let id = conversationID, loadedConversationID == id else { return nil }
+        guard active, let id = conversationID, loadedConversationID == id, loadedLens == lens else { return nil }
         let sequence = rows.compactMap { row -> Int? in
-            guard rowIDs.contains(row.id), let item = row.item,
+            guard rowIDs.contains(row.id), let item = row.item, currentRemoteKeys.contains(item.key),
                   item.body?.reference == nil || expandedBodies[item.key] != nil else { return nil }
             return item.sourceSequence
         }.max() ?? 0
@@ -261,9 +400,10 @@ import UniformTypeIdentifiers
 
     func acknowledgeVisibleRows(_ rowIDs: Set<String>, active: Bool, using service: any ConversationServing) async {
         guard !Task.isCancelled, let boundary = visibleReadBoundary(rowIDs: rowIDs, active: active) else { return }
+        let generation = readerGeneration
         do {
             let confirmed = try await service.markConversationRead(boundary.conversationID, through: boundary.throughSequence)
-            guard !Task.isCancelled, conversationID == boundary.conversationID else { return }
+            guard !Task.isCancelled, generation == readerGeneration, conversationID == boundary.conversationID else { return }
             if readPositionConversationID != conversationID {
                 readPositionConversationID = conversationID
                 readThroughSequence = 0
@@ -318,11 +458,14 @@ import UniformTypeIdentifiers
     private func refreshSnapshot(using service: any ConversationServing, transcript: Bool) async {
         guard !Task.isCancelled, let id = conversationID else { return }
         let requestedLens = lens
+        let generation = readerGeneration
+        let streamGeneration = tailGeneration
         do {
             let snapshot = try await service.conversationSnapshot(id, lens: requestedLens, transcript: transcript)
-            try await admit(snapshot, id: id, lens: requestedLens, transcript: transcript, using: service)
+            guard generation == readerGeneration else { return }
+            try await admit(snapshot, id: id, lens: requestedLens, transcript: transcript, generation: generation, streamGeneration: streamGeneration, using: service)
             error = nil
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled, generation == readerGeneration { self.error = error.localizedDescription } }
     }
 
     // MARK: Open tail
@@ -330,7 +473,19 @@ import UniformTypeIdentifiers
     /// The open tail's cursor and the first order of its window, both from its last snapshot.
     private var tailCoverage: Int?
     private var tailFirstOrder: ConversationCursor.Order?
-    func beginTail() { tailCoverage = nil; tailFirstOrder = nil }
+    @discardableResult func beginTail() -> Int {
+        tailGeneration += 1
+        tailCoverage = nil; tailFirstOrder = nil
+        currentRemoteKeys = []
+        return tailGeneration
+    }
+    func endTail(generation: Int) {
+        guard generation == tailGeneration else { return }
+        tailGeneration += 1
+        tailCoverage = nil; tailFirstOrder = nil
+        if let current = status { status = ConversationStatus(authority: "stale", turnRunning: nil, liveOutput: nil, rest: current.rest) }
+        saveDisplay(force: true)
+    }
 
     /// Applies one frame of the open tail without reading the transcript again. Only a
     /// changed live-output reference or unsettled outgoing messages read anything.
@@ -338,30 +493,39 @@ import UniformTypeIdentifiers
     /// gap, an invalidated window, or a changed runtime epoch or stop, as on the web.
     /// The server marks the window invalidated with every removed row; that removal is
     /// applied here, as the web applies it, and the stream stays open.
-    func applyTail(_ frame: ConversationTailFrame, using service: any ConversationServing) async -> Bool {
-        guard let id = conversationID else { return false }
+    func applyTail(_ frame: ConversationTailFrame, transcript: Bool = true, generation suppliedGeneration: Int? = nil, using service: any ConversationServing) async -> Bool {
+        let generation = suppliedGeneration ?? tailGeneration
+        guard generation == tailGeneration, let id = conversationID else { return false }
         let requestedLens = lens
         switch frame {
         case .reset: return false
         case .snapshot(let snapshot):
             do {
-                try await admit(snapshot, id: id, lens: requestedLens, transcript: true, using: service)
-                guard id == conversationID, lens == requestedLens else { return false }
+                try await admit(snapshot, id: id, lens: requestedLens, transcript: transcript, generation: readerGeneration, streamGeneration: generation, using: service)
+                guard generation == tailGeneration, id == conversationID, lens == requestedLens else { return false }
                 tailCoverage = snapshot.coverage?.throughSequence
                 tailFirstOrder = snapshot.page.items.first?.order
                 error = nil
                 return true
-            } catch { if !Task.isCancelled { self.error = error.localizedDescription }; return false }
+            } catch { if !Task.isCancelled, generation == tailGeneration { self.error = error.localizedDescription }; return false }
         case .changes(let changes):
             guard let coverage = tailCoverage, changes.fromSequence == coverage, changes.lens == requestedLens.rawValue,
                   changes.removedKeys.count > 0 || !changes.invalidatedScopes.contains(where: { $0.kind == "timeline" }),
                   changes.status.stoppedWithoutEnding == status?.stoppedWithoutEnding,
                   changes.status.runtimeEpoch == status?.runtimeEpoch else { return false }
             do {
-                let (liveText, receipts) = try await lightReads(changes.status, id: id, using: service)
+                let (liveText, receipts) = try await lightReads(changes.status, id: id, transcript: transcript, using: service)
+                let sizes = transcript ? await bodySizes(for: changes.upserts) : [:]
                 try Task.checkCancellation()
-                guard id == conversationID, lens == requestedLens, tailCoverage == coverage else { return false }
+                guard generation == tailGeneration, id == conversationID, lens == requestedLens, tailCoverage == coverage else { return false }
+                displayByteSizes.merge(sizes) { _, new in new }
                 if status != changes.status { status = changes.status }
+                if !transcript {
+                    applyReceipts(receipts)
+                    tailCoverage = changes.coverage.throughSequence
+                    error = nil
+                    return true
+                }
                 let timeline = changes.scopeChanges.first { $0.scope.kind == "timeline" }
                 let removed = Set(changes.removedKeys)
                 let leftWindow = Set(timeline?.removedKeys ?? [])
@@ -383,44 +547,60 @@ import UniformTypeIdentifiers
                 }
                 settleLiveRow(candidates: changes.upserts, output: changes.status.liveOutput)
                 if items != next { items = next }
+                currentRemoteKeys.subtract(removed)
+                currentRemoteKeys.formUnion(changes.upserts.map(\.key))
+                retainDisplay()
                 reconcileItems()
                 applyLive(changes.status.liveOutput, text: liveText, id: id)
                 applyReceipts(receipts)
                 tailCoverage = changes.coverage.throughSequence
+                saveDisplay()
                 error = nil
                 return true
-            } catch { if !Task.isCancelled { self.error = error.localizedDescription }; return false }
+            } catch { if !Task.isCancelled, generation == tailGeneration { self.error = error.localizedDescription }; return false }
         }
     }
 
     // MARK: Shared admission
 
     /// One coherent snapshot, from an explicit read or the open tail.
-    private func admit(_ snapshot: ConversationSnapshot, id: String, lens requestedLens: ConversationLens, transcript: Bool, using service: any ConversationServing) async throws {
-        let (liveText, receipts) = try await lightReads(snapshot.status, id: id, using: service)
+    private func admit(_ snapshot: ConversationSnapshot, id: String, lens requestedLens: ConversationLens, transcript: Bool, generation: Int, streamGeneration: Int? = nil, using service: any ConversationServing) async throws {
+        let (liveText, receipts) = try await lightReads(snapshot.status, id: id, transcript: transcript, using: service)
+        let sizes = transcript ? await bodySizes(for: snapshot.page.items) : [:]
         try Task.checkCancellation()
-        guard id == conversationID, lens == requestedLens else { return }
+        guard generation == readerGeneration, streamGeneration == nil || streamGeneration == tailGeneration,
+              id == conversationID, lens == requestedLens else { return }
+        displayByteSizes.merge(sizes) { _, new in new }
         if status != snapshot.status { status = snapshot.status }
         if transcript {
-            if loadedConversationID != id || loadedLens != requestedLens { items = []; expandedBodies = [:]; loadedConversationID = id; loadedLens = requestedLens; older = snapshot.page.older; liveRow = nil; liveTurnKey = nil }
+            pageProjectionVersion = snapshot.page.projectionVersion ?? snapshot.page.older?.projectionVersion
+            if replaceHistoryOnSnapshot { visibleRows = [] }
+            if replaceHistoryOnSnapshot || loadedConversationID != id || loadedLens != requestedLens { historyGeneration += 1; releaseOversizedBody(); items = []; expandedBodies = [:]; hasNewerHistory = false; replaceHistoryOnSnapshot = false; loadedConversationID = id; loadedLens = requestedLens; older = snapshot.page.older; liveRow = nil; liveTurnKey = nil }
             settleLiveRow(candidates: snapshot.page.items, output: snapshot.status.liveOutput)
             // Replace the current window; retain explicitly loaded history before it.
             let keys = Set(snapshot.page.items.map(\.key))
             let nextItems: [ConversationItem]
             if let first = snapshot.page.items.first, let at = items.firstIndex(where: { $0.key == first.key }) {
                 nextItems = Array(items.prefix(at)).filter { !keys.contains($0.key) } + snapshot.page.items
-            } else { nextItems = snapshot.page.items; older = snapshot.page.older }
+            } else {
+                if !items.isEmpty { historyGeneration += 1 }
+                nextItems = snapshot.page.items; older = snapshot.page.older
+            }
             if items != nextItems { items = nextItems }
+            currentRemoteKeys.formUnion(snapshot.page.items.map(\.key))
+            admitHistoryScope(snapshot.page.scope ?? .init(kind: "timeline", key: nil), keys: Set(snapshot.page.items.map(\.key)))
+            retainDisplay()
             reconcileItems()
         }
-        applyLive(snapshot.status.liveOutput, text: liveText, id: id)
+        if transcript { applyLive(snapshot.status.liveOutput, text: liveText, id: id) }
         applyReceipts(receipts)
+        if transcript { saveDisplay() }
     }
 
     /// The only reads a frame may need: changed live text and unsettled receipts.
-    private func lightReads(_ status: ConversationStatus, id: String, using service: any ConversationServing) async throws -> (String?, [ConversationReceipt]) {
+    private func lightReads(_ status: ConversationStatus, id: String, transcript: Bool, using service: any ConversationServing) async throws -> (String?, [ConversationReceipt]) {
         let liveText: String?
-        if let output = status.liveOutput {
+        if transcript, let output = status.liveOutput {
             if id == liveConversationID, output.reference == liveReference, let liveRow { liveText = liveRow.text }
             else { liveText = try await service.conversationLiveText(id, reference: output.reference) }
         } else { liveText = nil }
@@ -485,24 +665,58 @@ import UniformTypeIdentifiers
     }
     func loadOlder(using service: any ConversationServing) async {
         guard !loadingOlder, let id = conversationID, let cursor = older else { return }
+        let generation = readerGeneration
+        let history = historyGeneration
         loadingOlder = true
         defer { loadingOlder = false }
         do {
             let page = try await service.conversationPage(id, cursor: cursor)
+            let sizes = await bodySizes(for: page.items)
             try Task.checkCancellation()
-            guard cursor.lens == lens.rawValue, id == conversationID else { return }
+            guard generation == readerGeneration, history == historyGeneration, cursor.lens == lens.rawValue, id == conversationID else { return }
+            displayByteSizes.merge(sizes) { _, new in new }
             let keys = Set(items.map(\.key))
             let earlier = page.items.filter { !keys.contains($0.key) }
             items.insert(contentsOf: earlier, at: 0)
             let earlierIDs = earlier.map(\.id).filter { !rowOrder.contains($0) }
             rowOrder.insert(contentsOf: earlierIDs, at: 0)
             older = page.older
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+            pageProjectionVersion = page.projectionVersion ?? cursor.projectionVersion
+            currentRemoteKeys.formUnion(page.items.map(\.key))
+            admitHistoryScope(page.scope ?? cursor.scope, keys: Set(page.items.map(\.key)))
+            retainDisplay(preferOlder: true)
+            saveDisplay()
+        } catch { if !Task.isCancelled, generation == readerGeneration, history == historyGeneration { self.error = error.localizedDescription } }
     }
     func loadBody(_ item: ConversationItem, using service: any ConversationServing) async {
         guard let id = conversationID, let reference = item.body?.reference else { return }
-        do { expandedBodies[item.key] = try await service.conversationBody(id, reference: reference) }
-        catch { self.error = error.localizedDescription }
+        let generation = readerGeneration
+        let requestedLens = lens
+        do {
+            let body = try await service.conversationBody(id, reference: reference)
+            guard !Task.isCancelled, generation == readerGeneration, id == conversationID, requestedLens == lens,
+                  items.contains(where: { $0.key == item.key && $0.body?.reference == reference }) else { return }
+            let bytes = await Task.detached(priority: .utility) { try? JSONEncoder().encode(body).count }.value
+            guard !Task.isCancelled, generation == readerGeneration, id == conversationID, requestedLens == lens,
+                  items.contains(where: { $0.key == item.key && $0.body?.reference == reference }) else { return }
+            guard let bytes, bytes <= ConversationRetention.oversizedBodyLimit else {
+                let message = "Message is too large. Open it on the web."
+                bodyErrors[item.key] = message
+                error = message
+                return
+            }
+            if bytes > ConversationRetention.inlineByteLimit {
+                guard visibleRows.contains(item.key) else { return }
+                if let previous = oversizedBodyKey, previous != item.key {
+                    releaseOversizedBody()
+                }
+                oversizedBodyKey = item.key
+            }
+            bodyErrors[item.key] = nil
+            displayByteSizes["expanded:" + item.key] = (body, bytes)
+            expandedBodies[item.key] = body
+            retainDisplay()
+        } catch { if !Task.isCancelled, generation == readerGeneration { self.error = error.localizedDescription } }
     }
     @discardableResult func send(to owner: ConversationOwner, using service: any ConversationServing) async -> Bool {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
