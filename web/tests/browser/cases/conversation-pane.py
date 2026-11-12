@@ -2753,7 +2753,7 @@ def _conversation_repairs(browser, url):
 
 
 def _manager_recap_header(browser, url):
-    """The real header must remeasure its recap after its typography changes."""
+    """The real header must remeasure its read-only recap after its typography changes."""
     import time
 
     from playwright.sync_api import expect
@@ -2772,6 +2772,7 @@ def _manager_recap_header(browser, url):
         expect(toggle).to_have_text("Show less")
         page.evaluate("window.__layoutUpdate('')")
         expect(recap).to_be_empty()
+        expect(recap).not_to_have_attribute("contenteditable", "true")
         expect(toggle).to_have_count(0)
         assert page.evaluate("window.__layoutHeaderMatches()")
     finally:
@@ -4132,8 +4133,8 @@ def _card_state_motion(browser, url):
             if host == 'ticket' and width == 1280:
                 # Reuse this card for activity and semantic preview activation.
                 page.evaluate("window.__showActivePlan()")
-                expect(page.locator('[data-conversation-rest-line]')).to_have_text('Working')
-                expect(page.locator('[data-conversation-rest-bar]')).to_have_text('Working')
+                expect(page.locator('[data-conversation-rest-line]')).to_contain_text('Working · ')
+                expect(page.locator('[data-conversation-rest-bar]')).to_contain_text('Working · ')
                 page.evaluate("window.__showEveryMark()")
                 preview = page.locator('[data-conversation-unread-preview]')
                 expect(preview).to_have_text('the reply nobody has read')

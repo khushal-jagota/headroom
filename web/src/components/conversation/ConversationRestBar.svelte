@@ -1,11 +1,14 @@
 <script lang="ts">
+  import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
+  import { formatDuration } from "../../lib/conversation/transcript";
   /** Activity and the unread preview belong to the conversation surface.
    * Delivery and request feedback remains independent of the control that opens it. */
   let { preview = null, roleLabel = "Worker", activityKnown = true, connectionTrouble = false,
-    running = false, backgroundWork = null, feedback = null, onOpen }: { preview?: string | null;
+    running = false, startedAtUnixMilliseconds = null, backgroundWork = null, feedback = null, onOpen }: { preview?: string | null;
     roleLabel?: "Worker" | "Manager" | "Chief" | "Goal"; activityKnown?: boolean; connectionTrouble?: boolean;
-    running?: boolean; backgroundWork?: string | null; feedback?: string | null; onOpen: () => void } = $props();
-  let activity = $derived(running ? "Working" : backgroundWork ?? (activityKnown ? `${roleLabel} idle` : null));
+    running?: boolean; startedAtUnixMilliseconds?: number | null; backgroundWork?: string | null; feedback?: string | null; onOpen: () => void } = $props();
+  const elapsed = elapsedTurnTime(() => running ? startedAtUnixMilliseconds : null);
+  let activity = $derived(running ? elapsed.seconds === null ? "Working" : `Working · ${formatDuration(elapsed.seconds)}` : backgroundWork ?? (activityKnown ? `${roleLabel} idle` : null));
 </script>
 
 <!-- The composer's status line, where staging placed it: above the composer, what the agent is

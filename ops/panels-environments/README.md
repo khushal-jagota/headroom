@@ -34,6 +34,23 @@ change.
 `panels-live.service` binds the app to loopback port 8767 through its explicit live
 configuration. The existing Tailscale Serve route remains unchanged.
 
+The live unit sets `PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS=1` to refuse calls without
+identity from `panels-live.service`, which now includes Workers and their tools.
+The guard also recognizes the retired `panels-workers.slice` for legacy processes.
+This does not require a Worker slice or transient unit. The setting defaults to off. The application
+consumes it at startup, so its agent children and their scratch servers do not inherit it.
+Deploy replaces the app but does not copy unit files. Until the installed unit sets
+this input, the server performs no peer lookup and retains its previous behavior.
+
+After the release with this change is live, the operator applies the new unit:
+
+```sh
+cp ~/Deployments/Panels/current/app/ops/panels-environments/panels-live.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart panels-live.service
+```
+
+After activation, confirm one ordinary `panels` command from a real SSH login.
+Worker checks use temporary databases and scratch servers, never the live database.
+
 ## Stall watchdog
 
 `panels-stall-watchdog.timer` runs `panels stalls watchdog` every 30 seconds, outside the
