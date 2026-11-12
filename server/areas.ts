@@ -20,9 +20,13 @@ import { idle_publication } from './conversation/publication/idle.ts';
 const navigation = createNavigationRuntime(idle_publication);
 /** Diagnose retained Tickets before the first projection-producing commit. */
 export const prepareAreas = (database: Database): void => {
-  database.write(tx => audit_ticket_registry_integrity(tx, {startup:true}));
+  database.write((tx) => audit_ticket_registry_integrity(tx, { startup: true }));
 };
-export const initializeAreas = (database: Database, authority: SignalNavigationAuthority, config: Config): void => {
+export const initializeAreas = (
+  database: Database,
+  authority: SignalNavigationAuthority,
+  config: Config,
+): void => {
   initialize_worker_settings(database, config);
   configure_conversation_start(database, config);
   configure_chief_resources(config);
@@ -42,4 +46,8 @@ export const areas: readonly Area[] = [
   { prefix: '/api/navigation/view', routes: navigation.routes },
 ];
 /** Global order: signal publication, artifact links, navigation. */
-export const commitSteps: readonly CommitStep[] = [navigation.publicationCommitStep, artifactLinks, navigation.navigationCommitStep];
+export const commitSteps: readonly CommitStep[] = [
+  navigation.publicationCommitStep,
+  artifactLinks,
+  navigation.navigationCommitStep,
+];

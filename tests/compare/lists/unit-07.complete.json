@@ -210,7 +210,8 @@
         "sent_at_unix_milliseconds": 123
       },
       "capture": {
-        "conversation": "conversation_id"
+        "conversation": "conversation_id",
+        "ticket_send_fate": "fate"
       }
     },
     {
@@ -240,6 +241,9 @@
       "headers": {
         "X-Plan-Actor": "worker",
         "X-Plan-Ticket-ID": "${ticket}"
+      },
+      "capture": {
+        "owner_help_fate": "fate"
       }
     },
     {
@@ -255,7 +259,8 @@
         }
       },
       "capture": {
-        "chief_conversation": "conversation_id"
+        "chief_conversation": "conversation_id",
+        "chief_help_fate": "fate"
       },
       "headers": {
         "X-Plan-Actor": "worker",
@@ -292,6 +297,9 @@
             "file_name": "records.json"
           }
         ]
+      },
+      "capture": {
+        "chief_media_fate": "fate"
       }
     },
     {
@@ -315,6 +323,9 @@
         "sender_label": "Owner",
         "sender_message_id": "chief-message",
         "conversation_id": "${chief_conversation}"
+      },
+      "capture": {
+        "chief_send_fate": "fate"
       }
     },
     {
@@ -369,7 +380,8 @@
         }
       },
       "capture": {
-        "manager_conversation": "conversation_id"
+        "manager_conversation": "conversation_id",
+        "manager_help_fate": "fate"
       },
       "headers": {
         "X-Plan-Actor": "worker",
@@ -380,7 +392,10 @@
       "area": "tickets-membership",
       "method": "GET",
       "path": "/api/test/in-memory-conversations/${manager_conversation}/state",
-      "status": 200
+      "status": 200,
+      "capture": {
+        "manager_observations": "observations"
+      }
     },
     {
       "area": "tickets-membership",
@@ -405,7 +420,8 @@
       "status": 200,
       "json": {},
       "capture": {
-        "restarted": "conversation_id"
+        "restarted": "conversation_id",
+        "restart_started": "started"
       }
     },
     {
@@ -445,7 +461,8 @@
       "path": "/api/tickets/${ticket}/restart-worker",
       "status": 200,
       "capture": {
-        "revision_conversation": "conversation_id"
+        "revision_conversation": "conversation_id",
+        "restart_started": "started"
       },
       "json": {}
     },
@@ -453,7 +470,10 @@
       "area": "tickets-membership",
       "method": "GET",
       "path": "/api/test/in-memory-conversations/${revision_conversation}/state",
-      "status": 200
+      "status": 200,
+      "capture": {
+        "revision_prompt": "backend_prompt_writes"
+      }
     },
     {
       "area": "tickets-membership",
@@ -509,7 +529,10 @@
       "area": "ticket-dependencies",
       "method": "GET",
       "path": "/api/test/in-memory-conversations/${manager_conversation}/state",
-      "status": 200
+      "status": 200,
+      "capture": {
+        "manager_observations": "observations"
+      }
     },
     {
       "area": "tickets-membership",
@@ -548,7 +571,10 @@
       "area": "workspace-dependencies",
       "method": "GET",
       "path": "/api/resource-body?key=/api/tickets/${member}/workspace",
-      "status": 200
+      "status": 200,
+      "capture": {
+        "member_workspace": "body"
+      }
     },
     {
       "area": "workspace-dependencies",
@@ -563,7 +589,10 @@
       "area": "workspace-dependencies",
       "method": "GET",
       "path": "/api/resource-body?key=/api/tickets/${member}/workspace",
-      "status": 200
+      "status": 200,
+      "capture": {
+        "member_workspace": "body"
+      }
     },
     {
       "area": "tickets-membership",
@@ -590,7 +619,10 @@
       "area": "ticket-dependencies",
       "method": "GET",
       "path": "/api/resource-body?key=/api/tickets/${member}/workspace",
-      "status": 200
+      "status": 200,
+      "capture": {
+        "member_workspace": "body"
+      }
     },
     {
       "area": "ticket-dependencies",
@@ -605,7 +637,10 @@
       "area": "ticket-dependencies",
       "method": "GET",
       "path": "/api/resource-body?key=/api/tickets/${member}/workspace",
-      "status": 200
+      "status": 200,
+      "capture": {
+        "member_workspace": "body"
+      }
     },
     {
       "area": "tickets-membership",
@@ -643,5 +678,17 @@
     "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0}%5D}",
     "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0}%5D}"
   ],
-  "candidate": "typescript"
+  "candidate": "typescript",
+  "report_captures": [
+    "ticket_send_fate",
+    "owner_help_fate",
+    "chief_help_fate",
+    "chief_media_fate",
+    "chief_send_fate",
+    "manager_help_fate",
+    "manager_observations",
+    "restart_started",
+    "revision_prompt",
+    "member_workspace"
+  ]
 }
