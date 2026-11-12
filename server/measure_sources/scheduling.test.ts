@@ -15,6 +15,7 @@ import { request_run, claim_run } from './run_actions.ts';
 import { read_run } from './data.ts';
 import { SourceDispatcher } from './dispatcher.ts';
 import { current_source_slot } from './scheduling.ts';
+import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
 const result = (interrupted = false): RunResult => ({
   observations: [],
@@ -123,14 +124,23 @@ test('two source executions retain per-source exclusion and drain cancellation b
   uncooperative.start();
   uncooperative.poll_once();
   await turn();
-  await expect(uncooperative.stop({ deadline: performance.now() / 1000 })).rejects.toThrow(
-    'polling lock is retained',
-  );
-  expect(database.read((sql) => read_run(sql, late.id)).status).toBe('running');
-  finishLate(result(true));
-  await turn();
-  expect(database.read((sql) => read_run(sql, late.id)).status).toBe('interrupted');
-  await uncooperative.stop({ deadline: performance.now() / 1000 + 5 });
+  let settled = false;
+  try {
+    await expect(uncooperative.stop({ deadline: performance.now() / 1000 })).rejects.toBeInstanceOf(
+      ShutdownDeadlineExceeded,
+    );
+    const actual = uncooperative.settled().then(() => { settled = true; });
+    await turn();
+    expect(settled).toBe(false);
+    expect(owned).toBe(true);
+    expect(database.read((sql) => read_run(sql, late.id)).status).toBe('running');
+    finishLate(result(true));
+    await actual;
+    expect(database.read((sql) => read_run(sql, late.id)).status).toBe('interrupted');
+  } finally {
+    finishLate(result(true));
+    await uncooperative.settled();
+  }
   owned = false;
   await turn();
 });

@@ -4,6 +4,7 @@ import type { SpawnOptions } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { expect, it, vi } from 'vitest';
 import { ensure_cli_compatible } from './cli_compatibility.ts';
+import { OneShotChildren } from '../../lifecycle/one_shot_children.ts';
 
 vi.mock('./cli_compatibility.ts', () => ({
   ensure_cli_compatible: vi.fn().mockResolvedValue(undefined),
@@ -48,6 +49,7 @@ it('pins real SDK child metadata and leaves the server environment unchanged', a
   vi.stubEnv('NODE_OPTIONS', '--sdk-environment-probe');
   vi.stubEnv('DEBUG', 'sdk-environment-probe');
   vi.stubEnv('NoDefaultCurrentDirectoryInExePath', undefined);
+  const children = new OneShotChildren();
   try {
     // Builtin process entry points are fail-closed before the real SDK loads.
     const server_environment = { ...process.env };
@@ -60,12 +62,13 @@ it('pins real SDK child metadata and leaves the server environment unchanged', a
     const { CLAUDE_AGENT_SDK_VERSION } = await import('./claude_sdk.ts');
     expect(CLAUDE_AGENT_SDK_VERSION).toBe('0.3.316');
     const { probe_claude_model_catalog } = await import('./claude_model_catalog.ts');
-    await expect(probe_claude_model_catalog('/synthetic/claude-metadata-probe')).rejects.toThrow(
+    await expect(probe_claude_model_catalog('/synthetic/claude-metadata-probe', children)).rejects.toThrow(
       sentinel.message,
     );
     expect(ensure_cli_compatible).toHaveBeenCalledExactlyOnceWith(
       'claude',
       '/synthetic/claude-metadata-probe',
+      { children },
     );
     expect(captured).toBeDefined();
     expect(captured!.command).toBe('/synthetic/claude-metadata-probe');
@@ -82,6 +85,8 @@ it('pins real SDK child metadata and leaves the server environment unchanged', a
     expect(captured!.options.env!.HOME).toBe(process.env.HOME);
     expect(unexpected).toEqual([]);
   } finally {
+    children.seal();
+    await children.settled();
     for (const name of methods) {
       Object.defineProperty(child_process, name, {
         configurable: true,
