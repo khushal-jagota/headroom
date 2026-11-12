@@ -1,4 +1,4 @@
-/** Current Python release metadata validation, not a runtime admission probe. */
+/** Closed Python/Node release metadata validation, not a runtime admission probe. */
 import type { RuntimeContract, RuntimePlatform } from '../contracts.ts';
 import { numeric_value, numeric_kind } from '../../../core/http/numeric_json.ts';
 export const SUPPORTED_PLATFORMS: readonly RuntimePlatform[] = [
@@ -33,6 +33,7 @@ export const GLIBC_LIBRARIES = [
   'librt.so.1',
   'libutil.so.1',
 ] as const;
+export const MINIMUM_NODE_VERSION = '22.18.0' as const;
 export class RuntimeContractError extends Error {}
 function fail(message: string): never {
   throw new RuntimeContractError(message);
@@ -62,12 +63,13 @@ function equal(a: unknown, b: unknown): boolean {
 export function parse_optional_runtime_contract(value: unknown): RuntimeContract | null {
   if (value === null || value === undefined) return null;
   if (!object(value)) fail('runtime contract must be an object');
+  const node = numeric_kind(value.version) === 'integer' && numeric_value(value.version) === 2;
   const required = [
     'version',
     'system',
     'architecture',
     'platforms',
-    'python_version',
+    node ? 'minimum_node_version' : 'python_version',
     'node_major',
     'cpu_features',
     'external_libraries',
@@ -79,7 +81,12 @@ export function parse_optional_runtime_contract(value: unknown): RuntimeContract
   if (!equal(value.platforms, SUPPORTED_PLATFORMS)) fail('unsupported runtime platform boundary');
   for (const key of ['version', 'node_major'])
     if (numeric_kind(value[key]) !== 'integer') fail(`runtime ${key} must be an integer`);
-  for (const key of ['system', 'architecture', 'python_version', 'inventory_sha256'])
+  for (const key of [
+    'system',
+    'architecture',
+    node ? 'minimum_node_version' : 'python_version',
+    'inventory_sha256',
+  ])
     if (typeof value[key] !== 'string') fail(`runtime ${key} must be a string`);
   for (const key of ['cpu_features', 'external_libraries', 'external_executables'])
     if (
@@ -87,12 +94,14 @@ export function parse_optional_runtime_contract(value: unknown): RuntimeContract
       !(value[key] as unknown[]).every((item) => typeof item === 'string')
     )
       fail(`runtime ${key} must be a list of strings`);
-  if (numeric_value(value.version) !== 1)
+  if (numeric_value(value.version) !== 1 && !node)
     fail('unsupported runtime contract version; republish the app');
   if (value.system !== 'linux' || value.architecture !== 'x86_64')
     fail('unsupported runtime operating system or architecture');
   if (numeric_value(value.node_major) !== 22) fail('runtime requires host Node major 22');
-  if (!fullmatch(/^3\.12\.\p{Decimal_Number}+$/u, value.python_version as string))
+  if (node && value.minimum_node_version !== MINIMUM_NODE_VERSION)
+    fail(`runtime requires minimum Node ${MINIMUM_NODE_VERSION}`);
+  if (!node && !fullmatch(/^3\.12\.\p{Decimal_Number}+$/u, value.python_version as string))
     fail('runtime requires a concrete CPython 3.12 patch version');
   if (!fullmatch(/^[0-9a-f]{64}$/, value.inventory_sha256 as string))
     fail('invalid runtime inventory SHA256');
