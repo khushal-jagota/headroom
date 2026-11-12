@@ -28,6 +28,9 @@ import {
 // its handlers. Use the official lower-level middleware and schemas from this exact
 // pin, with an admission gate before the SDK can read the next frame. No JSON-RPC
 // correlation or protocol parser is implemented here. Tests pin these internal APIs.
+// The package exports neither Connection nor its generated validators. Relative
+// node_modules imports above preserve their exact official types without a second
+// handwritten protocol interface. An SDK upgrade requires a new review of this file.
 const sdk_root = import.meta.resolve('@agentclientprotocol/sdk/unstable');
 const rpc = (await import(new URL('../../core/jsonrpc.js', sdk_root).href)) as typeof Rpc;
 const validators = (await import(
@@ -96,7 +99,7 @@ export class HermesAcpClient {
         {
           pull: async (controller) => {
             try {
-              if (this.gate) await this.bounded(this.gate.promise);
+              if (this.gate) await this.gate.promise;
               if (this.stopped) {
                 controller.close();
                 return;
@@ -203,11 +206,11 @@ export class HermesAcpClient {
   get signal(): AbortSignal {
     return this.connection.signal;
   }
-  private bounded<T>(promise: Promise<T>): Promise<T> {
+  private wait_for_permission_write<T>(promise: Promise<T>): Promise<T> {
     let timer: ReturnType<typeof setTimeout>;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(
-        () => reject(new Error('ACP admission did not finish')),
+        () => reject(new Error('the permission answer did not reach the wire')),
         ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS * 1000,
       );
     });
@@ -305,7 +308,9 @@ export class HermesAcpClient {
       receipt = new Pending<void>();
       this.response_receipts.set(id, receipt);
     }
-    return this.bounded(receipt.promise).finally(() => this.response_receipts.delete(id));
+    return this.wait_for_permission_write(receipt.promise).finally(() =>
+      this.response_receipts.delete(id),
+    );
   }
   async stop(): Promise<void> {
     this.close();
@@ -408,7 +413,13 @@ export class HermesAcpLauncher {
   }
   stop(): Promise<void> {
     this.sealed = true;
-    if (!this.stopping) this.stopping = this.finish_stop();
+    if (!this.stopping) {
+      const stopping = this.finish_stop();
+      this.stopping = stopping;
+      void stopping.catch(() => {
+        if (this.stopping === stopping) this.stopping = null;
+      });
+    }
     return this.stopping;
   }
   private async finish_stop(): Promise<void> {

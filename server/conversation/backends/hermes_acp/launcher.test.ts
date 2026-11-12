@@ -108,3 +108,17 @@ test('stdin error settles a write whose callback never returns', async () => {
     await launcher.stop();
   }
 });
+
+test('failed stop retries cleanup while later starts stay sealed and logging stays once', async () => {
+  const owned = fake();
+  owned.stop.mockRejectedValueOnce(new Error('synthetic failed stop'));
+  vi.mocked(spawn_codex_process).mockResolvedValueOnce(owned as unknown as OwnedCodexProcess);
+  const errors: unknown[] = [];
+  const launcher = new HermesAcpLauncher();
+  await launcher.start(launch, resolved, { log: (error) => errors.push(error) });
+  await expect(launcher.stop()).rejects.toThrow('the Hermes process did not stop');
+  await expect(launcher.start(launch, resolved)).rejects.toThrow('shut down');
+  await launcher.stop();
+  expect(owned.stop).toHaveBeenCalledTimes(2);
+  expect(errors).toHaveLength(1);
+});

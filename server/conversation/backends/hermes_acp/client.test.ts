@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import type { AnyMessage } from '@agentclientprotocol/sdk/unstable';
 
 const before_import = { ...process.env };
@@ -20,6 +20,7 @@ function wire(handlers: ConstructorParameters<typeof HermesAcpClient>[1]) {
   let input!: ReadableStreamDefaultController<Uint8Array>;
   let fail_write = false;
   let write_gate: Promise<void> | null = null;
+  const write_gates: Promise<void>[] = [];
   const writes: AnyMessage[] = [];
   const source = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -30,13 +31,16 @@ function wire(handlers: ConstructorParameters<typeof HermesAcpClient>[1]) {
     async write(bytes) {
       if (fail_write) throw new Error('synthetic broken write');
       writes.push(JSON.parse(new TextDecoder().decode(bytes)) as AnyMessage);
-      await write_gate;
+      await (write_gates.shift() ?? write_gate);
     },
   });
   const client = new HermesAcpClient(sdk.ndJsonStream(output, source), handlers);
   return {
     client,
     writes,
+    hold_each_write(...gates: Promise<void>[]) {
+      write_gates.push(...gates);
+    },
     hold_writes(gate: Promise<void>) {
       write_gate = gate;
     },
@@ -72,7 +76,7 @@ const no_handlers = {
   },
 };
 
-test('official ACP SDK pin and imports preserve the parent environment', () => {
+test('official ACP SDK pin, consumed internals, and imports preserve the parent environment', async () => {
   const metadata = JSON.parse(
     readFileSync(
       new URL('../../../package.json', import.meta.resolve('@agentclientprotocol/sdk/unstable')),
@@ -87,9 +91,41 @@ test('official ACP SDK pin and imports preserve the parent environment', () => {
   expect(metadata.version).toBe('2.6.0');
   expect(manifest.dependencies['@agentclientprotocol/sdk']).toBe('2.6.0');
   expect(after_import).toEqual(before_import);
+  const root = import.meta.resolve('@agentclientprotocol/sdk/unstable');
+  const rpc = await import(new URL('../../core/jsonrpc.js', root).href);
+  const schemas = await import(new URL('./schema/zod.gen.js', root).href);
+  const builder = rpc.Connection.builder();
+  expect(typeof builder.withHandler).toBe('function');
+  expect(typeof builder.connect).toBe('function');
+  expect(builder.withHandler({ handleMessage: () => rpc.Handled.yes() })).toBe(builder);
+  for (const symbol of ['sendRequest', 'sendNotification', 'close']) {
+    expect(typeof rpc.Connection.prototype[symbol]).toBe('function');
+  }
+  for (const symbol of ['isRequestMessage', 'isNotificationMessage']) {
+    expect(typeof rpc[symbol]).toBe('function');
+  }
+  expect(rpc.Handled.yes()).toEqual({ handled: true });
+  expect(typeof sdk.ndJsonStream).toBe('function');
+  expect(typeof sdk.RequestError.methodNotFound).toBe('function');
+  for (const symbol of [
+    'zSessionNotification',
+    'zRequestPermissionRequest',
+    'zInitializeResponse',
+    'zNewSessionResponse',
+    'zLoadSessionResponse',
+    'zSetSessionModeResponse',
+    'zSetSessionConfigOptionResponse',
+    'zPromptResponse',
+  ])
+    expect(typeof schemas[symbol].parse).toBe('function');
+  const { client } = wire(no_handlers); // Connection accepts our typed handleMessage contract.
+  expect(client.signal).toBeInstanceOf(AbortSignal);
+  expect(client.closed).toBeInstanceOf(Promise);
+  await client.stop();
 });
 
-test('split notification finishes before the following prompt response', async () => {
+test('a slow split notification preserves wire and response order beyond fifteen seconds', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const gate = deferred<void>();
   const order: string[] = [];
   const { client, writes, send } = wire({
@@ -121,6 +157,9 @@ test('split notification finishes before the following prompt response', async (
     void prompt.response.then(() => order.push('response'));
     await tick();
     expect(order).toEqual(['notification started']);
+    await vi.advanceTimersByTimeAsync(16000);
+    expect(client.signal.aborted).toBe(false);
+    expect(order).toEqual(['notification started']);
     gate.resolve();
     await prompt.response;
     await tick();
@@ -128,6 +167,7 @@ test('split notification finishes before the following prompt response', async (
   } finally {
     gate.resolve();
     await client.stop();
+    vi.useRealTimers();
   }
 });
 
@@ -190,7 +230,7 @@ test('parked permission does not block later notifications or the prompt reply',
   }
 });
 
-test('one timeout leaves a second request and later writes usable', async () => {
+test('one timeout and one cancel leave another pending request and later writes usable', async () => {
   const { client, writes, send } = wire(no_handlers);
   try {
     const first = client.begin_request('timed-out', {}, { timeout_ms: 5 });
@@ -199,8 +239,16 @@ test('one timeout leaves a second request and later writes usable', async () => 
     const second = client.begin_request('unaffected', {});
     await second.written;
     await timed_out;
-    send(response(writes, 1));
-    expect(await second.response).toEqual({ value: 1 });
+    const cancelled = client.begin_request('cancelled', {});
+    const rejected = expect(cancelled.response).rejects.toBeInstanceOf(Error);
+    await cancelled.written;
+    cancelled.cancel();
+    await rejected;
+    const index = writes.findIndex(
+      (message) => 'method' in message && message.method === 'unaffected',
+    );
+    send(response(writes, index));
+    expect(await second.response).toEqual({ value: index });
     await client.notify('still-open', {});
     expect(writes.at(-1)).toMatchObject({ method: 'still-open' });
   } finally {
@@ -273,4 +321,63 @@ test('malformed input releases admission and official unstable v1 parsing retain
   } finally {
     await client.stop();
   }
+});
+
+test('SDK write receipts settle separately for the same method and params object', async () => {
+  const first_gate = deferred<void>();
+  const second_gate = deferred<void>();
+  const { client, writes, send, hold_each_write } = wire(no_handlers);
+  hold_each_write(first_gate.promise, second_gate.promise);
+  const params = { shared: true };
+  try {
+    const first = client.begin_request('same-method', params);
+    const second = client.begin_request('same-method', params);
+    let second_written = false;
+    void second.written.then(() => {
+      second_written = true;
+    });
+    await tick();
+    first_gate.resolve();
+    await first.written;
+    await tick();
+    expect(second_written).toBe(false);
+    second_gate.resolve();
+    await second.written;
+    expect(writes).toHaveLength(2);
+    const first_message = writes[0]!;
+    const second_message = writes[1]!;
+    expect(
+      'id' in first_message && 'id' in second_message && first_message.id !== second_message.id,
+    ).toBe(true);
+    send(response(writes, 0));
+    send(response(writes, 1));
+    await Promise.all([first.response, second.response]);
+  } finally {
+    first_gate.resolve();
+    second_gate.resolve();
+    await client.stop();
+  }
+}, 1000);
+
+test('closing a wire releases admission while its sink stays slow', async () => {
+  const gate = deferred<void>();
+  const entered = deferred<void>();
+  const { client, send } = wire({
+    async session_update() {
+      entered.resolve();
+      await gate.promise;
+    },
+  });
+  send({
+    jsonrpc: '2.0',
+    method: 'session/update',
+    params: {
+      sessionId: 'synthetic',
+      update: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'private' } },
+    },
+  });
+  await entered.promise;
+  await client.stop();
+  expect(client.signal.aborted).toBe(true);
+  gate.resolve();
 });
