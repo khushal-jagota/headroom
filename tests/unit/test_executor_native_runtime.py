@@ -12,7 +12,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 from uuid import uuid4
 
 import pytest
@@ -263,7 +263,7 @@ def test_same_ticket_starts_recheck_occupancy_after_workspace_lock(
         class ObservedLock(asyncio.Lock):
             waiting = 0
 
-            async def acquire(self) -> bool:
+            async def acquire(self) -> Literal[True]:
                 if self.locked():
                     self.waiting += 1
                     if self.waiting == 2:

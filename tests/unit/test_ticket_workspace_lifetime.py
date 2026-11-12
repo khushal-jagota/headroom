@@ -6,8 +6,13 @@ from sqlite3 import Connection
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.ticket_workspace_git import _git, _layout
+from tests.unit.test_executor_native_runtime import ScriptedChild
 from tests.unit.test_executor_native_runtime import native_registry as native_registry
 
+from planner.conversation.contracts import ResolvedConversationStart
+from planner.executor.mac_outbox import MacOutbox
+from planner.executor.mac_runner import MacRunner
+from planner.executor.protocol import ChildCommand, StartRun
 from planner.ticket_workspaces.contracts import RETENTION_SECONDS, WorkspaceState
 from planner.ticket_workspaces.data import read_workspace_states
 from planner.ticket_workspaces.filesystem import (
@@ -269,7 +274,7 @@ def test_new_activity_in_done_ticket_restarts_the_full_file_clock(tmp_db: Connec
 def test_home_mirror_retirement_does_not_displace_unpushed_mac_workspace(
     tmp_db: Connection,
     tmp_path: Path,
-    native_registry: tuple,
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
 ) -> None:
     """Regression 2: real server roles must resume the Mac's existing unsafe checkout."""
     import subprocess
@@ -285,6 +290,8 @@ def test_home_mirror_retirement_does_not_displace_unpushed_mac_workspace(
 
     layout = _layout(tmp_path)
     registry, _, _, native_start = native_registry
+    start_args = native_start.arguments
+    assert isinstance(start_args, StartRun)
     project = create_project(tmp_db, name="Mac Project", folder_path=layout.repository, now=1)
     ticket = create_ticket(
         tmp_db,
@@ -302,10 +309,10 @@ def test_home_mirror_retirement_does_not_displace_unpushed_mac_workspace(
     _git(mac_source, "config", "user.email", "test@example.com")
     _git(mac_source, "config", "user.name", "Test")
 
-    def localize_current_server_role():
+    def localize_current_server_role() -> ResolvedConversationStart:
         values = worker_resolve(tmp_db, ticket)
         resolved = replace(
-            native_start.arguments.resolved_start,
+            start_args.resolved_start,
             role_materials=values.role_materials,
             workspace_folder=values.workspace_folder,
             workspace_path_policy=values.workspace_path_policy,
