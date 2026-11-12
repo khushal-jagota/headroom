@@ -3,12 +3,28 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 from planner.platform_runtime.legacy_posix import LegacyPosixPlatformAdapter
 
 
 class DarwinPlatformAdapter(LegacyPosixPlatformAdapter):
+    def control_socket_path(self, port: int, environ: Mapping[str, str], launch_root: Path) -> Path:
+        from .paths import resolve_server_control_socket_path
+
+        return resolve_server_control_socket_path(port, environ, launch_root)
+
+    def event_loop_tasks_socket_path(self, path: Path) -> Path:
+        from .paths import resolve_event_loop_tasks_socket_path
+
+        return resolve_event_loop_tasks_socket_path(path)
+
+    def lifecycle_lease_path(self, port: int) -> Path:
+        from .paths import resolve_server_lifecycle_lease_path
+
+        return resolve_server_lifecycle_lease_path(port)
+
     def spawn_application_child(
         self,
         interpreter: str,
