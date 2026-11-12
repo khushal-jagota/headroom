@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Runtime } from './supervisor.ts';
 import { DEFAULT_LIMITS } from '../configuration.ts';
+import { failure_message } from '../notices.ts';
 import type { RunAdmission } from '../contracts.ts';
 import type { CredentialResolver } from '../../credentials/contracts.ts';
 import { numeric_value, stringify_python_json } from '../../core/http/numeric_json.ts';
@@ -320,6 +321,9 @@ test('stdout and private control frames share the output byte budget', async () 
       noCredentials,
     );
     expect(result.failure?.budget).toBe('output_bytes');
+    expect(failure_message(result.failure)).toBe(
+      'The run exceeded an execution limit. Limit: output_bytes.',
+    );
     expect(result.metrics.child_output_bytes).toBe(ordinaryBytes);
     expect(result.observations).toEqual([]);
   }
