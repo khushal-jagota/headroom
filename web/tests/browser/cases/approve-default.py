@@ -330,6 +330,8 @@ def run(browser, urls):
                 )
                 return
             result = {"worker_types": matches}
+        elif path == "machines":
+            result = fixture["MACHINE_CATALOG"]
         elif path == "worker-types":
             result = manifest
         elif path.startswith("tickets/") and "/accept/" in path:

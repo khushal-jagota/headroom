@@ -7,6 +7,7 @@ def run(browser, urls):
     import base64
     import json
     import os
+    import runpy
     from pathlib import Path
 
     from playwright.sync_api import Route, expect
@@ -108,6 +109,10 @@ def run(browser, urls):
         )
 
     page = browser.new_page(viewport={"width": 980, "height": 800})
+    fixture = runpy.run_path(
+        str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py")
+    )
+    page.route("**/api/machines", lambda route: route.fulfill(json=fixture["MACHINE_CATALOG"]))
     page.set_default_timeout(5000)
     errors = []
     expected_console_errors = set()
@@ -350,7 +355,7 @@ def run(browser, urls):
         page.set_viewport_size({"width": width, "height": height})
         page.goto(urls[0] + "?picker", wait_until="domcontentloaded")
         assert page.locator("[data-employee-destination-picker]").count() == 0
-        expect(page.locator('.machine[aria-label="Runs on Mac"]')).to_have_text("Mac")
+        expect(page.get_by_role('img', name='Runs on Mac', exact=True)).to_have_text("Mac")
         picker = page.locator(".picker-proof > [data-conversation-model-picker]")
         trigger = picker.locator("[data-conversation-picker-trigger]")
         assert trigger.inner_text() == "Opus 5.5 high"

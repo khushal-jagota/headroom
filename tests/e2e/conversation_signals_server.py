@@ -25,6 +25,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
     UserInputRequested,
 )
+from planner.conversation.child_custody import host_boot_identity
 from planner.conversation.contracts import (
     AnswerFate,
     ConversationBackendKey,
@@ -37,6 +38,7 @@ from planner.conversation.events import (
     UserInputOption,
     UserInputQuestion,
 )
+from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.conversation.message_content import MessageContent, MessageText, text_message_content
 from planner.conversation.snapshot import SubprocessBackendProbeEnvironment
 from planner.core.clock import build_clock
@@ -59,7 +61,12 @@ class ScriptedChild:
         self.reject_next_prompt = False
 
     async def start(self, *args: Any, **kwargs: Any) -> None:
-        pass
+        # This scripted adapter has no OS child. Never name the server as its child.
+        host = host_boot_identity()
+        assert host is not None
+        await self.sink.record_local_child_custody(  # type: ignore[attr-defined]
+            LocalChildIdentity(pid=2_147_483_647, birth="test-child", boot=host.boot)
+        )
 
     async def write_prompt(
         self, turn_token: TurnToken, content: MessageContent, *args: Any, **kwargs: Any,
