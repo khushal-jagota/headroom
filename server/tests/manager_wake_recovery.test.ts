@@ -1,11 +1,32 @@
-import { expect, test } from 'vitest';
-import { fixture, create } from './ticket_fixture.ts';
+import { expect, test, vi } from 'vitest';
+import { fixture, fixture_path, create } from './ticket_fixture.ts';
 import { ConversationStore } from '../conversation/record/data/store.ts';
 import { ResolvedConversationStart, PromptDeliveryMode } from '../conversation/contracts.ts';
 import { PromptEventPayload } from '../conversation/events.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import * as data from '../manager_wakes/data.ts';
-import { reconcile_batch_outcomes } from '../manager_wakes/runtime.ts';
+import type {
+  Database,
+  ReadSql,
+  TransactionSql,
+  WriteOptions,
+} from '../core/database/contracts.ts';
+import { TestClock } from '../core/clock.ts';
+import { InMemoryConversationSystem } from '../conversation/in_memory_conversation_system.ts';
+import {
+  ConversationStartRequest,
+  PromptDeliveryStarted,
+  type PromptDeliveryFate,
+} from '../conversation/contracts.ts';
+import {
+  configure_conversation_start,
+  conversation_link_lock,
+} from '../runtime/conversation_start.ts';
+import {
+  ManagerWakeLoop,
+  WakeObserverStopped,
+  reconcile_batch_outcomes,
+} from '../manager_wakes/runtime.ts';
 
 // The in-memory HTTP host cannot produce an interrupted native send or durable
 // receipts. Reuse the existing SQLite fixture and record writer without a host.
@@ -93,4 +114,135 @@ test('an interrupted offering stays uncertain until its exact durable prompt exi
     )?.closed_at,
   ).toBe(103);
   expect(reconcile_batch_outcomes(database, { now: 104 })).toBe(0);
+});
+
+// Neither the HTTP fake nor a settled receipt proves a hung provider cannot retain
+// the wake observer past shutdown or cause a late write after database ownership ends.
+test('the wake deadline records uncertainty and detaches a hung send without a late write', async () => {
+  const source = fixture();
+  const ticket = create(source);
+  let access_count = 0;
+  const database: Database = {
+    read<T>(work: (sql: ReadSql) => T): T {
+      access_count += 1;
+      return source.read(work);
+    },
+    write<T>(work: (sql: TransactionSql) => T, options?: WriteOptions): T {
+      access_count += 1;
+      return source.write(work, options);
+    },
+    close: () => source.close(),
+  };
+  configure_conversation_start(database, {
+    db_path: fixture_path(source),
+    workspace_root: '/workspace',
+  });
+  const system = new InMemoryConversationSystem();
+  await system.start_conversation(
+    new ConversationStartRequest({
+      conversation_id: 'hung-wake',
+      backend_key: 'codex',
+      model: 'gpt-6.1-sol',
+      workspace_folder: '/workspace',
+    }),
+  );
+  const store = new ConversationStore(database, { integer_now: () => 100 });
+  store.create_conversation(
+    new ResolvedConversationStart({
+      conversation_id: 'hung-wake',
+      backend_key: 'codex',
+      model: 'gpt-6.1-sol',
+      reasoning_effort: null,
+      role_materials: null,
+      workspace_folder: '/workspace',
+      access: 'full',
+    }),
+  );
+  database.write((sql) => {
+    sql.run('INSERT INTO agents(agent_key,conversation_id) VALUES (?,?)', [
+      'chief_of_staff',
+      'hung-wake',
+    ]);
+    data.create_worker_error_wake(sql, {
+      target: { kind: 'chief', id: 'chief' },
+      ticket_id: ticket.id,
+      ticket_title: ticket.title,
+      claim_revision: 1,
+      error_reason: 'stopped',
+      now: 100,
+    });
+  });
+  let started!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let finish!: (fate: PromptDeliveryFate) => void;
+  const provider = new Promise<PromptDeliveryFate>((resolve) => {
+    finish = resolve;
+  });
+  let completed = false;
+  vi.spyOn(system, 'send').mockImplementation(async () => {
+    started();
+    const result = await provider;
+    completed = true;
+    return result;
+  });
+  const kill = vi.spyOn(system, 'kill');
+  const loop = new ManagerWakeLoop({
+    workspace_context: { db_path: fixture_path(source), workspace_root: '/workspace' },
+    database,
+    clock: new TestClock('2026-07-04T12:00:00'),
+    conversation_system: system,
+    assert_database_owned: () => {},
+  });
+  const pass = loop.poll_once().catch((error: unknown) => error);
+  await entered;
+  expect(
+    database.read((sql) => sql.get<{ status: string }>('SELECT status FROM manager_wake_batches'))
+      ?.status,
+  ).toBe('offering');
+  const before = performance.now();
+  await loop.stop({ deadline: performance.now() / 1000 + 0.02 });
+  expect(performance.now() - before).toBeLessThan(1000);
+  expect(await pass).toBeInstanceOf(WakeObserverStopped);
+  expect(
+    database.read((sql) =>
+      sql.get('SELECT status,conversation_id,process_token FROM manager_wake_batches'),
+    ),
+  ).toEqual({
+    status: 'uncertain',
+    conversation_id: 'hung-wake',
+    process_token: loop.process_token,
+  });
+  expect(
+    database.read((sql) =>
+      sql.get<{ closed_at: number | null }>('SELECT closed_at FROM manager_wakes'),
+    )?.closed_at,
+  ).toBeNull();
+  // Detach must release the actual shared link lock while the core promise stays live.
+  let lock_timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    expect(
+      await Promise.race([
+        conversation_link_lock('agent:chief_of_staff').run(async () => 'lock released'),
+        new Promise<never>((_resolve, reject) => {
+          lock_timeout = setTimeout(
+            () => reject(new Error('wake retained the conversation link lock')),
+            1000,
+          );
+        }),
+      ]),
+    ).toBe('lock released');
+    expect(completed).toBe(false);
+  } finally {
+    if (lock_timeout !== undefined) clearTimeout(lock_timeout);
+  }
+  database.close();
+  const after_close = access_count;
+  finish(new PromptDeliveryStarted());
+  await provider;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(completed).toBe(true);
+  expect(kill).not.toHaveBeenCalled();
+  expect(access_count).toBe(after_close);
 });

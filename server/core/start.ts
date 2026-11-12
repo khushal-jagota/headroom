@@ -51,6 +51,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
       database,
       clock,
       conversation_system: options.conversationSystem,
+      workspace_context: { db_path: config.db_path, workspace_root: config.workspace_root },
       assert_database_owned,
     };
     const ownedTestAreas = (options.ownedTestAreas ?? []).map((factory) => factory(ownedContext));
