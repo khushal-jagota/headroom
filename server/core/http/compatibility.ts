@@ -82,34 +82,30 @@ export function installCompatibility(app: FastifyInstance): void {
       error.code === 'FST_ERR_CTP_EMPTY_JSON_BODY'
     ) {
       const failure = jsonFailure(error.jsonSource ?? '');
-      reply
-        .code(422)
-        .send({
-          detail: [
-            {
-              type: 'json_invalid',
-              loc: ['body', failure.position],
-              msg: 'JSON decode error',
-              input: {},
-              ctx: { error: failure.message },
-            },
-          ],
-        });
+      reply.code(422).send({
+        detail: [
+          {
+            type: 'json_invalid',
+            loc: ['body', failure.position],
+            msg: 'JSON decode error',
+            input: {},
+            ctx: { error: failure.message },
+          },
+        ],
+      });
       return;
     }
     if (error.code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE') {
-      reply
-        .code(422)
-        .send({
-          detail: [
-            {
-              type: 'dict_type',
-              loc: ['body'],
-              msg: 'Input should be a valid dictionary',
-              input: request.body,
-            },
-          ],
-        });
+      reply.code(422).send({
+        detail: [
+          {
+            type: 'dict_type',
+            loc: ['body'],
+            msg: 'Input should be a valid dictionary',
+            input: request.body,
+          },
+        ],
+      });
       return;
     }
     request.log.error(error);
