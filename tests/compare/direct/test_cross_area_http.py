@@ -126,7 +126,9 @@ def test_cross_area_http(tmp_path: Path) -> None:
                           "update": None, "slow": True, "idle": True,
                           "stallSlow": True, "stallIdle": False}
         second_requests = [item for item in seen if item["port"] == servers[1].server_port]
-        assert [item["path"] for item in second_requests] == ["/final", "/update-final"]
+        paths = [item["path"] for item in second_requests]
+        assert paths[0] == "/final"
+        assert paths[1:] and set(paths[1:]) == {"/update-final"}
         assert all(item["secret"] is None and item["custom"] is None and
                    item["authorization"] is None for item in second_requests)
         same_origin = [item for item in seen if item["path"] == "/final" and

@@ -10,24 +10,33 @@ export type UpdateExperienceState =
   'up_to_date' | 'available' | 'waiting' | 'updating' | 'failed' | 'mac_failed' | 'mac_unreachable';
 export type UpdateAction = 'update' | 'cancel' | 'update_now' | 'retry' | 'retry_mac';
 
-/** The current persisted release protocol, before the Node release contract lands. */
 export interface RuntimePlatform {
   distribution: string;
   version: string;
   minimum_glibc: string;
 }
-export interface RuntimeContract {
-  version: number;
+interface RuntimeBoundary {
   system: string;
   architecture: string;
   platforms: RuntimePlatform[];
-  python_version: string;
   node_major: number;
   cpu_features: string[];
   external_libraries: string[];
   external_executables: string[];
   inventory_sha256: string;
 }
+export interface PythonRuntimeContract extends RuntimeBoundary {
+  version: 1;
+  python_version: string;
+}
+export interface NodeRuntimeContract extends RuntimeBoundary {
+  version: 2;
+  system: 'linux';
+  architecture: 'x86_64';
+  node_major: 22;
+  minimum_node_version: '22.18.0';
+}
+export type RuntimeContract = PythonRuntimeContract | NodeRuntimeContract;
 export interface AppManifest {
   app_sha: string;
   source_digest: string;
@@ -107,6 +116,7 @@ export interface ReleaseStaging {
   stage(provider: UpdateProvider, release: PublishedUpdate, current_root: string): Promise<string>;
 }
 export interface InstallerOperations {
+  require_exact_schema_frontier(database: string, staged_app: string): void | Promise<void>;
   schema_change_pending(database: string, staged_app: string): boolean;
   create_backup(
     database: string,

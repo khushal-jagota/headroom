@@ -8,12 +8,25 @@ import type { ReadableStream } from 'node:stream/web';
 import { pipeline } from 'node:stream/promises';
 import { JsonNumber, numeric_value } from '../../core/http/numeric_json.ts';
 import type { NumericJSON } from '../../core/http/numeric_json.ts';
+import { parseIsoDatetime } from '../../core/clock.ts';
 import type { PublishedUpdate, UpdateProvider } from './contracts.ts';
 import { canonical_json, is_object, parse_attempt_json, parse_release } from './codec.ts';
 import { instant } from './logic/experience.ts';
 import { with_zip_member } from './zip.ts';
 
 type Identity = NumericJSON<number>;
+export const TRUSTED_RELEASE_WORKFLOWS: ReadonlyMap<string, 1 | 2> = new Map([
+  ['.github/workflows/deploy.yml', 1],
+  ['.github/workflows/publish-typescript-release.yml', 2],
+]);
+function exact_run_id(value: unknown): bigint {
+  if (value instanceof JsonNumber) {
+    if (value.integer !== null) return value.integer;
+    return BigInt(Math.trunc(value.value));
+  }
+  if (typeof value === 'number') return BigInt(Math.trunc(value));
+  return BigInt(String(value).trim().replaceAll('_', ''));
+}
 function repository_stream(response: Response, message: string): Readable {
   if (response.body === null) throw new Error(message);
   return Readable.from(
@@ -73,7 +86,17 @@ export class GitHubUpdateProvider implements UpdateProvider {
     if (!token) throw new Error('The repository update credential is unavailable.');
     return { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' };
   }
-  private async request(path: string, parameters: Record<string, string> = {}): Promise<Response> {
+  private request(
+    path: string,
+    parameters: Record<string, string>,
+    missing_ok: true,
+  ): Promise<Response | null>;
+  private request(path: string, parameters?: Record<string, string>): Promise<Response>;
+  private async request(
+    path: string,
+    parameters: Record<string, string> = {},
+    missing_ok = false,
+  ): Promise<Response | null> {
     const headers = this.headers();
     const url = new URL(`https://api.github.com/repos/${this.repository}/${path}`);
     for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, value);
@@ -99,6 +122,11 @@ export class GitHubUpdateProvider implements UpdateProvider {
     } catch {
       controller.abort();
       throw new Error('The repository update service is unavailable or its result is uncertain.');
+    }
+    if (missing_ok && response.status === 404) {
+      controller.abort();
+      await response.body?.cancel().catch(() => {});
+      return null;
     }
     if (!response.ok) {
       controller.abort();
@@ -133,7 +161,9 @@ export class GitHubUpdateProvider implements UpdateProvider {
     path: string,
     parameters: Record<string, string> = {},
   ): Promise<Record<string, unknown>> {
-    const response = await this.request(path, parameters);
+    return this.response_json(await this.request(path, parameters));
+  }
+  private async response_json(response: Response): Promise<Record<string, unknown>> {
     try {
       return record(parse_attempt_json(await response.text()));
     } catch {
@@ -141,13 +171,33 @@ export class GitHubUpdateProvider implements UpdateProvider {
     }
   }
   async available(): Promise<PublishedUpdate | null> {
-    const result = await this.json('actions/workflows/deploy.yml/runs', {
-      branch: 'main',
-      event: 'push',
-      status: 'success',
-      per_page: '20',
-    });
-    for (const run of list(result.workflow_runs)) {
+    const runs: Record<string, unknown>[] = [];
+    for (const [workflow, version] of TRUSTED_RELEASE_WORKFLOWS) {
+      const path = `actions/workflows/${workflow.split('/').at(-1)}/runs`;
+      const parameters = { branch: 'main', event: 'push', status: 'success', per_page: '20' };
+      const response =
+        version === 2
+          ? await this.request(path, parameters, true)
+          : await this.request(path, parameters);
+      if (response !== null) {
+        const result = await this.response_json(response);
+        runs.push(...list(result.workflow_runs));
+      }
+    }
+    const ordered = runs
+      .map((run) => ({
+        run,
+        created: parseIsoDatetime(run.created_at as string),
+        id: exact_run_id(run.id),
+      }))
+      .sort((a, b) => {
+        if (a.created.aware !== b.created.aware)
+          throw new Error("can't compare offset-naive and offset-aware datetimes");
+        const left = a.created.epochMicroseconds,
+          right = b.created.epochMicroseconds;
+        return left === right ? (a.id === b.id ? 0 : a.id > b.id ? -1 : 1) : left > right ? -1 : 1;
+      });
+    for (const { run } of ordered) {
       const release = await this.publication(run.id as Identity);
       if (release !== null) return release;
     }
@@ -155,13 +205,14 @@ export class GitHubUpdateProvider implements UpdateProvider {
   }
   async publication(run_id: Identity): Promise<PublishedUpdate | null> {
     const run = await this.json(`actions/runs/${canonical_json(run_id)}`);
+    const contract_version = TRUSTED_RELEASE_WORKFLOWS.get(run.path as string);
     if (
       run.head_branch !== 'main' ||
       run.event !== 'push' ||
       run.conclusion !== 'success' ||
       !is_object(run.head_repository) ||
       run.head_repository.full_name !== this.repository ||
-      run.path !== '.github/workflows/deploy.yml'
+      contract_version === undefined
     )
       return null;
     const artifacts = await this.json(`actions/runs/${canonical_json(run_id)}/artifacts`, {
@@ -214,6 +265,8 @@ export class GitHubUpdateProvider implements UpdateProvider {
       throw new Error('Publication identity differs from trusted repository evidence.');
     if (instant(release.expires_at).epochMicroseconds <= BigInt(Date.now()) * 1000n) return null;
     if (release.manifest.runtime_contract === null) return null;
+    if (release.manifest.runtime_contract.version !== contract_version)
+      throw new Error('This workflow does not publish this runtime contract version.');
     this.publication_cache = release;
     return release;
   }

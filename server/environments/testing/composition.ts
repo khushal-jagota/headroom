@@ -15,6 +15,7 @@ export function create_test_environment_runtime(context: TestCompositionContext)
     collector: null,
     staging: { stage: async () => unavailable() },
     installer: {
+      require_exact_schema_frontier: unavailable,
       schema_change_pending: unavailable,
       create_backup: async () => unavailable(),
       prepare: unavailable,

@@ -4,7 +4,12 @@ import { FileUpdateAttemptStore } from '../attempts.ts';
 import { deployment_status, resolve, settle } from '../logic/experience.ts';
 import { attempt_to_dict, parse_attempt, parse_release } from '../codec.ts';
 import type { UpdateAttempt } from '../contracts.ts';
-export { probe_service, probe_continuations, probe_update_routes } from './service.ts';
+export {
+  probe_service,
+  probe_continuations,
+  probe_update_routes,
+  probe_node_frontier,
+} from './service.ts';
 export { probe_update_provider } from './provider.ts';
 import { numeric_value } from '../../../core/http/numeric_json.ts';
 import type {

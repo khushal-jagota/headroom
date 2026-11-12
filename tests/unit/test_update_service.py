@@ -20,6 +20,8 @@ from tests.support.update_apps import SHA_A, SHA_B, build_app, release
 
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.db import connect, create_schema
+from planner.environments.app import AppManifest
+from planner.environments.runtime_contracts import NodeRuntimeContract
 from planner.environments.update_api import router
 from planner.environments.update_attempts import (
     FileUpdateAttemptStore,
@@ -27,6 +29,7 @@ from planner.environments.update_attempts import (
     import_legacy_request,
 )
 from planner.environments.update_contracts import PublishedMacUpdate, PublishedUpdate
+from planner.environments.update_install import require_exact_schema_frontier
 from planner.environments.update_service import ACTIVITY_CHANGED_DETAIL, UpdateService
 
 
@@ -60,7 +63,7 @@ class Provider:
 
 
 class Harness:
-    def __init__(self, root: Path, *, migrated: bool = True) -> None:
+    def __init__(self, root: Path, *, migrated: bool = True, node: bool = False) -> None:
         self.root = root
         (root / "data").mkdir(parents=True)
         self.database = root / "data" / "planner.db"
@@ -76,7 +79,10 @@ class Harness:
         if not migrated:
             # The candidate gains a revision this database has not applied.
             (versions / "next.py").write_text(f'revision = "next"\ndown_revision = "{head}"\n')
-        self.release = release(mac=PublishedMacUpdate(9, "f" * 64, 10))
+        self.release = release(
+            AppManifest(SHA_B, "c" * 64, "d" * 64, NodeRuntimeContract("f" * 64)) if node else None,
+            mac=PublishedMacUpdate(9, "f" * 64, 10),
+        )
         self.store = FileUpdateAttemptStore(root / "data" / "update-attempt.json")
         self.system = System()
         self.launched: list[tuple[str, list[str]]] = []
@@ -151,6 +157,47 @@ def test_schema_change_takes_the_backup_before_the_installer_starts(tmp_path: Pa
     assert snapshot.parent == harness.root / "data" / "backups"
     assert json.loads((snapshot / "metadata.json").read_text())["deployed_revision"] == SHA_A
     assert "backup" in recorded.steps and harness.launched
+
+
+def test_node_release_needs_the_exact_schema_frontier_at_staging(tmp_path: Path) -> None:
+    """Risk: a Node release, which runs no migration, is offered for a database behind it."""
+    with pytest.raises(ValueError, match="exactly its schema revision"):
+        Harness(tmp_path / "behind", migrated=False, node=True)
+    ready = Harness(tmp_path / "exact", node=True)
+    assert ready.service.ready_release() == ready.release
+    # A candidate without migrations and a database without a revision do not match.
+    empty = tmp_path / "empty.db"
+    with sqlite3.connect(empty) as db:
+        db.execute("CREATE TABLE alembic_version (version_num TEXT)")
+    with pytest.raises(ValueError, match="exactly its schema revision"):
+        require_exact_schema_frontier(empty, tmp_path / "no-migrations")
+
+
+@pytest.mark.parametrize("frontier", ["ancestor", "unknown", "divergent"])
+def test_node_release_rechecks_the_frontier_before_the_stop(
+    tmp_path: Path, frontier: str
+) -> None:
+    """Risk: the frontier differs at install time, and the service stops for a release
+    that cannot run on it. A known ancestor, which version 1 backs up and migrates,
+    is refused too."""
+    harness = Harness(tmp_path / "current", node=True)
+    harness.service.install(SHA_B, "now", confirm_activity=False)
+    with sqlite3.connect(harness.database) as db:
+        head = db.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+        if frontier == "ancestor":
+            staged = harness.root / f".app-next-{SHA_B}/src/planner/core/migrations/versions"
+            (staged / "next.py").write_text(f'revision = "next"\ndown_revision = "{head}"\n')
+        else:
+            db.execute("DELETE FROM alembic_version")
+            db.executemany(
+                "INSERT INTO alembic_version VALUES (?)",
+                [("unknown",)] + ([(head,)] if frontier == "divergent" else []),
+            )
+    harness.advance()
+    recorded = harness.store.read()
+    assert recorded is not None and recorded.state == "failed"
+    assert "exactly its schema revision" in (recorded.detail or "")
+    assert recorded.backup is None and not harness.launched
 
 
 def test_idle_wait_cancel_and_update_now(harness: Harness) -> None:
