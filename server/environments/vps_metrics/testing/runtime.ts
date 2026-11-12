@@ -1,11 +1,14 @@
 /** Explicit connected proofs use the actual pool and sampler, without another HTTP host. */
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
+import { fork } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { metrics_config } from '../configuration.ts';
 import type { MetricsConfig } from '../configuration.ts';
 import { decode, encode, float } from '../codec.ts';
-import type { Collector, Sample } from '../contracts.ts';
+import type { Collector, LatestResponse, Sample } from '../contracts.ts';
 import { MetricsRuntime } from '../runtime.ts';
+import { MetricsReaders } from '../readers/pool.ts';
 import type { BuildCollector } from '../sampler/contracts.ts';
 
 interface Probe {
@@ -50,6 +53,59 @@ export const failing_factory: BuildCollector = () => {
 };
 function emit(value: unknown): void {
   process.stdout.write(encode(value) + '\n');
+}
+async function reader_replacement_probe(spec: Probe, config: MetricsConfig) {
+  const failed_entry = spec.root + '/reader-boot-failure.mjs';
+  writeFileSync(failed_entry, 'process.exit(23);');
+  const children: ChildProcess[] = [],
+    ready: Promise<void>[] = [];
+  let failed_boot: Promise<void> | undefined;
+  const recovery_config = { ...config, read_workers: 2, read_seconds: 2 };
+  const pool = new MetricsReaders(spec.database, recovery_config, (entry, options) => {
+    const failing = children.length === 2;
+    const child = fork(failing ? failed_entry : entry, [], options);
+    children.push(child);
+    if (failing) failed_boot = new Promise<void>((resolve) => child.once('close', () => resolve()));
+    else ready.push(new Promise<void>((resolve) => child.once('message', () => resolve())));
+    return child;
+  });
+  const began = performance.now();
+  try {
+    await pool.start();
+    // Both healthy, idle processes are still owned through their live ChildProcess handles.
+    const old_closed = children.map(
+      (child) => new Promise<void>((resolve) => child.once('close', () => resolve())),
+    );
+    for (const child of children.slice()) child.kill('SIGKILL');
+    await Promise.all(old_closed);
+    while (!failed_boot) await delay(1);
+    await failed_boot;
+    // Let replacement failure publish its cooldown before the new admission.
+    await delay(0);
+    recovery_config.read_seconds = 0.005;
+    const short = await pool.read({ kind: 'latest', now: 100 }).then(
+      () => 'unexpected',
+      (error: Error) => error.message,
+    );
+    recovery_config.read_seconds = 2;
+    const recovered = await Promise.all([
+      pool.read<LatestResponse>({ kind: 'latest', now: 100 }),
+      pool.read<LatestResponse>({ kind: 'latest', now: 100 }),
+    ]);
+    await Promise.all(ready);
+    return {
+      expired_during_backoff: short === 'VPS metrics read deadline exceeded',
+      replacement_failed_before_ready: children[2].exitCode === 23,
+      successful_sequences: recovered.map((value) => value.sequence),
+      boot_count: children.length,
+      restored_readers: children.filter(
+        (child) => child.exitCode === null && child.signalCode === null,
+      ).length,
+      recovery_ms: performance.now() - began,
+    };
+  } finally {
+    await pool.close();
+  }
 }
 export async function metrics_runtime_probe(input: string): Promise<string> {
   const spec = decode<Probe>(input);
@@ -114,6 +170,8 @@ export async function metrics_runtime_probe(input: string): Promise<string> {
     const stopping = performance.now();
     await runtime.stop({ deadline: performance.now() / 1000 + 1 });
     await runtime.settled();
+    const stop_ms = performance.now() - stopping;
+    const replacement = await reader_replacement_probe(spec, config);
     return encode({
       latest,
       activity,
@@ -125,7 +183,8 @@ export async function metrics_runtime_probe(input: string): Promise<string> {
       cold_ms,
       warm_ms,
       activity_ms,
-      stop_ms: performance.now() - stopping,
+      stop_ms,
+      replacement,
     });
   }
   if (spec.mode === 'startup_failure') throw new Error('startup unexpectedly passed');

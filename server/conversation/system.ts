@@ -85,6 +85,7 @@ import {
   background_tasks_ended_with_child,
   IdleChildJanitor,
   detach_children,
+  tell_agent_about_lost_background_tasks,
 } from './runtime/maintenance.ts';
 import {
   discarded_row,
@@ -149,12 +150,37 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   private readonly shutdown_controller = new AbortController();
   private readonly native_waiters = new Set<() => void>();
   private idle_janitor: IdleChildJanitor | null = null;
+  private background_tasks_left_by_previous_process: ReadonlyMap<string, readonly string[]>;
   constructor(options: ConversationCoreOptions) {
     for (const key of Object.values(ConversationBackendKey)) {
       if (!options.backend_child_factories[key])
         throw new Error(`no backend child factory for ${key}`);
     }
     this.options = options;
+    this.background_tasks_left_by_previous_process = options.store.read_live_background_task_ids();
+  }
+  async tell_agents_of_background_tasks_lost_at_restart(): Promise<void> {
+    this.require_runtime_ownership();
+    const left_behind = this.background_tasks_left_by_previous_process;
+    this.background_tasks_left_by_previous_process = new Map();
+    for (const [conversation_id, task_ids] of [...left_behind].sort(([first], [second]) =>
+      first < second ? -1 : first > second ? 1 : 0,
+    )) {
+      try {
+        const state = this.conversation_state(conversation_id);
+        if (state === null) continue;
+        const lost = await this.persist(state, () =>
+          this.options.store.take_background_tasks(conversation_id, { task_ids }),
+        );
+        tell_agent_about_lost_background_tasks(this, state, lost);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') throw error;
+        console.error(
+          `conversation ${conversation_id} could not hear about background tasks lost at restart`,
+          error,
+        );
+      }
+    }
   }
   unix_time_now(): number {
     return (this.options.unix_time_now ?? (() => Date.now() / 1000))();
@@ -542,6 +568,37 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       if (error instanceof PromptWriteFailed) {
         await this.record_delivery_uncertainty(state, reservation, batch);
         return new PromptDeliveryUncertain();
+      }
+      const recovery_messages = batch.filter((message) => message.recovery_references.length > 0);
+      if (recovery_messages.length === 0) {
+        await this.persist(state, () =>
+          this.options.store.fail_recovery_claims(
+            state.record.conversation_id,
+            reservation.token.turn_number,
+          ),
+        );
+      } else {
+        await state.lock.run(async () => {
+          for (const [index, message] of recovery_messages.entries()) {
+            const rows = await this.persist(state, () =>
+              this.options.store.append_events(
+                state.record.conversation_id,
+                [uncertain_row(message, reservation.mode)],
+                {
+                  lifecycle:
+                    index === 0
+                      ? [
+                          turn_fact(reservation.token, S.unavailable),
+                          prompt_fact(reservation.token, S.unknown),
+                        ]
+                      : [],
+                  recording_receipt: message.recording_receipt,
+                },
+              ),
+            );
+            this.note_written(state, rows);
+          }
+        });
       }
       await state.lock.run(() => {
         if (queued) {

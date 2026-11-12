@@ -1,6 +1,6 @@
 /** Repository-scoped external reads. Credentials stay outside records and errors. */
 import { readFileSync, createWriteStream } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, open, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -183,28 +183,53 @@ export class GitHubUpdateProvider implements UpdateProvider {
     const metadata = await this.json(`actions/artifacts/${canonical_json(artifact_id)}`);
     if (metadata.expired === true) throw new Error('The pinned update artifact expired.');
     const headers = this.headers();
-    let response: Response;
-    try {
-      response = await this.fetch(
+    const controller = new AbortController();
+    // httpx's streaming timeout bounds each network read, not the whole archive.
+    // Do not time a disk write or ask the network reader for another chunk during it.
+    const network_read = async <T>(read: () => Promise<T>): Promise<T> => {
+      const timer = setTimeout(() => controller.abort(), 60_000);
+      try {
+        return await read();
+      } catch {
+        controller.abort();
+        throw new Error('The repository update download did not complete.');
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    const response = await network_read(() =>
+      this.fetch(
         `https://api.github.com/repos/${this.repository}/actions/artifacts/${canonical_json(artifact_id)}/zip`,
-        { method: 'GET', headers, redirect: 'follow', signal: AbortSignal.timeout(60_000) },
-      );
-    } catch {
+        { method: 'GET', headers, redirect: 'follow', signal: controller.signal },
+      ),
+    );
+    if (!response.ok) {
+      controller.abort();
+      await response.body?.cancel().catch(() => {});
+      throw new Error('The repository update service refused the download.');
+    }
+    if (response.body === null) {
+      controller.abort();
       throw new Error('The repository update download did not complete.');
     }
-    if (!response.ok) throw new Error('The repository update service refused the download.');
+    const reader = response.body.getReader();
+    let output: Awaited<ReturnType<typeof open>> | undefined;
     try {
-      await pipeline(
-        repository_stream(response, 'The repository update download did not complete.'),
-        createWriteStream(destination, { flags: 'wx' }),
-      );
-    } catch (error) {
-      if (
-        error instanceof TypeError ||
-        (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name))
-      )
-        throw new Error('The repository update download did not complete.');
-      throw error;
+      output = await open(destination, 'wx');
+      for (;;) {
+        const { value, done } = await network_read(() => reader.read());
+        if (done) break;
+        let offset = 0;
+        while (offset < value.byteLength) {
+          const { bytesWritten } = await output.write(value, offset, value.byteLength - offset);
+          offset += bytesWritten;
+        }
+      }
+    } finally {
+      controller.abort();
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+      await output?.close();
     }
   }
 }

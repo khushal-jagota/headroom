@@ -4,6 +4,8 @@ import { lstatSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { resolved_path } from '../paths.ts';
 import type { ChangeSignal } from '../../core/changes/index.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../../core/config.ts';
+import type { StopOptions } from '../../lifecycle/contracts.ts';
 import { build_worker_runtime_definitions } from '../../worker_types/configuration.ts';
 import { read_definitions } from '../../worker_types/store.ts';
 import { audit_ticket_registry_integrity } from '../../tickets/data/index.ts';
@@ -120,6 +122,7 @@ export class UpdateService {
   private last_state: string | null = null;
   private paused_attempt_id: string | null = null;
   private running = false;
+  private incarnation = 0;
   private prefetching: Promise<void> | null = null;
   private advancing: Promise<void> | null = null;
   private observer: NodeJS.Timeout | null = null;
@@ -161,25 +164,34 @@ export class UpdateService {
   prefetch(): Promise<void> {
     if (!this.running) return Promise.resolve();
     if (this.prefetching !== null) return this.prefetching;
-    this.prefetching = Promise.resolve()
-      .then(() => this.prefetch_release())
+    const incarnation = this.incarnation;
+    const flight = Promise.resolve()
+      .then(() => this.prefetch_release(incarnation))
       .finally(() => {
-        this.prefetching = null;
+        if (this.prefetching === flight) this.prefetching = null;
       });
-    return this.prefetching;
+    this.prefetching = flight;
+    return flight;
   }
-  private async prefetch_release(): Promise<void> {
+  private active(incarnation: number): boolean {
+    return this.running && this.incarnation === incarnation;
+  }
+  private async prefetch_release(incarnation: number): Promise<void> {
     const provider = this.options.provider;
-    if (!this.running || provider === null) return;
+    if (!this.active(incarnation) || provider === null) return;
     const release = await provider.available();
-    if (!this.running || release === null || release.manifest.app_sha === this.current_app_sha)
+    if (
+      !this.active(incarnation) ||
+      release === null ||
+      release.manifest.app_sha === this.current_app_sha
+    )
       return;
     validate_release(release);
     if (canonical_json(release) === canonical_json(this.ready)) return;
     await this.options.staging.stage(provider, release, this.options.current_root);
-    if (!this.running) return;
+    if (!this.active(incarnation)) return;
     await this.options.mac.prepare(release);
-    if (!this.running) return;
+    if (!this.active(incarnation)) return;
     this.ready = release;
     this.options.changes.emit();
   }
@@ -339,13 +351,27 @@ export class UpdateService {
     this.observer.unref();
     this.schedule_advance();
   }
-  async stop(): Promise<void> {
+  async stop(options?: StopOptions): Promise<void> {
+    const deadline = options?.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
     this.running = false;
+    this.incarnation++;
     if (this.observer !== null) clearInterval(this.observer);
     this.observer = null;
-    await Promise.allSettled(
+    const pending = Promise.allSettled(
       [this.prefetching, this.advancing].filter((task): task is Promise<void> => task !== null),
     );
+    this.prefetching = this.advancing = null;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        pending,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, Math.max(0, deadline - performance.now() / 1000) * 1000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
   poll(): boolean {
     if (!this.running) return false;
@@ -372,18 +398,21 @@ export class UpdateService {
   advance(): Promise<void> {
     if (!this.running) return Promise.resolve();
     if (this.advancing !== null) return this.advancing;
-    this.advancing = Promise.resolve()
-      .then(() => this.advance_waiting())
+    const incarnation = this.incarnation;
+    const flight = Promise.resolve()
+      .then(() => this.advance_waiting(incarnation))
       .finally(() => {
-        this.advancing = null;
+        if (this.advancing === flight) this.advancing = null;
       });
-    return this.advancing;
+    this.advancing = flight;
+    return flight;
   }
-  private async advance_waiting(): Promise<void> {
+  private async advance_waiting(incarnation: number): Promise<void> {
+    if (!this.active(incarnation)) return;
     const attempt = this.attempts.read();
     const system = this.options.runtime.conversation();
     if (
-      !this.running ||
+      !this.active(incarnation) ||
       attempt?.state !== 'waiting' ||
       system === null ||
       (attempt.mode === 'idle' && system.workspace_activity() !== 'idle')
@@ -393,7 +422,7 @@ export class UpdateService {
     try {
       const admitted = await system.run_with_workspace_admission(
         () => {
-          if (!this.running) throw new Stopped();
+          if (!this.active(incarnation)) throw new Stopped();
           this.options.runtime.assert_database_owned();
           try {
             this.options.runtime.database.write((tx) => {
@@ -420,7 +449,7 @@ export class UpdateService {
           }
           // A commit step can refuse the audit. Finish that door before the
           // external record changes, within this same synchronous admission claim.
-          if (!this.running) throw new Stopped();
+          if (!this.active(incarnation)) throw new Stopped();
           this.attempts.change(attempt_id, states('waiting'), (current) => ({
             ...current,
             state: 'preparing',
@@ -429,7 +458,7 @@ export class UpdateService {
         },
         { require_idle: attempt.mode === 'idle' || !attempt.confirm_activity },
       );
-      if (!this.running) return;
+      if (!this.active(incarnation)) return;
       if (!admitted) {
         if (attempt.mode === 'now')
           this.fail(attempt_id, states('waiting'), ACTIVITY_CHANGED_DETAIL);
@@ -441,9 +470,9 @@ export class UpdateService {
       throw error;
     }
     try {
-      await this.start_installer(attempt_id);
+      await this.start_installer(attempt_id, incarnation);
     } catch (error) {
-      if (!this.running) return;
+      if (!this.active(incarnation)) return;
       console.error('Update did not start its installer', error);
       this.fail(
         attempt_id,
@@ -453,9 +482,10 @@ export class UpdateService {
       this.reopen_after_unstarted(this.attempts.read());
     }
   }
-  private async start_installer(attempt_id: string): Promise<void> {
+  private async start_installer(attempt_id: string, incarnation: number): Promise<void> {
+    if (!this.active(incarnation)) return;
     const attempt = this.attempts.read();
-    if (!this.running || attempt?.attempt_id !== attempt_id) return;
+    if (attempt?.attempt_id !== attempt_id) return;
     const staged = staged_app_path(this.options.current_root, attempt.to_sha);
     if (!statSync(staged, { throwIfNoEntry: false })?.isDirectory())
       throw new Error('the staged release is missing');
@@ -466,9 +496,9 @@ export class UpdateService {
         this.options.backup_directory,
         attempt.from_sha,
       );
-      if (!this.running) return;
+      if (!this.active(incarnation)) return;
     }
-    if (!this.running) return;
+    if (!this.active(incarnation)) return;
     this.options.runtime.assert_database_owned();
     const command = this.options.installer.prepare({
       current_root: this.options.current_root,
@@ -478,7 +508,7 @@ export class UpdateService {
       health_url: this.options.health_url,
       health_timeout_seconds: UPDATE_HEALTH_TIMEOUT_SECONDS,
     });
-    if (!this.running) return;
+    if (!this.active(incarnation)) return;
     this.attempts.change(attempt_id, states('preparing'), (current) => ({
       ...current,
       state: 'installing',
@@ -490,7 +520,7 @@ export class UpdateService {
         installing: this.record_now(),
       },
     }));
-    if (!this.running) return;
+    if (!this.active(incarnation)) return;
     await this.options.installer.launch(attempt_id, command);
   }
   private fail(

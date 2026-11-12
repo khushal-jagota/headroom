@@ -434,6 +434,7 @@ test('forced update of busy real core shares the shutdown deadline and fences a 
     expect(updates_stop).toHaveBeenCalledOnce();
     const deadline = loops_stop.mock.calls[0][0]!.deadline!;
     expect(deadline).toBe(metrics_stop.mock.calls[0][0]!.deadline);
+    expect(deadline).toBe(updates_stop.mock.calls[0][0]!.deadline);
     expect(deadline).toBeGreaterThan(performance.now() / 1000);
     expect(owned.environment.before_worker_readiness_poll()).toBe(false);
     expect(() => acquireRuntimeOwnership(owned.path)).toThrow('ConversationRuntimeAlreadyOwned');

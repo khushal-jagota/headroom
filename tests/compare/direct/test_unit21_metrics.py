@@ -1,7 +1,11 @@
 """Compare metrics' typed rules and exact sidecar rows against current Python.
 
-HTTP reach cannot prove compressed-byte budgets, partial append rollback, or
-retention buckets. This reuses the existing data fixture without a new host.
+Store/rule parity compares 82 operations and exact rows/compressed bytes.
+The retained runtime case proves IPC, ready/start costs, and reader replacement.
+The sampler case proves cadence, ownership handoff, and a pending stop.
+The native case proves query/parent-death cleanup through owned pidfds.
+The route case proves public admission, validation, and error classification.
+These reuse the existing data fixture and app hosts, without another listener.
 """
 
 from __future__ import annotations
@@ -79,6 +83,71 @@ def _environment(root: Path) -> dict[str, str]:
         }
     )
     return env
+
+
+def _process_identity(pid: int) -> tuple[int, int]:
+    fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    return int(fields[1]), int(fields[19])
+
+
+def _owned_pidfd(pid: int, parent: int) -> int | None:
+    if sys.platform != "linux":
+        return None
+    expected = _process_identity(pid)
+    descriptor = os.pidfd_open(pid)
+    try:
+        assert _process_identity(pid) == expected and expected[0] == parent
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def _launch_probe(
+    root: Path,
+    companion: str,
+    function: str,
+    specification: dict[str, Any],
+) -> tuple[subprocess.Popen[str], int | None]:
+    request = root / "request.json"
+    request.write_text(json.dumps(specification, ensure_ascii=False))
+    launcher = root / "probe.mjs"
+    launcher.write_text(
+        "import{readFileSync}from'node:fs';const m=await import(process.argv[2]);"
+        "console.log(await m[process.argv[3]](readFileSync(process.argv[4],'utf8')));"
+    )
+    process = subprocess.Popen(
+        [
+            _node_executable(),
+            str(launcher),
+            (ROOT / f"server/environments/vps_metrics/testing/{companion}.ts").as_uri(),
+            function,
+            str(request),
+        ],
+        cwd=ROOT,
+        env=_environment(root),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        return process, _owned_pidfd(process.pid, os.getpid())
+    except BaseException:
+        # This exact Popen child is fresh, unreaped, and not handed to another owner.
+        # Its PID cannot be reused before waitpid. Popen.kill also checks its exit lock.
+        process.kill()
+        process.communicate(timeout=5)
+        raise
+
+
+def _run_probe(root: Path, companion: str, function: str, specification: dict[str, Any]) -> Any:
+    process, descriptor = _launch_probe(root, companion, function, specification)
+    try:
+        output, errors = process.communicate(timeout=60)
+        assert process.returncode == 0, errors
+        return json.loads(output)
+    finally:
+        _cleanup(process, descriptor)
 
 
 def _rows(conn: sqlite3.Connection) -> dict[str, list[dict[str, Any]]]:
@@ -531,28 +600,7 @@ def test_unit21_metrics_store_and_rules_match_python(
             assert expected["operations"][1]["rows"] == expected["operations"][0]["rows"]
             assert expected["operations"][3]["result"] == 2
         spec = {**case, "root": str(root), "database": str(root / "typescript.sqlite")}
-        spec_path = root / "request.json"
-        spec_path.write_text(json.dumps(spec, ensure_ascii=False))
-        output = subprocess.run(
-            [
-                _node_executable(),
-                "--input-type=module",
-                "-e",
-                "import {readFileSync} from 'node:fs'; "
-                "const {metrics_store_parity}=await import(process.argv[1]); "
-                "process.stdout.write(metrics_store_parity(readFileSync(process.argv[2],'utf8')));",
-                (ROOT / "server/environments/vps_metrics/testing/store_parity.ts").as_uri(),
-                str(spec_path),
-            ],
-            cwd=ROOT,
-            env=_environment(root),
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
-        assert output.returncode == 0, output.stderr
-        actual = json.loads(output.stdout)
+        actual = _run_probe(root, "store_parity", "metrics_store_parity", spec)
         if actual != expected:
             (root / "difference.json").write_text(
                 json.dumps({"python": expected, "typescript": actual}, indent=2, ensure_ascii=False)
@@ -583,37 +631,22 @@ def test_unit21_metrics_store_and_rules_match_python(
         )
 
 
-def _runtime(root: Path, mode: str, config: dict[str, Any] | None = None) -> subprocess.Popen[str]:
-    request = root / "runtime-request.json"
-    request.write_text(
-        json.dumps(
-            {
-                "root": str(root),
-                "database": str(root / "metrics.sqlite"),
-                "sample": sample(0),
-                "mode": mode,
-                "config": config or {},
-            }
-        )
-    )
-    launcher = root / "runtime-launcher.mjs"
-    launcher.write_text(
-        "import{readFileSync}from'node:fs';"
-        "const{metrics_runtime_probe}=await import(process.argv[2]);"
-        "console.log(await metrics_runtime_probe(readFileSync(process.argv[3],'utf8')));"
-    )
-    return subprocess.Popen(
-        [
-            _node_executable(),
-            str(launcher),
-            (ROOT / "server/environments/vps_metrics/testing/runtime.ts").as_uri(),
-            str(request),
-        ],
-        cwd=ROOT,
-        env=_environment(root),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
+def _runtime(
+    root: Path,
+    mode: str,
+    config: dict[str, Any] | None = None,
+) -> tuple[subprocess.Popen[str], int | None]:
+    return _launch_probe(
+        root,
+        "runtime",
+        "metrics_runtime_probe",
+        {
+            "root": str(root),
+            "database": str(root / "metrics.sqlite"),
+            "sample": sample(0),
+            "mode": mode,
+            "config": config or {},
+        },
     )
 
 
@@ -642,10 +675,21 @@ def _children(process: subprocess.Popen[str]) -> list[int]:
     ]
 
 
-def _cleanup(process: subprocess.Popen[str]) -> None:
-    if process.poll() is None:
-        process.kill()
-    process.communicate(timeout=5)
+def _cleanup(process: subprocess.Popen[str], descriptor: int | None) -> None:
+    try:
+        if process.poll() is None:
+            if descriptor is not None:
+                try:
+                    signal.pidfd_send_signal(descriptor, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            else:
+                # Non-Linux cases retain their own unreaped Popen child, never a /proc PID.
+                process.kill()
+        process.communicate(timeout=5)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _report(request: pytest.FixtureRequest, name: str, report: dict[str, Any]) -> None:
@@ -677,7 +721,7 @@ def test_unit21_metrics_independent_runtime_reads_and_cost(
                 conn, signal="cpu", entity=None, start=0, end=100, resolution="minute"
             ),
         }
-    process = _runtime(tmp_path, "plain", {"read_seconds": 1})
+    process, descriptor = _runtime(tmp_path, "plain", {"read_seconds": 1})
     try:
         ready = _line(process)
         assert ready["type"] == "ready_cost"
@@ -699,6 +743,23 @@ def test_unit21_metrics_independent_runtime_reads_and_cost(
         for key, value in expected.items():
             assert actual[key] == value
         assert actual["activity"] == 130
+        replacement = actual["replacement"]
+        assert {
+            key: replacement[key]
+            for key in (
+                "expired_during_backoff",
+                "replacement_failed_before_ready",
+                "successful_sequences",
+                "boot_count",
+                "restored_readers",
+            )
+        } == {
+            "expired_during_backoff": True,
+            "replacement_failed_before_ready": True,
+            "successful_sequences": [2, 2],
+            "boot_count": 5,
+            "restored_readers": 2,
+        }
         assert not (tmp_path / "collection.jsonl").exists()
         assert not (tmp_path / "application.sqlite").exists()
         assert all(not Path(f"/proc/{pid}").exists() for pid in owned)
@@ -718,10 +779,11 @@ def test_unit21_metrics_independent_runtime_reads_and_cost(
                 "rss_bytes_by_owned_pid": rss,
                 "summed_rss_bytes_includes_shared_pages": sum(rss.values()),
                 "all_owned_readers_reaped_and_wal_clear": True,
+                "replacement": replacement,
             },
         )
     finally:
-        _cleanup(process)
+        _cleanup(process, descriptor)
 
 
 def _assert_lock(path: Path, held: bool) -> None:
@@ -747,7 +809,7 @@ def test_unit21_metrics_sampler_cadence_ownership_and_pending_stop(tmp_path: Pat
     }
     normal = tmp_path / "normal"
     normal.mkdir()
-    process = _runtime(normal, "sampler", config)
+    process, descriptor = _runtime(normal, "sampler", config)
     try:
         result = _finish(process)
         assert result["latest"]["sample"] is not None
@@ -764,11 +826,11 @@ def test_unit21_metrics_sampler_cadence_ownership_and_pending_stop(tmp_path: Pat
         assert all(b["wall"] - a["wall"] >= 0.015 for a, b in zip(starts, starts[1:], strict=False))
         _assert_lock(normal / "metrics.sqlite.lock", False)
     finally:
-        _cleanup(process)
+        _cleanup(process, descriptor)
     for mode in ["hung", "short_hung", "startup_failure"]:
         root = tmp_path / mode
         root.mkdir()
-        process = _runtime(root, mode, config)
+        process, descriptor = _runtime(root, mode, config)
         try:
             if mode == "startup_failure":
                 assert _finish(process) == {"startup_error": "scripted startup failure"}
@@ -790,7 +852,7 @@ def test_unit21_metrics_sampler_cadence_ownership_and_pending_stop(tmp_path: Pat
                 assert _finish(process) == {"unref_exit": True}
             _assert_lock(root / "metrics.sqlite.lock", False)
         finally:
-            _cleanup(process)
+            _cleanup(process, descriptor)
 
 
 def _pathological_samples(database: Path) -> None:
@@ -826,7 +888,7 @@ def test_unit21_metrics_native_deadline_and_parent_death_release_wal(
         for mode in ["main_blocked", "parent_killed"]:
             root = tmp_path / mode
             root.mkdir()
-            process = _runtime(
+            process, descriptor = _runtime(
                 root,
                 "blocked_read",
                 {
@@ -835,23 +897,31 @@ def test_unit21_metrics_native_deadline_and_parent_death_release_wal(
                 },
             )
             owned: list[int] = []
+            handles: dict[int, int] = {}
             reaped: set[int] = set()
             try:
                 assert _line(process)["type"] == "ready"
                 owned = _children(process)
                 assert len(owned) == (1 if mode == "main_blocked" else 2)
+                for pid in owned:
+                    handle = _owned_pidfd(pid, process.pid)
+                    assert handle is not None
+                    handles[pid] = handle
                 _pathological_samples(root / "metrics.sqlite")
                 (root / "query-ready").touch()
                 assert _line(process)["type"] == "blocking"
                 assert _write_and_checkpoint(root / "metrics.sqlite") == 1
                 observed = time.monotonic()
                 if mode == "parent_killed":
-                    process.kill()
+                    assert descriptor is not None
+                    signal.pidfd_send_signal(descriptor, signal.SIGKILL)
                     process.wait(timeout=3)
                 time.sleep(0.6)
+                with selectors.DefaultSelector() as deaths:
+                    for handle in handles.values():
+                        deaths.register(handle, selectors.EVENT_READ)
+                    assert len(deaths.select(timeout=0)) == len(handles)
                 for pid in owned:
-                    proc = Path(f"/proc/{pid}/stat")
-                    assert not proc.exists() or proc.read_text().split()[2] == "Z"
                     if mode == "parent_killed":
                         found, _status = os.waitpid(pid, os.WNOHANG)
                         assert found == pid
@@ -874,21 +944,41 @@ def test_unit21_metrics_native_deadline_and_parent_death_release_wal(
                         "observed_after_ms": observed_ms,
                         "native_query_reader_dead": True,
                         "wal_clear": True,
+                        "pidfd_cleanup": True,
                     }
                 )
             finally:
-                _cleanup(process)
-                for pid in owned:
-                    if pid in reaped:
-                        continue
+                try:
+                    _cleanup(process, descriptor)
+                finally:
                     try:
-                        os.kill(pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    try:
-                        os.waitpid(pid, 0)
-                    except ChildProcessError:
-                        pass
+                        for pid, handle in handles.items():
+                            if pid not in reaped:
+                                try:
+                                    signal.pidfd_send_signal(handle, signal.SIGKILL)
+                                except ProcessLookupError:
+                                    pass
+                        # A failed partial capture happens before the query gate. All original
+                        # READY readers then exit through parent EOF, even without a pidfd.
+                        remaining = set(owned) - reaped
+                        deadline = time.monotonic() + 3
+                        while remaining and time.monotonic() < deadline:
+                            for pid in tuple(remaining):
+                                try:
+                                    found, _status = os.waitpid(pid, os.WNOHANG)
+                                except ChildProcessError:
+                                    remaining.remove(pid)
+                                else:
+                                    if found:
+                                        remaining.remove(pid)
+                            if remaining:
+                                time.sleep(0.005)
+                        assert not remaining, (
+                            f"owned readers did not exit after APP EOF: {remaining}"
+                        )
+                    finally:
+                        for handle in handles.values():
+                            os.close(handle)
     finally:
         assert libc.prctl(36, previous.value, 0, 0, 0) == 0
     _report(request, "unit-21-metrics-native-lifetime.json", {"reports": reports})
@@ -946,12 +1036,16 @@ def test_unit21_metrics_routes_populated_errors_and_callers_match_python(
         {"method": "POST", "path": "/api/vps-metrics/activity"},
     ]
     operations: list[dict[str, Any]] = list(base)
-    for headers in [
-        {"x-plan-actor": "chief"},
-        {"x-plan-actor": "manager", "x-plan-manager-id": callers["manager"]},
-        {"x-plan-actor": "worker", "x-plan-ticket-id": callers["ticket"]},
-    ]:
-        operations.extend({**operation, "headers": headers} for operation in base)
+    worker = {"x-plan-actor": "worker", "x-plan-ticket-id": callers["ticket"]}
+    operations.extend({**operation, "headers": worker} for operation in base)
+    operations.extend(
+        {**base[0], "headers": headers}
+        for headers in [
+            {"x-plan-actor": "chief"},
+            {"x-plan-actor": "manager", "x-plan-manager-id": callers["manager"]},
+        ]
+    )
+    public_count = len(operations)
     operations.extend(
         [
             {"method": "GET", "path": "/api/vps-metrics/processes?sequence=0&offset=-1&limit=0"},
@@ -972,26 +1066,23 @@ def test_unit21_metrics_routes_populated_errors_and_callers_match_python(
                 "method": "GET",
                 "path": "/api/vps-metrics/history?signal=cpu&start=0&end=60&resolution=raw",
             },
-            {"method": "GET", "path": "/api/vps-metrics/latest", "fault": "corrupt_latest"},
-            {"method": "GET", "path": "/api/vps-metrics/latest", "fault": "restore_latest"},
-            {
-                "method": "GET",
-                "path": "/api/vps-metrics/processes?sequence=1&limit=2",
-                "fault": "corrupt_snapshot",
-            },
-            {
-                "method": "GET",
-                "path": "/api/vps-metrics/processes?sequence=1&limit=2",
-                "fault": "restore_snapshot",
-            },
-            {"method": "POST", "path": "/api/vps-metrics/activity", "fault": "corrupt_activity"},
-            {"method": "POST", "path": "/api/vps-metrics/activity", "fault": "restore_activity"},
-            {"method": "GET", "path": "/api/vps-metrics/latest", "fault": "hide_samples"},
-            {"method": "GET", "path": "/api/vps-metrics/latest", "fault": "restore_samples"},
-            {"method": "POST", "path": "/api/vps-metrics/activity", "fault": "hide_metadata"},
-            {"method": "POST", "path": "/api/vps-metrics/activity", "fault": "restore_metadata"},
         ]
     )
+    for field, method, path, action in [
+        ("latest", "GET", "latest", "corrupt"),
+        ("snapshot", "GET", "processes?sequence=1&limit=2", "corrupt"),
+        ("activity", "POST", "activity", "corrupt"),
+        ("samples", "GET", "latest", "hide"),
+        ("metadata", "POST", "activity", "hide"),
+    ]:
+        operations.extend(
+            {
+                "method": method,
+                "path": "/api/vps-metrics/" + path,
+                "fault": f"{change}_{field}",
+            }
+            for change in [action, "restore"]
+        )
     runtime = MetricsRuntime(
         source_path, source, None, MetricsConfig(**config), wall_clock=lambda: 100.0
     )
@@ -1045,7 +1136,7 @@ def test_unit21_metrics_routes_populated_errors_and_callers_match_python(
                 )
     finally:
         asyncio.run(runtime.stop(deadline=time.monotonic() + 1))
-    assert all(item["status"] == 200 for item in expected[:16])
+    assert all(item["status"] == 200 for item in expected[:public_count])
     assert expected[0]["body"]["sample"]["metrics"]
     assert expected[1]["body"]["processes"]
     assert expected[2]["body"]["points"]
@@ -1062,38 +1153,17 @@ def test_unit21_metrics_routes_populated_errors_and_callers_match_python(
         503,
         200,
     ]
-    spec = tmp_path / "routes-request.json"
-    spec.write_text(
-        json.dumps(
-            {
-                "root": str(tmp_path),
-                "database": str(target),
-                "config": config,
-                "requests": operations,
-            }
-        )
+    actual = _run_probe(
+        tmp_path,
+        "routes",
+        "metrics_route_probe",
+        {
+            "root": str(tmp_path),
+            "database": str(target),
+            "config": config,
+            "requests": operations,
+        },
     )
-    launcher = tmp_path / "routes-launcher.mjs"
-    launcher.write_text(
-        "import{readFileSync}from'node:fs';"
-        "const{metrics_route_probe}=await import(process.argv[2]);"
-        "console.log(await metrics_route_probe(readFileSync(process.argv[3],'utf8')));"
-    )
-    result = subprocess.run(
-        [
-            _node_executable(),
-            str(launcher),
-            (ROOT / "server/environments/vps_metrics/testing/routes.ts").as_uri(),
-            str(spec),
-        ],
-        cwd=ROOT,
-        env=_environment(tmp_path),
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, result.stderr
-    actual = json.loads(result.stdout)
     if actual["responses"] != expected:
         (tmp_path / "routes-difference.json").write_text(
             json.dumps({"python": expected, "typescript": actual["responses"]}, indent=2)

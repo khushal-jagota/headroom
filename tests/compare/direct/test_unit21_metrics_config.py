@@ -118,8 +118,8 @@ def test_unit21_metrics_configuration_and_sidecar_paths(
     actual = json.loads(output.stdout)
     proposed_refusal = actual["configurations"].pop()
     assert actual == expected
-    # Proposed TS policy, pending Manager acceptance. Python accepts this exact
-    # integer; silently rounding it through JS Number is not an equal result.
+    # The Manager accepted this TS admission boundary. Python's different answer
+    # remains informational; this refusal assertion is a gating result.
     assert proposed_refusal == {
         "error": {
             "name": "ValueError",
@@ -138,7 +138,7 @@ def test_unit21_metrics_configuration_and_sidecar_paths(
                     "configurations": len(environments),
                     "canonical_paths": len(paths),
                     "proposed_difference": {
-                        "accepted": False,
+                        "accepted": True,
                         "python_accepts_integer": str(python_unsafe),
                         "typescript": proposed_refusal,
                     },

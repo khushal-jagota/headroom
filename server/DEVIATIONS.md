@@ -68,3 +68,59 @@ Required proof, not yet completed:
 - Packaged supervisor: clean Node-only startup and relocation without a compiler or Python.
 
 See [the accepted design](lifecycle/SUPERVISOR_DESIGN.md) for the protocol and failure limits.
+
+## VPS metrics integer configuration
+
+The migration Manager accepted this admission boundary for Unit 21 Part 2.
+It applies to these ten integer environment overrides:
+
+- `PLAN_VPS_METRICS_METRICS_PAYLOAD_BYTES`
+- `PLAN_VPS_METRICS_PROCESS_PAYLOAD_BYTES`
+- `PLAN_VPS_METRICS_PROCESS_SNAPSHOT_BYTES`
+- `PLAN_VPS_METRICS_TRANSACTION_PAYLOAD_BYTES`
+- `PLAN_VPS_METRICS_DATABASE_BYTES`
+- `PLAN_VPS_METRICS_WAL_BYTES`
+- `PLAN_VPS_METRICS_READ_WORKERS`
+- `PLAN_VPS_METRICS_PROCESS_PAGE_ROWS`
+- `PLAN_VPS_METRICS_HISTORY_POINTS`
+- `PLAN_VPS_METRICS_SERVICE_OUTPUT_BYTES`
+
+Python parses these overrides with `int()` and can preserve values beyond JavaScript's exact integer range, subject to existing configuration checks.
+For example, Python accepts and retains `9007199254740993` for `history_points`.
+TS explicitly refuses values outside ±9,007,199,254,740,991 with `ValueError: <field> exceeds the supported exact integer range`.
+It does not silently round the example to `9007199254740992`.
+
+The boundary exceeds realistic worker/page counts and memory/database budgets.
+Explicit refusal keeps operational limits exact without spreading BigInt configuration through number-based runtime APIs.
+Existing positive-value and consistency checks still apply.
+
+The existing [configuration proof](../tests/compare/direct/test_unit21_metrics_config.py),
+`test_unit21_metrics_configuration_and_sidecar_paths`, asserts the TS refusal as a gating result.
+It records Python's different answer as informational evidence. The ten keys share the same admission predicate.
+This policy acceptance does not approve the remaining Part 2 source or its merge.
+
+## Claude SDK identity in the child environment
+
+The migration Manager accepted these two differences on November 12, 2026, for Unit 18:
+
+| Variable | Python SDK | TypeScript SDK |
+| --- | --- | --- |
+| `CLAUDE_CODE_ENTRYPOINT` | `sdk-py` | `sdk-ts` |
+| `CLAUDE_AGENT_SDK_VERSION` | `0.2.152` | `0.3.316` |
+
+The child identifies the SDK that actually runs it. TypeScript does not claim to be the Python SDK.
+These are the only accepted launch-environment differences. All other variables compare exactly;
+there is no blanket SDK-variable normalization. The public spawn hook preserves the Python
+inherited-environment policy, including removal of `CLAUDECODE`, rather than forwarding the TS
+SDK's additional flags or filtered environment.
+
+`conversation/backends/claude_sdk_environment.test.ts` pins the two TS values through the real
+pinned SDK and the catalog's public spawn hook. It compares the entire child environment,
+including inherited values and the removal of `CLAUDECODE`. Every process API is blocked before
+SDK import, and the synthetic launch stops at the hook without a process.
+
+Source inspection found no Panels storage, view, usage, catalog, or session-path consumer of
+either variable. Panels reads usage and cost from result fields, models from the handshake,
+and the session cursor from `session_id`. Provider-private session-file effects remain unverified;
+no provider session file or owner executable was inspected for this check. The adapter follows
+this accepted policy in Unit 18's next part.

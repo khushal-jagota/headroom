@@ -4,7 +4,7 @@
   "configurations": 10,
   "canonical_paths": 5,
   "proposed_difference": {
-    "accepted": false,
+    "accepted": true,
     "python_accepts_integer": "9007199254740993",
     "typescript": {
       "error": {

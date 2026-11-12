@@ -1,8 +1,0 @@
-{
-  "complete": false,
-  "elapsed_seconds": 90.54,
-  "reason": "Python navigation participant TypeError: missing navigation_meta singleton in schema-only source",
-  "current_views": 0,
-  "source_unchanged": true,
-  "trace_log": "python-baseline-observed.log"
-}

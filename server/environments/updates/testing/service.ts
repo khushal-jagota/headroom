@@ -35,15 +35,18 @@ export interface ServiceProbeRequest {
 interface Hooks {
   stage?: () => Promise<void>;
   backup?: () => Promise<void>;
+  launch?: () => Promise<void>;
   migrate?: boolean;
   commit_fault?: boolean;
 }
 function deferred() {
   let release!: () => void;
-  const promise = new Promise<void>((resolve) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((resolve, refuse) => {
     release = resolve;
+    reject = refuse;
   });
-  return { promise, release };
+  return { promise, release, reject };
 }
 function harness(request: ServiceProbeRequest, hooks: Hooks = {}) {
   mkdirSync(request.root, { recursive: true });
@@ -134,6 +137,7 @@ function harness(request: ServiceProbeRequest, hooks: Hooks = {}) {
         trace.push('launch');
         if (launch_error !== null) throw new Error(launch_error);
         counts.launch++;
+        await hooks.launch?.();
       },
     },
     mac: {
@@ -165,6 +169,7 @@ function harness(request: ServiceProbeRequest, hooks: Hooks = {}) {
       now = value;
     },
     close: async () => {
+      if (!owned) return;
       await service.stop();
       owned = false;
       database.close();
@@ -257,26 +262,35 @@ export async function probe_continuations(request: ServiceProbeRequest) {
       installed_update_root(value.app_sha, value.app_root, value.database, value.service_unit),
     ),
   );
-  // Stop joins the held staging flight and fences its later publication.
+  // Each pending adapter outlives the same absolute shutdown deadline.
   const stage = deferred(),
-    h = harness(request, { stage: () => stage.promise });
+    restarted_stage = deferred();
+  let stages = 0;
+  const h = harness(request, {
+    stage: () => (++stages === 1 ? stage.promise : restarted_stage.promise),
+  });
   try {
     h.service.start();
     const first = h.service.prefetch(),
       second = h.service.prefetch();
     await pause(0);
-    let ended = false;
-    const stop = h.service.stop().then(() => {
-      ended = true;
-    });
+    const started = performance.now();
+    await h.service.stop({ deadline: started / 1000 + 0.03 });
+    result.stage_stop_ms = performance.now() - started;
+    h.service.start();
+    const restarted = h.service.prefetch();
     await pause(0);
-    result.stage_stop_waited = !ended;
     stage.release();
-    await stop;
     await Promise.all([first, second]);
-    result.stage_flight = { ...h.counts, ready: h.service.ready_release() };
+    result.old_finally_preserves_new_flight = h.service.prefetch() === restarted;
+    await h.service.stop({ deadline: performance.now() / 1000 });
+    await h.close();
+    restarted_stage.release();
+    await restarted;
+    result.stage_flight = { ...h.counts, ready: h.service.ready_release(), trace: h.trace };
   } finally {
     stage.release();
+    restarted_stage.release();
     await h.close();
   }
   const backup = deferred(),
@@ -290,24 +304,52 @@ export async function probe_continuations(request: ServiceProbeRequest) {
     b.service.install(b.release.manifest.app_sha, 'now', { confirm_activity: false });
     const advance = b.service.advance();
     await pause(0);
-    let ended = false;
-    const stop = b.service.stop().then(() => {
-      ended = true;
-    });
-    await pause(0);
-    result.backup_stop_waited = !ended;
+    const started = performance.now();
+    await b.service.stop({ deadline: started / 1000 + 0.03 });
+    result.backup_stop_ms = performance.now() - started;
+    const before = readFileSync(b.attempts.path, 'utf8');
+    await b.close();
     backup.release();
-    await stop;
     await advance;
     result.backup_fence = {
       ...b.counts,
       state: b.attempts.read()?.state,
       closed: b.barrier.closed,
       poll: b.service.poll(),
+      unchanged_after_ownership: readFileSync(b.attempts.path, 'utf8') === before,
     };
   } finally {
     backup.release();
     await b.close();
+  }
+  const launch = deferred(),
+    l = harness(
+      { ...request, root: join(request.root, 'launch-case') },
+      { launch: () => launch.promise },
+    );
+  try {
+    l.service.start();
+    await l.service.prefetch();
+    l.service.install(l.release.manifest.app_sha, 'now', { confirm_activity: false });
+    const advance = l.service.advance();
+    await pause(0);
+    const started = performance.now();
+    await l.service.stop({ deadline: started / 1000 + 0.03 });
+    const elapsed_ms = performance.now() - started;
+    const before = readFileSync(l.attempts.path, 'utf8');
+    await l.close();
+    launch.reject(new Error('late installer refusal'));
+    await advance;
+    result.launch_fence = {
+      elapsed_ms,
+      launches: l.counts.launch,
+      closed: l.barrier.closed,
+      state: l.attempts.read()?.state,
+      unchanged_after_ownership: readFileSync(l.attempts.path, 'utf8') === before,
+    };
+  } finally {
+    launch.release();
+    await l.close();
   }
   const audit = harness({ ...request, root: join(request.root, 'audit-case') });
   const definition = audit.database.read((sql) =>
