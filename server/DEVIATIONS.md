@@ -358,3 +358,64 @@ Whole-update validation uses the official SDK JSON schema before its best-effort
 Notifications during a prompt write follow Python's existing current-turn/no-turn guard. A successful actual prompt write remains accepted if stop races its continuation. Stderr retains whole lines with Python's final character cap. Fresh direct traces compare initialization exactly: the Python serializer uses `exclude_defaults=True`, so its empty default `clientCapabilities` does not appear on the wire. These are parity fixes, not additional deviations.
 
 The raw backend callback diagnostics compare exact payloads, turn attribution, counts, and order within each event type. Their cross-type order is not a parity claim. Canonical core events, lifecycle/view rows, live frames, and ACP requests keep exact ordered comparison.
+
+## CLI workspace artifact field
+
+The migration Manager accepted this Unit 20 difference before the first CLI PR merges.
+The Python CLI reads `artifact['path']` at `src/planner/cli/main.py:1663`.
+Workspace artifact nodes instead supply `opens: string | null`, so a populated tree raises `KeyError: 'path'`.
+Python constructs the human output before it selects JSON output, so the same fault also prevents populated JSON workspace reads.
+
+TypeScript reads `opens` and prints one line per top-level artifact node.
+A folded index keeps its single openable path. A nonopenable group prints `None`, which matches Python's `str(None)`.
+The command does not flatten the tree. Its JSON output retains the complete workspace artifact nodes and children.
+This accepted Python fault is not reproduced.
+
+`server/cli/work_commands.test.ts` exercises the real CLI handler with one populated workspace wire response.
+It covers a file, a folded index, and a nonopenable group with a child in human and JSON modes, without another host.
+
+## CLI nonfinite body-file input
+
+The migration Manager explicitly accepted this Unit 20 difference for nonfinite floating values in Ticket input files, including NaN, Infinity, and overflow such as `1e999`.
+Python `_read_json_object` accepts these constants through `json.loads`.
+`ticket_create` passes that body to `httpx.request`, whose `encode_json(..., allow_nan=False)` raises `ValueError` before transport.
+No request reaches the server. Python does not produce its normal CLI error envelope for this failure.
+
+TypeScript retains the existing shared numeric parser. After the syntax scanner accepts the Python constant,
+the input helper returns validation exit 1 with `non-finite JSON values are not allowed`.
+It also rejects nonfinite float leaves in nested objects and arrays. Huge integer markers remain valid, even if their approximate JavaScript number is infinite.
+The failure outcome matches Python, but the clean message and error envelope intentionally differ.
+The syntax scanner still reports no JSON syntax diagnostic for valid Python NaN/Infinity constants.
+The Python body-file fault is not reproduced. No shared parser policy changes form part of this acceptance.
+
+The host-free comparison in `tests/compare/direct/test_unit20_json_diagnostics.py` checks the clean TypeScript refusal
+and proves that Python HTTPX serialization fails before its transport method executes.
+
+## CLI TLS trust and configuration diagnostics
+
+The migration Manager accepted Node's built-in default trust store for the CLI.
+The measured Node 22 store contains 145 roots, while pinned Python certifi contains 118.
+All 118 certifi roots occur in Node's store, which adds 27 roots in this observation.
+The CLI keeps no copied CA bundle. It honors `SSL_CERT_FILE`, `SSL_CERT_DIR`, and Node's startup `NODE_EXTRA_CA_CERTS` handling.
+An explicit CA file or directory replaces the default roots. CA-directory lookup verifies lowercase OpenSSL subject-hash filenames and requires the `openssl` executable.
+The observed trust sets and raw diagnostic examples are in [the transport evidence](/files/tickets/t_jt78h9xr/artifacts/pr1-transport-review.json).
+
+The Manager accepted native Node TLS failure wording at exit 2 instead of Python's OpenSSL wording and source line.
+A missing `SSL_CERT_FILE` produces a clean validation error at exit 1, where Python prints a traceback.
+Every invalid server URL syntax is a clean configuration-validation error at exit 1.
+Python can instead print a traceback or attempt DNS. In the measured `http://[` bracket case, Python returns DNS connection exit 2 and TypeScript returns validation exit 1.
+Both raw bracket-case outcomes remain in the linked transport evidence. The Manager accepted the same rule for all malformed-address forms.
+A missing URL scheme retains Python's connection failure at exit 2.
+One comparison per failure class retains both raw outcomes.
+
+## CLI invalid UTF-8 body files
+
+The migration Manager accepted a clean validation error at exit 1 for invalid UTF-8 in a body file.
+Python's file decoder instead prints an uncaught traceback. Both commands fail before an HTTP request.
+
+## CLI executor socket transport — pending acceptance
+
+HTTP-client commands currently refuse `PLAN_EXECUTOR_ROOT` with a validation error while Unit 22 supplies the executor socket route.
+Python routes those calls through its executor transport. Help and offline declarations do not need that route.
+This is a temporary implementation gap owned by Unit 22, with CLI binding in Unit 20.
+The migration Manager must accept this temporary refusal before the CLI pull request merges.

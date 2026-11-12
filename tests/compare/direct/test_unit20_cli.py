@@ -319,6 +319,12 @@ def test_unit20_every_help_and_group_usage(tmp_path: Path, request: pytest.Fixtu
     cases = [(path + ["--help"], 0) for path, _ in declarations]
     cases.extend(
         (
+            (["project", "list", "--limit", "bad", "--bogus"], 2),
+            (["project", "list", "--limit", "bad", "--help"], 0),
+            (["ticket", "show", "--help", "--bogus"], 2),
+            (["ticket", "block", "t1", "extra"], 2),
+            (["sprint", "outcome", "add"], 2),
+            (["sprint", "outcome", "otherx"], 2),
             (["projec"], 2),
             (["project", "shwo"], 2),
             (["manager", "delte"], 2),
@@ -386,3 +392,72 @@ def test_unit20_every_help_and_group_usage(tmp_path: Path, request: pytest.Fixtu
         assert not differences, differences
     finally:
         _stop_server(handle)
+
+
+def test_unit20_declarations_match_fresh_python(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """Pin complete parser declarations without another connected host or CLI invocation."""
+    import os
+    import sys
+
+    from tests.support.synthetic_homes import create_synthetic_homes
+
+    started = time.perf_counter()
+    environment = {name: os.environ[name] for name in ("PATH", "LANG", "TZ") if name in os.environ}
+    environment.update(create_synthetic_homes(tmp_path))
+    environment = {
+        name: value for name, value in environment.items() if not name.startswith("PLAN_")
+    }
+    environment["PYTHONPATH"] = str(driver.ROOT / "src")
+    python = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import json; from tests.compare.direct.unit20_metadata import declarations; "
+            "print(json.dumps(declarations(), ensure_ascii=False))",
+        ],
+        cwd=driver.ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=40,
+        check=False,
+    )
+    assert python.returncode == 0, python.stderr
+    typescript = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            "import {commands} from './server/cli/commands.ts'; "
+            "process.stdout.write(JSON.stringify(commands));",
+        ],
+        cwd=driver.ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=40,
+        check=False,
+    )
+    assert typescript.returncode == 0, typescript.stderr
+    left, right = json.loads(python.stdout), json.loads(typescript.stdout)
+    _report(
+        request,
+        "unit20-declaration-drift",
+        {
+            "seconds": time.perf_counter() - started,
+            "scope": "Complete declarations: command/parameter order, "
+            "hidden/default/path/nargs/envvar metadata.",
+            "python": left,
+            "typescript": right,
+        },
+    )
+    destination = request.config.getoption("--compare-report-dir")
+    if destination:
+        from tests.compare.direct.unit20_metadata import render_declarations
+
+        # This is review evidence, never a repository mutation or a test bypass.
+        (Path(destination) / "unit20-fresh-commands.ts").write_text(render_declarations(left))
+    # JSON spelling also distinguishes booleans/numbers and integer/float defaults.
+    assert json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True)

@@ -5,10 +5,10 @@ import { read_source, read_json_object, worker_stdin_body } from './input.ts';
 import { part, parse_part_names, project_record, render_text } from './record_projection.ts';
 import type { RecordPart } from './record_projection.ts';
 import { JsonNumber, numeric_value, parse_numeric_json } from '../core/http/numeric_json.ts';
+import { python_text as scalar } from './python_text.ts';
+import { ticket_argument } from './parser.ts';
 
 type Body = Record<string, any>;
-const scalar = (value: unknown): string =>
-  value instanceof JsonNumber ? json(value) : String(value);
 const python_sort = (left: string, right: string): number => {
   const a = Array.from(left, (c) => c.codePointAt(0)!);
   const b = Array.from(right, (c) => c.codePointAt(0)!);
@@ -22,18 +22,6 @@ const quote = (value: string, slash = false): string => {
   );
   return slash ? encoded.replace(/%2F/g, '/') : encoded;
 };
-/** Keep the Python CLI's field order for these explicit read projections. */
-function fields_before(body: Body, names: string[], anchor: string): Body {
-  if (!Object.hasOwn(body, anchor)) return body;
-  const entries: [string, any][] = [];
-  for (const [name, value] of Object.entries(body)) {
-    if (name === anchor) {
-      for (const field of names) if (Object.hasOwn(body, field)) entries.push([field, body[field]]);
-    }
-    if (!names.includes(name)) entries.push([name, value]);
-  }
-  return Object.fromEntries(entries);
-}
 const drop_none = (body: Body): Body =>
   Object.fromEntries(
     Object.entries(body).filter(([, value]) => value !== null && value !== undefined),
@@ -42,9 +30,8 @@ const lines = (rows: any[], format: (row: any) => string): string =>
   rows.length ? rows.map(format).join('\n') : '(none)';
 const raw = (stdout: string): CommandResult => ({ exit_code: 0, stdout, stderr: '' });
 const ticket_id = (inv: Invocation, positional: string | null | undefined): string => {
-  if (positional != null && positional !== '-') return positional;
-  const value = inv.environment.PLAN_TICKET_ID?.trim();
-  if (value && value !== '-') return value;
+  const value = ticket_argument(positional, inv.environment);
+  if (value !== undefined) return value;
   return fail_validation(inv, 'ticket id required: pass it or set PLAN_TICKET_ID');
 };
 function caller_principal(inv: Invocation): Body {
@@ -70,7 +57,7 @@ function bounded(rows: string, page: Body): string {
       : numeric_value(page.return_count) === 0
         ? 'No results at this offset.'
         : rows;
-  const facts = `Returned ${scalar(page.return_count)} of ${scalar(page.match_count)} matches. Omitted ${scalar(page.omitted_before)} before and ${scalar(page.omitted_after)} after. Complete: ${page.complete ? 'yes' : 'no'}.`;
+  const facts = `Returned ${scalar(page.return_count)} of ${scalar(page.match_count)} matches. Omitted ${scalar(page.omitted_before)} before and ${scalar(page.omitted_after)} after. Complete: ${scalar(page.complete ? 'yes' : 'no')}.`;
   const directions: string[] = [];
   if (numeric_value(page.omitted_before))
     directions.push('Use --offset 0 to start from the first match.');
@@ -87,7 +74,10 @@ async function value_or_file(
 ): Promise<string | null> {
   const { value, body_file, clear } = inv.values;
   if (Number(value != null) + Number(body_file != null) + Number(allow_clear && clear) !== 1)
-    fail_validation(inv, `set ${field} with exactly one of --value, --body-file, or --clear`);
+    fail_validation(
+      inv,
+      `set ${scalar(field)} with exactly one of --value, --body-file, or --clear`,
+    );
   if (allow_clear && clear) return null;
   return body_file != null ? read_source(inv, body_file) : value;
 }
@@ -220,7 +210,7 @@ async function submit_proposal(
     );
   const body = await worker_stdin_body(inv, 'proposal body');
   const data = await send(inv, 'POST', `/api/tickets/${tid}/propose`, { json_body: { body } });
-  return emit(data, inv.values.as_json, `proposed on ${data.id}`);
+  return emit(data, inv.values.as_json, `proposed on ${scalar(data.id)}`);
 }
 async function request_help(inv: Invocation): Promise<CommandResult> {
   const v = inv.values;
@@ -244,7 +234,7 @@ async function request_help(inv: Invocation): Promise<CommandResult> {
   const body: Body = { message };
   if (recipient !== null) body.recipient = recipient;
   const data = await send(inv, 'POST', `/api/tickets/${tid}/request-help`, { json_body: body });
-  return emit(data, v.as_json, `help message ${data.fate}`);
+  return emit(data, v.as_json, `help message ${scalar(data.fate)}`);
 }
 async function proposal(inv: Invocation): Promise<CommandResult> {
   const v = inv.values;
@@ -263,7 +253,7 @@ async function proposal(inv: Invocation): Promise<CommandResult> {
       (value) => value != null,
     )
   )
-    fail_validation(inv, `${action} does not accept proposal approval options`);
+    fail_validation(inv, `${scalar(action)} does not accept proposal approval options`);
   if (action === 'submit') return submit_proposal(inv, tid);
   tid = ticket_id(inv, tid);
   if (action === 'revise') {
@@ -271,18 +261,18 @@ async function proposal(inv: Invocation): Promise<CommandResult> {
     const data = await send(inv, 'POST', `/api/tickets/${tid}/reject`, {
       json_body: { message: text },
     });
-    return emit(data, v.as_json, `${tid} proposal rejected`);
+    return emit(data, v.as_json, `${scalar(tid)} proposal rejected`);
   }
   const detail = await send(inv, 'GET', '/api/tickets', { params: { detail: 'full', id: tid } });
   const stage = detail.stage;
   const field =
     detail.workflow.stages.find((candidate: Body) => candidate.id === stage)?.gating_field ?? null;
   if (field === null)
-    fail_validation(inv, `ticket in ${stage} has nothing to approve`, {
+    fail_validation(inv, `ticket in ${scalar(stage)} has nothing to approve`, {
       no_route: 'No panels approval call is available for this Ticket.',
     });
   if (detail.pending_proposal === null || detail.pending_proposal.field !== field)
-    fail_validation(inv, `no pending ${field} proposal`, {
+    fail_validation(inv, `no pending ${scalar(field)} proposal`, {
       no_route: 'No panels approval call is available until a proposal exists.',
     });
   if (v.ceiling == null) fail_validation(inv, 'approval requires --ceiling');
@@ -306,7 +296,7 @@ async function proposal(inv: Invocation): Promise<CommandResult> {
   const data = await send(inv, 'POST', `/api/tickets/${tid}/accept/${field}`, {
     json_body: payload,
   });
-  return emit(data, v.as_json, `${data.id} approved ${field}`);
+  return emit(data, v.as_json, `${scalar(data.id)} approved ${scalar(field)}`);
 }
 function artifact_paths(entries: Body[]): string[] {
   const paths: string[] = [];
@@ -360,29 +350,24 @@ async function manager_show(inv: Invocation): Promise<CommandResult> {
 }
 async function manager_workspace(inv: Invocation): Promise<CommandResult> {
   const id = inv.values.item_id;
-  const response = await send(inv, 'GET', `/api/managers/${id}/workspace`);
-  const data = fields_before(
-    response,
-    ['conversation_history', 'conversation_signal'],
-    'awaiting_reply',
-  );
-  for (const ticket of data.tickets) {
-    ticket.ceiling_holder = fields_before(ticket.ceiling_holder, ['id'], 'kind');
-  }
+  const data = await send(inv, 'GET', `/api/managers/${id}/workspace`);
   const goals = data.goals;
   let visible: string;
   if (goals.length === 1) {
     const goal = goals[0];
-    visible = `Visible page: held goal ${goal.title} (${goal.id}). The Manager's own document is hidden.\nRead: panels goal show ${goal.id}\nSchema: panels goal schema edit\nEdit: panels goal edit ${goal.id}`;
+    visible = `Visible page: held goal ${scalar(goal.title)} (${scalar(goal.id)}). The Manager's own document is hidden.\nRead: panels goal show ${scalar(goal.id)}\nSchema: panels goal schema edit\nEdit: panels goal edit ${scalar(goal.id)}`;
   } else
-    visible = `Visible page: this Manager's own document.\nRead: panels page show --manager ${id}\nSchema: panels page schema\nEdit: panels page edit --manager ${id}`;
+    visible = `Visible page: this Manager's own document.\nRead: panels page show --manager ${scalar(id)}\nSchema: panels page schema\nEdit: panels page edit --manager ${scalar(id)}`;
   const human =
-    `${data.title} (${id})\nPurpose: ${data.goal}\nRecap: ${data.recap}\n\n${visible}\nOwn page revision: ${scalar(data.page_revision)}\nEdits replace the complete document. Artifacts are supporting files.\n\nHeld goals:\n` +
-    lines(goals, (goal) => `${goal.id} ${goal.title}`) +
+    `${scalar(data.title)} (${scalar(id)})\nPurpose: ${scalar(data.goal)}\nRecap: ${scalar(data.recap)}\n\n${scalar(visible)}\nOwn page revision: ${scalar(data.page_revision)}\nEdits replace the complete document. Artifacts are supporting files.\n\nHeld goals:\n` +
+    lines(goals, (goal) => `${scalar(goal.id)} ${scalar(goal.title)}`) +
     '\n\nArtifacts:\n' +
-    lines(data.artifacts, (artifact) => String(artifact.path)) +
+    lines(data.artifacts, (artifact) => scalar(artifact.opens)) +
     '\n\nTickets:\n' +
-    lines(data.tickets, (ticket) => `${ticket.id} ${ticket.title} [${ticket.stage}]`);
+    lines(
+      data.tickets,
+      (ticket) => `${scalar(ticket.id)} ${scalar(ticket.title)} [${scalar(ticket.stage)}]`,
+    );
   return emit(data, inv.values.as_json, human);
 }
 
@@ -420,7 +405,8 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       return emit(
         data,
         as_json,
-        `message ${data.fate}` + (data.fate === 'refused' ? `: ${data.refusal_reason}` : ''),
+        `message ${scalar(data.fate)}` +
+          (data.fate === 'refused' ? `: ${scalar(data.refusal_reason)}` : ''),
       );
     }
     case 'worker-type list':
@@ -428,7 +414,7 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       return emit(
         data,
         as_json,
-        lines(data.worker_types, (item) => String(item.worker_type)),
+        lines(data.worker_types, (item) => scalar(item.worker_type)),
       );
     case 'worker-type show':
       data = await send(inv, 'GET', `/api/worker-types/${v.worker_type}`);
@@ -449,11 +435,11 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       )
         fail_validation(inv, 'worker type record must be a JSON object');
       data = await send(inv, 'POST', '/api/worker-types', { json_body: record });
-      return emit(data, as_json, `${data.worker_type} saved`);
+      return emit(data, as_json, `${scalar(data.worker_type)} saved`);
     }
     case 'worker-type delete':
       data = await send(inv, 'DELETE', `/api/worker-types/${quote(v.worker_type)}`);
-      return emit(data, as_json, `${v.worker_type} deleted`);
+      return emit(data, as_json, `${scalar(v.worker_type)} deleted`);
     case 'worker-type skill': {
       const patch = await skill_patch(inv);
       const worker_path = quote(v.worker_type);
@@ -461,14 +447,14 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       const name = definition.profile.specialist_skill;
       data = await send(inv, 'PATCH', `/api/skills/${quote(name)}`, { json_body: patch });
       if (as_json) data = (await send(inv, 'GET', `/api/workers/${worker_path}`)).settings;
-      return emit(data, as_json, `${name} saved`);
+      return emit(data, as_json, `${scalar(name)} saved`);
     }
     case 'skill list':
       data = await send(inv, 'GET', '/api/skills');
       return emit(
         data,
         as_json,
-        lines(data.skills, (item) => String(item.name)),
+        lines(data.skills, (item) => scalar(item.name)),
       );
     case 'skill show':
       data = await send(inv, 'GET', `/api/skills/${quote(v.name)}`);
@@ -477,7 +463,7 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       data = await send(inv, 'PATCH', `/api/skills/${quote(v.name)}`, {
         json_body: await skill_patch(inv),
       });
-      return emit(data, as_json, `${data.name} saved`);
+      return emit(data, as_json, `${scalar(data.name)} saved`);
     case 'skill apply': {
       let manifest: any;
       try {
@@ -495,11 +481,11 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       )
         fail_validation(inv, 'manifest must contain a JSON object');
       data = await send(inv, 'POST', '/api/skills/apply', { json_body: manifest });
-      return emit(data, as_json, `applied ${data.skills.length} skills`);
+      return emit(data, as_json, `applied ${scalar(data.skills.length)} skills`);
     }
     case 'skill delete':
       data = await send(inv, 'DELETE', `/api/skills/${quote(v.name)}`);
-      return emit(data, as_json, `${data.name} deleted`);
+      return emit(data, as_json, `${scalar(data.name)} deleted`);
     case 'skill write-file': {
       const content = process.stdin.isTTY
         ? ''
@@ -508,7 +494,7 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       data = await send(inv, 'PUT', `/api/skills/${quote(v.name)}/files`, {
         json_body: { path: v.path, content },
       });
-      return emit(data, as_json, `${data.name}/${data.path} written`);
+      return emit(data, as_json, `${scalar(data.name)}/${scalar(data.path)} written`);
     }
     case 'skill check': {
       data = await send(inv, 'GET', '/api/skills/stale');
@@ -516,9 +502,12 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       const human = !refs.length
         ? 'every skill row names only things this build has'
         : refs
-            .map((item: Body) => `${item.skill_name}: ${item.kind} ${item.reference}`)
+            .map(
+              (item: Body) =>
+                `${scalar(item.skill_name)}: ${scalar(item.kind)} ${scalar(item.reference)}`,
+            )
             .join('\n') +
-          `\n\n${data.skill_names.length} skills hold something this build does not have`;
+          `\n\n${scalar(data.skill_names.length)} skills hold something this build does not have`;
       return emit(data, as_json, human);
     }
     case 'project list':
@@ -529,7 +518,7 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
         data,
         as_json,
         bounded(
-          lines(data.projects, (row) => `${row.id} ${row.name}`),
+          lines(data.projects, (row) => `${scalar(row.id)} ${scalar(row.name)}`),
           data.page,
         ),
       );
@@ -546,16 +535,16 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       data = await send(inv, 'POST', '/api/projects', {
         json_body: drop_none({ name: v.name, summary: v.summary, folder_path: v.folder_path }),
       });
-      return emit(data, as_json, `${data.id} ${data.name}`);
+      return emit(data, as_json, `${scalar(data.id)} ${scalar(data.name)}`);
     case 'project set': {
       const value = await value_or_file(inv, v.field);
       if (v.field === 'name' && value === null)
-        fail_validation(inv, `${v.field} cannot be cleared`);
+        fail_validation(inv, `${scalar(v.field)} cannot be cleared`);
       const field = v.field === 'folder-path' ? 'folder_path' : v.field;
       data = await send(inv, 'PATCH', `/api/projects/${v.project_id}`, {
         json_body: { [field]: v.field === 'folder-path' && value === null ? null : (value ?? '') },
       });
-      return emit(data, as_json, `${data.id} ${v.field} set`);
+      return emit(data, as_json, `${scalar(data.id)} ${scalar(v.field)} set`);
     }
     case 'ticket create': {
       const body = await read_json_object(inv, v.input_json, 'Ticket create input');
@@ -564,7 +553,11 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
         body.locale = v.locale;
       }
       data = await send(inv, 'POST', '/api/tickets', { json_body: body });
-      return emit(data, as_json, `${data.id} ${data.stage}\n${data.supervision_receipt}`);
+      return emit(
+        data,
+        as_json,
+        `${scalar(data.id)} ${scalar(data.stage)}\n${scalar(data.supervision_receipt)}`,
+      );
     }
     case 'ticket show':
       return show_ticket(inv);
@@ -580,7 +573,7 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       data = await send(inv, 'DELETE', `/api/tickets/${tid}`, {
         params: v.force ? { force: true } : undefined,
       });
-      return emit(data, as_json, `${tid} permanently deleted`);
+      return emit(data, as_json, `${scalar(tid)} permanently deleted`);
     }
     case 'ticket list': {
       const params: Body = {
@@ -604,10 +597,10 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       const rows = lines(
         data.tickets,
         (ticket) =>
-          `${ticket.id} ${ticket.stage} ${ticket.ticket_status} ${ticket.title}` +
+          `${scalar(ticket.id)} ${scalar(ticket.stage)} ${scalar(ticket.ticket_status)} ${scalar(ticket.title)}` +
           (ticket.is_backlogged ? ' | backlogged' : '') +
-          (ticket.project ? ` | ${ticket.project}` : '') +
-          (ticket.recap_preview ? `\n  ${ticket.recap_preview}` : ''),
+          (ticket.project ? ` | ${scalar(ticket.project)}` : '') +
+          (ticket.recap_preview ? `\n  ${scalar(ticket.recap_preview)}` : ''),
       );
       return emit(data, as_json, bounded(rows, data.page));
     }
@@ -617,13 +610,13 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       if (!Object.keys(body).length)
         fail_validation(inv, 'Ticket edit input must contain at least one field');
       data = await send(inv, 'PATCH', `/api/tickets/${tid}`, { json_body: body });
-      return emit(data, as_json, `${data.id} edited`);
+      return emit(data, as_json, `${scalar(data.id)} edited`);
     }
     case 'ticket complete':
       data = await send(inv, 'POST', `/api/tickets/${v.ticket_id}/complete/${v.field}`, {
         json_body: { body: await value_or_file(inv, v.field, false) },
       });
-      return emit(data, as_json, `${data.id} ${v.field} completed`);
+      return emit(data, as_json, `${scalar(data.id)} ${scalar(v.field)} completed`);
     case 'ticket employee-configuration':
       data = await send(inv, 'PUT', `/api/tickets/${v.ticket_id}/employee-configuration`, {
         json_body: {
@@ -632,7 +625,11 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
           employee_launch_reasoning_effort: v.reasoning_effort,
         },
       });
-      return emit(data, as_json, `${data.id} employee configuration set ${v.backend} ${v.model}`);
+      return emit(
+        data,
+        as_json,
+        `${scalar(data.id)} employee configuration set ${scalar(v.backend)} ${scalar(v.model)}`,
+      );
     case 'ticket history': {
       const tid = ticket_id(inv, v.ticket_id);
       if (v.after != null && v.before != null)
@@ -652,11 +649,8 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       const page = await send(inv, 'GET', `/api/conversation/conversations/${cid}/events`, {
         params,
       });
-      for (const event of page.events) {
-        event.payload = parse_numeric_json(json(event.payload, { sort_keys: true }));
-      }
       data = { ticket_id: tid, conversation_id: cid, events: page.events, has_more: page.has_more };
-      return emit(data, as_json, `${tid} ${data.events.length} history events`);
+      return emit(data, as_json, `${scalar(tid)} ${scalar(data.events.length)} history events`);
     }
     case 'ticket restart-worker': {
       if ((v.backend == null) !== (v.model == null))
@@ -673,14 +667,14 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
         json_body: body,
       });
       const configuration = data.employee_configuration;
-      const launch = `${configuration.employee_backend} ${configuration.employee_launch_model}`;
+      const launch = `${scalar(configuration.employee_backend)} ${scalar(configuration.employee_launch_model)}`;
       let human = data.started
-        ? `${v.ticket_id} restarted on ${launch}`
+        ? `${scalar(v.ticket_id)} restarted on ${scalar(launch)}`
         : data.delivery_fate === 'uncertain'
-          ? `${v.ticket_id} start delivery is uncertain. The Worker claim remains held.`
+          ? `${scalar(v.ticket_id)} start delivery is uncertain. The Worker claim remains held.`
           : data.delivery_fate === 'refused'
-            ? `${v.ticket_id} start delivery was refused`
-            : `${v.ticket_id} did not start: ${data.not_started_because}`;
+            ? `${scalar(v.ticket_id)} start delivery was refused`
+            : `${scalar(v.ticket_id)} did not start: ${scalar(data.not_started_because)}`;
       if (data.revision_restarted_in_fresh_conversation)
         human +=
           '\nThe revision continues in a fresh conversation. The old working context is gone, and only the revision feedback carries over.';
@@ -697,8 +691,8 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
         data,
         as_json,
         path === 'ticket block'
-          ? `${v.ticket_id} blocked by ${v.blocker_id}`
-          : `${v.ticket_id} unblocked from ${v.blocker_id}`,
+          ? `${scalar(v.ticket_id)} blocked by ${scalar(v.blocker_id)}`
+          : `${scalar(v.ticket_id)} unblocked from ${scalar(v.blocker_id)}`,
       );
     }
     case 'ticket proposal':
@@ -713,7 +707,7 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       data = await send(inv, 'PATCH', `/api/tickets/${v.ticket_id}`, {
         json_body: { manager: parent },
       });
-      return emit(data, as_json, `${v.ticket_id} assigned`);
+      return emit(data, as_json, `${scalar(v.ticket_id)} assigned`);
     }
     case 'manager create': {
       const body: Body = {
@@ -725,21 +719,21 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       if (v.project != null) body.project = v.project;
       if (v.project_id != null) body.project_id = v.project_id;
       data = await send(inv, 'POST', '/api/managers', { json_body: body });
-      let human = `Created manager ${data.id}.`;
+      let human = `Created manager ${scalar(data.id)}.`;
       if (data.startup == null) human += ' Idle (no goal).';
       else {
         const startup = data.startup;
         const fate = startup.fate;
-        human += ` Startup ${fate}.`;
+        human += ` Startup ${scalar(fate)}.`;
         if (fate === 'queued' && startup.queue_position != null)
           human += ` Queue position: ${scalar(startup.queue_position)}.`;
         if (['refused', 'uncertain', 'failed'].includes(fate)) {
           const reason = startup.refusal_reason || startup.error;
-          if (reason) human += ` ${reason}`;
-          human += `\nThe manager is saved. Inspect: panels manager show ${data.id}`;
+          if (reason) human += ` ${scalar(reason)}`;
+          human += `\nThe manager is saved. Inspect: panels manager show ${scalar(data.id)}`;
           human += ['uncertain', 'failed'].includes(fate)
             ? '\nCheck its conversation before any resend. Do not create it again.'
-            : `\nRetry on this manager: panels send-message --manager ${data.id} --message "<goal>"`;
+            : `\nRetry on this manager: panels send-message --manager ${scalar(data.id)} --message "<goal>"`;
         }
       }
       return emit(data, as_json, human);
@@ -755,16 +749,14 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
         offset: v.offset,
       });
       data = await send(inv, 'GET', '/api/managers', { params: { detail: 'summary', ...params } });
-      data.managers = data.managers.map((row: Body) =>
-        fields_before(row, ['conversation_signal'], 'awaiting_reply'),
-      );
       return emit(
         data,
         as_json,
         bounded(
           lines(
             data.managers,
-            (row) => `${row.id} ${row.title} [${row.settled ? 'settled' : 'active'}]`,
+            (row) =>
+              `${scalar(row.id)} ${scalar(row.title)} [${scalar(row.settled ? 'settled' : 'active')}]`,
           ),
           data.page,
         ),
@@ -775,16 +767,16 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
     case 'manager delete':
       if (!v.yes) fail_validation(inv, 'permanent deletion requires --yes');
       data = await send(inv, 'DELETE', `/api/managers/${v.item_id}`);
-      return emit(data, as_json, `${v.item_id} permanently deleted`);
+      return emit(data, as_json, `${scalar(v.item_id)} permanently deleted`);
     case 'manager set': {
       const value = await value_or_file(inv, v.field);
       if (['title', 'project', 'project-id'].includes(v.field) && value === null)
-        fail_validation(inv, `${v.field} cannot be cleared`);
+        fail_validation(inv, `${scalar(v.field)} cannot be cleared`);
       const field = v.field === 'project-id' ? 'project_id' : v.field;
       data = await send(inv, 'PATCH', `/api/managers/${v.item_id}`, {
         json_body: { [field]: value },
       });
-      return emit(data, as_json, `${data.id} ${v.field} set`);
+      return emit(data, as_json, `${scalar(data.id)} ${scalar(v.field)} set`);
     }
     case 'manager add-ticket':
     case 'manager remove-ticket': {
@@ -798,8 +790,8 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
         data,
         as_json,
         adding
-          ? `${v.ticket_id} added to ${v.item_id}`
-          : `${v.ticket_id} removed from ${v.item_id}`,
+          ? `${scalar(v.ticket_id)} added to ${scalar(v.item_id)}`
+          : `${scalar(v.ticket_id)} removed from ${scalar(v.item_id)}`,
       );
     }
     case 'manager workspace':
@@ -808,11 +800,11 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       data = await send(inv, 'PATCH', `/api/managers/${v.item_id}/settled`, {
         json_body: { settled: !v.active },
       });
-      return emit(data, as_json, `${v.item_id} ${v.active ? 'active' : 'settled'}`);
+      return emit(data, as_json, `${scalar(v.item_id)} ${scalar(v.active ? 'active' : 'settled')}`);
     case 'manager artifact list': {
       data = await send(inv, 'GET', `/api/managers/${v.item_id}/workspace`);
       const artifacts = artifact_paths(data.artifacts).sort(python_sort);
-      return emit({ manager_id: v.item_id, artifacts }, as_json, lines(artifacts, String));
+      return emit({ manager_id: v.item_id, artifacts }, as_json, lines(artifacts, scalar));
     }
     case 'manager artifact read': {
       const content = await send_text(
@@ -831,14 +823,14 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
         `/files/managers/${v.item_id}/artifacts/${quote(v.artifact_path, true)}`,
         { json_body: { content: await read_source(inv, v.body_file, true) } },
       );
-      return emit(data, as_json, data.url);
+      return emit(data, as_json, scalar(data.url));
     case 'manager artifact delete':
       data = await send(
         inv,
         'DELETE',
         `/files/managers/${v.item_id}/artifacts/${quote(v.artifact_path, true)}`,
       );
-      return emit(data, as_json, `${v.artifact_path} deleted`);
+      return emit(data, as_json, `${scalar(v.artifact_path)} deleted`);
     case 'manager conversation send': {
       if ((v.message == null) === (v.body_file == null))
         fail_validation(inv, 'send requires exactly one of --message or --body-file');
@@ -846,11 +838,11 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       data = await send(inv, 'POST', `/api/managers/${v.item_id}/conversation/send`, {
         json_body: { content: [{ piece: 'text', text }], sender_label: 'You' },
       });
-      return emit(data, as_json, `message ${data.fate}`);
+      return emit(data, as_json, `message ${scalar(data.fate)}`);
     }
     case 'manager conversation reset':
       data = await send(inv, 'POST', `/api/managers/${v.item_id}/conversation/reset`);
-      return emit(data, as_json, `${v.item_id} Manager conversation reset`);
+      return emit(data, as_json, `${scalar(v.item_id)} Manager conversation reset`);
     case 'worker my-ticket':
       return show_ticket(inv, true);
     case 'worker propose':
@@ -864,7 +856,7 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       const body = await worker_stdin_body(inv, 'recap');
       const tid = ticket_id(inv, v.ticket_id);
       data = await send(inv, 'PATCH', `/api/tickets/${tid}`, { json_body: { recap: body } });
-      return emit(data, as_json, `recap written on ${data.id}`);
+      return emit(data, as_json, `recap written on ${scalar(data.id)}`);
     }
     default:
       throw new Error(`No work command handler for ${path}`);

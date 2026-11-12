@@ -63,6 +63,32 @@ class CliHost:
             raise ValueError("CLI comparison database is outside its fixture root")
         if self.handle.proc.poll() is not None:
             raise ValueError("CLI comparison host is not running")
+        # The URL and database paths alone do not establish listener ownership.
+        # Both comparison launchers exec their server, so the handle PID owns its FD.
+        pid = getattr(self.handle.proc, "pid", None)
+        if sys.platform != "linux" or type(pid) is not int or pid <= 0:
+            raise ValueError("CLI comparison requires Linux listener PID evidence")
+        try:
+            listeners = [
+                line.split() for line in Path("/proc/net/tcp").read_text().splitlines()[1:]
+            ]
+            inodes = {
+                row[9]
+                for row in listeners
+                if row[3] == "0A" and row[1] == f"0100007F:{self.handle.port:04X}"
+            }
+            owned = set()
+            for descriptor in Path(f"/proc/{pid}/fd").iterdir():
+                try:
+                    owned.add(os.readlink(descriptor))
+                except FileNotFoundError:
+                    continue  # A concurrent request can close its unrelated FD.
+            if len(inodes) != 1 or not all(f"socket:[{inode}]" in owned for inode in inodes):
+                raise ValueError("CLI comparison listener is not owned by its fixture PID")
+        except OSError as error:
+            raise ValueError("CLI comparison cannot establish listener PID ownership") from error
+        if self.handle.proc.poll() is not None:
+            raise ValueError("CLI comparison host exited during listener admission")
 
 
 def environment(host: CliHost, identity: dict[str, str], root: Path) -> dict[str, str]:
@@ -144,7 +170,23 @@ def _python_library(argv: list[str], stdin: bytes, env: dict[str, str]) -> dict[
         }
 
 
-def _check_output(answer: dict[str, Any], step: dict[str, Any], argv: list[str], mode: str) -> None:
+def _check_output(
+    answer: dict[str, Any],
+    step: dict[str, Any],
+    argv: list[str],
+    mode: str,
+    *,
+    candidate: bool = False,
+) -> None:
+    assert not (candidate and mode == "text") or all(
+        marker not in answer[stream]
+        for stream in ("stdout", "stderr")
+        for marker in ("undefined", "[object Object]")
+    ), {
+        "argv": argv,
+        "reason": "TypeScript CLI leaked a JavaScript rendering placeholder",
+        **answer,
+    }
     if answer["exit_code"] != step["exit_code"]:
         raise AssertionError({"argv": argv, "expected_exit": step["exit_code"], **answer})
     if mode == "json" and answer["exit_code"] == 0 and "--help" not in argv:
@@ -184,7 +226,7 @@ def help_batch(host: CliHost, cases: list[tuple[list[str], int]], root: Path) ->
     assert isinstance(typescript, list) and len(typescript) == len(cases)
     for (argv, code), left, right in zip(cases, python, typescript, strict=True):
         _check_output(left, {"exit_code": code}, argv, "text")
-        _check_output(right, {"exit_code": code}, argv, "text")
+        _check_output(right, {"exit_code": code}, argv, "text", candidate=True)
     return {
         "python": python,
         "typescript": typescript,
@@ -258,7 +300,7 @@ def run_cli(
             "stderr": completed.stderr.decode("utf-8"),
         }
     elapsed = time.perf_counter() - started
-    _check_output(answer, step, argv, mode)
+    _check_output(answer, step, argv, mode, candidate=candidate)
     return {
         **answer,
         "seconds": elapsed,
