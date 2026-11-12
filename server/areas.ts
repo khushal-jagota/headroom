@@ -16,10 +16,15 @@ import { routes as attention } from './attention/routes.ts';
 import { configure_goal_resources } from './goals/resource_versions.ts';
 import { configure_goal_manager_documents } from './goals/manager_documents.ts';
 import { routes as credentials } from './credentials/routes.ts';
+import {
+  observe_events as observe_credential_requests,
+  reconcile_deliveries as reconcile_credential_requests,
+} from './credentials/requests/data.ts';
 import { ManagerWakeLoop } from './manager_wakes/runtime.ts';
 import {
   all_sender_messages_are_manager_notices,
   admit_notice_batch,
+  mark_notices_leaving_queue,
   create_ticket_failure_notice,
 } from './manager_wakes/data.ts';
 import { PromptDispatchDecision } from './conversation/contracts.ts';
@@ -105,8 +110,11 @@ export function createAreasRuntime(
       // The record owns the sole store, tail, reconciliation, and epoch rotation.
       conversation.initialize(database, config, {
         ...deployment_participants(config.db_path),
+        event_participant: observe_credential_requests,
+        startup_participant: reconcile_credential_requests,
         integer_now: () => clock.nowUnix(),
         all_are_notices: all_sender_messages_are_manager_notices,
+        mark_notices_leaving_queue,
         automated_maintenance_suppression_reason,
         is_memory_notice: is_memory_notice_sender_message_id,
         failure_notice: create_ticket_failure_notice,

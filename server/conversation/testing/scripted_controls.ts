@@ -2,6 +2,7 @@
 import type { Area } from '../../core/authority/register.ts';
 import type { TestCompositionContext } from '../../core/start.ts';
 import type { ReadSql } from '../../core/database/contracts.ts';
+import { claim_next_batch, record_batch_offering } from '../../manager_wakes/data.ts';
 import { OWNER } from '../../core/contracts.ts';
 import type { Principal } from '../../core/contracts.ts';
 import { BACKEND_KEYS_SUPPORTING_STEER, require_conversation_backend_key } from '../contracts.ts';
@@ -90,6 +91,27 @@ export function scriptedConversationControls(
   if (!core) throw new Error('Scripted controls require the real conversation core');
   const pending = new PendingSteerProbe(context, registry);
   const terminal = new TerminalSaveProbe(context, registry);
+  const review_departures = new Map<string, unknown[]>();
+  const batch_rows = (id: string) =>
+    context.database.read((sql) =>
+      sql.all(
+        'SELECT id,status,sender_message_id FROM manager_wake_batches WHERE conversation_id=? ORDER BY id',
+        [id],
+      ),
+    );
+  const original_departure = context.record.store.mark_held_sender_messages_leaving_queue.bind(
+    context.record.store,
+  );
+  context.record.store.mark_held_sender_messages_leaving_queue = (id, senders) => {
+    if (!review_departures.has(id)) return original_departure(id, senders);
+    const before = batch_rows(id);
+    const changed = original_departure(id, senders);
+    const calls = review_departures.get(id) ?? [];
+    calls.push({ before, changed, after: batch_rows(id) });
+    review_departures.set(id, calls);
+    return changed;
+  };
+
   return [
     {
       prefix: '/api/test',
@@ -103,6 +125,26 @@ export function scriptedConversationControls(
         const settle = () => core.wait_until_quiescent();
         const identity = (request: { params: unknown }) =>
           (request.params as { conversation_id: string }).conversation_id;
+        app.get('/signals/:conversation_id/review-batch', async (request) => ({
+          departures: review_departures.get(identity(request)) ?? [],
+          batches: batch_rows(identity(request)),
+        }));
+        app.post('/signals/:conversation_id/review-batch', async (request) => {
+          review_departures.set(identity(request), []);
+          return context.database.write((tx) => {
+            const batch = claim_next_batch(tx, {
+              process_token: 'unit15b',
+              now: context.clock.nowUnix(),
+            });
+            if (!batch) throw new Error('No review batch to claim');
+            record_batch_offering(tx, batch.id, {
+              conversation_id: identity(request),
+              process_token: 'unit15b',
+              now: context.clock.nowUnix(),
+            });
+            return batch;
+          });
+        });
         app.post('/signals/:conversation_id/ticket-choice-failure', async (request) =>
           ticket_choice_fault.arm(identity(request)),
         );
