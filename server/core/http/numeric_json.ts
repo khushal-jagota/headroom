@@ -81,21 +81,50 @@ export function clone_numeric_json(value: unknown): unknown {
   );
 }
 /** Python json.dumps(value, ensure_ascii=False), with its ordinary spaced separators. */
-export function stringify_python_json(value: unknown): string {
+export function stringify_python_json(
+  value: unknown,
+  options: { sort_keys?: boolean; compact?: boolean; ensure_ascii?: boolean } = {},
+): string {
+  const separator = options.compact ? ',' : ', ';
+  const text = (item: string): string => {
+    const encoded = JSON.stringify(item);
+    return options.ensure_ascii
+      ? encoded.replace(
+          /[\u007f-\uffff]/g,
+          (character) => '\\u' + character.charCodeAt(0).toString(16).padStart(4, '0'),
+        )
+      : encoded;
+  };
   if (value instanceof JsonNumber) return number_token(value);
   if (typeof value === 'bigint') return String(value);
   if (typeof value === 'number')
     return Number.isInteger(value) ? String(BigInt(value)) : python_float(value);
-  if (Array.isArray(value)) return '[' + value.map(stringify_python_json).join(', ') + ']';
-  if (value !== null && typeof value === 'object')
+  if (Array.isArray(value))
+    return '[' + value.map((item) => stringify_python_json(item, options)).join(separator) + ']';
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value);
+    if (options.sort_keys)
+      entries.sort(([a], [b]) => {
+        const left = Array.from(a, (character) => character.codePointAt(0)!);
+        const right = Array.from(b, (character) => character.codePointAt(0)!);
+        for (let index = 0; index < Math.min(left.length, right.length); index++) {
+          const difference = left[index]! - right[index]!;
+          if (difference) return difference;
+        }
+        return left.length - right.length;
+      });
     return (
       '{' +
-      Object.entries(value)
-        .map(([key, item]) => JSON.stringify(key) + ': ' + stringify_python_json(item))
-        .join(', ') +
+      entries
+        .map(
+          ([key, item]) =>
+            text(key) + (options.compact ? ':' : ': ') + stringify_python_json(item, options),
+        )
+        .join(separator) +
       '}'
     );
-  const result = JSON.stringify(value);
+  }
+  const result = typeof value === 'string' ? text(value) : JSON.stringify(value);
   if (result === undefined) throw new TypeError('Value is not JSON serializable');
   return result;
 }
