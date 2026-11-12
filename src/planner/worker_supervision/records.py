@@ -50,7 +50,7 @@ def write(path: Path, value: dict[str, Any]) -> None:
 
 
 @contextmanager
-def locked(path: Path, deadline: float) -> Iterator[None]:
+def locked(path: Path, deadline: float, *, wait: bool = True) -> Iterator[None]:
     """Serialize every journal transaction across callers and process restarts."""
     lock_path = path.with_suffix(".lock")
     descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -65,6 +65,8 @@ def locked(path: Path, deadline: float) -> Iterator[None]:
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except BlockingIOError:
+                if not wait:
+                    raise TimeoutError("Worker process journal is busy") from None
                 time.sleep(min(0.01, max(0, deadline - time.monotonic())))
         try:
             yield

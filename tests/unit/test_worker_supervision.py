@@ -24,8 +24,12 @@ from planner.worker_supervision.contracts import WorkerProcess
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux native priority and pidfd cleanup proof")
-def test_launch_priority_and_recorded_detached_tool_cleanup(tmp_path: Path) -> None:
+def test_launch_priority_and_recorded_detached_tool_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """One real launch proves priority before exec and custody after a tool detaches."""
+
+    monkeypatch.setattr(config, "OBSERVATION_SECONDS", 0.1)
 
     async def run() -> None:
         hostile = tmp_path / "ticket-code"
@@ -142,6 +146,9 @@ class _Primitives:
 
     def snapshot(self, deadline: float) -> dict[int, WorkerProcess]:
         return self.table
+
+    def prepare_launch(self) -> None:
+        pass
 
     def is_absent(self, process: WorkerProcess, deadline: float) -> bool:
         current = self.table.get(process.pid)
@@ -770,3 +777,199 @@ def test_linux_claims_late_isolated_session_member_and_signals_exact_process(
     assert any(
         item["pid"] == 30 and item["birth"] == "late" for item in records.read(path)["processes"]
     )
+
+
+def test_shared_round_indexes_once_and_retains_only_changed_custody(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """More Workers cannot multiply inventories, indexes, or unchanged journal writes."""
+    import threading
+
+    from planner.worker_supervision import observation
+    from planner.worker_supervision.contracts import InspectionContext
+
+    table = {pid: WorkerProcess(pid, str(pid), 1, pid, pid) for pid in range(20, 1520)}
+    native = _Primitives(table)
+    context = InspectionContext(native, native.host_boot(time.monotonic() + 1))
+    snapshots = 0
+    indexes = 0
+    writes = 0
+    original_index = observation.index_processes
+    original_write = records.write
+
+    def snapshot(deadline: float) -> dict[int, WorkerProcess]:
+        nonlocal snapshots
+        snapshots += 1
+        return table
+
+    def index(
+        table: dict[int, WorkerProcess],
+    ) -> tuple[dict[int, list[WorkerProcess]], dict[int, list[WorkerProcess]]]:
+        nonlocal indexes
+        indexes += 1
+        return original_index(table)
+
+    def write(path: Path, value: dict[str, object]) -> None:
+        nonlocal writes
+        writes += 1
+        original_write(path, value)
+
+    supervisors = []
+    for number in range(20):
+        path = tmp_path / (f"{number:032x}.json")
+        root = table[20 + number]
+        records.write(
+            path,
+            {
+                "version": 1,
+                "ticket_id": str(number),
+                "host": "host",
+                "boot": "boot",
+                "root": asdict(root),
+                "processes": [asdict(root)],
+                "isolated": True,
+                "state": "running",
+                "unattributed_session_members": [],
+            },
+        )
+        supervisor = object.__new__(WorkerSupervisor)
+        supervisor.path = path
+        supervisor._lock = threading.Lock()
+        supervisor._end = threading.Event()
+        supervisors.append(supervisor)
+    monkeypatch.setattr(native, "snapshot", snapshot)
+    monkeypatch.setattr(observation, "index_processes", index)
+    monkeypatch.setattr("planner.worker_supervision.index_processes", index)
+    monkeypatch.setattr(records, "write", write)
+    monkeypatch.setattr(config, "OBSERVATION_SECONDS", 0.01)
+    observer = observation.SharedProcessObserver(lambda deadline: context)
+    finished = threading.Event()
+    delivered = 0
+
+    def callback(supervisor: WorkerSupervisor) -> observation.ObservationCallback:
+        def apply(context: InspectionContext | None, pair: object) -> None:
+            nonlocal delivered
+            from planner.worker_supervision.contracts import ProcessObservation
+
+            assert isinstance(pair, ProcessObservation)
+            supervisor._observe_periodic(context, pair)
+            delivered += 1
+            if delivered == len(supervisors):
+                for member in supervisors:
+                    observer.unregister(member.path)
+                finished.set()
+
+        return apply
+
+    # A busy journal must not prevent the other nineteen records from observation.
+    with records.locked(supervisors[0].path, time.monotonic() + 1):
+        for supervisor in supervisors:
+            observer.register(supervisor.path, callback(supervisor))
+        thread = observer._thread
+        assert thread is not None
+        try:
+            assert finished.wait(1)
+        finally:
+            for supervisor in supervisors:
+                observer.unregister(supervisor.path)
+            thread.join(1)
+    assert not thread.is_alive()
+    assert snapshots == 2 and indexes == 2 and writes == 0
+    child = WorkerProcess(1600, "child", 21, 21, 21)
+    table[child.pid] = child
+    pair = observation.capture_observation(context, time.monotonic() + 1)
+    for supervisor in supervisors:
+        supervisor._observe_periodic(context, pair)
+    assert snapshots == 4 and indexes == 4 and writes == 1
+    assert records.read(supervisors[1].path)["processes"][-1] == asdict(child)
+
+
+def test_shared_observer_retires_and_restarts_without_repeated_host_commands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The last stop releases the thread, while each active lifetime shares host evidence."""
+    import threading
+
+    from planner.worker_supervision import observation
+    from planner.worker_supervision.contracts import InspectionContext
+
+    monkeypatch.setattr(config, "OBSERVATION_SECONDS", 0.01)
+    context = InspectionContext(_Primitives({}), LocalHostBootIdentity("host", "boot"))
+    host_calls = 0
+    rounds = 0
+    observed = threading.Event()
+
+    def factory(deadline: float) -> InspectionContext:
+        nonlocal host_calls
+        host_calls += 1
+        return context
+
+    def callback(context: InspectionContext | None, pair: object) -> None:
+        nonlocal rounds
+        rounds += 1
+        if rounds >= 2:
+            observed.set()
+
+    observer = observation.SharedProcessObserver(factory)
+    path = tmp_path / "worker"
+    observer.register(path, callback)
+    thread = observer._thread
+    assert thread is not None
+    try:
+        assert observed.wait(1)
+        assert host_calls == 1
+    finally:
+        observer.unregister(path)
+        thread.join(1)
+    assert not thread.is_alive() and observer._thread is None
+    observed.clear()
+    observer.register(path, callback)
+    replacement = observer._thread
+    assert replacement is not None and replacement is not thread
+    try:
+        assert observed.wait(1)
+        assert host_calls == 2
+    finally:
+        observer.unregister(path)
+        replacement.join(1)
+    assert not replacement.is_alive()
+
+
+def test_stop_cannot_leave_a_registration_after_concurrent_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stop and the first observation share a fence against a retained dead callback."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
+
+    supervisor = object.__new__(WorkerSupervisor)
+    supervisor.path = tmp_path / "worker"
+    supervisor._lock = threading.Lock()
+    supervisor._end = threading.Event()
+    entered = threading.Event()
+    release = threading.Event()
+    registered: set[Path] = set()
+
+    def observe(path: Path, deadline: float) -> None:
+        entered.set()
+        assert release.wait(1)
+
+    monkeypatch.setattr("planner.worker_supervision._observe", observe)
+    monkeypatch.setattr(
+        "planner.worker_supervision._process_observer",
+        SimpleNamespace(
+            register=lambda path, callback: registered.add(path),
+            unregister=lambda path: registered.discard(path),
+        ),
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        start = pool.submit(supervisor._start_observing)
+        assert entered.wait(1)
+        stop = pool.submit(supervisor._stop_observing)
+        release.set()
+        start.result(timeout=1)
+        stop.result(timeout=1)
+    assert supervisor._end.is_set() and not registered
+    supervisor._start_observing()
+    assert not registered

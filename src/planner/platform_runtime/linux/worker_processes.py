@@ -24,28 +24,30 @@ class LinuxWorkerProcesses:
         )
 
     def _read(self, pid: int) -> WorkerProcess:
-        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        with open(f"/proc/{pid}/stat", "rb") as stream:
+            fields = stream.read().rsplit(b")", 1)[1].split()
         return WorkerProcess(
             pid,
-            fields[19],
+            fields[19].decode("ascii"),
             int(fields[1]),
             int(fields[2]),
             int(fields[3]),
-            fields[0] in {"Z", "X"},
+            fields[0] in {b"Z", b"X"},
         )
 
     def snapshot(self, deadline: float) -> dict[int, WorkerProcess]:
         found: dict[int, WorkerProcess] = {}
-        for entry in Path("/proc").iterdir():
-            if time.monotonic() >= deadline:
-                raise TimeoutError("Worker inspection deadline expired")
-            if not entry.name.isdigit():
-                continue
-            try:
-                process = self._read(int(entry.name))
-            except (FileNotFoundError, ProcessLookupError):
-                continue
-            found[process.pid] = process
+        with os.scandir("/proc") as entries:
+            for entry in entries:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Worker inspection deadline expired")
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    process = self._read(int(entry.name))
+                except (FileNotFoundError, ProcessLookupError):
+                    continue
+                found[process.pid] = process
         return found
 
     def is_absent(self, process: WorkerProcess, deadline: float) -> bool:
