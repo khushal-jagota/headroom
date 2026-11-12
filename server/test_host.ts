@@ -1,3 +1,4 @@
+import { sourceTestArea } from './measure_sources/testing/routes.ts';
 import { notificationTestArea } from './notifications/testing.ts';
 /** Comparison composition. Each area appends its test-only route registration here. */
 import { managerWakeTestArea } from './manager_wakes/testing.ts';
@@ -66,6 +67,7 @@ await startServer({
       },
   testAreas: (context): readonly Area[] => [
     readinessTestRoutes,
+    sourceTestArea({ ...context, assert_database_owned: context.require_runtime_ownership }),
     notificationTestArea,
     managerWakeTestArea({ ...context, assert_database_owned: context.require_runtime_ownership }),
     ...(conversationSystem

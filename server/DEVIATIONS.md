@@ -43,3 +43,22 @@ See [the measure README](measures/README.md) for the fixed policy and proof comm
 ## Managed Linux supervisor stop
 
 The Manager accepted prior authenticated stop intent followed by the exact supervisor signal instead of Python's kernel-sender and verified-manager check. This preserves accidental bare-signal refusal without a compiled wrapper. Foreground behavior stays ordinary. Implementation remains pending, with the capability, restart-race, and hosted failure proofs listed in [the lifecycle deviation](lifecycle/DEVIATIONS.md).
+
+## JavaScript source execution limits
+
+The migration Manager accepted these limits for the new JavaScript script contract on November 12, 2026:
+
+- 8 MiB combined control, stdout, and stderr output per run.
+- 64 MiB aggregate decoded HTTP response bodies per run.
+- 256 MiB V8 old-space through the child Node process option. This is not a total resident-memory guarantee.
+
+Python enforces only the wall-time limit. Its configured default is 30 seconds (`src/planner/core/config.py` and `measure_sources/configuration.py`), equal to the TypeScript default. The configured wall-time value remains authoritative.
+
+`measure_sources/runtime/runtime.test.ts` proves each limit with actual children:
+
+- `stdout and private control frames share the output byte budget` proves combined output enforcement, including buffered output before completion.
+- `decoded HTTP bytes accumulate across responses and exhaust the run budget` proves aggregate response enforcement even if a script catches the failure.
+- `V8 old-space exhaustion is a safe budget failure and the child is reaped` proves heap exhaustion with a smaller test cap.
+- `good child sees only frozen data and a clean temporary home; parent retains numeric candidates` checks the actual default child option `--max-old-space-size=256`.
+
+The byte/heap failure cases use smaller configured limits to avoid unnecessary VPS load. Default constants retain the accepted values above.
