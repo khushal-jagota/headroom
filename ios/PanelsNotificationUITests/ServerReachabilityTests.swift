@@ -4,11 +4,31 @@ import XCTest
 final class ServerReachabilityTests: XCTestCase {
     @MainActor func testUnreachableServerReplacesContentAndRecovers() async throws {
         continueAfterFailure = false
+        let app = XCUIApplication()
+        // XCTest owns both blocks even when continueAfterFailure aborts this method.
+        // LIFO order captures failures before termination. A separate cleanup block
+        // still runs if evidence capture itself fails.
+        addTeardownBlock { MainActor.assumeIsolated { app.terminate() } }
+        addTeardownBlock { [self] in
+            MainActor.assumeIsolated {
+                guard (testRun?.totalFailureCount ?? 0) > 0 else { return }
+                let hierarchy = XCTAttachment(string: app.debugDescription)
+                hierarchy.name = "unreachable-app-hierarchy"
+                hierarchy.lifetime = .keepAlways
+                add(hierarchy)
+                let retry = XCTAttachment(string: app.buttons.matching(identifier: "server-unreachable.retry").debugDescription)
+                retry.name = "unreachable-retry-query"
+                retry.lifetime = .keepAlways
+                add(retry)
+                let screenshot = XCTAttachment(screenshot: app.screenshot())
+                screenshot.name = "unreachable-failure"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+            }
+        }
         let env = ProcessInfo.processInfo.environment
         let base = try XCTUnwrap(env["PANELS_OFFLINE_STUB_URL"])
         let control = try XCTUnwrap(env["PANELS_REACHABILITY_CONTROL_URL"])
-        let app = XCUIApplication()
-        defer { app.terminate() }
         func state(_ value: String) async throws {
             let (_, response) = try await URLSession.shared.data(from: URL(string: control + "/" + value)!)
             XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
@@ -33,13 +53,16 @@ final class ServerReachabilityTests: XCTestCase {
         }
         XCTAssertTrue(title.waitForExistence(timeout: remainingCoverTime()))
         XCTAssertTrue(title.isHittable)
-        let retry = app.buttons["Try again"]
+        let retry = app.buttons["server-unreachable.retry"]
         XCTAssertTrue(retry.waitForExistence(timeout: remainingCoverTime()))
+        XCTAssertEqual(retry.label, "Try again")
         XCTAssertTrue(retry.isHittable)
         // The title and accessibility tree can settle in separate updates.
         // All absence checks share the same transition deadline.
+        let refreshRetries = app.buttons.matching(identifier: "screen-refresh-error.retry")
         for coveredElement in [
             proposal,
+            refreshRetries.firstMatch,
             app.buttons["review.approve"],
             app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "specified hostname")).firstMatch,
             app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "Couldn’t refresh")).firstMatch,
@@ -47,6 +70,7 @@ final class ServerReachabilityTests: XCTestCase {
             XCTAssertTrue(coveredElement.waitForNonExistence(timeout: remainingCoverTime()))
             XCTAssertFalse(coveredElement.exists)
         }
+        XCTAssertEqual(refreshRetries.count, 0)
         try await state("online")
         XCTAssertTrue(proposal.waitForExistence(timeout: 70))
         XCTAssertTrue(title.waitForNonExistence(timeout: 5))

@@ -18,6 +18,7 @@ struct LoadErrorView: View {
             Text(message).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
                 .frame(maxWidth: .infinity, alignment: .leading)
             ScreenRetryButton(retry: retry)
+                .accessibilityIdentifier("screen-refresh-error.retry")
         }.padding(.vertical, PanelsTheme.Space.sm)
     }
 }
@@ -45,6 +46,7 @@ struct ServerUnreachableView: View {
             Text("Turn on Tailscale, then try again.")
         } actions: {
             ScreenRetryButton(retry: retry).buttonStyle(.bordered)
+                .accessibilityIdentifier("server-unreachable.retry")
         }
         .panelsScreen()
         .accessibilityIdentifier("server-unreachable")
