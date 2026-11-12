@@ -1,5 +1,6 @@
 """Generate the view oracle from existing synthetic fixtures and unchanged Python."""
 
+import argparse
 import hashlib
 import json
 import sys
@@ -8,6 +9,9 @@ from pathlib import Path
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check", action="store_true", help="fail if the committed oracle differs")
+    arguments = parser.parse_args()
     root = Path(__file__).resolve().parents[3]
     sys.path.insert(0, str(root))
     from tests.support.conversation_view_database import FIXTURES, database
@@ -52,10 +56,16 @@ def main() -> None:
         "fixtures": result,
     }
     destination = root / "server/conversation/views/fixture_oracle.json"
-    destination.write_text(
+    generated = (
         json.dumps(json.loads(encode_wire(output)), ensure_ascii=False, indent=2) + "\n"
-    )
-    print(f"Generated {len(result)} synthetic fixture projections and both lens pages")
+    ).encode("utf-8")
+    if arguments.check:
+        if destination.read_bytes() != generated:
+            parser.exit(1, "Conversation view oracle differs from current Python. Regenerate it.\n")
+        print(f"Verified {len(result)} synthetic fixture projections and both lens pages")
+    else:
+        destination.write_bytes(generated)
+        print(f"Generated {len(result)} synthetic fixture projections and both lens pages")
 
 
 if __name__ == "__main__":

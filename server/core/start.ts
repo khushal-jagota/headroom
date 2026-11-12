@@ -3,6 +3,8 @@ import { areas, commitSteps, initializeAreas, prepareAreas, closeAreas } from '.
 import { createApp } from '../app.ts';
 import { loadConfig } from './config.ts';
 import { buildClock } from './clock.ts';
+import { prepare_background_loops, type BackgroundLoops } from './loops.ts';
+import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import type { Clock } from './clock.ts';
 import type { Config } from './config.ts';
 import { ChangeSignal } from './changes/index.ts';
@@ -32,6 +34,10 @@ export type BackgroundServiceFactory = (
 
 /** Shared process lifecycle for the normal entry point and comparison host. */
 export interface ServerOptions {
+  /** Off until Unit 21 explicitly composes the production lifecycle. */
+  enableWorkerReadiness?: boolean;
+  /** Unit 21 supplies UpdateService.poll. True suppresses this poll. */
+  beforeWorkerReadinessPoll?: () => boolean;
   testAreas?: readonly Area[];
   /** Explicit composition switches. No factory means no task or provider adapter. */
   notificationDelivery?: BackgroundServiceFactory;
@@ -44,6 +50,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
   const ownership = acquireRuntimeOwnership(config.db_path);
   let dispatcher: ReturnType<typeof acquireLock> = null;
   let database: ReturnType<typeof createDatabase> | undefined;
+  let loops: BackgroundLoops | undefined;
   let signalAuthority: SignalPublicationAuthority | undefined;
   const background: ComposedBackgroundService[] = [];
   const closeBackground = async () => {
@@ -67,6 +74,21 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
       dispatcher = acquireLock(config.dispatcher_lock_path);
     }
     const clock = buildClock(config);
+    loops = prepare_background_loops({
+      enable_worker_readiness: options.enableWorkerReadiness ?? false,
+      test_mode: config.test_mode,
+      dispatch_enabled: config.dispatch_enabled,
+      dispatcher_owned: dispatcher !== null,
+      before_poll: options.beforeWorkerReadinessPoll,
+      worker: options.conversationSystem
+        ? {
+            connect_database: () => database!,
+            conversation_system: options.conversationSystem,
+            worker_type_registry: configured_worker_type_registry(),
+            now: () => clock.nowUnix(),
+          }
+        : null,
+    });
     const app = await createApp(config, {
       database,
       changes,
@@ -94,13 +116,19 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     const close = () => {
       if (closing) return closing;
       signalAuthority?.invalidate('shutdown');
-      return (closing = closeBackground()
+      return (closing = loops!
+        .stop()
+        .then(() => closeBackground())
         .finally(() => closeAreas())
         .finally(() => app.close())
         .finally(() => {
           database?.close();
           dispatcher?.close();
           ownership.close();
+        })
+        .catch((error) => {
+          closing = undefined;
+          throw error;
         }));
     };
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
@@ -111,6 +139,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
         });
       });
     }
+    loops.start(config.tick_seconds, changes);
     const inherited = process.env.PLAN_SERVER_LISTENER_FD;
     if (inherited !== undefined) {
       const fd = Number(inherited);
@@ -121,6 +150,11 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     }
   } catch (error) {
     signalAuthority?.invalidate('shutdown');
+    try {
+      await loops?.stop();
+    } catch (cleanupError) {
+      console.error('Worker loop cleanup failed', cleanupError);
+    }
     try {
       await closeBackground();
     } catch (cleanupError) {
