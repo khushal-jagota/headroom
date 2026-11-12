@@ -7,6 +7,7 @@ import { fixture, fixture_path, create, claim, read, now } from './ticket_fixtur
 import { InMemoryConversationSystem } from '../conversation/in_memory_conversation_system.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import {
+  ConversationLinkLock,
   configure_conversation_start,
   agent_resolve,
   send_to_agent_conversation,
@@ -106,4 +107,29 @@ test('abort of a new Ticket send preserves its source, link, and outstanding cla
     conversation_id: 'new_ticket',
     worker_step_claim: 'out',
   });
+});
+
+// Gap: abort of a queued lock waiter must neither bypass its holder nor stall its successor.
+test('an aborted lock waiter releases its slot and the next operation completes after the holder', async () => {
+  const lock = new ConversationLinkLock();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const holder = lock.run(() => held);
+  const controller = new AbortController();
+  const operation = vi.fn(async () => {});
+  const waiter = lock.run(operation, controller.signal);
+  let successor_entered = false;
+  const successor = lock.run(async () => {
+    successor_entered = true;
+  });
+  controller.abort();
+  await expect(waiter).rejects.toMatchObject({ name: 'AbortError' });
+  expect(operation).not.toHaveBeenCalled();
+  expect(successor_entered).toBe(false);
+  release();
+  await holder;
+  await successor;
+  expect(successor_entered).toBe(true);
 });
