@@ -287,7 +287,7 @@ def test_a_version_refusal_never_grants_execution_and_is_written_only_when_it_ch
                 assert isinstance(await endpoint.lease(lease_request(old)), LeaseRefused)
                 assert stored_refusal_at() == first_at and signals == []
                 # Another reason is new evidence: written, and announced.
-                newer = replace(mac_identity(), protocol_version=24)
+                newer = replace(mac_identity(), protocol_version=25)
                 assert isinstance(await endpoint.lease(lease_request(newer)), LeaseRefused)
                 record = _read(path, read_presence)
                 assert record is not None and record.refusal is not None
@@ -344,13 +344,13 @@ def test_a_replaced_process_is_refused_at_the_lease_and_at_the_work_route_fence(
 
             assert (
                 endpoint.require_current(
-                    incarnation_header=current.executor_incarnation, protocol_header="23"
+                    incarnation_header=current.executor_incarnation, protocol_header="24"
                 )
                 == current
             )
             for incarnation, protocol, code in (
-                (replaced.executor_incarnation, "23", ErrorCode.executor_incarnation_not_current),
-                (None, "23", ErrorCode.executor_incarnation_not_current),
+                (replaced.executor_incarnation, "24", ErrorCode.executor_incarnation_not_current),
+                (None, "24", ErrorCode.executor_incarnation_not_current),
                 (current.executor_incarnation, "21", ErrorCode.executor_version_refused),
                 (current.executor_incarnation, None, ErrorCode.executor_version_refused),
             ):

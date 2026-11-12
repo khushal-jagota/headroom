@@ -58,7 +58,6 @@ def test_incompatible_cli_refuses_before_native_launch(
 def test_worker_launch_preserves_sdk_arguments_and_keeps_unit_across_messages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
     monkeypatch.setenv("BASH_ENV", str(tmp_path / "user-bash-env"))
 
@@ -196,5 +195,37 @@ def test_owned_worker_callback_kills_a_child_that_ignores_term(
                 process.kill()
                 await asyncio.wait_for(process.wait(), 2)
             await process.aclose()
+
+    asyncio.run(exercise())
+
+
+def test_sdk_wrapped_spawn_refusal_does_not_leave_worker_custody_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SDK wraps an OS refusal, but no child exists to fence the next start."""
+    from claude_agent_sdk import CLIConnectionError
+
+    from planner.worker_supervision import records
+
+    root = tmp_path / "records"
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "scratch")
+    monkeypatch.setattr(
+        "claude_agent_sdk._internal.transport.subprocess_cli.anyio.open_process",
+        AsyncMock(side_effect=PermissionError("OS spawn refused")),
+    )
+
+    async def exercise() -> None:
+        environment = {"PLAN_TICKET_ID": "ticket", "PLAN_WORKER_PROCESS_ROOT": str(root)}
+        transport = _ClaudeCleanupTransport("", ClaudeAgentOptions(
+            cli_path=sys.executable, cwd=str(tmp_path), env=environment,
+        ))
+        with pytest.raises(CLIConnectionError, match="OS spawn refused"):
+            await transport.connect()
+        journal, = root.glob("*.json")
+        assert records.read(journal)["state"] == "complete"
+        assert not list((tmp_path / "scratch").glob("ticket-*"))
+        retry = await WorkerSupervisor.create(environment, tmp_path)
+        assert retry is not None
+        await retry.cancel_unspawned()
 
     asyncio.run(exercise())

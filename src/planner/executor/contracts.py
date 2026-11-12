@@ -43,6 +43,7 @@ from planner.executor.protocol import (
     MailboxCommand,
     MailboxPollReply,
     ModelListRequest,
+    WorkerCleanupUncertainty,
 )
 from planner.stalls.contracts import StallSource as StallSource
 from planner.ticket_workspaces.contracts import WorkspaceIdentity, WorkspaceState
@@ -121,6 +122,8 @@ class ExecutorHealthRead:
     queue_depth: int | None
     oldest_item_age_ms: int | None
     admission_stopped: bool
+    cleanup_uncertainties: tuple[WorkerCleanupUncertainty, ...] = ()
+    legacy_cleanup_notice: str | None = None
 
 
 class MailboxCommandState(StrEnum):

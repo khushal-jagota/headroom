@@ -45,6 +45,7 @@ from planner.core.authctx import (
     RequestContext,
     request_context,
 )
+from planner.core.authority import Target, TargetKind, require_above
 from planner.core.clock import Clock
 from planner.core.config import DB_BUSY_TIMEOUT_MS, Config
 from planner.core.contracts import (
@@ -831,6 +832,24 @@ def put_ticket_employee_configuration(
     )
     ticket = write_resolved_employee_configuration(conn, ticket_id, resolved, now=clk.now_unix())
     return _ticket_detail(conn, ticket.id, clk.now_unix())
+
+
+@router.post("/tickets/{ticket_id}/recheck-worker-cleanup")
+async def recheck_ticket_worker_cleanup(
+    ticket_id: str,
+    request: Request,
+    ctx: Ctx,
+    conversations: Conversations,
+) -> JsonDict:
+    """Inspect only this Ticket's recorded cleanup, including an ended Ticket."""
+    async with connection_off_the_loop(request) as conn:
+        def authorize() -> None:
+            tickets_data.read_ticket(conn, ticket_id)
+            require_above(conn, ctx.principal, Target(TargetKind.ticket, ticket_id))
+
+        await run_on_worker_thread(authorize)
+    result = await conversations.recheck_worker_cleanup(ticket_id)
+    return {"complete": result.complete, "reason": result.reason, "scope": result.scope}
 
 
 @router.post("/tickets/{ticket_id}/restart-worker")

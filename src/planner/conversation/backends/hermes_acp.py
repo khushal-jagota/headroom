@@ -161,6 +161,7 @@ from planner.conversation.message_files import (
 )
 from planner.conversation.worker_scratch import WorkerScratch
 from planner.worker_supervision import WorkerCleanupError, WorkerSupervisor
+from planner.worker_supervision.config import NATIVE_PHASE_SECONDS
 
 LOGGER = logging.getLogger("planner.conversation.backends.hermes_acp")
 
@@ -390,6 +391,7 @@ class HermesAcpBackendChild:
         self._sink = event_sink
         self._message_files = message_files
         self._processes = AsyncExitStack()
+        self._native_process: asyncio.subprocess.Process | None = None
         self._worker_scratch: WorkerScratch | None = None
         self._worker_supervisor: WorkerSupervisor | None = None
         self._connection: ClientSideConnection | None = None
@@ -753,9 +755,34 @@ class HermesAcpBackendChild:
     async def _stop_worker(self) -> None:
         supervisor = self._worker_supervisor
         if supervisor is not None:
-            result = await supervisor.stop(native_stop=self._processes.aclose)
+            result = await supervisor.stop(native_stop=self._stop_native_process)
             if not result.complete:
                 raise WorkerCleanupError(result.reason)
+
+    async def _stop_native_process(self) -> None:
+        process = self._native_process
+        # ACP's EOF and TERM grace periods exhaust the shared callback budget
+        # before its KILL phase. Retain the exact handle and escalate here first.
+        if process is not None and process.returncode is None:
+            if process.stdin is not None:
+                process.stdin.close()
+            for action in (None, process.terminate, process.kill):
+                if process.returncode is not None:
+                    break
+                if action is not None:
+                    try:
+                        action()
+                    except ProcessLookupError:
+                        pass
+                try:
+                    await asyncio.wait_for(process.wait(), NATIVE_PHASE_SECONDS)
+                except TimeoutError:
+                    continue
+            if process.returncode is None:
+                raise WorkerCleanupError(
+                    "The owned Hermes process did not stop before its deadline"
+                )
+        await self._processes.aclose()
 
     # --- starting -----------------------------------------------------------------------
 
@@ -776,7 +803,7 @@ class HermesAcpBackendChild:
                 self._worker_scratch = WorkerScratch(environment)
             except BaseException:
                 if self._worker_supervisor is not None:
-                    self._worker_supervisor.cancel_unspawned()
+                    await self._worker_supervisor.cancel_unspawned()
                 raise
             environment = self._worker_scratch.environment
             if self._worker_supervisor is not None:
@@ -789,7 +816,7 @@ class HermesAcpBackendChild:
                 try:
                     await reporter(str(supervisor.path))
                 except BaseException:
-                    supervisor.cancel_unspawned()
+                    await supervisor.cancel_unspawned()
                     raise
         try:
             argv = launch.argv if supervisor is None else supervisor.argv(launch.argv)
@@ -804,9 +831,11 @@ class HermesAcpBackendChild:
             )
         except OSError as would_not_spawn:
             if supervisor is not None:
-                supervisor.cancel_unspawned()
+                await supervisor.cancel_unspawned()
             raise BackendSpawnFailed(str(would_not_spawn)) from would_not_spawn
+        self._native_process = process
         if supervisor is not None:
+            await supervisor.spawned(process.pid)
             await supervisor.started(process.pid)
         if process.stderr is not None:
             self._standard_error_reader = asyncio.create_task(

@@ -462,10 +462,11 @@ Check a short network loss and a VPS restart against
 A Mac service restart must also establish what happens to its provider processes.
 Scripted Linux tests cannot prove that host behavior. The shared Worker supervisor
 records per-Worker process ownership under `$EXECUTOR_ROOT/run/worker-processes` and
-reconciles it before the first lease. Unknown cleanup fences new work. On macOS, a
-surviving process without a safe signal handle requires operator retirement. A tool
-that detaches before observation can escape. An older nonempty or unreadable
-`agent-processes.json` remains evidence and fences startup instead of disappearing.
+reconciles it before the first lease. Unknown cleanup fences the affected Ticket, and the lease reports its reason. Unrelated Tickets continue. On macOS, signals to recorded survivors require an immediate PID and microsecond
+birth check. A small check-to-signal race remains. Unknown cleanup stays visible. A tool
+that detaches before observation can escape. The first upgraded start attempts cleanup from the older `agent-processes.json`
+once under its original recorded-start rule, then removes that old file. Any survivor
+becomes an unassigned PID notice. It does not fence a Ticket or authorize another signal.
 Mac application previews remain
 unavailable. Retain evidence separately from production and preserve pending bytes.
 This runbook does not authorize changing application routes or account policy.

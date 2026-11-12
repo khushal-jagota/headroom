@@ -1,4 +1,4 @@
-"""Protocol 22's identity, version admission, mailbox wire values and manifest rule.
+"""Protocol 24's identity, version admission, mailbox wire values and manifest rule.
 
 Risk: a Mac and the VPS disagree about who may speak (versions, identity shape) or what
 a body means, and work is refused or misread with no error until both halves run. The
@@ -99,17 +99,17 @@ def test_identity_parses_with_and_without_the_rollback_generation() -> None:
     "protocol_version,spool_format_version,reason",
     [
         (21, 5, MAC_NEEDS_UPDATE),
-        (22, 5, MAC_NEEDS_UPDATE),
-        (23, 4, MAC_NEEDS_UPDATE),
-        (24, 5, MAC_VERSION_INCOMPATIBLE),
-        (23, 6, MAC_VERSION_INCOMPATIBLE),
+        (23, 5, MAC_NEEDS_UPDATE),
+        (24, 4, MAC_NEEDS_UPDATE),
+        (25, 5, MAC_VERSION_INCOMPATIBLE),
+        (24, 6, MAC_VERSION_INCOMPATIBLE),
     ],
 )
-def test_only_protocol_23_on_spool_5_is_admitted(
+def test_only_protocol_24_on_spool_5_is_admitted(
     protocol_version: int, spool_format_version: int, reason: str
 ) -> None:
-    assert supports_executor_versions(23, 5)
-    validate_identity(ExecutorIdentity(23, "revision", 5, INCARNATION))
+    assert supports_executor_versions(24, 5)
+    validate_identity(ExecutorIdentity(24, "revision", 5, INCARNATION))
     assert not supports_executor_versions(protocol_version, spool_format_version)
     assert refusal_reason_for_versions(protocol_version, spool_format_version) == reason
     identity = ExecutorIdentity(protocol_version, "revision", spool_format_version, INCARNATION)
@@ -117,7 +117,7 @@ def test_only_protocol_23_on_spool_5_is_admitted(
         validate_identity(identity)
     validate_identity(identity, check_versions=False)
     assert not supports_executor_versions(True, 5)
-    assert not supports_executor_versions(23, True)
+    assert not supports_executor_versions(24, True)
 
 
 def _prompt_command() -> ChildCommand:
@@ -155,7 +155,7 @@ def test_mailbox_values_round_trip_and_ignore_unknown_fields() -> None:
     assert decode_bounded(json.dumps(raw).encode(), MailboxPollReply) == poll
 
     lease = LeaseRequest(
-        identity=ExecutorIdentity(23, "revision", 5, INCARNATION),
+        identity=ExecutorIdentity(24, "revision", 5, INCARNATION),
         process_id=42,
         mac_wall_clock_ms=1,
         queue_depth=2,
@@ -170,6 +170,10 @@ def test_mailbox_values_round_trip_and_ignore_unknown_fields() -> None:
     del raw["going_to_sleep"]
     raw["identity"].pop("connection_generation")
     assert decode_bounded(json.dumps(raw).encode(), LeaseRequest) == lease
+    without_cleanup_evidence = {key: value for key, value in raw.items()
+                                if key != "cleanup_uncertainties"}
+    with pytest.raises(ValidationError, match="cleanup evidence"):
+        decode_bounded(json.dumps(without_cleanup_evidence).encode(), LeaseRequest)
 
     outcome = CommandOutcome(command.command_id, CHILD, CommandDisposition.refused, {"reason": "x"})
     report = CommandOutcomeReport((CommandResult(command.command_id, child_outcome=outcome),))

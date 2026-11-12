@@ -619,6 +619,7 @@ def test_absent_hermes_interpreter_preserves_spawn_failure_without_session_or_pr
     supervisor = Mock()
     supervisor.argv.side_effect = tuple
     supervisor.stop = AsyncMock(return_value=CleanupResult(True, ""))
+    supervisor.cancel_unspawned = AsyncMock()
     async def create(environment: dict[str, str], directory: Path) -> object:
         supervisor.environment = environment
         return supervisor
@@ -666,12 +667,98 @@ def test_absent_hermes_interpreter_preserves_spawn_failure_without_session_or_pr
         assert refusal.value.__cause__ is failure
         assert launches == [str(missing_interpreter)]
         supervisor.argv.assert_called_once_with((str(missing_interpreter), "-m", "hermes.acp"))
-        supervisor.cancel_unspawned.assert_called_once()
+        supervisor.cancel_unspawned.assert_awaited_once()
         supervisor.stop.assert_awaited_once()
         assert len(scratch_paths) == 1 and not scratch_paths[0].exists()
         assert sink.vendor_session_cursor is None
         assert sink.agent_contents == []
         assert sink.endings == []
         await child.stop()
+
+    _run(exercise)
+
+
+def test_configured_home_worker_root_reaches_real_hermes_transport_without_ambient_paths(
+    tmp_path: Path, executor_transport_home: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The curated Hermes environment must retain the configured supervision root."""
+    from tests.support.conversation_scripted_acp_agent import scripted_acp_agent_launch
+
+    from planner.conversation.production_backends import production_backend_launches
+    from planner.worker_supervision import records
+
+    monkeypatch.delenv("PLAN_DB_PATH", raising=False)
+    monkeypatch.delenv("PLAN_WORKER_PROCESS_ROOT", raising=False)
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "scratch")
+    configured_root = tmp_path / "configured-home" / "worker-processes"
+    launches = production_backend_launches(
+        panels_server_url="http://127.0.0.1:8811", worker_process_root=configured_root,
+    )
+    scripted = scripted_acp_agent_launch(
+        control_socket_path=str(executor_transport_home / "configured.sock")
+    )
+    launch = replace(launches.hermes, argv=scripted.argv, environment_overrides=(
+        *launches.hermes.environment_overrides, *scripted.environment_overrides,
+    ))
+    start = replace(_resolved_start(tmp_path), role_materials=ConversationRoleMaterials(
+        role_text="Worker", identity_environment_variables=(("PLAN_TICKET_ID", "ticket"),),
+    ))
+
+    async def exercise() -> None:
+        sink = _RecordingSink()
+        child = HermesAcpBackendChild(
+            launch=launch, resolved_start=start, event_sink=sink,
+            message_files=ConversationMessageFiles(tmp_path / "files"),
+        )
+        try:
+            await asyncio.wait_for(child.start(start, vendor_session_cursor=None), 10)
+            assert sink.vendor_session_cursor is not None
+            journals = list(configured_root.glob("*.json"))
+            assert len(journals) == 1
+            record = records.read(journals[0])
+            assert record["ticket_id"] == "ticket"
+            assert record["root"]["pid"] > 0
+        finally:
+            await asyncio.wait_for(child.stop(), 10)
+        assert records.read(journals[0])["state"] == "complete"
+
+    _run(exercise)
+
+
+def test_owned_hermes_callback_kills_a_child_that_ignores_term(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ACP's default grace phases cannot consume the shared deadline before KILL."""
+    import sys
+
+    from acp.transports import spawn_stdio_transport
+
+    monkeypatch.setattr(
+        "planner.conversation.backends.hermes_acp.NATIVE_PHASE_SECONDS", 0.05
+    )
+
+    async def exercise() -> None:
+        start = _resolved_start(tmp_path)
+        child = HermesAcpBackendChild(
+            launch=AcpChildLaunch((sys.executable,)), resolved_start=start,
+            event_sink=_RecordingSink(), message_files=ConversationMessageFiles(tmp_path / "files"),
+        )
+        _, _, process = await child._processes.enter_async_context(spawn_stdio_transport(
+            sys.executable, "-c",
+            "import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+            "print('ready',flush=True); time.sleep(60)",
+        ))
+        child._native_process = process
+        try:
+            assert process.stdout is not None
+            await asyncio.wait_for(process.stdout.readline(), 2)
+            await asyncio.wait_for(child._stop_native_process(), 1)
+            assert process.returncode == -9
+            assert child._native_process is process
+        finally:
+            if process.returncode is None:
+                process.kill()
+                await asyncio.wait_for(process.wait(), 2)
+            await child._processes.aclose()
 
     _run(exercise)

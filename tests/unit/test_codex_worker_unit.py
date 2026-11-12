@@ -34,10 +34,13 @@ class _ObservedUnit:
     def argv(self, original: Sequence[str]) -> tuple[str, ...]:
         return tuple(original)
 
+    async def spawned(self, pid: int) -> None:
+        pass
+
     async def started(self, pid: int) -> None:
         pass
 
-    def cancel_unspawned(self) -> None:
+    async def cancel_unspawned(self) -> None:
         pass
 
     async def stop(self, *, native_stop=None) -> CleanupResult:  # type: ignore[no-untyped-def]

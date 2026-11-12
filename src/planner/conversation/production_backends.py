@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 import shutil
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final
 
@@ -69,6 +69,7 @@ class ProductionBackendLaunches:
 def production_backend_launches(
     *,
     panels_server_url: str,
+    worker_process_root: Path | None = None,
     executable_path: ExecutablePathResolver = shutil.which,
 ) -> ProductionBackendLaunches:
     """This machine's three agents, resolved.
@@ -79,7 +80,7 @@ def production_backend_launches(
     fact about the server that is running now — a conversation resumed after a restart must
     reach the server that resumed it, not the one it was started under.
     """
-    return ProductionBackendLaunches(
+    launches = ProductionBackendLaunches(
         hermes=_hermes_launch(panels_server_url),
         codex=codex_app_server_child_launch(
             codex_executable=_on_path(executable_path, "codex"),
@@ -87,11 +88,26 @@ def production_backend_launches(
         ),
         claude=_claude_launch(panels_server_url, executable_path),
     )
+    if worker_process_root is None:
+        return launches
+    root = str(worker_process_root.expanduser().resolve())
+    return ProductionBackendLaunches(
+        hermes=replace(launches.hermes, environment_overrides=(
+            *launches.hermes.environment_overrides, ("PLAN_WORKER_PROCESS_ROOT", root),
+        )),
+        codex=replace(launches.codex, environment_overrides=(
+            *launches.codex.environment_overrides, ("PLAN_WORKER_PROCESS_ROOT", root),
+        )),
+        claude=replace(launches.claude, environment_overrides=(
+            *launches.claude.environment_overrides, ("PLAN_WORKER_PROCESS_ROOT", root),
+        )),
+    )
 
 
 def production_backend_child_factories(
     *,
     panels_server_url: str,
+    worker_process_root: Path | None = None,
     executable_path: ExecutablePathResolver = shutil.which,
     remembered_codex_login_rejection: CodexLoginRejectionMemory | None = None,
 ) -> Mapping[ConversationBackendKey, BackendChildFactory]:
@@ -102,7 +118,8 @@ def production_backend_child_factories(
     conversation uses.
     """
     launches = production_backend_launches(
-        panels_server_url=panels_server_url, executable_path=executable_path
+        panels_server_url=panels_server_url, executable_path=executable_path,
+        worker_process_root=worker_process_root,
     )
     return {
         ConversationBackendKey.hermes: HermesAcpBackendChildFactory(launches.hermes),

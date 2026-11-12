@@ -259,7 +259,13 @@ class MacPresenceService:
                     current=request.identity.executor_incarnation,
                     now_ms=now,
                 )
-            if lease_changes_presence_signal(
+            previous_lease = None if accepted.previous is None else accepted.previous.lease
+            cleanup_changed = (
+                previous_lease is None
+                or previous_lease.cleanup_uncertainties != request.cleanup_uncertainties
+                or previous_lease.legacy_cleanup_notice != request.legacy_cleanup_notice
+            )
+            if cleanup_changed or lease_changes_presence_signal(
                 accepted.previous,
                 accepted.current,
                 new_incarnation=accepted.new_incarnation,
@@ -416,6 +422,8 @@ class MacPresenceService:
             queue_depth=None if lease is None else lease.queue_depth,
             oldest_item_age_ms=None if lease is None else lease.oldest_item_age_ms,
             admission_stopped=False if lease is None else lease.admission_stopped,
+            cleanup_uncertainties=() if lease is None else lease.cleanup_uncertainties,
+            legacy_cleanup_notice=None if lease is None else lease.legacy_cleanup_notice,
         )
 
     # --- drains --------------------------------------------------------------------------
@@ -431,6 +439,9 @@ class MacPresenceService:
             and self._clock() - record.last_lease_at_ms <= LEASE_CONTINUITY_SECONDS * 1000
             and lease.identity.executor_incarnation == record.executor_incarnation
             and not lease.waiting_conversations_truncated
+            and not any(
+                item.conversation_id == conversation_id for item in lease.cleanup_uncertainties
+            )
             and all(
                 waiting.conversation_id != conversation_id
                 for waiting in lease.waiting_conversations

@@ -4,6 +4,7 @@ import TicketLifecycleControls from "../src/components/TicketLifecycleControls.s
 import { queries } from "../src/lib/queryCatalogue";
 import type { TicketDetail } from "../src/lib/types";
 import { QueryClient } from "@tanstack/svelte-query";
+import { recheckWorkerCleanup, workerCleanupMessage } from "../src/lib/workerCleanup";
 
 const ticket = (overrides: Partial<TicketDetail> = {}): TicketDetail => ({
   id: "ticket-example", stage: "needs_implementation", is_backlogged: false,
@@ -40,6 +41,7 @@ describe("explicit ticket lifecycle controls", () => {
       expect(controls(value)).toContain("Resume ticket");
     }
     expect(controls(ticket({ stage:"done", is_backlogged:true }), true)).not.toContain("data-ticket-backlog-action");
+    expect(controls(ticket({ stage:"done" }), true)).toContain("Recheck Worker cleanup");
   });
 });
 
@@ -88,4 +90,18 @@ describe("bounded manager ticket discovery", () => {
       }
     } finally { vi.unstubAllGlobals(); }
   });
+});
+
+
+it("rechecks exact cleanup and preserves an unproven result without a start request", async () => {
+  const requests: Array<{ url: string; method: string }> = [];
+  vi.stubGlobal("fetch", async (input: string, options: RequestInit) => {
+    requests.push({ url: input, method: String(options.method) });
+    return new Response(JSON.stringify({ complete: false, reason: "Recorded tool remains" }), { status: 200 });
+  });
+  try {
+    const result = await recheckWorkerCleanup("ended ticket");
+    expect(requests).toEqual([{ url: "/api/tickets/ended%20ticket/recheck-worker-cleanup", method: "POST" }]);
+    expect(workerCleanupMessage(result)).toBe("Worker cleanup not proven. Recorded tool remains");
+  } finally { vi.unstubAllGlobals(); }
 });

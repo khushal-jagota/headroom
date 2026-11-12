@@ -361,3 +361,44 @@ def test_manager_settlement_filters_before_paging(
             response = api.client.get("/api/managers", params=params)
             assert response.status_code == 400, response.text
             assert response.json()["error"]["detail"]["parameters"] == ["settled"]
+
+
+def test_cleanup_recheck_inspects_one_ticket_without_starting_even_after_it_ends(
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from planner.worker_supervision.contracts import CleanupResult
+
+    created = cli(server, "ticket", "create", "--input-json", "-", stdin=json.dumps({
+        "worker_type": "coding", "title": "Inspect retained cleanup",
+    }))
+    ticket_id = created["id"]
+    checks: list[str] = []
+
+    async def inspect(_self: InMemoryConversationSystem, target: str) -> CleanupResult:
+        checks.append(target)
+        return CleanupResult(
+            len(checks) > 1,
+            "Recorded tool remains" if len(checks) == 1 else "Recorded tool ended",
+        )
+
+    monkeypatch.setattr(InMemoryConversationSystem, "recheck_worker_cleanup", inspect)
+    starts = AsyncMock(side_effect=AssertionError("A cleanup recheck cannot start work"))
+    monkeypatch.setattr(InMemoryConversationSystem, "start_conversation", starts)
+    first = cli(server, "ticket", "recheck-worker-cleanup", ticket_id)
+    assert first == {"complete": False, "reason": "Recorded tool remains"}
+    denied = api.client.post(f"/api/tickets/{ticket_id}/recheck-worker-cleanup", headers={
+        "X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id,
+    })
+    assert denied.status_code == 400
+    assert denied.json()["error"]["code"] == "agent_forbidden"
+    assert checks == [ticket_id]
+    with closing(connect(str(server.db_path))) as conn:
+        conn.execute("UPDATE tickets SET stage='done' WHERE id=?", (ticket_id,))
+        conn.commit()
+    ended = cli(server, "ticket", "recheck-worker-cleanup", ticket_id)
+    assert ended == {"complete": True, "reason": "Recorded tool ended"}
+    assert checks == [ticket_id, ticket_id]
+    starts.assert_not_awaited()

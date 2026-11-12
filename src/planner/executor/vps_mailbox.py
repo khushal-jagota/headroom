@@ -57,6 +57,7 @@ from planner.executor.protocol import (
     MailboxOperation,
     MailboxPollReply,
     ModelListRequest,
+    RecheckCleanup,
     RejectedCommandResult,
     StartRun,
     Steer,
@@ -208,6 +209,42 @@ class SqliteCommandMailbox:
                     raise ValueError("command identity reused with different content")
                 return existing.command
             child = command.child
+            if isinstance(command.arguments, RecheckCleanup):
+                source = command.arguments.source
+                ticket = connection.execute(
+                    "SELECT conversation_id FROM tickets WHERE id=?",
+                    (command.arguments.ticket_id,),
+                ).fetchone()
+                assignment = connection.execute(
+                    "SELECT principal_kind,principal_id FROM executor_child_assignments "
+                    "WHERE executor_incarnation=? AND child_id=? AND conversation_id=?",
+                    (source.executor_incarnation, source.child_id, source.conversation_id),
+                ).fetchone()
+                authorized = (
+                    current_incarnation(connection) == child.executor_incarnation
+                    and assignment is not None
+                    and tuple(assignment) == ("ticket", command.arguments.ticket_id)
+                    and ticket is not None
+                    and (child.child_id, child.conversation_id)
+                    == (source.child_id, source.conversation_id)
+                )
+                if not authorized:
+                    connection.rollback()
+                    return CommandOutcome(
+                        command.command_id, child, CommandDisposition.refused,
+                        {"reason": "cleanup_source_not_owned"},
+                    )
+                # Inspection grants no native start/stop authority. Historical ownership
+                # remains valid after an older home already closed its source assignment.
+                placed = self._insert(
+                    connection,
+                    MailboxCommand(0, command.command_id, now, child_command=command),
+                    executor_incarnation=child.executor_incarnation,
+                    conversation_id=child.conversation_id, child_id=child.child_id,
+                    turn_number=None,
+                )
+                connection.commit()
+                return placed
             if (
                 current_incarnation(connection) != child.executor_incarnation
                 or ExecutorStore.open_child_assignment(connection, child) is None

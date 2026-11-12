@@ -18,7 +18,10 @@ export type ExecutorRefusal = {
 // What the server last heard from the Mac's lease. `since_ms` is when that began:
 // continuous presence, the going-to-sleep lease, the last lease, or the refusal.
 export type MacPresence = "present" | "asleep" | "not_heard_from" | "never" | "refused";
+export type WorkerCleanupUncertainty = { ticket_id: string; conversation_id: string; reason: string };
 export type MacStatus = {
+  cleanup_uncertainties?: WorkerCleanupUncertainty[];
+  legacy_cleanup_notice?: string | null;
   presence?: MacPresence;
   since_ms?: number | null;
   identity?: ExecutorIdentity | null;

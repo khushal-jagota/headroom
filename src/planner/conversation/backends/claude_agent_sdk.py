@@ -442,11 +442,7 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
     def _build_command(self) -> list[str]:
         command = super()._build_command()
         if self._worker_supervisor is not None:
-            try:
-                return list(self._worker_supervisor.argv(command))
-            except OSError:
-                self._worker_supervisor.cancel_unspawned()
-                raise
+            return list(self._worker_supervisor.argv(command))
         return command
 
     async def connect(self) -> None:
@@ -463,9 +459,14 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
         try:
             await self._connect_worker()
         except BaseException as error:
-            if (isinstance(error, OSError) and self._process is None
+            cause = error
+            while cause.__cause__ is not None:
+                cause = cause.__cause__
+            if (isinstance(cause, OSError) and self._process is None
                     and self._worker_supervisor is not None):
-                self._worker_supervisor.cancel_unspawned()
+                await self._worker_supervisor.cancel_unspawned()
+            elif self._worker_supervisor is not None and self._process is not None:
+                await self._worker_supervisor.spawned(self._process.pid)
             # Only Workers add this startup cleanup. Other conversations retain
             # the SDK's existing failure and later explicit disconnect behavior.
             if self._worker_scratch is not None:
@@ -492,7 +493,7 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
                 self._worker_scratch = WorkerScratch(environment)
             except BaseException:
                 if self._worker_supervisor is not None:
-                    self._worker_supervisor.cancel_unspawned()
+                    await self._worker_supervisor.cancel_unspawned()
                 raise
             environment = self._worker_scratch.environment
             self._options.env.update(environment)
@@ -503,7 +504,7 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
                     try:
                         await self.supervision_reporter(str(self._worker_supervisor.path))
                     except BaseException:
-                        self._worker_supervisor.cancel_unspawned()
+                        await self._worker_supervisor.cancel_unspawned()
                         raise
         await super().connect()
         if self._worker_supervisor is not None and self._process is not None:

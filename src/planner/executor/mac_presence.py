@@ -101,6 +101,7 @@ class MacLeaseLoop:
         self._workspace_cleanup_task: asyncio.Task[None] | None = None
 
     async def _request(self) -> LeaseRequest:
+        await self.runner.refresh_worker_cleanup()
         backlog = await asyncio.to_thread(self.outbox.lease_backlog)
         # The runner's state is read on the loop, which is the only thread changing it.
         return LeaseRequest(
@@ -114,6 +115,8 @@ class MacLeaseLoop:
             working_turns=self.runner.working_turns(),
             admission_stopped=self.runner.admission_stopped,
             going_to_sleep=self.presence.going_to_sleep,
+            cleanup_uncertainties=self.runner.cleanup_uncertainties,
+            legacy_cleanup_notice=self.runner.legacy_cleanup_notice,
         )
 
     async def lease_once(self) -> bool:

@@ -220,6 +220,7 @@ class ChildOperation(StrEnum):
     answer_permission_ask = "answer_permission_ask"
     answer_user_input = "answer_user_input"
     stop = "stop"
+    recheck_cleanup = "recheck_cleanup"
 
 
 class BackendEventMethod(StrEnum):
@@ -268,6 +269,7 @@ class StartRun:
     canonical_skill_snapshot: CanonicalSkillSnapshot
     vendor_session_cursor: str | None = None
     workspace_home_relative: str | None = None
+    supervision_protocol: int = 24
 
     kind: Literal["start"] = "start"
 
@@ -328,8 +330,16 @@ class StopRun:
     kind: Literal["stop"] = "stop"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RecheckCleanup:
+    source: ChildReference
+    ticket_id: str
+    kind: Literal["recheck_cleanup"] = "recheck_cleanup"
+
+
 type ChildCommandArguments = Annotated[
-    StartRun | WritePrompt | Steer | CancelTurn | AnswerPermission | AnswerUserInput | StopRun,
+    StartRun | WritePrompt | Steer | CancelTurn | AnswerPermission | AnswerUserInput
+    | StopRun | RecheckCleanup,
     Field(discriminator="kind"),
 ]
 
@@ -539,6 +549,13 @@ class WorkingTurn:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkerCleanupUncertainty:
+    ticket_id: str
+    conversation_id: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class LeaseRequest:
     """Route 1, every LEASE_INTERVAL_SECONDS. The Mac's own clock is display only."""
 
@@ -556,6 +573,17 @@ class LeaseRequest:
     working_turns: tuple[WorkingTurn, ...]
     admission_stopped: bool
     going_to_sleep: bool = False
+    cleanup_uncertainties: tuple[WorkerCleanupUncertainty, ...] = ()
+    legacy_cleanup_notice: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_cleanup_evidence(cls, value: object) -> object:
+        # Protocol 24 leases carry explicit cleanup evidence. Old persisted leases
+        # cannot prove a replaced source ended merely because their field is absent.
+        if isinstance(value, dict) and "cleanup_uncertainties" not in value:
+            raise ValueError("The lease lacks Worker cleanup evidence")
+        return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -640,6 +668,7 @@ class MailboxOperation(StrEnum):
     answer_permission_ask = "answer_permission_ask"
     answer_user_input = "answer_user_input"
     stop = "stop"
+    recheck_cleanup = "recheck_cleanup"
     read_model_list = "read_model_list"
 
 

@@ -292,6 +292,9 @@ def create_app(
             if backend_child_factories_for_test is not None
             else production_backend_child_factories(
                 panels_server_url=f"http://{HOST}:{config.port}",
+                worker_process_root=(
+                    Path(config.db_path).expanduser().resolve().parent / "worker-processes"
+                ),
                 remembered_codex_login_rejection=remembered_codex_login_rejection,
             )
         )

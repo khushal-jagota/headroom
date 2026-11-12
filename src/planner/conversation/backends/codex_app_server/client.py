@@ -223,7 +223,7 @@ class CodexAppServerClient:
                     self._worker_scratch = WorkerScratch(environment)
                 except BaseException:
                     if self._worker_supervisor is not None:
-                        self._worker_supervisor.cancel_unspawned()
+                        await self._worker_supervisor.cancel_unspawned()
                     raise
                 environment = self._worker_scratch.environment
                 if self._worker_supervisor is not None:
@@ -233,7 +233,7 @@ class CodexAppServerClient:
                 try:
                     await supervision_reporter(str(supervisor.path))
                 except BaseException:
-                    supervisor.cancel_unspawned()
+                    await supervisor.cancel_unspawned()
                     raise
             process = await asyncio.create_subprocess_exec(
                 *(argv if supervisor is None else supervisor.argv(argv)),
@@ -246,11 +246,12 @@ class CodexAppServerClient:
             )
             self._process = process
             if supervisor is not None:
+                await supervisor.spawned(process.pid)
                 await supervisor.started(process.pid)
         except BaseException as would_not_spawn:
             if self._worker_supervisor is not None:
                 if process is None and isinstance(would_not_spawn, OSError):
-                    self._worker_supervisor.cancel_unspawned()
+                    await self._worker_supervisor.cancel_unspawned()
                 await self._stop_worker()
                 self._worker_supervisor = None
             if self._worker_scratch is not None:

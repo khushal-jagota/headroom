@@ -33,6 +33,7 @@ LAUNCH_AGENT_RESTART_THROTTLE_SECONDS: Final = 10
 # request; "timeout" values bound the Mac client's whole request.
 # Presence: a lease every 10 s, judged by the VPS clock; away after 60 s without one.
 LEASE_INTERVAL_SECONDS: Final = 10.0
+CLEANUP_RECHECK_TIMEOUT_SECONDS: Final = 30.0
 LEASE_TIMEOUT_SECONDS: Final = 10.0
 LEASE_SERVER_LIMIT_SECONDS: Final = 5.0
 MAC_AWAY_AFTER_SECONDS: Final = 60.0

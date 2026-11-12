@@ -46,6 +46,15 @@ class LinuxWorkerProcesses:
             found[process.pid] = process
         return found
 
+    def is_absent(self, process: WorkerProcess, deadline: float) -> bool:
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Worker inspection deadline expired")
+        try:
+            current = self._read(process.pid)
+        except (FileNotFoundError, ProcessLookupError):
+            return True
+        return current.birth != process.birth or current.zombie
+
     def prepare_launch(self) -> None:
         if os.getsid(0) != os.getpid() or os.getpgrp() != os.getpid():
             os.setsid()

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 import ssl
 from functools import partial
@@ -24,6 +25,7 @@ from planner.executor.configuration import (
     ExecutorPaths,
     validate_server_url,
 )
+from planner.executor.legacy_worker_cleanup import migrate_once
 from planner.executor.mac_agent_gateway import AgentGateway
 from planner.executor.mac_catalog import MacCatalog
 from planner.executor.mac_files import MacFiles
@@ -44,7 +46,7 @@ from planner.executor.update_configuration import (
     MAC_RUNTIME_HANDOFF_ENV,
     MAC_RUNTIME_UPDATE_EXIT_CODE,
 )
-from planner.worker_supervision import WorkerCleanupError, reconcile
+from planner.worker_supervision import reconcile
 
 # A replaced incarnation exits with this code, so launchd starts a fresh process.
 REPLACED_INCARNATION_EXIT_CODE = 1
@@ -153,24 +155,13 @@ class MacService:
         self._stop.set()
 
     async def _reconcile_worker_processes(self) -> None:
-        """Retain uncertain startup evidence and refuse new work on every OS."""
+        """Attempt cleanup, then retain only affected Ticket fences without a restart."""
         try:
-            legacy_path = self.paths.run / "agent-processes.json"
-            if legacy_path.exists():
-                legacy = await asyncio.to_thread(read_record, legacy_path)
-                if legacy is None or legacy.get("processes") != []:
-                    self.runner.supervision_cleanup_uncertain = (
-                        "Legacy agent process evidence requires explicit retirement"
-                    )
-            result = await asyncio.to_thread(reconcile, self.paths.run / "worker-processes")
-            if not result.complete:
-                self.runner.supervision_cleanup_uncertain = result.reason
+            await asyncio.to_thread(migrate_once, self.paths.run)
         except (OSError, ValueError) as error:
-            self.runner.supervision_cleanup_uncertain = str(error)
-        if self.runner.supervision_cleanup_uncertain is not None:
-            # A fresh lease replaces old custody at the home. Never publish it
-            # while old native processes lack positive cleanup evidence.
-            raise WorkerCleanupError(self.runner.supervision_cleanup_uncertain)
+            logging.getLogger(__name__).warning("Legacy cleanup compatibility pass: %s", error)
+        await asyncio.to_thread(reconcile, self.paths.run / "worker-processes")
+        await self.runner.refresh_worker_cleanup(revoke_pending=True)
 
     async def run(self) -> None:
         loops: list[asyncio.Task[None]] = []

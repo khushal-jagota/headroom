@@ -3,10 +3,12 @@
   import { queries } from "../../lib/queryCatalogue";
   import { mutateJson } from "../../lib/mutate";
   import { MACHINE_ICONS, MACHINE_COLORS, type Machine, type MachineIcon, type MachineColor } from "../../lib/machines/contracts";
+  import MacStatus from "./MacStatus.svelte";
   import MachineSymbol from "./MachineSymbol.svelte";
   import Button from "../Button.svelte";
   import ErrorLine from "../ErrorLine.svelte";
   const machines = createQuery(() => queries.machines());
+  const executorHealth = createQuery(() => ({...queries.executorHealth(), enabled: Boolean(machines.data?.machines.some(machine => !machine.is_home))}));
   let editing = $state<string | null>(null);
   let name = $state("");
   let icon = $state<MachineIcon>("server");
@@ -39,6 +41,7 @@
           </div>
           {#if editing !== machine.machine_id}<Button variant="ghost" onclick={() => edit(machine)}>Edit</Button>{/if}
         </div>
+        {#if !machine.is_home}<MacStatus machineId={machine.machine_id} health={executorHealth.data} />{/if}
         {#if editing === machine.machine_id}
           <form onsubmit={(event) => {event.preventDefault(); void save();}}>
             <label>Name<input bind:value={name} required maxlength="80" disabled={saving} /></label>

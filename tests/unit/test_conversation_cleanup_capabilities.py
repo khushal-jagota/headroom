@@ -402,3 +402,82 @@ def test_local_workspace_stop_holds_start_admission_through_detach(tmp_path: Pat
             await harness.system.shutdown()
 
     asyncio.run(exercise())
+
+
+def test_recheck_retires_idle_custody_after_parent_crash_without_a_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A quiet recorded child must not require a surviving foreground turn to retire."""
+    from tests.support.principals import OWNER_PRINCIPAL
+
+    from planner.ticket_workspaces.contracts import WorkspaceIdentity
+    from planner.ticket_workspaces.data import register_workspace
+    from planner.tickets.data import create_ticket
+
+    db_path = tmp_path / "planner.db"
+    _create_database(db_path)
+
+    async def exercise() -> None:
+        harness = _Harness(db_path)
+        await _start(harness, "idle_child")
+        await harness.system.send("idle_child", text_message_content("work"), sender_label="owner")
+        await harness.complete_turn("idle_child")
+        with closing_connection(connect(str(db_path))) as conn:
+            ticket = create_ticket(
+                conn, title="Ended Worker cleanup", principal=OWNER_PRINCIPAL,
+                now=1, title_max_chars=200, worker_type="coding",
+            )
+            conn.execute(
+                "UPDATE tickets SET conversation_id=?,stage='done' WHERE id=?",
+                ("idle_child", ticket.id),
+            )
+            register_workspace(conn, ticket.id, "idle_child", WorkspaceIdentity("host", "folder"))
+            conn.commit()
+            assert conn.execute(
+                "SELECT state FROM conversation_child_custody WHERE conversation_id='idle_child'"
+            ).fetchone()[0] == "started"
+        # A crashed parent loses its in-memory adapter, while the exact source row
+        # survives. The fake child names an impossible PID, so fresh absence is real.
+        state = await harness.system._conversation_state("idle_child")
+        assert state is not None
+        state.child = None
+        assert (await harness.system.recheck_worker_cleanup(ticket.id)).complete
+        with closing_connection(connect(str(db_path))) as conn:
+            assert conn.execute(
+                "SELECT state FROM conversation_child_custody WHERE conversation_id='idle_child'"
+            ).fetchone()[0] == "retired"
+        assert harness.backend("idle_child").stops == 0
+        await harness.system.kill("idle_child")
+        assert await harness.system.retirement_is_confirmed("idle_child")
+
+        # The same explicit action must settle a crashed unknown turn as well as
+        # idle custody, after fresh proof. It must never signal or start work.
+        from planner.conversation import child_custody
+
+        with closing_connection(connect(str(db_path))) as conn:
+            conn.execute(
+                "UPDATE conversation_child_custody SET state='started' "
+                "WHERE conversation_id='idle_child'"
+            )
+            conn.execute(
+                "UPDATE conversation_lifecycle_facts SET status='unknown' "
+                "WHERE conversation_id='idle_child' AND kind='turn'"
+            )
+            conn.commit()
+        harness.store.blocked_local_conversations.add("idle_child")
+        gone = False
+        monkeypatch.setattr(child_custody, "retirement_row_proven", lambda row: gone)
+
+        def cannot_signal(*args: object) -> bool:
+            raise AssertionError("An observational recheck attempted a signal")
+
+        monkeypatch.setattr(child_custody, "stop_recorded_child", cannot_signal)
+        assert not (await harness.system.recheck_worker_cleanup(ticket.id)).complete
+        assert "idle_child" in harness.store.blocked_local_conversations
+        gone = True
+        assert (await harness.system.recheck_worker_cleanup(ticket.id)).complete
+        assert "idle_child" not in harness.store.blocked_local_conversations
+        assert harness.backend("idle_child").session_starts == 1
+        await harness.system.shutdown()
+
+    asyncio.run(exercise())

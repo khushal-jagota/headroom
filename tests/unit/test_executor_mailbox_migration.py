@@ -195,3 +195,38 @@ def test_the_migrated_incarnation_passes_the_fence_until_a_new_process_leases(
             )
         conn.rollback()
     assert replaced.value.code is ErrorCode.executor_incarnation_not_current
+
+
+def test_cleanup_recheck_upgrade_preserves_mailbox_rows_and_deleted_cursor(tmp_path: Path) -> None:
+    """The new operation must not lose a result or reuse a pruned mailbox sequence."""
+    path = str(tmp_path / "cleanup-recheck.db")
+    with schema_migration_transaction(path) as migration:
+        upgrade_schema_connection(migration, "worker_supervision")
+    with closing(connect(path)) as conn:
+        conn.execute(
+            "INSERT INTO executor_commands(command_sequence,command_id,executor_incarnation,"
+            "operation,conversation_id,child_id,command_json,state,created_at_ms,finished_at_ms,"
+            "outcome_json) VALUES(7,'old-stop','old','stop','conversation','child',"
+            "'exact-command','finished',1,2,'exact-outcome')"
+        )
+        conn.execute(
+            "INSERT INTO executor_commands(command_sequence,command_id,executor_incarnation,"
+            "operation,command_json,state,created_at_ms) "
+            "VALUES(99,'deleted','old','read_model_list','{}','withdrawn',1)"
+        )
+        conn.execute("DELETE FROM executor_commands WHERE command_sequence=99")
+        before = tuple(conn.execute("SELECT * FROM executor_commands").fetchone())
+        conn.commit()
+        create_schema(conn)
+        assert tuple(conn.execute("SELECT * FROM executor_commands").fetchone()) == before
+        conn.execute(
+            "INSERT INTO executor_commands(command_id,executor_incarnation,operation,command_json,"
+            "state,created_at_ms) VALUES('recheck','new','recheck_cleanup','{}','waiting',3)"
+        )
+        assert conn.execute(
+            "SELECT command_sequence FROM executor_commands WHERE command_id='recheck'"
+        ).fetchone()[0] == 100
+        indexes = {row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='executor_commands'"
+        )}
+        assert {"executor_commands_open", "executor_commands_conversation"} <= indexes

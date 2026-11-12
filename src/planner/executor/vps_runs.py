@@ -34,7 +34,10 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.task_settlement import run_on_worker_thread
 from planner.execution_identity import ChildReference, TicketLocale, supports_executor_versions
 from planner.executor.clock import now_ms
-from planner.executor.configuration import STEER_DELIVERY_LIMIT_SECONDS
+from planner.executor.configuration import (
+    CLEANUP_RECHECK_TIMEOUT_SECONDS,
+    STEER_DELIVERY_LIMIT_SECONDS,
+)
 from planner.executor.contracts import CommandSettlementReason, MacRunConversations
 from planner.executor.protocol import (
     AcceptanceReceipt,
@@ -45,6 +48,7 @@ from planner.executor.protocol import (
     CommandOutcome,
     CommandResult,
     MailboxCommand,
+    RecheckCleanup,
     WritePrompt,
     as_object,
 )
@@ -56,6 +60,7 @@ from planner.executor.vps_remote_child import LateSteer, MacRemoteChild
 from planner.executor.worker_identity import ticket_id_of
 from planner.stalls.contracts import TrackedWait, TrackedWaitKind
 from planner.stalls.registry import WAITS
+from planner.worker_supervision.contracts import CleanupResult
 
 LOGGER = logging.getLogger(__name__)
 # A drain step that fails (the database, or the core's retirement) is retried, doubling.
@@ -211,6 +216,49 @@ class MacRuns:
     def mac_is_present(self) -> bool:
         return self.presence.is_present()
 
+    async def recheck_cleanup(self, source: ChildReference, ticket_id: str) -> CleanupResult:
+        """Inspect one retained source through the current executor, without a start."""
+        current = self.presence.current_identity()
+        if current is None or not self.presence.is_present():
+            return CleanupResult(False, "The executor is not reachable for a cleanup inspection")
+        deadline = asyncio.get_running_loop().time() + CLEANUP_RECHECK_TIMEOUT_SECONDS
+        destination = ChildReference(
+            current.executor_incarnation, source.child_id, source.conversation_id
+        )
+        command = ChildCommand(
+            str(uuid4()), destination, ChildOperation.recheck_cleanup, None,
+            RecheckCleanup(source=source, ticket_id=ticket_id),
+        )
+        placed = await self.mailbox.put_child_command(command)
+        if isinstance(placed, CommandOutcome):
+            return CleanupResult(False, str(placed.result.get("reason", "Cleanup source refused")))
+        result = await self.mailbox.wait_result(
+            command.command_id, max(0, deadline - asyncio.get_running_loop().time())
+        )
+        outcome = None if result is None else result.child_outcome
+        if outcome is None:
+            return CleanupResult(False, "The cleanup inspection did not return before its deadline")
+        reason = str(outcome.result.get("reason", "Cleanup inspection returned no proof"))
+        if (outcome.disposition is not CommandDisposition.succeeded
+                or outcome.result.get("complete") is not True):
+            return CleanupResult(False, reason)
+        try:
+            await asyncio.wait_for(
+                self.presence.wait_until_drained(source.conversation_id),
+                max(0, deadline - asyncio.get_running_loop().time()),
+            )
+        except TimeoutError:
+            return CleanupResult(False, "Cleanup passed; a fresh executor lease is still pending")
+        return CleanupResult(True, reason)
+
+    def _cleanup_uncertainty(self, conversation_id: str) -> str | None:
+        record = self.presence.record()
+        if record is not None and record.lease is not None:
+            for uncertainty in record.lease.cleanup_uncertainties:
+                if uncertainty.conversation_id == conversation_id:
+                    return uncertainty.reason
+        return None
+
     async def put(self, command: ChildCommand) -> bool:
         placed = await self.mailbox.put_child_command(command)
         return isinstance(placed, MailboxCommand)
@@ -251,14 +299,24 @@ class MacRuns:
             {"reason": CommandSettlementReason.executor_process_replaced.value},
         )
         if not await self.put(command):
-            await self._closed_without_stop(command.child)
+            if not await self._closed_without_stop(command.child):
+                return CommandOutcome(
+                    command.command_id, command.child, CommandDisposition.uncertain,
+                    {"reason": self._cleanup_uncertainty(command.child.conversation_id)
+                        or "Source cleanup is not proven"},
+                )
             return replaced
         result = await self.mailbox.wait_result(command.command_id)
         outcome = None if result is None else result.child_outcome
         if outcome is None:
             raise RuntimeError("a stop settled without its outcome")
         if outcome.result.get("reason") == CommandSettlementReason.executor_process_replaced.value:
-            await self._closed_without_stop(command.child)
+            if not await self._closed_without_stop(command.child):
+                return CommandOutcome(
+                    command.command_id, command.child, CommandDisposition.uncertain,
+                    {"reason": self._cleanup_uncertainty(command.child.conversation_id)
+                        or "Source cleanup is not proven"},
+                )
             return replaced
         if outcome.disposition is CommandDisposition.succeeded:
             if not await run_on_worker_thread(
@@ -267,7 +325,7 @@ class MacRuns:
                 await run_on_worker_thread(self.store.close_child, command.child, now_ms())
         return outcome
 
-    async def _closed_without_stop(self, child: ChildReference) -> None:
+    async def _closed_without_stop(self, child: ChildReference) -> bool:
         """A stop that never reached its process: the process is gone. Its run closes once
         the conversation's items have drained.
 
@@ -277,14 +335,18 @@ class MacRuns:
         drain that ended without draining (shutdown) leaves the run open for the drain
         rebuilt at startup."""
         if await run_on_worker_thread(self.store.has_closed_child_assignment, child):
-            return
+            return True
+        if self._cleanup_uncertainty(child.conversation_id) is not None:
+            return False
         current = self.presence.current_identity()
         if current is None or current.executor_incarnation == child.executor_incarnation:
-            return
+            return False
         drain = self._start_drain(child, current.executor_incarnation)
         await drain.drained.wait()
         if drain.reached:
             await run_on_worker_thread(self.store.close_child, child, now_ms())
+            return True
+        return False
 
     async def save_answer(self, command: ChildCommand) -> bool:
         """The row is inserted under the conversation lock, only while its turn is live,

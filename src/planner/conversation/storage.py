@@ -551,8 +551,57 @@ class ConversationStore:
 
         return await asyncio.to_thread(read)
 
-    async def settle_recorded_source(self, conversation_id: str) -> RecordedSourceSettlement | None:
-        settled = await self._write(self._settle_recorded_source_sync, conversation_id)
+    async def retire_idle_recorded_source(
+        self, conversation_id: str, *, inspect_only: bool = False,
+    ) -> bool:
+        """Retire exact quiet custody even when no foreground turn survives restart."""
+        def retire() -> bool:
+            conn = self._connect()
+            try:
+                source = conn.execute(
+                    "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
+                    (conversation_id,),
+                ).fetchone()
+            finally:
+                conn.close()
+            if source is None:
+                return False
+            proven = child_custody.retirement_row_proven(source)
+            if not proven and not inspect_only and source["state"] == "started":
+                proven = child_custody.stop_recorded_child(LocalChildIdentity(
+                    source["pid"], source["birth"], source["boot"], source["unit"],
+                    source["supervision_record"],
+                ), source["host"])
+            if not proven:
+                return False
+            with self._publication_connection() as (conn, admission):
+                conn.execute("BEGIN IMMEDIATE")
+                current = conn.execute(
+                    "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
+                    (conversation_id,),
+                ).fetchone()
+                active = conn.execute(
+                    "SELECT 1 FROM conversation_lifecycle_facts WHERE conversation_id=? "
+                    "AND ((kind='turn' AND status IN ('intent','running','unknown')) "
+                    "OR (kind='attempt' AND status IN ('intent','unknown')) "
+                    "OR (kind='request' AND status IN ('pending','answering'))) LIMIT 1",
+                    (conversation_id,),
+                ).fetchone()
+                if current is None or tuple(current) != tuple(source) or active is not None:
+                    conn.rollback()
+                    return False
+                child_custody.write_retired(conn, conversation_id, str(source["generation"]))
+                self._apply_signal_mutation(conn, admission)
+                self._commit_rows(conn, ())
+                return True
+        return await self._write(retire)
+
+    async def settle_recorded_source(
+        self, conversation_id: str, *, inspect_only: bool = False,
+    ) -> RecordedSourceSettlement | None:
+        settled = await self._write(
+            self._settle_recorded_source_sync, conversation_id, inspect_only,
+        )
         if settled is None:
             return None
         result, token = settled
@@ -563,6 +612,7 @@ class ConversationStore:
     def _settle_recorded_source_sync(
         self,
         conversation_id: str,
+        inspect_only: bool = False,
     ) -> tuple[RecordedSourceSettlement, TurnToken] | None:
         conn = self._connect()
         try:
@@ -577,9 +627,10 @@ class ConversationStore:
         result: RecordedSourceSettlement
         if source["state"] == "launch_pending":
             if source["supervision_record"] is not None:
-                from planner.worker_supervision import stop_record
+                from planner.worker_supervision import inspect_record, stop_record
 
-                if not stop_record(Path(source["supervision_record"])).complete:
+                check = inspect_record if inspect_only else stop_record
+                if not check(Path(source["supervision_record"])).complete:
                     return None
             result = "undelivered"
         elif source["state"] == "retired":
@@ -592,7 +643,11 @@ class ConversationStore:
                 source["unit"],
                 source["supervision_record"],
             )
-            if not child_custody.stop_recorded_child(identity, source["host"]):
+            proven = (
+                child_custody.retirement_row_proven(source) if inspect_only
+                else child_custody.stop_recorded_child(identity, source["host"])
+            )
+            if not proven:
                 return None
             result = "retired"
         with self._publication_connection() as (conn, admission):

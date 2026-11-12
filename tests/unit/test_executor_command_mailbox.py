@@ -955,3 +955,93 @@ def test_a_claude_model_change_asks_for_a_rebind_even_after_a_vps_restart(
             assert [operation for operation, _ in world.rows()] == ["start", "write_prompt"]
 
     asyncio.run(asyncio.wait_for(exercise(), 20))
+
+
+def test_cleanup_recheck_targets_only_the_retained_ticket_and_waits_for_fresh_proof(
+    tmp_path: Path,
+) -> None:
+    """A new executor cannot turn an unrelated or stale source into cleanup proof."""
+    from dataclasses import replace
+
+    from tests.unit.test_executor_locale_admission import mac_ticket
+
+    from planner.executor.protocol import WorkerCleanupUncertainty
+
+    async def exercise() -> None:
+        async with _world(tmp_path) as world:
+            _running_turn(world.endpoint.db_path)
+            connection = connect(world.endpoint.db_path)
+            try:
+                ticket = mac_ticket(connection)
+                connection.execute(
+                    "UPDATE tickets SET conversation_id='c' WHERE id=?", (ticket.id,)
+                )
+                connection.execute(
+                    "UPDATE executor_child_assignments SET principal_id=? WHERE child_id=?",
+                    (ticket.id, world.child.child_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            replacement = mac_identity()
+            uncertain = replace(
+                lease_request(replacement),
+                cleanup_uncertainties=(WorkerCleanupUncertainty(ticket.id, "c", "Tool remains"),),
+            )
+            await world.endpoint.lease(uncertain)
+            assert not world.endpoint.presence._drained("c")
+            assert world.endpoint.presence._drained("unrelated")
+            refused = await world.endpoint.runs.recheck_cleanup(world.child, "unrelated-ticket")
+            assert not refused.complete
+            assert world.rows() == []
+            pending = asyncio.create_task(
+                world.endpoint.runs.recheck_cleanup(world.child, ticket.id)
+            )
+            polled = await world.endpoint.poll(replacement, 0, SETTLES)
+            assert polled.commands, (pending.result() if pending.done() else world.rows())
+            command = polled.commands[0]
+            assert command.child_command is not None
+            assert (command.child_command.child.executor_incarnation
+                    == replacement.executor_incarnation)
+            assert command.child_command.operation.value == "recheck_cleanup"
+            reply = await world.endpoint.record_outcomes(
+                replacement,
+                CommandOutcomeReport((
+                    _succeeded(command.command_id, command.child_command.child,
+                               complete=True, reason="Exact source ended"),
+                )),
+            )
+            assert reply.recorded == (command.command_id,)
+            await asyncio.sleep(0)
+            assert not pending.done()
+            assert world.core.retired == []
+            await world.endpoint.lease(lease_request(replacement))
+            result = await asyncio.wait_for(pending, SETTLES)
+            assert result.complete, result.reason
+            assert await world.endpoint.runs._closed_without_stop(world.child)
+            connection = connect(world.endpoint.db_path)
+            try:
+                connection.execute(
+                    "UPDATE tickets SET conversation_id=NULL WHERE id=?", (ticket.id,)
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            # Older homes can already close the source and change the Ticket link.
+            # Its exact historical ownership still authorizes inspection, never work.
+            historical = asyncio.create_task(
+                world.endpoint.runs.recheck_cleanup(world.child, ticket.id)
+            )
+            checked = (await world.endpoint.poll(
+                replacement, command.command_sequence, SETTLES
+            )).commands[0]
+            assert checked.child_command is not None
+            await world.endpoint.record_outcomes(
+                replacement, CommandOutcomeReport((
+                    _succeeded(checked.command_id, checked.child_command.child,
+                               complete=True, reason="Historical source ended"),
+                )),
+            )
+            assert (await asyncio.wait_for(historical, SETTLES)).complete
+
+    asyncio.run(asyncio.wait_for(exercise(), 20))

@@ -19,10 +19,17 @@ from uuid import uuid4
 from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.platform_runtime.selection import get_platform_adapter
 from planner.worker_supervision import config, records
-from planner.worker_supervision.contracts import CleanupResult, WorkerCleanupError, WorkerProcess
+from planner.worker_supervision.contracts import (
+    CleanupResult,
+    CleanupUncertainty,
+    WorkerCleanupError,
+    WorkerProcess,
+)
 
 __all__ = [
     "CleanupResult",
+    "CleanupUncertainty",
+    "cleanup_uncertainties",
     "WorkerCleanupError",
     "WorkerSupervisor",
     "inspect_record",
@@ -58,41 +65,77 @@ def _discover(record: dict[str, Any], table: dict[int, WorkerProcess]) -> list[W
     known = {_process(raw) for raw in record["processes"]}
     roots = {p.pid for p in known if _alive(p, table)}
     # A surviving authenticated member anchors its group/session, never a number alone.
-    groups = (
-        {(table[pid].group, table[pid].session) for pid in roots}
-        if record.get("isolated")
-        else set()
-    )
+    sessions = {table[pid].session for pid in roots} if record.get("isolated") else set()
     changed = True
     while changed:
         changed = False
         for process in table.values():
             if process.pid in roots or process.zombie:
                 continue
-            if process.parent in roots or (process.group, process.session) in groups:
+            if process.parent in roots or process.session in sessions:
                 roots.add(process.pid)
                 known.add(process)
                 if record.get("isolated"):
-                    groups.add((process.group, process.session))
+                    sessions.add(process.session)
                 changed = True
     return sorted(known, key=lambda p: (p.pid, p.birth))
 
 
+def _validate_pending_shape(record: dict[str, Any]) -> None:
+    if record.get("root") is not None:
+        return
+    if record["processes"]:
+        raise ValueError("Worker record has process custody without an exact root")
+    if not record.get("host") or not record.get("boot") or record.get("owner") is None:
+        raise ValueError("Pending Worker launch ownership is unknown")
+    _process(record["owner"])
+    state = record.get("state")
+    if state == "complete":
+        if not record.get("launch_revoked") and not record.get("boot_ended"):
+            raise ValueError("Rootless completion lacks a pre-execution revocation receipt")
+        return
+    if state == "pending":
+        return
+    if state in {"not_proven", "bootstrap_failed"} and record.get("launch_phase") == "pending":
+        return
+    raise ValueError("Worker record lacks valid pre-execution launch evidence")
+
+
 def _observe_unlocked(path: Path, deadline: float) -> dict[str, Any]:
     record = records.read(path)
+    _validate_pending_shape(record)
     primitives = get_platform_adapter().worker_processes()
     host = primitives.host_boot(deadline)
     if host.host != record.get("host"):
         raise ValueError("Worker process record belongs to another machine")
     if host.boot != record.get("boot"):
-        record.update(state="complete", reason="The recorded boot ended")
+        record.update(state="complete", boot_ended=True, reason="The recorded boot ended")
     elif record.get("state") != "complete":
         first = primitives.snapshot(deadline)
         second = primitives.snapshot(deadline)
         # A sequential inventory is not atomic. Authenticate both ends of each
         # discovered relationship across two observations before custody expands.
         stable = {pid: process for pid, process in second.items() if first.get(pid) == process}
-        record["processes"] = [asdict(p) for p in _discover(record, stable)]
+        discovered = _discover(record, stable)
+        record["processes"] = [asdict(p) for p in discovered]
+        known = {(process.pid, process.birth) for process in discovered}
+        root = record.get("root")
+        session_members: list[dict[str, Any]] = []
+        if root is not None and record.get("isolated") and root["session"] == root["pid"]:
+            leader = stable.get(root["pid"])
+            # A replacement leader proves that the old session identifier drained.
+            # Otherwise an unattributed survivor prevents cleanup proof, but its
+            # session number alone never authorizes a signal.
+            if leader is None or leader.birth == root["birth"]:
+                session_members = [
+                    asdict(process)
+                    for process in second.values()
+                    if process.session == root["session"]
+                    and not process.zombie
+                    and (process.pid, process.birth) not in known
+                ]
+        record["unattributed_session_members"] = session_members
+        record.pop("observation_error", None)
     records.write(path, record)
     return record
 
@@ -102,11 +145,19 @@ def _observe(path: Path, deadline: float) -> dict[str, Any]:
         return _observe_unlocked(path, deadline)
 
 
-def inspect_record(path: Path, *, identity: LocalChildIdentity | None = None) -> CleanupResult:
-    deadline = time.monotonic() + config.INSPECTION_SECONDS
+def inspect_record(
+    path: Path,
+    *,
+    identity: LocalChildIdentity | None = None,
+    revoke_pending: bool = False,
+    deadline: float | None = None,
+) -> CleanupResult:
+    deadline = time.monotonic() + config.INSPECTION_SECONDS if deadline is None else deadline
     try:
         with records.locked(path, deadline):
-            return _inspect_record(path, identity=identity, deadline=deadline)
+            return _inspect_record(
+                path, identity=identity, deadline=deadline, revoke_pending=revoke_pending
+            )
     except (OSError, ValueError, TimeoutError) as error:
         return CleanupResult(False, f"Worker cleanup evidence unavailable: {error}")
 
@@ -125,10 +176,25 @@ def stop_record(
         return CleanupResult(False, f"Worker cleanup not proven: {error}")
 
 
+def _revoke_pending(path: Path, record: dict[str, Any]) -> CleanupResult:
+    # The isolated bootstrap must acquire the same lock before it registers or
+    # executes. Revocation is a no-backend-execution proof, not bootstrap death.
+    _validate_pending_shape(record)
+    if record.get("owner") is None or not record.get("host") or not record.get("boot"):
+        return CleanupResult(False, "Pending Worker launch ownership is unknown")
+    reason = "Launch authorization revoked before backend execution"
+    record.update(state="complete", launch_revoked=True, reason=reason)
+    records.write(path, record)
+    return CleanupResult(True, reason)
+
+
 def _inspect_record(
-    path: Path, *, identity: LocalChildIdentity | None = None, deadline: float
+    path: Path,
+    *,
+    identity: LocalChildIdentity | None = None,
+    deadline: float,
+    revoke_pending: bool = False,
 ) -> CleanupResult:
-    """Read proof without signals; absence or unreadable evidence never means complete."""
     try:
         record = _observe_unlocked(path, deadline)
         if identity is not None:
@@ -141,13 +207,26 @@ def _inspect_record(
                 return CleanupResult(False, "Worker custody does not match its process record")
         if record.get("state") == "complete":
             return CleanupResult(True, str(record.get("reason", "Recorded processes ended")))
+        primitives = get_platform_adapter().worker_processes()
         if record.get("root") is None:
-            return CleanupResult(False, "Worker launch has no exact process registration")
-        if record.get("observation_error"):
-            return CleanupResult(False, str(record["observation_error"]))
-        table = get_platform_adapter().worker_processes().snapshot(deadline)
-        if any(_alive(_process(raw), table) for raw in record["processes"]):
+            owner = record.get("owner")
+            if (
+                not revoke_pending
+                and not record.get("launch_failed")
+                and owner is not None
+                and not primitives.is_absent(_process(owner), deadline)
+            ):
+                return CleanupResult(False, "Worker launch is still pending with its live owner")
+            return _revoke_pending(path, record)
+        if any(not primitives.is_absent(_process(raw), deadline) for raw in record["processes"]):
             return CleanupResult(False, "Recorded Worker processes remain")
+        # The root can exit after its previous snapshot and leave a late tool.
+        # Inspect the isolated session again after exact root/child absence.
+        record = _observe_unlocked(path, deadline)
+        if any(not primitives.is_absent(_process(raw), deadline) for raw in record["processes"]):
+            return CleanupResult(False, "Recorded Worker processes remain")
+        if record.get("unattributed_session_members"):
+            return CleanupResult(False, "Unattributed isolated-session processes remain")
         record.update(state="complete", reason="All identified Worker processes ended")
         records.write(path, record)
         return CleanupResult(True, record["reason"])
@@ -161,7 +240,6 @@ def _stop_record(
     identity: LocalChildIdentity | None = None,
     deadline: float | None = None,
 ) -> CleanupResult:
-    """Stop only authenticated incarnations, then persist positive scoped proof."""
     deadline = time.monotonic() + config.STOP_SECONDS if deadline is None else deadline
     try:
         record = _observe_unlocked(path, deadline)
@@ -176,37 +254,74 @@ def _stop_record(
         if record.get("state") == "complete":
             return CleanupResult(True, str(record["reason"]))
         if record.get("root") is None:
-            return CleanupResult(False, "Worker launch has no exact process registration")
+            return _revoke_pending(path, record)
         primitives = get_platform_adapter().worker_processes()
         term_deadline = min(deadline, time.monotonic() + config.TERM_SECONDS)
         for signum, phase_deadline in ((signal.SIGTERM, term_deadline), (signal.SIGKILL, deadline)):
             record = _observe_unlocked(path, deadline)
-            table = primitives.snapshot(deadline)
             remaining = [
-                _process(raw) for raw in record["processes"] if _alive(_process(raw), table)
+                _process(raw)
+                for raw in record["processes"]
+                if not primitives.is_absent(_process(raw), deadline)
             ]
             for process in remaining:
-                if not primitives.signal(process, signum, deadline):
-                    record.update(
-                        state="not_proven", reason="No safe signal handle for a recorded process"
-                    )
-                    records.write(path, record)
-                    return CleanupResult(False, record["reason"])
+                # A refused signal does not prove survival. A process can exit
+                # naturally while its native transport finishes teardown.
+                primitives.signal(process, signum, deadline)
             while time.monotonic() < phase_deadline:
-                record = _observe_unlocked(path, deadline)
-                table = primitives.snapshot(deadline)
-                if not any(_alive(_process(raw), table) for raw in record["processes"]):
-                    if record.get("observation_error"):
-                        return CleanupResult(False, str(record["observation_error"]))
-                    record.update(state="complete", reason="All identified Worker processes ended")
-                    records.write(path, record)
-                    return CleanupResult(True, record["reason"])
+                result = _inspect_record(path, identity=identity, deadline=deadline)
+                if result.complete:
+                    return result
                 time.sleep(min(0.05, max(0, phase_deadline - time.monotonic())))
-        record.update(state="not_proven", reason="Worker stop deadline expired")
+        record = records.read(path)
+        reason = "Worker stop deadline expired"
+        if record.get("unattributed_session_members"):
+            reason += "; unattributed isolated-session processes remain"
+        record.update(state="not_proven", reason=reason)
         records.write(path, record)
         return CleanupResult(False, record["reason"])
     except (OSError, ValueError, TypeError, KeyError, TimeoutError) as error:
         return CleanupResult(False, f"Worker cleanup not proven: {error}")
+
+
+def cleanup_uncertainties(
+    root: Path, *, revoke_pending: bool = False
+) -> tuple[CleanupUncertainty, ...]:
+    """Fresh observation clears each Ticket independently; it never stops a process."""
+    deadline = time.monotonic() + config.STOP_SECONDS
+    uncertain: list[CleanupUncertainty] = []
+    if not root.exists():
+        return ()
+    for path in sorted(root.glob("*.json")):
+        try:
+            record = records.read(path)
+        except (OSError, ValueError) as error:
+            uncertain.append(CleanupUncertainty(None, None, path, str(error)))
+            continue
+        if record.get("state") == "complete":
+            try:
+                _validate_pending_shape(record)
+            except (ValueError, TypeError, KeyError) as error:
+                uncertain.append(
+                    CleanupUncertainty(
+                        record.get("ticket_id"),
+                        record.get("conversation_id"),
+                        path,
+                        str(error),
+                    )
+                )
+            continue
+        result = inspect_record(path, revoke_pending=revoke_pending, deadline=deadline)
+        if not result.complete:
+            uncertain.append(
+                CleanupUncertainty(
+                    record.get("ticket_id"),
+                    record.get("conversation_id"),
+                    path,
+                    result.reason,
+                )
+            )
+    return tuple(uncertain)
 
 
 def reconcile(root: Path, ticket_id: str | None = None) -> CleanupResult:
@@ -222,6 +337,10 @@ def reconcile(root: Path, ticket_id: str | None = None) -> CleanupResult:
         if ticket_id is not None and record["ticket_id"] != ticket_id:
             continue
         if record.get("state") == "complete":
+            try:
+                _validate_pending_shape(record)
+            except (ValueError, TypeError, KeyError) as error:
+                return CleanupResult(False, str(error))
             continue
         try:
             primitives = get_platform_adapter().worker_processes()
@@ -265,11 +384,22 @@ class WorkerSupervisor:
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
             raise WorkerCleanupError("Worker process record root must be private and owned")
         for prior in root.glob("*.json"):
-            previous = records.read(prior)
-            if (
-                previous.get("ticket_id") != environment["PLAN_TICKET_ID"]
-                or previous.get("state") == "complete"
-            ):
+            try:
+                previous = records.read(prior)
+            except (OSError, ValueError):
+                # The uncertainty scan reports unassignable evidence. Canonical
+                # custody retains its own source fence, never every Ticket's.
+                continue
+            if previous.get("ticket_id") != environment["PLAN_TICKET_ID"]:
+                continue
+            if previous.get("state") == "complete":
+                try:
+                    _validate_pending_shape(previous)
+                except (ValueError, TypeError, KeyError) as error:
+                    raise WorkerCleanupError(str(error)) from error
+                continue
+            inspection = inspect_record(prior)
+            if inspection.complete:
                 continue
             primitives = get_platform_adapter().worker_processes()
             deadline = time.monotonic() + config.INSPECTION_SECONDS
@@ -311,7 +441,10 @@ class WorkerSupervisor:
                 "processes": [],
                 "isolated": False,
                 "state": "pending",
+                "launch_phase": "pending",
                 "conversation_id": environment.get("PLAN_CONVERSATION_ID"),
+                "source_child_id": environment.get("PLAN_EXECUTOR_CHILD_ID"),
+                "source_incarnation": environment.get("PLAN_EXECUTOR_SOURCE_INCARNATION"),
                 "reason": "Launch pending",
             },
         )
@@ -322,7 +455,10 @@ class WorkerSupervisor:
     ) -> WorkerSupervisor | None:
         if not environment.get("PLAN_TICKET_ID"):
             return None
-        return await asyncio.to_thread(cls, environment, working_directory)
+        try:
+            return await asyncio.to_thread(cls, environment, working_directory)
+        except (OSError, ValueError) as error:
+            raise WorkerCleanupError(f"Worker launch evidence is unavailable: {error}") from error
 
     def argv(self, original: Sequence[str]) -> tuple[str, ...]:
         if not original:
@@ -338,10 +474,10 @@ class WorkerSupervisor:
                 shutil.which(executable, path=self.environment.get("PATH", os.defpath)) or ""
             )
         if not executable or not os.path.isfile(executable) or not os.access(executable, os.X_OK):
-            self.cancel_unspawned()
             raise FileNotFoundError(f"Worker executable is unavailable: {original[0]}")
         return (
             sys.executable,
+            "-I",
             "-m",
             "planner.worker_supervision.launch",
             str(self.path),
@@ -349,16 +485,48 @@ class WorkerSupervisor:
             *original[1:],
         )
 
-    def cancel_unspawned(self) -> None:
+    async def cancel_unspawned(self) -> None:
         """Caller receipt: the OS refused spawn before any child existed."""
+        await asyncio.to_thread(self._cancel_unspawned)
+
+    def _cancel_unspawned(self) -> None:
         with self._lock, records.locked(self.path, time.monotonic() + config.INSPECTION_SECONDS):
             record = records.read(self.path)
+            _validate_pending_shape(record)
             if record.get("root") is not None:
                 raise WorkerCleanupError("Cannot cancel a registered Worker process")
-            record.update(state="complete", reason="The OS refused spawn before a child existed")
+            record.update(
+                state="complete",
+                launch_revoked=True,
+                reason="The OS refused spawn before a child existed",
+            )
             records.write(self.path, record)
 
+    async def spawned(self, pid: int) -> None:
+        """Capture the OS child before bootstrap registration can fail."""
+        await asyncio.to_thread(self._spawned, pid)
+
+    def _spawned(self, pid: int) -> None:
+        deadline = time.monotonic() + config.INSPECTION_SECONDS
+        with self._lock, records.locked(self.path, deadline):
+            record = records.read(self.path)
+            if record.get("launch_revoked") or record.get("state") == "complete":
+                raise WorkerCleanupError("Worker launch authorization was revoked")
+            root = record.get("root")
+            _validate_pending_shape(record)
+            if root is not None:
+                if root["pid"] != pid:
+                    raise WorkerCleanupError("Worker launch registered a different root")
+                return
+            primitives = get_platform_adapter().worker_processes()
+            first = primitives.snapshot(deadline).get(pid)
+            second = primitives.snapshot(deadline).get(pid)
+            if first is not None and first == second and first.parent == os.getpid():
+                record.update(root=asdict(first), processes=[asdict(first)], state="spawned")
+                records.write(self.path, record)
+
     async def started(self, pid: int) -> None:
+        await self.spawned(pid)
         deadline = time.monotonic() + config.START_SECONDS
         while time.monotonic() < deadline:
             record = await asyncio.to_thread(records.read, self.path)
@@ -375,7 +543,14 @@ class WorkerSupervisor:
                 self._observer.start()
                 return
             await asyncio.sleep(0.01)
+        await asyncio.to_thread(self._mark_launch_failed)
         raise WorkerCleanupError("Worker process registration deadline expired")
+
+    def _mark_launch_failed(self) -> None:
+        with self._lock, records.locked(self.path, time.monotonic() + config.INSPECTION_SECONDS):
+            record = records.read(self.path)
+            record["launch_failed"] = True
+            records.write(self.path, record)
 
     def identity(self) -> LocalChildIdentity | None:
         try:
@@ -429,13 +604,17 @@ class WorkerSupervisor:
             await asyncio.to_thread(capture)
         except (OSError, ValueError, TypeError, KeyError, WorkerCleanupError) as error:
             diagnostics.append(f"Process observation failed: {error}")
-            try:
-                with records.locked(self.path, deadline):
-                    record = records.read(self.path)
-                    record.update(state="not_proven", observation_error=str(error))
-                    records.write(self.path, record)
-            except (OSError, ValueError):
-                pass
+
+            def retain_observation_error(message: str) -> None:
+                try:
+                    with records.locked(self.path, deadline):
+                        record = records.read(self.path)
+                        record.update(state="not_proven", observation_error=message)
+                        records.write(self.path, record)
+                except (OSError, ValueError):
+                    pass
+
+            await asyncio.to_thread(retain_observation_error, str(error))
             return CleanupResult(False, "; ".join(diagnostics))
 
         if native_stop is not None:

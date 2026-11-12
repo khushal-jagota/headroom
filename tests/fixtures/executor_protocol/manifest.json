@@ -1,8 +1,8 @@
 {
   "command_journal_format_version": 1,
   "command_journal_schema_sha256": "bde82431a4dfe3cf9197129056f7601f586cc550591935c0546e245662efbd5b",
-  "protocol_version": 23,
-  "schema_sha256": "6e63dc67a5c0c0e609cca39d7e4d07a54bedf1030568f21ae0620a1f0244779e",
+  "protocol_version": 24,
+  "schema_sha256": "bd1114a7c712e03ba3fe58eb19d4eee1510f17e4391ba2770b862dc9210e98ae",
   "spool_format_version": 5,
   "spool_schema_sha256": "ff46dbdbbf2a82076a0ede2b4dbcd74f2c82044e90215c9d758ed506e1f41922"
 }

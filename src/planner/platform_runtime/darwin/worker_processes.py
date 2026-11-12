@@ -1,7 +1,7 @@
 """Mac process evidence uses libproc microsecond birth times, never ps text.
 
-macOS has no pidfd signal primitive. Arbitrary recorded survivors remain uncertain;
-only a backend's retained native child handle can own its ordinary root stop.
+macOS has no pidfd signal primitive. A signal follows an immediate exact libproc
+birth check. The small check-to-signal race is accepted, not Linux pidfd safety.
 """
 
 from __future__ import annotations
@@ -56,13 +56,16 @@ class DarwinWorkerProcesses:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("Worker inspection deadline expired")
-            return subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=remaining,
-            ).stdout.strip()
+            try:
+                return subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=remaining,
+                ).stdout.strip()
+            except subprocess.SubprocessError as error:
+                raise OSError(f"Mac host identity command failed: {error}") from error
 
         import re
 
@@ -109,6 +112,27 @@ class DarwinWorkerProcesses:
             )
         return result
 
+    def is_absent(self, process: WorkerProcess, deadline: float) -> bool:
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Worker inspection deadline expired")
+        # UID inventory is discovery only. A recorded process can change owner.
+        # Probe that PID directly: EPERM or unreadable libproc data is uncertainty.
+        try:
+            os.kill(process.pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False
+        library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        info = _BSDInfo()
+        ctypes.set_errno(0)
+        length = library.proc_pidinfo(process.pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info))
+        if length != ctypes.sizeof(info):
+            return ctypes.get_errno() == errno.ESRCH
+        # A replacement incarnation receives neither a signal nor a positive
+        # cleanup receipt on this platform. A later absent PID can prove cleanup.
+        return f"{info.start_sec}:{info.start_usec}" == process.birth and info.status == 5
+
     def prepare_launch(self) -> None:
         if os.getsid(0) != os.getpid() or os.getpgrp() != os.getpid():
             os.setsid()
@@ -116,5 +140,28 @@ class DarwinWorkerProcesses:
         # There is no oom_score_adj on macOS.
 
     def signal(self, process: WorkerProcess, signum: int, deadline: float) -> bool:
-        # A birth-time recheck cannot bind kill(2) to an incarnation. Never guess.
-        return False
+        if time.monotonic() >= deadline:
+            return False
+        try:
+            library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+            info = _BSDInfo()
+            ctypes.set_errno(0)
+            length = library.proc_pidinfo(
+                process.pid,
+                3,
+                0,
+                ctypes.byref(info),
+                ctypes.sizeof(info),
+            )
+            if length != ctypes.sizeof(info):
+                return False
+            if f"{info.start_sec}:{info.start_usec}" != process.birth:
+                return False
+            # macOS supplies no pidfd equivalent. The owner accepts the small
+            # interval between this microsecond birth check and kill(2).
+            os.kill(process.pid, signum)
+            return True
+        except ProcessLookupError:
+            return True
+        except OSError:
+            return False

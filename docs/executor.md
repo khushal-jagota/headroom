@@ -93,7 +93,7 @@ One installation lives in the owner's normal account:
 - **A LaunchAgent** starts at login and restarts the service after a crash.
 - **The data folder** holds the outbox, the command journal, Ticket files, skills, the workspace, and logs. Updates never replace it.
 
-The executor uses the same Worker supervisor as the home. It records exact process ownership, lowers priority, and reconciles old records before new work. Unknown cleanup refuses executor startup before the first lease and retains the old source fence. An unobserved detached tool can escape, so cleanup never promises that every descendant stopped. Native Mac checks establish its platform limits. On macOS, the owned transport stops the ordinary root. A surviving orphan or tool without a safe signal handle needs operator retirement, then another proof check.
+The executor uses the same Worker supervisor as the home. It records exact process ownership, lowers priority, and reconciles old records before new work. Unknown cleanup retains the affected Ticket fence. Unrelated Tickets can continue. The lease reports the reason and any older record that cannot identify a Ticket. An unobserved detached tool can escape, so cleanup never promises that every descendant stopped. Native Mac checks establish its platform limits. On macOS, signals to recorded survivors follow an immediate PID and microsecond birth check. A small check-to-signal race remains. Unknown cleanup retains its fence.
 
 **Updates.** One press of Update covers both machines ([Deployment](deployment.md#the-card-and-the-mac)). If the new runtime does not lease in time, the supervisor reverts. The VPS accepts one protocol version; an older Mac is refused with "Mac needs update".
 

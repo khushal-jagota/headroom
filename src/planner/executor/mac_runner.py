@@ -82,9 +82,11 @@ from planner.executor.protocol import (
     MailboxCommand,
     QueuedEnvelope,
     Quiescence,
+    RecheckCleanup,
     StartRun,
     Steer,
     StopRun,
+    WorkerCleanupUncertainty,
     WorkingTurn,
     WritePrompt,
     encode_backend_event,
@@ -321,11 +323,13 @@ class MacRunner:
         self._workspace_lock = asyncio.Lock()
         self._withdrawn_commands: set[str] = set()
         self._commands: dict[str, _CommandRecord] = {}
-        self.supervision_cleanup_uncertain: str | None = None
+        self.cleanup_uncertainties: tuple[WorkerCleanupUncertainty, ...] = ()
+        self.legacy_cleanup_notice: str | None = None
         self.admission_stopped = False
         self.planned_update_replay = False
         self._planned_replay_finished = asyncio.Event()
         self._planned_replay_finished.set()
+        self._started_children: set[str] = set()
         self._retired_children: set[str] = set()
         self._retiring_children: set[str] = set()
         self._source_tasks: dict[ChildReference, set[asyncio.Task[object]]] = {}
@@ -335,11 +339,26 @@ class MacRunner:
 
     @property
     def admission_stopped(self) -> bool:
-        return self._admission_stopped or self.supervision_cleanup_uncertain is not None
+        return self._admission_stopped
 
     @admission_stopped.setter
     def admission_stopped(self, stopped: bool) -> None:
         self._admission_stopped = stopped
+
+    async def refresh_worker_cleanup(self, *, revoke_pending: bool = False) -> None:
+        from planner.executor.cleanup_reconciliation import snapshot_cleanup
+
+        snapshot = await asyncio.to_thread(
+            snapshot_cleanup, self.paths, current_incarnation=self.incarnation,
+            revoke_pending=revoke_pending,
+            healthy_sources=frozenset(
+                child.reference for child in self._children.values()
+                if child.reference.child_id in self._started_children
+                and child.reference.child_id not in self._retiring_children
+            ),
+        )
+        self.cleanup_uncertainties = snapshot.uncertainties
+        self.legacy_cleanup_notice = snapshot.notice
 
     def authenticate(self, child_id: str | None, capability: str | None) -> RunningChild:
         child = self._children.get(child_id or "")
@@ -520,6 +539,7 @@ class MacRunner:
         identity[EXECUTOR_ROOT_ENV] = str(self.paths.root)
         identity["PLAN_TICKET_FILES_DIR"] = str(artifact_root)
         identity[RECORD_ROOT_ENV] = str(self.paths.run / "worker-processes")
+        identity["PLAN_EXECUTOR_SOURCE_INCARNATION"] = reference.executor_incarnation
         identity[NATIVE_SKILLS_DIR_ENV] = str(skill_generation / "skills")
         role_text = original.role_text if original else ""
         if managed:
@@ -646,6 +666,9 @@ class MacRunner:
             raise BackendSpawnFailed(f"Canonical skill bootstrap failed: {error}") from error
         async with self._workspace_lock:
             self._check_start_admission(command, ticket_id)
+            await self.refresh_worker_cleanup()
+            if any(item.ticket_id == ticket_id for item in self.cleanup_uncertainties):
+                raise BackendSpawnFailed("Previous Worker cleanup is not proven for this Ticket")
             resolved = await run_on_worker_thread(
                 self._localize_start,
                 resolved,
@@ -711,6 +734,7 @@ class MacRunner:
             if self._children.get(command.child.child_id) is child:
                 del self._children[command.child.child_id]
             raise
+        self._started_children.add(command.child.child_id)
         return {}
 
     def _check_start_admission(self, command: ChildCommand, ticket_id: str) -> None:
@@ -1024,6 +1048,28 @@ class MacRunner:
     async def _dispatch(self, command: ChildCommand) -> CommandOutcome:
         if command.child.executor_incarnation != self.incarnation:
             return _outcome(command, CommandDisposition.refused, {"reason": "incarnation_gone"})
+        if isinstance(command.arguments, RecheckCleanup):
+            from planner.executor.cleanup_reconciliation import snapshot_cleanup
+
+            recheck_args = command.arguments
+            snapshot = await asyncio.to_thread(
+                snapshot_cleanup, self.paths, current_incarnation=self.incarnation,
+            )
+            self.cleanup_uncertainties = snapshot.uncertainties
+            self.legacy_cleanup_notice = snapshot.notice
+            if snapshot.sources.get(recheck_args.source) != recheck_args.ticket_id:
+                return _outcome(command, CommandDisposition.uncertain, {
+                    "complete": False, "reason": "Exact Worker cleanup source is unavailable",
+                })
+            remaining = next((item for item in snapshot.uncertainties
+                if item.ticket_id == recheck_args.ticket_id
+                and item.conversation_id == recheck_args.source.conversation_id), None)
+            return _outcome(command, CommandDisposition.succeeded, {
+                "complete": remaining is None,
+                "reason": (
+                    "Recorded Worker cleanup is complete" if remaining is None else remaining.reason
+                ),
+            })
         if command.operation is ChildOperation.stop:
             return await self._stop_exact_child(command)
         if command.child.child_id in self._retiring_children:
