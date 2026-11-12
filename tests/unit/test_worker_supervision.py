@@ -208,6 +208,8 @@ def test_stop_deadline_retains_uncertainty(tmp_path: Path, monkeypatch: pytest.M
 
     clock = Clock()
     monkeypatch.setattr("planner.worker_supervision.time", clock)
+    monkeypatch.setattr("planner.worker_supervision.observation.time", clock)
+    monkeypatch.setattr(config, "STOP_OBSERVATION_BATCH_SECONDS", 0)
     monkeypatch.setattr("planner.worker_supervision.records.time", clock)
     phase_times: list[float] = []
     original_signal = native.signal
@@ -561,6 +563,8 @@ def test_refused_signal_waits_for_fresh_absence(
 
     timer = SimpleNamespace(monotonic=lambda: clock[0], sleep=settles)
     monkeypatch.setattr("planner.worker_supervision.time", timer)
+    monkeypatch.setattr("planner.worker_supervision.observation.time", timer)
+    monkeypatch.setattr(config, "STOP_OBSERVATION_BATCH_SECONDS", 0)
     monkeypatch.setattr("planner.worker_supervision.records.time", timer)
     result = stop_record(path)
     assert result.complete
@@ -684,6 +688,8 @@ def test_reconciliation_finishes_later_ticket_after_first_ticket_stays_uncertain
         monotonic=lambda: clock[0], sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds)
     )
     monkeypatch.setattr("planner.worker_supervision.time", timer)
+    monkeypatch.setattr("planner.worker_supervision.observation.time", timer)
+    monkeypatch.setattr(config, "STOP_OBSERVATION_BATCH_SECONDS", 0)
     monkeypatch.setattr("planner.worker_supervision.records.time", timer)
     monkeypatch.setattr("planner.worker_supervision.get_platform_adapter", lambda: _Adapter(native))
     monkeypatch.setattr(native, "host_boot", host)
@@ -739,6 +745,8 @@ def test_batch_filters_healthy_sources_and_gives_each_record_a_fresh_budget(
 
     timer = SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda seconds: None)
     monkeypatch.setattr("planner.worker_supervision.time", timer)
+    monkeypatch.setattr("planner.worker_supervision.observation.time", timer)
+    monkeypatch.setattr(config, "STOP_OBSERVATION_BATCH_SECONDS", 0)
     monkeypatch.setattr("planner.worker_supervision.records.time", timer)
     monkeypatch.setattr("planner.worker_supervision.get_platform_adapter", lambda: _Adapter(native))
     monkeypatch.setattr(native, "host_boot", host)
@@ -973,3 +981,240 @@ def test_stop_cannot_leave_a_registration_after_concurrent_start(
     assert supervisor._end.is_set() and not registered
     supervisor._start_observing()
     assert not registered
+
+
+def test_shared_observer_isolates_callback_failures_and_limits_record_error_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A corrupt record cannot end shared observation or flood the server log."""
+    import logging
+    import threading
+
+    from planner.worker_supervision import observation
+    from planner.worker_supervision.contracts import InspectionContext
+
+    monkeypatch.setattr(config, "OBSERVATION_SECONDS", 0.01)
+    context = InspectionContext(_Primitives({}), LocalHostBootIdentity("host", "boot"))
+    observer = observation.SharedProcessObserver(lambda deadline: context)
+    paths = [tmp_path / name for name in ("bad-index.json", "bad-depth.json", "healthy.json")]
+    calls = [0, 0, 0]
+    finished = threading.Event()
+
+    def bad_index(context: InspectionContext | None, pair: object) -> None:
+        calls[0] += 1
+        raise IndexError("invalid record index")
+
+    def bad_depth(context: InspectionContext | None, pair: object) -> None:
+        calls[1] += 1
+        raise RecursionError("invalid record depth")
+
+    def healthy(context: InspectionContext | None, pair: object) -> None:
+        calls[2] += 1
+        if calls[2] == 3:
+            for path in paths:
+                observer.unregister(path)
+            finished.set()
+
+    with caplog.at_level(logging.ERROR, logger=observation.__name__):
+        with observer._condition:
+            for path, callback in zip(paths, (bad_index, bad_depth, healthy), strict=True):
+                observer.register(path, callback)
+            thread = observer._thread
+        assert thread is not None
+        try:
+            assert finished.wait(1)
+        finally:
+            for path in paths:
+                observer.unregister(path)
+            thread.join(1)
+    assert calls == [3, 3, 3]
+    assert not thread.is_alive()
+    errors = [record for record in caplog.records if record.name == observation.__name__]
+    assert len(errors) == 2
+    assert str(paths[0]) in errors[0].getMessage()
+    assert str(paths[1]) in errors[1].getMessage()
+    assert errors[0].exc_info is not None and errors[0].exc_info[0] is IndexError
+    assert errors[1].exc_info is not None and errors[1].exc_info[0] is RecursionError
+
+
+def test_register_restarts_a_retained_dead_observer_thread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retained thread handle cannot permanently suppress observation of new Workers."""
+    import threading
+
+    from planner.worker_supervision import observation
+    from planner.worker_supervision.contracts import InspectionContext
+
+    monkeypatch.setattr(config, "OBSERVATION_SECONDS", 0.01)
+    context = InspectionContext(_Primitives({}), LocalHostBootIdentity("host", "boot"))
+    observer = observation.SharedProcessObserver(lambda deadline: context)
+    old_path = tmp_path / "old.json"
+    new_path = tmp_path / "new.json"
+    calls: set[Path] = set()
+    finished = threading.Event()
+
+    def callback(path: Path) -> observation.ObservationCallback:
+        def apply(context: InspectionContext | None, pair: object) -> None:
+            calls.add(path)
+            if len(calls) == 2:
+                observer.unregister(old_path)
+                observer.unregister(new_path)
+                finished.set()
+
+        return apply
+
+    dead_thread = threading.Thread(target=lambda: None)
+    dead_thread.start()
+    dead_thread.join(1)
+    assert not dead_thread.is_alive()
+    observer._thread = dead_thread
+    observer._callbacks[old_path] = callback(old_path)
+    observer.register(new_path, callback(new_path))
+    replacement = observer._thread
+    assert replacement is not None and replacement is not dead_thread
+    try:
+        assert finished.wait(1)
+    finally:
+        observer.unregister(old_path)
+        observer.unregister(new_path)
+        replacement.join(1)
+    assert not replacement.is_alive()
+
+
+def test_stop_observations_share_only_upcoming_pairs_and_preserve_each_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A late cleanup request needs new evidence, and a short leader cannot cancel its peer."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from planner.worker_supervision import observation
+    from planner.worker_supervision.contracts import InspectionContext
+
+    monkeypatch.setattr(config, "STOP_OBSERVATION_BATCH_SECONDS", 0.1)
+    native = _Primitives({})
+    context = InspectionContext(native, LocalHostBootIdentity("cohort-host", "boot"))
+    broker = observation.FreshProcessObservations()
+    key = (type(native), context.host)
+    entered = threading.Event()
+    release = threading.Event()
+    snapshots = 0
+    expire_next = False
+
+    def snapshot(deadline: float) -> dict[int, WorkerProcess]:
+        nonlocal snapshots, expire_next
+        snapshots += 1
+        result = native.table.copy()
+        if snapshots == 1:
+            entered.set()
+            assert release.wait(1)
+        if expire_next:
+            expire_next = False
+            time.sleep(max(0, deadline - time.monotonic()))
+            raise TimeoutError("The leader's inventory budget expired")
+        return result
+
+    monkeypatch.setattr(native, "snapshot", snapshot)
+
+    def await_pending(count: int) -> None:
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            with broker._condition:
+                if len(broker._pending.get(key, ())) == count:
+                    return
+            time.sleep(0.001)
+        pytest.fail("Fresh observation requests did not reach their cohort")
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        first = pool.submit(broker.capture, context, time.monotonic() + 2)
+        await_pending(1)
+        second = pool.submit(broker.capture, context, time.monotonic() + 2)
+        await_pending(2)
+        assert entered.wait(1)
+        late = pool.submit(broker.capture, context, time.monotonic() + 2)
+        await_pending(1)
+        child = WorkerProcess(30, "late-child", 1, 30, 20)
+        native.table[child.pid] = child
+        release.set()
+        first_pair = first.result(timeout=1)
+        assert second.result(timeout=1) is first_pair
+        late_pair = late.result(timeout=1)
+        assert late_pair is not first_pair
+        assert child.pid not in first_pair.stable
+        assert late_pair.stable[child.pid] == child
+        assert snapshots == 4
+
+        expire_next = True
+        short = pool.submit(broker.capture, context, time.monotonic() + 0.3)
+        await_pending(1)
+        expired_peer = pool.submit(broker.capture, context, time.monotonic() + 0.15)
+        await_pending(2)
+        longer = pool.submit(broker.capture, context, time.monotonic() + 2)
+        await_pending(3)
+        with pytest.raises(TimeoutError, match="inspection deadline"):
+            expired_peer.result(timeout=1)
+        with pytest.raises(TimeoutError, match="leader's inventory budget"):
+            short.result(timeout=1)
+        assert longer.result(timeout=1).stable[child.pid] == child
+        assert snapshots == 7
+    assert not broker._pending and not broker._capturing
+
+
+def test_concurrent_stops_leave_the_default_executor_free(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Long cleanup cannot queue another Stop or database work behind its TERM grace."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from planner.worker_supervision.contracts import CleanupResult
+
+    native = _Primitives({20: WorkerProcess(20, "old", 10, 20, 20)})
+    monkeypatch.setattr("planner.worker_supervision.get_platform_adapter", lambda: _Adapter(native))
+    monkeypatch.setattr(config, "STOP_OBSERVATION_BATCH_SECONDS", 0)
+    original = _record(tmp_path)
+    entered: set[Path] = set()
+    entered_lock = threading.Lock()
+    both_entered = threading.Event()
+    release = threading.Event()
+
+    def cleanup(path: Path, **kwargs: object) -> CleanupResult:
+        with entered_lock:
+            entered.add(path)
+            if len(entered) == 2:
+                both_entered.set()
+        assert release.wait(1), "Long cleanup used the shared executor"
+        return CleanupResult(True, "Fake recorded processes ended")
+
+    monkeypatch.setattr("planner.worker_supervision.stop_record", cleanup)
+
+    async def run() -> None:
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=1))
+        supervisors = []
+        for number in range(2):
+            path = tmp_path / f"{number:032x}.json"
+            records.write(path, records.read(original))
+            supervisor = object.__new__(WorkerSupervisor)
+            supervisor.path = path
+            supervisor._lock = threading.Lock()
+            supervisor._end = threading.Event()
+            supervisors.append(supervisor)
+        tasks = [asyncio.create_task(supervisor.stop()) for supervisor in supervisors]
+        try:
+            # This probe also needs the shared executor. It must run while both
+            # long cleanup calls remain held in their own transient executors.
+            async def wait_for_cleanups() -> None:
+                while not both_entered.is_set():
+                    await asyncio.sleep(0.001)
+
+            await asyncio.wait_for(wait_for_cleanups(), 0.5)
+            assert (
+                await asyncio.wait_for(asyncio.to_thread(lambda: "available"), 0.5) == "available"
+            )
+        finally:
+            release.set()
+            results = await asyncio.gather(*tasks)
+        assert all(result.complete for result in results)
+
+    asyncio.run(run())

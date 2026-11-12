@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ from planner.worker_supervision.contracts import (
     WorkerProcess,
 )
 from planner.worker_supervision.observation import (
+    FreshProcessObservations,
     SharedProcessObserver,
     capture_observation,
     index_processes,
@@ -132,6 +134,7 @@ def _observe_unlocked(
     *,
     context: InspectionContext | None = None,
     observation: ProcessObservation | None = None,
+    share_fresh_observation: bool = False,
 ) -> dict[str, Any]:
     record = records.read(path)
     previous = record.copy()
@@ -143,7 +146,12 @@ def _observe_unlocked(
     if host.boot != record.get("boot"):
         record.update(state="complete", boot_ended=True, reason="The recorded boot ended")
     elif record.get("state") != "complete":
-        observation = capture_observation(context, deadline) if observation is None else observation
+        if observation is None:
+            observation = (
+                _fresh_stop_observations.capture(context, deadline)
+                if share_fresh_observation
+                else capture_observation(context, deadline)
+            )
         stable = observation.stable
         discovered = _discover(
             record, stable, children=observation.children, sessions=observation.sessions
@@ -189,9 +197,16 @@ def _observe(
     context: InspectionContext | None = None,
     observation: ProcessObservation | None = None,
     wait: bool = True,
+    share_fresh_observation: bool = False,
 ) -> dict[str, Any]:
     with records.locked(path, deadline, wait=wait):
-        return _observe_unlocked(path, deadline, context=context, observation=observation)
+        return _observe_unlocked(
+            path,
+            deadline,
+            context=context,
+            observation=observation,
+            share_fresh_observation=share_fresh_observation,
+        )
 
 
 def inspect_record(
@@ -252,10 +267,13 @@ def _inspect_record(
     deadline: float,
     revoke_pending: bool = False,
     context: InspectionContext | None = None,
+    share_fresh_observation: bool = False,
 ) -> CleanupResult:
     try:
         context = _inspection_context(deadline) if context is None else context
-        record = _observe_unlocked(path, deadline, context=context)
+        record = _observe_unlocked(
+            path, deadline, context=context, share_fresh_observation=share_fresh_observation
+        )
         if identity is not None:
             root = record.get("root")
             if root is None or (root["pid"], root["birth"], record["boot"]) != (
@@ -281,7 +299,9 @@ def _inspect_record(
             return CleanupResult(False, "Recorded Worker processes remain")
         # The root can exit after its previous snapshot and leave a late tool.
         # Inspect the isolated session again after exact root/child absence.
-        record = _observe_unlocked(path, deadline, context=context)
+        record = _observe_unlocked(
+            path, deadline, context=context, share_fresh_observation=share_fresh_observation
+        )
         if any(not primitives.is_absent(_process(raw), deadline) for raw in record["processes"]):
             return CleanupResult(False, "Recorded Worker processes remain")
         if record.get("unattributed_session_members"):
@@ -303,7 +323,7 @@ def _stop_record(
     deadline = time.monotonic() + config.STOP_SECONDS if deadline is None else deadline
     try:
         context = _inspection_context(deadline) if context is None else context
-        record = _observe_unlocked(path, deadline, context=context)
+        record = _observe_unlocked(path, deadline, context=context, share_fresh_observation=True)
         if identity is not None:
             root = record.get("root")
             if root is None or (root["pid"], root["birth"], record["boot"]) != (
@@ -319,7 +339,9 @@ def _stop_record(
         primitives = context.primitives
         term_deadline = min(deadline, time.monotonic() + config.TERM_SECONDS)
         for signum, phase_deadline in ((signal.SIGTERM, term_deadline), (signal.SIGKILL, deadline)):
-            record = _observe_unlocked(path, deadline, context=context)
+            record = _observe_unlocked(
+                path, deadline, context=context, share_fresh_observation=True
+            )
             remaining = [
                 _process(raw)
                 for raw in record["processes"]
@@ -331,7 +353,11 @@ def _stop_record(
                 primitives.signal(process, signum, deadline)
             while time.monotonic() < phase_deadline:
                 result = _inspect_record(
-                    path, identity=identity, deadline=deadline, context=context
+                    path,
+                    identity=identity,
+                    deadline=deadline,
+                    context=context,
+                    share_fresh_observation=True,
                 )
                 if result.complete:
                     return result
@@ -483,6 +509,7 @@ def reconcile(root: Path, ticket_id: str | None = None) -> ReconciliationResult:
 
 
 _process_observer = SharedProcessObserver(_inspection_context)
+_fresh_stop_observations = FreshProcessObservations()
 
 
 class WorkerSupervisor:
@@ -737,7 +764,7 @@ class WorkerSupervisor:
         def capture() -> InspectionContext:
             context = _inspection_context(deadline)
             with self._lock:
-                _observe(self.path, deadline, context=context)
+                _observe(self.path, deadline, context=context, share_fresh_observation=True)
             return context
 
         try:
@@ -784,7 +811,11 @@ class WorkerSupervisor:
             with self._lock:
                 return stop_record(self.path, deadline=deadline, context=context)
 
-        result = await asyncio.to_thread(cleanup)
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="worker-process-stop")
+        try:
+            result = await asyncio.get_running_loop().run_in_executor(executor, cleanup)
+        finally:
+            executor.shutdown(wait=False)
         if diagnostics:
             return CleanupResult(result.complete, result.reason + "; " + "; ".join(diagnostics))
         return result
