@@ -1,4 +1,5 @@
 {
+  "candidate": "typescript",
   "conversation_system": "in_memory",
   "source_roots": [
     "src/planner/conversation/",

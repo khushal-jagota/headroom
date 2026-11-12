@@ -71,6 +71,19 @@ scripts/dev pytest tests/compare --compare-list tests/compare/lists/unit-NN.json
 
 Repeat `--compare-list` to select several lists. Without that option, pytest discovers every list. Four cheap oracle tests also run. Each report contains differences, route reach, source table counts, loop results, and the applied rules.
 
+## Candidate selection in branch CI
+
+After a list passes against TypeScript, add `"candidate": "typescript"` at its
+root. CI and local pytest runs then compare that list against
+`tests.compare.ts_launcher`. Lists without the marker retain Python against
+Python calibration. An explicit `--compare-right-module` overrides the marker.
+
+Pull requests select affected lists through `source_roots`. Shared harness,
+core, or `server/` changes select every list. Branch pushes run every list.
+The workflow installs `server/` dependencies and runs on Node 22 and 24, as the
+server workflow does. A difference fails the job. Reports upload even after
+failure, with one artifact for each Node version.
+
 ## TypeScript host contract
 
 Select the TS launcher with:

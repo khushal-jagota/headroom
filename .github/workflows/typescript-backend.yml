@@ -14,6 +14,10 @@ jobs:
   comparison:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -25,14 +29,16 @@ jobs:
           python-version: '3.12'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '22'
+          node-version: ${{ matrix.node }}
       - name: Install isolated dependencies
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install -r requirements.txt
           .venv/bin/python -m pip install --editable . --config-settings editable_mode=compat
+          scripts/dev npm --prefix server ci
           scripts/dev npm --prefix web ci
-          scripts/dev npm --prefix web run build
+          scripts/dev check-node web
+          (cd web && node node_modules/vite/bin/vite.js build)
       - name: Python type check
         run: scripts/dev mypy
       - name: Check conversation contracts
@@ -59,15 +65,28 @@ jobs:
             echo 'No comparison areas affected.'
             exit 0
           fi
-          arguments=()
+          python_arguments=()
+          typescript_arguments=()
           for list in "${lists[@]}"; do
-            arguments+=(--compare-list "$list")
+            candidate=$(.venv/bin/python -c 'import json, sys; print(json.load(open(sys.argv[1])).get("candidate", "python"))' "$list")
+            if [[ "$candidate" == typescript ]]; then
+              typescript_arguments+=(--compare-list "$list")
+            else
+              python_arguments+=(--compare-list "$list")
+            fi
           done
-          scripts/dev pytest tests/compare "${arguments[@]}" --compare-report-dir "$RUNNER_TEMP/comparison"
+          status=0
+          if [[ ${#python_arguments[@]} -gt 0 ]]; then
+            scripts/dev pytest tests/compare "${python_arguments[@]}" --compare-right-module tests.compare.host --compare-report-dir "$RUNNER_TEMP/comparison" || status=$?
+          fi
+          if [[ ${#typescript_arguments[@]} -gt 0 ]]; then
+            scripts/dev pytest tests/compare "${typescript_arguments[@]}" --compare-right-module tests.compare.ts_launcher --compare-report-dir "$RUNNER_TEMP/comparison" || status=$?
+          fi
+          exit "$status"
       - name: Preserve comparison evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: comparison-evidence
+          name: comparison-evidence-node-${{ matrix.node }}
           path: ${{ runner.temp }}/comparison
           if-no-files-found: ignore

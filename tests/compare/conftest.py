@@ -6,7 +6,7 @@ import pytest
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption("--compare-list", action="append", default=[])
     parser.addoption("--compare-report-dir", default=None)
-    parser.addoption("--compare-right-module", default="tests.compare.host")
+    parser.addoption("--compare-right-module", default=None)
 
 
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
