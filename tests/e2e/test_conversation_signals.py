@@ -196,9 +196,13 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         if state == "rest":
             line = pane.locator("[data-conversation-rest-line]")
             if working:
-                expect(line).to_have_text(re.compile(r"^Working(?: · .+)?$"), timeout=WAIT_MS)
+                expect(line).to_have_text(
+                    re.compile(r"^Working(?: · [0-9]+(?:s|m(?: [0-9]+s)?))?$"), timeout=WAIT_MS
+                )
             else:
-                expect(line).not_to_have_text(re.compile(r"^Working(?: · .+)?$"), timeout=WAIT_MS)
+                expect(line).not_to_have_text(
+                    re.compile(r"^Working(?: · [0-9]+(?:s|m(?: [0-9]+s)?))?$"), timeout=WAIT_MS
+                )
         else:
             expect(pane.locator("[data-conversation-stop]")).to_have_count(
                 int(working), timeout=WAIT_MS

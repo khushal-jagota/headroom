@@ -144,7 +144,6 @@ def test_kill_waits_for_a_local_write_behind_the_locale_router(
         assert isinstance(await sending, PromptDeliveryStarted)
         assert backend.written_texts() == ("first", "second")
         assert backend.live_children == 0
-        assert await harness.system.retirement_is_confirmed("c")
         assert await harness.recorded_kinds("c") == (
             ConversationEventKind.prompt,
             ConversationEventKind.turn_ended,
@@ -204,7 +203,6 @@ def test_kill_stops_a_local_child_that_finishes_spawning_during_disposition(
         await harness.settle()
         assert harness.backend("c").written_texts() == ()
         assert harness.backend("c").live_children == 0
-        assert await harness.system.retirement_is_confirmed("c")
 
     _run(exercise)
 
@@ -348,5 +346,42 @@ def test_stale_notice_does_not_refuse_the_next_model_changing_message_during_mac
         assert harness.backend("mac").sender_written_texts() == ("first", "next model")
         assert harness.backend("mac").model == "new-model"
         assert await harness.system.held_prompts("mac") == ()
+
+    _run(exercise)
+
+
+def test_kill_refuses_a_remote_stop_without_a_retirement_receipt(
+    stopped: tuple[_Harness, _StopFactory], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completed stop request alone cannot authorize a replacement native child."""
+    from unittest.mock import AsyncMock
+
+    from planner.conversation.contracts import PromptDeliveryQueued
+    from planner.core.errors import ErrorCode, PlannerError
+
+    harness, factory = stopped
+
+    async def exercise() -> None:
+        await _start(harness, "mac")
+        await harness.system.send("mac", text_message_content("first"), sender_label="Owner")
+        await harness.complete_turn("mac")
+        state = harness.system._conversations["mac"]
+        child = state.child
+        assert child is not None
+        stop = child.stop
+        monkeypatch.setattr(child, "stop", AsyncMock())
+        with pytest.raises(PlannerError, match="Recheck Worker cleanup") as refusal:
+            await harness.system.kill("mac")
+        assert refusal.value.code is ErrorCode.retry_later
+        assert state.child is child and state.child_is_quarantined
+        assert state.retained_child_reference is not None
+        result = await harness.system.send(
+            "mac", text_message_content("replacement"), sender_label="Owner",
+        )
+        assert isinstance(result, PromptDeliveryQueued)
+        assert harness.backend("mac").written_texts() == ("first",)
+        assert len(factory.runs) == 1
+        monkeypatch.setattr(child, "stop", stop)
+        factory.link_back.set()
 
     _run(exercise)

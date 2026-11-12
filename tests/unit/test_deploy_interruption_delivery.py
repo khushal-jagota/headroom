@@ -1221,7 +1221,6 @@ def test_live_source_keeps_exact_claim_and_prevents_replacement(tmp_path: Path) 
                 await restarted.system.kill("c")
                 source.wait(timeout=5)
                 assert source.returncode is not None
-                assert await restarted.system.retirement_is_confirmed("c")
             finally:
                 await restarted.system.shutdown()
         finally:

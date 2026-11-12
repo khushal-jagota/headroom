@@ -1,8 +1,9 @@
-"""Start a Ticket's worker step again, on a worker that died.
+"""Restart a Ticket's Worker: kill its conversation, unlink it, start a fresh step.
 
-One operation with one address. There was no ordinary route for it: reset and
-re-configure exist separately, and nothing released the claim and started. Only an
-Manager could reach it, through its own wrapper. Khushal can now do it too.
+One operation with one address, shared by the CLI and the API. A successful kill
+establishes that the old Worker ended. If cleanup cannot establish that, kill raises
+before the claim, conversation link, or launch configuration changes. A Mac Ticket
+refuses a restart while the Mac is away because the kill cannot reach it.
 """
 
 from __future__ import annotations
@@ -16,13 +17,14 @@ from planner.conversation.start_admission import explicit_start
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.task_settlement import run_on_worker_thread
+from planner.executor.clock import now_ms
 from planner.runtime import conversation_start, worker_step_readiness
 from planner.tickets import data as tickets_data
-from planner.tickets import revision_feedback
+from planner.tickets import locale_configuration, revision_feedback
 from planner.tickets.contracts import (
     StageOwnershipMode,
     Ticket,
-    TicketStatus,
+    TicketLocale,
     WorkerStepClaim,
 )
 from planner.tickets.logic import machine
@@ -36,49 +38,31 @@ def require_restartable(
     principal: Principal,
     ticket_id: str,
 ) -> Ticket:
-    """Return the Ticket, once every reason not to restart it has been ruled out.
-
-    Nothing is asked about whether the worker is alive, because nothing can answer it.
-    ``is_running`` reads in-process bookkeeping that nothing clears when a backend dies,
-    so a dead worker looks like a running one forever, and a guard on it would refuse the
-    exact state a restart is for. Whoever stands above the Ticket decides that its worker
-    is dead, from the conversation history they can already read, and the checks here
-    bound what that decision can reach.
-    """
+    """Return the Ticket, unless its Stage is the user's or its Mac is away."""
     ticket = tickets_data.read_ticket(conn, ticket_id)
-    worker_type_definition = ticket.workflow
     ownership_mode = machine.stage_ownership_mode(
         ticket.stage,
-        worker_type_definition=worker_type_definition,
+        worker_type_definition=ticket.workflow,
     )
     if ownership_mode is not StageOwnershipMode.worker:
-        # A user-owned Stage opens one collaborative discussion, so no code can tell a
-        # dead worker from a discussion waiting on the user. A restart there would kill a
-        # conversation the user is in.
+        # A user-owned Stage runs its opener once per Stage entry. A restart there would
+        # kill the conversation the user is in and start nothing.
         raise PlannerError(
             ErrorCode.validation,
             "only a Worker-owned Stage has a worker step to restart",
             {"ticket_id": ticket_id, "stage": ticket.stage},
         )
-    if ticket.worker_step_claim is WorkerStepClaim.out:
-        return ticket
-    if ticket.worker_step_claim is WorkerStepClaim.errored:
-        return ticket
-    if ticket.conversation_id is None:
-        # A restart whose start was refused lands here. Restarting again is how a
-        # caller corrects the launch configuration it named the first time.
-        return ticket
-    if (
-        ticket.ticket_status is TicketStatus.empty
-        and revision_feedback.snapshot(conn, ticket_id) is not None
+    if ticket.locale is TicketLocale.macos and not locale_configuration.mac_is_present(
+        conn, now_ms()
     ):
-        # Revision work keeps its conversation, so restart only has to rearm it.
-        return ticket
-    raise PlannerError(
-        ErrorCode.validation,
-        "the Ticket has no worker step out to restart",
-        {"ticket_id": ticket_id, "ticket_status": ticket.ticket_status.value},
-    )
+        # A stop cannot reach a Mac that is away, so its old Worker could outlive the
+        # restart. The readiness loop would not start the fresh step either.
+        raise PlannerError(
+            ErrorCode.validation,
+            f"{locale_configuration.WAITING_FOR_THE_MAC}: restart this Ticket once it is back",
+            {"ticket_id": ticket_id},
+        )
+    return ticket
 
 
 async def restart_worker(
@@ -91,10 +75,12 @@ async def restart_worker(
     now: Callable[[], int],
     write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None = None,
 ) -> dict[str, object]:
-    """Kill this Ticket's dead conversation, give the claim back, and start again.
+    """Kill this Ticket's conversation, unlink it, give back any claim, and start again.
 
-    A reset on its own would leave the claim out, with no conversation and nothing that
-    ever picks the Ticket up. Both halves happen here, and the caller sees one action.
+    Whatever the claim is, a successful kill permits the restart. A failed kill
+    preserves the claim, link, and configuration, and prevents a fresh start. If the
+    Ticket awaits approval, the kill and unlink happen and the result explains why
+    nothing started.
 
     The configuration is already validated when it arrives: the caller checked
     the backend name and disabled-model policy before anything was killed, so a
@@ -105,17 +91,29 @@ async def restart_worker(
     connection. The link lock, the kill and the start are the conversation system's and
     stay on the event loop.
     """
-    (
-        killed_conversation_id,
-        killed_conversation_looked_running,
-    ) = await _prepare_worker_restart(
-        conversations,
-        conn,
-        principal,
-        ticket_id,
-        write_employee_configuration=write_employee_configuration,
-        now=now,
-    )
+    async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
+        ticket = await run_on_worker_thread(require_restartable, conn, principal, ticket_id)
+        killed_conversation_id = ticket.conversation_id
+        killed_conversation_looked_running = False
+        revision_restarted_in_fresh_conversation = False
+        if killed_conversation_id is not None:
+            revision_restarted_in_fresh_conversation = (
+                await run_on_worker_thread(revision_feedback.snapshot, conn, ticket_id) is not None
+            )
+            killed_conversation_looked_running = await conversations.is_running(
+                killed_conversation_id
+            )
+            # kill owns cleanup proof. Its refusal must precede this transaction,
+            # so the Ticket still points at the Worker whose cleanup needs a recheck.
+            await conversations.kill(killed_conversation_id)
+        await run_on_worker_thread(
+            _unlink_give_back_the_claim_and_write_configuration,
+            conn,
+            ticket_id,
+            killed_conversation_id=killed_conversation_id,
+            write_employee_configuration=write_employee_configuration,
+            now=now(),
+        )
     # Start obtains fresh read ownership, after mutation ownership ends.
     with explicit_start():
         start_result = await start_worker_step()
@@ -126,92 +124,26 @@ async def restart_worker(
         start_result,
         killed_conversation_id,
         killed_conversation_looked_running,
+        revision_restarted_in_fresh_conversation,
     )
 
 
-async def _prepare_worker_restart(
-    conversations: ConversationSystem,
+def _unlink_give_back_the_claim_and_write_configuration(
     conn: sqlite3.Connection,
-    principal: Principal,
     ticket_id: str,
     *,
-    write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None,
-    now: Callable[[], int],
-) -> tuple[str | None, bool]:
-    ticket = await run_on_worker_thread(require_restartable, conn, principal, ticket_id)
-    rearming_idle_revision = (
-        ticket.worker_step_claim is WorkerStepClaim.none and ticket.conversation_id is not None
-    )
-    if rearming_idle_revision and write_employee_configuration is not None:
-        raise PlannerError(
-            ErrorCode.already_running,
-            "Employee configuration is frozen while a conversation or a worker step holds it",
-            {"ticket_id": ticket_id},
-        )
-    killed_conversation_id = ticket.conversation_id
-    killed_conversation_looked_running = False
-    async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
-        ticket = await run_on_worker_thread(require_restartable, conn, principal, ticket_id)
-        killed_conversation_id = ticket.conversation_id
-        if killed_conversation_id is not None:
-            killed_conversation_looked_running = await conversations.is_running(
-                killed_conversation_id
-            )
-            # Live-state bookkeeping can be stale, so it cannot decide admission. Kill
-            # the exact old traffic without a database write lock. A later send can resume
-            # this conversation if the Ticket moves while kill is awaited.
-            await conversations.kill(killed_conversation_id)
-
-        source_retirement_proven = False
-        if killed_conversation_id is not None:
-            source_retirement_proven = await conversations.retirement_is_confirmed(
-                killed_conversation_id
-            )
-            if not source_retirement_proven:
-                raise PlannerError(
-                    ErrorCode.validation,
-                    "source retirement is unresolved; executor or operator settlement is required",
-                    {
-                        "retirement_started": True,
-                        "source_retired": None,
-                        "reason": "context_changed",
-                        "corrective_action": "verify_launch_context",
-                    },
-                )
-        try:
-            await run_on_worker_thread(
-                _give_the_claim_back_and_write_configuration,
-                conn,
-                principal,
-                ticket_id,
-                write_employee_configuration=write_employee_configuration,
-                now=now(),
-            )
-        except PlannerError as error:
-            raise PlannerError(
-                error.code,
-                error.message,
-                {
-                    **error.detail,
-                    "retirement_started": killed_conversation_id is not None,
-                    "source_retired": True if source_retirement_proven else None,
-                },
-            ) from error
-    return killed_conversation_id, killed_conversation_looked_running
-
-
-def _give_the_claim_back_and_write_configuration(
-    conn: sqlite3.Connection,
-    principal: Principal,
-    ticket_id: str,
-    *,
+    killed_conversation_id: str | None,
     write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None,
     now: int,
 ) -> None:
-    """Give the claim back and write the configuration, as one transaction."""
+    """Unlink the killed conversation, give back any claim, and write the configuration.
+
+    One transaction. The Ticket is read again inside it, because a Worker can file its
+    proposal while the kill is awaited, and that gives the claim back by itself.
+    """
     conn.execute("BEGIN IMMEDIATE")
     try:
-        ticket = require_restartable(conn, principal, ticket_id)
+        ticket = tickets_data.read_ticket(conn, ticket_id)
         if ticket.worker_step_claim in {
             WorkerStepClaim.out,
             WorkerStepClaim.errored,
@@ -223,13 +155,13 @@ def _give_the_claim_back_and_write_configuration(
                 expected_claim_revision=ticket.worker_step_claim_revision,
                 now=now,
             )
-            if ticket.conversation_id is not None:
-                tickets_data.clear_ticket_conversation_link(
-                    conn,
-                    ticket_id,
-                    expected_conversation_id=ticket.conversation_id,
-                    now=now,
-                )
+        if killed_conversation_id is not None:
+            tickets_data.clear_ticket_conversation_link(
+                conn,
+                ticket_id,
+                expected_conversation_id=killed_conversation_id,
+                now=now,
+            )
         if write_employee_configuration is not None:
             write_employee_configuration(conn, now)
         conn.execute("COMMIT")
@@ -245,12 +177,15 @@ def _restart_result(
     start_result: WorkerStepStartResult,
     killed_conversation_id: str | None,
     killed_conversation_looked_running: bool,
+    revision_restarted_in_fresh_conversation: bool,
 ) -> dict[str, object]:
     restarted = tickets_data.read_ticket(conn, ticket_id)
     return {
         "ticket_id": ticket_id,
         "killed_conversation_id": killed_conversation_id,
         "killed_conversation_looked_running": killed_conversation_looked_running,
+        # The old working context is gone. Only the revision feedback carries over.
+        "revision_restarted_in_fresh_conversation": revision_restarted_in_fresh_conversation,
         "employee_configuration": {
             "employee_backend": restarted.employee_backend,
             "employee_launch_model": restarted.employee_launch_model,

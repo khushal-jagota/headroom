@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from collections.abc import Callable
-from contextlib import closing
+from datetime import UTC, datetime
 from pathlib import Path
 
 from playwright.sync_api import BrowserContext, Page, expect
@@ -27,7 +27,6 @@ from tests.support.connected_rows import _bind, _conversation, _message, _post
 from tests.support.server_fixtures import rail_server as rail_server
 
 from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
-from planner.core.db import connect
 
 EVIDENCE = Path("/home/vps/Deployments/Panels/current/data/files/tickets/t_0kjtqmge/artifacts/rail")
 LONG_TITLE = "Review the entire Worker title when the adjustable rail clips this long approval row"
@@ -155,11 +154,12 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     ).to_have_count(0)
     expect(card.locator(".manager-eyebrow")).to_contain_text("Rail proof")
     expect(left.locator(f'[data-manager="{empty["id"]}"]')).to_be_visible()
-    api.direct_patch(server, f"/api/managers/{empty['id']}/settled", {"settled": True})
-    # The host clock is fixed. Give this older update a distinct stored timestamp.
-    with closing(connect(str(server.db_path))) as conn:
-        conn.execute("UPDATE managers SET updated_at=updated_at-1 WHERE id=?", (empty["id"],))
-        conn.commit()
+    empty_settled = api.direct_patch(
+        server, f"/api/managers/{empty['id']}/settled", {"settled": True}
+    )
+    # Advance the fixed clock so the later settlement is newer through the server's write door.
+    next_update = datetime.fromtimestamp(int(empty_settled["updated_at"]) + 1, UTC)
+    api.direct_post(server, "/api/test/set-now", {"now": next_update.isoformat()})
     # The row waits on the owner's approval, so its mark column shows the Review mark, which
     # outranks its unread message's dot (redesign, owner). The mark stays through settle,
     # reopen and the other conversations' reads below.

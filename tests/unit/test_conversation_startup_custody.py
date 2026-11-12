@@ -187,9 +187,14 @@ def test_failed_start_keeps_handle_until_native_cleanup_succeeds(
             assert len(children) == 1
             assert children[0] is harness.system._conversations['c'].child
             assert children[0] is not None
+            with pytest.raises(PlannerError, match='Recheck Worker cleanup') as refusal:
+                await harness.system.kill('c')
+            assert refusal.value.code.value == 'retry_later'
+            assert harness.system._conversations['c'].child_is_quarantined
+            assert len(children) == 1
             monkeypatch.setattr(children[0], 'stop', AsyncMock())
             await harness.system.kill('c')
-            assert await harness.system.retirement_is_confirmed('c')
+            assert await harness.store.recorded_source_retirement_proven('c')
         finally:
             if children:
                 assert children[0] is not None
