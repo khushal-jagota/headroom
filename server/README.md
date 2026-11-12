@@ -121,3 +121,9 @@ Lists for units 7 through 10 select both in-memory systems with `"conversation_s
 The optional `beforePublication(database)` hook performs test-host projection bootstrap after record reconciliation and before producer initialization.
 It does not replace the producer authority. `testAreas` receives the shared core, record, publication, clock, and database.
 `startServer` returns its listener address and an idempotent close operation for isolated lifecycle tests.
+
+Use `requestOrigin(request)` from `core/http/origin.ts` for public URL construction.
+It matches Uvicorn's default trusted local peer (`127.0.0.1`) and validated
+`X-Forwarded-Proto` schemes. It keeps the actual Host and does not trust
+`X-Forwarded-Host`. Nondefault `FORWARDED_ALLOW_IPS` configuration is not part of
+this helper's current contract.

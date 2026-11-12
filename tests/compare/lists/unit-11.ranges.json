@@ -1,0 +1,89 @@
+{
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/files/"
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "File owner",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "manager": "id"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/files/managers/${manager}/range.mp4",
+      "status": 200,
+      "json": {
+        "content": "Exact caf\u00e9 \ud83d\ude00 bytes \\x00 0123456789"
+      }
+    }
+  ],
+  "requests": [
+    {
+      "area": "file-ranges",
+      "method": "GET",
+      "path": "/files/managers/${manager}/range.mp4",
+      "status": 200,
+      "response_bytes": true
+    },
+    {
+      "area": "file-ranges",
+      "method": "GET",
+      "path": "/files/managers/${manager}/range.mp4",
+      "status": 206,
+      "response_bytes": true,
+      "headers": {
+        "Range": "bytes=0-15"
+      }
+    },
+    {
+      "area": "file-ranges",
+      "method": "GET",
+      "path": "/files/managers/${manager}/range.mp4",
+      "status": 206,
+      "response_bytes": true,
+      "headers": {
+        "Range": "bytes=-8"
+      }
+    },
+    {
+      "area": "file-ranges",
+      "method": "GET",
+      "path": "/files/managers/${manager}/range.mp4",
+      "status": 416,
+      "response_bytes": true,
+      "headers": {
+        "Range": "bytes=99999-"
+      }
+    },
+    {
+      "area": "file-ranges",
+      "method": "GET",
+      "path": "/files/managers/${manager}/range.mp4",
+      "status": 400,
+      "response_bytes": true,
+      "headers": {
+        "Range": "items=0-2"
+      }
+    },
+    {
+      "area": "file-ranges",
+      "method": "GET",
+      "path": "/files/managers/${manager}/range.mp4",
+      "status": 206,
+      "response_bytes": true,
+      "headers": {
+        "Range": "bytes=2-1"
+      }
+    }
+  ],
+  "compare_managed_files": true,
+  "candidate": "typescript"
+}

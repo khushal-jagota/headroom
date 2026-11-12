@@ -5,9 +5,25 @@ import type {
   ReadAccess,
   ReadSql,
   SqlParameters,
+  SqlValue,
+  WriteOptions,
   TransactionSql,
 } from './contracts.ts';
 export type * from './contracts.ts';
+const functionScopes = new WeakMap<
+  ReadSql,
+  (name: string, callback: (...values: SqlValue[]) => SqlValue) => void
+>();
+/** Register a pure SQLite function for this read scope only, without a raw connection. */
+export function registerReadFunction(
+  sql: ReadSql,
+  name: string,
+  callback: (...values: SqlValue[]) => SqlValue,
+): void {
+  const register = functionScopes.get(sql);
+  if (!register) throw new TypeError('database SQL function scope is no longer active');
+  register(name, callback);
+}
 
 const BUSY_TIMEOUT_MS = 5000;
 
@@ -70,6 +86,7 @@ function scope<T>(
   work: (sql: TransactionSql) => T,
 ): T {
   let active = true;
+  const clearFunctions: (() => void)[] = [];
   function prepare(sql: string): BetterSqlite3.Statement {
     if (!active) throw new TypeError('database SQL scope is no longer active');
     assertScopedStatement(sql);
@@ -88,10 +105,24 @@ function scope<T>(
           invoke<BetterSqlite3.RunResult>(prepare(sql), 'run', parameters),
       })
     : reader;
+  functionScopes.set(capability, (name, callback) => {
+    if (!active) throw new TypeError('database SQL scope is no longer active');
+    let current: typeof callback | undefined = callback;
+    clearFunctions.push(() => {
+      current = undefined;
+    });
+    connection.function(name, { varargs: true }, (...values: SqlValue[]) => {
+      if (!active || !current)
+        throw new TypeError('database SQL function scope is no longer active');
+      return current(...values);
+    });
+  });
   try {
     return assertSynchronous(work(capability as TransactionSql));
   } finally {
+    functionScopes.delete(capability);
     active = false;
+    for (const clear of clearFunctions) clear();
   }
 }
 
@@ -166,10 +197,7 @@ export function createDatabase(
     if (closed) throw new Error('database is closed');
   };
   return Object.freeze({
-    write<T>(
-      work: (tx: TransactionSql) => T,
-      writeOptions?: { changeSignal?: 'emit' | 'silent' },
-    ): T {
+    write<T>(work: (tx: TransactionSql) => T, writeOptions?: WriteOptions): T {
       checkOpen();
       if (writing)
         throw new TypeError('nested write door calls are not allowed; use the current transaction');

@@ -1,8 +1,28 @@
-import { readFile, stat, realpath } from 'node:fs/promises';
+import { requestOrigin } from './origin.ts';
+import { open, readFile, stat, realpath } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import { resolve, sep, extname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { createHash, randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+// Starlette FileResponse emits chunks of this size. A final small chunk retains
+// the ordinary (non-streaming) gzip length and threshold behavior.
+const FILE_CHUNK_BYTES = 64 * 1024;
+async function readSlice(file: string, start: number, end: number): Promise<Buffer> {
+  const handle = await open(file, 'r');
+  try {
+    const bytes = Buffer.alloc(end - start);
+    let length = 0;
+    while (length < bytes.length) {
+      const result = await handle.read(bytes, length, bytes.length - length, start + length);
+      if (!result.bytesRead) break;
+      length += result.bytesRead;
+    }
+    return bytes.subarray(0, length);
+  } finally {
+    await handle.close();
+  }
+}
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -79,6 +99,7 @@ export async function sendFile(
     cache?: string;
     mime?: string;
     conditional?: boolean;
+    rangeErrorHeaders?: readonly string[];
   } = {},
 ): Promise<void> {
   let info;
@@ -128,6 +149,7 @@ export async function sendFile(
     } catch (error) {
       for (const name of ['content-length', 'etag', 'last-modified', 'accept-ranges'])
         reply.removeHeader(name);
+      for (const name of options.rangeErrorHeaders ?? []) reply.removeHeader(name);
       if (options.cache && options.conditional)
         reply.header('cache-control', 'no-cache, must-revalidate');
       if (error instanceof RangeError) {
@@ -141,16 +163,23 @@ export async function sendFile(
       }
       return;
     }
-    const bytes = await readFile(file);
     if (parts.length === 1) {
       const [start, end] = parts[0]!;
       reply
         .code(206)
         .header('content-range', `bytes ${start}-${end - 1}/${info.size}`)
         .header('content-length', end - start)
-        .send(bytes.subarray(start, end));
+        .send(
+          request.method === 'HEAD' || end === start
+            ? Buffer.alloc(0)
+            : end - start <= FILE_CHUNK_BYTES
+              ? await readSlice(file, start, end)
+              : createReadStream(file, { start, end: end - 1, highWaterMark: FILE_CHUNK_BYTES }),
+        );
+      await reply;
       return;
     }
+    const bytes = await readFile(file);
     const boundary = randomBytes(13).toString('hex');
     const chunks = parts.flatMap(([start, end]) => [
       Buffer.from(
@@ -168,7 +197,13 @@ export async function sendFile(
     await reply.send(Readable.from(chunks));
     return;
   }
-  reply.send(request.method === 'HEAD' ? Buffer.alloc(0) : await readFile(file));
+  await reply.send(
+    request.method === 'HEAD'
+      ? Buffer.alloc(0)
+      : info.size < FILE_CHUNK_BYTES
+        ? await readFile(file)
+        : createReadStream(file, { highWaterMark: FILE_CHUNK_BYTES }),
+  );
 }
 export async function mountStatic(
   app: FastifyInstance,
@@ -205,7 +240,7 @@ export async function mountStatic(
             return;
           }
           if (!request.url.split('?')[0]!.endsWith('/')) {
-            const url = new URL(request.url, `${request.protocol}://${request.host}`);
+            const url = new URL(request.url, requestOrigin(request));
             url.pathname += '/';
             reply.code(307).header('location', url.href).send('');
             return;
