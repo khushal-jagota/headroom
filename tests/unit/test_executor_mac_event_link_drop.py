@@ -711,7 +711,7 @@ def test_an_agent_write_past_the_limit_finishes_once_and_its_resend_gets_its_rec
                 return {"delivered": True}
 
             async def slow_delivery(
-                envelope: QueuedEnvelope, identity: ExecutorIdentity, published: object
+                envelope: QueuedEnvelope, identity: ExecutorIdentity, publish: object
             ) -> AcceptanceReceipt:
                 started.append(envelope.sequence)
                 await release.wait()  # e.g. another conversation's lock, or its retries

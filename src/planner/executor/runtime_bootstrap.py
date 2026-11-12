@@ -60,8 +60,10 @@ def read_record(path: Path) -> dict[str, Any] | None:
 
 def update_root() -> Path:
     executor = os.environ.get("PLAN_EXECUTOR_ROOT")
-    root = Path(executor).expanduser() if executor else (
-        Path.home() / "Library/Application Support/Panels/executor"
+    root = (
+        Path(executor).expanduser()
+        if executor
+        else (Path.home() / "Library/Application Support/Panels/executor")
     )
     return root.resolve() / "updates"
 
@@ -157,10 +159,14 @@ def supervise(arguments: list[str]) -> int:
     if pending is not None:
         # The permanent supervisor did not confirm this attempt before it ended.
         if selected is None or selected.get("request_id") != pending["request_id"]:
-            atomic_record(root / "failure.json", {
-                "request_id": pending["request_id"], "phase": "reverted",
-                "detail": "The runtime supervisor restarted before confirmation.",
-            })
+            atomic_record(
+                root / "failure.json",
+                {
+                    "request_id": pending["request_id"],
+                    "phase": "reverted",
+                    "detail": "The runtime supervisor restarted before confirmation.",
+                },
+            )
             handoff = root / "handoff.json"
         (root / "pending.json").unlink()
     runtime = str(selected["runtime_path"]) if selected else None
@@ -219,10 +225,14 @@ def supervise(arguments: list[str]) -> int:
                 (root / "pending.json").unlink()
                 continue
             _stop_child(process)
-            atomic_record(root / "failure.json", {
-                "request_id": pending["request_id"], "phase": "reverted",
-                "detail": "The new runtime did not confirm its VPS connection before the deadline.",
-            })
+            atomic_record(
+                root / "failure.json",
+                {
+                    "request_id": pending["request_id"],
+                    "phase": "reverted",
+                    "detail": "The new runtime did not confirm its VPS connection before the deadline.",
+                },
+            )
             (root / "pending.json").unlink()
             if stopping:
                 return 128 + signal.SIGTERM

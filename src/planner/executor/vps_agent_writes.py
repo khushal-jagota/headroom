@@ -41,7 +41,7 @@ from planner.message_delivery.contracts import MessageDeliveryMode
 from planner.tickets import actions, views
 
 if TYPE_CHECKING:
-    from planner.executor.vps_inbox import InboxStore, PublishedFiles
+    from planner.executor.vps_inbox import InboxStore, PublishedFiles, PublishFiles
     from planner.executor.vps_runs import MacRuns
     from planner.tickets.contracts import ReviewTransferNotice
 
@@ -146,12 +146,13 @@ class AgentWrites:
         self,
         envelope: QueuedEnvelope,
         identity: ExecutorIdentity,
-        published: PublishedFiles | None,
+        publish: PublishFiles,
     ) -> AcceptanceReceipt:
         write = type_adapter(CliWrite).validate_python(envelope.payload)
         if write.child.conversation_id != envelope.conversation_id:
             raise ValueError("CLI conversation conflicts with envelope")
         principal = await run_on_worker_thread(self.runs.authority, write.child)
+        published = await publish()
         if write.operation in ("message.send", "ticket.request_help"):
             return await self._deliver_message(envelope, write, principal, identity, published)
         from planner.tickets.review_transfer import notify_review_transfers
@@ -290,6 +291,8 @@ class AgentWrites:
                 {"ticket_id": write.arguments.get("ticket_id")},
                 body,
             )
+            # The files' owner is the child's open assignment, read under this writer.
+            self.store._validate_envelope(conn, envelope)
             self.store.require_unchanged_files(envelope, published)
             result: JsonObject = {
                 "target": {"kind": recipient.kind.value, "id": recipient.id},

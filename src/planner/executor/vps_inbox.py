@@ -155,6 +155,12 @@ def _artifact_changed() -> PlannerError:
     )
 
 
+# Publishes the item's files (InboxStore.publish_file_dependencies) under its Ticket's
+# guard. Each handler calls it after its own checks, so a refused item leaves its
+# uploads in staging; None for an item without files.
+type PublishFiles = Callable[[], Coroutine[Any, Any, PublishedFiles | None]]
+
+
 class InboxStore(VpsDatabase):
     def __init__(self, db_path: str) -> None:
         super().__init__(db_path)
@@ -333,34 +339,48 @@ class InboxStore(VpsDatabase):
         identity: ExecutorIdentity,
         group: Sequence[tuple[int, Path, PublishedFile]],
     ) -> list[tuple[int, PublishedFile]]:
-        """Rename one bounded group into the served tree under the item's authority."""
-        with self._transaction() as connection:
-            require_current_incarnation_in_transaction(connection, identity.executor_incarnation)
-            if self._prior_receipt(connection, envelope, identity) is not None:
-                raise PlannerError(ErrorCode.retry_later, "This item was saved meanwhile")
-            self._validate_envelope(connection, envelope)
-            published: list[tuple[int, PublishedFile]] = []
-            parents: dict[Path, None] = {}
-            staging_path = group[0][1].parent
-            with directory_descriptor(staging_path) as staging:
-                for index, source, file in group:
-                    if file_version(source) != file.version:
-                        raise _artifact_changed()
-                    with directory_descriptor(file.target.parent) as parent:
-                        os.replace(
-                            source.name, file.target.name, src_dir_fd=staging, dst_dir_fd=parent
+        """Rename one bounded group into the served tree under the item's authority.
+
+        The writer covers the authority checks and the renames. The directory flushes
+        run after it is released: they need only finish before the item's receipt, and
+        they run even when the group fails part-way, for the renames already made.
+        """
+        published: list[tuple[int, PublishedFile]] = []
+        renamed_into: dict[Path, None] = {}
+        staging_path = group[0][1].parent
+        try:
+            with self._transaction() as connection:
+                require_current_incarnation_in_transaction(
+                    connection, identity.executor_incarnation
+                )
+                if self._prior_receipt(connection, envelope, identity) is not None:
+                    raise PlannerError(ErrorCode.retry_later, "This item was saved meanwhile")
+                self._validate_envelope(connection, envelope)
+                with directory_descriptor(staging_path) as staging:
+                    for index, source, file in group:
+                        if file_version(source) != file.version:
+                            raise _artifact_changed()
+                        with directory_descriptor(file.target.parent) as parent:
+                            os.replace(
+                                source.name,
+                                file.target.name,
+                                src_dir_fd=staging,
+                                dst_dir_fd=parent,
+                            )
+                        renamed_into[file.target.parent] = None
+                        installed = file_version(file.target)
+                        # A rename keeps the inode and its bytes; only its change time moves.
+                        if installed is None or installed[:4] != file.version[:4]:
+                            raise _artifact_changed()
+                        published.append(
+                            (index, PublishedFile(file.manifest, file.target, installed))
                         )
-                    parents[file.target.parent] = None
-                    installed = file_version(file.target)
-                    # A rename keeps the inode and its bytes; only its change time moves.
-                    if installed is None or installed[:4] != file.version[:4]:
-                        raise _artifact_changed()
-                    published.append((index, PublishedFile(file.manifest, file.target, installed)))
-                os.fsync(staging)
-            for parent_path in parents:
-                with directory_descriptor(parent_path) as parent:
-                    os.fsync(parent)
             return published
+        finally:
+            if renamed_into:
+                for directory in (staging_path, *renamed_into):
+                    with directory_descriptor(directory) as descriptor:
+                        os.fsync(descriptor)
 
     @staticmethod
     def require_unchanged_files(envelope: QueuedEnvelope, published: PublishedFiles | None) -> None:
@@ -714,22 +734,23 @@ class MacInbox:
                     )
                 return previous
             async with self._file_publication(envelope, retry_later_at):
-                published = (
-                    await run_on_worker_thread(
+
+                async def publish() -> PublishedFiles | None:
+                    if not envelope.file_dependencies:
+                        return None
+                    return await run_on_worker_thread(
                         self.store.publish_file_dependencies, envelope, identity
                     )
-                    if envelope.file_dependencies
-                    else None
-                )
+
                 if envelope.kind is EnvelopeKind.backend_event:
-                    return await self._apply_event(envelope, identity, retry_later_at, published)
+                    return await self._apply_event(envelope, identity, retry_later_at, publish)
                 if envelope.kind is EnvelopeKind.answer_application:
-                    return await self._apply_answer(envelope, identity, retry_later_at, published)
+                    return await self._apply_answer(envelope, identity, retry_later_at, publish)
                 handler = {
                     EnvelopeKind.cli_write: self.agent_writes.accept,
                     EnvelopeKind.child_stopped: self._apply_stop,
                 }[envelope.kind]
-                return await handler(envelope, identity, published)
+                return await handler(envelope, identity, publish)
         except PlannerError as error:
             if error.code in (ErrorCode.retry_later, ErrorCode.executor_incarnation_not_current):
                 # Not a refusal: a refusal receipt would drop the item for good. A
@@ -793,7 +814,7 @@ class MacInbox:
         envelope: QueuedEnvelope,
         identity: ExecutorIdentity,
         retry_later_at: float,
-        published: PublishedFiles | None,
+        publish: PublishFiles,
     ) -> AcceptanceReceipt:
         event = type_adapter(BackendEvent).validate_python(envelope.payload)
         await run_on_worker_thread(self.runs.authority, event.child)
@@ -807,6 +828,7 @@ class MacInbox:
                 event.child, retry_later_at=retry_later_at
             )
         decoded = decode_event_arguments(event)
+        published = await publish()
         result = await self.conversations.take_backend_event(
             event.turn,
             decoded,
@@ -817,12 +839,13 @@ class MacInbox:
         return type_adapter(AcceptanceReceipt).validate_python(result.result)
 
     async def _apply_stop(
-        self, envelope: QueuedEnvelope, identity: ExecutorIdentity, published: PublishedFiles | None
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity, publish: PublishFiles
     ) -> AcceptanceReceipt:
         outcome = type_adapter(CommandOutcome).validate_python(envelope.payload)
         if outcome.child.conversation_id != envelope.conversation_id:
             raise ValueError("command outcome conversation conflicts with envelope")
         await run_on_worker_thread(self.runs.validate_stop, outcome)
+        published = await publish()
         receipt = await run_on_worker_thread(
             self.store.accept,
             envelope,
@@ -847,12 +870,13 @@ class MacInbox:
         envelope: QueuedEnvelope,
         identity: ExecutorIdentity,
         retry_later_at: float,
-        published: PublishedFiles | None,
+        publish: PublishFiles,
     ) -> AcceptanceReceipt:
         application = type_adapter(AnswerApplication).validate_python(envelope.payload)
         await run_on_worker_thread(
             self._require_application_assignment, application, envelope.conversation_id
         )
+        published = await publish()
         return type_adapter(AcceptanceReceipt).validate_python(
             (
                 await self.conversations.take_answer_application(
