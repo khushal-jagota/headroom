@@ -1,0 +1,489 @@
+{
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/files/"
+  ],
+  "compare_managed_files": true,
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "File owner",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "manager": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Other owner",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "other": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Artifact owner",
+        "worker_type": "coding",
+        "brief": "Agreed artifact brief",
+        "manager": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "ticket": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 200,
+      "json": {
+        "title": "File goal",
+        "project_id": "project_other",
+        "kind": "binary",
+        "primary_checklist_block_id": null
+      },
+      "capture": {
+        "goal": "id"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/files/managers/${manager}/seed.txt",
+      "status": 200,
+      "json": {
+        "content": "Seed caf\u00e9 \\u0000 bytes"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/propose",
+      "status": 200,
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      },
+      "json": {
+        "body": "[One](/files/tickets/${ticket}/one/report.md) [Two](/files/tickets/${ticket}/two/report.md) [Repeat](/files/tickets/${ticket}/one/report.md)"
+      }
+    }
+  ],
+  "requests": [
+    {
+      "area": "files",
+      "method": "PUT",
+      "path": "/files/managers/${manager}/proof.txt",
+      "status": 200,
+      "json": {
+        "content": "File caf\u00e9 \ud83d\ude00 with content 0123456789"
+      }
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/managers/${manager}/proof.txt",
+      "status": 200,
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/managers/${manager}/proof.txt",
+      "status": 206,
+      "headers": {
+        "Range": "bytes=0-9"
+      },
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/managers/${manager}/proof.txt",
+      "status": 206,
+      "headers": {
+        "Range": "bytes=-6"
+      },
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/managers/${manager}/proof.txt",
+      "status": 416,
+      "headers": {
+        "Range": "bytes=999999-"
+      },
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/managers/${manager}/proof.txt",
+      "status": 400,
+      "headers": {
+        "Range": "items=0-3"
+      },
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/managers/${manager}/proof.txt",
+      "status": 206,
+      "headers": {
+        "Range": "bytes=2-1"
+      },
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/api/artifact-catalog/manager/${manager}",
+      "status": 200
+    },
+    {
+      "area": "files",
+      "method": "DELETE",
+      "path": "/files/managers/${manager}/proof.txt",
+      "status": 200
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/managers/${manager}/proof.txt",
+      "status": 404
+    },
+    {
+      "area": "files",
+      "method": "PUT",
+      "path": "/files/sprint-items/${manager}/proof.txt",
+      "status": 200,
+      "json": {
+        "content": "File caf\u00e9 \ud83d\ude00 with content 0123456789"
+      }
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/sprint-items/${manager}/proof.txt",
+      "status": 200,
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/sprint-items/${manager}/proof.txt",
+      "status": 206,
+      "headers": {
+        "Range": "bytes=0-9"
+      },
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/sprint-items/${manager}/proof.txt",
+      "status": 206,
+      "headers": {
+        "Range": "bytes=-6"
+      },
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/sprint-items/${manager}/proof.txt",
+      "status": 416,
+      "headers": {
+        "Range": "bytes=999999-"
+      },
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/sprint-items/${manager}/proof.txt",
+      "status": 400,
+      "headers": {
+        "Range": "items=0-3"
+      },
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/sprint-items/${manager}/proof.txt",
+      "status": 206,
+      "headers": {
+        "Range": "bytes=2-1"
+      },
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/api/artifact-catalog/manager/${manager}",
+      "status": 200
+    },
+    {
+      "area": "files",
+      "method": "DELETE",
+      "path": "/files/sprint-items/${manager}/proof.txt",
+      "status": 200
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/sprint-items/${manager}/proof.txt",
+      "status": 404
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/managers/${manager}/seed.txt",
+      "status": 200,
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "PUT",
+      "path": "/files/managers/${manager}/site/index.html",
+      "status": 200,
+      "json": {
+        "content": "<!doctype html><h1>One artifact</h1>"
+      }
+    },
+    {
+      "area": "files",
+      "method": "PUT",
+      "path": "/files/managers/${manager}/nested/page.txt",
+      "status": 200,
+      "json": {
+        "content": "Nested file"
+      }
+    },
+    {
+      "kind": "restart"
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/api/artifact-catalog/manager/${manager}",
+      "status": 200
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/api/artifact-catalog/manager/${manager}?directory=nested",
+      "status": 200
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/api/artifact-catalog/manager/${manager}?limit=1&offset=1",
+      "status": 200
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/api/artifact-catalog/ticket/${ticket}",
+      "status": 200
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/tickets/${ticket}/absent.txt",
+      "status": 404
+    },
+    {
+      "area": "files",
+      "method": "PUT",
+      "path": "/files/managers/${manager}/refused.txt",
+      "status": 400,
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-Id": "${ticket}"
+      },
+      "json": {
+        "content": "refused"
+      }
+    },
+    {
+      "area": "files",
+      "method": "PUT",
+      "path": "/files/managers/${manager}/refused.txt",
+      "status": 400,
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-Id": "${other}"
+      },
+      "json": {
+        "content": "refused"
+      }
+    },
+    {
+      "area": "files",
+      "method": "PUT",
+      "path": "/files/managers/${manager}/chief.txt",
+      "status": 200,
+      "headers": {
+        "X-Plan-Actor": "chief"
+      },
+      "json": {
+        "content": "Chief admitted"
+      }
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/api/artifact-catalog/manager/${manager}?directory=../bad",
+      "status": 400
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/api/artifact-catalog/manager/${manager}?limit=0",
+      "status": 400
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/api/artifact-catalog/ticket/missing",
+      "status": 404
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/managers/${manager}/bad%252fpath",
+      "status": 404
+    },
+    {
+      "area": "files",
+      "method": "PUT",
+      "path": "/files/goals/${goal}/r\u00e9sum\u00e9.txt",
+      "status": 200,
+      "json": {
+        "content": "Goal caf\u00e9"
+      }
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/goals/${goal}/r\u00e9sum\u00e9.txt",
+      "status": 200,
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/api/artifact-catalog/goal/${goal}",
+      "status": 200
+    },
+    {
+      "area": "files",
+      "method": "DELETE",
+      "path": "/files/goals/${goal}/r\u00e9sum\u00e9.txt",
+      "status": 200
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/api/artifact-catalog/goal/${goal}",
+      "status": 200
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/api/artifact-catalog/manager/${manager}?directory=constructor",
+      "status": 200
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/managers/${manager}/seed.txt?ignored=%2f",
+      "status": 200,
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "PUT",
+      "path": "/files/managers/${manager}/type.xml",
+      "status": 200,
+      "json": {
+        "content": "MIME proof"
+      }
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/managers/${manager}/type.xml",
+      "status": 200,
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "PUT",
+      "path": "/files/managers/${manager}/type.zip",
+      "status": 200,
+      "json": {
+        "content": "MIME proof"
+      }
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/managers/${manager}/type.zip",
+      "status": 200,
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "PUT",
+      "path": "/files/managers/${manager}/type.py",
+      "status": 200,
+      "json": {
+        "content": "MIME proof"
+      }
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/managers/${manager}/type.py",
+      "status": 200,
+      "response_bytes": true
+    },
+    {
+      "area": "files",
+      "method": "PUT",
+      "path": "/files/managers/${manager}/type.ico",
+      "status": 200,
+      "json": {
+        "content": "MIME proof"
+      }
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/managers/${manager}/type.ico",
+      "status": 200,
+      "response_bytes": true
+    }
+  ],
+  "probes": [
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22blocked%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D"
+  ],
+  "candidate": "typescript"
+}

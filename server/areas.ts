@@ -1,3 +1,5 @@
+import { routes as files } from './files/routes.ts';
+import { routes as credentials } from './credentials/routes.ts';
 import { conversation_routes } from './tickets/conversation_routes.ts';
 import { routes as membership } from './membership/routes.ts';
 import { configure_conversation_start } from './runtime/conversation_start.ts';
@@ -42,6 +44,8 @@ export const closeAreas = async (): Promise<void> => {
 
 /** Add one area registration here. Core has no area identity branches. */
 export const areas: readonly Area[] = [
+  { prefix: '', routes: files },
+  { prefix: '/api', routes: credentials },
   { prefix: '/api', routes: tickets },
   { prefix: '/api', routes: conversation_routes },
   { prefix: '/api', routes: membership },

@@ -5,9 +5,25 @@ import type {
   ReadAccess,
   ReadSql,
   SqlParameters,
+  SqlValue,
+  WriteOptions,
   TransactionSql,
 } from './contracts.ts';
 export type * from './contracts.ts';
+const functionScopes = new WeakMap<
+  ReadSql,
+  (name: string, callback: (...values: SqlValue[]) => SqlValue) => void
+>();
+/** Register a pure SQLite function for this read scope only, without a raw connection. */
+export function registerReadFunction(
+  sql: ReadSql,
+  name: string,
+  callback: (...values: SqlValue[]) => SqlValue,
+): void {
+  const register = functionScopes.get(sql);
+  if (!register) throw new TypeError('database SQL function scope is no longer active');
+  register(name, callback);
+}
 
 const BUSY_TIMEOUT_MS = 5000;
 
@@ -88,9 +104,17 @@ function scope<T>(
           invoke<BetterSqlite3.RunResult>(prepare(sql), 'run', parameters),
       })
     : reader;
+  functionScopes.set(capability, (name, callback) => {
+    if (!active) throw new TypeError('database SQL scope is no longer active');
+    connection.function(name, { varargs: true }, (...values: SqlValue[]) => {
+      if (!active) throw new TypeError('database SQL function scope is no longer active');
+      return callback(...values);
+    });
+  });
   try {
     return assertSynchronous(work(capability as TransactionSql));
   } finally {
+    functionScopes.delete(capability);
     active = false;
   }
 }
@@ -166,10 +190,7 @@ export function createDatabase(
     if (closed) throw new Error('database is closed');
   };
   return Object.freeze({
-    write<T>(
-      work: (tx: TransactionSql) => T,
-      writeOptions?: { changeSignal?: 'emit' | 'silent' },
-    ): T {
+    write<T>(work: (tx: TransactionSql) => T, writeOptions?: WriteOptions): T {
       checkOpen();
       if (writing)
         throw new TypeError('nested write door calls are not allowed; use the current transaction');
@@ -177,6 +198,8 @@ export function createDatabase(
       let result: T;
       let changed = false;
       try {
+        if (writeOptions?.busyTimeoutMs !== undefined)
+          writer.pragma(`busy_timeout = ${writeOptions.busyTimeoutMs}`);
         writer.exec('BEGIN IMMEDIATE');
         const before = writer.prepare('SELECT total_changes() AS count').get() as { count: number };
         result = scope(writer, true, work);
@@ -188,6 +211,8 @@ export function createDatabase(
         if (writer.inTransaction) writer.exec('ROLLBACK');
         throw error;
       } finally {
+        if (writeOptions?.busyTimeoutMs !== undefined)
+          writer.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
         writing = false;
       }
       if (changed && writeOptions?.changeSignal !== 'silent') {

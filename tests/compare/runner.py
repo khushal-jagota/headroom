@@ -60,7 +60,7 @@ class Normalizer:
         if value is None:
             return None
         seen = self.tokens.setdefault(context, {})
-        key = json.dumps(value, sort_keys=True)
+        key = json.dumps({"bytes": value.hex()} if isinstance(value, bytes) else value, sort_keys=True)
         if key not in seen:
             seen[key] = len(seen)
         return seen[key]
@@ -103,6 +103,8 @@ class Normalizer:
         if isinstance(value, bytes):
             return {"bytes": value.hex()}
         if isinstance(value, str):
+            if path == "headers.etag":
+                return value
             value = value.replace(self.root, "<server-root>")
 
             def replace(match: re.Match[str]) -> str:
@@ -350,7 +352,7 @@ def run_list(
         with closing(connect(str(seed))) as conn:
             create_schema(conn)
     seed_captures: dict[str, Any] = {}
-    seed_attachments = root / "seed-attachments"
+    seed_files = root / "seed-files"
     if spec.get("seed_requests"):
         seed_server = _start_server(
             root / "seed-source", seed_db=lambda target: backup_database(seed, target),
@@ -372,9 +374,9 @@ def run_list(
         finally:
             _stop_server(seed_server)
         backup_database(seed_server.db_path, seed)
-        attachments = seed_server.db_path.parent / "files" / "conversations"
+        attachments = seed_server.db_path.parent / "files"
         if attachments.is_dir():
-            shutil.copytree(attachments, seed_attachments)
+            shutil.copytree(attachments, seed_files)
     servers = []
     modules = ["tests.compare.host", right_module]
     differences: list[dict[str, Any]] = []
@@ -384,9 +386,9 @@ def run_list(
 
             def copy_seed(target: Path) -> None:
                 backup_database(seed, target)
-                if seed_attachments.is_dir():
+                if seed_files.is_dir():
                     shutil.copytree(
-                        seed_attachments, target.parent / "files" / "conversations",
+                        seed_files, target.parent / "files",
                         dirs_exist_ok=True,
                     )
 
@@ -481,12 +483,13 @@ def run_list(
                             if "application/json" in response.headers.get("content-type", ""):
                                 body = response.json()
                             else:
-                                body = response.text
+                                body = (response.content
+                                        if resolved.get("response_bytes") is True else response.text)
                             answer = {
                                 "status": response.status_code,
                                 "headers": {
                                     h: response.headers[h]
-                                    for h in HEADERS if h in response.headers
+                                    for h in (*HEADERS, *(("content-length",) if resolved.get("response_bytes") is True else ())) if h in response.headers
                                 },
                                 "body": body,
                             }
@@ -528,22 +531,30 @@ def run_list(
         for table in sorted(set(snapshots[0]) | set(snapshots[1])):
             if snapshots[0].get(table) != snapshots[1].get(table):
                 differences.append({"table": table, "rows": [s.get(table) for s in snapshots]})
-        skill_files: list[dict[str, bytes]] = []
-        if spec.get("compare_skill_files") is True:
-            for server in servers:
-                skills = server.db_path.parent / "skills"
-                skill_files.append({
-                    path.relative_to(skills).as_posix(): path.read_bytes()
-                    for path in sorted(skills.rglob("*")) if path.is_file()
+        file_reports: dict[str, list[str]] = {}
+        for option, directory, label, report in (
+            ("compare_skill_files", "skills", "skill_file", "skill_files"),
+            ("compare_managed_files", "files", "managed_file", "managed_files"),
+        ):
+            if spec.get(option) is not True:
+                continue
+            trees: list[dict[str, bytes]] = []
+            for server, normalizer in zip(servers, norms, strict=True):
+                tree = server.db_path.parent / directory
+                trees.append({
+                    (normalizer.normalize(path.relative_to(tree).as_posix())
+                     if directory == "files" else path.relative_to(tree).as_posix()): path.read_bytes()
+                    for path in sorted(tree.rglob("*")) if path.is_file()
                 })
-            for name in sorted(set(skill_files[0]) | set(skill_files[1])):
-                contents = [files.get(name) for files in skill_files]
+            for name in sorted(set(trees[0]) | set(trees[1])):
+                contents = [files.get(name) for files in trees]
                 if contents[0] != contents[1]:
                     differences.append({
-                        "skill_file": name,
+                        label: name,
                         "bytes": [content.hex() if content is not None else None
                                   for content in contents],
                     })
+            file_reports[report] = sorted(trees[0])
         return {
             "list": list_path.name,
             "captures": {name: captures[0][name] for name in spec.get("report_captures", [])},
@@ -560,7 +571,7 @@ def run_list(
             ],
             "loop_results": loop_results,
             "rules": rules,
-            **({"skill_files": sorted(skill_files[0])} if skill_files else {}),
+            **file_reports,
         }
     finally:
         for server in reversed(servers):

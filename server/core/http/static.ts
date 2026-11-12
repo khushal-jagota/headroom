@@ -1,4 +1,5 @@
 import { readFile, stat, realpath } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import { resolve, sep, extname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { createHash, randomBytes } from 'node:crypto';
@@ -79,6 +80,7 @@ export async function sendFile(
     cache?: string;
     mime?: string;
     conditional?: boolean;
+    rangeErrorHeaders?: readonly string[];
   } = {},
 ): Promise<void> {
   let info;
@@ -128,6 +130,7 @@ export async function sendFile(
     } catch (error) {
       for (const name of ['content-length', 'etag', 'last-modified', 'accept-ranges'])
         reply.removeHeader(name);
+      for (const name of options.rangeErrorHeaders ?? []) reply.removeHeader(name);
       if (options.cache && options.conditional)
         reply.header('cache-control', 'no-cache, must-revalidate');
       if (error instanceof RangeError) {
@@ -141,16 +144,21 @@ export async function sendFile(
       }
       return;
     }
-    const bytes = await readFile(file);
     if (parts.length === 1) {
       const [start, end] = parts[0]!;
       reply
         .code(206)
         .header('content-range', `bytes ${start}-${end - 1}/${info.size}`)
         .header('content-length', end - start)
-        .send(bytes.subarray(start, end));
+        .send(
+          request.method === 'HEAD' || end === start
+            ? Buffer.alloc(0)
+            : createReadStream(file, { start, end: end - 1 }),
+        );
+      await reply;
       return;
     }
+    const bytes = await readFile(file);
     const boundary = randomBytes(13).toString('hex');
     const chunks = parts.flatMap(([start, end]) => [
       Buffer.from(
@@ -168,7 +176,7 @@ export async function sendFile(
     await reply.send(Readable.from(chunks));
     return;
   }
-  reply.send(request.method === 'HEAD' ? Buffer.alloc(0) : await readFile(file));
+  await reply.send(request.method === 'HEAD' ? Buffer.alloc(0) : createReadStream(file));
 }
 export async function mountStatic(
   app: FastifyInstance,
