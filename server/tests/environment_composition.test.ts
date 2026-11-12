@@ -216,7 +216,8 @@ test('shutdown during environment setup retains ownership and prevents later pro
         expect(layout).not.toHaveBeenCalled();
         expect(scratchFactory).not.toHaveBeenCalled();
       } finally {
-        await inert.close({ deadline: performance.now() / 1000 });
+        await inert.close({ deadline: performance.now() / 1000 + 1 });
+        await inert.settled();
       }
       vi.spyOn(MetricsRuntime.prototype, 'start').mockImplementationOnce(() => {
         const stop = process

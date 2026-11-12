@@ -250,6 +250,7 @@ def test_unit21_registry_fixture_and_lifecycle_parity(
         "PLAN_KEY_PATH": "key",
     }.items():
         environment[name] = str(tmp_path / relative)
+    Path(environment["PLAN_WORKSPACE_ROOT"]).mkdir()
     environment["PLAN_TEST_MODE"] = "1"
     with monkeypatch.context() as private:
         for name in list(os.environ):
@@ -305,7 +306,8 @@ def test_unit21_registry_fixture_and_lifecycle_parity(
             )
             assert result.returncode == 0, result.stderr
             actual = json.loads(result.stdout)
-            assert actual.pop("server_owner") == {
+            server_owner = actual.pop("server_owner")
+            assert server_owner == {
                 "running": True,
                 "reset": "environment instance is running",
                 "remove": "environment instance is running",
@@ -338,6 +340,7 @@ def test_unit21_registry_fixture_and_lifecycle_parity(
                         "One private actual TS server proves DB-owner admission. No browser."
                     ),
                     "result": actual,
+                    "server_owner": server_owner,
                 },
                 indent=2,
             )

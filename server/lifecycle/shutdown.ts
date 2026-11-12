@@ -43,7 +43,11 @@ export class ShutdownCoordinator implements ShutdownOwner, ShutdownStages {
   get shutdown_settled(): Promise<void> {
     return Promise.allSettled(this.#stages.map((stage) => stage.actual)).then((results) => {
       const failures = results.filter((result) => result.status === 'rejected');
-      if (failures.length) throw new AggregateError(failures.map((failure) => failure.reason), 'Shutdown stages failed after actual settlement');
+      if (failures.length)
+        throw new AggregateError(
+          failures.map((failure) => failure.reason),
+          'Shutdown stages failed after actual settlement',
+        );
     });
   }
   own(name: string, operation: () => unknown | Promise<unknown>): Promise<void> {
@@ -108,7 +112,8 @@ export class ShutdownCoordinator implements ShutdownOwner, ShutdownStages {
     if (state.failures.length)
       return new AggregateError(
         state.failures.map((failure) => failure.error),
-        `Shutdown failed; ownership retained: ${state.failures.map((failure) => failure.name).join(', ')}`,
+        `Shutdown failed; ownership retained: ${state.failures.map((failure) => failure.name).join(', ')}` +
+          (state.pending.length ? `; pending: ${state.pending.join(', ')}` : ''),
       );
     if (state.pending.length) return new ShutdownDeadlineExceeded(state.pending);
     return null;
