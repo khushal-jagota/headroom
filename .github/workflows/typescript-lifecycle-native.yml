@@ -1,0 +1,98 @@
+name: TypeScript lifecycle native ABI
+
+on:
+  pull_request:
+    branches: [feature/typescript-backend]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [feature/typescript-backend]
+
+permissions:
+  contents: read
+
+jobs:
+  darwin-locks:
+    name: Darwin arm64 non-acquiring lock observation (Node 22)
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Prove the existing registry sequence on the Darwin ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          native_root="$RUNNER_TEMP/lifecycle-native"
+          native_evidence="$RUNNER_TEMP/lifecycle-native-evidence"
+          native_tmp=$(mktemp -d "/tmp/p21-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXX")
+          native_tmp=$(cd "$native_tmp" && pwd -P)
+          trap 'rm -rf -- "$native_tmp"' EXIT
+          mkdir -p "$native_root"/{home/.codex,home/.claude,home/.hermes,config,cache,data,state,runtime,logs,backups,workspace,files,tickets,app} "$native_evidence"
+          printf '{}\n' > "$native_root/config.yaml"
+          # Scrub before pip's editable build, npm lifecycle scripts, or any repository launcher.
+          env -i PATH="$PATH" LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
+            GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            HOME="$native_root/home" \
+            CODEX_HOME="$native_root/home/.codex" CLAUDE_CONFIG_DIR="$native_root/home/.claude" \
+            HERMES_HOME="$native_root/home/.hermes" PLAN_HERMES_HOME="$native_root/home/.hermes" \
+            XDG_CONFIG_HOME="$native_root/config" XDG_CACHE_HOME="$native_root/cache" \
+            XDG_DATA_HOME="$native_root/data" XDG_STATE_HOME="$native_root/state" \
+            XDG_RUNTIME_DIR="$native_root/runtime" \
+            TMPDIR="$native_tmp" TMP="$native_tmp" TEMP="$native_tmp" \
+            PIP_CONFIG_FILE=/dev/null PIP_CACHE_DIR="$native_root/cache/pip" \
+            npm_config_cache="$native_root/cache/npm" HOMEBREW_CACHE="$native_root/cache/brew" \
+            HOMEBREW_NO_AUTO_UPDATE=1 \
+            PLAN_CONFIG_PATH="$native_root/config.yaml" PLAN_DB_PATH="$native_root/data/planner.db" \
+            PLAN_LOGS_DIR="$native_root/logs" PLAN_BACKUP_DIR="$native_root/backups" \
+            PLAN_DATA_DIR="$native_root/data" PLAN_WORKSPACE_ROOT="$native_root/workspace" \
+            PLAN_APP_ROOT="$native_root/app" PLAN_CREDENTIAL_KEY_PATH="$native_root/data/key" \
+            PLAN_KEY_PATH="$native_root/data/key" PLAN_TICKET_FILES_DIR="$native_root/files" \
+            PLAN_TICKET_SCRATCH_ROOT="$native_root/tickets" \
+            PLAN_TICKET_SCRATCH_DATABASE="$native_root/data/planner.db" \
+            PLAN_DISPATCHER_LOCK_PATH="$native_tmp/dispatcher.lock" \
+            PLAN_SERVER_CONTROL_SOCKET="$native_tmp/control.sock" \
+            PLAN_SERVER_LIFECYCLE_LEASE_PATH="$native_tmp/lifecycle.lock" \
+            PLAN_SERVER_URL=http://127.0.0.1:0 PLAN_PORT=0 \
+            PLAN_DISPATCH_ENABLED=false PLAN_TEST_MODE=1 \
+            NATIVE_EVIDENCE="$native_evidence" \
+            bash --noprofile --norc -euo pipefail <<'NATIVE' 2>&1 | tee "$native_evidence/job.log"
+          trap 'native_status=$?; printf "seconds=%s\nexit_code=%s\n" "$SECONDS" "$native_status" > "$NATIVE_EVIDENCE/job-time.txt"' EXIT
+          node -e '
+            const fs = require("node:fs"), os = require("node:os");
+            fs.writeFileSync(process.env.NATIVE_EVIDENCE + "/platform.json", JSON.stringify({
+              platform: process.platform, architecture: process.arch, node: process.version,
+              executable: process.execPath, os_release: os.release(),
+              boundary: "Existing registry sequence: Darwin variadic fcntl F_GETLK on read-only descriptors, real flock contention, and reset/remove ownership. No browser, provider, executor or service.",
+              hosted_cost: "OPEN until this job completes; registry body seconds and job elapsed time are preserved separately."
+            }, null, 2) + "\n");
+            if (process.platform !== "darwin" || process.arch !== "arm64")
+              throw new Error("The native proof requires a real Darwin arm64 Node runtime");
+          '
+          brew install icu4c pkg-config
+          export PKG_CONFIG_PATH="$(brew --prefix icu4c)/lib/pkgconfig"
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements.txt
+          .venv/bin/python -m pip install --editable . --config-settings editable_mode=compat
+          python -I -S -B scripts/development_safety/bootstrap.py npm --prefix server ci
+          # No web build: this registry fixture uses synthetic app roots and no UI assets.
+          python -I -S -B scripts/development_safety/bootstrap.py pytest \
+            tests/compare/direct/test_unit21_registry.py::test_unit21_registry_fixture_and_lifecycle_parity \
+            --compare-report-dir "$NATIVE_EVIDENCE/comparison" \
+            --basetemp "$TMPDIR/pytest" --junitxml "$NATIVE_EVIDENCE/results.xml"
+          NATIVE
+      - name: Preserve native ABI evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: lifecycle-native-darwin-arm64-node-22
+          path: ${{ runner.temp }}/lifecycle-native-evidence
+          if-no-files-found: warn

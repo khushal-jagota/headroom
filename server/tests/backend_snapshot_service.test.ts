@@ -444,7 +444,9 @@ test('test compositions cannot acquire production catalogs, login, updates, or H
     null,
   ]);
   expect(providers.usage).toEqual({});
-  expect(() => new SubprocessBackendProbeEnvironment()).toThrow('unavailable in tests');
+  expect(() => new SubprocessBackendProbeEnvironment(new OneShotChildren())).toThrow(
+    'unavailable in tests',
+  );
   await expect(http_get_usage('https://invalid.example', {}, 1)).rejects.toThrow(
     'unavailable in tests',
   );
@@ -469,7 +471,7 @@ test('production usage and registry transports refuse redirects without another 
     vi.stubEnv('VITEST', undefined);
     vi.stubEnv('PLAN_TEST_MODE', undefined);
     vi.stubEnv('PYTEST_CURRENT_TEST', undefined);
-    environment = new SubprocessBackendProbeEnvironment();
+    environment = new SubprocessBackendProbeEnvironment(new OneShotChildren());
     const adapter = new ClaudeUsageAdapter({
       credential_path,
       http_get: http_get_usage,
@@ -502,3 +504,4 @@ test('production usage and registry transports refuse redirects without another 
     await environment?.shutdown();
   }
 });
+import { OneShotChildren } from '../lifecycle/one_shot_children.ts';

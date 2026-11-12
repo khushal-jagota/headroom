@@ -24,6 +24,9 @@ export class BackgroundLoops {
       deadline: options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS,
     });
   }
+  settled(): Promise<void> {
+    return this.worker_step_readiness_loop?.settled() ?? Promise.resolve();
+  }
 }
 
 export function prepare_background_loops(options: {

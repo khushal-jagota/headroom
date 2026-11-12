@@ -1,5 +1,6 @@
 /** One bounded usage probe, with the rate-limit result's original JSON text. */
 import { homedir } from 'node:os';
+import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import { CodexAppServerClient, CodexLoginIsDuplicated, CodexRequestRejected } from './client.ts';
 import {
   CodexUsageTimeout,
@@ -19,15 +20,17 @@ type UsageClient = Pick<
   'start' | 'stop' | 'request' | 'request_raw' | 'notify'
 >;
 export interface UsageSourceOptions {
+  child_processes: OwnedChildProcesses;
   client_factory?: (options: ConstructorParameters<typeof CodexAppServerClient>[0]) => UsageClient;
 }
 export async function read_codex_rate_limits(
   executable: string,
   options: Parameters<CodexUsageSource>[1],
-  dependencies: UsageSourceOptions = {},
+  dependencies: UsageSourceOptions,
 ): Promise<string> {
   options.signal?.throwIfAborted();
   const client = (dependencies.client_factory ?? ((config) => new CodexAppServerClient(config)))({
+    child_processes: dependencies.child_processes,
     description: 'usage-read',
     handler: {
       async on_notification() {},

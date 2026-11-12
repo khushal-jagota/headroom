@@ -210,26 +210,39 @@ export class UsageService implements RecordedUsageService {
     await (this.resourceJoin ?? this.workerExit);
   }
   stop(options: StopOptions): Promise<void> {
-    if (this.stopCleanup === undefined) {
-      this.closed = true;
-      this.fail(new UsageServiceStopped());
-      const worker = this.worker;
-      const cleanup = Promise.allSettled([
-        Promise.resolve().then(() => worker?.terminate()),
-        this.workerExit,
-        ...this.callbackOperations,
-        ...this.operations,
-      ]);
-      this.resourceJoin = cleanup.then(() => undefined);
-      this.stopCleanup = cleanup.then((results) => {
-        const termination = results[0];
-        if (termination?.status === 'rejected') throw termination.reason;
-      });
-    }
-    return observe_shutdown(
-      this.stopCleanup,
+    if (this.stopCleanup !== undefined) return this.stopCleanup;
+    this.closed = true;
+    const worker = this.worker;
+    // Publish both lifetimes before abort callbacks can synchronously request stop.
+    let resolve!: () => void, reject!: (error: unknown) => void;
+    this.resourceJoin = new Promise<void>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    this.stopCleanup = observe_shutdown(
+      this.resourceJoin,
       options,
       'Usage resources did not stop before the shutdown deadline.',
     );
+    const failures: unknown[] = [];
+    try {
+      this.fail(new UsageServiceStopped());
+    } catch (error) {
+      failures.push(error);
+    }
+    // Request cancellation is not worker exit or asynchronous callback cleanup.
+    Promise.allSettled([
+      Promise.resolve().then(() => worker?.terminate()),
+      this.workerExit,
+      ...this.callbackOperations,
+      ...this.operations,
+    ]).then((results) => {
+      const termination = results[0];
+      if (termination?.status === 'rejected') failures.push(termination.reason);
+      if (failures.length)
+        reject(new AggregateError(failures, 'Usage resources did not close cleanly'));
+      else resolve();
+    });
+    return this.stopCleanup;
   }
 }

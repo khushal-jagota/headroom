@@ -26,6 +26,7 @@ import {
   approvals_to_json,
 } from '../tickets/logic/fields_codec.ts';
 import { inventory, pythonJson } from '../files/catalog/inventory.ts';
+import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
 
 const [mode, argument] = process.argv.slice(2);
 let result: unknown;
@@ -92,7 +93,13 @@ if (mode === 'repr') {
   assert.equal(loadConfig('/nonexistent-cross-area-config.yaml').test_mode, true);
   assert.equal(backend_io_is_test(), true);
   const refusal = /Production backend I\/O is unavailable in tests/;
-  assert.throws(() => new SubprocessBackendProbeEnvironment(), refusal);
+  const children = new OneShotChildren();
+  try {
+    assert.throws(() => new SubprocessBackendProbeEnvironment(children), refusal);
+  } finally {
+    children.seal();
+    await children.settled();
+  }
   const door = Object.create(
     SubprocessBackendProbeEnvironment.prototype,
   ) as SubprocessBackendProbeEnvironment;

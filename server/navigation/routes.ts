@@ -16,6 +16,7 @@ import { NavigationUnavailable } from './logic/errors.ts';
 import { jsonFailure } from '../core/http/json.ts';
 import { scalarQueries } from '../list_reads/http.ts';
 import { validateInstallation } from './publication.ts';
+import { install_request_lifetime } from '../core/http/lifetime.ts';
 import { snapshot } from './data/read.ts';
 function query(
   request: FastifyRequest,
@@ -101,12 +102,15 @@ function capture(
 }
 export function createRoutes(): FastifyPluginAsync<AreaServices> {
   return async (app, services) => {
-    const delivery = new ScopedDelivery(services.database);
+    const delivery = new ScopedDelivery(services.database, install_request_lifetime(app));
     const fences = new SnapshotFences(app);
     app.addHook('onReady', async () => {
       delivery.start();
     });
     app.addHook('onClose', async () => {
+      delivery.close();
+    });
+    app.addHook('preClose', async () => {
       delivery.close();
     });
     app.get('/snapshot', async (request, reply) => {

@@ -102,7 +102,7 @@ Each area adds one registration to the `testAreas` list in `test_host.ts`. Test 
 
 For a comparison list with `"conversation_system": "in_memory"`, the runner supplies `PLAN_COMPARE_CONVERSATION_SYSTEM=in_memory` to both hosts. The TS host creates one `InMemoryConversationSystem` for its test routes and all ordinary areas. Areas receive it as `services.conversationSystem`. The test endpoints start a conversation, send a message, read fake state, and complete a turn beneath `/api/test/in-memory-conversations`.
 
-Without this switch, the host composes `SqliteProcessConversationSystem` with the record runtime's single store and tail. `createConversationCore(context)` receives that runtime and the shared clock after record initialization. Runtime facts attach to that same record runtime. Shutdown closes the core before the record, application, and database ownership.
+Without this switch, the host composes `SqliteProcessConversationSystem` with the record runtime's single store and tail. `createConversationCore(context)` receives that runtime and the shared clock after record initialization. Runtime facts attach to that same record runtime. Shutdown begins HTTP closure and core cancellation together. Actual request and core work must settle before the record and database close.
 
 The comparison host uses `conversation/testing/scripted_process.ts` behind both Python and TypeScript backend adapters. Existing signal controls retain their meanings. Configuration and inspection controls expose process behavior and actual backend observations; backend news enters through the real core rather than direct event-row inserts.
 
@@ -139,7 +139,7 @@ The event/live tail subscribes before replay, joins at its sequence high-water m
 
 Owner-read and both answer routes require the owner. Mutations preserve the active Ticket conversation guard, and raw sends reject employee-owned conversations. All five send entry points share the existing 20 MiB pre-parser limit, including streamed bodies. Kept message-file reads reuse the file delivery implementation, with private immutable caching and `nosniff`.
 
-`ConversationHttpWriteScope` owns owner-read writes through SQLite BUSY contention without adopting core runtime state. Shutdown seals this scope before new writes can enter, then drains it before core shutdown and record cleanup. Other semantic errors propagate once. It does not change the record contract or retry provider actions.
+`ConversationHttpWriteScope` owns owner-read writes through SQLite BUSY contention without adopting core runtime state. Shutdown seals this scope before new writes can enter. Its actual drain and core cancellation begin before the shared wait. Both must settle before record cleanup. Other semantic errors propagate once. It does not change the record contract or retry provider actions.
 
 Voice transcription currently provides request-shape validation and the exact unconfigured 503 answer. No configured transcription provider is connected; audio/media/base64 processing and provider policy remain with the uploads/service unit. Valid video upload and credential-wire gates also remain with their owners. Backend catalog/admin/sign-in services are outside the sixteen seams above. A stored composer catalog read is separate from backend discovery.
 
@@ -179,10 +179,33 @@ Core factories must also bind `on_held_model_change` to `write_held_ticket_confi
 Without a core factory, the server supplies record reads and real publication from durable facts, with no local turn or substitute provider.
 An explicitly selected in-memory instrument remains separate. The idle authority helpers remain for their isolated tests.
 
-Shutdown revokes publication and closes tail subscriptions before the worker loops and background services drain.
-The HTTP write scope drains before the core fences native callbacks, closes its children, and drains retained writes.
-Record cleanup and HTTP closure precede navigation detachment, database closure, and lease release.
-The test registry's HTTP cleanup therefore follows core cleanup.
+Shutdown seals new request/write admission and stops new connections before any wait.
+It closes event streams immediately. Ordinary admitted responses and media work can finish during the shared grace.
+At grace expiry it logs named pending stages, closes remaining connections, and aborts remaining media work.
+Handlers, hooks, iterator operations, provider work, and native resources remain owned after a connection closes.
+Worker readiness and Manager wakes cancel at stop start. Every independent stop begins before drain waits.
+
+All service observers receive one absolute monotonic deadline. Their required `settled()` joins report actual work and cleanup.
+The application keeps waiting after grace. When every actual stage and native resource settles, it runs ordered finalizers automatically.
+Settled failures do not prevent safe finalization. Clean completion exits 0; collected failures produce a non-zero result.
+There is no manual finish operation and no renewed budget on repeated signals.
+A rejected detach cannot prove a child stopped: the invocation also owns actual process close and Worker-unit confirmation.
+
+The canonical values in `lifecycle/configuration.ts` are **30 seconds grace, 45 seconds hard-phase trigger, and 60 seconds supervisor timeout**.
+At the hard phase, the application logs named pending stages, kills still-owned unreaped groups, and attempts one batch of exact owned Worker units.
+That control attempt has at most the existing 10-second budget and original stop +55 seconds. It logs an unconfirmed force failure honestly.
+Then the application exits non-zero without database/record/lock finalizers under pending work.
+The 45-second value starts forced termination; it does not claim unconditional process exit at exactly 45 seconds.
+Node timers cannot interrupt synchronous JavaScript or SQLite. The separate supervisor fallback is required for a blocked application loop.
+New TypeScript packaging must consume the exported 60-second timeout; the legacy Python rehearsal's 30-second unit is not its rehearsal route.
+Real new-unit/supervisor timeout proofs remain part of the later packaging work.
+
+Registry mutation and direct startup share a stable database-derived authority outside the instance tree.
+Reset/remove hold it through the complete swap, walk, and manifest publication. They also retain the legacy supervisor and DB locks.
+Inspection observes existing kernel lock evidence without creating or acquiring locks. It is a point-in-time report, not mutation permission.
+Normal Python supervisor launches remain excluded through the existing port lease.
+An unmodified legacy Python direct launch does not take the new stable guard after its old DB sidecar moves; that mixed-version race is not claimed solved.
+The service/interface hand-over explains the shared `child_processes` and `one_shot_children` ownership arguments.
 
 To compare the in-memory instrument against TypeScript, run:
 

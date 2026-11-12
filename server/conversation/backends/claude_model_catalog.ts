@@ -1,5 +1,6 @@
 /** Model choices come from the selected CLI's startup handshake, without a prompt. */
-import { spawn } from 'node:child_process';
+import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
+import { OneShotChildren, stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
 import type { ChildProcess } from 'node:child_process';
 import { load_claude_sdk, CLAUDE_AGENT_SDK_VERSION } from './claude_sdk.ts';
 import type { Query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
@@ -104,6 +105,7 @@ export function claude_model_catalog_from_init(info: unknown): ClaudeModelCatalo
 
 export async function probe_claude_model_catalog(
   claude_executable: string,
+  children: OwnedOneShotChildren = new OneShotChildren(),
 ): Promise<ClaudeModelCatalog> {
   const state: {
     child: ChildProcess | null;
@@ -123,6 +125,7 @@ export async function probe_claude_model_catalog(
   let info: unknown;
   let failure: unknown;
   let failed = false;
+  let actual: Promise<unknown> | undefined;
   const close_query = () => {
     if (state.cli === null) return;
     state.cli.close();
@@ -130,7 +133,8 @@ export async function probe_claude_model_catalog(
   };
   try {
     const operation = async () => {
-      await ensure_cli_compatible('claude', claude_executable);
+      await ensure_cli_compatible('claude', claude_executable, { children });
+      children.signal.throwIfAborted();
       if (state.expired)
         throw new ClaudeModelCatalogUnavailable(
           'claude did not finish its startup handshake in time',
@@ -142,6 +146,7 @@ export async function probe_claude_model_catalog(
       };
       delete child_environment.CLAUDECODE;
       const { query } = await load_claude_sdk();
+      children.signal.throwIfAborted();
       if (state.expired)
         throw new ClaudeModelCatalogUnavailable(
           'claude did not finish its startup handshake in time',
@@ -153,7 +158,7 @@ export async function probe_claude_model_catalog(
           maxTurns: 1,
           env: child_environment,
           spawnClaudeCodeProcess(options) {
-            const started = spawn(options.command, options.args, {
+            const started = children.spawn(options.command, options.args, {
               cwd: options.cwd,
               // The SDK adds and removes launch variables. Python's environment remains canonical.
               env: child_environment,
@@ -185,7 +190,8 @@ export async function probe_claude_model_catalog(
         );
       }, MODEL_CATALOG_TIMEOUT_SECONDS * 1000);
     });
-    info = await Promise.race([operation(), timeout]);
+    actual = operation();
+    info = await Promise.race([actual, timeout]);
   } catch (cause) {
     failed = true;
     failure =
@@ -211,7 +217,7 @@ export async function probe_claude_model_catalog(
     release_input();
     if (state.child !== null && state.child.exitCode === null && state.child.signalCode === null) {
       try {
-        state.child.kill('SIGKILL');
+        stop_one_shot_child(state.child);
       } catch (cause) {
         if (!failed) {
           failed = true;
@@ -223,6 +229,8 @@ export async function probe_claude_model_catalog(
       }
     }
     if (state.child_exit !== null) await state.child_exit;
+    // The timeout/abort observer cannot discard a still-running SDK operation.
+    await actual?.catch(() => {});
   }
   if (failed) throw failure;
   // Python wraps startup failures, but transformation failures remain their own type.
