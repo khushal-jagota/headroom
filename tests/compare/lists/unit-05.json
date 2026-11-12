@@ -1,4 +1,5 @@
 {
+  "candidate": "typescript",
   "conversation_system": "in_memory",
   "compare_skill_files": true,
   "source_roots": [
