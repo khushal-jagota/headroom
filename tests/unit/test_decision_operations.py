@@ -84,12 +84,12 @@ def test_lost_response_lookup_and_retry_keep_original_outcome_after_ticket_advan
 
     with TestClient(_app(tmp_db), raise_server_exceptions=False) as client:
         assert client.get(path).json() == {"receipt_contract": 1, "receipt": None}
-        if decision == "send_back":
-            for message in ("x" * 10_001, " " * 10_001 + "short"):
-                oversized = client.post(path, json={**command, "message": message})
-                assert oversized.status_code == 400
-                assert _count(tmp_db) == 0
-                assert data.read_ticket(tmp_db, original.id) == original
+        text_field = "edited_body" if decision == "approve" else "message"
+        for text in ("x" * 10_001, " " * 10_001 + "short"):
+            oversized = client.post(path, json={**command, text_field: text})
+            assert oversized.status_code == 400
+            assert _count(tmp_db) == 0
+            assert data.read_ticket(tmp_db, original.id) == original
         monkeypatch.setattr(decision_operations, "apply", lose_response)
         assert client.post(path, json=command).status_code == 500
         monkeypatch.setattr(decision_operations, "apply", real_apply)
@@ -141,6 +141,13 @@ def test_lost_response_lookup_and_retry_keep_original_outcome_after_ticket_advan
         assert client.get(path).json() == receipt
         assert client.post(path, json=command).json() == receipt
         monkeypatch.setattr(data, "workflow_from_row", workflow_from_row)
+        oversized_stale = client.post(
+            path + "-oversized-stale", json={**command, text_field: "x" * 10_001},
+        )
+        assert oversized_stale.status_code == 400
+        assert _count(tmp_db) == 1
+        assert data.read_ticket(tmp_db, original.id) == advanced
+        assert list(tmp_db.execute("SELECT * FROM ticket_revision_feedback")) == feedback
         refusal = client.post(path + "-stale", json=command)
         assert refusal.status_code == 200
         terminal = refusal.json()["receipt"]
@@ -170,6 +177,41 @@ def test_actor_rank_and_saved_actor_ownership_precede_receipt_access(
         with pytest.raises(PlannerError) as denied:
             decision_operations.lookup(tmp_db, original.id, operation, actor=worker)
         assert denied.value.code is ErrorCode.agent_forbidden
+    # Unknown POST identities authorize a write. A global collision must never act as absence.
+    chief_ticket = _park(tmp_db)
+    chief_ticket = data.edit_ticket(
+        tmp_db, chief_ticket.id, edit=TicketEdit(ceiling_holder=CHIEF_PRINCIPAL),
+        principal=OWNER_PRINCIPAL, title_max_chars=TITLE_MAX_CHARS, now=4,
+    )
+    chief_command = _command(chief_ticket, "approve")
+    feedback = list(tmp_db.execute("SELECT * FROM ticket_revision_feedback"))
+    for operation in ("private", "unknown"):
+        with pytest.raises(PlannerError) as denied:
+            decision_operations.apply(
+                tmp_db, chief_ticket.id, operation, chief_command, actor=worker, now=4,
+            )
+        assert denied.value.code is ErrorCode.agent_forbidden
+    with pytest.raises(PlannerError) as collision:
+        decision_operations.apply(
+            tmp_db, chief_ticket.id, "private", chief_command, actor=CHIEF_PRINCIPAL, now=4,
+        )
+    assert collision.value.code is ErrorCode.agent_forbidden
+    assert collision.value.message == "decision operation identity is unavailable"
+    assert collision.value.detail == {}
+    assert data.read_ticket(tmp_db, chief_ticket.id) == chief_ticket
+    assert _count(tmp_db) == 1
+    assert list(tmp_db.execute("SELECT * FROM ticket_revision_feedback")) == feedback
+    chief_receipt = decision_operations.apply(
+        tmp_db, chief_ticket.id, "chief-new", chief_command, actor=CHIEF_PRINCIPAL, now=4,
+    )
+    assert chief_receipt["receipt"] is not None
+    assert chief_receipt["receipt"]["outcome"] == "applied"
+    assert decision_operations.lookup(
+        tmp_db, chief_ticket.id, "chief-new", actor=CHIEF_PRINCIPAL,
+    ) == chief_receipt
+    assert decision_operations.lookup(
+        tmp_db, original.id, "private", actor=CHIEF_PRINCIPAL,
+    ) == {"receipt_contract": 1, "receipt": None}
     manager = managers_data.create_manager(
         tmp_db, title="Partial authority", project_id="project_vylo", clock=fake_clock,
     )
@@ -193,7 +235,7 @@ def test_actor_rank_and_saved_actor_ownership_precede_receipt_access(
             tmp_db, original.id, "manager-denied", command, actor=actor, now=6,
         )
     assert denied.value.code is ErrorCode.agent_forbidden
-    assert _count(tmp_db) == 2
+    assert _count(tmp_db) == 3
 
 
 @pytest.mark.parametrize("decision", ["approve", "send_back"])

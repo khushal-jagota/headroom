@@ -79,6 +79,14 @@ def parse_command(raw: dict[str, Any]) -> DecisionCommand:
             raise _validation(f"{name} must be text or null")
     if isinstance(raw.get("message"), str):
         admission.validate_revision_guidance(raw["message"])
+    edited_body = raw.get("edited_body")
+    if (
+        isinstance(edited_body, str)
+        and len(edited_body) > admission.REVISION_GUIDANCE_MAX_CHARACTERS
+    ):
+        raise _validation(
+            f"edited_body must be at most {admission.REVISION_GUIDANCE_MAX_CHARACTERS} characters"
+        )
     if "next_holder" in raw:
         _holder(raw["next_holder"])
     return cast(DecisionCommand, dict(raw))
@@ -102,7 +110,7 @@ def _saved(
     ).fetchone()
     if row is not None and (row["actor_kind"], row["actor_id"]) != (actor.kind.value, actor.id):
         raise PlannerError(
-            ErrorCode.agent_forbidden, "this decision operation belongs to another actor",
+            ErrorCode.agent_forbidden, "decision operation identity is unavailable",
         )
     if row is not None and row["ticket_id"] != ticket_id:
         raise _validation("decision operation identity was reused for another Ticket")
