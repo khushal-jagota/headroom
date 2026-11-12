@@ -1,17 +1,17 @@
 /** Live-store boundary used only by the Python comparison suite. Never emits credentials. */
-import { createDatabase } from "../../server/core/database/index.ts";
-import { OWNER } from "../../server/core/contracts.ts";
+import { createDatabase } from "../../../server/core/database/index.ts";
+import { OWNER } from "../../../server/core/contracts.ts";
 import {
   create_credential_in_transaction,
   rename_credential,
   replace_credential_in_transaction,
-} from "../../server/credentials/actions.ts";
+} from "../../../server/credentials/actions.ts";
 import {
   DatabaseCredentialResolver,
   FileCredentialCipher,
-} from "../../server/credentials/store.ts";
-import { read_encryption_context } from "../../server/credentials/data.ts";
-import { associated_data } from "../../server/credentials/logic/validation.ts";
+} from "../../../server/credentials/store.ts";
+import { read_encryption_context } from "../../../server/credentials/data.ts";
+import { associated_data } from "../../../server/credentials/logic/validation.ts";
 
 const [path, key, mode] = process.argv.slice(2);
 if (!path || !key || !["mutate", "verify"].includes(mode ?? "")) {

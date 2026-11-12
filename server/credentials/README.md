@@ -5,7 +5,7 @@ The credential store retains Python's AES-256-GCM format and exact associated-da
 From the repository root, regenerate and inspect the fixture:
 
 ```sh
-.venv/bin/python server/credentials/generate_fixtures.py
+.venv/bin/python tests/compare/tools/generate_credential_fixture.py
 git diff -- server/credentials/fixtures/python-cipher.json
 ```
 
@@ -14,9 +14,12 @@ The generator uses the current Python credential encoder and cipher, a temporary
 The separate live interoperability check stays in the comparison suite:
 
 ```sh
-scripts/dev pytest tests/compare/test_credential_interop.py
+scripts/dev pytest tests/compare/direct/test_credential_interop.py
 ```
 
-That single case uses a fresh test-local key and database. Python creates stored current and legacy credentials. `tests/compare/credential_interop.ts` resolves them, checks associated data, replaces the legacy value, renames the current value, and creates a basic credential. Python resolves those TypeScript writes and replaces the basic value. TypeScript then resolves the Python replacement. Neither side prints a secret. The existing comparison workflow runs this case on Node 22 and 24 through `pytest tests/compare`; no workflow change is required.
+That single case uses a fresh test-local key and database. Python creates stored current and legacy credentials. `tests/compare/direct/credential_interop.ts` resolves them, checks associated data, replaces the legacy value, renames the current value, and creates a basic credential. Python resolves those TypeScript writes and replaces the basic value. TypeScript then resolves the Python replacement. Neither side prints a secret. The existing comparison workflow runs this case on Node 22 and 24 through its existing `pytest tests/compare/direct` step; no workflow change is required.
 
 The server suite retains the fixed cipher oracle, wrong-key refusal, and private HTTP parser checks. Its existing shared database fixture uses Python's standard library to read literal schema declarations. The credential tests no longer spawn or import the Python credential implementation.
+
+The generator and live-runtime driver stay outside `server/`, following the shared
+comparison tooling layout. The server workflow receives no new Python setup.

@@ -58,7 +58,13 @@ def main() -> None:
                     "secret": secret_body,
                 }
             )
-    output = Path(__file__).parent / "fixtures" / "python-cipher.json"
+    output = (
+        Path(__file__).resolve().parents[3]
+        / "server"
+        / "credentials"
+        / "fixtures"
+        / "python-cipher.json"
+    )
     output.write_text(json.dumps({"key_hex": key.hex(), "credentials": rows}, indent=2) + "\n")
 
 
