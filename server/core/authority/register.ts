@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastif
 import type { Database } from '../database/index.ts';
 import type { Config } from '../config.ts';
 import type { Clock } from '../clock.ts';
+import type { ChangeSignal } from '../changes/index.ts';
 import { requestContext } from './identity.ts';
 import { requestAdmission } from './intake.ts';
 import type { AdmissionDependencies } from './intake.ts';
@@ -15,6 +16,11 @@ export interface AreaServices {
   config: Config;
   clock: Clock;
   identity: typeof requestContext;
+}
+/** Background and test composition receives this only under database ownership. */
+export interface OwnedAreaContext extends Omit<AreaServices, 'identity'> {
+  changes: ChangeSignal;
+  assert_database_owned(): void;
 }
 export interface Area {
   prefix: string;

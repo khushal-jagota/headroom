@@ -43,17 +43,20 @@ export interface InterpretedBackendEvent {
   readonly failure_notice: boolean;
 }
 export function normalized_failure_summary(detail: string | null): string {
-  let text = (detail ?? '').trim().replace(/\s+/gu, ' ');
+  // Python str.split includes these controls and excludes the JavaScript BOM whitespace.
+  let text = (detail ?? '').replace(/[\p{White_Space}\u001c-\u001f]+/gu, ' ').replace(/^ | $/g, '');
+  // Python \b uses Unicode letters/numbers. Its IGNORECASE also includes dotted/dotless I.
+  // After str.split-equivalent collapse, Python whitespace is exactly the ASCII space.
   const assignment =
-    /(["']?\b(?:authorization|password|api[ -]key|(?:[a-z0-9]+[_-])*(?:api[_-]?key|authorization|password|secret|token)(?:[_-][a-z0-9]+)*)\b["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:bearer\s+)?[^,;}]+)/giu;
+    /(["']?(?<![\p{L}\p{N}_])(?:author[iİı]zat[iİı]on|password|ap[iİı][ -]key|(?:[a-z0-9İı]+[_-])*(?:ap[iİı][_-]?key|author[iİı]zat[iİı]on|password|secret|token)(?:[_-][a-z0-9İı]+)*)(?![\p{L}\p{N}_])["']? *[:=] *)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:bearer +)?[^,;}]+)/giu;
   text = text.replace(assignment, '$1[redacted]');
   text = text.replace(
-    /\bbearer\s+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/giu,
+    /(?<![\p{L}\p{N}_])bearer +(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^ ]+)/giu,
     'Bearer [redacted]',
   );
   if (!text) return 'the turn failed for an unknown reason';
   const points = Array.from(text);
-  return points.length > 240 ? points.slice(0, 239).join('').trimEnd() + '…' : text;
+  return points.length > 240 ? points.slice(0, 239).join('').replace(/ +$/u, '') + '…' : text;
 }
 function copy_turn(running: RunningTurn): RunningTurn {
   return {

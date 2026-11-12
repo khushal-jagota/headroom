@@ -1,9 +1,16 @@
 import { routes as previews } from './previews/routes.ts';
 import { routes as files } from './files/routes.ts';
 import { routes as credentials } from './credentials/routes.ts';
+import { ManagerWakeLoop } from './manager_wakes/runtime.ts';
+import type { OwnedAreaContext } from './core/authority/register.ts';
+import { routes as managers } from './managers/routes.ts';
+import { routes as messageDelivery } from './message_delivery/routes.ts';
+import { configure_manager_resources } from './managers/resource_versions.ts';
 import { routes as notifications } from './notifications/routes.ts';
 import { initialize_notifications } from './notifications/data.ts';
 import { buildClock } from './core/clock.ts';
+import type { Clock } from './core/clock.ts';
+import type { ConversationViewRuntime } from './conversation/views/routes.ts';
 import { conversation_routes } from './tickets/conversation_routes.ts';
 import { routes as membership } from './membership/routes.ts';
 import { configure_conversation_start } from './runtime/conversation_start.ts';
@@ -34,14 +41,20 @@ export const initializeAreas = (
   database: Database,
   authority: SignalNavigationAuthority,
   config: Config,
+  clock: Clock = buildClock(config),
 ): void => {
-  database.write((tx) => initialize_notifications(tx, buildClock(config).nowUnix()));
+  database.write((tx) => initialize_notifications(tx, clock.nowUnix()));
   initialize_worker_settings(database, config);
   configure_conversation_start(database, config);
   configure_chief_resources(config);
-  conversation.initialize(database, config);
+  configure_manager_resources(clock);
+  conversation.initialize(database, config, { integer_now: () => clock.nowUnix() });
   navigation.initialize(database, authority);
 };
+export const getConversationRuntime = (): ConversationViewRuntime => conversation.getRuntime();
+export const bindConversationRuntimeFacts = (
+  facts: ConversationViewRuntime['runtime_facts'],
+): void => conversation.bind_runtime_facts(facts);
 export const closeAreas = async (): Promise<void> => {
   navigation.close();
   await conversation.close();
@@ -52,6 +65,8 @@ export const areas: readonly Area[] = [
   { prefix: '', routes: previews },
   { prefix: '', routes: files },
   { prefix: '/api', routes: credentials },
+  { prefix: '/api', routes: managers },
+  { prefix: '/api', routes: messageDelivery },
   { prefix: '/api', routes: notifications },
   { prefix: '/api', routes: tickets },
   { prefix: '/api', routes: conversation_routes },
@@ -69,3 +84,34 @@ export const commitSteps: readonly CommitStep[] = [
   artifactLinks,
   navigation.navigationCommitStep,
 ];
+
+/** The lifecycle composer opts into production loops at this composition point. */
+export interface AreaLoopOptions {
+  managerWakes?: boolean;
+}
+export function composeAreaLoops(context: OwnedAreaContext, options: AreaLoopOptions = {}) {
+  let wakes: ManagerWakeLoop | undefined;
+  let unsubscribe: (() => void) | undefined;
+  if (options.managerWakes) {
+    context.assert_database_owned();
+    if (!context.conversationSystem) throw new Error('Manager wakes require a conversation system');
+    wakes = new ManagerWakeLoop({
+      database: context.database,
+      clock: context.clock,
+      conversation_system: context.conversationSystem,
+      assert_database_owned: context.assert_database_owned,
+      workspace_context: {
+        db_path: context.config.db_path,
+        workspace_root: context.config.workspace_root,
+      },
+    });
+    unsubscribe = context.changes.subscribe(() => wakes?.wake());
+    wakes.start(context.config.tick_seconds);
+  }
+  return {
+    async stop(options: { deadline?: number } = {}): Promise<void> {
+      unsubscribe?.();
+      await wakes?.stop(options);
+    },
+  };
+}

@@ -1,0 +1,316 @@
+{
+  "conversation_system": "in_memory",
+  "candidate": "typescript",
+  "source_roots": [
+    "src/planner/managers/",
+    "src/planner/message_delivery/",
+    "src/planner/manager_wakes/"
+  ],
+  "requests": [
+    {
+      "area": "fresh-starts",
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Fresh startup Manager",
+        "project_id": "project_other",
+        "goal": "A saved Manager goal must reach this fresh prompt."
+      },
+      "capture": {
+        "manager": "id",
+        "initial_conversation": "startup.conversation_id"
+      },
+      "note": "New fake conversation: compare the saved goal, source link and actual prompt first. Both hosts return503 before cleanup. The reset-before-restart recipe awaits Manager review."
+    },
+    {
+      "area": "fresh-starts",
+      "method": "GET",
+      "path": "/api/managers?id=${manager}&detail=full",
+      "status": 200
+    },
+    {
+      "area": "fresh-starts",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${initial_conversation}/state",
+      "status": 200,
+      "capture": {
+        "initial_conversation_prompt": "observations",
+        "initial_conversation_writes": "backend_prompt_writes"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "status": 503,
+      "note": "503 is the observed stand-in coverage gap, not successful navigation proof."
+    },
+    {
+      "area": "fresh-starts",
+      "method": "POST",
+      "path": "/api/managers/${manager}/conversation/reset",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "status": 200
+    },
+    {
+      "kind": "restart",
+      "note": "The fake creates no durable conversation row. Reset the synthetic link before restart; linked navigation after this new start stays open for the real-core rerun."
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "status": 200
+    },
+    {
+      "area": "fresh-starts",
+      "method": "POST",
+      "path": "/api/managers/${manager}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "A new Manager prompt after reset."
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "fresh-manager-door"
+      },
+      "capture": {
+        "manager_conversation": "conversation_id"
+      },
+      "note": "New fake Manager conversation after reset; inspect prompt and row answers before explicit cleanup and restart."
+    },
+    {
+      "area": "fresh-starts",
+      "method": "GET",
+      "path": "/api/managers?id=${manager}&detail=full",
+      "status": 200
+    },
+    {
+      "area": "fresh-starts",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${manager_conversation}/state",
+      "status": 200,
+      "capture": {
+        "manager_conversation_prompt": "observations",
+        "manager_conversation_writes": "backend_prompt_writes"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "status": 503,
+      "note": "503 is the observed stand-in coverage gap, not successful navigation proof."
+    },
+    {
+      "area": "fresh-starts",
+      "method": "POST",
+      "path": "/api/managers/${manager}/conversation/reset",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "status": 200
+    },
+    {
+      "kind": "restart",
+      "note": "The fake creates no durable conversation row. Reset the synthetic link before restart; linked navigation after this new start stays open for the real-core rerun."
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "status": 200
+    },
+    {
+      "area": "fresh-starts",
+      "method": "POST",
+      "path": "/api/messages/send",
+      "status": 200,
+      "json": {
+        "target": {
+          "kind": "chief",
+          "id": "chief"
+        },
+        "message": "The general message door starts Chief on this actual text."
+      },
+      "capture": {
+        "chief_conversation": "conversation_id"
+      },
+      "note": "New fake Chief conversation through the general message door; inspect actual content before cleanup and restart."
+    },
+    {
+      "area": "fresh-starts",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${chief_conversation}/state",
+      "status": 200,
+      "capture": {
+        "chief_conversation_prompt": "observations",
+        "chief_conversation_writes": "backend_prompt_writes"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "status": 503,
+      "note": "503 is the observed stand-in coverage gap, not successful navigation proof."
+    },
+    {
+      "area": "fresh-starts",
+      "method": "POST",
+      "path": "/api/chief/conversation/reset",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "status": 200
+    },
+    {
+      "kind": "restart",
+      "note": "The fake creates no durable conversation row. Reset the synthetic link before restart; linked navigation after this new start stays open for the real-core rerun."
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "status": 200
+    },
+    {
+      "area": "fresh-starts",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "A fresh wake source",
+        "worker_type": "coding",
+        "brief": "A populated review source",
+        "ceiling": "needs_what_changes",
+        "manager": {
+          "kind": "manager",
+          "id": "${manager}"
+        },
+        "ceiling_holder": {
+          "kind": "manager",
+          "id": "${manager}"
+        }
+      },
+      "capture": {
+        "ticket": "id"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "status": 200
+    },
+    {
+      "area": "fresh-starts",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/propose",
+      "status": 200,
+      "json": {
+        "body": "A proposal that requires a fresh Manager wake."
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "status": 200
+    },
+    {
+      "area": "fresh-starts",
+      "method": "POST",
+      "path": "/api/test/poll/manager-wakes",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "fresh_wake_batch_ids": "batch_ids"
+      },
+      "note": "The wake loop starts a fresh fake Manager conversation. This pass proves batch/source changes and actual sends, not durable core receipts."
+    },
+    {
+      "area": "fresh-starts",
+      "method": "GET",
+      "path": "/api/managers?id=${manager}&detail=full",
+      "status": 200,
+      "capture": {
+        "wake_conversation": "manager.conversation_id"
+      }
+    },
+    {
+      "area": "fresh-starts",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${wake_conversation}/state",
+      "status": 200,
+      "capture": {
+        "wake_conversation_prompt": "observations",
+        "wake_conversation_writes": "backend_prompt_writes"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "status": 503,
+      "note": "503 is the observed stand-in coverage gap, not successful navigation proof."
+    },
+    {
+      "area": "fresh-starts",
+      "method": "POST",
+      "path": "/api/managers/${manager}/conversation/reset",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "status": 200
+    },
+    {
+      "kind": "restart",
+      "note": "The fake creates no durable conversation row. Reset the synthetic link before restart; linked navigation after this new start stays open for the real-core rerun."
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "status": 200
+    }
+  ],
+  "report_captures": [
+    "manager",
+    "initial_conversation_prompt",
+    "initial_conversation_writes",
+    "manager_conversation_prompt",
+    "manager_conversation_writes",
+    "chief_conversation_prompt",
+    "chief_conversation_writes",
+    "fresh_wake_batch_ids",
+    "wake_conversation_prompt",
+    "wake_conversation_writes"
+  ]
+}

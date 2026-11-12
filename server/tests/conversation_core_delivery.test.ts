@@ -1,3 +1,4 @@
+import { setup } from './conversation_core_fixture.ts';
 /** Internal ordering risks that HTTP request lists cannot pause at their exact boundary. */
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -25,66 +26,6 @@ import { ScriptedChild } from '../conversation/testing/scripted_child.ts';
 import type { ScriptedBehavior } from '../conversation/testing/scripted_protocol.ts';
 import type { ConversationStoreOptions } from '../conversation/record/contracts.ts';
 import type { ConversationCoreOptions } from '../conversation/runtime/contracts.ts';
-
-const children: ScriptedChild[] = [];
-const directories: string[] = [];
-afterEach(async () => {
-  await Promise.all(children.splice(0).map((child) => child.terminate()));
-  for (const directory of directories.splice(0))
-    rmSync(directory, { recursive: true, force: true });
-  vi.restoreAllMocks();
-});
-function setup(
-  options: {
-    behavior?: ScriptedBehavior;
-    record?: ConversationStoreOptions;
-    core?: Partial<ConversationCoreOptions>;
-  } = {},
-) {
-  const database = fixture();
-  const directory = mkdtempSync(join(tmpdir(), 'conversation-core-'));
-  directories.push(directory);
-  database.write((tx) =>
-    tx.run('INSERT INTO conversation_runtime_epoch VALUES (1,?)', ['test-runtime']),
-  );
-  const store = new ConversationStore(database, { integer_now: () => 100, ...options.record });
-  const created = new Deferred<ScriptedChild>();
-  const factory: ConversationCoreOptions['backend_child_factories']['codex'] = ({ event_sink }) => {
-    const child = new ScriptedChild(event_sink);
-    children.push(child);
-    const configured = options.behavior
-      ? child.configure('write_prompt', options.behavior)
-      : Promise.resolve();
-    const original = child.start.bind(child);
-    child.start = async (...args) => {
-      await configured;
-      return original(...args);
-    };
-    created.resolve(child);
-    return child;
-  };
-  const core = new SqliteProcessConversationSystem({
-    store,
-    backend_child_factories: { codex: factory, claude: factory, hermes: factory },
-    message_files: new ConversationMessageFiles(join(directory, 'conversation.sqlite')),
-    ...options.core,
-  });
-  const start = () =>
-    core.start_conversation(
-      new ConversationStartRequest({
-        conversation_id: 'core',
-        model: 'model',
-        workspace_folder: '/workspace',
-        role_materials: new ConversationRoleMaterials({ role_text: 'Role' }),
-      }),
-    );
-  const send = (text = 'one', identity = 'sender') =>
-    core.send('core', text_message_content(text), {
-      sender_label: 'Owner',
-      sender_message_id: identity,
-    });
-  return { core, store, database, child: created.promise, start, send };
-}
 
 // Inventory #8: the provider reports news while its prompt receipt is still withheld.
 // The real scripted process and real record together prove the provider/core/store boundary.

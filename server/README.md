@@ -80,7 +80,11 @@ Each area adds one registration to the `testAreas` list in `test_host.ts`. Test 
 
 For a comparison list with `"conversation_system": "in_memory"`, the runner supplies `PLAN_COMPARE_CONVERSATION_SYSTEM=in_memory` to both hosts. The TS host creates one `InMemoryConversationSystem` for its test routes and all ordinary areas. Areas receive it as `services.conversationSystem`. The test endpoints start a conversation, send a message, read fake state, and complete a turn beneath `/api/test/in-memory-conversations`.
 
-Without this switch, the host does not register those endpoints or inject an in-memory system. Unit 15 supplies the real conversation system. Units 7 through 10 can then run their lists without the switch against the real core.
+Without this switch, the host composes `SqliteProcessConversationSystem` with the record runtime's single store and tail. `createConversationCore(context)` receives that runtime and the shared clock after record initialization. Runtime facts attach to that same record runtime. Shutdown closes the core before the record, application, and database ownership.
+
+The comparison host uses `conversation/testing/scripted_process.ts` behind both Python and TypeScript backend adapters. The five existing controls beneath `/api/test/signals/:conversation_id` retain their meanings. Configuration and inspection controls expose process behavior and actual backend observations. They do not write event rows directly.
+
+The four `unit-15.*` lists compare all 21 conformance scenarios through start, state, send, interrupt, kill, and permission-answer routes. They compare the conversation row, ordered events, lifecycle facts, all five view tables, runtime state, and process observations. Status publication still uses the idle source at this checkpoint. The complete route inventory, live-stream proof, browser tests, and earlier-unit reruns follow in later packages.
 
 ## In-memory conversation instrument
 
