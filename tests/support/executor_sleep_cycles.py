@@ -776,6 +776,13 @@ class CycleEndpoint(VpsExecutor):
         super().bind_conversations(conversations)
         self.inbox.conversations = cast(Any, _CountingConversations(conversations))
 
+    def hold_replies(self) -> None:
+        """Open a fresh saved-before-receipt window for this crash injection."""
+        self._released.clear()
+        self.held_replies = 0
+        self.held_conversations.clear()
+        self.replies_held = True
+
     def release_replies(self) -> None:
         self.replies_held = False
         self._released.set()
@@ -1440,7 +1447,7 @@ class SleepCycles:
             await asyncio.sleep(2.5)
             report.kill_mode = "offline"
         else:
-            self.endpoint.replies_held = True
+            self.endpoint.hold_replies()
             await self._blackhole_off(report)
 
             async def saved_unacknowledged() -> bool:
@@ -1490,7 +1497,7 @@ class SleepCycles:
         }
         previous = self.endpoint.presence.current_identity()
         if vps_restart:
-            self.endpoint.replies_held = True
+            self.endpoint.hold_replies()
             await self._blackhole_off(report)
         await self._launch_executor(None if previous is None else previous.executor_incarnation)
         if not vps_restart:
