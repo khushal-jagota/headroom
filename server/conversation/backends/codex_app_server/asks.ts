@@ -1,3 +1,4 @@
+import { python_string_repr as shared_string_repr } from '../../../core/python_repr.ts';
 /** Permission and question conversion without wire or record ownership. */
 import { PermissionAskOption, UserInputOption, UserInputQuestion } from '../../events.ts';
 import type { UserInputAnswer } from '../../events.ts';
@@ -84,16 +85,4 @@ export function user_input_answer(answers: readonly UserInputAnswer[]): Record<s
     ),
   });
 }
-export function repr(text: string): string {
-  const quote = text.includes("'") && !text.includes('"') ? '"' : "'";
-  return (
-    quote +
-    text
-      .replaceAll('\\', '\\\\')
-      .replaceAll(quote, '\\' + quote)
-      .replaceAll('\n', '\\n')
-      .replaceAll('\r', '\\r')
-      .replaceAll('\t', '\\t') +
-    quote
-  );
-}
+export const repr = shared_string_repr;

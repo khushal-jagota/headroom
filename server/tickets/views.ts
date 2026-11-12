@@ -1,3 +1,4 @@
+import { python_string_repr } from '../core/python_repr.ts';
 import { casefold } from '../core/casefold.ts';
 /** Public Ticket reads. All queries share the caller's read snapshot. */
 import { dirname, join, parse } from 'node:path';
@@ -378,10 +379,7 @@ function python_repr(value: unknown): string {
   if (value === null) return 'None';
   if (value === true) return 'True';
   if (value === false) return 'False';
-  if (typeof value === 'string')
-    return (
-      "'" + value.replaceAll('\\', '\\\\').replaceAll("'", "\\'").replaceAll('\n', '\\n') + "'"
-    );
+  if (typeof value === 'string') return python_string_repr(value);
   if (Array.isArray(value)) return '[' + value.map(python_repr).join(', ') + ']';
   if (typeof value === 'object')
     return (

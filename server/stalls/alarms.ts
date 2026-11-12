@@ -106,18 +106,45 @@ export async function send_push(
   return delivered;
 }
 export async function message_chief(text: string, server_url: string): Promise<boolean> {
+  const controller = new AbortController();
+  const network_read = async <T>(read: () => Promise<T>): Promise<T> => {
+    const timer = setTimeout(() => controller.abort(), CHIEF_MESSAGE_TIMEOUT_SECONDS * 1000);
+    try {
+      return await read();
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   try {
-    const response = await fetch(server_url.replace(/\/$/, '') + '/api/messages/send', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        target: { kind: 'chief', id: 'chief' },
-        message: `${CHIEF_MESSAGE_PREFIX} ${text}`,
-        mode: 'steer',
+    const response = await network_read(() =>
+      fetch(server_url.replace(/\/$/, '') + '/api/messages/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          target: { kind: 'chief', id: 'chief' },
+          message: `${CHIEF_MESSAGE_PREFIX} ${text}`,
+          mode: 'steer',
+        }),
+        redirect: 'manual',
+        signal: controller.signal,
       }),
-      signal: AbortSignal.timeout(CHIEF_MESSAGE_TIMEOUT_SECONDS * 1000),
-    });
-    const body: unknown = response.ok ? await response.json() : null;
+    );
+    let body: unknown = null;
+    if (response.ok && response.body) {
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      try {
+        for (;;) {
+          const { value, done } = await network_read(() => reader.read());
+          if (done) break;
+          chunks.push(value);
+        }
+      } finally {
+        await reader.cancel().catch(() => {});
+        reader.releaseLock();
+      }
+      body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    } else await response.body?.cancel();
     if (
       !body ||
       typeof body !== 'object' ||
@@ -130,5 +157,7 @@ export async function message_chief(text: string, server_url: string): Promise<b
   } catch (error) {
     console.warn('stall alarm could not reach the Chief', error);
     return false;
+  } finally {
+    controller.abort();
   }
 }
