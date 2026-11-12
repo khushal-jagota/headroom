@@ -20,7 +20,7 @@ installer unit: stop → swap folders → start → health ── healthy → do
 ## What it is made of
 
 - **Publication.** A GitHub workflow on hosted machines. For one commit, the suites and static checks run on their own machines while another builds once and seals the archive. It then proves the archive on a clean Debian root and, at the same time, rehearses the install on a throwaway known-good release with the same installer the live host uses. A native Mac machine builds and proves the Mac runtime. A last machine checks every proof against the build and writes the receipt. Panels offers a release only when the whole run passed. If one job fails, "Re-run failed jobs" reruns only that job. Every attempt of a run checks the same commit, so the last machine accepts evidence from the attempt that made it, and still requires the latest result of every job to be a pass. Shared or unknown changes select all default suites.
-- **The sealed release.** An archive plus a receipt. It holds the app, a private CPython 3.12 with its native libraries, a virtual environment with every pinned Python dependency, the built browser app, and the agent backends' Node packages, including the Claude Code and Codex CLIs.
+- **The sealed release.** An archive plus a receipt. It holds the app, a private CPython 3.12 with its native libraries, a virtual environment with every pinned Python dependency, the built browser app, and the agent backends' Node packages. Each build resolves current Claude Code and Codex CLIs and records the versions it checks. Once sealed, the archive never changes.
 - **The live tree.** `~/Deployments/Panels/current/` with `app`, `data`, and `logs`. An install changes only `app`. The next release waits beside it, unpacked, and the previous one stays beside it after an install. See [Environments](environments.md).
 - **The installer.** One small program that uses only Python's standard library. It runs outside every app, so the app it replaces cannot break it.
 - **The attempt record.** One small file beside the live data, outside the database and its backups. It says what one press of Update is doing and how it ended, with the time of each step. The update card and the deployment status that the iOS app shows read it. It is the one file that crosses versions, so every version ignores what it does not know and keeps it when it writes.
@@ -30,6 +30,8 @@ installer unit: stop → swap folders → start → health ── healthy → do
 A release brings its own Python, so installation never runs a package installer. Before publication, a separate proof runs the archive on a minimal Debian root with no Python 3.12 and no network.
 
 The host supplies the glibc loader and a short named list of system libraries, Node 22, Hermes, media tools such as `ffprobe`, `python3` 3.11 or newer for the installer, and every credential. Credentials live in the host's service environment and agent homes, so replacing the app never replaces them. Each release states its needs in a versioned runtime contract, and Panels checks it against the host before it offers the release.
+
+Actual Claude and Codex conversations use owner-maintained CLIs outside the release. App installation does not change those versions. SDK dependencies keep their API pins, while CLI qualification checks the protocol that Panels uses instead of an exact version number. These checks cannot guarantee compatibility with every future CLI update. See [Conversations](conversations.md) for the owner update controls.
 
 ## How an install happens
 
@@ -104,4 +106,4 @@ Commands outside the guard, such as Ruff or a direct `.venv/bin` call, can still
 - `scripts/dev`, `scripts/development_safety/`: the worktree guard.
 - `ops/panels-environments/`: user units and runner setup.
 
-_Last verified: 2026-11-09._
+_Last verified: 2026-11-11._

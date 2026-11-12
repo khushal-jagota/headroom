@@ -354,7 +354,6 @@ export interface ViewRestFacts {
   plan_progress: ViewPlanProgress;
 }
 
-/** A background task the agent started that is still live after its turn. */
 export interface ViewBackgroundTask {
   task_id: string;
   task_description: string;
@@ -370,8 +369,7 @@ export interface ConversationViewStatus {
   turn_key: string | null;
   turn_running: boolean | null;
   stopped_without_ending: boolean;
-  /** Live background tasks, from the same record the sidebar's working signal reads. */
-  background_tasks: ViewBackgroundTask[];
+  background_tasks: Array<ViewBackgroundTask>;
   pending_permission: ViewRequestIdentity | null;
   pending_user_input: ViewRequestIdentity | null;
   plan: ViewBodyReference | null;

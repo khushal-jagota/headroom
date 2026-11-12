@@ -51,15 +51,6 @@ from planner.environments.hermes_home import (
 type ExecutablePathResolver = Callable[[str], str | None]
 
 CLAUDE_EXECUTABLE_OVERRIDE: Final = "PLAN_CLAUDE_EXECUTABLE"
-PANELS_OWNED_CLAUDE_EXECUTABLE: Final = (
-    Path(os.environ.get("PLAN_APP_ROOT", Path(__file__).resolve().parents[3]))
-    / "agent_backends"
-    / "node_modules"
-    / "@anthropic-ai"
-    / "claude-code"
-    / "bin"
-    / "claude.exe"
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +85,7 @@ def production_backend_launches(
             codex_executable=_on_path(executable_path, "codex"),
             panels_server_url=panels_server_url,
         ),
-        claude=_claude_launch(panels_server_url),
+        claude=_claude_launch(panels_server_url, executable_path),
     )
 
 
@@ -138,12 +129,25 @@ def _hermes_launch(panels_server_url: str) -> AcpChildLaunch:
     )
 
 
-def _claude_launch(panels_server_url: str) -> ClaudeAgentSdkChildLaunch:
-    """Claude as Panels' tested CLI, unless the operator names another executable."""
+def _claude_launch(
+    panels_server_url: str,
+    executable_path: ExecutablePathResolver = shutil.which,
+) -> ClaudeAgentSdkChildLaunch:
+    """Use the owner's Claude, independently of the selected app release."""
     override = os.environ.get(CLAUDE_EXECUTABLE_OVERRIDE)
+    app_root = os.environ.get("PLAN_APP_ROOT")
+    # Older permanent Mac supervisors select this exact bundled path at each handoff.
+    # Keep external operator overrides, but do not let that generated selection pin Claude.
+    if override is not None and app_root is not None:
+        legacy = (
+            Path(app_root) / "agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+        )
+        if Path(override).expanduser() == legacy:
+            override = None
     return ClaudeAgentSdkChildLaunch(
         claude_executable=(
-            Path(override).expanduser() if override is not None else PANELS_OWNED_CLAUDE_EXECUTABLE
+            Path(override).expanduser()
+            if override is not None else _on_path(executable_path, "claude")
         ),
         environment_overrides=(("PLAN_SERVER_URL", panels_server_url),),
     )

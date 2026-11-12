@@ -198,7 +198,8 @@ def _validate_runtime_tree(root: Path) -> None:
             raise AppValidationError(f"runtime file is not executable: {path.relative_to(root)}")
     for path in (
         root / "web" / "dist" / "index.html",
-        root / "agent_backends" / "node_modules" / ".package-lock.json",
+        root / "agent_backends/node_modules/@anthropic-ai/claude-code/package.json",
+        root / "agent_backends/node_modules/@openai/codex/package.json",
     ):
         if not path.is_file():
             raise AppValidationError(f"runtime file is missing: {path.relative_to(root)}")
@@ -287,9 +288,14 @@ def _install_app_dependencies(app_root: Path) -> None:
     if requirements.is_file():
         subprocess.run([str(python), "-m", "pip", "install", "-r", str(requirements)], check=True)
     subprocess.run([str(python), "-m", "pip", "install", str(app_root)], check=True)
-    for directory in (app_root / "web", app_root / "agent_backends"):
-        if (directory / "package-lock.json").is_file():
-            subprocess.run(["npm", "ci", "--prefix", str(directory)], check=True)
+    if (app_root / "web/package-lock.json").is_file():
+        subprocess.run(["npm", "ci", "--prefix", str(app_root / "web")], check=True)
+    if (app_root / "agent_backends/package.json").is_file():
+        subprocess.run(
+            ["npm", "install", "--prefix", str(app_root / "agent_backends"),
+             "--package-lock=false", "--save=false", "@anthropic-ai/claude-code@latest",
+             "@openai/codex@latest"], check=True,
+        )
     if (app_root / "web" / "package.json").is_file():
         subprocess.run(["npm", "run", "build", "--prefix", str(app_root / "web")], check=True)
 

@@ -27,6 +27,8 @@ A conversation is one agent, working in one folder, with a permanent record of w
 ```
 The backend's own session id is internal and can be rebound without anything outside the system noticing.
 
+Claude and Codex run from owner-maintained CLI installations outside the app. Settings → Backends shows their installed and latest versions on the VPS. Only the owner can update them there. Updates change the selected user-local installation, and new agent processes use that version. A failed version lookup does not stop ordinary conversations. Mac CLI updates stay local to the Mac.
+
 ## How a send works
 
 A busy agent is not a refusal. The sender picks how a busy agent meets the message:
