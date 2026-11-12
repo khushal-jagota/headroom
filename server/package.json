@@ -8,7 +8,9 @@
   "scripts": {
     "start": "../scripts/dev check-node server && node main.ts",
     "check": "../scripts/dev check-node server && tsc --noEmit",
-    "test": "../scripts/dev check-node server && vitest run"
+    "test": "../scripts/dev check-node server && vitest run",
+    "format": "../scripts/dev check-node server && prettier --write \"**/*.ts\"",
+    "format:check": "../scripts/dev check-node server && prettier --check \"**/*.ts\""
   },
   "dependencies": {
     "better-sqlite3": "13.1.1",
@@ -21,6 +23,7 @@
     "@types/better-sqlite3": "7.6.13",
     "@types/node": "22.19.3",
     "typescript": "5.9.3",
-    "vitest": "4.1.10"
+    "vitest": "4.1.10",
+    "prettier": "3.10.0"
   }
 }
