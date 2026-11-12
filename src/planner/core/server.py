@@ -58,6 +58,7 @@ from planner.core.response_compression import (
 from planner.core.sse import change_stream
 from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
+from planner.core.unidentified_agent_calls import UnidentifiedAgentCallsMiddleware
 from planner.core.web_assets import WebAssets
 from planner.credentials.api import router as credentials_router
 from planner.credentials.requests.api import router as credential_requests_router
@@ -514,6 +515,9 @@ def create_app(
     app.state.video_uploads = video_uploads
     app.state.navigation_delivery = navigation_delivery
     app.add_middleware(ConversationSendBodyLimitMiddleware)
+    app.add_middleware(
+        UnidentifiedAgentCallsMiddleware, enabled=config.refuse_unidentified_agent_calls
+    )
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
     from planner.executor.app_transport import build_executor_router
 

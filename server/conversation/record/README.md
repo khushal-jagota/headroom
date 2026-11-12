@@ -72,3 +72,9 @@ Without a deployment participant, `reconcile_in_transaction` rotates
 `reconcile_deployment`, that participant owns the complete order: import captured
 evidence against the old epoch, then rotate once. The store does not rotate again.
 The real core must reuse one startup transaction and must not reconcile twice.
+
+Unit 19 adds two synchronous record operations. `bind_interruption_delivery(conversation_id, turn_number, references = null, recovery_sender_message_ids = null)` calls its optional participant in one write transaction before child startup. It commits the binding and returns the notice. A failed participant rolls back that binding. Later child or wire failures do not erase a committed binding.
+
+`fail_recovery_claims(conversation_id, turn_number)` calls its optional participant in one later write transaction. It compares Ticket claim revisions before and after that callback. A changed claim emits the change signal. A failed callback rolls back that transaction and leaves the prior binding intact. The existing core persistence scope supplies retries and shutdown ownership. Provider operations remain outside both transactions.
+
+Both callbacks are optional. Without them, binding returns null and failure settlement changes no rows. Existing participant names and signatures remain intact. The concrete core snapshots previous-process task IDs before it starts children. `tell_agents_of_background_tasks_lost_at_restart()` takes only those IDs and queues the existing lost-task prompt for each removed task. Tasks from this process remain untouched.
