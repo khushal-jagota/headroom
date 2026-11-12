@@ -390,12 +390,23 @@ def main(args: Sequence[str] | None = None) -> int:
             if arguments[0] == "npm"
             else python_command(TREE, arguments, environment)
         )
+        # Keep original deployment evidence for the existing dependency check above.
+        # Only test commands receive replacement runtime paths, never setup or mypy.
+        is_pytest = arguments[0] != "npm" and (
+            Path(arguments[0]).name == "pytest"
+            or (len(arguments) > 2 and arguments[1:3] == ["-m", "pytest"])
+        )
+        if is_pytest:
+            from test_runtime import RuntimeIsolation
+
+            with RuntimeIsolation(environment) as runtime:
+                return subprocess.run(command, cwd=TREE, env=runtime.environment).returncode
         os.chdir(TREE)
         os.execvpe(command[0], command, environment)
     except SafetyRefusal as exc:
         print(f"Command: {' '.join(arguments)}\n{exc}", file=sys.stderr)
         return 2
-    except (OSError, subprocess.CalledProcessError) as exc:
+    except (OSError, subprocess.CalledProcessError, ValueError) as exc:
         print(f"Development command failed: {exc}", file=sys.stderr)
         return 2
     return 0
