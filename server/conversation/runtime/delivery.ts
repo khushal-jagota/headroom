@@ -141,6 +141,24 @@ export async function deliver_prompt(
       record_refusal: true,
     });
   }
+  const references = batch.flatMap((message) => message.recovery_references);
+  const identities = new Map(
+    batch.flatMap((message) =>
+      message.sender_message_id === null
+        ? []
+        : message.recovery_references.map(
+            (reference) => [reference.interruption_id, message.sender_message_id!] as const,
+          ),
+    ),
+  );
+  const interruption_notice = await host.persist(state, () =>
+    host.options.store.bind_interruption_delivery(
+      state.record.conversation_id,
+      reservation.token.turn_number,
+      references.length === 0 ? null : references,
+      identities.size === 0 ? null : identities,
+    ),
+  );
   const had_child = state.child !== null;
   let child: BackendChild;
   try {
@@ -208,6 +226,8 @@ export async function deliver_prompt(
     .every((decision) => decision.is_manager_notice);
   let sender_content = one_prompt_from(survivors);
   let wire_content = await compose(host, state, sender_content);
+  if (interruption_notice !== null)
+    wire_content = prefix_message_content_text(wire_content, interruption_notice, '\n\n');
   const write = async (target: BackendChild) => {
     const accepted = await host.native_operation(() =>
       target.write_prompt(reservation.token, wire_content, {
@@ -268,6 +288,8 @@ export async function deliver_prompt(
         .every((decision) => decision.is_manager_notice);
       sender_content = one_prompt_from(survivors);
       wire_content = await compose(host, state, sender_content);
+      if (interruption_notice !== null)
+        wire_content = prefix_message_content_text(wire_content, interruption_notice, '\n\n');
       owned(host, state, reservation);
       return await write(child);
     } catch (next) {
