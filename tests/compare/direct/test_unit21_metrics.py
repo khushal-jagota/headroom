@@ -853,11 +853,13 @@ def test_unit21_metrics_sampler_cadence_ownership_and_pending_stop(tmp_path: Pat
                 with sqlite3.connect(root / "metrics.sqlite") as conn:
                     assert conn.execute("SELECT COUNT(*) FROM samples").fetchone()[0] == 2
             else:
-                # The daemon-like worker must not retain a stopped short-lived APP.
-                assert _finish(process) == {"unref_exit": True}
-            _assert_lock(root / "metrics.sqlite.lock", False)
+                # The command returned, but actual collector ownership remains.
+                assert _line(process) == {"retained_worker": True}
+                assert process.poll() is None
+                _assert_lock(root / "metrics.sqlite.lock", True)
         finally:
             _cleanup(process, descriptor)
+        _assert_lock(root / "metrics.sqlite.lock", False)
 
 
 def _pathological_samples(database: Path) -> None:

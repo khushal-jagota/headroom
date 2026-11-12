@@ -6,6 +6,7 @@ import { resolved_path } from '../paths.ts';
 import type { ChangeSignal } from '../../core/changes/index.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../../core/config.ts';
 import type { StopOptions } from '../../lifecycle/contracts.ts';
+import { observe_shutdown } from '../../lifecycle/deadline.ts';
 import { build_worker_runtime_definitions } from '../../worker_types/configuration.ts';
 import { read_definitions } from '../../worker_types/store.ts';
 import { audit_ticket_registry_integrity } from '../../tickets/data/index.ts';
@@ -125,6 +126,9 @@ export class UpdateService {
   private incarnation = 0;
   private prefetching: Promise<void> | null = null;
   private advancing: Promise<void> | null = null;
+  private readonly work = new Set<Promise<void>>();
+  private stopping: Promise<void> | undefined;
+  private shutdown_settlement: Promise<void> | undefined;
   private observer: NodeJS.Timeout | null = null;
   constructor(options: UpdateServiceOptions) {
     this.options = options;
@@ -169,8 +173,10 @@ export class UpdateService {
       .then(() => this.prefetch_release(incarnation))
       .finally(() => {
         if (this.prefetching === flight) this.prefetching = null;
+        this.work.delete(flight);
       });
     this.prefetching = flight;
+    this.work.add(flight);
     return flight;
   }
   private active(incarnation: number): boolean {
@@ -198,7 +204,7 @@ export class UpdateService {
     this.ready = release;
     this.options.changes.emit();
   }
-  private settled(): UpdateAttempt | null {
+  private settled_attempt(): UpdateAttempt | null {
     const attempt = this.attempts.read();
     if (attempt === null) return null;
     const ended = settle(attempt, this.current_app_sha, timestamp(this.now()));
@@ -218,7 +224,7 @@ export class UpdateService {
   }
   status(): UpdateStatus {
     this.refresh_available();
-    const attempt = this.running ? this.settled() : this.attempts.read();
+    const attempt = this.running ? this.settled_attempt() : this.attempts.read();
     if (this.running) this.reopen_after_unstarted(attempt);
     const system = this.options.runtime.conversation();
     const activity = system?.workspace_activity() ?? 'unknown';
@@ -337,6 +343,7 @@ export class UpdateService {
   }
   start(): void {
     if (this.running) return;
+    this.stopping = this.shutdown_settlement = undefined;
     this.options.runtime.assert_database_owned();
     this.running = true;
     const attempt = this.attempts.read();
@@ -354,27 +361,20 @@ export class UpdateService {
     this.observer.unref();
     this.schedule_advance();
   }
-  async stop(options?: StopOptions): Promise<void> {
+  settled(): Promise<void> {
+    return this.shutdown_settlement ?? Promise.allSettled([...this.work]).then(() => {});
+  }
+  stop(options?: StopOptions): Promise<void> {
+    if (this.stopping) return this.stopping;
     const deadline = options?.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
     this.running = false;
     this.incarnation++;
     if (this.observer !== null) clearInterval(this.observer);
     this.observer = null;
-    const pending = Promise.allSettled(
-      [this.prefetching, this.advancing].filter((task): task is Promise<void> => task !== null),
-    );
+    this.shutdown_settlement = Promise.allSettled([...this.work]).then(() => {});
     this.prefetching = this.advancing = null;
-    let timer: NodeJS.Timeout | undefined;
-    try {
-      await Promise.race([
-        pending,
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, Math.max(0, deadline - performance.now() / 1000) * 1000);
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
+    this.stopping = observe_shutdown(this.shutdown_settlement, { deadline }, 'updates');
+    return this.stopping;
   }
   poll(): boolean {
     if (!this.running) return false;
@@ -406,8 +406,10 @@ export class UpdateService {
       .then(() => this.advance_waiting(incarnation))
       .finally(() => {
         if (this.advancing === flight) this.advancing = null;
+        this.work.delete(flight);
       });
     this.advancing = flight;
+    this.work.add(flight);
     return flight;
   }
   private async advance_waiting(incarnation: number): Promise<void> {

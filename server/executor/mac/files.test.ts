@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
 import { FilesService, file_version } from './files.ts';
+import { ServerLifecycleError } from '../../lifecycle/contracts.ts';
 import {
   directory_open_flags,
   flock_descriptor,
@@ -29,6 +30,7 @@ import {
 
 const roots: string[] = [];
 const services: FilesService[] = [];
+const expected_failures = new WeakSet<FilesService>();
 function scratch(): string {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'mac-files-')));
   roots.push(root);
@@ -41,8 +43,15 @@ function files(): FilesService {
 }
 afterEach(async () => {
   for (const service of services.splice(0)) {
-    await service.stop({ deadline: performance.now() / 1000 + 10 });
-    await service.settled();
+    if (expected_failures.has(service)) {
+      await expect(service.stop({ deadline: performance.now() / 1000 + 10 })).rejects.toMatchObject(
+        { name: 'DataCloneError' },
+      );
+      await expect(service.settled()).rejects.toMatchObject({ name: 'DataCloneError' });
+    } else {
+      await service.stop({ deadline: performance.now() / 1000 + 10 });
+      await service.settled();
+    }
   }
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -187,7 +196,7 @@ describe('retained executor file capabilities', () => {
     const admitted = service.file_digest(source);
     const stopped = service.stop({ deadline: performance.now() / 1000 - 1 });
     await expect(service.file_digest(source)).rejects.toThrow();
-    await expect(stopped).rejects.toMatchObject({ name: 'ServerLifecycleError' });
+    await expect(stopped).rejects.toBeInstanceOf(ServerLifecycleError);
     await retained; // The service closes this deliberately unreturned handle at real settlement.
     expect((await admitted)[1]).toBe(1024 * 1024);
     await service.stop({ deadline: performance.now() / 1000 + 10 });
@@ -224,8 +233,11 @@ describe('retained executor file capabilities', () => {
       );
       expect(await admitted).toMatchObject({ name: 'DataCloneError' });
       expect(await broken).toMatchObject({ name: 'DataCloneError' });
-      await service.stop({ deadline: performance.now() / 1000 + 10 });
-      await service.settled();
+      expected_failures.add(service);
+      await expect(service.stop({ deadline: performance.now() / 1000 + 10 })).rejects.toMatchObject(
+        { name: 'DataCloneError' },
+      );
+      await expect(service.settled()).rejects.toMatchObject({ name: 'DataCloneError' });
       expect(descriptor_targets()).not.toContain(root);
     },
   );

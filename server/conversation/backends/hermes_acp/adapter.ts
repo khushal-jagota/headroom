@@ -39,6 +39,7 @@ import type { ConversationMessageFiles } from '../../message_files.ts';
 import { within } from '../codex_app_server/process.ts';
 import type { AcpChildLaunch } from './launch.ts';
 import { HermesAcpLauncher } from './client.ts';
+import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import type { HermesAcpClient } from './client.ts';
 import {
   AVAILABLE_COMMANDS_WAIT_TIMEOUT_SECONDS,
@@ -61,18 +62,20 @@ export class HermesAcpBackendChild implements BackendChild {
   private readonly launch: AcpChildLaunch;
   private resolved_start: ResolvedConversationStart;
   private readonly sink: BackendEventSink;
-  private readonly launcher = new HermesAcpLauncher();
+  private readonly launcher: HermesAcpLauncher;
   private readonly messages: HermesMessages;
   private readonly events: HermesEvents;
   private client: HermesAcpClient | null = null;
   private configuration: HermesConfiguration | null = null;
   private stopped = false;
   constructor(options: {
+    child_processes: OwnedChildProcesses;
     launch: AcpChildLaunch;
     resolved_start: ResolvedConversationStart;
     event_sink: BackendEventSink;
     message_files: ConversationMessageFiles;
   }) {
+    this.launcher = new HermesAcpLauncher(options.child_processes);
     this.launch = options.launch;
     this.resolved_start = options.resolved_start;
     this.sink = options.event_sink;
@@ -428,6 +431,9 @@ export class HermesAcpBackendChild implements BackendChild {
     );
   }
 }
-export function create_hermes_backend_child_factory(launch: AcpChildLaunch): BackendChildFactory {
-  return (options) => new HermesAcpBackendChild({ launch, ...options });
+export function create_hermes_backend_child_factory(
+  launch: AcpChildLaunch,
+  dependencies: { child_processes: OwnedChildProcesses },
+): BackendChildFactory {
+  return (options) => new HermesAcpBackendChild({ launch, ...options, ...dependencies });
 }

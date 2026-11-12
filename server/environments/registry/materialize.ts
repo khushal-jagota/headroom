@@ -37,6 +37,7 @@ const operations: MaterializationOperations = {
     build_fake_environment_database(path, now);
   },
   rename,
+  remove: rm,
 };
 async function exists(path: string): Promise<boolean> {
   try {
@@ -243,6 +244,7 @@ export async function reset_environment_instance(
 }
 export async function remove_environment_instance(
   options: EnvironmentRequest,
+  effects: MaterializationOperations = operations,
 ): Promise<EnvironmentManifest> {
   if (options.kind === 'live')
     throw new EnvironmentValidationError('live environment cannot be removed');
@@ -253,7 +255,7 @@ export async function remove_environment_instance(
       throw new EnvironmentValidationError('environment instance is not prepared');
     const lease = acquire_stopped_environment_lease(current);
     try {
-      await rm(current.instance_root, { recursive: true });
+      await effects.remove(current.instance_root, { recursive: true });
     } finally {
       lease.close();
     }

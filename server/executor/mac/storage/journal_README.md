@@ -56,6 +56,8 @@ Snapshot owners must close cursors in `finally`. Natural EOF preserves outstandi
 
 Unexpected Worker exit seals spool mutations. The pinned better-sqlite3 environment cleanup hook closes its native database handles before actual exit.
 An error event alone is not completion. Actual `settled()` joins the worker exit and all admitted callbacks and operations.
+After that actual join, retained fatal and native-close failures reject `settled()`, including a close error before a successful retry.
+Ordinary wire-validation refusals remain caller errors. A deadline alone never changes a clean actual join into failure.
 The addon proof lives in `src/better_sqlite3.cpp:56`, `src/addon.cpp:7`, and `src/objects/database.cpp:36` in pinned better-sqlite3 13.1.1.
 Node-API environment cleanup applies even when `worker.terminate()` disallows JavaScript cleanup.
 

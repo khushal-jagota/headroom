@@ -18,6 +18,7 @@ import { createEnvironmentRuntime } from '../environments/runtime.ts';
 import type { EnvironmentRuntime } from '../environments/contracts.ts';
 import { MetricsRuntime } from '../environments/vps_metrics/runtime.ts';
 import { UpdateService } from '../environments/updates/service.ts';
+import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import type { InstallerOperations, PublishedUpdate } from '../environments/updates/contracts.ts';
 import {
   GLIBC_LIBRARIES,
@@ -39,6 +40,19 @@ function deferred<T>() {
   });
   void promise.catch(() => {});
   return { promise, resolve, reject };
+}
+function shutdown_failure(error: unknown): Error {
+  const detail = JSON.stringify(error, (_key, value: unknown) =>
+    value instanceof Error
+      ? {
+          type: value.constructor.name,
+          name: value.name,
+          message: value.message,
+          errors: value instanceof AggregateError ? value.errors : undefined,
+        }
+      : value,
+  );
+  return new Error(`Actual shutdown failure: ${detail}`, { cause: error });
 }
 async function reached<T>(promise: Promise<T>, label: string, state?: () => unknown): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -248,6 +262,8 @@ async function owned_server(installer?: Partial<InstallerOperations>) {
       async close() {
         try {
           await server.close();
+        } catch (error) {
+          throw shutdown_failure(error);
         } finally {
           await registry.close();
           rmSync(root, { recursive: true, force: true });
@@ -337,7 +353,7 @@ test('real core completion admits an idle update, refuses HTTP writes without mu
   }
 }, 20_000);
 
-test('forced update of busy real core shares the shutdown deadline and fences a late native return after successor ownership', async () => {
+test('forced update finalizes automatically after a raw provider outlives shutdown grace', async () => {
   const loops_stop = vi.spyOn(BackgroundLoops.prototype, 'stop');
   const metrics_stop = vi.spyOn(MetricsRuntime.prototype, 'stop');
   const updates_stop = vi.spyOn(UpdateService.prototype, 'stop');
@@ -357,7 +373,7 @@ test('forced update of busy real core shares the shutdown deadline and fences a 
       stop_started.resolve();
     },
   });
-  stop_server = owned.server.close;
+  stop_server = () => owned.server.close({ deadline: performance.now() / 1000 + 0.5 });
   const receipt = deferred<void>(),
     receipt_entered = deferred<void>();
   let child: ScriptedChild | undefined;
@@ -443,18 +459,36 @@ test('forced update of busy real core shares the shutdown deadline and fences a 
     expect(() => acquireRuntimeOwnership(owned.path)).toThrow('ConversationRuntimeAlreadyOwned');
     expect(returned).toBe(false);
     await child.release('owned-detach');
-    await closing!;
+    let closed = false;
+    void closing!.then(() => {
+      closed = true;
+    });
+    // Observe the actual core's bounded observer, rather than sleep until grace.
+    await expect(owned.context.core!.shutdown({ deadline })).rejects.toBeInstanceOf(
+      ShutdownDeadlineExceeded,
+    );
     await pending;
+    expect(closed).toBe(false);
     expect(returned).toBe(false);
+    expect(owned.server.shutdown_state).toMatchObject({ kind: 'stopping', failures: [] });
+    expect(owned.server.shutdown_state.pending).toContain('conversation core');
+    expect(() => acquireRuntimeOwnership(owned.path)).toThrow('ConversationRuntimeAlreadyOwned');
+    const retained_rows = canonical_rows(owned.context.database);
+    receipt.resolve();
+    await reached(provider_return!, 'raw provider return while original ownership remains held');
+    await closing!.catch((error: unknown) => {
+      throw shutdown_failure(error);
+    });
+    expect(returned).toBe(true);
+    expect(closed).toBe(true);
+    expect(owned.server.shutdown_state.kind).toBe('closed');
     const successor = acquireRuntimeOwnership(owned.path);
     const successor_reads = createReadAccess(owned.path);
     try {
       const before = canonical_rows(successor_reads);
+      expect(before).toEqual(retained_rows);
       const access_counts = accesses.map((spy) => spy.mock.calls.length);
-      receipt.resolve();
-      await reached(provider_return!, 'late provider return after successor ownership');
       await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(returned).toBe(true);
       expect(accesses.map((spy) => spy.mock.calls.length)).toEqual(access_counts);
       expect(canonical_rows(successor_reads)).toEqual(before);
     } finally {

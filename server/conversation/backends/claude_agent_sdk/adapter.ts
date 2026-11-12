@@ -21,6 +21,7 @@ import {
 import type { MessageContent } from '../../message_content.ts';
 import type { ConversationMessageFiles } from '../../message_files.ts';
 import { BackendCliIncompatible } from '../cli_compatibility.ts';
+import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../../lifecycle/contracts.ts';
 import { claude_sdk_client } from './query.ts';
 import type {
   ClaudeSdkClient,
@@ -48,6 +49,8 @@ export interface ClaudeAgentSdkChildLaunch {
   environment_overrides?: readonly (readonly [string, string])[];
 }
 interface ChildOptions {
+  child_processes: OwnedChildProcesses;
+  one_shot_children: OwnedOneShotChildren;
   launch: ClaudeAgentSdkChildLaunch;
   resolved_start: ResolvedConversationStart;
   event_sink: B.BackendEventSink;
@@ -76,6 +79,8 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
   private readonly sink: B.BackendEventSink;
   private readonly message_files: ConversationMessageFiles;
   private readonly client_factory: ClaudeSdkClientFactory;
+  private readonly child_processes: OwnedChildProcesses;
+  private readonly one_shot_children: OwnedOneShotChildren;
   private client: ClaudeSdkClient | null = null;
   private session_id: string | null = null;
   private resume_confirmed = false;
@@ -91,6 +96,8 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
   private readonly events: ClaudeEvents;
   private readonly asks: ClaudeAsks;
   constructor(options: ChildOptions) {
+    this.child_processes = options.child_processes;
+    this.one_shot_children = options.one_shot_children;
     this.launch = options.launch;
     this.resolved_start = options.resolved_start;
     this.sink = options.event_sink;
@@ -155,6 +162,8 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
       ...(start.role_materials?.identity_environment_variables ?? []),
     ]);
     return {
+      child_processes: this.child_processes,
+      one_shot_children: this.one_shot_children,
       cwd: start.workspace_folder,
       pathToClaudeCodeExecutable: this.launch.claude_executable,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
@@ -654,8 +663,11 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
 }
 export function create_claude_backend_child_factory(
   launch: ClaudeAgentSdkChildLaunch,
-  options: { client_factory?: ClaudeSdkClientFactory } = {},
+  options: {
+    child_processes: OwnedChildProcesses;
+    one_shot_children: OwnedOneShotChildren;
+    client_factory?: ClaudeSdkClientFactory;
+  },
 ): B.BackendChildFactory {
-  return (values) =>
-    new ClaudeAgentSdkBackendChild({ ...values, launch, client_factory: options.client_factory });
+  return (values) => new ClaudeAgentSdkBackendChild({ ...values, launch, ...options });
 }

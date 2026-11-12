@@ -1,5 +1,7 @@
 /** Own every command group until exit, including request cancellation and shutdown. */
-import { spawn } from 'node:child_process';
+import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
+import type { ChildProcess } from 'node:child_process';
+import { OneShotChildren } from '../../lifecycle/one_shot_children.ts';
 import type { CommandOutcome } from './contracts.ts';
 export interface BackendCommandOptions {
   timeout_seconds: number;
@@ -7,6 +9,10 @@ export interface BackendCommandOptions {
   signal?: AbortSignal;
 }
 export class BackendCommands {
+  private readonly children: OwnedOneShotChildren;
+  constructor(children: OwnedOneShotChildren = new OneShotChildren()) {
+    this.children = children;
+  }
   private readonly controller = new AbortController();
   private readonly pending = new Set<Promise<CommandOutcome>>();
   run(argv: readonly string[], options: BackendCommandOptions): Promise<CommandOutcome> {
@@ -19,20 +25,26 @@ export class BackendCommands {
       const error: Buffer[] = [];
       let timed_out = false;
       let reaped = false;
-      const child = spawn(argv[0], argv.slice(1), {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: true,
-        env: { ...process.env, ...options.environment_overrides },
-      });
-      const kill_group = () => {
-        if (reaped || child.exitCode !== null || child.signalCode !== null) return;
+      const stop_owned = (owned: ChildProcess) => {
+        if (reaped || owned.exitCode !== null || owned.signalCode !== null) return;
         try {
-          if (child.pid !== undefined) process.kill(-child.pid, 'SIGKILL');
+          if (owned.pid !== undefined) process.kill(-owned.pid, 'SIGKILL');
         } catch {
-          if (!reaped && child.exitCode === null && child.signalCode === null)
-            child.kill('SIGKILL');
+          if (!reaped && owned.exitCode === null && owned.signalCode === null)
+            owned.kill('SIGKILL');
         }
       };
+      const child = this.children.spawn(
+        argv[0],
+        argv.slice(1),
+        {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: true,
+          env: { ...process.env, ...options.environment_overrides },
+        },
+        stop_owned,
+      );
+      const kill_group = () => stop_owned(child);
       const abort = () => kill_group();
       signal.addEventListener('abort', abort, { once: true });
       if (signal.aborted) kill_group();
@@ -43,11 +55,11 @@ export class BackendCommands {
       const cleanup = () => {
         clearTimeout(timer);
         signal.removeEventListener('abort', abort);
-        child.stdout.destroy();
-        child.stderr.destroy();
+        child.stdout!.destroy();
+        child.stderr!.destroy();
       };
-      child.stdout.on('data', (chunk: Buffer) => output.push(chunk));
-      child.stderr.on('data', (chunk: Buffer) => error.push(chunk));
+      child.stdout!.on('data', (chunk: Buffer) => output.push(chunk));
+      child.stderr!.on('data', (chunk: Buffer) => error.push(chunk));
       child.once('error', (failure) => {
         if (child.pid === undefined) reaped = true;
         cleanup();
@@ -89,6 +101,7 @@ export class BackendCommands {
   }
   async shutdown(): Promise<void> {
     this.controller.abort(new Error('Backend commands stopped at shutdown'));
-    await Promise.allSettled([...this.pending]);
+    this.children.seal();
+    await Promise.all([Promise.allSettled([...this.pending]), this.children.settled()]);
   }
 }

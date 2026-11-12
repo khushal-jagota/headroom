@@ -103,6 +103,11 @@ export class ConversationLiveTail {
         watcher.close();
       }
     }
+    this.views.close_subscriptions();
+  }
+  /** Destructive output cleanup belongs after actual HTTP/producer settlement. */
+  close(): void {
+    this.close_all_subscriptions();
     this.views.close();
   }
   open_subscription_count(): number {

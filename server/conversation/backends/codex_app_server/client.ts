@@ -16,6 +16,7 @@ import { WorkerUnit } from '../../worker_unit/index.ts';
 import { with_tool_shell_kill_priority } from '../../tool_shell_kill_priority.ts';
 import { CONSUMED_SERVER_NOTIFICATIONS, decode_server_request } from './protocol.ts';
 import { OwnedCodexProcess, spawn_codex_process, within } from './process.ts';
+import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import {
   CHILD_OUTPUT_LINE_LIMIT_BYTES,
   METHOD_NOT_FOUND_ERROR_CODE,
@@ -132,6 +133,7 @@ function error_text(error: unknown): string {
 }
 
 export class CodexAppServerClient {
+  private readonly child_processes: OwnedChildProcesses;
   private readonly handler: CodexServerMessageHandler;
   private readonly description: string;
   private readonly notifications: Readonly<Record<string, Reader>>;
@@ -156,11 +158,13 @@ export class CodexAppServerClient {
   private stderr_ever = 0;
   private end_reason_value: string | null = null;
   constructor(options: {
+    child_processes: OwnedChildProcesses;
     handler: CodexServerMessageHandler;
     description: string;
     consumed_notifications?: Readonly<Record<string, Reader>>;
     warning?: (message: string) => void;
   }) {
+    this.child_processes = options.child_processes;
     this.handler = options.handler;
     this.description = options.description;
     this.notifications = options.consumed_notifications ?? CONSUMED_SERVER_NOTIFICATIONS;
@@ -231,11 +235,14 @@ export class CodexAppServerClient {
         unit = await WorkerUnit.create(
           { ...environment, PLAN_TICKET_ID: options.worker_ticket_id },
           options.working_directory,
+          { child_processes: this.child_processes },
         );
         this.worker_unit = unit;
         assert_current();
       }
       owned = await spawn_codex_process(unit?.argv(options.argv) ?? options.argv, {
+        child_processes: this.child_processes,
+        worker_unit: unit ?? undefined,
         environment: unit?.environment ?? environment,
         working_directory: options.working_directory,
       });
@@ -267,6 +274,7 @@ export class CodexAppServerClient {
     let owned: OwnedCodexProcess;
     try {
       owned = await spawn_codex_process([executable, '--version'], {
+        child_processes: this.child_processes,
         environment: {
           ...Object.fromEntries(
             Object.entries(process.env).filter(

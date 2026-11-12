@@ -152,8 +152,10 @@ export class OutboxStore {
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
       const database_cleanup = (failure as Partial<DurableSidecarOpenFailure>).database_cleanup;
-      if (database === undefined && database_cleanup !== undefined)
+      if (database === undefined && database_cleanup !== undefined) {
         resources.database = database_cleanup;
+        resources.record_cleanup_failure((failure as DurableSidecarOpenFailure).cleanup_error);
+      }
       try {
         await resources.stop(options);
       } catch (cleanup_error) {

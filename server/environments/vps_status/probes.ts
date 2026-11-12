@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process';
+import { OneShotChildren, stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
+import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import { statfs, opendir, stat } from 'node:fs/promises';
 import { platform } from 'node:os';
 import { relative, isAbsolute } from 'node:path';
@@ -51,28 +52,61 @@ async function command(
   executable: string,
   arguments_: readonly string[],
   limit: number,
+  shared?: OwnedOneShotChildren,
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(executable, arguments_, { stdio: ['ignore', 'pipe', 'ignore'] });
-    const decoder = new StringDecoder('utf8');
-    let output = '';
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error('status probe timed out'));
-    }, PROBE_TIMEOUT_MILLISECONDS);
-    child.stdout.on('data', (chunk: Buffer) => {
-      output = characters(output + decoder.write(chunk), limit);
+  const children = shared ?? new OneShotChildren();
+  try {
+    return await new Promise<string>((resolve, reject) => {
+      const child = children.spawn(executable, arguments_, { stdio: ['ignore', 'pipe', 'ignore'] });
+      const decoder = new StringDecoder('utf8');
+      let output = '';
+      const timer = setTimeout(() => {
+        stop_one_shot_child(child);
+        reject(new Error('status probe timed out'));
+      }, PROBE_TIMEOUT_MILLISECONDS);
+      child.stdout!.on('data', (chunk: Buffer) => {
+        output = characters(output + decoder.write(chunk), limit);
+      });
+      child.once('error', (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      child.once('close', (code) => {
+        clearTimeout(timer);
+        if (code !== 0) reject(new Error('status probe failed'));
+        else resolve(characters(output + decoder.end(), limit));
+      });
     });
-    child.once('error', (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.once('close', (code) => {
-      clearTimeout(timer);
-      if (code !== 0) reject(new Error('status probe failed'));
-      else resolve(characters(output + decoder.end(), limit));
-    });
-  });
+  } finally {
+    if (!shared) {
+      children.seal();
+      await children.settled();
+    }
+  }
+}
+/** Production passes its invocation-owned cohort. Plain typed CLI calls own theirs. */
+export function create_vps_status_dependencies(
+  children: OwnedOneShotChildren,
+): VpsStatusDependencies {
+  return {
+    ...DEFAULT_DEPENDENCIES,
+    process_lines: async () =>
+      (
+        await command(
+          'ps',
+          ['-axo', 'pid=,ppid=,etime=,command='],
+          PROCESS_OUTPUT_CHARACTERS,
+          children,
+        )
+      ).split(/\r?\n/),
+    git_worktree_output: (root) =>
+      command(
+        'git',
+        ['-C', root, 'worktree', 'list', '--porcelain'],
+        GIT_OUTPUT_CHARACTERS,
+        children,
+      ),
+  };
 }
 export const DEFAULT_DEPENDENCIES: VpsStatusDependencies = {
   now: () => new Date().toISOString(),

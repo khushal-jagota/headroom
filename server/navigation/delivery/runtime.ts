@@ -13,6 +13,7 @@ import { windowKey } from '../logic/view.ts';
 import { coverage } from '../data/registry.ts';
 import { DELIVERY } from './configuration.ts';
 import { prune } from './retention.ts';
+import { HttpRequestScope } from '../../core/http/lifetime.ts';
 type Coverage = CurrentViewSnapshot['coverage'];
 interface Notice {
   coverage: Coverage;
@@ -93,6 +94,7 @@ function frame(value: object & { event: string }): string {
   return `event: ${value.event}\ndata: ${compact(value)}\n\n`;
 }
 class ScopedStream {
+  private readonly lifetime: HttpRequestScope;
   private previous: CurrentViewSnapshot;
   private keys: Set<string>;
   private readonly sections: Set<string>;
@@ -117,8 +119,10 @@ class ScopedStream {
     initial: CurrentViewSnapshot,
     snapshot: () => CurrentViewSnapshot,
     forget: () => void,
+    lifetime: HttpRequestScope,
   ) {
     this.response = response;
+    this.lifetime = lifetime;
     this.authority = authority;
     this.token = token;
     this.snapshot = snapshot;
@@ -146,7 +150,10 @@ class ScopedStream {
         void this.flush();
       });
   }
-  private async send(body: string): Promise<void> {
+  private send(body: string): Promise<void> {
+    return this.lifetime.track(() => this.send_owned(body));
+  }
+  private async send_owned(body: string): Promise<void> {
     if (this.closed) return;
     this.authority.validate(this.token);
     if (!this.response.write(body)) {
@@ -175,7 +182,10 @@ class ScopedStream {
         [...value.keys].some((item) => (JSON.parse(item) as string[])[0] === 'address'));
     void this.flush();
   }
-  private async flush(): Promise<void> {
+  private flush(): Promise<void> {
+    return this.lifetime.track(() => this.flush_owned());
+  }
+  private async flush_owned(): Promise<void> {
     if (this.closed || this.sending || !this.pending) return;
     this.sending = true;
     try {
@@ -223,13 +233,15 @@ class ScopedStream {
 }
 /** One notice cursor serves all subscriptions. Content reads happen only for affected views. */
 export class ScopedDelivery {
+  private readonly lifetime: HttpRequestScope;
   private previous: Coverage | null = null;
   private readonly streams = new Set<ScopedStream>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private retention: ReturnType<typeof setInterval> | undefined;
   private readonly database: Database;
-  constructor(database: Database) {
+  constructor(database: Database, lifetime = new HttpRequestScope()) {
     this.database = database;
+    this.lifetime = lifetime;
   }
   start(): void {
     if (this.timer) throw new Error('scoped navigation delivery already started');
@@ -267,9 +279,18 @@ export class ScopedDelivery {
     let stream: ScopedStream | undefined;
     try {
       const initial = snapshot();
-      stream = new ScopedStream(response, authority, token, request, initial, snapshot, () => {
-        if (stream) this.streams.delete(stream);
-      });
+      stream = new ScopedStream(
+        response,
+        authority,
+        token,
+        request,
+        initial,
+        snapshot,
+        () => {
+          if (stream) this.streams.delete(stream);
+        },
+        this.lifetime,
+      );
       if (!response.writableEnded) this.streams.add(stream);
     } catch {
       response.end();

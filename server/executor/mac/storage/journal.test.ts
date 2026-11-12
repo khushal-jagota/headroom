@@ -15,6 +15,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { parse_numeric_json, stringify_python_json } from '../../../core/http/numeric_json.ts';
 import { createReadAccess } from '../../../core/database/index.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
+import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 import { FilesService } from '../files.ts';
 import { FILE_CHUNK_BYTES } from '../configuration.ts';
 import { acquire_process_lock } from '../platform.ts';
@@ -26,6 +27,31 @@ import type { OutboxCleanup } from './resources.ts';
 
 const deadline = () => ({ deadline: performance.now() / 1000 + 5 });
 const roots: { root: string; owner?: OutboxStore }[] = [];
+const expected_failures = new WeakSet<OutboxCleanup>();
+function messages(error: unknown): string[] {
+  if (!(error instanceof Error)) return [String(error)];
+  return [
+    error.message,
+    ...(error instanceof AggregateError ? error.errors.flatMap(messages) : []),
+    ...(error.cause === undefined ? [] : messages(error.cause)),
+  ];
+}
+async function retained_failure(task: Promise<unknown>, message?: string): Promise<void> {
+  const error = await task.then(
+    () => null,
+    (failure) => failure,
+  );
+  expect(error).toBeInstanceOf(Error);
+  expect(error).not.toBeInstanceOf(ShutdownDeadlineExceeded);
+  if (message) expect(messages(error)).toContain(message);
+}
+async function actual_failure(owner: OutboxCleanup, message: string): Promise<void> {
+  expected_failures.add(owner);
+  await retained_failure(
+    observe_shutdown(owner.settled(), deadline(), 'actual cleanup stalled'),
+    message,
+  );
+}
 const command =
   '{"command_sequence":1,"command_id":"stop","created_at_vps_ms":1,"child_command":{"command_id":"stop","child":{"executor_incarnation":"inc","child_id":"child","conversation_id":"c"},"operation":"stop","turn":null,"arguments":{"kind":"stop"},"file_dependencies":[]},"model_list_request":null}';
 const reply = '{"commands":[' + command + ']}';
@@ -190,10 +216,15 @@ afterEach(async () => {
     writeFileSync(join(root, 'policy-release'), 'release');
     rmSync(join(root, 'fail-close'), { force: true });
     if (owner) {
-      await owner
-        .stop(deadline())
-        .catch((error) => expect(error).toMatchObject({ name: 'ServerLifecycleError' }));
-      await observe_shutdown(owner.settled(), deadline(), 'owned journal cleanup stalled');
+      if (expected_failures.has(owner)) {
+        await retained_failure(owner.stop(deadline()));
+        await retained_failure(
+          observe_shutdown(owner.settled(), deadline(), 'owned journal cleanup stalled'),
+        );
+      } else {
+        await owner.stop(deadline());
+        await observe_shutdown(owner.settled(), deadline(), 'owned journal cleanup stalled');
+      }
     }
     rmSync(root, { recursive: true, force: true });
   }
@@ -206,12 +237,12 @@ test('stop during module load owns the unstarted journal and never opens its dat
     (error) => error as Error,
   );
   await vi.waitFor(() => expect(existsSync(f.entered)).toBe(true));
-  await expect(f.owner.stop({ deadline: performance.now() / 1000 - 1 })).rejects.toMatchObject({
-    name: 'ServerLifecycleError',
-  });
+  await expect(f.owner.stop({ deadline: performance.now() / 1000 - 1 })).rejects.toBeInstanceOf(
+    ServerLifecycleError,
+  );
   expect(() => acquire_process_lock(f.spool)).toThrow('outbox is already owned');
   writeFileSync(f.release, 'release');
-  expect(await opening).toMatchObject({ name: 'ServerLifecycleError' });
+  expect(await opening).toBeInstanceOf(ServerLifecycleError);
   // Observed timeout does not require a retry just to resume real cleanup.
   await observe_shutdown(f.owner.settled(), deadline(), 'module-load cleanup stalled');
   expect(existsSync(f.database)).toBe(false);
@@ -233,10 +264,10 @@ test('failed startup flush retains a live cleanup continuation while journal clo
   expect(f.worker().threadId).not.toBe(-1);
   expect(() => acquire_process_lock(f.spool)).toThrow('outbox is already owned');
   rmSync(f.fail_close);
-  await failure!.cleanup!.stop(deadline());
-  await failure!.cleanup!.settled();
-  await f.owner.stop(deadline());
-  await f.owner.settled();
+  await retained_failure(failure!.cleanup!.stop(deadline()), 'journal close blocked');
+  await actual_failure(failure!.cleanup!, 'journal close blocked');
+  await retained_failure(f.owner.stop(deadline()), 'journal close blocked');
+  await actual_failure(f.owner, 'journal close blocked');
   const lease = acquire_process_lock(f.spool);
   lease.close();
 });
@@ -283,8 +314,8 @@ test('shutdown drains one admitted multi-chunk finish and retains the lock acros
   expect(f.worker().threadId).not.toBe(-1);
   expect(() => acquire_process_lock(f.spool)).toThrow('outbox is already owned');
   rmSync(f.fail_close);
-  await f.owner.stop(deadline());
-  await f.owner.settled();
+  await retained_failure(f.owner.stop(deadline()), 'journal close blocked');
+  await actual_failure(f.owner, 'journal close blocked');
   const lease = acquire_process_lock(f.spool);
   lease.close();
 });
@@ -311,12 +342,16 @@ test('an observed resource fault rolls back a blocked journal transaction before
   void updating.catch(() => {});
   try {
     await vi.waitFor(() => expect(existsSync(f.policy_entered)).toBe(true));
+    // This observer expires before the file-worker fault arrives; actual failure must survive it.
+    await expect(f.owner.stop({ deadline: performance.now() / 1000 - 1 })).rejects.toBeInstanceOf(
+      ServerLifecycleError,
+    );
     // The pure policy gate runs after UPDATE inside the journal's single transaction.
     const file_exit = new Promise<void>((resolve) => f.file_worker.once('exit', () => resolve()));
     f.file_worker.postMessage({ operation: 'stop' });
     await file_exit;
     writeFileSync(f.policy_release, 'release');
-    await expect(updating).rejects.toMatchObject({ name: 'ServerLifecycleError' });
+    await expect(updating).rejects.toBeInstanceOf(ServerLifecycleError);
     const snapshot = createReadAccess(f.database);
     try {
       expect(
@@ -348,10 +383,10 @@ test('an observed resource fault rolls back a blocked journal transaction before
   writeFileSync(f.crash, 'exit');
   await exited;
   expect(held_at_error).toBe(true);
-  expect(await racing_stop).toMatchObject({ name: 'ServerLifecycleError' });
+  expect(await racing_stop).toBeInstanceOf(ServerLifecycleError);
   expect(f.journal_fault).toHaveBeenCalledTimes(1);
   expect(f.root_fault).toHaveBeenCalledTimes(1);
-  await journal.settled();
+  await actual_failure(journal, 'journal close blocked');
   expect(() =>
     f.owner.append(
       { submission_id: 'late', conversation_id: 'c', child_id: 'child', kind: 'cli_write' },
@@ -363,7 +398,7 @@ test('an observed resource fault rolls back a blocked journal transaction before
   ).toThrow();
   expect(readFileSync(f.database).byteLength).toBeGreaterThan(0);
   await Promise.all(f.shutdown);
-  await f.owner.settled();
+  await actual_failure(f.owner, 'journal close blocked');
   const lease = acquire_process_lock(f.spool);
   lease.close();
 });
@@ -384,8 +419,8 @@ test('truncated committed fresh delivery faults the host and joins actual cleanu
   expect(f.worker().threadId).not.toBe(-1);
   expect(() => acquire_process_lock(f.spool)).toThrow('outbox is already owned');
   rmSync(f.fail_close);
-  await expect(journal.stop(deadline())).rejects.toMatchObject({ name: 'ServerLifecycleError' });
-  await f.owner.settled();
+  await expect(journal.stop(deadline())).rejects.toBeInstanceOf(ServerLifecycleError);
+  await actual_failure(f.owner, 'journal close blocked');
   expect(f.worker().threadId).toBe(-1);
   const lease = acquire_process_lock(f.spool);
   lease.close();

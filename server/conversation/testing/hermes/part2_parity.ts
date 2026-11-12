@@ -1,4 +1,5 @@
 /** The real TS adapter and core, with one local scripted ACP peer. */
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createDatabase } from '../../../core/database/index.ts';
@@ -83,18 +84,25 @@ export async function run_part2_parity(spec: Spec): Promise<unknown> {
   };
   const backendEvents: unknown[] = [];
   const kept: unknown[] = [];
-  const base = create_hermes_backend_child_factory({
-    argv: [process.execPath, spec.executable],
-    environment_overrides: [
-      ['UNIT16_TRACE', spec.trace],
-      ['UNIT16_STATE', spec.state],
-      ['UNIT16_CONTROL', spec.control],
-    ],
-  });
-  const missing = create_hermes_backend_child_factory({
-    argv: [spec.workspace + '/missing-hermes-python'],
-    environment_overrides: [],
-  });
+  const child_processes = new ChildProcesses();
+  const base = create_hermes_backend_child_factory(
+    {
+      argv: [process.execPath, spec.executable],
+      environment_overrides: [
+        ['UNIT16_TRACE', spec.trace],
+        ['UNIT16_STATE', spec.state],
+        ['UNIT16_CONTROL', spec.control],
+      ],
+    },
+    { child_processes },
+  );
+  const missing = create_hermes_backend_child_factory(
+    {
+      argv: [spec.workspace + '/missing-hermes-python'],
+      environment_overrides: [],
+    },
+    { child_processes },
+  );
   const factory: BackendChildFactory = (options) =>
     (options.resolved_start.conversation_id === 'unit16-missing-interpreter' ? missing : base)({
       ...options,

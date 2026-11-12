@@ -922,8 +922,7 @@ def test_service_continuations_fence_stop_and_observe_external_attempts(
     actual = _node(tmp_path, value, "probe_continuations")
     assert actual["installed_roots"] == [str(installed.resolve()), None, None, None]
     assert actual["old_finally_preserves_new_flight"]
-    assert 15 <= actual["stage_stop_ms"] < 500
-    assert 15 <= actual["backup_stop_ms"] < 500
+    assert actual["stage_actual_retained"]
     assert actual["stage_flight"] == {
         "provider": 2,
         "stage": 2,
@@ -945,7 +944,6 @@ def test_service_continuations_fence_stop_and_observe_external_attempts(
         "unchanged_after_ownership": True,
     }
     launch = actual["launch_fence"]
-    assert 15 <= launch["elapsed_ms"] < 500
     assert {key: value for key, value in launch.items() if key != "elapsed_ms"} == {
         "launches": 1,
         "closed": True,
@@ -977,8 +975,11 @@ def test_service_continuations_fence_stop_and_observe_external_attempts(
             "boundary": (
                 "Real database and admission barrier with scripted stage/backup/launch. "
                 "File observation emits changes; readiness poll advances waiting work. "
-                "Held stage, backup, and installer refusal settle after the absolute stop "
-                "deadline and database ownership ends, without later publication or writes. "
+                "Manager-required TS policy: stop rejects at its absolute deadline and "
+                "retains database ownership until held stage, backup and installer settle. "
+                "Existing scripted business result assertions remain unchanged. This "
+                "lifetime policy supersedes Python's earlier observer-only shutdown "
+                "and is not reported as equal. "
                 "Real provider and production adapter shutdown remain open."
             ),
         },

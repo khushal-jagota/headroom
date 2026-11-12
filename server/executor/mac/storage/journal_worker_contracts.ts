@@ -83,6 +83,7 @@ export interface CursorRowDescriptor {
 }
 export type JournalWorkerMessage =
   | { kind: 'ready' }
+  | { kind: 'cleanup_failure'; error: JournalErrorBody }
   | { kind: 'startup_error'; error: JournalErrorBody }
   | { kind: 'reply'; id: number; value?: unknown; error?: JournalErrorBody }
   | { kind: 'callback'; id: number; callback: 'permission' | 'flush' | 'clock' };

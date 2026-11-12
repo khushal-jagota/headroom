@@ -1,5 +1,6 @@
 /** Ask the app-server for models. Catalog presence does not establish entitlement. */
 import { homedir } from 'node:os';
+import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import { CodexAppServerClient, CodexAppServerError } from './client.ts';
 import { CodexModelCatalogUnavailable } from '../../snapshot/provider_contracts.ts';
 import type { CodexModelCatalog, CodexModel } from '../../snapshot/provider_contracts.ts';
@@ -15,6 +16,7 @@ export { CodexModelCatalogUnavailable } from '../../snapshot/provider_contracts.
 export const MODEL_CATALOG_TIMEOUT_SECONDS = 30;
 type CatalogClient = Pick<CodexAppServerClient, 'start' | 'stop' | 'request' | 'notify'>;
 export interface ModelCatalogOptions {
+  child_processes: OwnedChildProcesses;
   signal?: AbortSignal;
   client_factory?: (
     options: ConstructorParameters<typeof CodexAppServerClient>[0],
@@ -22,10 +24,11 @@ export interface ModelCatalogOptions {
 }
 export async function probe_codex_model_catalog(
   executable: string,
-  options: ModelCatalogOptions = {},
+  options: ModelCatalogOptions,
 ): Promise<CodexModelCatalog> {
   options.signal?.throwIfAborted();
   const client = (options.client_factory ?? ((config) => new CodexAppServerClient(config)))({
+    child_processes: options.child_processes,
     description: 'model-catalog',
     handler: {
       async on_notification() {},

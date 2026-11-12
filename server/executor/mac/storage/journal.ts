@@ -233,6 +233,7 @@ export class CommandJournal implements AsyncCommandJournal {
   private closed = false;
   private stop_acknowledged = false;
   private failure: Error | undefined;
+  private readonly cleanup_failures = new Set<unknown>();
   private readonly listeners = new Set<(error: Error) => void>();
   private readonly operations = new Set<Promise<unknown>>();
   private tail: Promise<void> = Promise.resolve();
@@ -250,6 +251,7 @@ export class CommandJournal implements AsyncCommandJournal {
   private joined: Promise<void> | undefined;
   private readonly actual: Promise<void>;
   private actual_resolve!: () => void;
+  private actual_reject!: (error: unknown) => void;
   private error_exports: Record<string, unknown> = {};
   private constructor(
     owner: JournalSpoolOwner,
@@ -259,9 +261,11 @@ export class CommandJournal implements AsyncCommandJournal {
     this.owner = owner;
     this.incarnation = incarnation;
     this.dependencies = dependencies;
-    this.actual = new Promise((resolve) => {
+    this.actual = new Promise((resolve, reject) => {
       this.actual_resolve = resolve;
+      this.actual_reject = reject;
     });
+    void this.actual.catch(() => {});
     for (const url of [dependencies.protocol_module, dependencies.outputs_module])
       if (url.protocol !== 'file:')
         throw new TypeError('journal dependencies must be trusted file module URLs');
@@ -362,7 +366,10 @@ export class CommandJournal implements AsyncCommandJournal {
         this.worker = worker;
         this.exit = new Promise((resolve) => worker.once('exit', () => resolve()));
         worker.on('message', (message: JournalWorkerMessage) => this.receive(worker, message));
-        worker.on('error', (error) => this.fail(error, true));
+        worker.on('error', (error) => {
+          this.cleanup_failures.add(error);
+          this.fail(error, true);
+        });
         worker.on('exit', (code) => {
           if (!this.stop_acknowledged || this.pending.size)
             this.fail(new ServerLifecycleError(`Journal worker exited (${code}).`), true);
@@ -379,6 +386,10 @@ export class CommandJournal implements AsyncCommandJournal {
     );
   }
   private receive(worker: Worker, message: JournalWorkerMessage): void {
+    if (message.kind === 'cleanup_failure') {
+      this.cleanup_failures.add(this.restore(message.error));
+      return;
+    }
     if (message.kind === 'ready') {
       this.ready_resolve();
       return;
@@ -682,14 +693,22 @@ export class CommandJournal implements AsyncCommandJournal {
       await this.exit;
       while (this.operations.size || this.callbacks.size)
         await Promise.allSettled([...this.operations, ...this.callbacks]);
-      this.actual_resolve();
+      const failures = new Set(this.cleanup_failures);
+      if (this.failure) failures.add(this.failure);
+      if (failures.size)
+        this.actual_reject(
+          failures.size === 1
+            ? [...failures][0]
+            : new AggregateError(failures, 'Journal resource cleanup failed.'),
+        );
+      else this.actual_resolve();
     })();
     return this.joined;
   }
   stop(options: StopOptions): Promise<void> {
     this.closed = true;
     if (!this.stop_request) {
-      const request = (async () => {
+      const request = Promise.resolve().then(async () => {
         // Admission is sealed, but complete uploads and their final transaction keep
         // their reservation. A stop frame cannot split an admitted operation.
         while (this.operations.size) await Promise.allSettled([...this.operations]);
@@ -724,7 +743,10 @@ export class CommandJournal implements AsyncCommandJournal {
           }
           // A real close-error reply proves a live retry port, even after an
           // earlier delivery fault. Keep it distinct from fail() rejection.
-          if (close_error) throw close_error;
+          if (close_error) {
+            this.cleanup_failures.add(close_error);
+            throw close_error;
+          }
         } else if (worker)
           this.fail(new ServerLifecycleError('Journal worker is unavailable.'), true);
         await this.join_actual();
@@ -734,7 +756,8 @@ export class CommandJournal implements AsyncCommandJournal {
           );
           throw Object.assign(error, { cause: this.failure });
         }
-      })();
+        await this.actual;
+      });
       this.stop_request = request;
       void request.catch(() => {
         if (this.stop_request === request) this.stop_request = undefined;

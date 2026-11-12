@@ -92,7 +92,7 @@ export async function install_owned_launch_boundary(spec: Part2Spec): Promise<()
   // Install the subprocess fence before importing any containment/control implementation.
   const { WorkerUnit, environment_file } = await import('../../worker_unit/index.ts');
   const originalCreate = WorkerUnit.create;
-  WorkerUnit.create = async (environment, working_directory) => {
+  WorkerUnit.create = async (environment, working_directory, options) => {
     if (environment.PLAN_TICKET_ID !== 'unit18-synthetic-worker') denied();
     mkdirSync(`${directory}/t`, { recursive: true, mode: 0o700 });
     const values = {
@@ -103,6 +103,7 @@ export async function install_owned_launch_boundary(spec: Part2Spec): Promise<()
     };
     writeFileSync(`${directory}/environment`, environment_file(values), { mode: 0o600 });
     const unit = new WorkerUnit({
+      child_processes: options.child_processes,
       name,
       directory,
       environment: values,

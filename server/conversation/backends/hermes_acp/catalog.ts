@@ -11,6 +11,7 @@ import { python_string_repr as python_repr } from '../../../core/python_repr.ts'
 import { spawn_codex_process } from '../codex_app_server/process.ts';
 import type { OwnedCodexProcess } from '../codex_app_server/process.ts';
 import type { AcpChildLaunch } from './launch.ts';
+import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 
 export function hermes_model_catalog_launch(options: {
   hermes_python: string;
@@ -63,6 +64,7 @@ function collect(stream: Readable, chunks: Buffer[]): Promise<void> {
 export class HermesModelCatalogOwner {
   readonly source: HermesModelCatalogSource;
   private readonly launch: AcpChildLaunch;
+  private readonly child_processes: OwnedChildProcesses;
   private readonly timeout_seconds: number;
   private readonly log: (error: unknown) => void;
   private readonly active = new Set<Probe>();
@@ -71,11 +73,13 @@ export class HermesModelCatalogOwner {
   constructor(
     launch: AcpChildLaunch,
     options: {
+      child_processes: OwnedChildProcesses;
       timeout_seconds?: number;
       log?: (error: unknown) => void;
-    } = {},
+    },
   ) {
     this.launch = launch;
+    this.child_processes = options.child_processes;
     this.timeout_seconds = options.timeout_seconds ?? MODEL_CATALOG_PROBE_TIMEOUT_SECONDS;
     this.log = options.log ?? (() => {});
     this.source = (options) => this.read(options.refresh);
@@ -127,6 +131,7 @@ export class HermesModelCatalogOwner {
     try {
       try {
         probe.owned = await spawn_codex_process(argv, {
+          child_processes: this.child_processes,
           environment,
           working_directory: process.cwd(),
           close_stdin: true,
