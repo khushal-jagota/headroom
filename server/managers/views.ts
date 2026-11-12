@@ -116,7 +116,13 @@ export function manager_tickets(sql: ReadSql, id: string): Record<string, unknow
         activity_at: ticket.updated_at,
         conversation_id: ticket.conversation_id,
         has_pending_proposal: ticket.pending_proposal !== null,
-        ceiling_holder: ticket.ceiling_holder,
+        ceiling_holder:
+          ticket.ceiling_holder === null
+            ? null
+            : {
+                id: ticket.ceiling_holder.id,
+                kind: ticket.ceiling_holder.kind,
+              },
         ticket_status: ticket.ticket_status,
         waiting_to_closeout: field === 'consequences' && ticket.ticket_status === 'empty',
         gating_field: field,

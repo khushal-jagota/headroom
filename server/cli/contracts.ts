@@ -5,6 +5,7 @@ export interface Parameter {
   secondary_opts?: string[];
   argument?: boolean;
   nargs?: number;
+  envvar?: string | string[];
   type: 'string' | 'integer' | 'float' | 'boolean' | 'choice' | 'path' | 'uuid';
   choices?: string[];
   min?: number;
@@ -20,6 +21,11 @@ export interface Parameter {
   exists?: boolean;
   file_okay?: boolean;
   dir_okay?: boolean;
+  readable?: boolean;
+  writable?: boolean;
+  executable?: boolean;
+  resolve_path?: boolean;
+  allow_dash?: boolean;
 }
 export interface CommandDefinition {
   path: string[];

@@ -921,6 +921,56 @@
     },
     {
       "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "restart-worker",
+        "${ticket}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Starts the real scripted Worker conversation before help delivery and history reads.",
+      "assert_json": {
+        "started": true
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "proposal",
+        "${ticket}",
+        "submit"
+      ],
+      "identity": {
+        "actor": "worker",
+        "ticket_id": "${ticket}"
+      },
+      "exit_code": 0,
+      "stdin": "Canonical submit form brief.\n",
+      "proof": "Submits a real brief proposal through the canonical Ticket action with Worker identity and stdin."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-ticket",
+      "argv": [
+        "ticket",
+        "proposal",
+        "${ticket}",
+        "revise"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "stdin": "Revise this concrete brief before approval.\n",
+      "proof": "Returns the pending brief to its Worker through the canonical revision action and stdin."
+    },
+    {
+      "kind": "cli",
       "area": "cli-worker",
       "argv": [
         "worker",
@@ -952,23 +1002,6 @@
       },
       "exit_code": 0,
       "proof": "Accepts the pending brief proposal through current workflow data."
-    },
-    {
-      "kind": "cli",
-      "area": "cli-ticket",
-      "argv": [
-        "ticket",
-        "restart-worker",
-        "${ticket}"
-      ],
-      "identity": {
-        "actor": "owner"
-      },
-      "exit_code": 0,
-      "proof": "Starts the real scripted Worker conversation before help delivery and history reads.",
-      "assert_json": {
-        "started": true
-      }
     },
     {
       "kind": "cli",
@@ -1206,7 +1239,9 @@
       "command": "manager workspace",
       "variant": "Workspace with a nonempty artifact tree",
       "owner": "Python source owner through migration Manager",
-      "reason": "The Python CLI reads artifact[\"path\"] while the workspace API returns nodes with opens and children. It raises KeyError even with --json because it constructs the human output first. The success sequence exercises populated purpose, recap and membership after artifact deletion; artifact write/list/read/delete independently exercise real artifact bytes."
+      "reason": "The Python CLI reads artifact[\"path\"] while the workspace API returns nodes with opens and children. It raises KeyError even with --json because it constructs the human output first. The Manager accepted that TS reads opens instead and retains the full JSON workspace. The shared success sequence follows artifact deletion because Python cannot read a populated tree.",
+      "deviation": "server/DEVIATIONS.md#cli-workspace-artifact-field",
+      "typescript_proof": "server/cli/work_commands.test.ts pins file, folded-index and nonopenable-group nodes in human and JSON modes."
     }
   ]
 }

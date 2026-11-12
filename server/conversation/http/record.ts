@@ -13,10 +13,15 @@ import type { ConversationLiveTailFrame } from '../events.ts';
 import type { ConversationBackendKey } from '../contracts.ts';
 import type { StoredConversationEvent } from '../record/contracts.ts';
 import { conversation_event_payload_json_object } from '../record/codec.ts';
+import { parse_numeric_json, stringify_python_json } from '../../core/http/numeric_json.ts';
 import { readable_tool_call_detail } from '../tool_detail.ts';
 import type { ConversationViewRuntime } from '../views/routes.ts';
 export function public_event(event: StoredConversationEvent, backend_key: ConversationBackendKey) {
-  const payload = conversation_event_payload_json_object(event.payload);
+  const payload = parse_numeric_json(
+    stringify_python_json(conversation_event_payload_json_object(event.payload), {
+      sort_keys: true,
+    }),
+  ) as Record<string, unknown>;
   if (event.payload instanceof ToolCallFinishedEventPayload) {
     const readable = readable_tool_call_detail(event.payload.detail, { backend_key });
     const carried =
