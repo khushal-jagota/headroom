@@ -1652,3 +1652,13 @@ def test_silent_remote_starts_leave_home_admission_and_durable_commands_intact(
         await endpoint.close()
 
     asyncio.run(exercise())
+
+
+def test_start_checks_prompt_and_delivery_keep_all_sql_off_event_loop(world: _World) -> None:
+    from tests.support.sql_threads import sql_must_run_off_event_loop
+
+    ticket_id = world.ready_ticket()
+    world.add_revision_feedback(ticket_id, "Read this before the next step")
+    with sql_must_run_off_event_loop():
+        assert world.start_step(ticket_id).started
+    assert not world.pending_revision_feedback(ticket_id)

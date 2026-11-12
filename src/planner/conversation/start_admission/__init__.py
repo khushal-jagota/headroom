@@ -322,31 +322,34 @@ class AutomaticStartAdmission:
                 ):
                     del self._requests[identity]
 
+    def requests_for(self, identities: Iterable[str | None]) -> tuple[StartRequest, ...]:
+        """Snapshot the admission facts that the turn transaction must retain."""
+        with self._lock:
+            return tuple(
+                self._requests[identity].request
+                for identity in identities
+                if identity is not None and identity in self._requests
+            )
+
     def persist_bindings(self, db_path: str, turn: TurnToken) -> None:
         from planner.core.db import connect
 
         with self._lock:
-            requests = [r.request for r in self._requests.values() if r.turn == turn]
+            requests = tuple(r.request for r in self._requests.values() if r.turn == turn)
         if not requests:
             return
         conn = connect(db_path)
         try:
-            conn.executemany(
-                "INSERT INTO automatic_start_bindings "
-                "(identity,work_class,destination,conversation_id,turn_number) VALUES (?,?,?,?,?) "
-                "ON CONFLICT(identity) DO UPDATE SET conversation_id=excluded.conversation_id,"
-                "turn_number=excluded.turn_number,executor_incarnation=NULL,child_id=NULL",
-                [
-                    (
-                        r.identity,
-                        r.work_class,
-                        r.destination,
-                        turn.conversation_id,
-                        turn.turn_number,
-                    )
-                    for r in requests
-                ],
+            missing = tuple(
+                request for request in requests
+                if conn.execute(
+                    "SELECT 1 FROM automatic_start_bindings WHERE identity=? "
+                    "AND work_class=? AND destination=? AND conversation_id=? AND turn_number=?",
+                    (request.identity, request.work_class, request.destination,
+                     turn.conversation_id, turn.turn_number),
+                ).fetchone() is None
             )
+            write_bindings(conn, turn, missing)
         finally:
             conn.close()
 
@@ -506,3 +509,19 @@ class AutomaticStartAdmission:
                 self._refresh()
                 return
         self.settle_ids(db_path, (identity,))
+
+
+def write_bindings(
+    conn: sqlite3.Connection, turn: TurnToken, requests: tuple[StartRequest, ...]
+) -> None:
+    """Retain admission in the caller's atomic turn reservation."""
+    if not requests:
+        return
+    conn.executemany(
+        "INSERT INTO automatic_start_bindings "
+        "(identity,work_class,destination,conversation_id,turn_number) VALUES (?,?,?,?,?) "
+        "ON CONFLICT(identity) DO UPDATE SET conversation_id=excluded.conversation_id,"
+        "turn_number=excluded.turn_number,executor_incarnation=NULL,child_id=NULL",
+        [(r.identity, r.work_class, r.destination, turn.conversation_id, turn.turn_number)
+         for r in requests],
+    )

@@ -32,6 +32,8 @@ Worker files a proposal for the current stage
                           goes out with the Worker's next step
 ```
 
+A proposal waits briefly for a busy database before it changes the record. If that wait expires, the sender receives a retryable refusal. Headroom never repeats a proposal commit after an uncertain result.
+
 Only the Ticket's own Worker files proposals. Khushal, Chief, and Managers decide them, and never write them. The proposal resolver is the only writer that makes stage text canonical and moves a stage. Every approval moves exactly one stage and names how far the Worker may go next, so the ceiling is chosen again at each gate.
 
 By default a new Ticket's ceiling is on Brief and its holder is whoever created it. The Brief then waits for that person, and their approval sets the first real ceiling. A creator can set a later ceiling up front, but never Done.

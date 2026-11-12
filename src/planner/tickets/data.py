@@ -61,6 +61,7 @@ from planner.tickets.logic import (
     review_transfer,
 )
 from planner.tickets.logic.decisions import Decision
+from planner.tickets.proposal_contention import begin_proposal
 from planner.worker_settings.contracts import ManagedWorkerLaunchDefaults
 from planner.worker_settings.service import read_worker_launch_defaults_for_ticket_creation
 from planner.worker_types.configuration import (
@@ -138,7 +139,7 @@ def _validate_review_holder(
 
 
 @contextmanager
-def _txn(conn: sqlite3.Connection) -> Iterator[None]:
+def _txn(conn: sqlite3.Connection, *, proposal: bool = False) -> Iterator[None]:
     if conn.in_transaction:
         conn.execute("SAVEPOINT ticket_write")
         try:
@@ -150,7 +151,10 @@ def _txn(conn: sqlite3.Connection) -> Iterator[None]:
         else:
             conn.execute("RELEASE ticket_write")
         return
-    conn.execute("BEGIN IMMEDIATE")
+    if proposal:
+        begin_proposal(conn)
+    else:
+        conn.execute("BEGIN IMMEDIATE")
     try:
         yield
     except BaseException:
@@ -1437,7 +1441,7 @@ def file_current_proposal(
             "only the Ticket's own Worker can file its proposal",
             {"ticket_id": ticket_id},
         )
-    with _txn(conn):
+    with _txn(conn, proposal=True):
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )

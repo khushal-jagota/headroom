@@ -269,19 +269,29 @@ def write_pending(conn: sqlite3.Connection, conversation_id: str, generation: st
     current = host_boot_identity()
     if current is None or not current.host or not current.boot:
         raise BackendSpawnFailed("Cannot establish the host and boot identity before agent startup")
-    conn.execute(
-        "INSERT INTO conversation_child_custody(conversation_id,generation,state,host,boot) "
-        "VALUES (?,?,'launch_pending',?,?) ON CONFLICT(conversation_id) DO UPDATE SET "
-        "generation=excluded.generation,state=excluded.state,pid=NULL,birth=NULL,"
-        "boot=excluded.boot,host=excluded.host,unit=NULL,supervision_record=NULL",
-        (
-            conversation_id,
-            generation,
-            current.host,
-            current.boot,
-        ),
-    )
-    bind_current_turn(conn, conversation_id)
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "INSERT INTO conversation_child_custody(conversation_id,generation,state,host,boot) "
+            "VALUES (?,?,'launch_pending',?,?) ON CONFLICT(conversation_id) DO UPDATE SET "
+            "generation=excluded.generation,state=excluded.state,pid=NULL,birth=NULL,"
+            "boot=excluded.boot,host=excluded.host,unit=NULL,supervision_record=NULL",
+            (
+                conversation_id,
+                generation,
+                current.host,
+                current.boot,
+            ),
+        )
+        bind_current_turn(conn, conversation_id)
+        if owns_transaction:
+            conn.commit()
+    except BaseException:
+        if owns_transaction and conn.in_transaction:
+            conn.rollback()
+        raise
 
 
 def bind_current_turn(conn: sqlite3.Connection, conversation_id: str) -> None:

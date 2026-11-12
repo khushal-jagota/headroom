@@ -88,6 +88,8 @@ from planner.conversation.publication.coordinator import (
     SignalPublicationCoordinator,
 )
 from planner.conversation.publication.mutations import PlainFieldMutation, SignalRuntimeMutation
+from planner.conversation.start_admission import write_bindings
+from planner.conversation.start_admission.contracts import StartRequest
 from planner.conversation.views.writer import append_projection
 from planner.core.config import (
     CONVERSATION_WRITE_FAILURE_FIRST_RETRY_SECONDS,
@@ -925,10 +927,14 @@ class ConversationStore:
                 ),
             )
 
-    async def reserve_turn(self, conversation_id: str) -> int:
-        return await self._write(self._reserve_turn_sync, conversation_id)
+    async def reserve_turn(
+        self, conversation_id: str, start_requests: tuple[StartRequest, ...] = ()
+    ) -> int:
+        return await self._write(self._reserve_turn_sync, conversation_id, start_requests)
 
-    def _reserve_turn_sync(self, conversation_id: str) -> int:
+    def _reserve_turn_sync(
+        self, conversation_id: str, start_requests: tuple[StartRequest, ...] = ()
+    ) -> int:
         with self._publication_connection() as (conn, admission):
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
@@ -952,6 +958,7 @@ class ConversationStore:
             )
             if conversation_id not in self.blocked_local_conversations:
                 child_custody.bind_current_turn(conn, conversation_id)
+            write_bindings(conn, TurnToken(conversation_id, turn_number), start_requests)
             apply_facts(
                 conn,
                 conversation_id,

@@ -3946,3 +3946,25 @@ def test_oldest_eligible_held_worker_precedes_new_readiness_starts(
         gate.finish("new-readiness")
 
     _run(exercise)
+
+
+def test_start_and_end_never_execute_sql_on_the_event_loop(harness: _Harness) -> None:
+    """Existing fates do not prove SQL thread placement through a real shared store."""
+    from tests.support.sql_threads import sql_must_run_off_event_loop
+
+    from planner.conversation.start_admission.contracts import StartRequest
+
+    async def exercise() -> None:
+        await _start(harness)
+        assert harness.system.start_admission.try_start(
+            StartRequest("worker-thread-proof", "worker", HOME_MACHINE_ID)
+        )
+        assert isinstance(await harness.system.send(
+            "c", text_message_content("work"), sender_label="Panels",
+            sender_message_id="worker-thread-proof",
+        ), PromptDeliveryStarted)
+        await harness.agent_message("c", text_message_content("accepted"))
+        await harness._end_turn("c", ConversationTurnEnding.completed)
+
+    with sql_must_run_off_event_loop():
+        _run(exercise)

@@ -66,6 +66,8 @@ A running turn or a running background task shows a working mark, and that mark 
 
 ## Decisions that shape it
 
+Database work runs on worker threads, so a database wait does not stop the server. Related start facts share a transaction when no file or process operation separates them. Custody, dispatch, and acceptance retain their separate recovery boundaries.
+
 - Start work, then stop watching. Nothing listens for a turn to end.
 - Readiness is computed from the record, never stored as its own state.
 - A send that may have reached the Worker is never repeated automatically.
