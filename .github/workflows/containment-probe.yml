@@ -1,151 +1,80 @@
-name: Ticket browser comparison (temporary)
+name: Disposable Worker pressure proof
+
 'on':
   workflow_dispatch:
-    inputs:
-      reference_sha:
-        required: true
-        type: string
-        default: a3290fb1d24d447c3588489733b17a716bf830c0
-      repaired_sha:
-        required: true
-        type: string
-        default: 195eb035f819f6beac480418bc61a3ddb77a694b
+
 permissions:
   contents: read
+
 jobs:
-  compare:
+  worker-pressure:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        suite:
-        - e2e
-        - browser
-        source: ${{ fromJSON(format('["{0}","{1}"]', inputs.reference_sha, inputs.repaired_sha)) }}
-    env:
-      PANELS_REHEARSAL: 'true'
-      PANELS_SUITE: ${{ matrix.suite }}
-      PANELS_REPORT_DIR: ${{ github.workspace }}/reports
-      PANELS_CANDIDATE_SOURCE: ${{ github.workspace }}/source
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        ref: ${{ matrix.source }}
-        path: source
-        persist-credentials: false
-        fetch-depth: 0
-    - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-      with:
-        python-version: '3.12'
-    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-      with:
-        node-version: '22'
-    - name: Bootstrap disposable hosted runner
-      run: 'sudo apt-get update
-
-        sudo apt-get install -y bubblewrap dbus-user-session ffmpeg patchelf binutils libtk8.6
-
-        # Hosted Ubuntu''s AppArmor policy otherwise denies unprivileged bwrap.
-
-        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
-        sudo loginctl enable-linger "$USER"
-
-        sudo systemctl start "user@$(id -u).service"
-
-        echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
-
-        echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> "$GITHUB_ENV"
-
-        sudo mkdir -p /home/vps/Deployments/Panels
-
-        sudo chown "$(id -u):$(id -g)" /home/vps/Deployments/Panels
-
-        '
-    - name: Prepare isolated source and dependencies
-      run: 'set -euo pipefail
-
-        mkdir -p "$PANELS_REPORT_DIR" "$HOME/t" "$GITHUB_WORKSPACE/artifact-shadow"
-
-        cd source
-
-        python3 -m venv .venv
-
-        .venv/bin/python -m pip install -r requirements.txt
-
-        .venv/bin/python -m pip install --editable .
-
-        npm ci --prefix web
-
-        npm install --prefix agent_backends --package-lock=false --save=false @anthropic-ai/claude-code@latest @openai/codex@latest
-
-        .venv/bin/python -m playwright install --with-deps chromium
-
-        codex_bin="$(.venv/bin/python scripts/deployment_codex.py setup --source-root "$PWD")"
-
-        echo "$codex_bin" >> "$GITHUB_PATH"
-
-        export PATH="$codex_bin:$PATH"
-
-        npm --prefix web run build
-
-        '
-    - name: Establish authenticated E2E user manager
-      if: ${{ matrix.suite == 'e2e' }}
-      run: "exec > >(tee -a \"$PANELS_REPORT_DIR/e2e.log\") 2>&1\npython3 - <<'PYTHON'\nimport json\nimport os\n\
-        import subprocess\nimport time\nfrom pathlib import Path\n\nif (os.environ.get(\"PANELS_REHEARSAL\") !=\
-        \ \"true\"\n        or os.environ.get(\"RUNNER_ENVIRONMENT\") != \"github-hosted\"):\n    raise RuntimeError(\"\
-        E2E user manager setup requires a disposable hosted runner\")\nuid = os.getuid()\nunit = f\"user@{uid}.service\"\
-        \nexpected_pid = int(subprocess.check_output(\n    [\"systemctl\", \"show\", unit, \"--property=MainPID\"\
-        , \"--value\"], text=True).strip())\nif expected_pid <= 1:\n    raise RuntimeError(\"system user unit has\
-        \ no live manager PID\")\nprint(json.dumps({\"expected_manager_pid\": expected_pid, \"expected_uid\": uid}),\
-        \ flush=True)\ntry:\n    executable = Path(f\"/proc/{expected_pid}/exe\")\n    metadata = executable.stat()\n\
-        \    print(json.dumps({\"manager_exe\": os.readlink(executable),\n                      \"device\": metadata.st_dev,\
-        \ \"inode\": metadata.st_ino}), flush=True)\nexcept OSError as error:\n    print(json.dumps({\"manager_exe_error\"\
-        : str(error)}), flush=True)\ncommand = [\n    \"/usr/bin/busctl\", f\"--address=unix:path=/run/user/{uid}/bus\"\
-        , \"--json=short\",\n    \"call\", \"org.freedesktop.DBus\", \"/org/freedesktop/DBus\", \"org.freedesktop.DBus\"\
-        ,\n    \"GetConnectionCredentials\", \"s\", \"org.freedesktop.systemd1\",\n]\nstarted = time.monotonic()\n\
-        \ndef query(label):\n    attempt = time.monotonic()\n    try:\n        result = subprocess.run(command,\
-        \ capture_output=True, text=True, timeout=1.0)\n        print(json.dumps({\"query\": label, \"elapsed_seconds\"\
-        : time.monotonic() - started,\n                          \"duration_seconds\": time.monotonic() - attempt,\n\
-        \                          \"exit\": result.returncode, \"stdout\": result.stdout,\n                   \
-        \       \"stderr\": result.stderr}), flush=True)\n        if result.returncode:\n            return False\n\
-        \        value = json.loads(result.stdout)\n        credentials = value[\"data\"][0]\n        return (value[\"\
-        type\"] == \"a{sv}\"\n                and credentials[\"ProcessID\"] == {\"type\": \"u\", \"data\": expected_pid}\n\
-        \                and credentials[\"UnixUserID\"] == {\"type\": \"u\", \"data\": uid})\n    except subprocess.TimeoutExpired\
-        \ as error:\n        print(json.dumps({\"query\": label, \"elapsed_seconds\": time.monotonic() - started,\n\
-        \                          \"duration_seconds\": time.monotonic() - attempt,\n                         \
-        \ \"exit\": None, \"timeout\": True, \"stdout\": str(error.stdout),\n                          \"stderr\"\
-        : str(error.stderr)}), flush=True)\n    except (ValueError, KeyError, TypeError, IndexError) as error:\n\
-        \        print(json.dumps({\"query\": label, \"credentials_error\": str(error)}), flush=True)\n    return\
-        \ False\n\nquery(\"before-start\")\nsubprocess.run([\"systemctl\", \"--user\", \"start\", \"dbus.service\"\
-        ],\n               check=True, timeout=10)\ndeadline = time.monotonic() + 20\nattempt = 0\nwhile time.monotonic()\
-        \ < deadline:\n    attempt += 1\n    if query(f\"readiness-{attempt}\"):\n        current_pid = int(subprocess.check_output(\n\
-        \            [\"systemctl\", \"show\", unit, \"--property=MainPID\", \"--value\"],\n            text=True).strip())\n\
-        \        if current_pid != expected_pid:\n            raise RuntimeError(\"system user manager changed during\
-        \ readiness\")\n        print(json.dumps({\"authenticated_manager_ready\": True, \"attempts\": attempt,\n\
-        \                          \"elapsed_seconds\": time.monotonic() - started}), flush=True)\n        break\n\
-        \    time.sleep(0.25)\nelse:\n    raise RuntimeError(\"E2E user manager did not acquire authenticated DBus\
-        \ credentials\")\nPYTHON\n"
-    - name: Run full suite at exact source
-      run: "set -euo pipefail\nfor key in $(compgen -e); do\n  case \"$key\" in PLAN_*|PANELS_REAL_*|HERMES_HOME|CODEX_HOME|CLAUDE_CONFIG_DIR)\
-        \ unset \"$key\" ;; esac\ndone\nexport TMPDIR=\"$HOME/t\"\nexport PATH=\"$PANELS_CANDIDATE_SOURCE/.venv/bin:$PATH\"\
-        \nexport PANELS_E2E_FAILURE_DIR=\"$PANELS_REPORT_DIR/failure\"\nexport PANELS_UI_PROOF_DIR=\"$PANELS_REPORT_DIR/success\"\
-        \ncd source\ngit rev-parse HEAD | tee \"$PANELS_REPORT_DIR/revision.txt\"\nif [ \"$PANELS_SUITE\" = e2e\
-        \ ]; then\n  .venv/bin/python scripts/deployment_codex.py verify --source-root \"$PWD\"\n  bwrap --bind\
-        \ / / --dev-bind /dev /dev --bind \"$GITHUB_WORKSPACE/artifact-shadow\" /home/vps/Deployments/Panels --chdir\
-        \ \"$PWD\" --     .venv/bin/pytest tests/e2e -n 4 --basetemp \"$HOME/t/p\" --junitxml=\"$PANELS_REPORT_DIR/e2e.xml\"\
-        \ 2>&1 | tee \"$PANELS_REPORT_DIR/run.log\"\nelse\n  bwrap --bind / / --dev-bind /dev /dev --bind \"$GITHUB_WORKSPACE/artifact-shadow\"\
-        \ /home/vps/Deployments/Panels --chdir \"$PWD/web\" --     node tests/browser/run.mjs --report \"$PANELS_REPORT_DIR/browser.json\"\
-        \ --revision \"$(git rev-parse HEAD)\" 2>&1 | tee \"$PANELS_REPORT_DIR/run.log\"\nfi\n"
-    - name: Upload comparison evidence
-      if: ${{ always() }}
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-      with:
-        name: comparison-${{ matrix.suite }}-${{ matrix.source }}
-        path: reports
-        retention-days: 7
+      - name: Require the authorized Ticket branch and hosted runner
+        env:
+          PANELS_DISPATCH_REF: ${{ github.ref }}
+        run: |
+          test "$PANELS_DISPATCH_REF" = refs/heads/ticket/t_1ecuge4h
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          mkdir -p "$RUNNER_TEMP/worker-pressure-evidence"
+          printf '%s\n' "$PANELS_DISPATCH_REF" > "$RUNNER_TEMP/worker-pressure-evidence/dispatch-ref.txt"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Preserve exact source and hosted environment
+        env:
+          PANELS_SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -o pipefail
+          test "$(git rev-parse HEAD)" = "$PANELS_SOURCE_SHA"
+          git archive --format=tar HEAD | gzip -n > "$RUNNER_TEMP/worker-pressure-evidence/source.tar.gz"
+          (
+            cd "$RUNNER_TEMP/worker-pressure-evidence"
+            sha256sum source.tar.gz > source.sha256
+          )
+          {
+            printf 'Source: %s\n' "$PANELS_SOURCE_SHA"
+            git rev-parse 'HEAD^{tree}'
+            printf 'Runner image: %s\nImage version: %s\n' "$ImageOS" "$ImageVersion"
+            cat /etc/os-release
+            uname -a
+            python3 --version
+            node --version
+            npm --version
+            systemctl --version
+            free -m
+          } > "$RUNNER_TEMP/worker-pressure-evidence/environment.txt"
+      - name: Install build prerequisites
+        run: |
+          set -o pipefail
+          sudo apt-get update
+          sudo apt-get install -y libicu-dev pkg-config build-essential
+      - name: Set up independent source-local dependencies
+        run: |
+          set -o pipefail
+          scripts/dev setup 2>&1 | tee "$RUNNER_TEMP/worker-pressure-evidence/setup.log"
+      - name: Probe a real home under builds and low memory
+        run: |
+          set -o pipefail
+          .venv/bin/python scripts/worker_pressure_probe.py probe \
+            --root "$RUNNER_TEMP/worker-pressure-run" \
+            2>&1 | tee "$RUNNER_TEMP/worker-pressure-evidence/probe.log"
+      - name: Preserve results, records, and home logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: worker-pressure-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/worker-pressure-evidence/
+            ${{ runner.temp }}/worker-pressure-run/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 30
