@@ -13,6 +13,8 @@ import type {
 import type * as Rpc from '../../../node_modules/@agentclientprotocol/sdk/dist/core/jsonrpc.js';
 import type * as Validators from '../../../node_modules/@agentclientprotocol/sdk/dist/v1/unstable/schema/zod.gen.js';
 import { BackendAdapterError, BackendSpawnFailed } from '../contracts.ts';
+import { CodexChildWouldNotStart } from '../codex_app_server/errors.ts';
+import { python_repr } from '../claude_agent_sdk/failure_summary.ts';
 import { spawn_codex_process, within } from '../codex_app_server/process.ts';
 import type { OwnedCodexProcess } from '../codex_app_server/process.ts';
 import type { ResolvedConversationStart } from '../../contracts.ts';
@@ -72,18 +74,27 @@ export interface AcpRequest<T> {
 export interface AcpRequestOptions {
   timeout_ms?: number;
   signal?: AbortSignal;
+  /** Complete caller-owned reply effects before the next inbound frame. Raw response stays independent. */
+  after_response?: () => Promise<void>;
 }
 interface WriteReceipt {
   method: string;
   params: unknown;
   request: boolean;
   pending: Pending<void>;
+  effect: ResponseEffect;
+}
+interface ResponseEffect {
+  readonly pending: Pending<void>;
+  completed: boolean;
+  id?: JsonRpcId;
 }
 
 export class HermesAcpClient {
   readonly closed: Promise<void>;
   private readonly connection: Rpc.Connection;
   private readonly receipts = new Set<WriteReceipt>();
+  private readonly response_effects = new Map<JsonRpcId, ResponseEffect>();
   private readonly response_receipts = new Map<JsonRpcId, Pending<void>>();
   private readonly active_answers = new Set<Pending<never>>();
   private failure: unknown = null;
@@ -112,7 +123,9 @@ export class HermesAcpClient {
               const message = next.value;
               if (rpc.isRequestMessage(message) || rpc.isNotificationMessage(message))
                 this.gate = new Pending<void>();
-              else this.gate = null;
+              else
+                this.gate =
+                  'id' in message ? (this.response_effects.get(message.id)?.pending ?? null) : null;
               controller.enqueue(message);
             } catch (error) {
               controller.error(error);
@@ -131,20 +144,27 @@ export class HermesAcpClient {
         write: async (message) => {
           this.require_wire();
           try {
-            await writer.write(message);
+            let receipt: WriteReceipt | undefined;
             if ('method' in message) {
-              for (const receipt of this.receipts) {
-                if (
-                  receipt.method === message.method &&
-                  receipt.params === message.params &&
-                  receipt.request === 'id' in message
-                ) {
-                  this.receipts.delete(receipt);
-                  receipt.pending.resolve();
-                  break;
-                }
+              receipt = [...this.receipts].find(
+                (candidate) =>
+                  candidate.method === message.method &&
+                  candidate.params === message.params &&
+                  candidate.request === 'id' in message,
+              );
+              if (receipt && 'id' in message && !receipt.effect.completed) {
+                // Observe only the official SDK-generated id. The SDK still owns
+                // correlation and response parsing. The write receipt remains later.
+                receipt.effect.id = message.id;
+                this.response_effects.set(message.id, receipt.effect);
               }
-            } else {
+            }
+            await writer.write(message);
+            if (receipt) {
+              this.receipts.delete(receipt);
+              receipt.pending.resolve();
+            }
+            if (!('method' in message)) {
               this.response_receipts.get(message.id)?.resolve();
               this.response_receipts.delete(message.id);
             }
@@ -233,6 +253,8 @@ export class HermesAcpClient {
     this.failure = error ?? new Error('the ACP wire ended');
     for (const receipt of this.receipts) receipt.pending.reject(this.failure);
     this.receipts.clear();
+    for (const effect of this.response_effects.values()) effect.pending.resolve();
+    this.response_effects.clear();
     for (const receipt of this.response_receipts.values()) receipt.reject(this.failure);
     this.response_receipts.clear();
     for (const answer of this.active_answers) answer.reject(this.failure);
@@ -246,7 +268,8 @@ export class HermesAcpClient {
     options: AcpRequestOptions = {},
   ): AcpRequest<T> {
     const written = new Pending<void>();
-    const receipt = { method, params, request: true, pending: written };
+    const effect: ResponseEffect = { pending: new Pending<void>(), completed: false };
+    const receipt = { method, params, request: true, pending: written, effect };
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const cancel = (reason?: unknown) => controller.abort(reason);
@@ -284,7 +307,19 @@ export class HermesAcpClient {
         });
       // A cancellation can precede the actual request write. Keep its write
       // receipt independent: the SDK still sends that request and its cancellation.
-      void response.catch(() => {});
+      // Do not put effects behind response itself: turn ending awaits that raw
+      // promise, while this separate barrier awaits the completed ending.
+      const finish_effect = () => options.after_response?.();
+      void response
+        .then(finish_effect, finish_effect)
+        .catch((error) => {
+          if (!this.stopped) this.log(error);
+        })
+        .finally(() => {
+          effect.completed = true;
+          effect.pending.resolve();
+          if (effect.id !== undefined) this.response_effects.delete(effect.id);
+        });
       return { written: written.promise, response, cancel };
     } catch (error) {
       written.reject(error);
@@ -405,7 +440,19 @@ export class HermesAcpLauncher {
       } catch {
         // Cleanup reports its own failure. Startup preserves its original failure.
       }
-      throw new BackendSpawnFailed(error instanceof Error ? error.message : String(error));
+      const executable = launch.argv[0];
+      // The shared process helper retains Node's exact spawn message, not errno.
+      // Translate this one observed missing-executable failure, without a pattern
+      // that can rewrite provider errors or unrelated operating-system failures.
+      const detail =
+        error instanceof CodexChildWouldNotStart &&
+        executable !== undefined &&
+        error.message === `spawn ${executable} ENOENT`
+          ? `[Errno 2] No such file or directory: ${python_repr(executable)}`
+          : error instanceof Error
+            ? error.message
+            : String(error);
+      throw new BackendSpawnFailed(detail);
     }
   }
   standard_error_tail(): string | null {
