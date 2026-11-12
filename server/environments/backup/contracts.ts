@@ -22,21 +22,3 @@ export interface RestoreOptions {
   readonly live_stopped: boolean;
 }
 
-/** Public operations mirror Python; capture excludes files, legacy restore retains it. */
-export interface BackupOperations {
-  managed_file_roots(databasePath: string): Promise<Record<ManagedRootName, string>>;
-  create_database_backup(
-    sourceDatabase: string,
-    backupDirectory: string,
-    deployedRevision: string,
-  ): Promise<string>;
-  restore_database_snapshot(
-    snapshot: string,
-    destinationDatabase: string,
-    options: RestoreOptions,
-  ): Promise<void>;
-  apply_verified_snapshot_retention(
-    backupDirectory: string,
-    candidates: readonly string[],
-  ): Promise<void>;
-}

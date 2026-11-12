@@ -35,22 +35,6 @@ export interface ApplicationSchemaSeed {
 /** Synchronous domain bootstrap, after DDL and its frontier in the same write scope. */
 export type FreshDatabaseBootstrap = (tx: TransactionSql) => void;
 
-/** File maintenance stays in core. These signatures do not expose a native driver. */
-export interface DatabaseFileOperations {
-  /** Existing source; owns its private read connection through online-copy settlement. */
-  onlineBackup(sourcePath: string, destinationPath: string): Promise<void>;
-  /** Existing image; requires the first SQLite integrity-check result to be "ok". */
-  verifyDatabaseIntegrity(path: string): void;
-  /** Uses this owned capability, outside a transaction, with the main busy timeout. */
-  checkpointDatabase(database: Database, mode: 'PASSIVE' | 'TRUNCATE'): CheckpointResult;
-  /** New path only; one canonical write installs DDL, frontier, then required rows. */
-  createDatabaseFromSeed(
-    path: string,
-    seed: ApplicationSchemaSeed,
-    bootstrap: FreshDatabaseBootstrap,
-  ): Database;
-}
-
 /** Dedicated domain storage uses the same writer engine without app projections. */
 export interface AuxiliaryDatabaseOptions {
   schemaVersion: number;
