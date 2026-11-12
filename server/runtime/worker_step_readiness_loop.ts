@@ -1,4 +1,5 @@
 /** Explicit per-Ticket start path. Polling and scheduling remain in Unit 9. */
+import { ConversationStartAborted, observe_conversation_operation } from './abort.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { Database } from '../core/database/contracts.ts';
 import {
@@ -52,6 +53,7 @@ export class WorkerStepStartResult {
   }
 }
 export interface WorkerStepStartOptions {
+  signal?: AbortSignal;
   connect_database: () => Database;
   conversation_system: ConversationSystem;
   worker_type_registry: WorkerTypeRegistry;
@@ -76,7 +78,13 @@ async function _admitted_start_ready_worker_step(
   return conversation_start.conversation_link_lock(`ticket:${ticket_id}`).run(async () => {
     const ticket = database.read((sql) => tickets_data.read_ticket(sql, ticket_id));
     let conversation_id = ticket.conversation_id;
-    if (conversation_id !== null && (await system.is_running(conversation_id))) {
+    if (
+      conversation_id !== null &&
+      (await observe_conversation_operation(
+        () => system.is_running(conversation_id!),
+        options.signal,
+      ))
+    ) {
       return new WorkerStepStartResult({ started: false });
     }
     if (
@@ -145,11 +153,13 @@ async function _admitted_start_ready_worker_step(
           worker_type_registry: options.worker_type_registry,
           retain_backend_start_failure: !paired_opener,
           now: options.now(),
+          signal: options.signal,
         },
       );
       conversation_id = delivered.conversation_id;
       fate = delivered.fate;
     } catch (error) {
+      if (error instanceof ConversationStartAborted) throw error;
       console.error(
         `worker step could not be started (ticket=${ticket_id} conversation=${conversation_id})`,
         error,
@@ -206,7 +216,7 @@ async function _admitted_start_ready_worker_step(
       }
     }
     return WorkerStepStartResult.from_delivery_fate(fate);
-  });
+  }, options.signal);
 }
 
 export async function tell_a_worker_it_lost_its_memory(
@@ -226,7 +236,10 @@ export async function tell_a_worker_it_lost_its_memory(
         return false;
       if (
         worker_memory.an_answer_is_already_waiting(
-          await options.conversation_system.held_prompts(conversation_id),
+          await observe_conversation_operation(
+            () => options.conversation_system.held_prompts(conversation_id),
+            options.signal,
+          ),
         )
       )
         return false;
@@ -245,6 +258,7 @@ export async function tell_a_worker_it_lost_its_memory(
             sender_message_id: worker_memory.new_memory_notice_message_id(),
             worker_type_registry: options.worker_type_registry,
             now: options.now(),
+            signal: options.signal,
           },
         );
         if (
@@ -254,18 +268,20 @@ export async function tell_a_worker_it_lost_its_memory(
           return false;
         return true;
       } catch (error) {
+        if (error instanceof ConversationStartAborted) throw error;
         console.error(
           `memory-loss notice could not be sent (ticket=${ticket_id} conversation=${conversation_id})`,
           error,
         );
         return false;
       }
-    });
+    }, options.signal);
   });
 }
 
 /** Candidate scanning, timer backstop, and per-Ticket task ownership. */
 export class WorkerStepReadinessLoop {
+  private readonly controllers = new Map<string, AbortController>();
   private readonly in_flight = new Map<string, Promise<unknown>>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private interval_ms: number | undefined;
@@ -301,20 +317,27 @@ export class WorkerStepReadinessLoop {
   }
   private schedule(ticket_id: string, notice = false): boolean {
     if (this.stop_requested || this.in_flight.has(ticket_id)) return false;
+    const controller = new AbortController();
+    this.controllers.set(ticket_id, controller);
+    const options = { ...this.options, signal: controller.signal };
     const task = Promise.resolve().then<unknown>(() =>
       notice
-        ? tell_a_worker_it_lost_its_memory(ticket_id, this.options)
-        : start_ready_worker_step(ticket_id, this.options),
+        ? tell_a_worker_it_lost_its_memory(ticket_id, options)
+        : start_ready_worker_step(ticket_id, options),
     );
     this.in_flight.set(ticket_id, task);
     void task
-      .catch((error) =>
+      .catch((error) => {
+        if (error instanceof ConversationStartAborted) return;
         console.error(
           `worker step task ended in an unhandled failure (ticket=${ticket_id})`,
           error,
-        ),
-      )
-      .finally(() => this.in_flight.delete(ticket_id));
+        );
+      })
+      .finally(() => {
+        this.in_flight.delete(ticket_id);
+        this.controllers.delete(ticket_id);
+      });
     return true;
   }
   poll_once(): string[] {
@@ -336,7 +359,8 @@ export class WorkerStepReadinessLoop {
   async drain(): Promise<void> {
     const results = await Promise.allSettled([...this.in_flight.values()]);
     for (const result of results) {
-      if (result.status === 'rejected') throw result.reason;
+      if (result.status === 'rejected' && !(result.reason instanceof ConversationStartAborted))
+        throw result.reason;
     }
   }
   wake(): void {
@@ -362,9 +386,28 @@ export class WorkerStepReadinessLoop {
     this.interval_ms = interval_seconds * 1000;
     this.tick();
   }
-  async stop(): Promise<void> {
+  async stop(options: { deadline?: number } = {}): Promise<void> {
     this.stop_requested = true;
     clearTimeout(this.timer);
-    await this.drain();
+    const deadline = options.deadline ?? performance.now() / 1000 + 10;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const drained = this.drain();
+    try {
+      const finished = await Promise.race([
+        drained.then(() => true),
+        new Promise<false>((resolve) => {
+          timer = setTimeout(
+            () => resolve(false),
+            Math.max(0, deadline - performance.now() / 1000) * 1000,
+          );
+        }),
+      ]);
+      if (!finished) {
+        for (const controller of this.controllers.values()) controller.abort();
+        await this.drain();
+      }
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }

@@ -276,3 +276,36 @@ test('an unanswered compaction sends one queued notice and an uncertain notice p
   expect(loop.tell_every_worker_that_lost_its_memory()).toEqual([]);
   await loop.stop();
 });
+
+// Gap: normal drain cases cannot prove that a stalled provider permits loop shutdown.
+test('loop stop aborts a hung start at its deadline and releases dispatcher ownership', async () => {
+  const { db, system, options } = setup();
+  const ticket = create(db);
+  const path = fixture_path(db) + '.hung-dispatcher.lock';
+  const owner = acquireLock(path)!;
+  let entered!: () => void;
+  const sending = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  vi.spyOn(system, 'send').mockImplementation(() => {
+    entered();
+    return new Promise(() => {});
+  });
+  const loop = new WorkerStepReadinessLoop(options);
+  loop.poll_once();
+  await sending;
+  const departure = read(db, ticket.id);
+  const started = performance.now();
+  await loop.stop({ deadline: performance.now() / 1000 + 0.01 });
+  owner.close();
+  const next = acquireLock(path);
+  expect(next).not.toBeNull();
+  next!.close();
+  expect(performance.now() - started).toBeLessThan(500);
+  expect(read(db, ticket.id)).toMatchObject({
+    conversation_id: departure.conversation_id,
+    worker_step_claim: 'out',
+    worker_step_claim_revision: departure.worker_step_claim_revision,
+  });
+  expect(loop.poll_once()).toEqual([]);
+});
