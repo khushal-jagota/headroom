@@ -346,7 +346,9 @@ def _child_environment(
     role_materials = resolved_start.role_materials
     if role_materials is not None:
         environment.update(role_materials.identity_environment_variables)
-    environment["PLAN_CONVERSATION_ID"] = resolved_start.conversation_id
+    if (role_materials is not None
+            and dict(role_materials.identity_environment_variables).get("PLAN_TICKET_ID")):
+        environment["PLAN_CONVERSATION_ID"] = resolved_start.conversation_id
     return environment
 
 

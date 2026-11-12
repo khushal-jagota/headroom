@@ -419,15 +419,27 @@ class WorkerSupervisor:
     async def stop(self, native_stop: Callable[[], Awaitable[None]] | None = None) -> CleanupResult:
         self._end.set()
         deadline = time.monotonic() + config.STOP_SECONDS
-        native_timed_out = False
+        diagnostics: list[str] = []
+
+        def capture() -> None:
+            with self._lock:
+                _observe(self.path, deadline)
+
         try:
-
-            def capture() -> None:
-                with self._lock:
-                    _observe(self.path, deadline)
-
             await asyncio.to_thread(capture)
-            if native_stop is not None:
+        except (OSError, ValueError, TypeError, KeyError, WorkerCleanupError) as error:
+            diagnostics.append(f"Process observation failed: {error}")
+            try:
+                with records.locked(self.path, deadline):
+                    record = records.read(self.path)
+                    record.update(state="not_proven", observation_error=str(error))
+                    records.write(self.path, record)
+            except (OSError, ValueError):
+                pass
+            return CleanupResult(False, "; ".join(diagnostics))
+
+        if native_stop is not None:
+            try:
                 task: asyncio.Future[None] = asyncio.ensure_future(native_stop())
                 self._native_stop_task = task
                 done, _ = await asyncio.wait(
@@ -439,26 +451,21 @@ class WorkerSupervisor:
                     task.add_done_callback(
                         lambda finished: None if finished.cancelled() else finished.exception()
                     )
-                    native_timed_out = True
+                    diagnostics.append("Native Worker stop deadline expired")
+                elif task.cancelled():
+                    diagnostics.append("Native Worker stop task was canceled")
                 else:
                     await task
-        except (OSError, ValueError, WorkerCleanupError, TimeoutError) as error:
-            try:
-                with records.locked(self.path, deadline):
-                    record = records.read(self.path)
-                    record.update(state="not_proven", observation_error=str(error))
-                    records.write(self.path, record)
-            except (OSError, ValueError):
-                pass
-            return CleanupResult(False, f"Native Worker stop not proven: {error}")
+            except Exception as error:
+                # Transport teardown failure does not prevent process escalation.
+                # It is not a gap in process observation or durable custody.
+                diagnostics.append(f"Native Worker stop failed: {error}")
 
         def cleanup() -> CleanupResult:
             with self._lock:
                 return stop_record(self.path, deadline=deadline)
 
         result = await asyncio.to_thread(cleanup)
-        if native_timed_out:
-            return CleanupResult(
-                False, "Native Worker stop deadline expired; process cleanup: " + result.reason
-            )
+        if diagnostics:
+            return CleanupResult(result.complete, result.reason + "; " + "; ".join(diagnostics))
         return result

@@ -1467,6 +1467,10 @@ class ClaudeAgentSdkBackendChild:
         minted_session_id: str | None,
     ) -> ClaudeAgentOptions:
         """Everything the child is started with, from the values this conversation runs on."""
+        identity = dict(_identity_environment(resolved_start))
+        environment = {**dict(self._launch.environment_overrides), **identity}
+        if identity.get("PLAN_TICKET_ID"):
+            environment["PLAN_CONVERSATION_ID"] = resolved_start.conversation_id
         return ClaudeAgentOptions(
             cwd=str(resolved_start.workspace_folder),
             cli_path=self._launch.claude_executable,
@@ -1476,11 +1480,7 @@ class ClaudeAgentSdkBackendChild:
             permission_mode=_permission_mode(resolved_start.access),
             resume=vendor_session_cursor,
             session_id=minted_session_id,
-            env={
-                **dict(self._launch.environment_overrides),
-                **dict(_identity_environment(resolved_start)),
-                "PLAN_CONVERSATION_ID": resolved_start.conversation_id,
-            },
+            env=environment,
             max_buffer_size=CLAUDE_SDK_MAX_BUFFER_SIZE,
             include_partial_messages=True,
             can_use_tool=self._can_use_tool,

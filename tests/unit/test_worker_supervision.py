@@ -23,6 +23,7 @@ from planner.worker_supervision import (
 from planner.worker_supervision.contracts import WorkerProcess
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native priority and pidfd cleanup proof")
 def test_launch_priority_and_recorded_detached_tool_cleanup(tmp_path: Path) -> None:
     """One real launch proves priority before exec and custody after a tool detaches."""
 
@@ -58,8 +59,13 @@ def test_launch_priority_and_recorded_detached_tool_cleanup(tmp_path: Path) -> N
             assert os.getsid(tool_pid) == tool_pid
             identity = supervisor.identity()
             assert identity is not None and identity.supervision_record == str(supervisor.path)
-            result = await supervisor.stop()
+
+            async def failed_transport_stop() -> None:
+                raise OSError("transport close failed")
+
+            result = await supervisor.stop(native_stop=failed_transport_stop)
             assert result.complete, result.reason
+            assert "transport close failed" in result.reason
             await process.wait()
             assert inspect_record(supervisor.path, identity=identity).complete
         finally:
@@ -196,16 +202,19 @@ def test_native_stop_cancellation_cannot_extend_deadline(
             except asyncio.CancelledError:
                 await release.wait()
 
-        monkeypatch.setattr(config, "STOP_SECONDS", 0.03)
+        monkeypatch.setattr(config, "STOP_SECONDS", 0.1)
+        monkeypatch.setattr(config, "NATIVE_STOP_SECONDS", 0.01)
         started = time.monotonic()
         result = await supervisor.stop(native_stop=resistant)
-        assert not result.complete and time.monotonic() - started < 0.2
+        assert result.complete and time.monotonic() - started < 0.2
+        assert "Native Worker stop deadline expired" in result.reason
         release.set()
         await asyncio.sleep(0)
 
     asyncio.run(run())
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native orphan pidfd cleanup proof")
 def test_restart_reconciles_worker_after_its_parent_crashes(tmp_path: Path) -> None:
     """A new supervisor uses durable evidence after the original owner dies."""
     import json

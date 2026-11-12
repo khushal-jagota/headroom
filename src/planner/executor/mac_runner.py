@@ -707,6 +707,7 @@ class MacRunner:
             # same-Ticket fence and an address for a later explicit retirement.
             self._retiring_children.add(command.child.child_id)
             await native.stop()
+            self._retiring_children.discard(command.child.child_id)
             if self._children.get(command.child.child_id) is child:
                 del self._children[command.child.child_id]
             raise

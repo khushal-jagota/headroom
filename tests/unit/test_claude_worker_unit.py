@@ -166,6 +166,7 @@ def test_owned_worker_callback_kills_a_child_that_ignores_term(
 ) -> None:
     """The SDK's longer grace sequence cannot consume the shared stop deadline."""
     import anyio
+    from anyio.streams.text import TextSendStream
 
     monkeypatch.setattr(
         "planner.conversation.backends.claude_agent_sdk.NATIVE_PHASE_SECONDS", 0.05
@@ -185,7 +186,8 @@ def test_owned_worker_callback_kills_a_child_that_ignores_term(
                 cli_path=sys.executable, cwd=str(tmp_path),
             ))
             transport._process = process
-            transport._stdin_stream = process.stdin
+            assert process.stdin is not None
+            transport._stdin_stream = TextSendStream(process.stdin)
             await asyncio.wait_for(transport._stop_native_process(), 1)
             assert process.returncode == -9
             assert transport._cleanup_process is process
