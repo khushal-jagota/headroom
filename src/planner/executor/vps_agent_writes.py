@@ -41,7 +41,7 @@ from planner.message_delivery.contracts import MessageDeliveryMode
 from planner.tickets import actions, views
 
 if TYPE_CHECKING:
-    from planner.executor.vps_inbox import InboxStore
+    from planner.executor.vps_inbox import InboxStore, PublishedFiles
     from planner.executor.vps_runs import MacRuns
     from planner.tickets.contracts import ReviewTransferNotice
 
@@ -143,14 +143,17 @@ class AgentWrites:
         self.conversations: ConversationSystem
 
     async def accept(
-        self, envelope: QueuedEnvelope, identity: ExecutorIdentity
+        self,
+        envelope: QueuedEnvelope,
+        identity: ExecutorIdentity,
+        published: PublishedFiles | None,
     ) -> AcceptanceReceipt:
         write = type_adapter(CliWrite).validate_python(envelope.payload)
         if write.child.conversation_id != envelope.conversation_id:
             raise ValueError("CLI conversation conflicts with envelope")
         principal = await run_on_worker_thread(self.runs.authority, write.child)
         if write.operation in ("message.send", "ticket.request_help"):
-            return await self._deliver_message(envelope, write, principal, identity)
+            return await self._deliver_message(envelope, write, principal, identity, published)
         from planner.tickets.review_transfer import notify_review_transfers
 
         notices: list[ReviewTransferNotice] = []
@@ -174,7 +177,7 @@ class AgentWrites:
             )
 
         receipt = await run_on_worker_thread(
-            self.store.accept, envelope, mutate, now_ms(), identity=identity
+            self.store.accept, envelope, mutate, now_ms(), identity=identity, published=published
         )
         if notices:
             connection = connect(self.db_path)
@@ -206,10 +209,11 @@ class AgentWrites:
         write: CliWrite,
         principal: Principal,
         identity: ExecutorIdentity,
+        published: PublishedFiles | None,
     ) -> AcceptanceReceipt:
         """Reserve before calling a provider; a replay never calls it again."""
         previous, recipient, message, mode = await run_on_worker_thread(
-            self._reserve_dispatch, envelope, write, principal, identity
+            self._reserve_dispatch, envelope, write, principal, identity, published
         )
         if previous is not None:
             return previous
@@ -250,6 +254,7 @@ class AgentWrites:
         write: CliWrite,
         principal: Principal,
         identity: ExecutorIdentity,
+        published: PublishedFiles | None,
     ) -> tuple[AcceptanceReceipt | None, Principal, str, MessageDeliveryMode]:
         with self.store._transaction() as conn:
             # The reservation is the write that admits the delivery: fence its sender here.
@@ -285,7 +290,7 @@ class AgentWrites:
                 {"ticket_id": write.arguments.get("ticket_id")},
                 body,
             )
-            self.store.install_files(envelope.file_dependencies)
+            self.store.require_unchanged_files(envelope, published)
             result: JsonObject = {
                 "target": {"kind": recipient.kind.value, "id": recipient.id},
                 "conversation_id": None,
