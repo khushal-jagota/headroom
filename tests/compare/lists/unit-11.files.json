@@ -507,6 +507,28 @@
       "path": "/files/managers/${manager}/type.ico",
       "status": 200,
       "response_bytes": true
+    },
+    {
+      "kind": "restart"
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/api/artifact-catalog/goal/${goal}",
+      "status": 200,
+      "capture": {
+        "goal_after_refresh": ""
+      }
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/managers/${manager}/seed.txt",
+      "status": 304,
+      "headers": {
+        "If-None-Match": "\"1899437f82d13535a1c18e8d2277d2a8b90c8f3eeba14d95926ca757c4d97e84\""
+      },
+      "response_bytes": true
     }
   ],
   "probes": [
@@ -522,6 +544,7 @@
     "catalog_5",
     "catalog_6",
     "catalog_7",
-    "catalog_8"
+    "catalog_8",
+    "goal_after_refresh"
   ]
 }

@@ -3,7 +3,7 @@ import { lstatSync, realpathSync, statSync } from 'node:fs';
 import type { OwnerKind } from '../contracts.ts';
 export const unsafeEncoded = /%(?:25|2e|2f|5c)/i;
 export function safeId(value: string): void {
-  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error('unsafe owner id');
+  if (!value || /[^A-Za-z0-9_-]/.test(value)) throw new Error('unsafe owner id');
 }
 export function safeRelative(value: string): void {
   if (
