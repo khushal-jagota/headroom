@@ -57,6 +57,7 @@ from planner.runtime.logic.conversation_start_resolution import (
 )
 from planner.tickets.contracts import Ticket
 from planner.tickets.data import create_ticket, read_ticket
+from planner.worker_supervision.contracts import CleanupResult
 from planner.worker_types.store import read_definition, write_definition
 
 _WORKSPACE = Path("/tmp/panels-workspace")
@@ -206,6 +207,9 @@ class _LinkWatchingConversationSystem:
 
     async def discard_held_prompt(self, conversation_id: str, held_prompt_id: str) -> bool:
         return await self._system.discard_held_prompt(conversation_id, held_prompt_id)
+
+    async def recheck_worker_cleanup(self, ticket_id: str) -> CleanupResult:
+        return CleanupResult(True, "No retained Worker processes")
 
     async def retirement_is_confirmed(self, conversation_id: str) -> bool:
         return await self._system.retirement_is_confirmed(conversation_id)

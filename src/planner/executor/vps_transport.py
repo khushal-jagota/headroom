@@ -113,6 +113,7 @@ class VpsExecutor:
     def bind_conversations(self, conversations: SqliteProcessConversationSystem) -> None:
         self.conversations = conversations
         self.runs.conversations = conversations
+        conversations.configure_worker_cleanup_recheck(self.runs.recheck_cleanup)
         self.inbox.conversations = conversations
         self.inbox.agent_writes.conversations = conversations
 

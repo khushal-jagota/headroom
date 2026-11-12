@@ -112,6 +112,7 @@ from planner.notifications.attention import (
 )
 from planner.stalls.contracts import TrackedWaitHandle, TrackedWaitKind
 from planner.stalls.registry import WAITS
+from planner.ticket_workspaces.contracts import WorkspaceIdentity
 
 DEFAULT_BUSY_TIMEOUT_MILLISECONDS = 5000
 
@@ -347,27 +348,33 @@ class ConversationStore:
         # A pre-upgrade turn without custody keeps the existing restart rule.
         # Every child launched by this version records custody before it starts.
         unresolved = tuple(
-            turn for turn in read_unresolved_turns(conn, include_custody_unavailable=True)
+            turn
+            for turn in read_unresolved_turns(conn, include_custody_unavailable=True)
             if turn.conversation_id not in open_runs
             and conn.execute(
                 "SELECT 1 FROM conversation_child_custody WHERE conversation_id=?",
                 (turn.conversation_id,),
-            ).fetchone() is not None
+            ).fetchone()
+            is not None
         )
         self.blocked_local_conversations = {
             turn.conversation_id
             for turn in unresolved
             if turn.conversation_id not in proofs
-            or tuple(conn.execute(
-                "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
-                (turn.conversation_id,),
-            ).fetchone()) != proofs[turn.conversation_id]
+            or tuple(
+                conn.execute(
+                    "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
+                    (turn.conversation_id,),
+                ).fetchone()
+            )
+            != proofs[turn.conversation_id]
             or not child_custody.occurrence_matches(
                 conn, turn.conversation_id, turn.occurrence_id, turn.runtime_epoch
             )
         }
         self._startup_source_proofs = {
-            identity: snapshot for identity, snapshot in proofs.items()
+            identity: snapshot
+            for identity, snapshot in proofs.items()
             if identity not in self.blocked_local_conversations
         }
         # Capture before restart destroys the old live facts. Missing identity is not
@@ -389,7 +396,8 @@ class ConversationStore:
                         and captured.runtime_epoch == turn.runtime_epoch
                     )
                 )
-                for manifest in manifests for captured in manifest.turns
+                for manifest in manifests
+                for captured in manifest.turns
             ):
                 continue
             already = conn.execute(
@@ -407,6 +415,7 @@ class ConversationStore:
                 claim_error_reason="interrupted by a home crash",
                 ended_by="The home process interruption",
             )
+
         # A deployment snapshot does not prove that an independently hosted local
         # child stopped. Keep those immutable captures for the next proven recovery.
         def capture_needs_proof(captured: CapturedTurn) -> bool:
@@ -423,9 +432,11 @@ class ConversationStore:
             )
 
         admitted_manifests = tuple(
-            replace(manifest, turns=tuple(
-                turn for turn in manifest.turns if not capture_needs_proof(turn)
-            )) for manifest in manifests
+            replace(
+                manifest,
+                turns=tuple(turn for turn in manifest.turns if not capture_needs_proof(turn)),
+            )
+            for manifest in manifests
         )
         interruption_data.reconcile(conn, admitted_manifests, self._integer_now())
         ids = conn.execute(
@@ -456,16 +467,43 @@ class ConversationStore:
                 self._insert_rows(conn, conversation_id, payloads)
         commit_without_change_signal(conn)
 
+    async def workspace_conversation_ids(
+        self,
+        ticket_id: str,
+        identity: WorkspaceIdentity,
+    ) -> tuple[str, ...]:
+        """Read only conversations bound to this physical local workspace."""
+
+        def read() -> tuple[str, ...]:
+            conn = self._connect()
+            try:
+                return tuple(
+                    str(row[0])
+                    for row in conn.execute(
+                        "SELECT conversation_id FROM ticket_workspace_conversations "
+                        "WHERE ticket_id=? AND machine_id=? AND workspace_id=?",
+                        (ticket_id, identity.machine_id, identity.workspace_id),
+                    )
+                )
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(read)
+
     async def has_recorded_source(self, conversation_id: str) -> bool:
         def read() -> bool:
             conn = self._connect()
             try:
-                return conn.execute(
-                    "SELECT 1 FROM conversation_child_custody WHERE conversation_id=?",
-                    (conversation_id,),
-                ).fetchone() is not None
+                return (
+                    conn.execute(
+                        "SELECT 1 FROM conversation_child_custody WHERE conversation_id=?",
+                        (conversation_id,),
+                    ).fetchone()
+                    is not None
+                )
             finally:
                 conn.close()
+
         return await asyncio.to_thread(read)
 
     async def recorded_source_retirement_proven(self, conversation_id: str) -> bool:
@@ -482,13 +520,17 @@ class ConversationStore:
                 )
             finally:
                 conn.close()
+
         return await asyncio.to_thread(read)
 
     def settled_recorded_turn(self, conversation_id: str) -> TurnToken | None:
         return self._settled_recorded_turns.get(conversation_id)
 
     async def check_local_child_started(
-        self, conversation_id: str, generation: str, turn_number: int,
+        self,
+        conversation_id: str,
+        generation: str,
+        turn_number: int,
     ) -> bool:
         def read() -> bool:
             conn = self._connect()
@@ -500,15 +542,66 @@ class ConversationStore:
                     "WHERE c.conversation_id=? AND c.generation=? AND c.state='started' "
                     "AND c.host IS NOT NULL AND c.host!='' AND c.pid>0 "
                     "AND c.birth IS NOT NULL AND c.birth!='' AND c.boot IS NOT NULL AND c.boot!='' "
-                    "AND o.turn_number=?", (conversation_id, generation, turn_number),
+                    "AND o.turn_number=?",
+                    (conversation_id, generation, turn_number),
                 ).fetchone()
                 return row is not None
             finally:
                 conn.close()
+
         return await asyncio.to_thread(read)
 
-    async def settle_recorded_source(self, conversation_id: str) -> RecordedSourceSettlement | None:
-        settled = await self._write(self._settle_recorded_source_sync, conversation_id)
+    async def retire_idle_recorded_source(
+        self, conversation_id: str, *, inspect_only: bool = False,
+    ) -> bool:
+        """Retire exact quiet custody even when no foreground turn survives restart."""
+        def retire() -> bool:
+            conn = self._connect()
+            try:
+                source = conn.execute(
+                    "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
+                    (conversation_id,),
+                ).fetchone()
+            finally:
+                conn.close()
+            if source is None:
+                return False
+            proven = child_custody.retirement_row_proven(source)
+            if not proven and not inspect_only and source["state"] == "started":
+                proven = child_custody.stop_recorded_child(LocalChildIdentity(
+                    source["pid"], source["birth"], source["boot"], source["unit"],
+                    source["supervision_record"],
+                ), source["host"])
+            if not proven:
+                return False
+            with self._publication_connection() as (conn, admission):
+                conn.execute("BEGIN IMMEDIATE")
+                current = conn.execute(
+                    "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
+                    (conversation_id,),
+                ).fetchone()
+                active = conn.execute(
+                    "SELECT 1 FROM conversation_lifecycle_facts WHERE conversation_id=? "
+                    "AND ((kind='turn' AND status IN ('intent','running','unknown')) "
+                    "OR (kind='attempt' AND status IN ('intent','unknown')) "
+                    "OR (kind='request' AND status IN ('pending','answering'))) LIMIT 1",
+                    (conversation_id,),
+                ).fetchone()
+                if current is None or tuple(current) != tuple(source) or active is not None:
+                    conn.rollback()
+                    return False
+                child_custody.write_retired(conn, conversation_id, str(source["generation"]))
+                self._apply_signal_mutation(conn, admission)
+                self._commit_rows(conn, ())
+                return True
+        return await self._write(retire)
+
+    async def settle_recorded_source(
+        self, conversation_id: str, *, inspect_only: bool = False,
+    ) -> RecordedSourceSettlement | None:
+        settled = await self._write(
+            self._settle_recorded_source_sync, conversation_id, inspect_only,
+        )
         if settled is None:
             return None
         result, token = settled
@@ -517,7 +610,9 @@ class ConversationStore:
         return result
 
     def _settle_recorded_source_sync(
-        self, conversation_id: str,
+        self,
+        conversation_id: str,
+        inspect_only: bool = False,
     ) -> tuple[RecordedSourceSettlement, TurnToken] | None:
         conn = self._connect()
         try:
@@ -531,14 +626,28 @@ class ConversationStore:
             return None
         result: RecordedSourceSettlement
         if source["state"] == "launch_pending":
+            if source["supervision_record"] is not None:
+                from planner.worker_supervision import inspect_record, stop_record
+
+                check = inspect_record if inspect_only else stop_record
+                if not check(Path(source["supervision_record"])).complete:
+                    return None
             result = "undelivered"
         elif source["state"] == "retired":
             result = "retired"
         else:
             identity = LocalChildIdentity(
-                int(source["pid"]), str(source["birth"]), str(source["boot"]), source["unit"]
+                int(source["pid"]),
+                str(source["birth"]),
+                str(source["boot"]),
+                source["unit"],
+                source["supervision_record"],
             )
-            if not child_custody.stop_recorded_child(identity, source["host"]):
+            proven = (
+                child_custody.retirement_row_proven(source) if inspect_only
+                else child_custody.stop_recorded_child(identity, source["host"])
+            )
+            if not proven:
                 return None
             result = "retired"
         with self._publication_connection() as (conn, admission):
@@ -561,29 +670,57 @@ class ConversationStore:
             number = int(occurrence[0])
             facts = read_facts(conn, conversation_id)
             if result == "undelivered":
-                turn = next((fact for fact in facts if fact.kind is LifecycleKind.turn
-                             and fact.turn_number == number), None)
-                prompt = next((fact for fact in facts if fact.kind is LifecycleKind.attempt
-                               and fact.identity == f"prompt:{number}"), None)
-                if (turn is None or prompt is None
+                turn = next(
+                    (
+                        fact
+                        for fact in facts
+                        if fact.kind is LifecycleKind.turn and fact.turn_number == number
+                    ),
+                    None,
+                )
+                prompt = next(
+                    (
+                        fact
+                        for fact in facts
+                        if fact.kind is LifecycleKind.attempt
+                        and fact.identity == f"prompt:{number}"
+                    ),
+                    None,
+                )
+                if (
+                    turn is None
+                    or prompt is None
                     or turn.status not in {LifecycleStatus.intent, LifecycleStatus.unavailable}
-                    or prompt.status not in {LifecycleStatus.intent, LifecycleStatus.suppressed}):
+                    or prompt.status not in {LifecycleStatus.intent, LifecycleStatus.suppressed}
+                ):
                     conn.rollback()
                     return None
-                settled = tuple(replace(fact, status=(LifecycleStatus.unavailable
-                                if fact is turn else LifecycleStatus.suppressed))
-                                for fact in (turn, prompt))
+                settled = tuple(
+                    replace(
+                        fact,
+                        status=(
+                            LifecycleStatus.unavailable
+                            if fact is turn
+                            else LifecycleStatus.suppressed
+                        ),
+                    )
+                    for fact in (turn, prompt)
+                )
             else:
                 child_custody.write_retired(conn, conversation_id, str(source["generation"]))
                 settled = facts_after_restart(facts, None)
             cancelled = LifecycleFact(
-                LifecycleKind.attempt, f"cancel:recorded:{number}:{source['generation']}",
-                number, LifecycleOperation.cancel, LifecycleStatus.accepted,
+                LifecycleKind.attempt,
+                f"cancel:recorded:{number}:{source['generation']}",
+                number,
+                LifecycleOperation.cancel,
+                LifecycleStatus.accepted,
             )
             self._apply_signal_mutation(conn, admission)
             apply_facts(conn, conversation_id, (*settled, cancelled))
             participate(
-                conn, self._transaction_participant,
+                conn,
+                self._transaction_participant,
                 LifecycleTransition(conversation_id, read_facts(conn, conversation_id)),
                 guard=self._transaction_control_guard,
             )
@@ -593,6 +730,22 @@ class ConversationStore:
             )
             self._commit_rows(conn, ())
         return result, TurnToken(conversation_id, number)
+
+    async def record_child_supervision(
+        self,
+        conversation_id: str,
+        generation: str,
+        path: str,
+    ) -> None:
+        def persist() -> None:
+            conn = self._connect()
+            try:
+                child_custody.write_supervision_record(conn, conversation_id, generation, path)
+                commit_without_change_signal(conn)
+            finally:
+                conn.close()
+
+        await self._write(persist)
 
     async def record_child_custody(
         self,

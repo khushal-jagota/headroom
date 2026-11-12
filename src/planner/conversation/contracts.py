@@ -30,6 +30,7 @@ from typing import Final, Literal, Protocol, TypedDict
 from planner.conversation.message_content import MessageContent
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.contracts import ErrorCode, PlannerError, Principal
+from planner.worker_supervision.contracts import CleanupResult
 
 type ConversationMessageContent = MessageContent | Callable[[str], Awaitable[MessageContent]]
 
@@ -712,6 +713,10 @@ class ConversationSystem(Protocol):
         require_idle: bool,
     ) -> bool:
         """Atomically recheck activity, claim adoption, and close start/send admission."""
+        ...
+
+    async def recheck_worker_cleanup(self, ticket_id: str) -> CleanupResult:
+        """Inspect a Ticket's retained source without a new Worker start."""
         ...
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:

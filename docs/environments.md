@@ -26,7 +26,7 @@ The home uses one platform contract for service identity, app-child launch, proc
 
 Only the Linux native home adapter exists. Other POSIX source servers retain their existing foreground lifecycle. Native updates, preview evidence, and resource collection remain explicitly unavailable there. The later Mac adapter must supply login-session launchd services, crash-orphan cleanup, process and preview evidence, metrics, short socket addresses, and an Apple Silicon home runtime. The existing Mac executor remains separate. No Mac home behavior is proved by Linux checks.
 
-Worker supervision remains a separate subsystem. Its later implementation uses process identities and custody evidence for bounded shutdown and confirmed cleanup. A missing process observation never proves that all descendants stopped. The current Linux Worker units remain in place.
+Worker supervision is one subsystem for home and executor processes. It uses exact identities and durable custody for bounded shutdown and scoped cleanup proof. Unknown cleanup retains a fence. Linux Workers share the home service resource domain, but the adapter removes its protected OOM score before the backend starts. Separate Worker units and slices no longer apply. A missing observation never proves that all descendants stopped.
 
 The contracts and Linux implementation live in `platform_runtime/`. Domain policy stays in lifecycle, preview, conversation, and environment code.
 

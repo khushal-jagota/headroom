@@ -11,9 +11,15 @@ from planner.environments.vps_metrics.config import MetricsConfig
 from planner.environments.vps_metrics.contracts import Collector
 from planner.platform_runtime.contracts import PreviewProcessInspector
 from planner.server_lifecycle.contracts import ProcessIdentity, ShutdownPolicy
+from planner.worker_supervision.contracts import WorkerProcessPrimitives
 
 
 class LinuxPlatformAdapter:
+    def worker_processes(self) -> WorkerProcessPrimitives:
+        from .worker_processes import LinuxWorkerProcesses
+
+        return LinuxWorkerProcesses()
+
     update_unavailable_reason: str | None = None
 
     def read_process_identity(self, pid: int) -> ProcessIdentity | None:

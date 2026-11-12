@@ -10,6 +10,7 @@ class LocalChildIdentity:
     birth: str
     boot: str
     unit: str | None = None
+    supervision_record: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

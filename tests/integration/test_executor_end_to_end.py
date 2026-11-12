@@ -112,6 +112,8 @@ from planner.executor.protocol import (
 )
 from planner.executor.vps_files import InputFile
 from planner.executor.vps_transport import VpsExecutor
+from planner.worker_supervision import WorkerSupervisor
+from planner.worker_supervision.config import RECORD_ROOT_ENV
 
 pytestmark = pytest.mark.usefixtures("executor_transport_home")
 
@@ -138,7 +140,17 @@ class ScriptedNativeChild:
         *,
         vendor_session_cursor: str | None,
     ) -> None:
-        del resolved_start, vendor_session_cursor
+        del vendor_session_cursor
+        assert resolved_start.role_materials is not None
+        environment = dict(resolved_start.role_materials.identity_environment_variables)
+        environment["PLAN_CONVERSATION_ID"] = resolved_start.conversation_id
+        assert RECORD_ROOT_ENV in environment
+        # This adapter scripts transport effects in the test process. It never
+        # spawns an external native process. Record that exact boundary through
+        # the shared owner so restart tests do not invent missing process proof.
+        receipt = await WorkerSupervisor.create(environment, resolved_start.workspace_folder)
+        assert receipt is not None
+        await receipt.cancel_unspawned()
         self.start_count += 1
 
     async def write_prompt(

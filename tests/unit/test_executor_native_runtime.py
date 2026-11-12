@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
@@ -251,7 +252,7 @@ def test_legacy_native_resume_keeps_original_checkout_and_uncommitted_work(
     asyncio.run(run())
 
 
-def test_same_ticket_starts_recheck_occupancy_after_workspace_lock(
+def test_same_ticket_starts_recheck_occupancy_after_ticket_lock(
     native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
 ) -> None:
     """Two starts can both pass the fast check while cleanup holds the local lock."""
@@ -271,7 +272,7 @@ def test_same_ticket_starts_recheck_occupancy_after_workspace_lock(
                 return await super().acquire()
 
         lock = ObservedLock()
-        registry._workspace_lock = lock
+        registry._ticket_start_locks["t_one"] = lock
         await lock.acquire()
         other = replace(
             start,
@@ -1285,5 +1286,313 @@ def test_executor_default_file_refuses_without_provider_construction(
         assert "Mac workspace unavailable" in error
         assert native.starts == 0
         assert retained.read_text() == "retain"
+
+    asyncio.run(run())
+
+
+def test_failed_start_keeps_child_and_ticket_fence_until_cleanup_proves_stop(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stop failure after partial spawn must remain addressable for retirement."""
+
+    async def run() -> None:
+        registry, _, native, start = native_registry
+
+        async def failed_start(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("partial native start")
+
+        async def failed_stop() -> None:
+            raise RuntimeError("cleanup not proven")
+
+        monkeypatch.setattr(native, "start", failed_start)
+        monkeypatch.setattr(native, "stop", failed_stop)
+        outcome = await registry.run(start)
+        assert outcome.disposition is CommandDisposition.uncertain
+        assert outcome.result["error_message"] == "cleanup not proven"
+        assert start.child.child_id in registry._children
+        replacement = replace(
+            start, command_id="replacement", child=replace(start.child, child_id=str(uuid4()))
+        )
+        refused = await registry.run(replacement)
+        assert refused.disposition is not CommandDisposition.succeeded
+        assert start.child.child_id in registry._children
+
+        async def stopped() -> None:
+            return None
+
+        monkeypatch.setattr(native, "stop", stopped)
+        retired = await registry.run(
+            ChildCommand("retire_failed", start.child, ChildOperation.stop, None, StopRun())
+        )
+        assert retired.disposition is CommandDisposition.succeeded
+        assert start.child.child_id not in registry._children
+
+    asyncio.run(run())
+
+
+def test_executor_restart_preserves_legacy_uncertainty_and_fences_new_work(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing modern custody cannot become proof just because a source map exists."""
+    from planner.executor import mac_service
+    from planner.executor.mac_mailbox import CommandJournal
+    from planner.executor.mac_runner import command_owes_outputs
+    from planner.executor.protocol import (
+        CommandResult,
+        MailboxCommand,
+        MailboxPollReply,
+        RecheckCleanup,
+    )
+    from planner.worker_supervision import WorkerSupervisor
+    from planner.worker_supervision.config import RECORD_ROOT_ENV
+    from planner.worker_supervision.contracts import ReconciliationResult
+
+    async def run() -> None:
+        registry, _, native, start = native_registry
+        source = replace(start.child, executor_incarnation="previous-executor")
+        prior = replace(start, command_id="prior_start", child=source)
+        registry.paths.spool.mkdir(parents=True, exist_ok=True)
+        with contextlib.closing(CommandJournal(
+            registry.paths.spool, source.executor_incarnation, outputs_owed=command_owes_outputs,
+        )) as journal:
+            journal.record_poll_reply(MailboxPollReply((MailboxCommand(
+                1, prior.command_id, 1, child_command=prior,
+            ),)), source.executor_incarnation)
+            journal.finish(prior.command_id, CommandResult(prior.command_id, CommandOutcome(
+                prior.command_id, source, CommandDisposition.succeeded, {},
+            )), outputs_owed=False)
+            journal.mark_reported([prior.command_id])
+            journal.shrink_to_tombstones()
+        roots: list[Path] = []
+
+        def reconciled(root: Path) -> ReconciliationResult:
+            roots.append(root)
+            return ReconciliationResult(True, "recorded processes ended")
+
+        monkeypatch.setattr(mac_service, "reconcile", reconciled)
+        service = object.__new__(MacService)
+        service.paths = registry.paths
+        service.runner = registry
+        await service._reconcile_worker_processes()
+        assert roots == [registry.paths.run / "worker-processes"]
+        assert not registry.admission_stopped
+        from planner.executor import cleanup_reconciliation
+
+        def no_legacy_scan(run: Path) -> str | None:
+            raise AssertionError("Ticket inspection scanned unassigned legacy PIDs")
+
+        monkeypatch.setattr(cleanup_reconciliation, "legacy_notice", no_legacy_scan)
+        blocked = await registry.run(start)
+        assert blocked.disposition is not CommandDisposition.succeeded
+        assert native.starts == 0
+
+        assert isinstance(start.arguments, StartRun)
+        resolved = start.arguments.resolved_start
+        assert resolved.role_materials is not None
+        env = dict(resolved.role_materials.identity_environment_variables)
+        env["PLAN_TICKET_ID"] = "t_other"
+        unrelated = replace(start, command_id="unrelated", child=replace(
+            start.child, child_id=str(uuid4()), conversation_id="c_other",
+        ), arguments=replace(start.arguments, resolved_start=replace(
+            resolved, conversation_id="c_other", role_materials=replace(
+                resolved.role_materials, identity_environment_variables=tuple(env.items()),
+            ),
+        )))
+        assert (await registry.run(unrelated)).disposition is CommandDisposition.succeeded
+        await registry.refresh_worker_cleanup(ticket_id="t_other")
+        assert all(item.ticket_id != "t_other" for item in registry.cleanup_uncertainties)
+
+        recheck = ChildCommand(
+            "recheck", start.child, ChildOperation.recheck_cleanup, None,
+            RecheckCleanup(source=source, ticket_id="t_one"),
+        )
+        assert (await registry.run(recheck)).result["complete"] is False
+        receipt = await WorkerSupervisor.create({
+            "PLAN_TICKET_ID": "t_one", "PLAN_CONVERSATION_ID": source.conversation_id,
+            "PLAN_EXECUTOR_CHILD_ID": source.child_id,
+            "PLAN_EXECUTOR_SOURCE_INCARNATION": source.executor_incarnation,
+            RECORD_ROOT_ENV: str(registry.paths.run / "worker-processes"),
+        }, registry.paths.root)
+        assert receipt is not None
+        await receipt.cancel_unspawned()
+        complete = await registry.run(replace(recheck, command_id="fresh_recheck"))
+        assert complete.result["complete"] is True
+        assert registry.cleanup_uncertainties == ()
+        receipt.path.unlink()
+        missing = await registry.run(replace(recheck, command_id="missing_again"))
+        assert not missing.result["complete"]
+
+    asyncio.run(run())
+
+
+def test_legacy_cleanup_runs_once_and_survivors_remain_unassigned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.executor import legacy_worker_cleanup as legacy
+    from planner.executor.runtime_bootstrap import read_record
+
+    run = tmp_path / "legacy-run"
+    run.mkdir()
+    old = run / "agent-processes.json"
+    old.write_text(json.dumps({"processes": [
+        {"process_id": 101, "started": "original"},
+        {"process_id": 102, "started": "replaced"},
+    ]}))
+    states: dict[int, str | None] = {101: "original", 102: "new", 103: "tool"}
+    monkeypatch.setattr(legacy, "_started", lambda pid, deadline: states[pid])
+    monkeypatch.setattr(legacy, "_with_descendants", lambda targets, deadline: [
+        {"process_id": 101, "started": "original"}, {"process_id": 103, "started": "tool"},
+    ])
+    monkeypatch.setattr(legacy, "TERM_SECONDS", 0)
+    signals: list[tuple[int, int]] = []
+
+    def signal(pid: int, signum: int) -> None:
+        receipt = read_record(run / legacy.RECEIPT)
+        assert receipt is not None and receipt["attempted"]
+        signals.append((pid, signum))
+        if pid == 103:
+            states[pid] = None
+
+    monkeypatch.setattr(os, "kill", signal)
+    legacy.migrate_once(run)
+    assert not old.exists()
+    assert {pid for pid, _ in signals} == {101, 103}
+    assert "101" in (legacy.legacy_notice(run) or "")
+    count = len(signals)
+    legacy.migrate_once(run)
+    assert len(signals) == count
+    states[101] = None
+    from planner.executor.runtime_bootstrap import atomic_record
+
+    receipt = read_record(run / legacy.RECEIPT)
+    assert receipt is not None
+    receipt["error"] = "The old snapshot timed out"
+    atomic_record(run / legacy.RECEIPT, receipt)
+    assert legacy.legacy_notice(run) is None
+
+
+def test_healthy_native_source_is_not_an_uncertain_cleanup_alarm(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.executor import cleanup_reconciliation
+    from planner.executor.protocol import RecheckCleanup
+    from planner.worker_supervision.contracts import CleanupUncertainty
+
+    async def run() -> None:
+        registry, _, _, start = native_registry
+        assert (await registry.run(start)).disposition is CommandDisposition.succeeded
+        proof = registry.paths.run / "worker-processes" / ("1" * 32 + ".json")
+        proof.parent.mkdir(parents=True, exist_ok=True)
+        proof.write_text("owned live source supplied by the fake inspector")
+        monkeypatch.setattr(
+            cleanup_reconciliation, "_sources", lambda paths: {start.child: "t_one"},
+        )
+        monkeypatch.setattr(cleanup_reconciliation, "_modern_sources", lambda paths: {start.child})
+        monkeypatch.setattr(cleanup_reconciliation, "_record_source", lambda path: start.child)
+        reason = "Recorded Worker processes remain"
+        def inspected(
+            root: Path, *, healthy_sources: frozenset[tuple[str, str]] = frozenset(),
+            **kwargs: object,
+        ) -> tuple[CleanupUncertainty, ...]:
+            if (start.child.executor_incarnation, start.child.child_id) in healthy_sources:
+                return ()
+            return (CleanupUncertainty("t_one", start.child.conversation_id, proof, reason),)
+
+        monkeypatch.setattr(cleanup_reconciliation, "cleanup_uncertainties", inspected)
+        def uncertainty_reasons() -> list[str]:
+            return [item.reason for item in registry.cleanup_uncertainties]
+
+        await registry.refresh_worker_cleanup()
+        assert uncertainty_reasons() == []
+        # A healthy running source is not stopped. The explicit action must say so.
+        recheck = ChildCommand(
+            "inspect_running", start.child, ChildOperation.recheck_cleanup, None,
+            RecheckCleanup(source=start.child, ticket_id="t_one"),
+        )
+        assert not (await registry.run(recheck)).result["complete"]
+        reason = "Worker cleanup evidence unavailable"
+        await registry.refresh_worker_cleanup()
+        assert uncertainty_reasons() == []
+        reason = "Recorded Worker processes remain"
+        registry._retiring_children.add(start.child.child_id)
+        await registry.refresh_worker_cleanup()
+        assert uncertainty_reasons() == [reason]
+
+    asyncio.run(run())
+
+
+def test_ticket_inspection_does_not_hold_other_starts_or_workspace_retirement(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A slow OS inspection for one Ticket must not hold the physical workspace mutex."""
+    from planner.executor import cleanup_reconciliation
+    from planner.executor.cleanup_reconciliation import ExecutorCleanupSnapshot
+    from planner.executor.protocol import WorkerCleanupUncertainty
+    from planner.ticket_workspaces.contracts import RETENTION_SECONDS, WorkspaceState
+    from planner.ticket_workspaces.filesystem import prepare_workspace
+
+    async def run() -> None:
+        registry, _, native, start = native_registry
+        entered, release = threading.Event(), threading.Event()
+        inspected: list[str | None] = []
+
+        def snapshot(
+            paths: ExecutorPaths, *, ticket_id: str | None = None, **kwargs: object,
+        ) -> ExecutorCleanupSnapshot:
+            inspected.append(ticket_id)
+            if ticket_id == "t_one":
+                entered.set()
+                if not release.wait(5):
+                    raise TimeoutError("The test did not release the Ticket inspection")
+            return ExecutorCleanupSnapshot((), {}, None)
+
+        monkeypatch.setattr(cleanup_reconciliation, "snapshot_cleanup", snapshot)
+        retained = WorkerCleanupUncertainty("t_retained", "c_retained", "Still unknown")
+        registry.cleanup_uncertainties = (retained,)
+        registry.legacy_cleanup_notice = "Unassigned legacy PID 123"
+        first = asyncio.create_task(registry.run(start))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            assert isinstance(start.arguments, StartRun)
+            resolved = start.arguments.resolved_start
+            assert resolved.role_materials is not None
+            env = dict(resolved.role_materials.identity_environment_variables)
+            env["PLAN_TICKET_ID"] = "t_other"
+            other = replace(start, command_id="other-start", child=replace(
+                start.child, child_id=str(uuid4()), conversation_id="c_other",
+            ), arguments=replace(start.arguments, resolved_start=replace(
+                resolved, conversation_id="c_other", role_materials=replace(
+                    resolved.role_materials, identity_environment_variables=tuple(env.items()),
+                ),
+            )))
+            outcome = await asyncio.wait_for(registry.run(other), 2)
+            assert outcome.disposition is CommandDisposition.succeeded
+            assert native.starts == 1
+            folder = registry.paths.artifacts / "t_00000001"
+            prepare_workspace(folder, None, "t_00000001")
+
+            async def authorize(*args: object) -> bool:
+                return True
+
+            registry._retire_workspace = authorize
+            await asyncio.wait_for(registry.cleanup_workspaces(
+                (WorkspaceState("t_00000001", 0, True),), RETENTION_SECONDS + 1,
+            ), 2)
+            assert not folder.exists()
+            assert registry.cleanup_uncertainties == (retained,)
+            assert inspected == ["t_one", "t_other"]
+        finally:
+            release.set()
+            await first
+        assert native.starts == 2
+        assert registry.cleanup_uncertainties == (retained,)
+        assert registry.legacy_cleanup_notice == "Unassigned legacy PID 123"
+        await registry.refresh_worker_cleanup()
+        assert registry.legacy_cleanup_notice is None
+        assert inspected == ["t_one", "t_other", None]
 
     asyncio.run(run())

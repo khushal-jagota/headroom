@@ -7,7 +7,8 @@ for one child run strictly in mailbox order; different children run side by side
 stop skips its child's queue, and a model list has no child. The poll loop records a
 reply and polls again at once: it never waits for a command to run. Results go back on
 their own route, retried until the VPS records or rejects them. A reported command
-shrinks to a tombstone that is kept, so a restored mailbox never runs it twice.
+shrinks traffic to a retained tombstone. Start and stop payloads retain exact cleanup
+ownership and proof, so a restored mailbox never runs work twice.
 """
 
 from __future__ import annotations
@@ -294,15 +295,22 @@ class CommandJournal:
     def shrink_to_tombstones(self) -> None:
         """Shrink each finished, reported, published row to a tombstone: its command_id,
         sequence and incarnation, and the result that re-answers it (the child and its
-        outcome; a model list is dropped). The command itself is dropped. Rows are never
-        deleted, so a command a restored VPS mailbox serves again is never run again."""
+        outcome; a model list is dropped). Start and stop commands retain their source
+        ownership and cleanup proof. Other command payloads are dropped. Rows are never
+        deleted, so a restored mailbox never runs a recorded command again."""
         with self._lock, self._db:
             rows = self._db.execute(
-                "SELECT command_id,result_json FROM commands WHERE phase='finished' "
+                "SELECT command_id,result_json,mailbox_command_json FROM commands "
+                "WHERE phase='finished' "
                 "AND result_reported=1 AND outputs_published=1 "
                 "AND length(mailbox_command_json)>0"
             ).fetchall()
-            for command_id, raw in rows:
+            for command_id, raw, command_raw in rows:
+                command = self._command(command_raw).child_command
+                if command is not None and command.operation in {
+                    ChildOperation.start, ChildOperation.stop,
+                }:
+                    continue
                 result = self._result(raw)
                 kept = CommandResult(result.command_id, child_outcome=result.child_outcome)
                 self._db.execute(

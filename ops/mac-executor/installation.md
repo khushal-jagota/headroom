@@ -137,12 +137,12 @@ PY
 
 Check that the resolved commit equals the reviewed full SHA.
 Record the constants printed from the exact candidate source; they govern compatibility.
-At the time of writing the candidate uses wire protocol 22, outbox format 5 and
+The Worker supervision candidate uses wire protocol 24, outbox format 5 and
 command journal format 1. Both Mac and VPS must match the candidate's wire protocol
 before work, and the existing `spool/outbox.sqlite3` and `spool/commands.sqlite3` must
 pass the candidate's SQLite version checks below. A missing command journal is created
 at start; a previous runtime ignores it. Plan the VPS and Mac updates together when the
-protocol changes. Protocol 22 replaced the WebSocket of protocol 21: a protocol-21 Mac
+protocol changes. A protocol-23 Mac
 is refused with "Mac needs update" and can still update itself through the update route.
 
 Each new native Worker start installs the canonical database skills into the selected provider's normal skills home.
@@ -459,17 +459,21 @@ permission and question callbacks. Check that an ordinary Worker reads canonical
 writes an artifact through `PLAN_TICKET_FILES_DIR`, and that the served Ticket link opens it.
 Check a short network loss and a VPS restart against
 [the restart rules](../../docs/executor.md).
-A Mac service restart must also establish that launchd ends its provider processes;
-scripted tests cannot prove that host behavior. As a backstop, the executor records its
-agent processes in `$EXECUTOR_ROOT/run/agent-processes.json`; at its next start, before
-its first lease, it sends SIGTERM and then, after 10 seconds, SIGKILL to each recorded
-process whose start time still matches. Mac application previews remain
+A Mac service restart must also establish what happens to its provider processes.
+Scripted Linux tests cannot prove that host behavior. The shared Worker supervisor
+records per-Worker process ownership under `$EXECUTOR_ROOT/run/worker-processes` and
+reconciles it before the first lease. Unknown cleanup fences the affected Ticket, and the lease reports its reason. Unrelated Tickets continue. On macOS, signals to recorded survivors require an immediate PID and microsecond
+birth check. A small check-to-signal race remains. Unknown cleanup stays visible. A tool
+that detaches before observation can escape. The first upgraded start attempts cleanup from the older `agent-processes.json`
+once under its original recorded-start rule, then removes that old file. Any survivor
+becomes an unassigned PID notice. It does not fence a Ticket or authorize another signal.
+Mac application previews remain
 unavailable. Retain evidence separately from production and preserve pending bytes.
 This runbook does not authorize changing application routes or account policy.
 
 Code paths: `src/planner/environments/mac_executor.py`, `src/planner/executor/cli.py`,
 `src/planner/executor/mac_outbox.py`, `src/planner/executor/mac_mailbox.py`,
-`src/planner/executor/mac_agent_processes.py`, `requirements-build.txt`, `requirements-executor.txt`,
+`src/planner/worker_supervision/`, `requirements-build.txt`, `requirements-executor.txt`,
 `agent_backends/package-lock.json`.
 
 ## Narrow permission setup and native evidence

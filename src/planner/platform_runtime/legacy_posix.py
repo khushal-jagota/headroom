@@ -17,6 +17,7 @@ from planner.platform_runtime.linux.adapter import LinuxPlatformAdapter
 from planner.previews.contracts import PreviewError
 from planner.previews.contracts import ProcessIdentity as PreviewIdentity
 from planner.server_lifecycle.contracts import ProcessIdentity, ShutdownPolicy
+from planner.worker_supervision.contracts import WorkerProcessPrimitives
 
 
 class UnavailablePreviewInspector:
@@ -39,6 +40,15 @@ class UnavailableMetricsCollector:
 
 class LegacyPosixPlatformAdapter(LinuxPlatformAdapter):
     """Retain portable lifecycle operations and refuse Linux-only capabilities."""
+
+    def worker_processes(self) -> WorkerProcessPrimitives:
+        import sys
+
+        if sys.platform != "darwin":
+            raise UnsupportedPlatformError("Worker process supervision requires Linux or macOS")
+        from planner.platform_runtime.darwin.worker_processes import DarwinWorkerProcesses
+
+        return DarwinWorkerProcesses()
 
     update_unavailable_reason = "Home updates are unavailable on this operating system."
 

@@ -58,6 +58,7 @@ from planner.conversation.message_content import (
 )
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.contracts import Principal
+from planner.worker_supervision.contracts import CleanupResult
 
 
 class InMemoryConversationObservationKind(StrEnum):
@@ -640,6 +641,9 @@ class InMemoryConversationSystem:
             )
             return True
         return False
+
+    async def recheck_worker_cleanup(self, ticket_id: str) -> CleanupResult:
+        return CleanupResult(True, "No retained Worker processes")
 
     async def retirement_is_confirmed(self, conversation_id: str) -> bool:
         state = self._conversations.get(conversation_id)

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from planner.platform_runtime.targets import RuntimeTarget
     from planner.previews.contracts import ProcessIdentity as PreviewIdentity
     from planner.server_lifecycle.contracts import ProcessIdentity, ShutdownPolicy
+    from planner.worker_supervision.contracts import WorkerProcessPrimitives
 
 
 class UnsupportedPlatformError(RuntimeError):
@@ -26,6 +27,8 @@ class PreviewProcessInspector(Protocol):
 
 
 class PlatformAdapter(Protocol):
+    def worker_processes(self) -> WorkerProcessPrimitives: ...
+
     @property
     def update_unavailable_reason(self) -> str | None: ...
 
@@ -78,6 +81,7 @@ class RuntimeRequirements(Protocol):
 
 class HomeRuntime(Protocol):
     target: RuntimeTarget
+
     def parse_contract(self, value: object) -> RuntimeRequirements: ...
     def complete_private_runtime(self, app_root: Path) -> RuntimeRequirements: ...
     def verify_host(self, contract: RuntimeRequirements, *, state: Path) -> None: ...

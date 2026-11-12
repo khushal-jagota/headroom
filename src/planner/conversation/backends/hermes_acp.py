@@ -160,6 +160,8 @@ from planner.conversation.message_files import (
     MessageFileMissing,
 )
 from planner.conversation.worker_scratch import WorkerScratch
+from planner.worker_supervision import WorkerCleanupError, WorkerSupervisor
+from planner.worker_supervision.config import NATIVE_PHASE_SECONDS
 
 LOGGER = logging.getLogger("planner.conversation.backends.hermes_acp")
 
@@ -345,6 +347,9 @@ def _child_environment(
     role_materials = resolved_start.role_materials
     if role_materials is not None:
         environment.update(role_materials.identity_environment_variables)
+    if (role_materials is not None
+            and dict(role_materials.identity_environment_variables).get("PLAN_TICKET_ID")):
+        environment["PLAN_CONVERSATION_ID"] = resolved_start.conversation_id
     return environment
 
 
@@ -386,7 +391,9 @@ class HermesAcpBackendChild:
         self._sink = event_sink
         self._message_files = message_files
         self._processes = AsyncExitStack()
+        self._native_process: asyncio.subprocess.Process | None = None
         self._worker_scratch: WorkerScratch | None = None
+        self._worker_supervisor: WorkerSupervisor | None = None
         self._connection: ClientSideConnection | None = None
         self._session_id: str | None = None
         self._session_configuration_options: tuple[Any, ...] = ()
@@ -732,6 +739,7 @@ class HermesAcpBackendChild:
                     await task
         self._standard_error_reader = None
         self._child_watcher = None
+        await self._stop_worker()
         connection = self._connection
         self._connection = None
         if connection is not None:
@@ -739,9 +747,42 @@ class HermesAcpBackendChild:
             # shut down has no use for the complaint.
             with suppress(Exception):
                 await connection.close()
-        await self._processes.aclose()
+        if self._worker_supervisor is None:
+            await self._processes.aclose()
         if self._worker_scratch is not None:
             self._worker_scratch.close()
+
+    async def _stop_worker(self) -> None:
+        supervisor = self._worker_supervisor
+        if supervisor is not None:
+            result = await supervisor.stop(native_stop=self._stop_native_process)
+            if not result.complete:
+                raise WorkerCleanupError(result.reason)
+
+    async def _stop_native_process(self) -> None:
+        process = self._native_process
+        # ACP's EOF and TERM grace periods exhaust the shared callback budget
+        # before its KILL phase. Retain the exact handle and escalate here first.
+        if process is not None and process.returncode is None:
+            if process.stdin is not None:
+                process.stdin.close()
+            for action in (None, process.terminate, process.kill):
+                if process.returncode is not None:
+                    break
+                if action is not None:
+                    try:
+                        action()
+                    except ProcessLookupError:
+                        pass
+                try:
+                    await asyncio.wait_for(process.wait(), NATIVE_PHASE_SECONDS)
+                except TimeoutError:
+                    continue
+            if process.returncode is None:
+                raise WorkerCleanupError(
+                    "The owned Hermes process did not stop before its deadline"
+                )
+        await self._processes.aclose()
 
     # --- starting -----------------------------------------------------------------------
 
@@ -755,20 +796,47 @@ class HermesAcpBackendChild:
         role_identity = (dict(resolved_start.role_materials.identity_environment_variables)
                     if resolved_start.role_materials else {})
         if role_identity.get("PLAN_TICKET_ID"):
-            self._worker_scratch = WorkerScratch(environment)
+            self._worker_supervisor = await WorkerSupervisor.create(
+                environment, resolved_start.workspace_folder
+            )
+            try:
+                self._worker_scratch = WorkerScratch(environment)
+            except BaseException:
+                if self._worker_supervisor is not None:
+                    await self._worker_supervisor.cancel_unspawned()
+                raise
             environment = self._worker_scratch.environment
+            if self._worker_supervisor is not None:
+                self._worker_supervisor.environment.update(environment)
+        supervisor = self._worker_supervisor
+        if supervisor is not None:
+            environment = supervisor.environment
+            reporter = getattr(self._sink, "record_local_child_supervision", None)
+            if reporter is not None:
+                try:
+                    await reporter(str(supervisor.path))
+                except BaseException:
+                    await supervisor.cancel_unspawned()
+                    raise
         try:
+            argv = launch.argv if supervisor is None else supervisor.argv(launch.argv)
             reader, writer, process = await self._processes.enter_async_context(
                 spawn_stdio_transport(
-                    launch.argv[0],
-                    *launch.argv[1:],
+                    argv[0],
+                    *argv[1:],
                     env=environment,
                     cwd=resolved_start.workspace_folder,
                     limit=CHILD_OUTPUT_LINE_LIMIT_BYTES,
                 )
             )
         except OSError as would_not_spawn:
+            if supervisor is not None:
+                await supervisor.cancel_unspawned()
             raise BackendSpawnFailed(str(would_not_spawn)) from would_not_spawn
+        self._native_process = process
+        if supervisor is not None:
+            await supervisor.spawned(process.pid)
+            await supervisor.started(process.pid)
         if process.stderr is not None:
             self._standard_error_reader = asyncio.create_task(
                 self._read_standard_error(process.stderr),
@@ -794,7 +862,8 @@ class HermesAcpBackendChild:
             raise BackendSpawnFailed(str(would_not_come_up)) from would_not_come_up
         reporter = getattr(self._sink, "record_local_child_custody", None)
         if reporter is not None:
-            identity = process_identity(process.pid)
+            identity = (process_identity(process.pid) if supervisor is None
+                        else supervisor.identity())
             if identity is not None:
                 await reporter(identity)
         return connection
@@ -807,7 +876,10 @@ class HermesAcpBackendChild:
                 cwd=str(resolved_start.workspace_folder), mcp_servers=[]
             )
         except Exception as would_not_create:
-            raise SessionLoadFailed(str(would_not_create)) from would_not_create
+            detail = str(would_not_create)
+            if isinstance(would_not_create, RequestError) and would_not_create.data is not None:
+                detail += f": {would_not_create.data}"
+            raise SessionLoadFailed(detail) from would_not_create
         self._session_id = response.session_id
         self._session_configuration_options = tuple(response.config_options or ())
         self._session_model = _current_model_from_metadata(response.field_meta)
@@ -1465,6 +1537,12 @@ class HermesAcpBackendChild:
         would wait forever instead of being told it did not.
         """
         await process.wait()
+        try:
+            await self._stop_worker()
+        except WorkerCleanupError as error:
+            self._wire_broken = True
+            self._give_up_on_unsent_permission_answers(str(error))
+            return
         if self._worker_scratch is not None:
             self._worker_scratch.close()
         self._wire_broken = True

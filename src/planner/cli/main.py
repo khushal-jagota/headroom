@@ -1369,6 +1369,19 @@ def ticket_history(
     http.emit(data, as_json, f"{tid} {len(data['events'])} history events")
 
 
+@ticket.command("recheck-worker-cleanup")
+@click.argument("ticket_id")
+@json_option
+def ticket_recheck_worker_cleanup(ticket_id: str, as_json: bool) -> None:
+    """Recheck exact Worker cleanup without starting work or discarding evidence."""
+    data = http.send(
+        "POST", f"/api/tickets/{ticket_id}/recheck-worker-cleanup",
+        as_json=as_json, json_body={},
+    )
+    state = "complete" if data["complete"] else "not proven"
+    http.emit(data, as_json, f"Worker cleanup {state}: {data['reason']}")
+
+
 @ticket.command("restart-worker")
 @click.argument("ticket_id")
 @click.option("--backend", default=None, help="Registered employee backend to restart on.")
@@ -2086,6 +2099,7 @@ _PUBLIC_COMMAND_HELP = {
     ("ticket", "proposal"): "Submit, accept, or revise the current Ticket proposal.",
     ("ticket", "complete"): "Complete one user-owned Stage directly.",
     ("ticket", "history"): "Read the current Worker conversation for one Ticket.",
+    ("ticket", "recheck-worker-cleanup"): "Recheck exact Worker cleanup without starting work.",
     (
         "ticket",
         "restart-worker",

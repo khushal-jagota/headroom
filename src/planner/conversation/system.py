@@ -28,6 +28,7 @@ its own prompt.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import sqlite3
 import time
@@ -37,6 +38,7 @@ from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import partial
+from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Final, Literal
 from uuid import uuid4
 
@@ -182,6 +184,8 @@ from planner.core.contracts import ErrorCode, PlannerError, Principal, Principal
 from planner.core.db import connect
 from planner.core.task_settlement import run_on_worker_thread
 from planner.execution_identity import ChildReference
+from planner.ticket_workspaces.contracts import WorkspaceIdentity
+from planner.worker_supervision.contracts import CleanupResult
 
 LOGGER = logging.getLogger("planner.conversation")
 
@@ -625,6 +629,9 @@ class SqliteProcessConversationSystem:
         self._conversations: dict[str, _ConversationState] = {}
         self._conversations_lock = asyncio.Lock()
         self.workspace_admission = WorkspaceAdmission()
+        self._worker_cleanup_recheck: Callable[
+            [ChildReference, str], Awaitable[CleanupResult]
+        ] | None = None
         self._idle_child_janitor: asyncio.Task[None] | None = None
         self._signal = store.signal_coordinator
         retained_runs = tuple(
@@ -714,6 +721,35 @@ class SqliteProcessConversationSystem:
             idle=lambda: self.workspace_activity() == "idle",
             require_idle=require_idle,
         )
+
+    async def retire_local_workspace(
+        self,
+        ticket_id: str,
+        identity: WorkspaceIdentity,
+        operation: Callable[[], Path | str],
+    ) -> Path | str:
+        """Exclude starts until exact local children stop and the folder detaches."""
+        if not self.workspace_admission.claim(
+            lambda: None, idle=lambda: True, require_idle=True
+        ):
+            return "Workspace admission is busy or closed"
+
+        async def owned() -> Path | str:
+            try:
+                ids = await self._store.workspace_conversation_ids(ticket_id, identity)
+                for conversation_id in ids:
+                    await self.kill(conversation_id)
+                    if not await self.retirement_is_confirmed(conversation_id):
+                        return "Local child retirement is not proven"
+                return await run_on_worker_thread(operation)
+            except Exception:
+                LOGGER.exception("Local workspace retirement failed")
+                return "Local child retirement failed"
+            finally:
+                self.workspace_admission.reopen()
+
+        # A canceled cleanup caller cannot reopen admission while detach still runs.
+        return await asyncio.shield(asyncio.create_task(owned()))
 
     async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
         state = await self._conversation_state(conversation_id)
@@ -1180,6 +1216,128 @@ class SqliteProcessConversationSystem:
                 recording_receipt=recording_receipt,
             )
 
+    def configure_worker_cleanup_recheck(
+        self, callback: Callable[[ChildReference, str], Awaitable[CleanupResult]],
+    ) -> None:
+        self._worker_cleanup_recheck = callback
+
+    async def recheck_worker_cleanup(self, ticket_id: str) -> CleanupResult:
+        """Fresh proof clears only this Ticket. This action never starts native work."""
+        def read() -> tuple[
+            str, str | None, tuple[str, ...], tuple[ChildReference, ...], bool,
+        ] | None:
+            with contextlib.closing(connect(self._store._db_path)) as conn:
+                row = conn.execute(
+                    "SELECT machine_id,conversation_id FROM tickets WHERE id=?", (ticket_id,),
+                ).fetchone()
+                if row is None:
+                    return None
+                ids = tuple(str(item[0]) for item in conn.execute(
+                    "SELECT w.conversation_id FROM ticket_workspace_conversations w "
+                    "JOIN conversation_child_custody c USING(conversation_id) WHERE w.ticket_id=?",
+                    (ticket_id,),
+                ))
+                from planner.execution_configuration import PROTOCOL_VERSION
+                from planner.executor.configuration import LEASE_CONTINUITY_SECONDS
+                from planner.executor.protocol import LeaseRequest, type_adapter
+
+                presence = conn.execute(
+                    "SELECT lease_json,last_lease_at_ms FROM mac_executor_presence "
+                    "WHERE singleton=1"
+                ).fetchone()
+                lease = None
+                fresh = False
+                if presence is not None and presence[0] is not None:
+                    with contextlib.suppress(ValueError):
+                        lease = type_adapter(LeaseRequest).validate_json(presence[0])
+                        fresh = (
+                            lease.identity.protocol_version == PROTOCOL_VERSION
+                            and presence[1] is not None
+                            and int(self._unix_time_now() * 1000) - int(presence[1])
+                            <= LEASE_CONTINUITY_SECONDS * 1000
+                        )
+                uncertain_conversations = {
+                    item.conversation_id
+                    for item in (() if lease is None else lease.cleanup_uncertainties)
+                    if item.ticket_id == ticket_id
+                }
+                historical = tuple(ChildReference(str(item[0]), str(item[1]), str(item[2]))
+                    for item in conn.execute(
+                        "SELECT executor_incarnation,child_id,conversation_id "
+                        "FROM executor_child_assignments WHERE principal_kind='ticket' "
+                        "AND principal_id=?", (ticket_id,),
+                    ) if str(item[2]) in uncertain_conversations or "" in uncertain_conversations)
+                return str(row[0]), row[1], ids, historical, fresh and not uncertain_conversations
+        ticket = await run_on_worker_thread(read)
+        if ticket is None:
+            return CleanupResult(False, "The Ticket is unavailable")
+        machine_id, conversation_id, local_ids, historical, fresh = ticket
+        if machine_id != HOME_MACHINE_ID:
+            state = (
+                None if conversation_id is None else await self._conversation_state(conversation_id)
+            )
+            retained = None if state is None else self._retained_run(state)
+            source = (
+                retained.reference if retained is not None
+                else None if state is None else state.retained_child_reference
+            )
+            sources = tuple(dict.fromkeys((*historical, *((source,) if source else ()))))
+            if not sources:
+                return CleanupResult(
+                    fresh,
+                    "No retained Worker source needs cleanup" if fresh
+                    else "Fresh executor cleanup evidence is unavailable",
+                )
+            if self._worker_cleanup_recheck is None:
+                return CleanupResult(False, "The executor cleanup checker is unavailable")
+            for recorded in sources:
+                result = await self._worker_cleanup_recheck(recorded, ticket_id)
+                if not result.complete:
+                    return result
+            return CleanupResult(True, "Recorded Worker cleanup is complete")
+        if conversation_id is not None and conversation_id not in local_ids:
+            local_ids += (conversation_id,)
+        for local_id in local_ids:
+            state = await self._conversation_state(local_id)
+            if state is None:
+                return CleanupResult(False, "The recorded conversation is unavailable")
+            async with state.lock:
+                if local_id in self._store.blocked_local_conversations:
+                    settlement = await self._store.settle_recorded_source(
+                        local_id, inspect_only=True,
+                    )
+                    if settlement is None:
+                        return CleanupResult(False, "The recorded Worker cleanup is not proven")
+                    state.local_child_retirement_proven = settlement == "retired"
+                    state.local_preparation_cancelled = settlement == "undelivered"
+                    state.child_is_quarantined = False
+                    token = self._store.settled_recorded_turn(local_id)
+                    if token is not None:
+                        await run_on_worker_thread(
+                            self.start_admission.reject, self._store._db_path, token,
+                        )
+                    continue
+                if state.running_turn is not None or state.reserved_turn is not None:
+                    return CleanupResult(False, "The Worker still has an active turn")
+                if not await self._store.has_recorded_source(local_id):
+                    if state.child is not None or state.child_is_quarantined:
+                        return CleanupResult(
+                            False, "The retained Worker has no exact cleanup evidence"
+                        )
+                    continue
+                if not await self._store.retire_idle_recorded_source(local_id, inspect_only=True):
+                    return CleanupResult(
+                        False, "Worker cleanup is not proven. "
+                        "Stop the old process and recheck cleanup."
+                    )
+                if state.child is not None:
+                    await self._discard_child(state, state.child)
+                    if state.child is not None or state.child_is_quarantined:
+                        return CleanupResult(False, "The retained Worker cleanup is not proven")
+                state.local_child_retirement_proven = True
+                state.child_is_quarantined = False
+        return CleanupResult(True, "Recorded Worker cleanup is complete")
+
     async def retirement_is_confirmed(self, conversation_id: str) -> bool:
         """Require an actual cleanup receipt or proof that no source ever started."""
         state = await self._conversation_state(conversation_id)
@@ -1246,6 +1404,14 @@ class SqliteProcessConversationSystem:
                     await run_on_worker_thread(
                         self.start_admission.reject, self._store._db_path, token
                     )
+            if (state.child is None and not state.local_preparation_cancelled
+                    and not state.local_child_retirement_proven
+                    and await self._store.has_recorded_source(conversation_id)):
+                if not await self._store.retire_idle_recorded_source(conversation_id):
+                    raise PlannerError(
+                        ErrorCode.retry_later, "The recorded Worker cleanup is not proven."
+                    )
+                state.local_child_retirement_proven = True
             if state.child_is_quarantined:
                 raise PlannerError(
                     ErrorCode.retry_later,
@@ -5925,6 +6091,11 @@ class _CoreBackendEventSink:
         self._system = system
         self._state = state
         self.generation = uuid4().hex
+
+    async def record_local_child_supervision(self, path: str) -> None:
+        await self._system._store.record_child_supervision(
+            self._state.record.conversation_id, self.generation, path
+        )
 
     async def record_local_child_custody(self, identity: LocalChildIdentity) -> None:
         await self._system._store.record_child_custody(

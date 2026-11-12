@@ -24,7 +24,7 @@ The Mac opens every request. Each is a plain HTTPS request. No work depends on a
 
 ## Which work goes to the Mac
 
-Each Ticket names a stable machine destination (see [Tickets](tickets.md)). The home destination keeps direct execution. Only the original Mac destination uses the configured executor ID. Without that executor, its Tickets wait. They never run on the home. The Chief and Managers stay on the home. Legacy `vps` and `macos` values remain aliases for these original two destinations. The executor wire protocol stays at 23.
+Each Ticket names a stable machine destination (see [Tickets](tickets.md)). The home destination keeps direct execution. Only the original Mac destination uses the configured executor ID. Without that executor, its Tickets wait. They never run on the home. The Chief and Managers stay on the home. Legacy `vps` and `macos` values remain aliases for these original two destinations. The executor wire protocol is 24. Release the home and Mac executor together. A protocol-23 executor is refused, but its update remains available.
 
 Settings → Machines shows each destination’s availability, current Worker count, and Tickets that wait while it is away. Counts use existing conversation signals and Ticket ownership. An away machine has unknown activity. Display names, four icons, and eight colors do not enter routing or authority checks.
 
@@ -93,7 +93,9 @@ One installation lives in the owner's normal account:
 - **A LaunchAgent** starts at login and restarts the service after a crash.
 - **The data folder** holds the outbox, the command journal, Ticket files, skills, the workspace, and logs. Updates never replace it.
 
-Agent processes run at a lower priority than the service, so builds cannot starve it. At start, the service ends any agent processes its previous run left, and the tools they started, so a replaced Mac process's agents are really gone.
+The executor uses the same Worker supervisor as the home. It records exact process ownership, lowers priority, and reconciles old records before new work. Unknown cleanup retains the affected Ticket fence. Unrelated Tickets can continue. The lease reports the reason and any older record that cannot identify a Ticket. An unobserved detached tool can escape, so cleanup never promises that every descendant stopped. Native Mac checks establish its platform limits. On macOS, signals to recorded survivors follow an immediate PID and microsecond birth check. A small check-to-signal race remains. Unknown cleanup retains its fence.
+
+The old aggregate `agent-processes.json` keeps its accepted old-version rule once. The first upgraded start attempts its matched-process cleanup, then removes the file. A survivor stays visible as unassigned PID evidence and fences no Ticket. Later inspection clears that notice after the process ends. New records use Ticket-specific cleanup proof.
 
 **Updates.** One press of Update covers both machines ([Deployment](deployment.md#the-card-and-the-mac)). If the new runtime does not lease in time, the supervisor reverts. The VPS accepts one protocol version; an older Mac is refused with "Mac needs update".
 

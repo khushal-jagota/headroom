@@ -1,6 +1,8 @@
 """Workspace ownership shared by the server and local executors."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 RETENTION_SECONDS = 7 * 24 * 60 * 60
 WORKTREE_DIRECTORY = "worktree"
@@ -24,3 +26,8 @@ class WorkspaceIdentity:
 class CleanupResult:
     removed: list[str] = field(default_factory=list)
     skipped: list[dict[str, str]] = field(default_factory=list)
+
+
+type WorkspaceRetirementOperation = Callable[
+    [str, WorkspaceIdentity, Callable[[], Path | str]], Path | str
+]
