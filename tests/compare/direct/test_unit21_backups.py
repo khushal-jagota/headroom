@@ -22,7 +22,13 @@ from tests.compare.direct.unit21_schema_seed import ARTIFACT, build_seed
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 from tests.unit.test_database_backups import _legacy_snapshot, _seed_database, _seed_managed_tree
 
+from planner.core.contracts import OWNER_PRINCIPAL
+from planner.core.db import connect, create_schema
 from planner.environments import backup
+from planner.tickets import data as tickets_data
+from planner.tickets.contracts import Ticket
+from planner.tickets.views import ticket_json
+from planner.worker_types.configuration import load_worker_runtime_definitions
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -89,6 +95,20 @@ def _records(database: Path) -> list[str]:
     with closing(sqlite3.connect(database)) as connection:
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         return [row[0] for row in connection.execute("SELECT value FROM records ORDER BY value")]
+
+
+def _ticket_payload(ticket: Ticket) -> dict[str, Any]:
+    return {
+        **ticket_json(ticket, ticket.updated_at),
+        "worker_step_claim": ticket.worker_step_claim.value,
+        "worker_step_claim_revision": ticket.worker_step_claim_revision,
+        "pending_proposal_revision": ticket.pending_proposal_revision,
+    }
+
+
+def _ticket(database: Path, identity: str) -> dict[str, Any]:
+    with closing(connect(str(database))) as connection:
+        return _ticket_payload(tickets_data.read_ticket(connection, identity))
 
 
 def test_unit21_fresh_schema_bootstrap_is_complete_unique_and_atomic(
@@ -159,28 +179,48 @@ def test_unit21_fresh_schema_bootstrap_is_complete_unique_and_atomic(
 
 
 def test_unit21_backup_v2_cross_language_wal_roots_and_retention(
-    tmp_path: Path, request: pytest.FixtureRequest
+    tmp_path: Path, request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Native online images and root copies must survive both implementations."""
     started = time.perf_counter()
     source = tmp_path / "source/database.sqlite"
-    _seed_database(source)
+    source.parent.mkdir()
+    for name, value in create_synthetic_homes(tmp_path).items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("PLAN_DB_PATH", str(source))
+    now = 1792231200
+    with closing(connect(str(source))) as connection:
+        create_schema(connection)
+        ticket = tickets_data.create_ticket(
+            connection,
+            title="Recover this Ticket",
+            brief="The saved brief must survive.",
+            principal=OWNER_PRINCIPAL,
+            now=now,
+            title_max_chars=200,
+            worker_type="coding",
+        )
     _seed_managed_tree(source.parent, "canonical")
     (source.parent / "skills/dangling").symlink_to("missing")
     (source.parent / "skills/inner").symlink_to("panels", target_is_directory=True)
     # Root links are followed by copytree. Descendant links remain links.
     (source.parent / "worker-settings").rename(source.parent / "settings-target")
     (source.parent / "worker-settings").symlink_to("settings-target", target_is_directory=True)
-    with closing(sqlite3.connect(source)) as writer:
-        writer.execute("PRAGMA journal_mode=WAL")
+    with closing(connect(str(source))) as writer:
+        writer.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         writer.execute("PRAGMA wal_autocheckpoint=0")
-        writer.execute("INSERT INTO records VALUES ('committed in WAL')")
-        writer.commit()
+        wal_ticket = tickets_data.edit_ticket(
+            writer,
+            ticket.id,
+            edit={"title": "Committed in WAL"},
+            title_max_chars=200,
+            principal=OWNER_PRINCIPAL,
+            now=now + 1,
+        )
         assert Path(str(source) + "-wal").stat().st_size > 0
         result = _node(tmp_path, action="backup", source=str(source))
         snapshot = Path(result["snapshot"])
         assert backup.is_verified_snapshot(snapshot)
-        assert _records(snapshot / "database.sqlite") == ["canonical", "committed in WAL"]
         metadata = json.loads((snapshot / "metadata.json").read_text())
         assert re.fullmatch(
             r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{6})?\+00:00", metadata["created_at"]
@@ -189,7 +229,20 @@ def test_unit21_backup_v2_cross_language_wal_roots_and_retention(
         destination = tmp_path / "python-restore/database.sqlite"
         _seed_managed_tree(destination.parent, "old")
         backup.restore_database_snapshot(snapshot, destination, live_stopped=True)
-        assert _records(destination) == ["canonical", "committed in WAL"]
+        before = _ticket(destination, ticket.id)
+        assert before == _ticket_payload(wal_ticket)
+        with closing(connect(str(destination))) as restored:
+            load_worker_runtime_definitions(restored)
+            tickets_data.edit_ticket(
+                restored,
+                ticket.id,
+                edit={"title": "Recovered and editable"},
+                title_max_chars=200,
+                principal=OWNER_PRINCIPAL,
+                now=now + 2,
+            )
+        ticket_result = {"before": before, "after": _ticket(destination, ticket.id)}
+        assert ticket_result["after"]["title"] == "Recovered and editable"
         assert "old" in (destination.parent / "files/tickets/t_1/artifacts/ui.html").read_text()
         assert _tree(destination.parent / "skills") == _tree(source.parent / "skills")
         assert _tree(destination.parent / "worker-settings") == _tree(
@@ -207,8 +260,9 @@ def test_unit21_backup_v2_cross_language_wal_roots_and_retention(
             action="restore",
             snapshot=str(python_snapshot),
             destination=str(typescript_destination),
-        ) == {"restored": True}
-        assert _records(typescript_destination) == _records(source)
+            ticket={"id": ticket.id, "title": "Recovered and editable", "now": now + 2},
+        ) == {"restored": True, "ticket": ticket_result}
+        assert _ticket(typescript_destination, ticket.id) == ticket_result["after"]
         assert _tree(typescript_destination.parent / "skills") == _tree(source.parent / "skills")
         assert (
             typescript_destination.parent / "skills/panels/SKILL.md"
@@ -229,9 +283,9 @@ def test_unit21_backup_v2_cross_language_wal_roots_and_retention(
         )
     verified = backup.verified_snapshots(tmp_path / "backups")
     assert len(verified) == 3 and bad.is_dir()
-    before = sorted(path.name for path in (tmp_path / "backups").iterdir())
+    published_before = sorted(path.name for path in (tmp_path / "backups").iterdir())
     assert _node(tmp_path, action="backup", source=str(source), fail_publication=True)["injected"]
-    assert sorted(path.name for path in (tmp_path / "backups").iterdir()) == before
+    assert sorted(path.name for path in (tmp_path / "backups").iterdir()) == published_before
     # A former millisecond-Z timestamp sorts after a later Python microsecond value.
     # Mix the actual TS representation with Python snapshots inside one second.
     mixed = tmp_path / "mixed"
@@ -254,9 +308,12 @@ def test_unit21_backup_v2_cross_language_wal_roots_and_retention(
         "unit-21-backup-compatibility.json",
         started,
         verified=len(verified),
+        ticket=ticket_result,
         boundary=(
             "Real WAL online backup, TS→Python and Python→TS restore, root/inner symlinks, "
-            "legacy files, retention and unpublished failure cleanup."
+            "legacy files, retention and unpublished failure cleanup. Real application schema "
+            "and populated Ticket before/after ordinary Python/TS readers and canonical writers, "
+            "closed and reopened without destination bootstrap. No process/HTTP startup claim."
         ),
     )
 

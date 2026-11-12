@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createDatabaseFromSeed,
+  createDatabase,
   createReadAccess,
   checkpointDatabase,
 } from '../../../core/database/index.ts';
@@ -16,6 +17,11 @@ import { bootstrap_application } from '../../bootstrap.ts';
 import { create_database_backup, apply_verified_snapshot_retention } from '../capture.ts';
 import { restore_database_snapshot } from '../restore.ts';
 import { verified_snapshot_retention_plan } from '../evidence.ts';
+import { OWNER } from '../../../core/contracts.ts';
+import { read_ticket, edit_ticket } from '../../../tickets/data/index.ts';
+import { with_worker_runtime_definitions } from '../../../worker_types/configuration.ts';
+import type { Ticket } from '../../../tickets/contracts.ts';
+import { ticket_json } from '../../../tickets/views.ts';
 
 interface Request {
   action: 'backup' | 'restore' | 'fresh' | 'retention';
@@ -27,6 +33,7 @@ interface Request {
   live_stopped?: boolean;
   fail_target?: string;
   fail_publication?: boolean;
+  ticket?: { id: string; title: string; now: number };
 }
 export async function backup_probe(request: Request): Promise<unknown> {
   const rename = fs.rename;
@@ -55,7 +62,12 @@ export async function backup_probe(request: Request): Promise<unknown> {
       await restore_database_snapshot(request.snapshot!, request.destination!, {
         live_stopped: request.live_stopped ?? true,
       });
-      return { restored: true };
+      return request.ticket === undefined
+        ? { restored: true }
+        : {
+            restored: true,
+            ticket: ticket_probe(request.destination!, request.ticket),
+          };
     }
     if (request.action === 'retention') {
       const root = join(request.root, 'backups');
@@ -67,6 +79,41 @@ export async function backup_probe(request: Request): Promise<unknown> {
     return { error: (error as Error).message, injected };
   } finally {
     fs.rename = rename;
+  }
+}
+function ticket_probe(path: string, ticket: NonNullable<Request['ticket']>) {
+  const payload = (value: Ticket) => ({
+    ...ticket_json(value, value.updated_at),
+    worker_step_claim: value.worker_step_claim,
+    worker_step_claim_revision: value.worker_step_claim_revision,
+    pending_proposal_revision: value.pending_proposal_revision,
+  });
+  // Opening an existing image must not repair it with migrations or bootstrap.
+  const database = createDatabase(path);
+  let before: Ticket;
+  try {
+    before = database.read((sql) =>
+      with_worker_runtime_definitions(sql, () => {
+        const saved = read_ticket(sql, ticket.id);
+        database.write((tx) =>
+          edit_ticket(tx, ticket.id, {
+            edit: { title: ticket.title },
+            principal: OWNER,
+            now: ticket.now,
+            title_max_chars: 200,
+          }),
+        );
+        return saved;
+      }),
+    );
+  } finally {
+    database.close();
+  }
+  const reopened = createReadAccess(path);
+  try {
+    return { before: payload(before), after: reopened.read((sql) => payload(read_ticket(sql, ticket.id))) };
+  } finally {
+    reopened.close();
   }
 }
 function fresh_probe(root: string): unknown {
