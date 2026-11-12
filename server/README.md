@@ -256,6 +256,14 @@ delayed interruption, file and MCP items, retryable and final errors, and child 
 before and after admission. Request timeout and write-failure transport checks use
 injected clients rather than this paired core run.
 
+The real Codex 0.167.2 proof completed a fresh TypeScript turn and an exact recall
+through TypeScript on a Python-created thread. Its manual driver, complete replies,
+request evidence, and restore instructions remain Ticket artifacts outside source control.
+The existing pair also covers native bookkeeping notifications between replies, both
+turn-start orderings, historical usage on resume, and multiple agent-text fragments.
+Unknown notification payloads stay synthetic where only native method names were retained.
+Real sign-in timing, approvals, tools, and interruption remain side-by-side gate checks.
+
 The adapter bounds ask withdrawal before child shutdown, then always invokes client cleanup.
 The existing Python withdrawal wait is unbounded. The Manager accepted the two-second
 bound in the Part 2 review. The difference is recorded in `DEVIATIONS.md`.
