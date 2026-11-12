@@ -16,6 +16,7 @@ import {
 } from '../conversation/contracts.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import * as conversation_start from '../runtime/conversation_start.ts';
+import { ConversationStartAborted, observe_conversation_operation } from '../runtime/abort.ts';
 import { read_manager } from '../managers/data.ts';
 import { manager_lifecycle_lock } from '../managers/service.ts';
 import { read_ticket } from '../tickets/data/index.ts';
@@ -71,19 +72,18 @@ export function reconcile_batch_outcomes(database: Database, options: { now: num
   }
   return settled;
 }
-/** The observer leaves the core-owned exchange alive when shutdown stops its wait. */
-export class WakeObserverStopped extends Error {
-  constructor() {
-    super('manager wake observer stopped');
-    this.name = 'WakeObserverStopped';
-  }
-}
+/** Wake-specific uncertainty and write fencing around the canonical abort signal. */
 class WakeDeliveryObserver {
-  private stopped = false;
-  private readonly waiters = new Set<(error: WakeObserverStopped) => void>();
+  private readonly controller = new AbortController();
+  readonly signal = this.controller.signal;
   private offered: (() => void) | undefined;
+  private readonly assert_database_owned: () => void;
+  constructor(assert_database_owned: () => void) {
+    this.assert_database_owned = assert_database_owned;
+  }
   check(): void {
-    if (this.stopped) throw new WakeObserverStopped();
+    if (this.signal.aborted) throw new ConversationStartAborted();
+    this.assert_database_owned();
   }
   on_offered(operation: () => void): void {
     this.check();
@@ -93,43 +93,26 @@ class WakeDeliveryObserver {
     this.offered = undefined;
   }
   cancel(): void {
-    if (this.stopped) return;
-    this.stopped = true;
-    const error = new WakeObserverStopped();
+    if (this.signal.aborted) return;
     // Record uncertainty before any observer can finish and release the database owner.
     try {
+      this.assert_database_owned();
       this.offered?.();
     } catch (cause) {
-      Object.defineProperty(error, 'cause', { value: cause });
       console.error('manager wake cancellation could not record uncertainty', cause);
     } finally {
       this.offered = undefined;
-      for (const reject of this.waiters) reject(error);
-      this.waiters.clear();
+      this.controller.abort();
     }
-  }
-  observe<T>(operation: () => Promise<T>): Promise<T> {
-    this.check();
-    return new Promise<T>((resolve, reject) => {
-      this.waiters.add(reject);
-      try {
-        operation()
-          .then(resolve, reject)
-          .finally(() => this.waiters.delete(reject));
-      } catch (error) {
-        this.waiters.delete(reject);
-        reject(error);
-      }
-    });
   }
   database(database: Database): Database {
     return {
       read: <T>(work: (sql: ReadSql) => T): T => {
-        this.check();
+        this.assert_database_owned();
         return database.read(work);
       },
       write: <T>(work: (sql: TransactionSql) => T, options?: WriteOptions): T => {
-        this.check();
+        this.assert_database_owned();
         return database.write(work, options);
       },
       close: () => {
@@ -137,21 +120,10 @@ class WakeDeliveryObserver {
       },
     };
   }
-  system(system: ConversationSystem): ConversationSystem {
-    const observed = new Set<PropertyKey>(['start_conversation', 'send', 'is_running', 'kill']);
-    return new Proxy(system, {
-      get: (target, key) => {
-        const value = Reflect.get(target, key, target);
-        if (typeof value !== 'function') return value;
-        return observed.has(key)
-          ? (...args: unknown[]) =>
-              this.observe(() => Promise.resolve(Reflect.apply(value, target, args)))
-          : value.bind(target);
-      },
-    });
-  }
 }
+
 export interface DeliverBatchOptions {
+  assert_database_owned: () => void;
   workspace_context: WakeWorkspaceContext;
   database: Database;
   conversation_system: ConversationSystem;
@@ -163,11 +135,10 @@ export async function deliver_batch(
   batch: WakeBatch,
   options: DeliverBatchOptions,
 ): Promise<boolean> {
-  const observer = options.observer ?? new WakeDeliveryObserver();
+  const observer = options.observer ?? new WakeDeliveryObserver(options.assert_database_owned);
   options = {
     ...options,
     observer,
-    conversation_system: observer.system(options.conversation_system),
   };
   const admission = options.conversation_system.workspace_admission?.operation();
   try {
@@ -177,7 +148,10 @@ export async function deliver_batch(
       return admitted_deliver_batch(batch, options);
     };
     return batch.target.kind === 'manager'
-      ? await observer.observe(() => manager_lifecycle_lock(batch.target.id).run(operation))
+      ? await observe_conversation_operation(
+          () => manager_lifecycle_lock(batch.target.id).run(operation),
+          observer.signal,
+        )
       : await operation();
   } finally {
     observer.settled();
@@ -219,126 +193,136 @@ async function admitted_deliver_batch(
     throw error;
   }
   const link_key = agent_key === null ? `ticket:${target.id}` : `agent:${agent_key}`;
-  return observer.observe(() =>
-    conversation_start.conversation_link_lock(link_key).run(async () => {
-      observer.check();
-      let current: string | null;
-      try {
-        current =
-          agent_key === null
-            ? database.read((sql) => read_ticket(sql, target.id).conversation_id)
-            : conversation_start.read_agent_conversation(database, agent_key);
-      } catch (error) {
-        if (error instanceof PlannerError && error.code === 'not_found') {
-          database.write((sql) => data.close_undeliverable_batch(sql, batch.id, { now: now() }));
+  return observe_conversation_operation(
+    () =>
+      conversation_start.conversation_link_lock(link_key).run(async () => {
+        observer.check();
+        let current: string | null;
+        try {
+          current =
+            agent_key === null
+              ? database.read((sql) => read_ticket(sql, target.id).conversation_id)
+              : conversation_start.read_agent_conversation(database, agent_key);
+        } catch (error) {
+          if (error instanceof PlannerError && error.code === 'not_found') {
+            database.write((sql) => data.close_undeliverable_batch(sql, batch.id, { now: now() }));
+            return false;
+          }
+          throw error;
+        }
+        const running =
+          current !== null
+            ? await observe_conversation_operation(
+                () => conversation_system.is_running(current!),
+                observer.signal,
+              )
+            : false;
+        observer.check();
+        if (running) {
+          database.write((sql) => data.release_pending_batch(sql, batch.id, { process_token }), {
+            changeSignal: 'silent',
+          });
           return false;
         }
-        throw error;
-      }
-      const running = current !== null ? await conversation_system.is_running(current) : false;
-      observer.check();
-      if (running) {
-        database.write((sql) => data.release_pending_batch(sql, batch.id, { process_token }), {
-          changeSignal: 'silent',
-        });
-        return false;
-      }
-      const created = conversation_start.new_conversation_id();
-      const intended_conversation_id = current ?? created;
-      database.write((sql) =>
-        data.record_batch_offering(sql, batch.id, {
-          conversation_id: intended_conversation_id,
-          process_token,
-          now: now(),
-        }),
-      );
-      observer.on_offered(() =>
+        const created = conversation_start.new_conversation_id();
+        const intended_conversation_id = current ?? created;
         database.write((sql) =>
-          data.record_batch_uncertain(sql, batch.id, {
-            conversation_id: intended_conversation_id,
-            process_token,
-            now: now(),
-          }),
-        ),
-      );
-      let delivered: conversation_start.DeliveredMessage;
-      try {
-        const send_options = {
-          conversation_id: current,
-          created_conversation_id: created,
-          sender_label: WAKE_SENDER_LABEL,
-          mode: 'queue' as const,
-          sender_message_id: batch.sender_message_id,
-        };
-        delivered =
-          agent_key === null
-            ? await conversation_start.send_to_ticket_conversation(
-                conversation_system,
-                helper_database,
-                target.id,
-                text_message_content(batch.message),
-                { ...send_options, now: now() },
-              )
-            : await conversation_start.send_to_agent_conversation(
-                conversation_system,
-                helper_database,
-                agent_key,
-                text_message_content(batch.message),
-                resolved,
-                { ...send_options, required_manager_id },
-              );
-      } catch (error) {
-        if (error instanceof WakeObserverStopped) throw error;
-        database.write((sql) =>
-          data.record_batch_uncertain(sql, batch.id, {
+          data.record_batch_offering(sql, batch.id, {
             conversation_id: intended_conversation_id,
             process_token,
             now: now(),
           }),
         );
-        throw error;
-      }
-      observer.check();
-      observer.settled();
-      if (delivered.fate instanceof PromptDeliveryRefused) {
+        observer.on_offered(() =>
+          database.write((sql) =>
+            data.record_batch_uncertain(sql, batch.id, {
+              conversation_id: intended_conversation_id,
+              process_token,
+              now: now(),
+            }),
+          ),
+        );
+        let delivered: conversation_start.DeliveredMessage;
+        try {
+          const send_options = {
+            conversation_id: current,
+            created_conversation_id: created,
+            sender_label: WAKE_SENDER_LABEL,
+            mode: 'queue' as const,
+            signal: observer.signal,
+            sender_message_id: batch.sender_message_id,
+          };
+          delivered =
+            agent_key === null
+              ? await conversation_start.send_to_ticket_conversation(
+                  conversation_system,
+                  helper_database,
+                  target.id,
+                  text_message_content(batch.message),
+                  { ...send_options, now: now() },
+                )
+              : await conversation_start.send_to_agent_conversation(
+                  conversation_system,
+                  helper_database,
+                  agent_key,
+                  text_message_content(batch.message),
+                  resolved,
+                  { ...send_options, required_manager_id },
+                );
+        } catch (error) {
+          if (observer.signal.aborted || error instanceof ConversationStartAborted) throw error;
+          database.write((sql) =>
+            data.record_batch_uncertain(sql, batch.id, {
+              conversation_id: intended_conversation_id,
+              process_token,
+              now: now(),
+            }),
+          );
+          throw error;
+        }
+        observer.check();
+        observer.settled();
+        if (delivered.fate instanceof PromptDeliveryRefused) {
+          database.write((sql) =>
+            data.record_batch_failure(sql, batch.id, {
+              status: 'refused',
+              conversation_id: delivered.conversation_id,
+              now: now(),
+            }),
+          );
+          return false;
+        }
+        if (delivered.fate instanceof PromptDeliverySuppressed) {
+          reconcile_batch_outcomes(database, { now: now() });
+          return false;
+        }
+        if (delivered.fate instanceof PromptDeliveryUncertain) {
+          database.write((sql) =>
+            data.record_batch_uncertain(sql, batch.id, {
+              conversation_id: delivered.conversation_id ?? intended_conversation_id,
+              process_token,
+              now: now(),
+            }),
+          );
+          return false;
+        }
+        if (delivered.conversation_id === null)
+          throw new Error('accepted wake has no conversation');
         database.write((sql) =>
-          data.record_batch_failure(sql, batch.id, {
-            status: 'refused',
+          data.record_batch_accepted(sql, batch.id, {
             conversation_id: delivered.conversation_id,
-            now: now(),
-          }),
-        );
-        return false;
-      }
-      if (delivered.fate instanceof PromptDeliverySuppressed) {
-        reconcile_batch_outcomes(database, { now: now() });
-        return false;
-      }
-      if (delivered.fate instanceof PromptDeliveryUncertain) {
-        database.write((sql) =>
-          data.record_batch_uncertain(sql, batch.id, {
-            conversation_id: delivered.conversation_id ?? intended_conversation_id,
             process_token,
             now: now(),
           }),
         );
-        return false;
-      }
-      if (delivered.conversation_id === null) throw new Error('accepted wake has no conversation');
-      database.write((sql) =>
-        data.record_batch_accepted(sql, batch.id, {
-          conversation_id: delivered.conversation_id,
-          process_token,
-          now: now(),
-        }),
-      );
-      reconcile_batch_outcomes(database, { now: now() });
-      return (
-        database.read((sql) =>
-          data.delivery_outcome_kind(sql, delivered.conversation_id!, batch.sender_message_id),
-        ) === 'prompt'
-      );
-    }),
+        reconcile_batch_outcomes(database, { now: now() });
+        return (
+          database.read((sql) =>
+            data.delivery_outcome_kind(sql, delivered.conversation_id!, batch.sender_message_id),
+          ) === 'prompt'
+        );
+      }, observer.signal),
+    observer.signal,
   );
 }
 
@@ -399,10 +383,11 @@ export class ManagerWakeLoop {
     for (const batch of batches) {
       if (this.stopped || this.in_flight.has(batch.id)) continue;
       ids.push(batch.id);
-      const observer = new WakeDeliveryObserver();
+      const observer = new WakeDeliveryObserver(this.options.assert_database_owned);
       this.observers.set(batch.id, observer);
       const delivery = deliver_batch(batch, {
         observer,
+        assert_database_owned: this.options.assert_database_owned,
         workspace_context: this.options.workspace_context,
         database,
         conversation_system,
@@ -413,7 +398,7 @@ export class ManagerWakeLoop {
       deliveries.push(
         delivery
           .catch((error: unknown) => {
-            if (error instanceof WakeObserverStopped) throw error;
+            if (error instanceof ConversationStartAborted) throw error;
             console.error(
               `manager wake delivery ended in an uncertain failure (batch=${batch.id})`,
               error,
@@ -450,7 +435,7 @@ export class ManagerWakeLoop {
       this.timer = undefined;
       void this.poll_once()
         .catch((error: unknown) => {
-          if (error instanceof WakeObserverStopped) return;
+          if (error instanceof ConversationStartAborted) return;
           console.error('manager wake poll failed', error);
         })
         .finally(() => {
