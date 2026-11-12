@@ -9,6 +9,7 @@ import { PreviewError, base_path, port, type PreviewRecord, type Header } from '
 import { request_headers, response_headers, within_prefix } from './policy.ts';
 import { Capacity, TransferBudget, MessageBudget } from './limits.ts';
 import { PreviewService } from './service.ts';
+import { HttpRequestScope } from '../core/http/lifetime.ts';
 const raw_headers = (raw: string[]): Header[] =>
   Array.from({ length: raw.length / 2 }, (_, i) => [raw[i * 2]!, raw[i * 2 + 1]!]);
 function headers_object(headers: Header[]): http.OutgoingHttpHeaders {
@@ -83,31 +84,40 @@ class HeaderBoundedSocket extends net.Socket {
 class VerifiedAgent extends http.Agent {
   readonly service: PreviewService;
   readonly record: PreviewRecord;
-  constructor(service: PreviewService, record: PreviewRecord) {
+  readonly lifetime: HttpRequestScope;
+  constructor(service: PreviewService, record: PreviewRecord, lifetime: HttpRequestScope) {
     super({ keepAlive: false, maxSockets: 1 });
     this.service = service;
     this.record = record;
+    this.lifetime = lifetime;
   }
   override createConnection(
     _options: net.NetConnectOpts,
     callback?: (error: Error | null, socket: Duplex) => void,
   ): net.Socket {
     // Agent waits for callback. Returning no socket prevents premature request writes.
-    void (async () => {
-      await this.service.before_connection(this.record);
-      const socket = new HeaderBoundedSocket();
-      socket.connect({ host: '127.0.0.1', port: port(this.record) });
-      socket.pause();
-      try {
-        await deadline(once(socket, 'connect'), config.CONNECT_SECONDS * 1000);
-        await this.service.after_connection(this.record, socket.localPort!);
-        callback?.(null, socket);
-        setImmediate(() => socket.resume());
-      } catch (error) {
-        socket.destroy();
-        callback?.(error as Error, undefined as unknown as Duplex);
-      }
-    })().catch((error) => callback?.(error as Error, undefined as unknown as Duplex));
+    void this.lifetime
+      .track(async () => {
+        if (this.lifetime.sealed) throw new Error('Preview connection admission is closed');
+        await this.service.before_connection(this.record);
+        if (this.lifetime.sealed) throw new Error('Preview connection admission is closed');
+        const socket = new HeaderBoundedSocket();
+        void this.lifetime.track(
+          () => new Promise<void>((resolve) => socket.once('close', () => resolve())),
+        );
+        socket.connect({ host: '127.0.0.1', port: port(this.record) });
+        socket.pause();
+        try {
+          await deadline(once(socket, 'connect'), config.CONNECT_SECONDS * 1000);
+          await this.service.after_connection(this.record, socket.localPort!);
+          callback?.(null, socket);
+          setImmediate(() => socket.resume());
+        } catch (error) {
+          socket.destroy();
+          callback?.(error as Error, undefined as unknown as Duplex);
+        }
+      })
+      .catch((error) => callback?.(error as Error, undefined as unknown as Duplex));
     return undefined as unknown as net.Socket;
   }
 }
@@ -123,8 +133,11 @@ export class PreviewTransport {
     perMessageDeflate: false,
   });
   readonly service: PreviewService;
-  constructor(service: PreviewService) {
+  readonly lifetime: HttpRequestScope;
+  private closed = false;
+  constructor(service: PreviewService, lifetime: HttpRequestScope = new HttpRequestScope()) {
     this.service = service;
+    this.lifetime = lifetime;
   }
   private track(generation: string, close: () => void): () => void {
     let sessions = this.sessions.get(generation);
@@ -152,10 +165,20 @@ export class PreviewTransport {
     this.cookie_names.delete(generation);
   }
   close(): void {
+    this.closed = true;
     for (const generation of [...this.sessions.keys()]) this.revoke(generation);
     this.websocket_server.close();
   }
   async http(
+    request: IncomingMessage,
+    response: ServerResponse,
+    ticket_id: string,
+    generation: string,
+  ): Promise<void> {
+    if (this.closed) throw new Error('Preview transport admission is closed');
+    return this.lifetime.run(() => this.http_owned(request, response, ticket_id, generation));
+  }
+  private async http_owned(
     request: IncomingMessage,
     response: ServerResponse,
     ticket_id: string,
@@ -187,7 +210,7 @@ export class PreviewTransport {
       const length = request.headers['content-length'];
       if (length && (!/^\d+$/.test(length) || Number(length) > config.REQUEST_BODY_BYTES))
         throw new PreviewError('Preview request body exceeds the supported limit.', 413);
-      agent = new VerifiedAgent(this.service, record);
+      agent = new VerifiedAgent(this.service, record, this.lifetime);
       untrack = this.track(generation, closed);
       timer = setTimeout(closed, config.HTTP_TOTAL_SECONDS * 1000 - (performance.now() - started));
       response.once('close', () => upstream?.destroy());
@@ -200,6 +223,10 @@ export class PreviewTransport {
         agent,
         maxHeaderSize: config.HEADER_BYTES,
       });
+      const owned_upstream = upstream;
+      void this.lifetime.track(
+        () => new Promise<void>((resolve) => owned_upstream.once('close', () => resolve())),
+      );
       upstream.on('error', () => {});
       upstream.setTimeout(config.HTTP_IDLE_SECONDS * 1000, () =>
         upstream?.destroy(new Error('preview timeout')),
@@ -209,25 +236,27 @@ export class PreviewTransport {
         upstream!.once('error', reject);
       });
       let pump_error: unknown;
-      const body_pump = (async () => {
-        let total = 0;
-        for await (const raw of request) {
-          const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
-          total += chunk.length;
-          if (total > config.REQUEST_BODY_BYTES)
-            throw new PreviewError('Preview request body exceeds the supported limit.', 413);
-          for (let offset = 0; offset < chunk.length; offset += config.CHUNK_BYTES) {
-            const part = chunk.subarray(offset, offset + config.CHUNK_BYTES);
-            await this.budget.consume(part.length);
-            if (!upstream!.write(part))
-              await deadline(once(upstream!, 'drain'), config.DOWNSTREAM_SEND_SECONDS * 1000);
+      const body_pump = this.lifetime
+        .track(async () => {
+          let total = 0;
+          for await (const raw of request) {
+            const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+            total += chunk.length;
+            if (total > config.REQUEST_BODY_BYTES)
+              throw new PreviewError('Preview request body exceeds the supported limit.', 413);
+            for (let offset = 0; offset < chunk.length; offset += config.CHUNK_BYTES) {
+              const part = chunk.subarray(offset, offset + config.CHUNK_BYTES);
+              await this.budget.consume(part.length);
+              if (!upstream!.write(part))
+                await deadline(once(upstream!, 'drain'), config.DOWNSTREAM_SEND_SECONDS * 1000);
+            }
           }
-        }
-        upstream!.end();
-      })().catch((error) => {
-        pump_error = error;
-        upstream!.destroy(error as Error);
-      });
+          upstream!.end();
+        })
+        .catch((error) => {
+          pump_error = error;
+          upstream!.destroy(error as Error);
+        });
       const peer = await deadline(
         incoming,
         config.PREHEADER_SECONDS * 1000 - (performance.now() - started),
@@ -287,6 +316,25 @@ export class PreviewTransport {
     ticket_id: string,
     generation: string,
   ): Promise<void> {
+    if (this.closed) throw new Error('Preview transport admission is closed');
+    return this.lifetime.run(() =>
+      this.websocket_owned(request, socket, head, ticket_id, generation),
+    );
+  }
+  private async websocket_owned(
+    request: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+    ticket_id: string,
+    generation: string,
+  ): Promise<void> {
+    void this.lifetime.track(
+      () =>
+        new Promise<void>((resolve) => {
+          if (socket.closed) resolve();
+          else socket.once('close', () => resolve());
+        }),
+    );
     let admitted = false;
     let peer: WebSocket | undefined;
     let browser: WebSocket | undefined;
@@ -307,7 +355,7 @@ export class PreviewTransport {
         origin: record.public_origin,
         cookie_names: this.cookies(generation),
       }).filter(([k]) => !k.toLowerCase().startsWith('sec-websocket-'));
-      agent = new VerifiedAgent(this.service, record);
+      agent = new VerifiedAgent(this.service, record, this.lifetime);
       const protocols = String(request.headers['sec-websocket-protocol'] ?? '')
         .split(',')
         .map((s) => s.trim())
@@ -322,6 +370,10 @@ export class PreviewTransport {
         handshakeTimeout: config.PREHEADER_SECONDS * 1000,
       });
       peer.on('error', () => {});
+      const owned_peer = peer;
+      void this.lifetime.track(
+        () => new Promise<void>((resolve) => owned_peer.once('close', () => resolve())),
+      );
       const early: [RawData, boolean][] = [];
       const capture = (data: RawData, binary: boolean): void => {
         early.push([data, binary]);
@@ -353,6 +405,10 @@ export class PreviewTransport {
         }
       });
       browser.on('error', () => {});
+      const owned_browser = browser;
+      void this.lifetime.track(
+        () => new Promise<void>((resolve) => owned_browser.once('close', () => resolve())),
+      );
       const messages = new MessageBudget();
       const relay = (source: WebSocket, target: WebSocket): void => {
         let queued = 0;
@@ -362,29 +418,31 @@ export class PreviewTransport {
           // Socket pause bounds pending data to the current parser chunk.
           // A legal burst in that chunk must drain instead of failing at frame five.
           source.pause();
-          chain = chain
-            .then(async () => {
-              const bytes = Array.isArray(data)
-                ? Buffer.concat(data)
-                : Buffer.isBuffer(data)
-                  ? data
-                  : Buffer.from(data);
-              if (bytes.length > config.WEBSOCKET_MESSAGE_BYTES)
-                throw new PreviewError(
-                  'Preview WebSocket message exceeds the supported limit.',
-                  413,
+          chain = this.lifetime
+            .track(() =>
+              chain.then(async () => {
+                const bytes = Array.isArray(data)
+                  ? Buffer.concat(data)
+                  : Buffer.isBuffer(data)
+                    ? data
+                    : Buffer.from(data);
+                if (bytes.length > config.WEBSOCKET_MESSAGE_BYTES)
+                  throw new PreviewError(
+                    'Preview WebSocket message exceeds the supported limit.',
+                    413,
+                  );
+                messages.consume();
+                await this.budget.consume(bytes.length);
+                await deadline(
+                  new Promise<void>((resolve, reject) =>
+                    target.send(bytes, { binary }, (error) => (error ? reject(error) : resolve())),
+                  ),
+                  config.DOWNSTREAM_SEND_SECONDS * 1000,
                 );
-              messages.consume();
-              await this.budget.consume(bytes.length);
-              await deadline(
-                new Promise<void>((resolve, reject) =>
-                  target.send(bytes, { binary }, (error) => (error ? reject(error) : resolve())),
-                ),
-                config.DOWNSTREAM_SEND_SECONDS * 1000,
-              );
-              queued--;
-              if (!queued) source.resume();
-            })
+                queued--;
+                if (!queued) source.resume();
+              }),
+            )
             .catch(() => {
               source.terminate();
               target.terminate();

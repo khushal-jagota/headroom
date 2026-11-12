@@ -11,6 +11,8 @@ import { reconcile_attention } from '../notifications/data.ts';
 import { StallChecker } from '../stalls/checker.ts';
 import { WAITS } from '../stalls/registry.ts';
 import type { StallSource } from '../stalls/contracts.ts';
+import { observe_shutdown } from './deadline.ts';
+import { ShutdownDeadlineExceeded } from './contracts.ts';
 import type {
   BackgroundCompositionContext,
   BackgroundServiceFactory,
@@ -45,17 +47,36 @@ export const production_notification_delivery: BackgroundServiceFactory = (conte
       loop.start(context.config.tick_seconds);
     },
     close(options) {
-      unsubscribe?.();
-      unsubscribe = undefined;
-      return loop.stop(options);
+      let stopped!: Promise<void>;
+      try {
+        unsubscribe?.();
+      } finally {
+        unsubscribe = undefined;
+        stopped = loop.stop(options);
+        void stopped.catch(() => {});
+      }
+      return stopped;
     },
+    settled: () => loop.settled(),
   };
 };
 export function production_stall_checker(
   sources: () => readonly StallSource[],
 ): BackgroundServiceFactory {
-  return (context) =>
-    new StallChecker(context.database, WAITS, sources, () => context.clock.now().getTime());
+  return (context) => {
+    const checker = new StallChecker(context.database, WAITS, sources, () =>
+      context.clock.now().getTime(),
+    );
+    let actual = Promise.resolve();
+    return {
+      start: () => checker.start(),
+      close(stop) {
+        actual = checker.close();
+        return observe_shutdown(actual, stop, 'stall checker');
+      },
+      settled: () => actual,
+    };
+  };
 }
 export function compose_background_services(
   context: OwnedAreaContext,
@@ -72,6 +93,7 @@ export function compose_background_services(
   let stopped: Promise<void> | undefined;
   let started = false;
   let starting: Promise<void> | undefined;
+  let actual_stop: Promise<void> | undefined;
   const own = (factory: () => ComposedBackgroundService) => {
     let service: ComposedBackgroundService | undefined;
     services.push({
@@ -80,6 +102,7 @@ export function compose_background_services(
         await service.start();
       },
       close: (stop) => service?.close(stop),
+      settled: () => service?.settled() ?? Promise.resolve(),
     });
   };
   if (dispatcher_admitted(context.config, options.dispatcher_owned)) {
@@ -110,40 +133,43 @@ export function compose_background_services(
       return {
         start: () => worker.start(context.config.tick_seconds, context.changes),
         close: (stop) => worker.stop(stop),
+        settled: () => worker.settled(),
       };
     });
     own(() => {
       const areas = composeAreaLoops(context, options.areaLoops);
-      return { start: () => areas.start(), close: (stop) => areas.stop(stop) };
+      return {
+        start: () => areas.start(),
+        close: (stop) => areas.stop(stop),
+        settled: () => areas.settled(),
+      };
     });
   }
   return {
     start() {
       if (started || stopped) throw new Error('background services already started or stopped');
       started = true;
-      starting = (async () => {
+      starting = Promise.resolve().then(async () => {
         for (const service of services) {
           if (stopped) break;
           await service.start();
         }
-      })();
+      });
       return starting;
     },
     close(stop: StopOptions) {
       if (stopped) return stopped;
-      // Every close fences its producer synchronously, before any drain is awaited.
-      const drains = services.map((service) => {
-        try {
-          return Promise.resolve(service.close(stop));
-        } catch (error) {
-          return Promise.reject(error);
+      const drains: Promise<unknown>[] = [];
+      actual_stop = Promise.resolve().then(async () => {
+        for (const service of services) {
+          try {
+            drains.push(service.settled());
+          } catch (error) {
+            drains.push(Promise.reject(error));
+          }
         }
-      });
-      // A close operation can fence a service while its asynchronous start still
-      // owns permitted setup work. Retain ownership until that start settles too.
-      // The start caller retains its error; it is not a second cleanup failure.
-      if (starting) drains.push(starting.catch(() => {}));
-      stopped = Promise.allSettled(drains).then((results) => {
+        if (starting) drains.push(starting.catch(() => {}));
+        const results = await Promise.allSettled(drains);
         const failures = results.filter((result) => result.status === 'rejected');
         if (failures.length)
           throw new AggregateError(
@@ -151,7 +177,23 @@ export function compose_background_services(
             'Background shutdown failed',
           );
       });
+      // Publish the fixed observer before any close callback can reenter composition.
+      stopped = observe_shutdown(actual_stop, stop, 'background services');
+      // Every close fences its producer synchronously, before any drain is awaited.
+      for (const service of services) {
+        try {
+          drains.push(
+            Promise.resolve(service.close(stop)).catch((error: unknown) => {
+              if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+            }),
+          );
+        } catch (error) {
+          drains.push(Promise.reject(error));
+        }
+      }
       return stopped;
     },
+    settled: () =>
+      actual_stop ?? Promise.all(services.map((service) => service.settled())).then(() => {}),
   };
 }

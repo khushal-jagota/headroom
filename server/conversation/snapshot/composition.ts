@@ -1,6 +1,7 @@
 /** Production receives provider implementations as values. Missing ones stay explicit. */
 import type { Database } from '../../core/database/contracts.ts';
 import type { Config } from '../../core/config.ts';
+import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import type { BackendProbeEnvironment, BackendHttpRuntime } from './contracts.ts';
 import type {
   CodexModelCatalogSource,
@@ -34,18 +35,27 @@ export function create_backend_runtime(options: {
   readonly now: () => Date;
   readonly providers: BackendProviders;
   readonly environment?: BackendProbeEnvironment;
+  readonly one_shot_children?: OwnedOneShotChildren;
 }): BackendHttpRuntime {
   const { database, providers, now } = options;
   const environment: BackendProbeEnvironment =
     options.environment ??
     (options.config.test_mode || backend_io_is_test()
       ? new RecordingBackendProbeEnvironment()
-      : new SubprocessBackendProbeEnvironment());
+      : new SubprocessBackendProbeEnvironment(require_children(options.one_shot_children)));
   const rejection = new DurableCodexLoginRejection(database, now);
   return {
     async shutdown() {
-      await environment.shutdown?.();
-      await providers.codex_sign_in?.shutdown();
+      const results = await Promise.allSettled([
+        Promise.resolve().then(() => environment.shutdown?.()),
+        Promise.resolve().then(() => providers.codex_sign_in?.shutdown()),
+      ]);
+      const failures = results.filter((result) => result.status === 'rejected');
+      if (failures.length)
+        throw new AggregateError(
+          failures.map((failure) => failure.reason),
+          'Backend shutdown failed',
+        );
     },
     database,
     backend_snapshots: new BackendSnapshotService({
@@ -60,6 +70,10 @@ export function create_backend_runtime(options: {
     codex_sign_in: providers.codex_sign_in,
     machine_catalog: providers.machine_catalog,
   };
+}
+function require_children(children: OwnedOneShotChildren | undefined): OwnedOneShotChildren {
+  if (!children) throw new Error('Production backend probes require a server-owned child lifetime');
+  return children;
 }
 export function unavailable_backend_providers(): BackendProviders {
   return {

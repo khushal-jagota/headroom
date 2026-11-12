@@ -2,6 +2,8 @@
 import { dirname } from 'node:path';
 import type { Config } from '../core/config.ts';
 import { HOST } from '../core/config.ts';
+import { observe_shutdown } from '../lifecycle/deadline.ts';
+import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import type { TestCompositionContext } from '../core/start.ts';
 import type { EnvironmentRuntime } from './contracts.ts';
 import { expand_path, resolved_path } from './paths.ts';
@@ -100,6 +102,7 @@ export async function createEnvironmentRuntime(
     });
   let starting: Promise<void> | undefined;
   let closing: Promise<void> | undefined;
+  let actual_stop: Promise<void> | undefined;
   return {
     areas: [
       { prefix: '/api', routes: create_update_routes(updates, operations.mac_reads) },
@@ -129,17 +132,22 @@ export async function createEnvironmentRuntime(
     },
     close(options) {
       if (closing) return closing;
-      // Fence every producer now, including when setup still owns a continuation.
-      const begin = async (operation: () => void | Promise<void>) => {
-        await operation();
-      };
-      const drains = [
-        begin(() => metrics.stop(options)),
-        begin(() => updates.stop(options)),
-        begin(() => scratch?.close(options)),
-        starting?.catch(() => {}),
-      ];
-      closing = Promise.allSettled(drains).then((results) => {
+      const drains: Promise<unknown>[] = [];
+      actual_stop = Promise.resolve().then(async () => {
+        const actuals = [
+          () => metrics.settled(),
+          () => updates.settled(),
+          () => scratch?.settled(),
+        ];
+        for (const actual of actuals) {
+          try {
+            drains.push(Promise.resolve(actual()));
+          } catch (error) {
+            drains.push(Promise.reject(error));
+          }
+        }
+        if (starting) drains.push(starting.catch(() => {}));
+        const results = await Promise.allSettled(drains);
         const failures = results.filter((result) => result.status === 'rejected');
         if (failures.length)
           throw new AggregateError(
@@ -147,7 +155,32 @@ export async function createEnvironmentRuntime(
             'Environment shutdown failed',
           );
       });
+      closing = observe_shutdown(actual_stop, options, 'environment services');
+      // Fence every producer now, including when setup still owns a continuation.
+      for (const stop of [
+        () => metrics.stop(options),
+        () => updates.stop(options),
+        () => scratch?.close(options),
+      ]) {
+        try {
+          drains.push(
+            Promise.resolve(stop()).catch((error: unknown) => {
+              if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+            }),
+          );
+        } catch (error) {
+          drains.push(Promise.reject(error));
+        }
+      }
       return closing;
     },
+    settled: () =>
+      actual_stop ??
+      Promise.all([
+        metrics.settled(),
+        updates.settled(),
+        scratch?.settled(),
+        starting?.catch(() => {}),
+      ]).then(() => {}),
   };
 }

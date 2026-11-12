@@ -53,11 +53,16 @@ export function createConversationRuntime() {
     bind_runtime_facts(facts: ConversationViewRuntime['runtime_facts']): void {
       getRuntime().runtime_facts = facts;
     },
+    seal(): void {
+      rebuilder?.close();
+      runtime?.live_tail.close_all_subscriptions();
+    },
     async close(): Promise<void> {
       rebuilder?.close();
       runtime?.live_tail.close_all_subscriptions();
       await rebuilder?.finish();
       await runtime?.store.finish_writes();
+      runtime?.live_tail.close();
       runtime = undefined;
       rebuilder = undefined;
     },

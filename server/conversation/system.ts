@@ -1,4 +1,6 @@
 import { turn_is_maintenance } from './runtime/state.ts';
+import { observe_shutdown } from '../lifecycle/deadline.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../core/config.ts';
 /** Local process core. Registered as ConversationSystem after the turn-control slice lands. */
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
@@ -151,6 +153,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   private shutdown_task: Promise<void> | null = null;
   private readonly shutdown_controller = new AbortController();
   private readonly native_waiters = new Set<() => void>();
+  private readonly native_settlements = new Set<Promise<void>>();
   private idle_janitor: IdleChildJanitor | null = null;
   private background_tasks_left_by_previous_process: ReadonlyMap<string, readonly string[]>;
   constructor(options: ConversationCoreOptions) {
@@ -269,13 +272,25 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       cancel = () => reject(new DOMException('The operation was aborted', 'AbortError'));
     });
     this.native_waiters.add(cancel);
+    // Reserve before invoking a provider: it can synchronously request shutdown.
+    let release!: () => void;
+    const actual = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.native_settlements.add(actual);
+    const settled = () => {
+      this.native_settlements.delete(actual);
+      release();
+    };
     let native: Promise<T>;
     try {
       native = operation();
     } catch (error) {
+      settled();
       this.native_waiters.delete(cancel);
       return Promise.reject(error);
     }
+    void Promise.resolve(native).then(settled, settled);
     return Promise.race([native, closing]).finally(() => this.native_waiters.delete(cancel));
   }
   note_written(state: ConversationState, rows: readonly StoredConversationEvent[]): void {
@@ -1322,9 +1337,32 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       await Promise.allSettled(tasks);
     }
   }
-  async shutdown(): Promise<void> {
-    this.options.on_shutdown?.();
-    if (this.shutdown_task) return this.shutdown_task;
+  settled(): Promise<void> {
+    return this.shutdown_task ?? Promise.resolve();
+  }
+  shutdown(
+    options: import('../lifecycle/contracts.ts').StopOptions = {
+      deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS,
+    },
+  ): Promise<void> {
+    if (!this.shutdown_task) this.begin_shutdown();
+    return observe_shutdown(this.shutdown_task!, options, 'conversation core');
+  }
+  private begin_shutdown(): void {
+    let resolve!: () => void, reject!: (error: unknown) => void;
+    this.shutdown_task = new Promise<void>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    void this.shutdown_task.catch(() => {});
+    this.shutting_down = true;
+    this.workspace_admission.seal();
+    const failures: unknown[] = [];
+    try {
+      this.options.on_shutdown?.();
+    } catch (error) {
+      failures.push(error);
+    }
     const states = [...this.conversations.values()];
     const pumps = states.flatMap((state) =>
       state.backend_event_pump ? [state.backend_event_pump] : [],
@@ -1345,21 +1383,28 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       state.phase_settled.resolve();
       state.reserved_turn?.resolved.resolve();
     }
-    this.shutting_down = true;
     for (const cancel of this.native_waiters) cancel();
     this.native_waiters.clear();
     this.shutdown_controller.abort();
-    this.shutdown_task = (async () => {
-      await this.idle_janitor?.stop();
-      // These are fenced observers, never raw provider promises. Cleanup can restore
-      // an uncertain child which must participate in the detach below.
-      await Promise.allSettled([
+    // Detach every child before waiting for a raw call. Exit can settle that call.
+    const detaching = detach_children(states);
+    const janitor = this.idle_janitor?.stop();
+    void (async () => {
+      const results = await Promise.allSettled([
+        detaching,
+        janitor,
+        ...this.native_settlements,
         ...pumps,
         ...states.flatMap((state) => [...state.settlement_tasks]),
       ]);
-      await detach_children(states);
-      await this.options.store.finish_writes();
-    })();
-    return this.shutdown_task;
+      for (const result of results) if (result.status === 'rejected') failures.push(result.reason);
+      try {
+        await this.options.store.finish_writes();
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length)
+        throw new AggregateError(failures, 'Conversation core did not shut down cleanly');
+    })().then(resolve, reject);
   }
 }

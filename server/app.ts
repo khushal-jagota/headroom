@@ -9,6 +9,7 @@ import { buildClock } from './core/clock.ts';
 import { ChangeSignal } from './core/changes/index.ts';
 import type { Database } from './core/database/index.ts';
 import { installMiddleware } from './core/http/middleware.ts';
+import { install_request_lifetime, type HttpRequestScope } from './core/http/lifetime.ts';
 import type { WorkspaceAdmission } from './core/http/middleware.ts';
 import { installCompatibility } from './core/http/compatibility.ts';
 import { registerCoreRoutes } from './core/routes.ts';
@@ -18,6 +19,7 @@ import type { Area } from './core/authority/register.ts';
 import type { ConversationSystem } from './conversation/contracts.ts';
 import type { SignalNavigationAuthority } from './conversation/publication/authority.ts';
 export interface AppServices {
+  request_lifetime?: HttpRequestScope;
   conversationSystem?: ConversationSystem;
   signalAuthority?: SignalNavigationAuthority;
   database: Database;
@@ -34,9 +36,10 @@ export async function createApp(config: Config, services: AppServices): Promise<
     forceCloseConnections: true,
   });
   const clock = services.clock ?? buildClock(config);
+  const request_lifetime = install_request_lifetime(app, services.request_lifetime);
   const changes = services.changes ?? new ChangeSignal();
   installCompatibility(app);
-  installMiddleware(app, config, services.workspaceAdmission);
+  installMiddleware(app, config, services.workspaceAdmission, request_lifetime);
   const configuredRoot = process.env.PLAN_APP_ROOT;
   const root = configuredRoot
     ? resolve(

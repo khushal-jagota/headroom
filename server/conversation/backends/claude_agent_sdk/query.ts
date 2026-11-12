@@ -181,6 +181,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
   private worker_unit_stop: Promise<void> | null = null;
   private stderr: ObservedStderr | null = null;
   private cleanup_started = false;
+  private readonly compatibility_controller = new AbortController();
   private stream_failure: Error | null = null;
   private cancel_attempt: CancelAttempt | null = null;
   private wire_message_count = 0;
@@ -205,6 +206,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     await ensure_cli_compatible('claude', this.options.pathToClaudeCodeExecutable, {
       environment: overrides,
       working_directory: this.options.cwd,
+      signal: this.compatibility_controller.signal,
     });
     with_tool_shell_kill_priority(overrides);
     const environment: Record<string, string> = {};
@@ -611,6 +613,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
   }
   async disconnect(): Promise<void> {
     this.cleanup_started = true;
+    this.compatibility_controller.abort();
     this.release_permission_waiters(true);
     this.stderr?.end();
     await this.stop_worker_unit();

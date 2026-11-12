@@ -11,9 +11,14 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { ClaudeUsageAdapter } from '../backend_usage/claude.ts';
 import { http_get_usage } from '../backend_usage/http.ts';
-export function production_backend_providers(test_mode = false): BackendProviders {
+import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
+export function production_backend_providers(
+  test_mode = false,
+  children?: OwnedOneShotChildren,
+): BackendProviders {
   const providers = unavailable_backend_providers();
   if (test_mode || backend_io_is_test()) return providers;
+  if (!children) throw new Error('Production catalogs require a server-owned child lifetime');
   return {
     ...providers,
     usage: {
@@ -32,7 +37,7 @@ export function production_backend_providers(test_mode = false): BackendProvider
           'Production catalog reads are unavailable in tests.',
         );
       try {
-        return await probe_claude_model_catalog(executable);
+        return await probe_claude_model_catalog(executable, children);
       } catch (error) {
         if (error instanceof ProviderUnavailable)
           throw new ClaudeModelCatalogUnavailable(error.message);

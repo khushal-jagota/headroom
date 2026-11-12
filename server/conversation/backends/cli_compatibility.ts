@@ -1,5 +1,6 @@
 /** The selected executable must supply the native features that Panels consumes. */
-import { spawn } from 'node:child_process';
+import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
+import { OneShotChildren } from '../../lifecycle/one_shot_children.ts';
 
 export type Backend = 'codex' | 'claude';
 export const VERSION_TIMEOUT_SECONDS = 10;
@@ -101,48 +102,76 @@ export function validate_cli_version(
 export async function ensure_cli_compatible(
   backend: Backend,
   executable: string,
-  options: { environment?: Readonly<Record<string, string>>; working_directory?: string } = {},
+  options: {
+    environment?: Readonly<Record<string, string>>;
+    working_directory?: string;
+    children?: OwnedOneShotChildren;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<void> {
-  const output = await new Promise<{ stdout: string; code: number | null }>((resolve, reject) => {
-    let child;
-    try {
-      child = spawn(executable, ['--version'], {
-        env:
-          options.environment === undefined
-            ? process.env
-            : { ...process.env, ...options.environment },
-        cwd: options.working_directory,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-    } catch (cause) {
-      reject(
-        new BackendCliIncompatible(cli_version_error(backend, executable, 'check').message, {
-          cause,
-        }),
-      );
-      return;
-    }
-    const chunks: Buffer[] = [];
-    let timed_out = false;
-    const timeout = setTimeout(() => {
-      timed_out = true;
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
-    }, VERSION_TIMEOUT_SECONDS * 1000);
-    child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
-    child.stderr.resume();
-    child.once('error', (cause) => {
-      clearTimeout(timeout);
-      reject(
-        new BackendCliIncompatible(cli_version_error(backend, executable, 'check').message, {
-          cause,
-        }),
-      );
-    });
-    child.once('close', (code) => {
-      clearTimeout(timeout);
-      if (timed_out) reject(cli_version_error(backend, executable, 'check'));
-      else resolve({ stdout: Buffer.concat(chunks).toString('utf8'), code });
-    });
+  options.signal?.throwIfAborted();
+  const children = options.children ?? new OneShotChildren();
+  let release_closed!: () => void;
+  const closed = new Promise<void>((resolve) => {
+    release_closed = resolve;
   });
-  validate_cli_version(backend, executable, output.stdout, output.code);
+  try {
+    const output = await new Promise<{ stdout: string; code: number | null }>((resolve, reject) => {
+      let child;
+      try {
+        child = children.spawn(executable, ['--version'], {
+          env:
+            options.environment === undefined
+              ? process.env
+              : { ...process.env, ...options.environment },
+          cwd: options.working_directory,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } catch (cause) {
+        release_closed();
+        reject(
+          new BackendCliIncompatible(cli_version_error(backend, executable, 'check').message, {
+            cause,
+          }),
+        );
+        return;
+      }
+      const chunks: Buffer[] = [];
+      const abort = () => {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      };
+      options.signal?.addEventListener('abort', abort, { once: true });
+      if (options.signal?.aborted) abort();
+      let timed_out = false;
+      const timeout = setTimeout(() => {
+        timed_out = true;
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      }, VERSION_TIMEOUT_SECONDS * 1000);
+      child.stdout!.on('data', (chunk: Buffer) => chunks.push(chunk));
+      child.stderr!.resume();
+      child.once('error', (cause) => {
+        clearTimeout(timeout);
+        reject(
+          new BackendCliIncompatible(cli_version_error(backend, executable, 'check').message, {
+            cause,
+          }),
+        );
+      });
+      child.once('close', (code) => {
+        clearTimeout(timeout);
+        options.signal?.removeEventListener('abort', abort);
+        release_closed();
+        if (timed_out) reject(cli_version_error(backend, executable, 'check'));
+        else resolve({ stdout: Buffer.concat(chunks).toString('utf8'), code });
+      });
+    });
+    validate_cli_version(backend, executable, output.stdout, output.code);
+  } finally {
+    // Abort cancels the outcome, not actual ownership. Core/APP observes its own deadline.
+    await closed;
+    if (!options.children) {
+      children.seal();
+      await children.settled();
+    }
+  }
 }

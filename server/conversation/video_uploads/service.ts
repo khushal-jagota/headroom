@@ -1,5 +1,6 @@
 /** Durable bounded intake, atomic adoption, and conservative recovery. */
 import { randomUUID } from 'node:crypto';
+import { observe_shutdown } from '../../lifecycle/deadline.ts';
 import { mkdirSync, renameSync, statSync, statfsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
@@ -247,20 +248,10 @@ export class VideoUploadService {
 
   async drain(options: { deadline: number }): Promise<void> {
     this.seal();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        Promise.allSettled([...this.transfers]),
-        new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(
-            () => reject(new Error('Video transfers did not settle before the shutdown deadline')),
-            Math.max(0, (options.deadline - performance.now() / 1000) * 1000),
-          );
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
+    await observe_shutdown(this.settled(), options, 'Video transfers');
+  }
+  async settled(): Promise<void> {
+    while (this.transfers.size) await Promise.allSettled([...this.transfers]);
   }
 
   private async receive_transfer(

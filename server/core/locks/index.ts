@@ -6,6 +6,12 @@ const flock = libc.func('int flock(int fd, int operation)');
 export interface LockHandle {
   close(): void;
 }
+export class ConversationRuntimeAlreadyOwnedError extends Error {
+  constructor(path: string) {
+    super(`ConversationRuntimeAlreadyOwned: ${path}`);
+    this.name = 'ConversationRuntimeAlreadyOwnedError';
+  }
+}
 /** Descriptors from Node's openSync are close-on-exec. Never unlink held lock files. */
 export function acquireLock(path: string): LockHandle | null {
   mkdirSync(dirname(path), { recursive: true });
@@ -32,6 +38,6 @@ export function acquireLock(path: string): LockHandle | null {
 export function acquireRuntimeOwnership(dbPath: string): LockHandle {
   const canonical = realpathSync(resolve(dbPath));
   const handle = acquireLock(`${canonical}.conversation-owner.lock`);
-  if (!handle) throw new Error(`ConversationRuntimeAlreadyOwned: ${canonical}`);
+  if (!handle) throw new ConversationRuntimeAlreadyOwnedError(canonical);
   return handle;
 }

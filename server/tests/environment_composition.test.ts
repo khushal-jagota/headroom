@@ -81,6 +81,7 @@ test('environment providers and poll hooks share the server, and both producer g
   const scratchFactory = vi.spyOn(scratchRuntime, 'create_ticket_scratch_runtime').mockReturnValue({
     start: scratchStart,
     close: scratchClose,
+    settled: () => scratchDrain.promise,
   });
   const layout = vi.spyOn(scratchLayout, 'layout_for');
   const metricsStop = vi.spyOn(MetricsRuntime.prototype, 'stop');
@@ -96,6 +97,7 @@ test('environment providers and poll hooks share the server, and both producer g
         deadlines.push(deadline);
         return backgroundDrain.promise;
       },
+      settled: () => backgroundDrain.promise,
     }),
     async createEnvironments(context) {
       const environment = await create_test_environment_runtime(context);
@@ -199,6 +201,7 @@ test('shutdown during environment setup retains ownership and prevents later pro
   const scratchFactory = vi.spyOn(scratchRuntime, 'create_ticket_scratch_runtime').mockReturnValue({
     start: scratchStart,
     close() {},
+    settled: async () => {},
   });
   const layout = vi.spyOn(scratchLayout, 'layout_for');
   const updatesStart = vi.spyOn(UpdateService.prototype, 'start');

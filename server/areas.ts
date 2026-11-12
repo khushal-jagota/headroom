@@ -1,4 +1,7 @@
 import { Runtime as SourceRuntime } from './measure_sources/runtime/supervisor.ts';
+import { observe_shutdown } from './lifecycle/deadline.ts';
+import { ShutdownDeadlineExceeded } from './lifecycle/contracts.ts';
+import { SHUTDOWN_GRACE_SECONDS } from './core/config.ts';
 import { SourceScheduleLoop } from './measure_sources/schedule_loop.ts';
 import { build_participants as source_participants } from './measure_sources/scheduling.ts';
 import { routes as previews } from './previews/routes.ts';
@@ -186,6 +189,9 @@ export function createAreasRuntime(
     closeSubscriptions(): void {
       if (recordReady) conversation.getRuntime().live_tail.close_all_subscriptions();
     },
+    sealRecord(): void {
+      conversation.seal();
+    },
     async closeRecord(): Promise<void> {
       await conversation.close();
       recordReady = false;
@@ -206,6 +212,8 @@ export function composeAreaLoops(context: OwnedAreaContext, options: AreaLoopOpt
   let sources: SourceScheduleLoop | undefined;
   let wakes: ManagerWakeLoop | undefined;
   let unsubscribe: (() => void) | undefined;
+  let closing: Promise<void> | undefined;
+  let actual_stop: Promise<void> | undefined;
   if (options.managerWakes) {
     context.assert_database_owned();
     if (!context.conversationSystem) throw new Error('Manager wakes require a conversation system');
@@ -237,15 +245,49 @@ export function composeAreaLoops(context: OwnedAreaContext, options: AreaLoopOpt
       unsubscribe = context.changes.subscribe(() => wakes?.wake());
       wakes.start(context.config.tick_seconds);
     },
-    async stop(options: { deadline?: number } = {}): Promise<void> {
-      unsubscribe?.();
-      const results = await Promise.allSettled([wakes?.stop(options), sources?.stop(options)]);
-      const failures = results.filter((result) => result.status === 'rejected');
-      if (failures.length)
-        throw new AggregateError(
-          failures.map((result) => result.reason),
-          'Area loop shutdown failed',
-        );
+    stop(options: { deadline?: number } = {}): Promise<void> {
+      if (closing) return closing;
+      const stop = {
+        deadline: options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS,
+      };
+      const drains: Promise<unknown>[] = [];
+      actual_stop = Promise.resolve().then(async () => {
+        for (const actual of [() => wakes?.settled(), () => sources?.settled()]) {
+          try {
+            drains.push(Promise.resolve(actual()));
+          } catch (error) {
+            drains.push(Promise.reject(error));
+          }
+        }
+        const results = await Promise.allSettled(drains);
+        const failures = results.filter((result) => result.status === 'rejected');
+        if (failures.length)
+          throw new AggregateError(
+            failures.map((result) => result.reason),
+            'Area loop shutdown failed',
+          );
+      });
+      closing = observe_shutdown(actual_stop, stop, 'area loops');
+      try {
+        unsubscribe?.();
+      } catch (error) {
+        drains.push(Promise.reject(error));
+      }
+      unsubscribe = undefined;
+      for (const close of [() => wakes?.stop(stop), () => sources?.stop(stop)]) {
+        try {
+          drains.push(
+            Promise.resolve(close()).catch((error: unknown) => {
+              if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+            }),
+          );
+        } catch (error) {
+          drains.push(Promise.reject(error));
+        }
+      }
+      return closing;
     },
+    settled: () =>
+      actual_stop ?? Promise.all([wakes?.settled(), sources?.settled()]).then(() => {}),
   };
 }

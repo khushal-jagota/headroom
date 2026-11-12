@@ -7,31 +7,36 @@ import { LIFECYCLE_SECONDS } from './config.ts';
 import { PreviewService } from './service.ts';
 import { PreviewTransport } from './transport.ts';
 import { require_preview_ingress } from './ingress.ts';
+import { install_request_lifetime } from '../core/http/lifetime.ts';
 const result = (record: PreviewRecord | null) =>
   record === null
     ? { preview: null }
     : { ...record, base_path: base_path(record), url: record.public_origin + base_path(record) };
 export const routes: FastifyPluginAsync<AreaServices> = async (app, services) => {
+  const lifetime = install_request_lifetime(app);
   const service = new PreviewService(
     services.database,
     services.config.trusted_ingress_canonical_origin ?? '',
     services.config.port,
   );
-  const transport = new PreviewTransport(service);
+  const transport = new PreviewTransport(service, lifetime);
   let timer: NodeJS.Timeout | undefined;
   let unsubscribe: (() => void) | undefined;
   let checking = false;
-  const recheck = async (): Promise<void> => {
-    if (checking) return;
-    checking = true;
-    try {
-      for (const generation of await service.recheck_all()) transport.revoke(generation);
-    } catch (error) {
-      app.log.error(error, 'Preview lifecycle inspection refused; retrying');
-    } finally {
-      checking = false;
-    }
-  };
+  let closing: Promise<void> | undefined;
+  const recheck = (): Promise<void> =>
+    lifetime.track(async () => {
+      if (closing || lifetime.sealed) return;
+      if (checking) return;
+      checking = true;
+      try {
+        for (const generation of await service.recheck_all()) transport.revoke(generation);
+      } catch (error) {
+        app.log.error(error, 'Preview lifecycle inspection refused; retrying');
+      } finally {
+        checking = false;
+      }
+    });
   app.addHook('onReady', async () => {
     await service.start();
     unsubscribe = services.changes?.subscribe(() => void recheck());
@@ -39,15 +44,17 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     timer.unref();
   });
   app.addHook('onClose', async () => {
+    await closing;
+  });
+  // onClose runs after listener shutdown; terminate WS first so server.close can finish.
+  app.addHook('preClose', async () => {
     clearInterval(timer);
     unsubscribe?.();
     app.server.off('upgrade', upgrade);
     transport.close();
-    await service.close();
-  });
-  // onClose runs after listener shutdown; terminate WS first so server.close can finish.
-  app.addHook('preClose', async () => {
-    transport.close();
+    // Existing service owns inspection admission and its outstanding work.
+    closing ??= service.close();
+    void closing.catch(() => {});
   });
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof PreviewError) {
@@ -122,13 +129,15 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     if (!match) return;
     try {
       require_preview_ingress(request, services.config);
-      void transport.websocket(
-        request,
-        socket,
-        head,
-        decodeURIComponent(match[1]!),
-        decodeURIComponent(match[2]!),
-      );
+      void transport
+        .websocket(
+          request,
+          socket,
+          head,
+          decodeURIComponent(match[1]!),
+          decodeURIComponent(match[2]!),
+        )
+        .catch(() => socket.destroy());
     } catch {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
     }

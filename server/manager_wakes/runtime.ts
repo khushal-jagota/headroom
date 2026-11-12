@@ -16,7 +16,12 @@ import {
 } from '../conversation/contracts.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import * as conversation_start from '../runtime/conversation_start.ts';
-import { ConversationStartAborted, observe_conversation_operation } from '../runtime/abort.ts';
+import {
+  ConversationStartAborted,
+  conversation_operation_scope,
+  observe_conversation_operation,
+} from '../runtime/abort.ts';
+import { observe_shutdown } from '../lifecycle/deadline.ts';
 import { read_manager } from '../managers/data.ts';
 import { manager_lifecycle_lock } from '../managers/service.ts';
 import { read_ticket } from '../tickets/data/index.ts';
@@ -76,6 +81,7 @@ export function reconcile_batch_outcomes(database: Database, options: { now: num
 class WakeDeliveryObserver {
   private readonly controller = new AbortController();
   readonly signal = this.controller.signal;
+  readonly operations = conversation_operation_scope(this.signal);
   private offered: (() => void) | undefined;
   private readonly assert_database_owned: () => void;
   constructor(assert_database_owned: () => void) {
@@ -338,6 +344,9 @@ export class ManagerWakeLoop {
   private interval = 0;
   private readonly in_flight = new Map<number, Promise<boolean>>();
   private readonly observers = new Map<number, WakeDeliveryObserver>();
+  private readonly actual = new Set<Promise<void>>();
+  private closing: Promise<void> | undefined;
+  private shutdown_settlement: Promise<void> | undefined;
 
   constructor(options: ManagerWakeLoopOptions) {
     this.options = options;
@@ -368,7 +377,7 @@ export class ManagerWakeLoop {
     database.write((sql) => data.recover_accepted_batches_from_other_processes(sql, options));
     const batches = database.read(data.pending_batches);
     const attempted = new Set(batches.map((batch) => `${batch.target.kind}:${batch.target.id}`));
-    for (;;) {
+    for (; !this.stopped;) {
       const batch = database.write((sql) => data.claim_next_batch(sql, options), {
         changeSignal: 'silent',
       });
@@ -385,16 +394,26 @@ export class ManagerWakeLoop {
       ids.push(batch.id);
       const observer = new WakeDeliveryObserver(this.options.assert_database_owned);
       this.observers.set(batch.id, observer);
-      const delivery = deliver_batch(batch, {
-        observer,
-        assert_database_owned: this.options.assert_database_owned,
-        workspace_context: this.options.workspace_context,
-        database,
-        conversation_system,
-        process_token: this.process_token,
-        now: () => clock.nowUnix(),
-      });
+      const delivery = Promise.resolve().then(() =>
+        deliver_batch(batch, {
+          observer,
+          assert_database_owned: this.options.assert_database_owned,
+          workspace_context: this.options.workspace_context,
+          database,
+          conversation_system,
+          process_token: this.process_token,
+          now: () => clock.nowUnix(),
+        }),
+      );
       this.in_flight.set(batch.id, delivery);
+      const actual = delivery
+        .then(
+          () => {},
+          () => {},
+        )
+        .then(() => observer.operations.settled());
+      this.actual.add(actual);
+      void actual.finally(() => this.actual.delete(actual)).catch(() => {});
       deliveries.push(
         delivery
           .catch((error: unknown) => {
@@ -452,23 +471,39 @@ export class ManagerWakeLoop {
     this.timer.unref();
   }
   /** Absolute deadline in monotonic seconds (performance.now()/1000), like Python. */
-  async stop(options: { deadline?: number } = {}): Promise<void> {
+  settled(): Promise<void> {
+    return (
+      this.shutdown_settlement ??
+      Promise.allSettled([
+        ...(this.pass ? [this.pass] : []),
+        ...this.in_flight.values(),
+        ...this.actual,
+      ]).then(() => {})
+    );
+  }
+  stop(options: { deadline?: number } = {}): Promise<void> {
+    if (this.closing) return this.closing;
     this.stopped = true;
     if (this.timer !== undefined) clearTimeout(this.timer);
-    const settled = Promise.allSettled([
+    this.shutdown_settlement = Promise.allSettled([
       ...(this.pass ? [this.pass] : []),
       ...this.in_flight.values(),
-    ]);
+      ...this.actual,
+    ]).then((results) => {
+      const failure = results.find(
+        (result) =>
+          result.status === 'rejected' && !(result.reason instanceof ConversationStartAborted),
+      );
+      if (failure?.status === 'rejected') throw failure.reason;
+    });
     const deadline = options.deadline ?? performance.now() / 1000 + 10;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      settled,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, Math.max(0, deadline * 1000 - performance.now()));
-      }),
-    ]);
-    if (timer !== undefined) clearTimeout(timer);
-    for (const observer of this.observers.values()) observer.cancel();
-    await settled;
+    this.closing = observe_shutdown(
+      this.shutdown_settlement,
+      { deadline },
+      'manager wakes',
+    ).finally(() => {
+      for (const observer of this.observers.values()) observer.cancel();
+    });
+    return this.closing;
   }
 }

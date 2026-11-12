@@ -1,5 +1,10 @@
 /** Explicit per-Ticket start path. Polling and scheduling remain in Unit 9. */
-import { ConversationStartAborted, observe_conversation_operation } from './abort.ts';
+import {
+  ConversationStartAborted,
+  conversation_operation_scope,
+  observe_conversation_operation,
+} from './abort.ts';
+import { observe_shutdown } from '../lifecycle/deadline.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { Database } from '../core/database/contracts.ts';
 import {
@@ -283,6 +288,9 @@ export async function tell_a_worker_it_lost_its_memory(
 export class WorkerStepReadinessLoop {
   private readonly controllers = new Map<string, AbortController>();
   private readonly in_flight = new Map<string, Promise<unknown>>();
+  private readonly actual = new Set<Promise<void>>();
+  private closing: Promise<void> | undefined;
+  private shutdown_settlement: Promise<void> | undefined;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private interval_ms: number | undefined;
   private stop_requested = false;
@@ -318,6 +326,7 @@ export class WorkerStepReadinessLoop {
   private schedule(ticket_id: string, notice = false): boolean {
     if (this.stop_requested || this.in_flight.has(ticket_id)) return false;
     const controller = new AbortController();
+    const operations = conversation_operation_scope(controller.signal);
     this.controllers.set(ticket_id, controller);
     const options = { ...this.options, signal: controller.signal };
     const task = Promise.resolve().then<unknown>(() =>
@@ -326,6 +335,14 @@ export class WorkerStepReadinessLoop {
         : start_ready_worker_step(ticket_id, options),
     );
     this.in_flight.set(ticket_id, task);
+    const actual = task
+      .then(
+        () => {},
+        () => {},
+      )
+      .then(() => operations.settled());
+    this.actual.add(actual);
+    void actual.finally(() => this.actual.delete(actual)).catch(() => {});
     void task
       .catch((error) => {
         if (error instanceof ConversationStartAborted) return;
@@ -386,28 +403,28 @@ export class WorkerStepReadinessLoop {
     this.interval_ms = interval_seconds * 1000;
     this.tick();
   }
-  async stop(options: { deadline?: number } = {}): Promise<void> {
+  settled(): Promise<void> {
+    return this.shutdown_settlement ?? Promise.all([this.drain(), ...this.actual]).then(() => {});
+  }
+  stop(options: { deadline?: number } = {}): Promise<void> {
+    if (this.closing) return this.closing;
     this.stop_requested = true;
     clearTimeout(this.timer);
     const deadline = options.deadline ?? performance.now() / 1000 + 10;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const drained = this.drain();
-    try {
-      const finished = await Promise.race([
-        drained.then(() => true),
-        new Promise<false>((resolve) => {
-          timer = setTimeout(
-            () => resolve(false),
-            Math.max(0, deadline - performance.now() / 1000) * 1000,
-          );
-        }),
-      ]);
-      if (!finished) {
-        for (const controller of this.controllers.values()) controller.abort();
-        await this.drain();
-      }
-    } finally {
-      clearTimeout(timer);
-    }
+    this.shutdown_settlement = Promise.allSettled([this.drain(), ...this.actual]).then(
+      (results) => {
+        const failure = results.find((result) => result.status === 'rejected');
+        if (failure?.status === 'rejected') throw failure.reason;
+      },
+    );
+    this.closing = observe_shutdown(
+      this.shutdown_settlement,
+      { deadline },
+      'worker readiness',
+    ).catch((error: unknown) => {
+      for (const controller of this.controllers.values()) controller.abort();
+      throw error;
+    });
+    return this.closing;
   }
 }

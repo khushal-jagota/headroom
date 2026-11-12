@@ -77,6 +77,7 @@ test('one dispatcher owner admits all loops and test mode admits no factories', 
       close: () => {
         calls.push('close');
       },
+      settled: async () => {},
     };
   };
   const wakes = vi.spyOn(ManagerWakeLoop.prototype, 'start');
@@ -141,6 +142,7 @@ test('notification wakes subscribe to commits and stop before the shared drain w
       deadlines.push(options.deadline);
       return first.promise;
     },
+    settled: () => first.promise,
   });
   const services = compose_background_services(context, {
     dispatcher_owned: true,
@@ -313,6 +315,7 @@ test('startServer reconciles only its dispatcher before runtime factories and cl
             expect(acquireLock(configuration.PLAN_DISPATCHER_LOCK_PATH)).toBeNull();
             stopped.push('notification close');
           },
+          settled: async () => {},
         }),
         stallChecker: () => ({
           start() {
@@ -322,6 +325,7 @@ test('startServer reconciles only its dispatcher before runtime factories and cl
           close() {
             stopped.push('stall close');
           },
+          settled: async () => {},
         }),
       }),
     ).rejects.toThrow('synthetic service refusal');
@@ -454,6 +458,7 @@ test('close fences later starts and waits for the active start before ownership 
       close() {
         trace.push('close entered');
       },
+      settled: () => finish.promise,
     }),
     stallChecker: () => {
       throw new Error('a later service must never start');
