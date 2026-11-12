@@ -1,5 +1,7 @@
 import { PlannerError } from '../core/contracts.ts';
 import { numeric_value } from '../core/http/numeric_json.ts';
+import type { ChartBlock, PageDocument } from '../goals/contracts.ts';
+import { measure_ids } from '../goals/logic/documents.ts';
 import type { Principal } from '../core/contracts.ts';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type {
@@ -39,35 +41,14 @@ export function read_state(
   const m = read_measure(sql, id);
   return snapshot(sql, m, day ?? local_date(now, m.timezone), now);
 }
-function chart_measure_ids(primary: unknown, page: unknown): Set<string> {
-  const found = new Set<string>();
-  const chart = (raw: unknown) => {
-    if (!raw || typeof raw !== 'object') return;
-    const c = raw as Record<string, unknown>;
-    if (typeof c.measure_id === 'string') found.add(c.measure_id);
-    const b = c.binding as { kind?: string; inputs?: { measure_id: string }[] } | undefined;
-    if (b?.kind === 'scalar_inputs')
-      for (const input of b.inputs ?? []) found.add(input.measure_id);
-  };
-  chart(primary);
-  const walk = (raw: unknown) => {
-    if (Array.isArray(raw)) {
-      for (const v of raw) walk(v);
-      return;
-    }
-    if (!raw || typeof raw !== 'object') return;
-    const o = raw as Record<string, unknown>;
-    if (o.type === 'chart') chart(o);
-    for (const v of Object.values(o)) if (v && typeof v === 'object') walk(v);
-  };
-  walk(page);
-  return found;
-}
 export function manager_manual_measure(sql: ReadSql, id: string, measure_id: string): boolean {
   if (read_measure(sql, measure_id).origin !== 'manual') return false;
   const row = sql.get<{ page: string | null }>('SELECT page FROM managers WHERE id=?', [id]);
   if (!row) throw new PlannerError('not_found', 'manager not found', { id });
-  if (row.page !== null && chart_measure_ids(null, JSON.parse(row.page)).has(measure_id))
+  if (
+    row.page !== null &&
+    measure_ids(null, JSON.parse(row.page) as PageDocument).includes(measure_id)
+  )
     return true;
   return sql
     .all<{ primary_chart: string | null; page: string }>(
@@ -75,10 +56,10 @@ export function manager_manual_measure(sql: ReadSql, id: string, measure_id: str
       [id],
     )
     .some((goal) =>
-      chart_measure_ids(
-        goal.primary_chart === null ? null : JSON.parse(goal.primary_chart),
-        JSON.parse(goal.page),
-      ).has(measure_id),
+      measure_ids(
+        goal.primary_chart === null ? null : (JSON.parse(goal.primary_chart) as ChartBlock),
+        JSON.parse(goal.page) as PageDocument,
+      ).includes(measure_id),
     );
 }
 function require_manual_author(sql: ReadSql, actor: Principal, id: string): void {
@@ -90,10 +71,10 @@ function require_manual_author(sql: ReadSql, actor: Principal, id: string): void
   if (!row) throw new PlannerError('not_found', 'goal not found');
   if (
     read_measure(sql, id).origin !== 'manual' ||
-    !chart_measure_ids(
-      row.primary_chart ? JSON.parse(row.primary_chart) : null,
-      JSON.parse(row.page),
-    ).has(id)
+    !measure_ids(
+      row.primary_chart ? (JSON.parse(row.primary_chart) as ChartBlock) : null,
+      JSON.parse(row.page) as PageDocument,
+    ).includes(id)
   )
     throw new PlannerError('agent_forbidden', 'goal can write only its bound manual measures');
 }
