@@ -1474,6 +1474,12 @@ class ClaudeAgentSdkBackendChild:
                     raise
                 if not reader.cancelled():
                     raise
+            except Exception:
+                # A reader that died with an error re-raises it on every await, so
+                # letting it escape would keep this stop from ever reaching the client.
+                LOGGER.warning(
+                    "the claude reader had already ended with an error", exc_info=True
+                )
             self._reader = None
         client = self._client
         if client is not None:

@@ -124,6 +124,7 @@ from planner.conversation.backends.contracts import (
     ToolCallProgress as BackendToolCallProgress,
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
+from planner.conversation.backends.task_ending import end_task
 from planner.conversation.child_custody import process_identity
 from planner.conversation.contracts import (
     AnswerFate,
@@ -733,11 +734,12 @@ class HermesAcpBackendChild:
             self._settle_parked_asks(turn)
             self._forget(turn.prompt, "prompt")
         self._give_up_on_unsent_permission_answers("this child is being shut down")
-        for task in (self._standard_error_reader, self._child_watcher):
+        for what, task in (
+            ("the stderr reader", self._standard_error_reader),
+            ("the child watcher", self._child_watcher),
+        ):
             if task is not None:
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
+                await end_task(task, what=f"hermes: {what}", logger=LOGGER)
         self._standard_error_reader = None
         self._child_watcher = None
         await self._stop_worker()

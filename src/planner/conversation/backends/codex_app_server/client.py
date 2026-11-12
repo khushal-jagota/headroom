@@ -47,6 +47,7 @@ from planner.conversation.backends.codex_app_server.login import (
     codex_home,
     logins_hold_the_same_credential,
 )
+from planner.conversation.backends.task_ending import end_task
 from planner.conversation.child_custody import process_identity
 from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.conversation.worker_scratch import WorkerScratch
@@ -299,11 +300,13 @@ class CodexAppServerClient:
     async def stop(self) -> None:
         """End the child: stop reading it, close its input, and make sure it is gone."""
         self._wire_broken = True
-        for task in (self._reader, self._standard_error_reader, self._child_watcher):
+        for what, task in (
+            ("the reader", self._reader),
+            ("the stderr reader", self._standard_error_reader),
+            ("the child watcher", self._child_watcher),
+        ):
             if task is not None:
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
+                await end_task(task, what=f"codex {self._description}: {what}", logger=LOGGER)
         self._reader = None
         self._standard_error_reader = None
         self._child_watcher = None

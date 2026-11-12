@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -718,5 +719,31 @@ def test_transport_records_identity_before_sdk_protocol_initialization(
         await transport.connect()
         stages.append("initialize")
         assert stages == ["spawn", "custody", "initialize"]
+
+    _run(exercise)
+
+
+def test_a_reader_that_died_with_an_error_does_not_keep_the_client_open(tmp_path: Path) -> None:
+    """A dead task raises its error on every await, so stop() once never reached disconnect."""
+
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, _sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=None)
+        assert child._reader is not None
+        child._reader.cancel()
+        await asyncio.gather(child._reader, return_exceptions=True)
+
+        async def died_of_a_lock() -> None:
+            raise sqlite3.OperationalError("database is locked")
+
+        child._reader = asyncio.create_task(died_of_a_lock())
+        await asyncio.gather(child._reader, return_exceptions=True)
+
+        await child.stop()
+
+        assert child._reader is None
+        assert child._client is None
+        assert clients[0].disconnected
 
     _run(exercise)
