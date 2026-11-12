@@ -1,6 +1,6 @@
 # Hermes ACP connection
 
-`create_hermes_backend_child_factory(launch)` supplies the Hermes backend child through the fixed conversation contract. The modules retain the Python extension path and the official ACP connection. The catalog source remains a separate part.
+`create_hermes_backend_child_factory(launch)` supplies the Hermes backend child through the fixed conversation contract. The modules retain the Python extension path and the official ACP connection. The catalog owner supplies the inventory command source.
 
 `hermes_acp_child_launch` retains the Python extension path. `child_environment` reproduces Python's six inherited variables, explicit launch overrides, full-access switch, and final conversation identity. Hermes does not use the tool-shell helper and does not add `BASH_ENV`. The Manager corrected that assumption in the ticket Brief.
 
