@@ -87,6 +87,7 @@ export function createNavigationPublication(factory: PublicationFactory, navigat
         tx.run('DELETE FROM navigation_signal_publications');
         for (const [id, attention] of values) put(tx, runtimeEpoch, id, 0, attention);
         tx.run('INSERT OR REPLACE INTO navigation_signal_installation(singleton,installation_id,scope,runtime_epoch,sequence,last_batch) VALUES(1,?,?,?,?,NULL)', [installationId, scope, runtimeEpoch, '0']);
+        tx.run('UPDATE navigation_meta SET schema_version=10 WHERE singleton=1');
         navigation.rebuild(tx);
       }, { changeSignal: 'silent' });
       authority.validate(token);

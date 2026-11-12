@@ -107,3 +107,25 @@ A restart step stops and starts both hosts on their existing databases, ports, a
 Captures survive the restart. The fixture bootstraps a database before launch, so the runner restores a SQLite backup after that bootstrap. This preserves the pre-restart rows for the server under comparison. The fake clock starts again at the fixture's configured time.
 
 A list can supply `seed_requests` before its ordinary `requests`. Each seed request has the same method, path, status, JSON, headers, and capture fields as an ordinary request. The runner replays them once against the default Python host and stops it. SQLite backups of that database then supply both sides. Seed captures are available on both sides. This can create real caller records without a partial TS server's unsupported creation routes. Seed requests do not count as compared route coverage. No direct seed row writes occur.
+
+### Writes on an open stream
+
+A stream step can include `after_open`. Each request runs after the preceding complete frame on that same side. The first request follows the initial frame. The next request waits for the next frame. Use `frames` equal to one plus the number of requests, so every write has a following frame. The total deadline covers the writes too.
+
+```json
+{
+  "kind": "stream", "method": "GET",
+  "path": "/api/navigation/view/events?view=...", "status": 200,
+  "frames": 3, "deadline_seconds": 10,
+  "after_open": [
+    {"method": "PATCH", "path": "/api/projects/${project}", "status": 200, "json": {"name": "Renamed"}},
+    {"method": "POST", "path": "/api/projects", "status": 200, "json": {"name": "New project"}, "capture": {"new_project": "id"}}
+  ]
+}
+```
+
+Nested requests use the same captures and substitutions as ordinary requests. New captures remain available after the stream closes. The comparison includes their status, selected headers, and bodies under `after_open`. A failed write cannot pass through equal failures. Stream frame captures still refer to the frame list. This extension proves live delivery on one open connection, without a new host or another test server.
+
+After each `after_open` write, the runner also executes the list's read probes. Each probe requires HTTP 200. These reads do not consume a stream frame or advance the next action. Their compared answers live under `after_open.*.probes.*`, with response bodies under `after_open.*.probes.*.body`. A normalization rule for those bodies needs that full path. The ordinary stream frames remain under `body.*.data`.
+
+For review evidence, `report_captures` can name existing captures to include in the report. It changes no comparison or substitution behavior. Navigation uses this to retain ordered overview windows and the actual stream frames.

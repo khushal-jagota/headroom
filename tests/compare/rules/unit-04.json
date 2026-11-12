@@ -29,6 +29,7 @@
     "navigation_view_unread_conversations": "Derived navigation storage. Scoped route answers are compared; stored Project record visibility and nonempty windows remain explicit limits.",
     "navigation_view_globals": "Derived navigation storage. Scoped route answers are compared; stored Project record visibility and nonempty windows remain explicit limits.",
     "navigation_view_changes": "Derived navigation storage. Scoped route answers are compared; stored Project record visibility and nonempty windows remain explicit limits.",
-    "conversation_runtime_epoch": "Process startup recovery marker from the later conversation core. This unit has no interrupted turns and does not prove recovery."
+    "conversation_runtime_epoch": "Process startup recovery marker from the later conversation core. This unit has no interrupted turns and does not prove recovery.",
+    "navigation_view_ordered": "TS-only Intl collation order index. Ordered member IDs, paging, counts, and closures are compared through scoped windows."
   }
 }

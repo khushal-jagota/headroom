@@ -1,11 +1,13 @@
-import { once } from 'node:events';
+import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { AreaServices } from '../core/authority/register.ts';
 import type { CurrentAuthority, CurrentViewSnapshot, ViewRequest } from '../../web/src/lib/navigation/contracts.ts';
-import type { NavigationAuthority, NavigationSource } from './contracts.ts';
+import type { NavigationAuthority } from './contracts.ts';
+import { ScopedDelivery } from './delivery/runtime.ts';
+import { SnapshotFences } from './delivery/snapshot_fence.ts';
+import { DELIVERY } from './delivery/configuration.ts';
 import { parseView } from './logic/view.ts';
-import { compact } from './logic/json.ts';
 import { NavigationUnavailable } from './logic/errors.ts';
 import { jsonFailure } from '../core/http/json.ts';
 import { scalarQueries } from '../list_reads/http.ts';
@@ -33,31 +35,38 @@ function view(request: FastifyRequest, reply: FastifyReply): ViewRequest | null 
     reply.code(400).send({ detail }); return null;
   }
 }
-function capture(authority: NavigationAuthority, sources: readonly NavigationSource[], services: AreaServices, value: ViewRequest): { current: CurrentViewSnapshot; token: CurrentAuthority } {
+function expectedSnapshotFailure(error: unknown): boolean {
+  return error instanceof NavigationUnavailable || error instanceof SyntaxError
+    || error instanceof TypeError || error instanceof RangeError
+    || error instanceof Error && (error.constructor === Error
+      || String((error as Error & { code?: string }).code ?? '').startsWith('SQLITE_'));
+}
+function capture(authority: NavigationAuthority, services: AreaServices, value: ViewRequest, captured?: CurrentAuthority): { current: CurrentViewSnapshot; token: CurrentAuthority } {
   let token: CurrentAuthority;
-  try { token = authority.capture(); } catch (error) { throw new NavigationUnavailable((error as Error).message); }
-  const current = services.database.read(sql => { validateInstallation(sql, token); return snapshot(sql, value, token, sources); });
-  try { authority.validate(token); } catch (error) { throw new NavigationUnavailable((error as Error).message); }
-  return { current, token };
+  try { token = captured ?? authority.capture(); authority.validate(token); }
+  catch (error) { throw new NavigationUnavailable((error as Error).message); }
+  try {
+    const current = services.database.read(sql => { validateInstallation(sql, token); return snapshot(sql, value, token); });
+    try { authority.validate(token); } catch (error) { throw new NavigationUnavailable((error as Error).message); }
+    return { current, token };
+  } catch (error) {
+    if (!expectedSnapshotFailure(error)) throw error;
+    throw new NavigationUnavailable((error as Error).message);
+  }
 }
-function frame(current: object & { event: string }): string { return `event: ${current.event}\ndata: ${compact(current)}\n\n`; }
-function difference(previous: CurrentViewSnapshot, current: CurrentViewSnapshot): Record<string, unknown> & { event: string } {
-  const { event: _event, mode: _mode, content, ...common } = current;
-  if (current.content_version === previous.content_version) return { ...common, event: 'checkpoint', previous_coverage: previous.coverage };
-  const old = new Map(previous.content.records.map(row => [compact([row.kind, row.id]), compact(row)]));
-  const fresh = new Set(content.records.map(row => compact([row.kind, row.id])));
-  return { ...common, event: 'patch', previous_coverage: previous.coverage, previous_content_version: previous.content_version, upserts: content.records.filter(row => old.get(compact([row.kind, row.id])) !== compact(row)), evictions: previous.content.records.filter(row => !fresh.has(compact([row.kind, row.id]))).map(({ kind, id }) => ({ kind, id })), windows: content.windows, counts: content.counts, review_context: content.review_context, review_summary: content.review_summary };
-}
-export function createRoutes(sources: readonly NavigationSource[]): FastifyPluginAsync<AreaServices> {
+export function createRoutes(): FastifyPluginAsync<AreaServices> {
 return async (app, services) => {
-  const streams = new Set<() => void>();
-  app.addHook('onClose', async () => { for (const close of streams) close(); });
+  const delivery = new ScopedDelivery(services.database);
+  const fences = new SnapshotFences(app);
+  app.addHook('onReady', async () => { delivery.start(); });
+  app.addHook('onClose', async () => { delivery.close(); });
   app.get('/snapshot', async (request, reply) => {
     const value = view(request, reply); if (!value) return;
     const authority: NavigationAuthority | undefined = services.signalAuthority;
     if (!authority) return reply.code(503).send({ detail: 'navigation view is unavailable' });
     try {
-      const { current } = capture(authority, sources, services, value);
+      const { current, token } = capture(authority, services, value);
+      fences.hold(request, reply, authority, token);
       return reply.header('cache-control', 'no-store').send(current);
     } catch (error) { if (!(error instanceof NavigationUnavailable)) throw error; return reply.code(503).send({ detail: 'navigation view is unavailable' }); }
   });
@@ -65,41 +74,15 @@ return async (app, services) => {
     const value = view(request, reply); if (!value) return;
     const authority: NavigationAuthority | undefined = services.signalAuthority;
     if (!authority) return reply.code(503).send({ detail: 'navigation view is unavailable' });
-    let admitted: ReturnType<typeof capture>;
-    try { admitted = capture(authority, sources, services, value); } catch (error) { if (!(error instanceof NavigationUnavailable)) throw error; return reply.code(503).send({ detail: 'navigation view is unavailable' }); }
+    let token: CurrentAuthority;
+    try { token = authority.capture(); authority.validate(token); }
+    catch { return reply.code(503).send({ detail: 'navigation view is unavailable' }); }
+    // As in Python, only authority is captured before stream headers. The initial
+    // scoped read is lazy. An invalid durable view then closes the started stream.
     reply.hijack();
     reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
-    let previous = admitted.current, closed = false, sending = false, heartbeat = Date.now();
-    const abort = new AbortController();
-    let unwatch: () => void = () => {};
-    const close = () => { if (closed) return; closed = true; abort.abort(); clearInterval(timer); unwatch(); streams.delete(close); reply.raw.end(); };
-    const send = async (body: string) => {
-      authority!.validate(admitted.token);
-      if (!reply.raw.write(body)) {
-        const deadline = setTimeout(() => abort.abort(), 10_000);
-        try { await once(reply.raw, 'drain', { signal: abort.signal }); }
-        finally { clearTimeout(deadline); }
-      }
-      authority!.validate(admitted.token);
-    };
-    const timer = setInterval(() => { void (async () => {
-      if (closed || sending) return;
-      sending = true;
-      try {
-        authority!.validate(admitted.token);
-        const current = capture(authority, sources, services, value).current;
-        if (current.coverage.epoch !== previous.coverage.epoch) { close(); return; }
-        if (current.coverage.revision !== previous.coverage.revision) { await send(frame(difference(previous, current))); previous = current; heartbeat = Date.now(); }
-        else if (Date.now() - heartbeat >= 15_000) { await send(': heartbeat\n\n'); heartbeat = Date.now(); }
-      } catch { close(); }
-      finally { sending = false; }
-    })(); }, 1000);
-    unwatch = authority!.watch(admitted.token, close);
-    if (closed) { unwatch(); return; }
-    streams.add(close);
-    reply.raw.once('close', close);
-    sending = true;
-    try { await send(frame(previous)); } catch { close(); } finally { sending = false; }
+    delivery.open(reply.raw, authority, token, value,
+      () => capture(authority, services, value, token).current);
   });
   app.get('/content', async (request, reply) => {
     const value = query(request, reply, ['kind', 'identity', 'version']); if (!value) return;
@@ -108,7 +91,17 @@ return async (app, services) => {
     if (!row) return reply.code(409).send({ detail: 'recap owner is absent' });
     const body = String((JSON.parse(row.value) as { recap: string }).recap);
     if (createHash('sha256').update(body).digest('hex') !== value.version) return reply.code(409).send({ detail: 'recap source changed' });
-    return reply.header('cache-control', 'no-store').header('etag', value.version).type('text/plain; charset=utf-8').send(body);
+    // Python slices Unicode scalars, with four-byte characters bounded by the chunk budget.
+    function* chunks(): Generator<string> {
+      let chunk = '', count = 0;
+      for (const scalar of body) {
+        chunk += scalar; count += 1;
+        if (count === DELIVERY.contentChunkBytes / 4) { yield chunk; chunk = ''; count = 0; }
+      }
+      if (chunk) yield chunk;
+    }
+    return reply.header('cache-control', 'no-store').header('etag', value.version)
+      .type('text/plain; charset=utf-8').send(Readable.from(chunks()));
   });
 };
 }

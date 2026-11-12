@@ -134,7 +134,10 @@ def capture_values(body: Any, call: dict[str, Any], captures: dict[str, Any]) ->
         captures[name] = value
 
 
-async def stream_answer(base: str, call: dict[str, Any]) -> dict[str, Any]:
+async def stream_answer(
+    base: str, call: dict[str, Any], captures: dict[str, Any] | None = None,
+    probes: list[str] | None = None,
+) -> dict[str, Any]:
     """Read complete SSE frames under one deadline, including response headers."""
     count = call["frames"]
     deadline = call["deadline_seconds"]
@@ -143,6 +146,12 @@ async def stream_answer(base: str, call: dict[str, Any]) -> dict[str, Any]:
         isinstance(deadline, (int, float)) and not isinstance(deadline, bool)
         and math.isfinite(deadline) and deadline > 0
     )
+    saved = {} if captures is None else captures
+    after_open = call.get("after_open", [])
+    assert isinstance(after_open, list) and len(after_open) < count, (
+        "each after_open request requires its following stream frame", call
+    )
+    writes: list[dict[str, Any]] = []
     frames: list[dict[str, Any]] = []
     answer: dict[str, Any] = {}
 
@@ -173,6 +182,53 @@ async def stream_answer(base: str, call: dict[str, Any]) -> dict[str, Any]:
                                 "event": fields.get("event") or "message", "data": payload,
                                 **reconnect,
                             })
+                            if len(frames) <= len(after_open):
+                                # One write follows each frame, so later frames prove the
+                                # already-open stream observes each committed transition.
+                                operation = after_open[len(frames) - 1]
+                                resolved = substitute(operation, saved)
+                                changed = await client.request(
+                                    resolved["method"], base + resolved["path"],
+                                    json=resolved.get("json"), headers=resolved.get("headers"),
+                                )
+                                assert changed.status_code == resolved["status"], (
+                                    operation, changed.status_code, changed.text,
+                                )
+                                body = (
+                                    changed.json()
+                                    if "application/json" in changed.headers.get("content-type", "")
+                                    else changed.text
+                                )
+                                capture_values(body, operation, saved)
+                                action: dict[str, Any] = {
+                                    "status": changed.status_code,
+                                    "headers": {
+                                        h: changed.headers[h]
+                                        for h in HEADERS if h in changed.headers
+                                    },
+                                    "body": body,
+                                }
+                                writes.append(action)
+                                if probes:
+                                    action["probes"] = []
+                                    for path in probes:
+                                        probed = await client.get(base + substitute(path, saved))
+                                        assert probed.status_code == 200, (
+                                            path, probed.status_code, probed.text,
+                                        )
+                                        action["probes"].append({
+                                            "status": probed.status_code,
+                                            "headers": {
+                                                h: probed.headers[h]
+                                                for h in HEADERS if h in probed.headers
+                                            },
+                                            "body": (
+                                                probed.json()
+                                                if "application/json" in probed.headers.get(
+                                                    "content-type", ""
+                                                ) else probed.text
+                                            ),
+                                        })
                             if len(frames) == count:
                                 return
                         fields = {}
@@ -196,11 +252,21 @@ async def stream_answer(base: str, call: dict[str, Any]) -> dict[str, Any]:
     assert len(frames) == count, (
         "stream did not deliver the required complete frames", call, len(frames), answer
     )
+    if after_open:
+        answer["after_open"] = writes
     return answer
 
 
-async def stream_answers(bases: list[str], calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    reads = [stream_answer(base, call) for base, call in zip(bases, calls, strict=True)]
+async def stream_answers(
+    bases: list[str], calls: list[dict[str, Any]],
+    captures: list[dict[str, Any]] | None = None,
+    probes: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    saved = [{} for _ in bases] if captures is None else captures
+    reads = [
+        stream_answer(base, call, values, probes)
+        for base, call, values in zip(bases, calls, saved, strict=True)
+    ]
     return list(await asyncio.gather(*reads))
 
 
@@ -289,7 +355,8 @@ def run_list(
                     assert response.status_code == call["status"], (
                         call, response.status_code, response.text,
                     )
-                    capture_values(response.json(), request, seed_captures)
+                    if request.get("capture"):
+                        capture_values(response.json(), request, seed_captures)
         finally:
             _stop_server(seed_server)
         backup_database(seed_server.db_path, seed)
@@ -361,7 +428,19 @@ def run_list(
                     if call.get("kind") == "stream":
                         streamed = asyncio.run(stream_answers(
                             [server.base for server in servers],
-                            [substitute(call, saved) for saved in captures],
+                            [
+                                {
+                                    **substitute(
+                                        {k: v for k, v in call.items() if k != "after_open"},
+                                        saved,
+                                    ),
+                                    # Defer nested substitutions until their preceding
+                                    # writes have populated or replaced captures.
+                                    "after_open": call.get("after_open", []),
+                                }
+                                for saved in captures
+                            ],
+                            captures, spec.get("probes"),
                         ))
                     for side, server in enumerate(servers):
                         resolved = substitute(call, captures[side])
@@ -431,6 +510,7 @@ def run_list(
                 differences.append({"table": table, "rows": [s.get(table) for s in snapshots]})
         return {
             "list": list_path.name,
+            "captures": {name: captures[0][name] for name in spec.get("report_captures", [])},
             "seconds": time.monotonic() - started,
             "requests": len(spec["requests"]),
             "http_inventory": len(declared),

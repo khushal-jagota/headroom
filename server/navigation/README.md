@@ -1,30 +1,23 @@
-# Navigation source registration
+# Shared navigation engine
 
-Composition creates one runtime with `createNavigationRuntime(idle_publication)`. The write door calls its `publicationCommitStep` before its `navigationCommitStep`. Startup calls `runtime.initialize(database, signalAuthority)` before requests arrive. This installs publication storage and rebuilds navigation through the same write door. Python owns the schema and source triggers.
+Navigation owns every record derivation and one shared view engine. Later domains do not register navigation sources or implement views. Their writes use the write door. Existing source triggers populate `navigation_dirty`; the navigation commit step resolves dependencies, derives all affected roots, updates records, journals the revision, and updates the shared projection.
 
-A later domain exports a `NavigationSource` and appends it to `navigationSources` in `index.ts`. Supply:
+`data/derivation.ts` covers Tickets, Managers, Chief, Projects, goals, conversations, addresses, and totals. It reads canonical source rows. `views/projection.ts` owns memberships, counts, owner relationships, and change footprints. `views/read.ts` owns bounded windows, closures, Review context, paging, overlap, and recap references.
 
-- `roots(sql)` to enumerate source identities for startup rebuild.
-- `affected(sql, dirty)` to resolve new or changed roots from a trigger entry.
-- `derive(sql, id)` to return records and source dependencies, including an empty record list after deletion.
-- `view(sql, request)` when the domain adds scoped windows, records, counts, or review context. Return the complete bounded record closure for its windows. Shared counts are additive, so do not count another source's records twice.
+## Ordering and bounded reads
 
-The framework also resolves prior dependencies. A failed derivation rolls back the source write through the existing write door. Sources receive transaction-scoped SQL and must not retain it or return promises.
+Intl.Collator compares the same title and identity operands as Python's ICU order. Its generation is separate because Node does not expose ICU sort-key bytes. Existing projection tables retain semantic comparator operands. The TS-only `navigation_view_ordered` index stores physical positions for indexed page reads. Public anchors retain semantic operands, not physical positions. Insertions, deletions, and title changes do not turn an old anchor into an ordinal offset.
 
-Add the domain's records and their mutations to its comparison list, with a snapshot after each write and a restart before the final snapshot. This extends the rebuild proof. The first unit proves only Projects and the required baseline Chief record. The populated proof finishes at gate 3.
+Count-only windows load no membership rows. Page reads fetch only admitted rows and logarithmic anchor-search points. Dynamic Review priority uses the bounded submitted history keys. Projection writes rebuild the order of groups whose membership or sort operands changed. The write cost is O(N log N) sort plus N replacements for each changed group. This cost needs gate 3 measurement on representative data.
 
-Projects have no navigation window membership in Python. A Project-only snapshot therefore does not expose stored Project records. Its route comparison cannot prove each Project record's derivation independently. The result must retain this limitation.
+## Publication and delivery
 
-`createNavigationRuntime` accepts a `PublicationFactory` from `navigation/contracts.ts`. The conversation unit's `idle_publication` factory supplies complete idle attention facts through a synchronous callback. Navigation owns installation storage, per-conversation revisions, and the stored batch cursor. New or changed facts advance that cursor. Deleted conversations retain revisioned tombstones. Unchanged idle facts do not rewrite rows.
+The shared startup creates `services.signalAuthority` under runtime ownership. Navigation stores and validates that supplied installation inside each read snapshot. It creates no producer permit. The idle callback retains durable unread/failure facts, but runtime-only working/question states remain false. The real conversation core replaces that temporary source.
 
-The conversation dependency supplies producer authority through `AreaServices.signalAuthority`. Its public interface supplies `capture`, `validate`, and `watch`. Navigation declares the equivalent consumer interface in its own contracts. It does not create producer identities, availability, generations, delivery sessions, or permits.
+Delivery follows the Python scoped coordinator: poll committed change footprints, recapture intersecting views, emit patch or checkpoint, send heartbeats, and retain bounded journal history. Epoch changes, missing retained footprints, and revoked authority close the connection. Reconnection starts a fresh snapshot, as Python does; Last-Event-ID is not a replay contract here. Snapshot sends retain their authority through asynchronous send hooks. Content reads validate the durable recap digest and stream bounded Unicode chunks.
 
-`runtime.initialize(database, signalAuthority)` captures that producer's permit and commits an installation with the same scope, runtime epoch, and installation identity. It also rebuilds navigation. Failed startup does not admit requests. The routes receive the same dependency through area registration. A SQL installation check runs inside each navigation read transaction. The producer validates runtime authority before sends. Its watcher revokes open streams and pending drains on invalidation. Composition invalidates the producer before it closes navigation storage, the app, and the database. Persisted records alone cannot grant live authority.
+## Adding later domain writers
 
-This adapter proves the idle source only. It does not infer live attention, owner association effects, or producer availability changes. The real conversation core replaces the idle source integration and supplies proof for those transitions. It must retain installation checks and immediate delivery revocation.
+No navigation registration is required. Preserve source trigger declarations and parameter names, write through the shared door, and extend that domain's comparison list with snapshots after writes. Add the domain's records to populated restart evidence. Gate 3 still proves the combined result on a copy of live.
 
-# Resource provider registration
-
-Export a provider that implements `ResourceProvider` from `server/resource_versions/contracts.ts`. Its `capture(sql, request, key)` returns null for an unrelated key, or a revision and body reader. Add it to `providers` in `server/resource_versions/registry.ts`. Both run inside one read snapshot. Neither writes.
-
-Each provider's domain comparison must prove its recognized keys, unchanged and changed revisions, coherent bodies, and relevant authority rules. This unit proves only the empty registry: unknown revisions are null and an unregistered body returns 404.
+Resource providers remain separate. Implement `ResourceProvider` from `server/resource_versions/contracts.ts`, add it to that registry, and prove recognized keys, body coherence, revisions, and authority in its domain list. This unit proves the generic registry with no providers.
