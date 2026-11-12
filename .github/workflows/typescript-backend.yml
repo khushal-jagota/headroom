@@ -147,7 +147,7 @@ jobs:
             BROWSER_EVIDENCE_DIR="$browser_evidence" \
             bash --noprofile --norc -euo pipefail <<'BROWSER' 2>&1 | tee "$browser_evidence/job.log"
           sudo apt-get update
-          sudo apt-get install -y libicu-dev pkg-config build-essential
+          sudo apt-get install -y libicu-dev pkg-config build-essential ffmpeg
           scripts/dev setup
           scripts/dev check-node web
           (cd web && node node_modules/vite/bin/vite.js build)
