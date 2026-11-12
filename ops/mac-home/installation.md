@@ -40,26 +40,31 @@ The database, skills, and settings live under `data/`. Workspaces live under `wo
 Private sockets and the port-scoped lease live under `/var/tmp/panels-<uid>/`, with mode 0700.
 These short runtime paths do not depend on the length of the state path.
 
-## Authenticate and start
+## Use your existing login and start
 
-Each home uses separate provider configuration. Preserve your real `HOME` for the macOS login keychain.
-Authenticate the provider that you use with these variables. Do not copy another home's credentials.
+Panels uses the provider logins already on your Mac. No second login is required.
+The generator preserves your real `HOME` for the macOS login keychain.
+It retains explicitly configured `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and `PLAN_HERMES_HOME` from the setup shell.
+Without those variables, it uses `~/.codex`, `~/.claude`, and `~/.hermes`.
+If you use custom provider folders, export their existing paths before the setup command.
 
-```sh
-export CODEX_HOME="$PANELS_ROOT/providers/codex"
-export CLAUDE_CONFIG_DIR="$PANELS_ROOT/providers/claude"
-export PLAN_HERMES_HOME="$PANELS_ROOT/providers/hermes"
-agent_backends/node_modules/.bin/codex login
-# For Claude instead:
-agent_backends/node_modules/.bin/claude auth login
-```
+The source home uses its own workspaces and projects its skills there.
+It does not provision account-wide skill links in these shared provider homes.
+For a coexistence check, use the canonical provider home and compare the live executor's setup and skills before and after.
+Do not copy `auth.json` or change login, provider configuration, or global skill links for that check.
+
+For a disposable test, add `--isolated-providers` to the setup command.
+This explicit test option creates empty provider folders under the state root. It does not create a login.
+For one real Codex Worker in that test, set only its home plist's `CODEX_HOME` to the existing canonical provider directory.
+Use that directory directly. Do not copy or symlink credentials, perform a second login, or provision account-wide skills.
 
 For Hermes, add `PLAN_HERMES_PYTHON` to the home plist's environment with its installed interpreter path.
 See the repository README for provider prerequisites. Select the provider in Panels before the first Worker.
 
 ```sh
 launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.plist"
-curl --fail "http://127.0.0.1:$PANELS_PORT/api/health?expected_sha=$(git rev-parse HEAD)"
+curl --fail --retry 20 --retry-connrefused --retry-delay 1 \
+  "http://127.0.0.1:$PANELS_PORT/api/health?expected_sha=$(git rev-parse HEAD)"
 launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.backup.plist"
 ```
 
@@ -82,7 +87,12 @@ For an existing Serve configuration, preserve its routes and choose an unused HT
 
 ## Stop, restart, and backup
 
+Before stop, record the supervisor and app identities for this home.
 Stop the exact jobs with `launchctl bootout "gui/$(id -u)/$PANELS_LABEL.backup"` and `launchctl bootout "gui/$(id -u)/$PANELS_LABEL"`.
+Wait until `launchctl print "gui/$(id -u)/$PANELS_LABEL"` reports that the job is absent.
+Check that the recorded supervisor and app ended and that the port has no listener.
+If the stop exceeds 30 seconds, record the output and stop. Do not bootstrap a replacement until these checks pass.
+Apply the same job-absence wait before reload of the backup label.
 Start them again with the bootstrap commands above. This is also the ordinary service restart route.
 The supervisor remains in launchd custody. Its hard death also removes the app and permits a fresh start.
 
@@ -109,10 +119,15 @@ cp -R "$PANELS_ROOT/data/backups/<snapshot-name>" "$PANELS_RESTORE/snapshot"
   --destination-db "$PANELS_RESTORE/data/planner.db" --live-stopped
 ```
 
-Start a foreground proof with explicit isolated paths and dispatch disabled:
+Start a foreground proof in a subshell with every inherited `PLAN_*` variable cleared.
+Set only the explicit scratch paths below. Keep dispatch disabled and test mode enabled.
 
 ```sh
-env CODEX_HOME="$PANELS_RESTORE/providers/codex" \
+(
+  for panels_variable in $(env | sed -n 's/^\(PLAN_[A-Za-z0-9_]*\)=.*/\1/p'); do
+    unset "$panels_variable"
+  done
+  env CODEX_HOME="$PANELS_RESTORE/providers/codex" \
   CLAUDE_CONFIG_DIR="$PANELS_RESTORE/providers/claude" \
   PLAN_HERMES_HOME="$PANELS_RESTORE/providers/hermes" \
   PLAN_CONFIG_PATH="$PANELS_RESTORE/config.yaml" \
@@ -126,6 +141,7 @@ env CODEX_HOME="$PANELS_RESTORE/providers/codex" \
   PLAN_APP_SHA="$(git rev-parse HEAD)" \
   PLAN_PORT=8768 PLAN_DISPATCH_ENABLED=0 PLAN_TEST_MODE=1 \
   .venv/bin/python -m planner serve
+)
 ```
 
 In another terminal, check port 8768 health and read one known record through that scratch server.

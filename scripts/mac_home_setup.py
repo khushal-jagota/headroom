@@ -15,7 +15,15 @@ from pathlib import Path
 SOURCE = Path(__file__).resolve().parents[1]
 
 
-def write_home(root: Path, source: Path, label: str, port: int, revision: str) -> None:
+def write_home(
+    root: Path,
+    source: Path,
+    label: str,
+    port: int,
+    revision: str,
+    *,
+    isolated_providers: bool = False,
+) -> None:
     """Create one new record, with service and backup bound to the same paths."""
     root = root.expanduser().absolute()
     if root.exists() or root.is_symlink():
@@ -33,10 +41,8 @@ def write_home(root: Path, source: Path, label: str, port: int, revision: str) -
     if not interpreter.is_file():
         raise ValueError("Set up this checkout's independent .venv first")
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
-    for name in ("data", "logs", "agents", "providers", "workspaces"):
+    for name in ("data", "logs", "agents", "workspaces"):
         (root / name).mkdir(mode=0o700)
-    for name in ("codex", "claude", "hermes"):
-        (root / "providers" / name).mkdir(mode=0o700)
     config = root / "data/config.yaml"
     config.write_text(json.dumps({"workspace_root": str(root / "workspaces")}) + "\n")
     config.chmod(0o600)
@@ -49,9 +55,6 @@ def write_home(root: Path, source: Path, label: str, port: int, revision: str) -
                 os.environ.get("PATH", os.defpath),
             )
         ),
-        "CODEX_HOME": str(root / "providers/codex"),
-        "CLAUDE_CONFIG_DIR": str(root / "providers/claude"),
-        "PLAN_HERMES_HOME": str(root / "providers/hermes"),
         "PLAN_CONFIG_PATH": str(config),
         "PLAN_WORKSPACE_ROOT": str(root / "workspaces"),
         "PLAN_DB_PATH": str(root / "data/planner.db"),
@@ -61,6 +64,18 @@ def write_home(root: Path, source: Path, label: str, port: int, revision: str) -
         "PLAN_PORT": str(port),
         "PLAN_APP_SHA": revision,
     }
+    for variable, folder in (
+        ("CODEX_HOME", ".codex"),
+        ("CLAUDE_CONFIG_DIR", ".claude"),
+        ("PLAN_HERMES_HOME", ".hermes"),
+    ):
+        if isolated_providers:
+            provider = root / "providers" / folder.removeprefix(".")
+            provider.mkdir(mode=0o700, parents=True)
+            configured = str(provider)
+        else:
+            configured = os.environ.get(variable) or str(Path.home() / folder)
+        environment[variable] = str(Path(configured).expanduser().resolve())
     common: dict[str, object] = {
         "WorkingDirectory": str(source),
         "EnvironmentVariables": environment,
@@ -112,6 +127,11 @@ def main() -> None:
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--label", required=True)
     parser.add_argument("--port", required=True, type=int)
+    parser.add_argument(
+        "--isolated-providers",
+        action="store_true",
+        help="TEST ONLY: use empty provider folders under the new state root",
+    )
     args = parser.parse_args()
     revision = subprocess.check_output(
         ["git", "-C", str(SOURCE), "rev-parse", "HEAD"], text=True
@@ -131,7 +151,14 @@ def main() -> None:
         if existing.returncode == 0:
             raise SystemExit(f"The launchd job {label} already exists")
     try:
-        write_home(args.root, SOURCE, args.label, args.port, revision)
+        write_home(
+            args.root,
+            SOURCE,
+            args.label,
+            args.port,
+            revision,
+            isolated_providers=args.isolated_providers,
+        )
     except (OSError, ValueError) as error:
         raise SystemExit(str(error)) from error
     print(f"Wrote {args.root.expanduser().resolve()}. No launchd job was loaded.")

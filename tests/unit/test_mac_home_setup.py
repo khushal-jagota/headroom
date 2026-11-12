@@ -9,7 +9,9 @@ import pytest
 from scripts.mac_home_setup import write_home
 
 
-def test_service_and_backup_keep_one_record_with_space_paths(tmp_path: Path) -> None:
+def test_service_and_backup_keep_one_record_with_space_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # No existing test covers generated launchd jobs. A wrong backup source or
     # shell-split interpreter could silently omit the running home's record.
     source = tmp_path / "source with spaces"
@@ -17,6 +19,11 @@ def test_service_and_backup_keep_one_record_with_space_paths(tmp_path: Path) -> 
     interpreter.parent.mkdir(parents=True)
     interpreter.touch()
     root = tmp_path / "state with spaces"
+    codex_home = tmp_path / "existing codex"
+    hermes_home = tmp_path / "existing hermes"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("PLAN_HERMES_HOME", str(hermes_home))
     write_home(root, source, "com.panels.test", 9876, "a" * 40)
     home = plistlib.loads((root / "agents/com.panels.test.plist").read_bytes())
     backup = plistlib.loads((root / "agents/com.panels.test.backup.plist").read_bytes())
@@ -29,10 +36,36 @@ def test_service_and_backup_keep_one_record_with_space_paths(tmp_path: Path) -> 
     assert arguments[arguments.index("--backup-dir") + 1] == environment["PLAN_BACKUP_DIR"]
     assert arguments[arguments.index("--deployed-revision") + 1] == environment["PLAN_APP_SHA"]
     assert environment["PLAN_WORKSPACE_ROOT"] == str(root / "workspaces")
-    assert environment["CODEX_HOME"] == str(root / "providers/codex")
-    assert environment["CLAUDE_CONFIG_DIR"] == str(root / "providers/claude")
+    assert environment["CODEX_HOME"] == str(codex_home)
+    assert environment["CLAUDE_CONFIG_DIR"] == str((Path.home() / ".claude").resolve())
+    assert environment["PLAN_HERMES_HOME"] == str(hermes_home)
     assert environment["HOME"] == str(Path.home())
+    assert not (root / "providers").exists()
+    assert not codex_home.exists()
+    assert not hermes_home.exists()
     assert home["AbandonProcessGroup"] is False
+    # A disposable test can explicitly keep all provider state away from the
+    # existing account. This protection must not become the install default.
+    isolated_root = tmp_path / "isolated state"
+    write_home(
+        isolated_root,
+        source,
+        "com.panels.isolated",
+        9877,
+        "a" * 40,
+        isolated_providers=True,
+    )
+    isolated = plistlib.loads((isolated_root / "agents/com.panels.isolated.plist").read_bytes())[
+        "EnvironmentVariables"
+    ]
+    for variable, folder in (
+        ("CODEX_HOME", "codex"),
+        ("CLAUDE_CONFIG_DIR", "claude"),
+        ("PLAN_HERMES_HOME", "hermes"),
+    ):
+        provider = isolated_root / "providers" / folder
+        assert isolated[variable] == str(provider)
+        assert list(provider.iterdir()) == []
 
 
 def test_existing_root_is_not_reconfigured(tmp_path: Path) -> None:
