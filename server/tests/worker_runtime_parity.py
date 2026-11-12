@@ -91,11 +91,16 @@ def presence(conn: sqlite3.Connection, state: str) -> None:
     sleep=WALL if state=='asleep' else None
     conn.execute('INSERT INTO mac_executor_presence(singleton,executor_incarnation,identity_json,last_contact_at_ms,last_lease_at_ms,continuous_since_ms,going_to_sleep_at_ms) VALUES (1,?,?,?,?,?,?)',
         ('synthetic',json.dumps(identity),WALL,lease,WALL,sleep))
+    if state=='refused':
+        refusal=dict(reason='Mac needs update',peer_identity=identity,
+            server_identity=dict(protocol_version=PROTOCOL_VERSION,spool_format_version=SPOOL_FORMAT_VERSION,application_revision='server',executor_incarnation='server'),
+            refused_at_ms=WALL)
+        conn.execute('UPDATE mac_executor_presence SET refusal_json=? WHERE singleton=1',(json.dumps(refusal),))
 
 def check_readiness(conn: sqlite3.Connection, root: Path, outcome: str) -> dict[str, Any]:
     ticket=new_ticket(conn,'new_worker' if outcome=='user_opened' else 'coding')
     fieldless=None
-    if outcome in ('present','expired','asleep','incompatible','absent'):
+    if outcome in ('present','expired','asleep','incompatible','absent','refused'):
         conn.execute("UPDATE tickets SET locale='macos' WHERE id=?",(ticket.id,))
         if outcome!='absent':presence(conn,outcome)
     elif outcome=='backlogged':conn.execute('UPDATE tickets SET is_backlogged=1 WHERE id=?',(ticket.id,))
@@ -183,7 +188,7 @@ def check_abort(conn: sqlite3.Connection,root: Path,kind: str,existing: bool) ->
 def main() -> None:
     started=time.monotonic()
     results=[]
-    cases=[('readiness',name,False) for name in ('ready','backlogged','absent','incompatible','present','expired','asleep','terminal','out','user_opened','disabled','fieldless')]
+    cases=[('readiness',name,False) for name in ('ready','backlogged','absent','incompatible','refused','present','expired','asleep','terminal','out','user_opened','disabled','fieldless')]
     cases += [('abort',kind,existing) for kind in ('ticket','chief','manager') for existing in (False,True)]
     with tempfile.TemporaryDirectory(prefix='worker-python-ts-') as temporary:
         storage=Path(temporary)
