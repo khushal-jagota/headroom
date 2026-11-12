@@ -221,8 +221,13 @@ def _scripted_routes(
         await app.state.conversation.system.wait_until_quiescent()
 
     @app.get("/api/test/signals/{conversation_id}/live-status-before-adoption")
-    async def live_status(conversation_id: str) -> dict[str, Any]:
-        return await live_status_before_adoption(app.state.conversation.system, conversation_id)
+    async def live_status(
+        conversation_id: str, include_runtime_epoch: str | None = None,
+    ) -> dict[str, Any]:
+        return await live_status_before_adoption(
+            app.state.conversation.system, conversation_id,
+            include_runtime_epoch=include_runtime_epoch == "true", db_path=db_path,
+        )
 
     @app.post("/api/test/signals/{conversation_id}/ticket-choice-failure")
     async def arm_ticket_choice_failure(conversation_id: str) -> dict[str, bool]:
@@ -309,8 +314,17 @@ def _scripted_routes(
         return {"ok": True}
 
     @app.post("/api/test/signals/{conversation_id}/finish")
-    async def finish(conversation_id: str) -> dict[str, bool]:
-        await children[conversation_id].finish()
+    async def finish(
+        conversation_id: str, body: dict[str, Any] | None = None,
+    ) -> dict[str, bool]:
+        if (
+            (body or {}).get("only_if_running") is True
+            and not await app.state.conversation.system.is_running(conversation_id)
+        ):
+            return {"ok": True}
+        child = children[conversation_id]
+        await child.finish()
+        await child.flush_events()
         await settled()
         return {"ok": True}
 
@@ -405,11 +419,13 @@ def _scripted_routes(
         return {"configured": True}
 
     @app.get("/api/test/signals/{conversation_id}/inspect")
-    async def inspect(conversation_id: str) -> dict[str, Any]:
+    async def inspect(
+        conversation_id: str, include_workspace_activity: str | None = None,
+    ) -> dict[str, Any]:
         await settled()
         children = await registry.inspect(conversation_id)
         system = app.state.conversation.system
-        runtime = {
+        runtime: dict[str, Any] = {
             "running": await system.is_running(conversation_id),
             "held_prompts": _in_memory_snapshot(await system.held_prompts(conversation_id)),
             "pending_permission_ask_ids": sorted(
@@ -419,6 +435,8 @@ def _scripted_routes(
                 await system.pending_user_input_request_ids(conversation_id)
             ),
         }
+        if include_workspace_activity == "true":
+            runtime["workspace_activity"] = system.workspace_activity()
         return {
             **record_rows(db_path, conversation_id),
             "runtime": runtime,

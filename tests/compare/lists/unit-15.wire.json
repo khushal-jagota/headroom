@@ -1644,13 +1644,22 @@
       }
     },
     {
+      "area": "startup-runtime-epoch-rotation",
+      "method": "GET",
+      "path": "/api/test/signals/u15-restart-lazy/live-status-before-adoption?include_runtime_epoch=true",
+      "status": 200,
+      "capture": {
+        "u15_restart_epoch_before": ""
+      }
+    },
+    {
       "area": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
       "kind": "restart"
     },
     {
       "area": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
       "method": "GET",
-      "path": "/api/test/signals/u15-restart-lazy/live-status-before-adoption",
+      "path": "/api/test/signals/u15-restart-lazy/live-status-before-adoption?include_runtime_epoch=true",
       "status": 200,
       "capture": {
         "u15_restart_before_adoption": ""
@@ -1776,6 +1785,7 @@
     "u15_rebind_send_now_spawn_refused",
     "u15_restart_lazy_started",
     "u15_restart_lazy_before_restart",
+    "u15_restart_epoch_before",
     "u15_restart_lazy_after_restart_before_send",
     "u15_restart_lazy_resumed",
     "u15_restart_lazy_completed",

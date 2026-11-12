@@ -2,6 +2,8 @@
 
 The runner sends one request list to Python and a candidate server on separate copies of one database. It compares responses, read probes, and source rows. Python is the reference.
 
+Source-row sort keys retain known normalized identities and use generic placeholders for unknown IDs, so independent rows remain aligned across insertion orders.
+
 ## Add an area
 
 Add two files with the same name:

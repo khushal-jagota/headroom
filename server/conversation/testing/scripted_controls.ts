@@ -109,8 +109,14 @@ export function scriptedConversationControls(
         app.get('/signals/:conversation_id/ticket-choice-failure', async (request) =>
           ticket_choice_fault.observe(identity(request)),
         );
-        app.get('/signals/:conversation_id/live-status-before-adoption', async (request) =>
-          live_status_before_adoption(context, identity(request)),
+        app.get<{ Querystring: { include_runtime_epoch?: string } }>(
+          '/signals/:conversation_id/live-status-before-adoption',
+          async (request) =>
+            live_status_before_adoption(
+              context,
+              identity(request),
+              request.query.include_runtime_epoch === 'true',
+            ),
         );
         app.post<{ Body: { text: string; recipient: Principal; barrier: string } }>(
           '/signals/:conversation_id/pending-steer/begin',
@@ -182,11 +188,19 @@ export function scriptedConversationControls(
             return { ok: true };
           },
         );
-        app.post('/signals/:conversation_id/finish', async (request) => {
-          await registry.child(identity(request)).finish();
-          await settle();
-          return { ok: true };
-        });
+        app.post<{ Body: { only_if_running?: boolean } | null }>(
+          '/signals/:conversation_id/finish',
+          async (request) => {
+            const id = identity(request);
+            if (request.body?.only_if_running === true && !(await core.is_running(id)))
+              return { ok: true };
+            const child = registry.child(id);
+            await child.finish();
+            await child.flush_events();
+            await settle();
+            return { ok: true };
+          },
+        );
         app.post('/signals/:conversation_id/questions', async (request) => {
           await registry.child(identity(request)).request_questions();
           await settle();
@@ -286,24 +300,30 @@ export function scriptedConversationControls(
           );
           return { configured: true };
         });
-        app.get('/signals/:conversation_id/inspect', async (request) => {
-          const id = identity(request);
-          await settle();
-          const children = await registry.inspect(id);
-          const runtime = {
-            running: await core.is_running(id),
-            held_prompts: observed(await core.held_prompts(id)),
-            pending_permission_ask_ids: [...(await core.pending_permission_ask_ids(id))].sort(),
-            pending_user_input_request_ids: [
-              ...(await core.pending_user_input_request_ids(id)),
-            ].sort(),
-          };
-          return {
-            ...context.database.read((sql) => record_rows(sql, id)),
-            runtime,
-            backend: { children },
-          };
-        });
+        app.get<{ Querystring: { include_workspace_activity?: string } }>(
+          '/signals/:conversation_id/inspect',
+          async (request) => {
+            const id = identity(request);
+            await settle();
+            const children = await registry.inspect(id);
+            const runtime = {
+              running: await core.is_running(id),
+              held_prompts: observed(await core.held_prompts(id)),
+              pending_permission_ask_ids: [...(await core.pending_permission_ask_ids(id))].sort(),
+              pending_user_input_request_ids: [
+                ...(await core.pending_user_input_request_ids(id)),
+              ].sort(),
+              ...(request.query.include_workspace_activity === 'true'
+                ? { workspace_activity: core.workspace_activity() }
+                : {}),
+            };
+            return {
+              ...context.database.read((sql) => record_rows(sql, id)),
+              runtime,
+              backend: { children },
+            };
+          },
+        );
         app.post<{ Body: { backend_keys: string[] } }>(
           '/conversation-steering',
           async (request) => {
