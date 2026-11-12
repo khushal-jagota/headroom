@@ -23,6 +23,7 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore, StoredConversationEvent
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
+from planner.core.errors import PlannerError
 from planner.execution_identity import ChildReference
 from planner.executor.protocol import (
     ChildCommand,
@@ -179,7 +180,6 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
     from dataclasses import replace
 
     from planner.conversation.backends.contracts import TurnToken
-    from planner.core.errors import PlannerError
     from planner.executor.protocol import (
         EnvelopeKind,
         JsonObject,
@@ -369,7 +369,9 @@ def test_kill_withdraws_a_stalled_initial_input_without_a_round_trip(
             )
             assert await asyncio.to_thread(entered.wait, 5)
             kill_started.set()
-            await asyncio.wait_for(system.kill("c_killed"), 5)
+            # The Mac never polls, so withdrawal cannot prove native retirement.
+            with pytest.raises(PlannerError, match="previous agent did not stop"):
+                await asyncio.wait_for(system.kill("c_killed"), 5)
             kill_returned.set()
             assert await asyncio.to_thread(inserted.wait, 5)
             result = await asyncio.wait_for(sending, 5)

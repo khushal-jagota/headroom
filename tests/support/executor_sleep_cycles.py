@@ -828,6 +828,10 @@ def _make_core(endpoint: VpsExecutor) -> SqliteProcessConversationSystem:
         message_files=ConversationMessageFiles(endpoint.db_path),
     )
     system.configure_machine_catalog(endpoint.catalog)
+    system.start_admission.configure_destinations(
+        lambda destination: destination == "home" or endpoint.presence.is_present()
+    )
+    endpoint.mailbox.start_admission = system.start_admission
     endpoint.bind_conversations(system)
     endpoint.app = FastAPI()
     return system
