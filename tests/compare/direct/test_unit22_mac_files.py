@@ -42,6 +42,9 @@ def test_unit22_mac_files_and_configuration(tmp_path: Path, request: pytest.Fixt
     for name in ("py", "ts"):
         (tmp_path / name).mkdir()
         (tmp_path / name / "source").write_bytes(content)
+    # Python's raw regular_descriptor blocks on a FIFO before fstat. The TS worker
+    # must refuse it without a writer; capture already excludes it in Python.
+    os.mkfifo(tmp_path / "ts" / "fifo", 0o600)
     root = tmp_path / "py"
     sha, count = file_digest(root / "source")
     manifest = FileManifest(FileScope.ticket, "ticket", "target", sha, count)
@@ -85,6 +88,11 @@ def test_unit22_mac_files_and_configuration(tmp_path: Path, request: pytest.Fixt
     alias = tmp_path / "alias"
     alias.symlink_to(canonical / "child", target_is_directory=True)
     roots = ["", "~/executor", str(alias) + "/../executor", str(tmp_path / "absent" / "state")]
+    legacy = Path(homes["HOME"]) / "Library" / "Application Support" / "Panels" / "executor"
+    legacy.mkdir(parents=True)
+    legacy_alias = tmp_path / "legacy-alias"
+    legacy_alias.symlink_to(legacy, target_is_directory=True)
+    refused_roots = [str(legacy), str(legacy / "spool"), str(legacy_alias)]
 
     def outcome(action: Callable[..., Any], *args: Any) -> Any:
         try:
@@ -145,6 +153,7 @@ def test_unit22_mac_files_and_configuration(tmp_path: Path, request: pytest.Fixt
                 "components": components,
                 "relatives": relatives,
                 "roots": roots,
+                "refused_roots": refused_roots,
             }
         )
     )
@@ -178,6 +187,38 @@ def test_unit22_mac_files_and_configuration(tmp_path: Path, request: pytest.Fixt
     )
     assert output.returncode == 0, output.stderr
     actual = json.loads(output.stdout)
+    assert actual.pop("fifo_refused") is True
+    python_default_paths = expected["paths"].pop(0)
+    typescript_default_paths = actual["paths"].pop(0)
+    typescript_root = legacy.with_name("executor-typescript")
+    assert typescript_default_paths == [
+        str(path)
+        for path in (
+            typescript_root,
+            typescript_root / "workspace",
+            typescript_root / "spool",
+            typescript_root / "artifacts" / "tickets",
+            typescript_root / "artifacts" / "message-files.db",
+            typescript_root / "skills",
+            typescript_root / "run",
+            typescript_root / "run" / "executor.sock",
+        )
+    ]
+    assert actual.pop("refused_roots") == [
+        {
+            "error": {
+                "name": "ValueError",
+                "message": (
+                    "TypeScript executor root must be separate from the Python executor root"
+                ),
+            }
+        }
+    ] * len(refused_roots)
+    assert (
+        actual.pop("refused_homes")
+        == [{"error": {"name": "ValueError", "message": "executor HOME must be an absolute path"}}]
+        * 2
+    )
     settings = actual.pop("settings")
     for name, value in settings.items():
         reference = getattr(configuration, name, getattr(update_configuration, name, None))
@@ -196,6 +237,14 @@ def test_unit22_mac_files_and_configuration(tmp_path: Path, request: pytest.Fixt
                     "equal": True,
                     "bytes": count,
                     "observations": actual,
+                    "accepted_difference": {
+                        "python_default_paths": python_default_paths,
+                        "typescript_default_paths": typescript_default_paths,
+                        "reason": (
+                            "The TypeScript installation must stay separate from Python state."
+                        ),
+                        "fifo": "TS refuses FIFO intake without an external writer.",
+                    },
                     "seconds": time.perf_counter() - started,
                 },
                 indent=2,

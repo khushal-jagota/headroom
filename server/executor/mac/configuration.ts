@@ -1,10 +1,15 @@
 /** Mac-owned runtime settings. Protocol types remain with the shared wire owner. */
 import { isIP } from 'node:net';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { resolve_path_sync } from '../../core/path_resolution.ts';
-import { strip } from '../../core/unidentified_agent_calls/logic.ts';
-import { default_executor_root, executor_socket_path, expand_executor_path } from './platform.ts';
+import { strip } from '../../core/whitespace.ts';
+import {
+  default_executor_root,
+  executor_socket_path,
+  expand_executor_path,
+  python_executor_root,
+} from './platform.ts';
 export { MAC_AWAY_AFTER_SECONDS } from '../configuration.ts';
 
 export const MAX_ENVELOPE_BYTES = 1024 * 1024;
@@ -122,11 +127,21 @@ function value_error(message: string): never {
   throw Object.assign(new Error(message), { name: 'ValueError' });
 }
 export function executor_paths(environment: NodeJS.ProcessEnv = process.env): ExecutorPaths {
+  const home = environment.HOME ?? homedir();
+  if (!home || !isAbsolute(home)) value_error('executor HOME must be an absolute path');
   const configured = strip(environment[EXECUTOR_ROOT_ENV] ?? '');
   const root = configured
     ? expand_executor_path(configured, environment)
-    : default_executor_root(environment.HOME ?? homedir());
-  return new ExecutorPaths(resolve_path_sync(root));
+    : default_executor_root(home);
+  const resolved = resolve_path_sync(root);
+  const legacy = resolve_path_sync(python_executor_root(home));
+  const within_python = relative(legacy, resolved);
+  if (
+    !within_python ||
+    (within_python !== '..' && !within_python.startsWith('../') && !isAbsolute(within_python))
+  )
+    value_error('TypeScript executor root must be separate from the Python executor root');
+  return new ExecutorPaths(resolved);
 }
 
 /** Preserve urlsplit's origin validation without WHATWG URL normalization. */

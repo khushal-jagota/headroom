@@ -1,293 +1,169 @@
-/** Immutable snapshots and bounded byte transfers, relative to retained directory inodes. */
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, writeSync } from 'node:fs';
-import type { BigIntStats } from 'node:fs';
-import { createHash, randomUUID } from 'node:crypto';
-import { basename, dirname, isAbsolute, join, relative } from 'node:path';
-import { resolve_path_sync } from '../../core/path_resolution.ts';
-import { FILE_CHUNK_BYTES } from './configuration.ts';
-import {
-  directory_open_flags,
-  mkdir_relative,
-  open_relative,
-  rename_relative,
-  require_relative_component,
-  sync_directory_descriptor,
-  sync_file_descriptor,
-  unlink_relative,
-} from './platform.ts';
+/** File work belongs to this explicitly owned thread, never the service event loop. */
+import { Worker } from 'node:worker_threads';
+import { observe_shutdown } from '../../conversation/shutdown.ts';
+import { ServerLifecycleError } from '../../lifecycle/contracts.ts';
+import type { StopOptions } from '../../lifecycle/contracts.ts';
+import type {
+  DirectoryHandle,
+  FileOperation,
+  FileOperationArguments,
+  FileOperationResults,
+  FileWorkerRequest,
+  FileWorkerResponse,
+} from './file_worker_contracts.ts';
+export { contained_path, file_version, safe_component } from './file_metadata.ts';
+export type { FileVersion } from './file_metadata.ts';
+export type { DirectoryHandle } from './file_worker_contracts.ts';
 
-/** This is local metadata, not an executor wire type. */
-export type FileVersion = readonly [bigint, bigint, bigint, bigint, bigint];
-function invalid(message: string): Error {
-  return Object.assign(new Error(message), { name: 'ValueError' });
-}
-function error_code(error: unknown): string | undefined {
-  return (error as NodeJS.ErrnoException).code;
-}
-export function safe_component(value: string): string {
-  if (!value || /[^A-Za-z0-9_-]/.test(value)) throw invalid('unsafe executor identifier');
-  return value;
-}
-function is_symlink(path: string): boolean {
-  // pathlib's is_symlink returns false for an embedded NUL. resolve then refuses it.
-  if (path.includes('\0')) return false;
-  try {
-    return lstatSync(path).isSymbolicLink();
-  } catch (error) {
-    if (['ENOENT', 'ENOTDIR'].includes(error_code(error) ?? '')) return false;
-    throw error;
+export class FilesService {
+  private worker: Worker | undefined;
+  private exit: Promise<void> = Promise.resolve();
+  private sequence = 0;
+  private closed = false;
+  private failure: Error | undefined;
+  private stop_requested = false;
+  private readonly directories = new WeakSet<DirectoryHandle>();
+  private readonly pending = new Map<
+    number,
+    { resolve(value: unknown): void; reject(error: Error): void }
+  >();
+  private seal(error: Error): void {
+    this.failure ??= error;
+    this.closed = true;
+    for (const request of this.pending.values()) request.reject(error);
+    this.pending.clear();
   }
-}
-/** A lexical/preflight refusal only. All later byte I/O still uses retained descriptors. */
-export function contained_path(root: string, relative_path: string): string {
-  if (
-    !relative_path ||
-    relative_path.includes('\\') ||
-    /%(25|2e|2f|5c)/i.test(relative_path) ||
-    relative_path.split('/').some((part) => ['', '.', '..'].includes(part))
-  )
-    throw invalid('unsafe relative artifact path');
-  if (is_symlink(root)) throw invalid('artifact root is symlink');
-  let current = root;
-  for (const part of relative_path.split('/')) {
-    current = join(current, part);
-    if (is_symlink(current)) throw invalid('artifact path contains symlink');
+  private start(): Worker {
+    if (this.closed)
+      throw this.failure ?? new ServerLifecycleError('Executor files service is stopped.');
+    if (this.worker !== undefined) return this.worker;
+    // Node 22.18+ and 24 run these .ts files directly. No inherited eval or loader is needed.
+    const worker = new Worker(new URL('./files_worker.ts', import.meta.url), {
+      execArgv: [],
+      // libc opens bypass Node's tracker. This worker explicitly owns every descriptor.
+      trackUnmanagedFds: false,
+    });
+    this.worker = worker;
+    this.exit = new Promise<void>((resolve) => worker.once('exit', () => resolve()));
+    worker.on('message', (message: FileWorkerResponse) => {
+      const request = this.pending.get(message.id);
+      this.pending.delete(message.id);
+      if ('error' in message)
+        request?.reject(Object.assign(new Error(message.error.message), message.error));
+      else request?.resolve(message.value);
+    });
+    worker.on('error', (error) => this.seal(error));
+    worker.on('exit', (code) => {
+      if (this.pending.size !== 0 || !this.closed)
+        this.seal(new Error(`Executor files worker exited (${code}).`));
+      this.worker = undefined;
+    });
+    return worker;
   }
-  if (current.includes('\0')) throw invalid('lstat: embedded null character in path');
-  const rel = relative(resolve_path_sync(root), resolve_path_sync(current));
-  if (rel === '..' || rel.startsWith('../') || isAbsolute(rel))
-    throw invalid('artifact path escapes root');
-  return current;
-}
-/** The caller owns the returned descriptor. Reject '..' before path normalization. */
-export function directory_descriptor(path: string, options: { create?: boolean } = {}): number {
-  if (path.includes('\0')) throw invalid('embedded null byte');
-  const raw_parts = path.split('/');
-  if (raw_parts.includes('..')) throw invalid('unsafe directory component');
-  const parts = (isAbsolute(path) ? raw_parts : [...process.cwd().split('/'), ...raw_parts]).filter(
-    (part) => part !== '' && part !== '.',
-  );
-  let descriptor = openSync('/', directory_open_flags);
-  try {
-    for (const part of parts) {
-      if (options.create) {
-        try {
-          mkdir_relative(descriptor, part);
-          sync_file_descriptor(descriptor);
-        } catch (error) {
-          if (error_code(error) !== 'EEXIST') throw error;
-        }
+  private request<Operation extends FileOperation>(
+    operation: Operation,
+    arguments_: FileOperationArguments[Operation],
+  ): Promise<FileOperationResults[Operation]> {
+    return new Promise((resolve, reject) => {
+      if (this.closed) {
+        reject(this.failure ?? new ServerLifecycleError('Executor files service is stopped.'));
+        return;
       }
-      const child = open_relative(descriptor, part, directory_open_flags);
-      const previous = descriptor;
-      descriptor = child;
-      closeSync(previous);
-    }
-    return descriptor;
-  } catch (error) {
-    closeSync(descriptor);
-    throw error;
-  }
-}
-export function regular_descriptor(path: string): number {
-  const parent = directory_descriptor(dirname(path));
-  let descriptor: number;
-  try {
-    descriptor = open_relative(parent, basename(path), constants.O_RDONLY | constants.O_NOFOLLOW);
-  } catch (error) {
-    closeSync(parent);
-    throw error;
-  }
-  try {
-    closeSync(parent);
-  } catch (error) {
-    closeSync(descriptor);
-    throw error;
-  }
-  try {
-    if (!fstatSync(descriptor).isFile()) throw invalid('artifact is not regular file');
-    return descriptor;
-  } catch (error) {
-    closeSync(descriptor);
-    throw error;
-  }
-}
-export function fsync_file(descriptor: number): void {
-  sync_file_descriptor(descriptor);
-}
-export function fsync_directory(path: string): void {
-  const descriptor = directory_descriptor(path);
-  try {
-    sync_directory_descriptor(descriptor);
-  } finally {
-    closeSync(descriptor);
-  }
-}
-export function copy_hashed(
-  incoming: number,
-  outgoing: number,
-  options: { byte_limit?: number; skip_unreadable_source?: boolean } = {},
-): readonly [string, number] {
-  const digest = createHash('sha256');
-  const buffer = Buffer.allocUnsafe(FILE_CHUNK_BYTES);
-  let count = 0;
-  for (;;) {
-    let read: number;
-    try {
-      read = readSync(incoming, buffer, 0, buffer.length, null);
-    } catch (error) {
-      if (
-        options.skip_unreadable_source &&
-        ['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(error_code(error) ?? '')
-      )
-        return ['', -1];
-      throw error;
-    }
-    if (read === 0) return [digest.digest('hex'), count];
-    count += read;
-    if (options.byte_limit !== undefined && count > options.byte_limit)
-      throw invalid('file exceeds manifest length');
-    digest.update(buffer.subarray(0, read));
-    let offset = 0;
-    while (offset < read) {
-      const written = writeSync(outgoing, buffer, offset, read - offset, null);
-      if (!written)
-        throw Object.assign(new Error('file write made no progress'), { name: 'OSError' });
-      offset += written;
-    }
-  }
-}
-/** Copy into the held destination parent. The source is opened without ancestor symlinks. */
-export function copy_verified_at(
-  source: string,
-  parent: number,
-  name: string,
-  sha256: string,
-  byte_count: number,
-): void {
-  const incoming = regular_descriptor(source);
-  try {
-    const outgoing = open_relative(
-      parent,
-      name,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-      0o600,
-    );
-    try {
+      const id = ++this.sequence;
       try {
-        const [digest, count] = copy_hashed(incoming, outgoing, { byte_limit: byte_count });
-        if (count !== byte_count || digest !== sha256) throw invalid('incomplete or corrupt file');
-        fsync_file(outgoing);
+        const worker = this.start();
+        this.pending.set(id, {
+          resolve: (value) => resolve(value as FileOperationResults[Operation]),
+          reject,
+        });
+        worker.postMessage({ id, operation, arguments: arguments_ } as FileWorkerRequest);
       } catch (error) {
-        unlink_relative(parent, name);
-        throw error;
+        const failure = error instanceof Error ? error : new Error(String(error));
+        this.seal(failure);
+        reject(failure);
+        this.request_stop();
       }
-    } finally {
-      closeSync(outgoing);
+    });
+  }
+  file_digest(path: string) {
+    return this.request('file_digest', [path]);
+  }
+  verified_version(path: string, sha256: string, byte_count: number) {
+    return this.request('verified_version', [path, sha256, byte_count]);
+  }
+  copy_verified(source: string, target: string, sha256: string, byte_count: number) {
+    return this.request('copy_verified', [source, target, sha256, byte_count]);
+  }
+  install_verified(source: string, target: string, sha256: string, byte_count: number) {
+    return this.request('install_verified', [source, target, sha256, byte_count]);
+  }
+  fsync_directory(path: string) {
+    return this.request('fsync_directory', [path]);
+  }
+  async open_directory(path: string, options: { create?: boolean } = {}): Promise<DirectoryHandle> {
+    const handle = Object.freeze({ id: await this.request('open_directory', [path, options]) });
+    this.directories.add(handle);
+    return handle;
+  }
+  private directory(handle: DirectoryHandle): number {
+    if (!this.directories.has(handle))
+      throw new Error('Executor directory handle belongs to another files service or is closed.');
+    return handle.id;
+  }
+  async close_directory(handle: DirectoryHandle): Promise<void> {
+    await this.request('close_directory', [this.directory(handle)]);
+    this.directories.delete(handle);
+  }
+  async copy_verified_at(
+    source: string,
+    handle: DirectoryHandle,
+    name: string,
+    sha256: string,
+    byte_count: number,
+  ): Promise<void> {
+    await this.request('copy_verified_at', [
+      source,
+      this.directory(handle),
+      name,
+      sha256,
+      byte_count,
+    ]);
+  }
+  async install_verified_at(
+    source: string,
+    handle: DirectoryHandle,
+    name: string,
+    sha256: string,
+    byte_count: number,
+  ): Promise<void> {
+    await this.request('install_verified_at', [
+      source,
+      this.directory(handle),
+      name,
+      sha256,
+      byte_count,
+    ]);
+  }
+  stop(options: StopOptions): Promise<void> {
+    this.closed = true;
+    this.request_stop();
+    return observe_shutdown(
+      this.exit,
+      options,
+      'Executor file work remains unfinished at the shutdown deadline.',
+    );
+  }
+  private request_stop(): void {
+    if (this.stop_requested || this.worker === undefined) return;
+    try {
+      this.worker.postMessage({ operation: 'stop' } satisfies FileWorkerRequest);
+      this.stop_requested = true;
+    } catch (error) {
+      // Leave this retryable. A failed send is not evidence that the thread exited.
+      this.seal(error instanceof Error ? error : new Error(String(error)));
     }
-  } finally {
-    closeSync(incoming);
   }
-}
-export function copy_verified(
-  source: string,
-  destination: string,
-  sha256: string,
-  byte_count: number,
-): void {
-  const parent = directory_descriptor(dirname(destination));
-  try {
-    copy_verified_at(source, parent, basename(destination), sha256, byte_count);
-  } finally {
-    closeSync(parent);
-  }
-}
-export function install_verified_at(
-  source: string,
-  parent: number,
-  name: string,
-  sha256: string,
-  byte_count: number,
-): void {
-  require_relative_component(name);
-  const temporary = '.tmp-' + randomUUID().replaceAll('-', '');
-  try {
-    copy_verified_at(source, parent, temporary, sha256, byte_count);
-    rename_relative(parent, temporary, parent, name);
-    sync_directory_descriptor(parent);
-  } finally {
-    unlink_relative(parent, temporary, true);
-  }
-}
-export function install_verified(
-  source: string,
-  target: string,
-  sha256: string,
-  byte_count: number,
-): void {
-  require_relative_component(basename(target));
-  const parent = directory_descriptor(dirname(target), { create: true });
-  try {
-    install_verified_at(source, parent, basename(target), sha256, byte_count);
-  } finally {
-    closeSync(parent);
-  }
-}
-function version(status: BigIntStats): FileVersion {
-  return [status.dev, status.ino, status.size, status.mtimeNs, status.ctimeNs];
-}
-function same_version(one: FileVersion | null, other: FileVersion): boolean {
-  return one !== null && one.every((value, index) => value === other[index]);
-}
-/** Python uses metadata-only lstat here. Byte I/O never uses this path-based observation. */
-export function file_version(path: string): FileVersion | null {
-  try {
-    const status = lstatSync(path, { bigint: true });
-    return status.isFile() ? version(status) : null;
-  } catch (error) {
-    if (error_code(error) === 'ENOENT') return null;
-    throw error;
-  }
-}
-function hash_descriptor(incoming: number): readonly [string, number] {
-  const digest = createHash('sha256');
-  const buffer = Buffer.allocUnsafe(FILE_CHUNK_BYTES);
-  let count = 0;
-  for (;;) {
-    const read = readSync(incoming, buffer, 0, buffer.length, null);
-    if (read === 0) return [digest.digest('hex'), count];
-    digest.update(buffer.subarray(0, read));
-    count += read;
-  }
-}
-export function verified_version(
-  path: string,
-  sha256: string,
-  byte_count: number,
-): FileVersion | null {
-  let incoming: number;
-  try {
-    incoming = regular_descriptor(path);
-  } catch (error) {
-    if (error_code(error) === 'ENOENT') return null;
-    throw error;
-  }
-  let before: FileVersion, after: FileVersion, digest: string, count: number;
-  try {
-    before = version(fstatSync(incoming, { bigint: true }));
-    [digest, count] = hash_descriptor(incoming);
-    after = version(fstatSync(incoming, { bigint: true }));
-  } finally {
-    closeSync(incoming);
-  }
-  if (!same_version(before, after) || digest !== sha256 || count !== byte_count) return null;
-  return same_version(file_version(path), after) ? after : null;
-}
-export function file_digest(path: string): readonly [string, number] {
-  const incoming = regular_descriptor(path);
-  try {
-    return hash_descriptor(incoming);
-  } finally {
-    closeSync(incoming);
+  settled(): Promise<void> {
+    return this.exit;
   }
 }

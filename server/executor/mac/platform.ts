@@ -3,7 +3,13 @@ import { constants } from 'node:fs';
 import { constants as os_constants, homedir } from 'node:os';
 import { join } from 'node:path';
 import { getSystemErrorName } from 'node:util';
+import { isMainThread } from 'node:worker_threads';
 import koffi from 'koffi';
+
+for (const name of ['O_NOFOLLOW', 'O_DIRECTORY', 'O_CREAT', 'O_EXCL', 'O_NONBLOCK'] as const) {
+  if (typeof constants[name] !== 'number' || constants[name] <= 0)
+    throw new Error(`executor requires the native ${name} flag`);
+}
 
 function native_platform(): 'darwin' | 'linux' {
   if (process.platform !== 'darwin' && process.platform !== 'linux')
@@ -47,12 +53,13 @@ export function require_relative_component(name: string): void {
 export function open_relative(parent: number, name: string, flags: number, mode = 0): number {
   require_relative_component(name);
   const close_on_exec = native_platform() === 'darwin' ? 0x1000000 : 0x80000;
-  const openat = native('int openat(int dirfd, const char *path, int flags, unsigned int mode)');
-  return checked('openat', () => openat(parent, name, flags | close_on_exec, mode));
+  const openat = native('int openat(int dirfd, const char *path, int flags, ...)');
+  return checked('openat', () => openat(parent, name, flags | close_on_exec, 'int', mode));
 }
 export function mkdir_relative(parent: number, name: string, mode = 0o700): void {
   require_relative_component(name);
-  const mkdirat = native('int mkdirat(int dirfd, const char *path, unsigned int mode)');
+  const mode_type = native_platform() === 'darwin' ? 'uint16_t' : 'unsigned int';
+  const mkdirat = native(`int mkdirat(int dirfd, const char *path, ${mode_type} mode)`);
   checked('mkdirat', () => mkdirat(parent, name, mode));
 }
 export function unlink_relative(parent: number, name: string, missing_ok = false): void {
@@ -79,23 +86,25 @@ export function rename_relative(
 }
 /** Directory flushes deliberately avoid libuv's Darwin full-flush/fallback policy. */
 export function sync_directory_descriptor(descriptor: number): void {
+  if (isMainThread) throw new Error('Executor directory flushes require the owned files worker.');
   const fsync = native('int fsync(int fd)');
   checked('fsync', () => fsync(descriptor));
 }
 /** Python requires the full flush to succeed. Missing symbols and failures propagate. */
 export function sync_file_descriptor(descriptor: number): void {
+  if (isMainThread) throw new Error('Executor full flushes require the owned files worker.');
   sync_directory_descriptor(descriptor);
   if (native_platform() === 'darwin') {
-    const fcntl = native('int fcntl(int fd, int command)');
+    const fcntl = native('int fcntl(int fd, int command, ...)');
     checked('fcntl(F_FULLFSYNC)', () => fcntl(descriptor, 51));
   }
 }
 export function flock_descriptor(
   descriptor: number,
-  operation: 'exclusive' | 'try-exclusive' | 'unlock',
+  operation: 'try-exclusive' | 'unlock',
 ): boolean {
   const flock = native('int flock(int fd, int operation)');
-  const flags = operation === 'unlock' ? 8 : operation === 'try-exclusive' ? 2 | 4 : 2;
+  const flags = operation === 'unlock' ? 8 : 2 | 4;
   try {
     checked('flock', () => flock(descriptor, flags));
     return true;
@@ -112,6 +121,9 @@ export const directory_open_flags =
   constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
 
 export function default_executor_root(home: string): string {
+  return join(home, 'Library', 'Application Support', 'Panels', 'executor-typescript');
+}
+export function python_executor_root(home: string): string {
   return join(home, 'Library', 'Application Support', 'Panels', 'executor');
 }
 export function executor_socket_path(root: string): string {
