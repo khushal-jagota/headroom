@@ -3,7 +3,11 @@ import { Worker } from 'node:worker_threads';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
-import { FILE_CHUNK_BYTES, MAX_MAILBOX_POLL_BYTES } from '../configuration.ts';
+import {
+  FILE_CHUNK_BYTES,
+  MAX_MAILBOX_POLL_BYTES,
+  MAX_COMMAND_OUTCOMES_PER_REPORT,
+} from '../configuration.ts';
 import { JOURNAL_OPERATIONS, JOURNAL_INPUT_BYTES } from './journal_limits.ts';
 import { failure_name } from '../failure_name.ts';
 import { journal_error, journal_error_properties } from './journal_worker_contracts.ts';
@@ -25,6 +29,7 @@ import type {
   FreshCommandCursor,
   UnpublishedJournalCommand,
   UnreportedJournalResult,
+  SelectedJournalReport,
 } from './journal_contracts.ts';
 export type * from './journal_contracts.ts';
 
@@ -435,7 +440,12 @@ export class CommandJournal implements AsyncCommandJournal {
         return;
       }
       if (this.pending.size >= JOURNAL_OPERATIONS) {
-        reject(new ServerLifecycleError('Journal request capacity reached.'));
+        reject(
+          Object.assign(new ServerLifecycleError('Journal request capacity reached.'), {
+            code: 'EBUSY',
+            unadmitted: true,
+          }),
+        );
         return;
       }
       const id = ++this.sequence;
@@ -466,7 +476,10 @@ export class CommandJournal implements AsyncCommandJournal {
     try {
       this.admit();
       if (this.operations.size >= JOURNAL_OPERATIONS)
-        throw new ServerLifecycleError('Journal operation capacity reached.');
+        throw Object.assign(new ServerLifecycleError('Journal operation capacity reached.'), {
+          code: 'EBUSY',
+          unadmitted: true,
+        });
       const task = this.tail.then(() => {
         this.assert_healthy();
         return work();
@@ -552,6 +565,81 @@ export class CommandJournal implements AsyncCommandJournal {
       (input) =>
         this.raw({ operation: 'finish', command_id, input, owed: outputs_owed }) as Promise<void>,
     );
+  }
+  finish_stream(command_id: string, body: CanonicalReader, outputs_owed: boolean): Promise<void> {
+    let started = false;
+    const task = this.enqueue(async () => {
+      started = true;
+      let input: number | undefined,
+        committed = false,
+        primary: unknown;
+      try {
+        if (
+          !Number.isSafeInteger(body.byte_count) ||
+          body.byte_count < 0 ||
+          body.byte_count > JOURNAL_INPUT_BYTES
+        )
+          throw new RangeError('Journal stream exceeds the native byte limit.');
+        input = (await this.raw({ operation: 'input_start', text: false })) as number;
+        let received = 0;
+        for await (const chunk of body) {
+          if (
+            !(chunk instanceof Uint8Array) ||
+            !chunk.byteLength ||
+            chunk.byteLength > FILE_CHUNK_BYTES ||
+            received + chunk.byteLength > body.byte_count
+          )
+            throw this.delivery_failure('Journal input stream exceeded its chunk or byte count.');
+          received += chunk.byteLength;
+          await this.raw({ operation: 'input_push', input, chunk: Uint8Array.from(chunk).buffer });
+        }
+        if (received !== body.byte_count)
+          throw this.delivery_failure('Journal input stream ended before its byte count.');
+        await this.raw({ operation: 'input_end', input });
+        await this.raw({ operation: 'finish', command_id, input, owed: outputs_owed });
+        committed = true;
+      } catch (error) {
+        primary = error;
+        throw error;
+      } finally {
+        try {
+          if (!committed && input !== undefined && !this.failure)
+            await this.raw({ operation: 'input_drop', input });
+        } finally {
+          try {
+            await body.close();
+          } catch (error) {
+            console.warn('Mac journal stream cleanup failed:', failure_name(error));
+            this.delivery_failure('Journal input stream cleanup failed.', error);
+            if (!committed && primary === undefined) throw error;
+          }
+        }
+      }
+    });
+    return task.catch(async (error) => {
+      if (!started) {
+        try {
+          await body.close();
+        } catch (cleanup) {
+          console.warn('Mac journal unadmitted stream cleanup failed:', failure_name(cleanup));
+          this.delivery_failure('Journal input stream cleanup failed.', cleanup);
+        }
+      }
+      throw error;
+    });
+  }
+  async select_report(): Promise<SelectedJournalReport | null> {
+    const value = await this.call<{
+      selection: number;
+      command_ids: string[];
+      body: ReaderDescriptor;
+    } | null>({ operation: 'select_report' });
+    return value === null ? null : { ...value, body: new Reader(this, value.body) };
+  }
+  report_feedback(selection: number, settled_ids: readonly string[] | null): Promise<boolean> {
+    if (settled_ids !== null && settled_ids.length > MAX_COMMAND_OUTCOMES_PER_REPORT)
+      return Promise.reject(new RangeError('Journal feedback exceeds its report limit.'));
+    return this.call({ operation: 'report_feedback', selection, settled_ids });
   }
   mark_outputs_published(command_id: string): Promise<void> {
     return this.call({ operation: 'mark_outputs_published', command_id });

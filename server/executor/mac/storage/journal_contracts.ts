@@ -69,7 +69,14 @@ export interface UnreportedJournalResult {
   command_id: string;
   result: CanonicalReader;
 }
+export interface SelectedJournalReport {
+  readonly selection: number;
+  readonly command_ids: readonly string[];
+  readonly body: CanonicalReader;
+}
 export interface AsyncCommandJournal extends OutboxCleanup {
+  assert_healthy(): void;
+  delivery_failure(message: string, cause?: unknown): Error;
   poll_cursor(): Promise<bigint>;
   lower_poll_cursor(high: bigint, cursor_at_lease: bigint): Promise<boolean>;
   record_poll_reply(
@@ -79,6 +86,9 @@ export interface AsyncCommandJournal extends OutboxCleanup {
   ): Promise<FreshCommandCursor>;
   result_of(command_id: string): Promise<CanonicalReader | null>;
   finish(command_id: string, result: Uint8Array | string, outputs_owed: boolean): Promise<void>;
+  finish_stream(command_id: string, body: CanonicalReader, outputs_owed: boolean): Promise<void>;
+  select_report(): Promise<SelectedJournalReport | null>;
+  report_feedback(selection: number, settled_ids: readonly string[] | null): Promise<boolean>;
   mark_outputs_published(command_id: string): Promise<void>;
   unpublished(): Promise<JournalCursor<UnpublishedJournalCommand>>;
   unreported(limit: number): Promise<JournalCursor<UnreportedJournalResult>>;

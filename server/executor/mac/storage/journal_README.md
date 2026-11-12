@@ -66,4 +66,8 @@ This narrows an observed cross-thread failure window. It does not atomically fen
 The main-owned lock still excludes replacement writers until all registered databases and workers actually settle.
 
 Queue, runner, HTTP, provider, and catalog composition remain later slices.
+The mailbox slice adds worker-local report selection/feedback and an admitted `finish_stream` upload.
+Feedback owns held-result fairness and releases its selection even if the report-mark transaction fails.
+Main capacity refusal is explicitly unadmitted `EBUSY`. Callers can retry that refusal without repeating an accepted feedback transaction.
+Stream cleanup after a known commit preserves that successful write and faults the host if its reader cleanup fails.
 The finite fixture modules prove focused behavior, not arbitrary runtime wire validation or production provider exchange.
