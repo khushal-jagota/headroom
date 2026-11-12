@@ -15,7 +15,7 @@ import { LifecycleKind as K } from '../record/lifecycle.ts';
 import { interpret_backend_event } from '../logic/backend_events.ts';
 import type { RuntimeMutation } from './contracts.ts';
 import { field_mutation } from './save_attempt.ts';
-import { same_turn, set_phase } from './state.ts';
+import { turn_is_maintenance, same_turn, set_phase } from './state.ts';
 import type { ConversationState } from './state.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 import {
@@ -124,7 +124,7 @@ export async function take_backend_event(
                   interpreted.payloads.length > 0 &&
                   !interpreted.compacted &&
                   running !== null &&
-                  !running.automatic_compaction,
+                  !turn_is_maintenance(running),
                 automatic_compaction_confirmed:
                   interpreted.compacted ||
                   (event instanceof TurnEnded && running?.compaction_confirmed === true),
@@ -202,7 +202,7 @@ export async function take_backend_event(
     }
     if (result.written.length > 0) {
       const last = result.written[result.written.length - 1];
-      if (running !== null && !running.automatic_compaction && !interpreted.compacted) {
+      if (running !== null && !turn_is_maintenance(running) && !interpreted.compacted) {
         state.record = new ConversationRecord({
           ...state.record,
           latest_agent_activity_at: last.created_at,

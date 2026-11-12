@@ -1021,6 +1021,24 @@ export function clear_ticket_conversation_link(
   if (changed) capture_ticket_attention(tx, id, o.now);
   return changed;
 }
+/** Automatic maintenance follows the current Ticket's permission to run. */
+export function automated_maintenance_suppression_reason(
+  sql: ReadSql,
+  conversation_id: string,
+): string | null {
+  const current = sql.get<{ is_backlogged: number }>(
+    'SELECT is_backlogged FROM tickets WHERE conversation_id=?',
+    [conversation_id],
+  );
+  if (current !== undefined) return current.is_backlogged ? 'worker_ticket_backlogged' : null;
+  if (
+    sql.get('SELECT 1 FROM ticket_conversations WHERE conversation_id=?', [conversation_id]) !==
+    undefined
+  )
+    return 'worker_conversation_replaced';
+  return null;
+}
+
 export function write_ticket_last_chosen_configuration(
   tx: TransactionSql,
   id: string,

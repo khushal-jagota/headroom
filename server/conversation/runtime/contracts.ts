@@ -45,6 +45,7 @@ export interface ReservedTurn {
   readonly resolved: Deferred<void>;
   readonly automatic_compaction: boolean;
   automatic_notice: boolean;
+  memory_notice_only: boolean;
   prompt_accepted: boolean;
   messages: readonly Message[];
   mode: PromptDeliveryMode;
@@ -57,6 +58,7 @@ export interface DeliveryAttempt {
   readonly composed_content_delivered: boolean;
   readonly messages: readonly Message[];
   readonly automatic_notice: boolean;
+  readonly memory_notice_only: boolean;
 }
 /** Applying a field returns its rollback operation for this synchronous attempt. */
 export interface RuntimeMutation {
