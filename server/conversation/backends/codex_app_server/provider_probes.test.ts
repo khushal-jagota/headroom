@@ -7,7 +7,7 @@ import type { Database } from '../../../core/database/contracts.ts';
 
 function production_providers(database: Database = {} as Database) {
   vi.stubEnv('VITEST', '');
-  vi.stubEnv('PLAN_TEST_MODE', '');
+  vi.stubEnv('PLAN_TEST_MODE', '0');
   vi.stubEnv('PYTEST_CURRENT_TEST', undefined);
   return create_codex_providers({
     database,
