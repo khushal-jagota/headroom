@@ -32,6 +32,8 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Install isolated dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
           python -m venv .venv
           .venv/bin/python -m pip install -r requirements.txt
           .venv/bin/python -m pip install --editable . --config-settings editable_mode=compat
