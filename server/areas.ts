@@ -1,6 +1,8 @@
 import { routes as notifications } from './notifications/routes.ts';
 import { initialize_notifications } from './notifications/data.ts';
 import { buildClock } from './core/clock.ts';
+import type { Clock } from './core/clock.ts';
+import type { ConversationViewRuntime } from './conversation/views/routes.ts';
 import { conversation_routes } from './tickets/conversation_routes.ts';
 import { routes as membership } from './membership/routes.ts';
 import { configure_conversation_start } from './runtime/conversation_start.ts';
@@ -31,14 +33,19 @@ export const initializeAreas = (
   database: Database,
   authority: SignalNavigationAuthority,
   config: Config,
+  clock: Clock = buildClock(config),
 ): void => {
-  database.write((tx) => initialize_notifications(tx, buildClock(config).nowUnix()));
+  database.write((tx) => initialize_notifications(tx, clock.nowUnix()));
   initialize_worker_settings(database, config);
   configure_conversation_start(database, config);
   configure_chief_resources(config);
-  conversation.initialize(database, config);
+  conversation.initialize(database, config, { integer_now: () => clock.nowUnix() });
   navigation.initialize(database, authority);
 };
+export const getConversationRuntime = (): ConversationViewRuntime => conversation.getRuntime();
+export const bindConversationRuntimeFacts = (
+  facts: ConversationViewRuntime['runtime_facts'],
+): void => conversation.bind_runtime_facts(facts);
 export const closeAreas = async (): Promise<void> => {
   navigation.close();
   await conversation.close();
