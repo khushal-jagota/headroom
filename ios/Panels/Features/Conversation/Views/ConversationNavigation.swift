@@ -152,6 +152,7 @@ private struct ConversationSurface: View {
             if active, !store.serverUnreachable, scenePhase == .active, model.outgoing != before { Task { await readConfiguration() } }
         }
         .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel(); model.saveDisplay(force: true) } }
+        .onChange(of: store.serverUnreachable) { _, covered in if covered { speech.cancel() } }
         .onDisappear { speech.cancel() }
         .onChange(of: store.baseURL) { _, _ in speech.cancel() }
     }
