@@ -89,7 +89,11 @@ function coreMessage(message: Record<string, unknown>): boolean {
   if (!coreProof) return false;
   const params = (message.params ?? {}) as Record<string, unknown>;
   const answer = (result: unknown) => send({ id: message.id, result });
-  if (message.method === 'initialize') answer({ userAgent: 'scripted-codex' });
+  if (message.method === 'initialize') {
+    answer({ userAgent: 'scripted-codex' });
+    // Only the method was observed. Its payload stays synthetic and unconsumed.
+    send({ method: 'remoteControl/status/changed', params: {} });
+  }
   else if (message.method === 'initialized') {
     /* one-way handshake */
   } else if (message.method === 'thread/start')
