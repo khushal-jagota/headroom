@@ -8,6 +8,10 @@ if (process.argv.includes('--version') || process.argv.includes('-v')) {
   process.exit(0);
 }
 const arguments_ = process.argv.slice(2);
+const part3 = process.env.UNIT18_PART3_SCRIPTED === '1';
+if (part3 && Object.keys(process.env).some((name) => name.startsWith('PLAN_'))) {
+  throw new Error('The manual provider rehearsal must have no Panels identity variables');
+}
 const option = (name: string) => {
   const inline = arguments_.find((argument) => argument.startsWith(`${name}=`));
   if (inline !== undefined) return inline.slice(name.length + 1);
@@ -21,14 +25,14 @@ function log(value: unknown) {
   appendFileSync(trace!, `${JSON.stringify(value)}\n`);
 }
 const launchMetadata = process.env.UNIT18_WRAPPED_FILE;
-if (!launchMetadata) throw new Error('The scripted CLI requires captured launch argv');
+if (!launchMetadata && !part3) throw new Error('The scripted CLI requires captured launch argv');
 log({
   kind: 'launch',
   pid: process.pid,
   node_executable: process.execPath,
   environment: process.env,
   args: arguments_,
-  ...JSON.parse(readFileSync(launchMetadata, 'utf8')),
+  ...(launchMetadata ? JSON.parse(readFileSync(launchMetadata, 'utf8')) : {}),
 });
 if (process.env.PLAN_TICKET_ID) {
   const path = process.env.UNIT18_WRAPPED_FILE;
@@ -75,7 +79,7 @@ function publishInit() {
     uuid: 'script-init',
     cwd: process.cwd(),
     model: 'haiku',
-    tools: ['Write', 'AskUserQuestion'],
+    tools: part3 ? [] : ['Write', 'AskUserQuestion'],
     mcp_servers: [],
     slash_commands: [],
     permissionMode: 'default',
@@ -231,6 +235,33 @@ input.on('line', (line) => {
   }
   lifecycle(uuid, 'started');
   active.push(uuid);
+  if (part3) {
+    let reply: string;
+    if (value.includes('Reply exactly UNIT18_FRESH_OK')) {
+      reply = 'UNIT18_FRESH_OK';
+    } else {
+      const token = /UNIT18_MEMORY_[0-9a-f]+/.exec(value)?.[0];
+      if (token && value.includes('Reply exactly STORED')) {
+        state.memory = token;
+        reply = 'STORED';
+      } else if (value.includes('Recall the exact memory token from the previous turn')) {
+        if (!option('--resume') || !state.memory) throw new Error('No scripted seed memory exists');
+        reply = state.memory;
+      } else {
+        throw new Error('Unexpected prompt in the manual provider rehearsal');
+      }
+    }
+    emit({
+      type: 'stream_event',
+      session_id: session,
+      uuid: 'part3-stream',
+      parent_tool_use_id: null,
+      event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: reply } },
+    });
+    text(reply);
+    finish();
+    return;
+  }
   if (scenario === 'crash7') {
     process.stderr.write('synthetic process crash\n');
     process.exit(7);
