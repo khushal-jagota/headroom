@@ -41,7 +41,7 @@ function sender_conversation_id(database: Database, sender: Principal): string |
   }
   return null;
 }
-function sender_conversation_link_key(database: Database, sender: Principal): string {
+export function sender_conversation_link_key(database: Database, sender: Principal): string {
   if (sender.kind === 'ticket') return `ticket:${sender.id}`;
   if (sender.kind === 'chief') return `agent:${CHIEF_SETTINGS_KEY}`;
   if (sender.kind === 'manager') {

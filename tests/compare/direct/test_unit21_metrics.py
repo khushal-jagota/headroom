@@ -660,8 +660,8 @@ def _line(process: subprocess.Popen[str], seconds: float = 10) -> dict[str, Any]
     return cast(dict[str, Any], json.loads(line))
 
 
-def _finish(process: subprocess.Popen[str]) -> dict[str, Any]:
-    process.wait(timeout=10)
+def _finish(process: subprocess.Popen[str], seconds: float = 10) -> dict[str, Any]:
+    process.wait(timeout=seconds)
     assert process.stdout and process.stderr
     output, errors = process.stdout.read(), process.stderr.read()
     assert process.returncode == 0, errors
@@ -809,21 +809,26 @@ def test_unit21_metrics_sampler_cadence_ownership_and_pending_stop(tmp_path: Pat
     }
     normal = tmp_path / "normal"
     normal.mkdir()
-    process, descriptor = _runtime(normal, "sampler", config)
+    process, descriptor = _runtime(normal, "sampler", {**config, "slow_seconds": 30})
     try:
-        result = _finish(process)
+        result = _finish(process, seconds=20)
         assert result["latest"]["sample"] is not None
+        assert result["latest"]["sample"]["expected_interval"] == config["active_seconds"]
         assert result["failure"] is None
         events = [
             json.loads(line) for line in (normal / "collection.jsonl").read_text().splitlines()
         ]
         starts = [event for event in events if event["type"] == "start"]
         assert starts[0]["include_slow"] is True
-        assert any(event["include_slow"] is False for event in starts[1:])
-        assert any(
-            result["blocked_at"] + 0.01 < event["wall"] < result["unblocked_at"] for event in starts
+        observed = starts[result["blocked_start_count"] : result["blocked_end_count"]]
+        assert len(observed) >= 3
+        assert any(event["include_slow"] is False for event in observed)
+        # The active transition can sample immediately. Later active gaps obey cadence.
+        stable = observed[1:]
+        assert all(
+            b["monotonic"] - a["monotonic"] >= 0.015
+            for a, b in zip(stable, stable[1:], strict=False)
         )
-        assert all(b["wall"] - a["wall"] >= 0.015 for a, b in zip(starts, starts[1:], strict=False))
         _assert_lock(normal / "metrics.sqlite.lock", False)
     finally:
         _cleanup(process, descriptor)

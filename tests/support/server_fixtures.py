@@ -14,6 +14,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from test_runtime import environment_for, validate_environment
 from tests.support.server import (
     FAKE_NOW,
     PLAN_BIN,
@@ -65,9 +66,12 @@ def _first_meta_answer(base: str, log_path: Path, describe_server: Callable[[], 
     assert meta["test_mode"] is True, meta
 
 
-def _scrubbed_env() -> dict[str, str]:
-    """os.environ minus every ambient PLAN_* key (kills shell leakage)."""
-    return {k: v for k, v in os.environ.items() if not k.startswith(("PLAN_", "PANELS_REAL_"))}
+def _scrubbed_env(storage: Path | None = None) -> dict[str, str]:
+    """Private runtime defaults, without worker identity or provider opt-ins."""
+    if storage is None:
+        storage = Path(os.environ["PLAN_DB_PATH"]).parent
+    environment = environment_for(storage, os.environ)
+    return {k: v for k, v in environment.items() if not k.startswith("PANELS_REAL_")}
 
 
 def _log_tail(log_path: Path, n: int = 40) -> str:
@@ -137,12 +141,13 @@ def _start_server(
     try:
         port = int(listener.getsockname()[1])
         base = f"http://127.0.0.1:{port}"
-        env = _scrubbed_env()
+        env = _scrubbed_env(srvdir)
         env.update(
             {
                 "PLAN_TEST_MODE": "1",
                 "PLAN_DB_PATH": str(db_path),
                 "PLAN_PORT": str(port),
+                "PLAN_SERVER_URL": base,
                 "PLAN_SERVER_LISTENER_FD": str(listener.fileno()),
                 "PLAN_FAKE_NOW": fake_now if fake_now is not None else FAKE_NOW,
                 "PLAN_LOGS_DIR": str(srvdir / "logs"),
@@ -158,6 +163,7 @@ def _start_server(
             )
 
         env.update(homes)
+        validate_environment(env)
 
         # The owner-read trace hook is a sitecustomize, so every interpreter started with
         # it on PYTHONPATH imports FastAPI and the conversation store before doing anything
@@ -351,7 +357,7 @@ def cli(tmp_path: Path) -> Callable[..., JsonObject]:
         stdin: str | None = None,
         settle_brief: bool = False,
     ) -> JsonObject:
-        env = _scrubbed_env()
+        env = _scrubbed_env(tmp_path)
         env.update(create_synthetic_homes(tmp_path))
         env["PLAN_SERVER_URL"] = server.base
         if ticket_id is not None:
@@ -363,6 +369,7 @@ def cli(tmp_path: Path) -> Callable[..., JsonObject]:
             env["PLAN_ACTOR"] = "worker"
         if actor is not None:
             env["PLAN_ACTOR"] = actor
+        validate_environment(env)
         proc = subprocess.run(
             [str(PLAN_BIN), *args, "--json"],
             input=stdin,
