@@ -1,3 +1,4 @@
+import { routes as previews } from './previews/routes.ts';
 import { routes as files } from './files/routes.ts';
 import { routes as measures } from './measures/routes.ts';
 import { routes as datasets } from './datasets/routes.ts';
@@ -66,6 +67,7 @@ export const closeAreas = async (): Promise<void> => {
 
 /** Add one area registration here. Core has no area identity branches. */
 export const areas: readonly Area[] = [
+  { prefix: '', routes: previews },
   { prefix: '/api', routes: measures, admission: measure_admission },
   { prefix: '/api', routes: datasets, admission: measure_admission },
   { prefix: '', routes: files },
