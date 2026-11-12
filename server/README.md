@@ -82,7 +82,7 @@ Each area adds one registration to the `testAreas` list in `test_host.ts`. Test 
 
 For a comparison list with `"conversation_system": "in_memory"`, the runner supplies `PLAN_COMPARE_CONVERSATION_SYSTEM=in_memory` to both hosts. The TS host creates one `InMemoryConversationSystem` for its test routes and all ordinary areas. Areas receive it as `services.conversationSystem`. The test endpoints start a conversation, send a message, read fake state, and complete a turn beneath `/api/test/in-memory-conversations`.
 
-Without this switch, the host composes `SqliteProcessConversationSystem` with the record runtime's single store and tail. `createConversationCore(context)` receives that runtime and the shared clock after record initialization. Runtime facts attach to that same record runtime. Shutdown closes the core before the record, application, and database ownership.
+Without this switch, the host composes `SqliteProcessConversationSystem` with the record runtime's single store and tail. `createConversationCore(context)` receives that runtime and the shared clock after record initialization. Runtime facts attach to that same record runtime. Shutdown begins HTTP closure and core cancellation together. Actual request and core work must settle before the record and database close.
 
 The comparison host uses `conversation/testing/scripted_process.ts` behind both Python and TypeScript backend adapters. Existing signal controls retain their meanings. Configuration and inspection controls expose process behavior and actual backend observations; backend news enters through the real core rather than direct event-row inserts.
 
@@ -119,7 +119,7 @@ The event/live tail subscribes before replay, joins at its sequence high-water m
 
 Owner-read and both answer routes require the owner. Mutations preserve the active Ticket conversation guard, and raw sends reject employee-owned conversations. All five send entry points share the existing 20 MiB pre-parser limit, including streamed bodies. Kept message-file reads reuse the file delivery implementation, with private immutable caching and `nosniff`.
 
-`ConversationHttpWriteScope` owns owner-read writes through SQLite BUSY contention without adopting core runtime state. Shutdown seals this scope before new writes can enter, then drains it before core shutdown and record cleanup. Other semantic errors propagate once. It does not change the record contract or retry provider actions.
+`ConversationHttpWriteScope` owns owner-read writes through SQLite BUSY contention without adopting core runtime state. Shutdown seals this scope before new writes can enter. Its actual drain and core cancellation begin before the shared wait. Both must settle before record cleanup. Other semantic errors propagate once. It does not change the record contract or retry provider actions.
 
 Voice transcription currently provides request-shape validation and the exact unconfigured 503 answer. No configured transcription provider is connected; audio/media/base64 processing and provider policy remain with the uploads/service unit. Valid video upload and credential-wire gates also remain with their owners. Backend catalog/admin/sign-in services are outside the sixteen seams above. A stored composer catalog read is separate from backend discovery.
 
@@ -159,10 +159,24 @@ Core factories must also bind `on_held_model_change` to `write_held_ticket_confi
 Without a core factory, the server supplies record reads and real publication from durable facts, with no local turn or substitute provider.
 An explicitly selected in-memory instrument remains separate. The idle authority helpers remain for their isolated tests.
 
-Shutdown revokes publication and closes tail subscriptions before the worker loops and background services drain.
-The HTTP write scope drains before the core fences native callbacks, closes its children, and drains retained writes.
-Record cleanup and HTTP closure precede navigation detachment, database closure, and lease release.
-The test registry's HTTP cleanup therefore follows core cleanup.
+Shutdown seals all request admission and revokes publication before any wait.
+It begins every independent stop, including core cancellation, HTTP closure, background services, uploads, recovery, and one-shot children.
+The request scope retains actual handlers, hooks, and iterator operations after a client disconnect.
+The core retains native provider calls separately from their canceled observers and begins child detaches before their shared wait.
+
+Every stage observes one absolute monotonic deadline. The default application budget is 30 seconds.
+A deadline ends the caller's wait. It does not prove that the underlying work stopped.
+If work remains or cleanup fails, the server logs the pending or failed stages and retains its database, locks, and process lifetime.
+The record and database close only after all actual work settles, and only within the same budget.
+Repeated signals reuse the original stop attempt and deadline.
+Node timers cannot interrupt synchronous JavaScript or SQLite, so this policy does not promise a hard bound during an event-loop stall.
+
+An embedding host can explicitly call `finish_shutdown({deadline})` after a timeout.
+This internal operation requires every old flight to be already settled and every cleanup failure to be absent.
+It bounds only the remaining finalization and never restarts stop stages. Signals do not call it.
+An unresolved or failed stage retains ownership for operator intervention.
+Registry reset and removal hold both the supervisor lifecycle lease and the same database owner lock that `startServer` holds.
+Python also separates the supervisor lease from the application database lock.
 
 To compare the in-memory instrument against TypeScript, run:
 
@@ -271,3 +285,24 @@ Provider shutdown refuses new sign-in and probe work, aborts active catalog and 
 reads, and joins them before the database closes. Both snapshot environment and sign-in
 cleanup run even if either fails. Exact-second sign-in timestamps omit the fractional
 part, as Python does. Nonzero microseconds retain six digits.
+
+## Hermes ACP transport
+
+`conversation/backends/hermes_acp/` supplies the first part of the Hermes port:
+launch values, ordered ACP transport, and process ownership. The backend child and
+catalog binding remain later parts. Hermes retains Python's exact child environment,
+including the absence of an automatic `BASH_ENV` override.
+
+The adapter pins `@agentclientprotocol/sdk` to `2.6.0` and uses its ACP v1
+`/unstable` entrypoint to retain prompt usage fields. The public `ClientApp` dispatches
+handlers concurrently, so the adapter uses the SDK's lower-level `Connection` and
+generated validators behind an admission gate. Notifications and request admission
+finish before the next frame reaches the SDK. Permission answers remain outside
+that gate. Notification admission has no timeout; the permission response-write
+confirmation retains Python's 15-second bound. Close and wire failure release the gate.
+
+The package exports no subpath for `Connection` or the generated validators.
+Runtime imports resolve their files from the pinned package entrypoint. Relative
+`node_modules` imports supply those same official types without a duplicate protocol
+interface. Pin checks cover the consumed internal symbols. Any SDK upgrade requires
+a new review of `conversation/backends/hermes_acp/client.ts` before approval.

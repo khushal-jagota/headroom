@@ -154,6 +154,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   private readonly shutdown_controller = new AbortController();
   private readonly native_waiters = new Set<() => void>();
   private readonly native_settlements = new Set<Promise<void>>();
+  private readonly child_stop_ownership = new Map<import('./backends/contracts.ts').BackendChild, ConversationState>();
   private idle_janitor: IdleChildJanitor | null = null;
   private background_tasks_left_by_previous_process: ReadonlyMap<string, readonly string[]>;
   constructor(options: ConversationCoreOptions) {
@@ -1088,14 +1089,17 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     state: ConversationState,
     child: import('./backends/contracts.ts').BackendChild,
   ): Promise<boolean> {
+    // A pending stop remains owned even when the active slot becomes available.
+    this.child_stop_ownership.set(child, state);
     if (state.child === child) state.child = null;
     const stopped = await stop_child(state, child, (operation) => this.native_operation(operation));
     if (stopped) {
+      this.child_stop_ownership.delete(child);
       state.child_event_sink = null;
       state.child_is_quarantined = false;
       await background_tasks_ended_with_child(this, state);
-    } else {
-      state.child = child;
+    } else if (!this.shutting_down) {
+      if (state.child === null) state.child = child;
       state.child_is_quarantined = true;
     }
     return stopped;
@@ -1369,6 +1373,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     );
     // A child can already exist while its native start still awaits a response.
     for (const state of states) {
+      if (state.child !== null) this.child_stop_ownership.set(state.child, state);
+      if (state.preparing_child !== null) this.child_stop_ownership.set(state.preparing_child, state);
       if (state.child === null && state.preparing_child !== null)
         state.child = state.preparing_child;
       state.closing = true;
@@ -1387,7 +1393,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     this.native_waiters.clear();
     this.shutdown_controller.abort();
     // Detach every child before waiting for a raw call. Exit can settle that call.
-    const detaching = detach_children(states);
+    const detaching = detach_children(states, [...this.child_stop_ownership].map(([child, state]) => ({ child, state })))
+      .then(() => { this.child_stop_ownership.clear(); });
     const janitor = this.idle_janitor?.stop();
     void (async () => {
       const results = await Promise.allSettled([

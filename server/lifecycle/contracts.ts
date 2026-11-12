@@ -56,14 +56,6 @@ export interface OwnedOneShotChildren {
   /** Actual ChildProcess close boundaries, never command-result completion. */
   settled(): Promise<void>;
 }
-export class ShutdownDeadlineExceeded extends Error {
-  readonly pending: readonly string[];
-  constructor(pending: readonly string[]) {
-    super(`Shutdown deadline expired; ownership retained: ${pending.join(', ')}`);
-    this.name = 'ShutdownDeadlineExceeded';
-    this.pending = pending;
-  }
-}
 export interface BackgroundCompositionContext {
   database: Database;
   config: Config;
@@ -86,6 +78,14 @@ export class ServerLifecycleError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ServerLifecycleError';
+  }
+}
+export class ShutdownDeadlineExceeded extends ServerLifecycleError {
+  readonly pending: readonly string[];
+  constructor(pending: readonly string[]) {
+    super(`Shutdown deadline expired; ownership retained: ${pending.join(', ')}`);
+    this.name = 'ShutdownDeadlineExceeded';
+    this.pending = pending;
   }
 }
 export class ServerLifecycleAlreadyOwnedError extends ServerLifecycleError {

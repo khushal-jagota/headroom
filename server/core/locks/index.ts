@@ -1,5 +1,5 @@
-import { closeSync, mkdirSync, openSync, realpathSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { closeSync, mkdirSync, openSync, realpathSync, lstatSync, readlinkSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import koffi from 'koffi';
 const libc = koffi.load(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6');
 const flock = libc.func('int flock(int fd, int operation)');
@@ -35,8 +35,24 @@ export function acquireLock(path: string): LockHandle | null {
     },
   };
 }
+function canonical_database_path(path: string): string {
+  const absolute = resolve(path);
+  try { return realpathSync(absolute); }
+  catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  // Python resolves a missing DB non-strictly. Follow an existing dangling link
+  // before appending missing tails, so the future runtime uses the same lock.
+  try {
+    if (lstatSync(absolute).isSymbolicLink())
+      return canonical_database_path(resolve(dirname(absolute), readlinkSync(absolute)));
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  return join(canonical_database_path(dirname(absolute)), basename(absolute));
+}
 export function acquireRuntimeOwnership(dbPath: string): LockHandle {
-  const canonical = realpathSync(resolve(dbPath));
+  const canonical = canonical_database_path(dbPath);
   const handle = acquireLock(`${canonical}.conversation-owner.lock`);
   if (!handle) throw new ConversationRuntimeAlreadyOwnedError(canonical);
   return handle;

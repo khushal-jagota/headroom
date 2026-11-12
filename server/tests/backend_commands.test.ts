@@ -2,7 +2,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { BackendCommands } from '../conversation/snapshot/commands.ts';
 
 interface OwnedProcesses {
@@ -81,7 +81,7 @@ test.skipIf(process.platform !== 'linux')(
       [
         "const {spawn} = require('node:child_process');",
         "const {writeFileSync, renameSync} = require('node:fs');",
-        "const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {stdio: ['ignore', 'inherit', 'inherit']});",
+        "const descendant = spawn(process.execPath, ['-e', 'setTimeout(() => process.exit(0), 500)'], {stdio: ['ignore', 'inherit', 'inherit']});",
         "descendant.once('spawn', () => {",
         "  writeFileSync(process.argv[2] + '.tmp', JSON.stringify({parent: process.pid, descendant: descendant.pid}));",
         "  renameSync(process.argv[2] + '.tmp', process.argv[2]);",
@@ -92,12 +92,14 @@ test.skipIf(process.platform !== 'linux')(
     );
     const owned_groups: OwnedProcesses[] = [];
     const owners: BackendCommands[] = [];
+    const signals = vi.spyOn(process, 'kill');
     try {
       for (const mode of ['abort', 'shutdown', 'exit'] as const) {
         const commands = new BackendCommands();
         owners.push(commands);
         const controller = new AbortController();
         const marker = join(root, `${mode}.json`);
+        const first_signal = signals.mock.calls.length;
         // Observe rejection immediately: request abort and shutdown intentionally reject.
         const operation = commands
           .run([process.execPath, script, marker, mode], {
@@ -124,23 +126,20 @@ test.skipIf(process.platform !== 'linux')(
           // The ten-second command timer must not be needed to release the held pipes.
           const settled = await within(operation, 2000);
           expect('value' in settled && settled.value.exit_code).toBe(0);
+          // This mode never requests a stop. Exit cleanup must not signal the
+          // retired leader's PGID, even though the finite descendant holds pipes.
+          expect(signals.mock.calls.slice(first_signal)).toEqual([]);
         }
         // run/shutdown settled only after the owned parent exited.
         expect(stopped(owned.parent)).toBe(true);
         await group_stopped(owned);
       }
     } finally {
-      // Kill only the exact groups this test started, even if an assertion failed.
-      for (const owned of owned_groups) {
-        if (stopped(owned.parent) && stopped(owned.descendant)) continue;
-        try {
-          process.kill(-owned.parent, 'SIGKILL');
-        } catch (error) {
-          if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
-        }
-      }
+      // Owners can stop live leaders. Finite descendants exit themselves after
+      // parent exit, so cleanup never signals a retired or reused numeric group.
       await within(Promise.allSettled(owners.map((owner) => owner.shutdown())), 3000);
       for (const owned of owned_groups) await group_stopped(owned);
+      signals.mockRestore();
       rmSync(root, { recursive: true, force: true });
     }
   },

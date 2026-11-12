@@ -6,9 +6,10 @@ import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, delimiter, normalize } from 'node:path';
 import type { BackendProbeEnvironment, CommandOutcome } from './contracts.ts';
+import { testModeFromEnvironment } from '../../core/config.ts';
 export function backend_io_is_test(): boolean {
   return (
-    process.env.PLAN_TEST_MODE === '1' ||
+    testModeFromEnvironment() ||
     process.env.VITEST === 'true' ||
     process.env.PYTEST_CURRENT_TEST !== undefined
   );

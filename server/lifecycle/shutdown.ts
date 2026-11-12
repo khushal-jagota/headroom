@@ -41,7 +41,10 @@ export class ShutdownCoordinator implements ShutdownOwner, ShutdownStages {
     };
   }
   get shutdown_settled(): Promise<void> {
-    return Promise.all(this.#stages.map((stage) => stage.actual)).then(() => undefined);
+    return Promise.allSettled(this.#stages.map((stage) => stage.actual)).then((results) => {
+      const failures = results.filter((result) => result.status === 'rejected');
+      if (failures.length) throw new AggregateError(failures.map((failure) => failure.reason), 'Shutdown stages failed after actual settlement');
+    });
   }
   own(name: string, operation: () => unknown | Promise<unknown>): Promise<void> {
     let resolve!: () => void, reject!: (error: unknown) => void;

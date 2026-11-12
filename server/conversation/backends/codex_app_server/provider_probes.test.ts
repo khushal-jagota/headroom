@@ -8,7 +8,7 @@ import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 
 function production_providers(children: OneShotChildren, database: Database = {} as Database) {
   vi.stubEnv('VITEST', '');
-  vi.stubEnv('PLAN_TEST_MODE', '');
+  vi.stubEnv('PLAN_TEST_MODE', '0');
   vi.stubEnv('PYTEST_CURRENT_TEST', undefined);
   return create_codex_providers({
     one_shot_children: children,

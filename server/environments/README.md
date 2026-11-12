@@ -33,9 +33,10 @@ The Node release admission bridge belongs to Part 4.
 
 The real-core proofs now cover idle-update admission after a native turn completes, HTTP write refusal without database mutation,
 continued reads, and admission reopening after installer launch failure. They use ordinary routes and scripted external operations.
-A second proof forces an update while the real core is busy. Its external installer adapter requests actual application shutdown.
-It holds the accepted provider return through shutdown and ownership transfer, with detach released explicitly.
-Its later return performs no store/publication access or database mutation. It also checks the shared loop, metrics, and update stop deadline.
+A second case forces an update while the real core is busy. Its external installer adapter requests actual application shutdown.
+The Manager's later stop policy supersedes its original ownership-transfer expectation.
+The revised proof must retain ownership through an unfinished provider return and allow explicit finalization only after actual settlement.
+That revised evidence remains pending until its focused check passes.
 The real installer/systemd path, vendor SDK behavior, loop-provider cancellation, and an absolute total shutdown bound remain unproven.
 
 ## Retained metrics and status

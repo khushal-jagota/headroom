@@ -24,11 +24,14 @@ export class BackendCommands {
       const output: Buffer[] = [];
       const error: Buffer[] = [];
       let timed_out = false;
+      let reaped = false;
       const stop_owned = (owned: ChildProcess) => {
+        if (reaped || owned.exitCode !== null || owned.signalCode !== null) return;
         try {
           if (owned.pid !== undefined) process.kill(-owned.pid, 'SIGKILL');
         } catch {
-          owned.kill('SIGKILL');
+          if (!reaped && owned.exitCode === null && owned.signalCode === null)
+            owned.kill('SIGKILL');
         }
       };
       const child = this.children.spawn(
@@ -58,13 +61,15 @@ export class BackendCommands {
       child.stdout!.on('data', (chunk: Buffer) => output.push(chunk));
       child.stderr!.on('data', (chunk: Buffer) => error.push(chunk));
       child.once('error', (failure) => {
+        if (child.pid === undefined) reaped = true;
         cleanup();
         if (signal.aborted) reject(signal.reason);
         else resolve({ exit_code: -1, standard_output: '', standard_error: failure.message });
       });
       child.once('exit', (code) => {
-        // A descendant can retain inherited pipes after its parent exits.
-        kill_group();
+        reaped = true;
+        // Descendants can retain pipes. Close our ends without signaling the
+        // retired leader's numeric group, which can now be reused.
         setImmediate(() => {
           cleanup();
           if (signal.aborted) {
