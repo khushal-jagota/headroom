@@ -3,7 +3,7 @@
 from alembic import op
 
 revision = "local_child_custody"
-down_revision = "retire_executor_websocket_tables"
+down_revision = "ticket_workspace_lifecycle"
 branch_labels = None
 depends_on = None
 
