@@ -57,6 +57,7 @@ from planner.conversation.message_content import message_content_text, text_mess
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.db import connect, create_schema
 from planner.execution_identity import ChildReference
+from planner.runtime.worker_memory import new_memory_notice_message_id
 
 RECOVERY_TEXT = "Inspect the interrupted work and continue the current authorized step."
 
@@ -157,7 +158,7 @@ def world(tmp_path: Path) -> Iterator[tuple[Path, _MacRuns]]:
 
 
 async def _first_server_with_running_turns(
-    db_path: Path, runs: _MacRuns, *conversation_ids: str
+    db_path: Path, runs: _MacRuns, *conversation_ids: str, sender_message_id: str | None = None
 ) -> _Harness:
     harness = _Harness(db_path, factory_wrapper=runs.wrap)
     for conversation_id in conversation_ids:
@@ -171,7 +172,10 @@ async def _first_server_with_running_turns(
             )
         )
         fate = await harness.system.send(
-            conversation_id, text_message_content("work"), sender_label="owner"
+            conversation_id,
+            text_message_content("work"),
+            sender_label="owner",
+            sender_message_id=sender_message_id,
         )
         assert isinstance(fate, PromptDeliveryStarted)
     return harness
@@ -272,6 +276,47 @@ def test_a_vps_restart_adopts_the_running_mac_turn_live(
             assert isinstance(sent, PromptDeliveryStarted)
             assert restarted.spawned_conversation_ids == []
             assert restarted.backend("mac").written_texts() == ("next",)
+        finally:
+            await restarted.system.shutdown()
+
+    _run(exercise)
+
+
+def test_a_memory_notice_turn_adopted_after_a_vps_restart_stays_maintenance(
+    world: tuple[Path, _MacRuns],
+) -> None:
+    """Risk: the adopted turn is rebuilt from facts that do not say it was a notice, so
+    its ending renews compaction eligibility and restarts the idle compaction loop."""
+    db_path, runs = world
+
+    async def exercise() -> None:
+        first = await _first_server_with_running_turns(
+            db_path, runs, "mac", sender_message_id=new_memory_notice_message_id()
+        )
+        await first.system.shutdown()
+
+        restarted = _Harness(db_path, factory_wrapper=runs.wrap)
+        try:
+            assert await restarted.system.is_running("mac")
+            token = TurnToken("mac", 1)
+            await restarted.system.take_backend_event(
+                token, ToolCallStarted(tool_call_id="t1", title="ls", tool_kind="execute")
+            )
+            await restarted.system.take_backend_event(
+                token,
+                TurnEnded(
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                ),
+            )
+            assert await _turn_endings(restarted, "mac") == [ConversationTurnEnding.completed]
+            record = await restarted.store.read_conversation("mac")
+            assert record is not None
+            assert (record.latest_agent_activity_sequence, record.latest_agent_activity_at) == (
+                0,
+                None,
+            )
         finally:
             await restarted.system.shutdown()
 

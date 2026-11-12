@@ -107,8 +107,10 @@ from planner.notifications.attention import (
     conversation_attention_snapshot,
     conversation_attention_snapshot_is_current,
 )
+from planner.runtime import worker_memory
 from planner.stalls.contracts import TrackedWaitHandle, TrackedWaitKind
 from planner.stalls.registry import WAITS
+from planner.tickets import data as tickets_data
 
 DEFAULT_BUSY_TIMEOUT_MILLISECONDS = 5000
 
@@ -776,13 +778,20 @@ class ConversationStore:
         messages: tuple[PromptDiscardedEventPayload, ...],
         *,
         lifecycle_if_all_suppressed: tuple[LifecycleFact, ...] = (),
+        automatic_compaction: bool = False,
     ) -> tuple[PromptDispatchDecision, ...]:
-        """Serialize current notice eligibility with exact discard and lifecycle records."""
+        """Serialize current notice eligibility with exact discard and lifecycle records.
+
+        ``automatic_compaction`` says the one message is the automatic ``/compact``, which
+        has no sender id. It and every memory-loss notice are maintenance, admitted only
+        while the conversation may receive maintenance.
+        """
         return await self._write(
             self._admit_sender_messages_sync,
             conversation_id,
             messages,
             lifecycle_if_all_suppressed,
+            automatic_compaction,
         )
 
     def _admit_sender_messages_sync(
@@ -790,6 +799,7 @@ class ConversationStore:
         conversation_id: str,
         messages: tuple[PromptDiscardedEventPayload, ...],
         lifecycle_if_all_suppressed: tuple[LifecycleFact, ...],
+        automatic_compaction: bool,
     ) -> tuple[PromptDispatchDecision, ...]:
         with self._publication_connection() as (conn, admission):
             try:
@@ -809,6 +819,13 @@ class ConversationStore:
                         reason = interruption_data.admit_recovery(
                             conn, conversation_id, message.recovery_references, self._integer_now()
                         )
+                    memory_notice = worker_memory.is_memory_notice_sender_message_id(
+                        message.sender_message_id
+                    )
+                    if reason is None and (automatic_compaction or memory_notice):
+                        reason = tickets_data.automated_maintenance_suppression_reason(
+                            conn, conversation_id
+                        )
                     if reason is not None:
                         previous = conn.execute(
                             "SELECT payload FROM conversation_events WHERE conversation_id=? "
@@ -825,7 +842,9 @@ class ConversationStore:
                                 or reason
                             )
                     decisions.append(
-                        PromptDispatchDecision(message.sender_message_id, reason, notice)
+                        PromptDispatchDecision(
+                            message.sender_message_id, reason, notice, memory_notice
+                        )
                     )
                 lifecycle = (
                     lifecycle_if_all_suppressed
@@ -1342,9 +1361,16 @@ class ConversationStore:
                 "ORDER BY latest_agent_activity_at, conversation_id",
                 (due_at_or_before, activity_after),
             ).fetchall()
+            return tuple(
+                str(row["conversation_id"])
+                for row in rows
+                if tickets_data.automated_maintenance_suppression_reason(
+                    conn, str(row["conversation_id"])
+                )
+                is None
+            )
         finally:
             conn.close()
-        return tuple(str(row["conversation_id"]) for row in rows)
 
     def _append_delivered_prompt_sync(
         self,
@@ -1623,6 +1649,27 @@ class ConversationStore:
         finally:
             conn.close()
         return tuple(_stored_event(row) for row in rows)
+
+    def _open_turn_holds_only_memory_notices_sync(self, conversation_id: str) -> bool:
+        """Whether every prompt since the last turn ending is a memory-loss notice.
+
+        A turn adopted after a VPS restart is rebuilt from the record, and its prompt rows
+        (the opener and any steer) are the ones after the previous turn's ending.
+        """
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT json_extract(payload,'$.sender_message_id') FROM conversation_events "
+                "WHERE conversation_id = ? AND kind = 'prompt' AND sequence > COALESCE(("
+                "SELECT MAX(sequence) FROM conversation_events "
+                "WHERE conversation_id = ? AND kind = 'turn_ended'),0)",
+                (conversation_id, conversation_id),
+            ).fetchall()
+        finally:
+            conn.close()
+        return bool(rows) and all(
+            worker_memory.is_memory_notice_sender_message_id(row[0]) for row in rows
+        )
 
     def _read_latest_events_sync(
         self, conversation_id: str, before_sequence: int | None, limit: int
