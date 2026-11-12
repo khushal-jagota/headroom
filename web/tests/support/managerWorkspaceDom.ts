@@ -27,9 +27,14 @@ export function childrenDomMatches(root:HTMLElement,principal:import('../../src/
     && buttons?.[0].disabled===(page.omitted_before===0) && buttons?.[1].disabled===(page.next_offset===null);
 }
 
+/** The page title is plain text beside the signal mark, so read only the heading's own text nodes. */
+function ownText(node:Element|null):string {
+  return [...(node?.childNodes ?? [])].filter(child=>child.nodeType===Node.TEXT_NODE).map(child=>child.textContent).join('').trim();
+}
+
 export function workspaceHeaderDomMatches(root:HTMLElement,item:import('../../src/lib/workspaceRail').WorkspaceManager):boolean {
   return root.querySelector('.page-eyebrow > span')?.textContent===(item.project ?? '')
-    && root.querySelector('h1 [contenteditable]')?.textContent===item.title
+    && ownText(root.querySelector('h1'))===item.title
     && root.querySelector('.page-settle')?.getAttribute('aria-label')===`${item.settled ? 'Reopen' : 'Settle'} ${item.title}`
     && JSON.stringify(actualMark(root.querySelector('h1')!))===JSON.stringify(expectedMark(item.conversation_signal,item.conversation_id));
 }
