@@ -67,6 +67,7 @@ from planner.conversation.contracts import (
     PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliverySuppressed,
     PromptDeliveryUncertain,
     PromptQueueReason,
     ResolvedConversationStart,
@@ -113,6 +114,7 @@ from planner.core.contracts import (
     PrincipalKind,
 )
 from planner.core.db import connect, create_schema
+from planner.runtime.worker_memory import new_memory_notice_message_id
 from planner.worker_types.store import read_definition, workflow_from_preset, workflow_to_json
 
 VENDOR_SESSION_CURSOR = "vendor-session-1"
@@ -1308,6 +1310,229 @@ def test_maintenance_releases_owner_and_worker_messages_in_order(
             "worker opener",
         ]
         assert [prompt.sender for prompt in prompts[-2:]] == [OWNER_PRINCIPAL, ticket]
+
+    _run(exercise)
+
+
+# --- maintenance does not schedule more maintenance --------------------------------------
+
+
+def _link_worker_ticket(db_path: Path, conversation_id: str, ticket_id: str = "t_worker") -> None:
+    """A Ticket whose current conversation this is, with the history row its start writes."""
+    _link_test_ticket_to_conversation(db_path, conversation_id, ticket_id=ticket_id)
+    conn = connect(str(db_path))
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO ticket_conversations (conversation_id, ticket_id) VALUES (?, ?)",
+                (conversation_id, ticket_id),
+            )
+    finally:
+        conn.close()
+
+
+def _backlog_ticket(db_path: Path, ticket_id: str = "t_worker") -> None:
+    conn = connect(str(db_path))
+    try:
+        with conn:
+            conn.execute("UPDATE tickets SET is_backlogged=1 WHERE id=?", (ticket_id,))
+    finally:
+        conn.close()
+
+
+async def _sweep(harness: _Harness) -> None:
+    await harness.system._sweep_idle_children()
+    await harness.settle()
+
+
+async def _discarded(harness: _Harness, conversation_id: str) -> list[tuple[str, str | None]]:
+    return [
+        (message_content_text(event.payload.content), event.payload.suppression_reason)
+        for event in await harness.events(conversation_id)
+        if isinstance(event.payload, PromptDiscardedEventPayload)
+    ]
+
+
+async def _send_memory_notice(harness: _Harness, conversation_id: str) -> object:
+    return await harness.system.send(
+        conversation_id,
+        text_message_content("Your context was compacted"),
+        sender_label="Panels",
+        sender_message_id=new_memory_notice_message_id(),
+    )
+
+
+def test_a_memory_notice_turn_does_not_make_its_worker_due_for_another_compaction(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        _link_worker_ticket(harness.db_path, "c")
+        await harness.system.send("c", text_message_content("real work"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60)
+        await _sweep(harness)
+        await harness.confirm_compaction("c")
+        await harness.complete_turn("c")
+        assert harness.backend("c").written_texts().count("/compact") == 1
+
+        # The recovery turn uses a tool and ends, as a Worker re-reading its Ticket does.
+        await _send_memory_notice(harness, "c")
+        backend = harness.backend("c")
+        assert backend.sink is not None and backend.live_turn_token is not None
+        await backend.sink.report(
+            backend.live_turn_token,
+            ToolCallStarted(tool_call_id="t1", title="panels worker", tool_kind="execute"),
+        )
+        await harness.complete_turn("c")
+        harness.clock.advance(51 * 60)
+        await _sweep(harness)
+        assert harness.backend("c").written_texts().count("/compact") == 1
+
+        # Real work restores ordinary eligibility.
+        await harness.system.send("c", text_message_content("more work"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60)
+        await _sweep(harness)
+        assert harness.backend("c").written_texts().count("/compact") == 2
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("joins", ["held_batch", "steer_accepted", "steer_uncertain"])
+def test_real_work_joining_a_memory_notice_turn_still_counts(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, joins: str
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "c")
+        _link_worker_ticket(harness.db_path, "c")
+        assert isinstance(await _send_memory_notice(harness, "c"), PromptDeliveryStarted)
+        if joins == "held_batch":
+            # A second notice and an owner message wait together and go as one turn.
+            await _send_memory_notice(harness, "c")
+            await harness.system.send("c", text_message_content("owner"), sender_label="owner")
+            await harness.complete_turn("c")
+            assert harness.backend("c").sender_message_counts[-1] == 2
+        else:
+            harness.backend("c").steer_outcome = (
+                BackendSteerAccepted() if joins == "steer_accepted" else BackendSteerUncertain()
+            )
+            await harness.system.send(
+                "c",
+                text_message_content("owner"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
+            )
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60)
+        await _sweep(harness)
+        assert harness.backend("c").written_texts()[-1] == "/compact"
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("backlogged", ["before_selection", "after_selection"])
+def test_a_backlogged_worker_is_never_compacted_and_its_owner_still_gets_through(
+    harness: _Harness, backlogged: str
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        _link_worker_ticket(harness.db_path, "c")
+        await harness.system.send("c", text_message_content("real work"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60)
+        if backlogged == "before_selection":
+            _backlog_ticket(harness.db_path)
+        else:
+            select = harness.store.conversations_due_for_automatic_compaction
+
+            async def select_then_backlog(**window: int) -> tuple[str, ...]:
+                selected = await select(**window)
+                _backlog_ticket(harness.db_path)
+                return selected
+
+            harness.store.conversations_due_for_automatic_compaction = select_then_backlog  # type: ignore[method-assign]
+        await _sweep(harness)
+        # A later sweep in the same window selects nothing, so it writes nothing either.
+        harness.clock.advance(5 * 60)
+        await _sweep(harness)
+        stale = [("/compact", "worker_ticket_backlogged")]
+        assert await _discarded(harness, "c") == (stale if backlogged == "after_selection" else [])
+
+        # A person's message in the window starts at once, with no /compact reserved first.
+        fate = await harness.system.send(
+            "c", text_message_content("still there?"), sender_label="owner"
+        )
+        await harness.settle()
+        assert isinstance(fate, PromptDeliveryStarted)
+        assert harness.backend("c").written_texts() == ("real work", "still there?")
+        assert await _discarded(harness, "c") == (stale if backlogged == "after_selection" else [])
+
+    _run(exercise)
+
+
+def test_a_notice_waiting_in_the_queue_is_suppressed_once_its_ticket_is_backlogged(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        _link_worker_ticket(harness.db_path, "c")
+        await harness.system.send("c", text_message_content("real work"), sender_label="owner")
+        assert isinstance(await _send_memory_notice(harness, "c"), PromptDeliveryQueued)
+        await harness.system.send("c", text_message_content("behind it"), sender_label="owner")
+        _backlog_ticket(harness.db_path)
+        await harness.complete_turn("c")
+
+        assert harness.backend("c").written_texts() == ("real work", "behind it")
+        assert await _discarded(harness, "c") == [
+            ("Your context was compacted", "worker_ticket_backlogged")
+        ]
+
+    _run(exercise)
+
+
+def test_a_replaced_worker_conversation_is_never_restarted_for_maintenance(
+    harness: _Harness,
+) -> None:
+    from planner.runtime.conversation_start import reset_ticket_conversation
+
+    async def exercise() -> None:
+        await _start(harness, "old")
+        _link_worker_ticket(harness.db_path, "old")
+        await harness.system.send("old", text_message_content("real work"), sender_label="owner")
+        await harness.complete_turn("old")
+        session_starts = harness.backend("old").session_starts
+        select = harness.store.conversations_due_for_automatic_compaction
+
+        async def select_then_reset(**window: int) -> tuple[str, ...]:
+            selected = await select(**window)
+            conn = connect(str(harness.db_path))
+            try:
+                await reset_ticket_conversation(harness.system, conn, "t_worker", now=2)
+            finally:
+                conn.close()
+            harness.store.conversations_due_for_automatic_compaction = select  # type: ignore[method-assign]
+            return selected
+
+        harness.store.conversations_due_for_automatic_compaction = select_then_reset  # type: ignore[method-assign]
+        # The /compact is selected before the reset and dispatched after it.
+        harness.clock.advance(51 * 60)
+        await _sweep(harness)
+        # A later sweep in the same window no longer selects the old conversation.
+        harness.clock.advance(5 * 60)
+        await _sweep(harness)
+        # A notice selected before the reset reaches no agent either.
+        harness.clock.advance(10 * 60)
+        fate = await _send_memory_notice(harness, "old")
+
+        assert fate == PromptDeliverySuppressed("worker_conversation_replaced")
+        assert harness.backend("old").session_starts == session_starts
+        assert harness.backend("old").written_texts() == ("real work",)
+        assert await _discarded(harness, "old") == [
+            ("/compact", "worker_conversation_replaced"),
+            ("Your context was compacted", "worker_conversation_replaced"),
+        ]
 
     _run(exercise)
 
@@ -2735,7 +2960,7 @@ def test_review_resolution_during_session_preparation_suppresses_duplicate_waite
     harness: _Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from planner.conversation.contracts import PromptDeliveryFate, PromptDeliverySuppressed
+    from planner.conversation.contracts import PromptDeliveryFate
 
     async def exercise() -> None:
         await _start(harness)
