@@ -161,12 +161,12 @@ def test_unverified_launch_parent_is_checked_again_when_a_shutdown_signal_arrive
 def test_ambiguous_manager_executable_never_becomes_dogfood(
     path: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import planner.server_lifecycle.process_identity as identities
+    import planner.platform_runtime.linux.lifecycle as identities
 
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(identities, "read_authenticated_manager_identity", lambda _pid: None)
 
-    monkeypatch.setattr("planner.server_lifecycle.process_identity.os.getppid", lambda: 1168)
+    monkeypatch.setattr("planner.platform_runtime.linux.lifecycle.os.getppid", lambda: 1168)
     monkeypatch.setattr(
         identities, "read_process_identity", lambda _pid: replace(MANAGER, executable_path=path)
     )
@@ -176,18 +176,18 @@ def test_ambiguous_manager_executable_never_becomes_dogfood(
 def test_reparent_during_capture_and_unverified_pid_one_fail_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import planner.server_lifecycle.process_identity as identities
+    import planner.platform_runtime.linux.lifecycle as identities
 
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(identities, "read_authenticated_manager_identity", lambda _pid: None)
 
     parents = iter([1168, 1])
     monkeypatch.setattr(
-        "planner.server_lifecycle.process_identity.os.getppid", lambda: next(parents)
+        "planner.platform_runtime.linux.lifecycle.os.getppid", lambda: next(parents)
     )
     monkeypatch.setattr(identities, "read_process_identity", lambda _pid: MANAGER)
     assert identities.capture_shutdown_policy().authorized_manager is None
-    monkeypatch.setattr("planner.server_lifecycle.process_identity.os.getppid", lambda: 1)
+    monkeypatch.setattr("planner.platform_runtime.linux.lifecycle.os.getppid", lambda: 1)
     monkeypatch.setattr(
         identities,
         "read_process_identity",
@@ -261,7 +261,7 @@ def test_dbus_credentials_preserve_manager_identity_without_fabricated_executabl
     import json
     import subprocess
 
-    import planner.server_lifecycle.process_identity as identities
+    import planner.platform_runtime.linux.lifecycle as identities
 
     calls: list[tuple[list[str], dict[str, object]]] = []
 
@@ -287,7 +287,7 @@ def test_dbus_credentials_preserve_manager_identity_without_fabricated_executabl
         Path, "read_text",
         lambda _path: "0 (manager) " + " ".join(["S"] + ["0"] * 18 + ["123"]),
     )
-    monkeypatch.setattr("planner.server_lifecycle.process_identity.subprocess.run", busctl)
+    monkeypatch.setattr("planner.platform_runtime.linux.lifecycle.subprocess.run", busctl)
     manager = identities.read_authenticated_manager_identity(os.getpid())
     assert manager is not None
     assert manager.identity_source == "dbus_manager"
@@ -311,7 +311,7 @@ def test_dbus_unavailable_or_changed_identity_fails_closed(
     import json
     import subprocess
 
-    import planner.server_lifecycle.process_identity as identities
+    import planner.platform_runtime.linux.lifecycle as identities
 
     def busctl(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         if failure == "timeout":
@@ -329,7 +329,7 @@ def test_dbus_unavailable_or_changed_identity_fails_closed(
         )
         return subprocess.CompletedProcess(command, 0, "{}" if failure == "malformed" else data)
 
-    monkeypatch.setattr("planner.server_lifecycle.process_identity.subprocess.run", busctl)
+    monkeypatch.setattr("planner.platform_runtime.linux.lifecycle.subprocess.run", busctl)
     start_times = iter([123, 124] if failure == "replacement" else [123, 123])
 
     def stat(_path: Path) -> str:

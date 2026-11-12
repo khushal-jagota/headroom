@@ -3464,29 +3464,6 @@ class SqliteProcessConversationSystem:
                         PlainFieldMutation(state, "running_turn", accepted_turn),
                     ),
                 )
-                if carried_change is not None and any(
-                    message.held_prompt_id for message in reservation.messages
-                ):
-                    from planner.core.db import connect
-                    from planner.tickets.data import write_ticket_last_chosen_configuration
-
-                    conn = connect(self._store._db_path)
-                    try:
-                        row = conn.execute(
-                            "SELECT id FROM tickets WHERE conversation_id=?",
-                            (state.record.conversation_id,),
-                        ).fetchone()
-                        if row is not None:
-                            write_ticket_last_chosen_configuration(
-                                conn,
-                                row[0],
-                                expected_conversation_id=state.record.conversation_id,
-                                model=carried_change.model,
-                                reasoning_effort=carried_change.reasoning_effort,
-                                now=int(self._unix_time_now()),
-                            )
-                    finally:
-                        conn.close()
                 self._take_in_written_rows(state, written)
                 owner_prompt_sequences = [
                     event.sequence
@@ -3518,10 +3495,36 @@ class SqliteProcessConversationSystem:
                 if self._signal is None:
                     state.running_turn = accepted_turn
                 self._set_phase(state, _ConversationPhase.running)
+                # The receipt already owns these sender identities. A later Ticket
+                # preference write cannot leave duplicate callers behind its barrier.
+                self._settle_held_deliveries(state, reservation.messages)
                 # The prompt commit can announce before this process-owned state is
                 # visible. Publish again after the runtime transition, so a reader of
                 # that earlier announcement cannot keep an idle answer indefinitely.
                 change_signal.emit()
+                if carried_change is not None and any(
+                    message.held_prompt_id for message in reservation.messages
+                ):
+                    from planner.core.db import connect
+                    from planner.tickets.data import write_ticket_last_chosen_configuration
+
+                    conn = connect(self._store._db_path)
+                    try:
+                        row = conn.execute(
+                            "SELECT id FROM tickets WHERE conversation_id=?",
+                            (state.record.conversation_id,),
+                        ).fetchone()
+                        if row is not None:
+                            write_ticket_last_chosen_configuration(
+                                conn,
+                                row[0],
+                                expected_conversation_id=state.record.conversation_id,
+                                model=carried_change.model,
+                                reasoning_effort=carried_change.reasoning_effort,
+                                now=int(self._unix_time_now()),
+                            )
+                    finally:
+                        conn.close()
                 return True
             finally:
                 if state.phase is not _ConversationPhase.starting:

@@ -127,7 +127,7 @@ def source_client(
         env={
             "PLAN_TEST_MODE": "1",
             "PLAN_DB_PATH": str(database),
-            "PLAN_FAKE_NOW": "2026-10-27T12:00:00+00:00",
+            "PLAN_FAKE_NOW": "2026-10-27T12:00:00",
             "PLAN_TICK_SECONDS": "1",
             "PLAN_LOGS_DIR": str(tmp_path / "logs"),
             "PLAN_CREDENTIAL_KEY_PATH": str(tmp_path / "secrets" / "key"),

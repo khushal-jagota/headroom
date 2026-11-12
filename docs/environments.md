@@ -20,6 +20,16 @@ All of them run as one Unix user, the existing `vps` account. They are separated
 
 Live and staging are registered environments. Headroom validates them together: one live environment, distinct ports, and no staging root inside the live tree. Ticket servers and local checkouts are outside that registry. Their isolation is the worktree and its `PLAN_*` paths. [`AGENTS.md`](../AGENTS.md) holds the setup rules agents follow. A second isolated server on one machine is set up with [ops/runbooks/isolated-server.md](../ops/runbooks/isolated-server.md).
 
+## The operating-system boundary
+
+The home uses one platform contract for service identity, app-child launch, process evidence, private sockets, locks, and resource collection. The Linux adapter preserves the existing systemd and kernel operations. Shared installation paths keep explicit configuration and current defaults. Runtime selection separates the operating system, architecture, and home or executor role. Existing archive formats and integrity checks stay the same. A Mac executor archive cannot become a home release.
+
+Only the Linux native home adapter exists. Other POSIX source servers retain their existing foreground lifecycle. Native updates, preview evidence, and resource collection remain explicitly unavailable there. The later Mac adapter must supply login-session launchd services, crash-orphan cleanup, process and preview evidence, metrics, short socket addresses, and an Apple Silicon home runtime. The existing Mac executor remains separate. No Mac home behavior is proved by Linux checks.
+
+Worker supervision remains a separate subsystem. Its later implementation uses process identities and custody evidence for bounded shutdown and confirmed cleanup. A missing process observation never proves that all descendants stopped. The current Linux Worker units remain in place.
+
+The contracts and Linux implementation live in `platform_runtime/`. Domain policy stays in lifecycle, preview, conversation, and environment code.
+
 ## How a server is configured
 
 Defaults live in `config.yaml`. Every value there can be overridden by the matching `PLAN_*` environment variable. Test-only switches are environment-only on purpose. Stream heartbeats, database lock waits, and shutdown grace periods use fixed values in code. The background poll interval remains adjustable. Startup does not create an empty logs folder. Status and cleanup can inspect existing logs. A server with dispatch enabled owns the readiness, measure-source schedule, and manager-wake loops behind one machine lock, so a second server on the same lock never becomes a second scheduler.
