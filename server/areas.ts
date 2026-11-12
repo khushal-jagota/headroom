@@ -1,3 +1,7 @@
+import {
+  routes as measureSources,
+  admission as source_admission,
+} from './measure_sources/routes.ts';
 import { routes as previews } from './previews/routes.ts';
 import { routes as files } from './files/routes.ts';
 import { routes as measures } from './measures/routes.ts';
@@ -113,6 +117,7 @@ export function createAreasRuntime() {
       return [
         { prefix: '', routes: previews },
         { prefix: '/api', routes: measures, admission: measure_admission },
+        { prefix: '/api', routes: measureSources, admission: source_admission },
         { prefix: '/api', routes: datasets, admission: measure_admission },
         { prefix: '/api', routes: goals },
         { prefix: '/api', routes: attention },
