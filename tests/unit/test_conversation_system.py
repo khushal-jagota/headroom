@@ -1460,11 +1460,14 @@ def test_a_backlogged_worker_is_never_compacted_and_its_owner_still_gets_through
         stale = [("/compact", "worker_ticket_backlogged")]
         assert await _discarded(harness, "c") == (stale if backlogged == "after_selection" else [])
 
-        # A person's message is not discarded: the stale /compact is, and the message runs.
-        await harness.system.send("c", text_message_content("still there?"), sender_label="owner")
+        # A person's message in the window starts at once, with no /compact reserved first.
+        fate = await harness.system.send(
+            "c", text_message_content("still there?"), sender_label="owner"
+        )
         await harness.settle()
+        assert isinstance(fate, PromptDeliveryStarted)
         assert harness.backend("c").written_texts() == ("real work", "still there?")
-        assert (await _discarded(harness, "c"))[-1] == stale[0]
+        assert await _discarded(harness, "c") == (stale if backlogged == "after_selection" else [])
 
     _run(exercise)
 
@@ -1499,14 +1502,25 @@ def test_a_replaced_worker_conversation_is_never_restarted_for_maintenance(
         _link_worker_ticket(harness.db_path, "old")
         await harness.system.send("old", text_message_content("real work"), sender_label="owner")
         await harness.complete_turn("old")
-        conn = connect(str(harness.db_path))
-        try:
-            await reset_ticket_conversation(harness.system, conn, "t_worker", now=2)
-        finally:
-            conn.close()
         session_starts = harness.backend("old").session_starts
+        select = harness.store.conversations_due_for_automatic_compaction
 
+        async def select_then_reset(**window: int) -> tuple[str, ...]:
+            selected = await select(**window)
+            conn = connect(str(harness.db_path))
+            try:
+                await reset_ticket_conversation(harness.system, conn, "t_worker", now=2)
+            finally:
+                conn.close()
+            harness.store.conversations_due_for_automatic_compaction = select  # type: ignore[method-assign]
+            return selected
+
+        harness.store.conversations_due_for_automatic_compaction = select_then_reset  # type: ignore[method-assign]
+        # The /compact is selected before the reset and dispatched after it.
         harness.clock.advance(51 * 60)
+        await _sweep(harness)
+        # A later sweep in the same window no longer selects the old conversation.
+        harness.clock.advance(5 * 60)
         await _sweep(harness)
         # A notice selected before the reset reaches no agent either.
         harness.clock.advance(10 * 60)
@@ -1515,6 +1529,10 @@ def test_a_replaced_worker_conversation_is_never_restarted_for_maintenance(
         assert fate == PromptDeliverySuppressed("worker_conversation_replaced")
         assert harness.backend("old").session_starts == session_starts
         assert harness.backend("old").written_texts() == ("real work",)
+        assert await _discarded(harness, "old") == [
+            ("/compact", "worker_conversation_replaced"),
+            ("Your context was compacted", "worker_conversation_replaced"),
+        ]
 
     _run(exercise)
 

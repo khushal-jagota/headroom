@@ -22,10 +22,12 @@ from tests.support.conversation_test_loop import conversation_test_loop
 from tests.support.ticket_workflows import preset_workflow_json
 from tests.unit.test_conversation_system import _FakeBackend, _FakeBackendChild, _Harness, _run
 
+import planner.conversation.system as conversation_system
 from planner.conversation.backends.contracts import (
     BackendChildFactory,
     BackendEventSink,
     BackendPromptAccepted,
+    BackendSteerUncertain,
     PromptWriteRefused,
     RetainedBackendRun,
     ToolCallStarted,
@@ -35,8 +37,10 @@ from planner.conversation.backends.contracts import (
 from planner.conversation.contracts import (
     AnswerFate,
     ConversationStartRequest,
+    PromptDeliveryMode,
     PromptDeliveryQueued,
     PromptDeliveryStarted,
+    PromptDeliveryUncertain,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
@@ -282,17 +286,29 @@ def test_a_vps_restart_adopts_the_running_mac_turn_live(
     _run(exercise)
 
 
+@pytest.mark.parametrize("owner_steer", [False, True], ids=["notice_only", "uncertain_steer"])
 def test_a_memory_notice_turn_adopted_after_a_vps_restart_stays_maintenance(
-    world: tuple[Path, _MacRuns],
+    world: tuple[Path, _MacRuns], monkeypatch: pytest.MonkeyPatch, owner_steer: bool
 ) -> None:
     """Risk: the adopted turn is rebuilt from facts that do not say it was a notice, so
-    its ending renews compaction eligibility and restarts the idle compaction loop."""
+    its ending renews compaction eligibility and restarts the idle compaction loop. An
+    owner steer of uncertain admission counts as work, as it does before the restart."""
     db_path, runs = world
 
     async def exercise() -> None:
         first = await _first_server_with_running_turns(
             db_path, runs, "mac", sender_message_id=new_memory_notice_message_id()
         )
+        if owner_steer:
+            monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+            first.backend("mac").steer_outcome = BackendSteerUncertain()
+            fate = await first.system.send(
+                "mac",
+                text_message_content("owner"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
+            )
+            assert isinstance(fate, PromptDeliveryUncertain)
         await first.system.shutdown()
 
         restarted = _Harness(db_path, factory_wrapper=runs.wrap)
@@ -313,9 +329,8 @@ def test_a_memory_notice_turn_adopted_after_a_vps_restart_stays_maintenance(
             assert await _turn_endings(restarted, "mac") == [ConversationTurnEnding.completed]
             record = await restarted.store.read_conversation("mac")
             assert record is not None
-            assert (record.latest_agent_activity_sequence, record.latest_agent_activity_at) == (
-                0,
-                None,
+            assert record.latest_agent_activity_sequence == (
+                record.latest_sequence if owner_steer else 0
             )
         finally:
             await restarted.system.shutdown()

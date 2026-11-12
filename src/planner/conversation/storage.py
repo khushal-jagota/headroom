@@ -1346,6 +1346,19 @@ class ConversationStore:
                 self._commit_rows(conn, (), always_announce=True)
         return record
 
+    async def automated_maintenance_suppression_reason(self, conversation_id: str) -> str | None:
+        """Why automated maintenance may not reach this conversation now, or None."""
+        return await asyncio.to_thread(
+            self._automated_maintenance_suppression_reason_sync, conversation_id
+        )
+
+    def _automated_maintenance_suppression_reason_sync(self, conversation_id: str) -> str | None:
+        conn = self._connect()
+        try:
+            return tickets_data.automated_maintenance_suppression_reason(conn, conversation_id)
+        finally:
+            conn.close()
+
     def _conversations_due_for_automatic_compaction_sync(
         self, due_at_or_before: int, activity_after: int
     ) -> tuple[str, ...]:
@@ -1654,13 +1667,15 @@ class ConversationStore:
         """Whether every prompt since the last turn ending is a memory-loss notice.
 
         A turn adopted after a VPS restart is rebuilt from the record, and its prompt rows
-        (the opener and any steer) are the ones after the previous turn's ending.
+        (the opener and any steer) are the ones after the previous turn's ending. A steer
+        whose admission is uncertain counts too, as it does while the turn runs here.
         """
         conn = self._connect()
         try:
             rows = conn.execute(
                 "SELECT json_extract(payload,'$.sender_message_id') FROM conversation_events "
-                "WHERE conversation_id = ? AND kind = 'prompt' AND sequence > COALESCE(("
+                "WHERE conversation_id = ? AND kind IN ('prompt','prompt_delivery_uncertain') "
+                "AND sequence > COALESCE(("
                 "SELECT MAX(sequence) FROM conversation_events "
                 "WHERE conversation_id = ? AND kind = 'turn_ended'),0)",
                 (conversation_id, conversation_id),

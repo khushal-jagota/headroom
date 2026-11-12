@@ -2130,7 +2130,7 @@ class SqliteProcessConversationSystem:
                 or state.late_steers
             ):
                 return self._hold_prompt(state=state, queue_reason=queue_reason, message=message)
-            if self._automatic_compaction_is_due(state):
+            if await self._automatic_compaction_may_start(state):
                 held_fate = self._hold_prompt(
                     state=state, queue_reason=queue_reason, message=message
                 )
@@ -2218,6 +2218,20 @@ class SqliteProcessConversationSystem:
             > state.record.automatic_compaction_attempted_through_sequence
         )
 
+    async def _automatic_compaction_may_start(self, state: _ConversationState) -> bool:
+        """Due by time and activity, and the conversation may receive maintenance now.
+
+        The eligibility read happens only once the in-memory conditions pass. The sweep's
+        own selection already applies the rule, and dispatch admission rechecks it last.
+        """
+        return (
+            self._automatic_compaction_is_due(state)
+            and await self._store.automated_maintenance_suppression_reason(
+                state.record.conversation_id
+            )
+            is None
+        )
+
     async def _send_now(
         self,
         state: _ConversationState,
@@ -2247,7 +2261,7 @@ class SqliteProcessConversationSystem:
                 if state.child_is_quarantined:
                     self._settle_phase(state)
                     return self._hold_prompt(state=state, message=message)
-                if self._automatic_compaction_is_due(state):
+                if await self._automatic_compaction_may_start(state):
                     held_fate = self._hold_prompt(state=state, message=message)
                     automatic_reservation = await self._reserve_turn(
                         state, automatic_compaction=True
