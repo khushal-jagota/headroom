@@ -24,11 +24,13 @@ Live and staging are registered environments. Headroom validates them together: 
 
 The home uses one platform contract for service identity, app-child launch, process evidence, private sockets, locks, and resource collection. The Linux adapter preserves the existing systemd and kernel operations. Shared installation paths keep explicit configuration and current defaults. Runtime selection separates the operating system, architecture, and home or executor role. Existing archive formats and integrity checks stay the same. A Mac executor archive cannot become a home release.
 
-Only the Linux native home adapter exists. Other POSIX source servers retain their existing foreground lifecycle. Native updates, preview evidence, and resource collection remain explicitly unavailable there. The later Mac adapter must supply login-session launchd services, crash-orphan cleanup, process and preview evidence, metrics, short socket addresses, and an Apple Silicon home runtime. The existing Mac executor remains separate. No Mac home behavior is proved by Linux checks.
+An Apple Silicon Mac can run a home from source in the owner's login session. Its launchd job owns the supervisor and app process group, so a hard supervisor crash does not leave the app behind. Private short sockets support long installation paths. A separate launchd job takes verified backups through the existing backup command. Logout stops the home, and sleep makes it unreachable. See the [Mac source-install procedure](../ops/mac-home/installation.md).
+
+The Mac home does not yet support release installs, updates, previews, native metrics, or maintenance and watchdog schedules. Other POSIX source servers retain their existing foreground lifecycle. The Mac executor remains separate. Linux checks do not prove Mac behavior.
 
 Worker supervision is one subsystem for home and executor processes. It uses exact identities and durable custody for bounded shutdown and scoped cleanup proof. Unknown cleanup retains a fence. Linux Workers share the home service resource domain, but the adapter removes its protected OOM score before the backend starts. Separate Worker units and slices no longer apply. A missing observation never proves that all descendants stopped.
 
-The contracts and Linux implementation live in `platform_runtime/`. Domain policy stays in lifecycle, preview, conversation, and environment code.
+The contracts and OS adapters live in `platform_runtime/`. Domain policy stays in lifecycle, preview, conversation, and environment code.
 
 ## How a server is configured
 
