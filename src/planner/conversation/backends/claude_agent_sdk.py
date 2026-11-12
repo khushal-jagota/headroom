@@ -447,9 +447,10 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
         try:
             await self._connect_worker()
         except BaseException:
-            # The SDK can fail after it creates its process. Preserve scratch until
-            # close confirms that this partial child is no longer alive.
-            await self.close()
+            # Only Workers add this startup cleanup. Other conversations retain
+            # the SDK's existing failure and later explicit disconnect behavior.
+            if self._worker_scratch is not None:
+                await self.close()
             raise
 
     async def _connect_worker(self) -> None:
