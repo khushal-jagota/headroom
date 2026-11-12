@@ -696,7 +696,10 @@ export function reject_proposal(
   });
   if (o.message !== null) {
     revision_feedback.set_feedback(tx, id, {
-      stage: t.stage, sender: o.principal, message: o.message, now: o.now,
+      stage: t.stage,
+      sender: o.principal,
+      message: o.message,
+      now: o.now,
     });
   }
   const u = _apply_decision(tx, t, d, o.now);

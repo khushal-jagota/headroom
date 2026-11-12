@@ -21,11 +21,16 @@ export const readinessTestRoutes: Area = {
       const pass = previous.then(async () => {
         const ticket_ids = loop!.poll_once();
         await loop!.drain();
-        return {ticket_ids: ticket_ids.sort()};
+        return { ticket_ids: ticket_ids.sort() };
       });
-      previous = pass.then(() => undefined, () => undefined);
+      previous = pass.then(
+        () => undefined,
+        () => undefined,
+      );
       return pass;
     });
-    app.addHook('onClose', async () => { await loop?.stop(); });
+    app.addHook('onClose', async () => {
+      await loop?.stop();
+    });
   },
 };

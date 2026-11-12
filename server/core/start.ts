@@ -48,12 +48,14 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
       dispatch_enabled: config.dispatch_enabled,
       dispatcher_owned: dispatcher !== null,
       before_poll: options.beforeWorkerReadinessPoll,
-      worker: options.conversationSystem ? {
-        connect_database: () => database!,
-        conversation_system: options.conversationSystem,
-        worker_type_registry: configured_worker_type_registry(),
-        now: () => clock.nowUnix(),
-      } : null,
+      worker: options.conversationSystem
+        ? {
+            connect_database: () => database!,
+            conversation_system: options.conversationSystem,
+            worker_type_registry: configured_worker_type_registry(),
+            now: () => clock.nowUnix(),
+          }
+        : null,
     });
     const app = await createApp(config, {
       database,
@@ -68,13 +70,18 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     const close = () => {
       if (closing) return closing;
       signalAuthority?.invalidate('shutdown');
-      return (closing = loops!.stop()
+      return (closing = loops!
+        .stop()
         .then(() => closeAreas())
         .then(() => app.close())
-        .finally(() => {
+        .then(() => {
           database?.close();
           dispatcher?.close();
           ownership.close();
+        })
+        .catch((error) => {
+          closing = undefined;
+          throw error;
         }));
     };
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {

@@ -55,18 +55,30 @@ export function an_answer_is_already_waiting(
   );
 }
 export function ticket_ids_holding_an_unanswered_memory_loss(sql: ReadSql): string[] {
-  return sql.all<{id: string}>(`SELECT id FROM tickets
-    WHERE worker_step_claim='out' AND conversation_id IS NOT NULL`)
-    .filter((row) => ticket_needs_memory_notice(sql, row.id)).map((row) => row.id);
+  return sql
+    .all<{ id: string }>(
+      `SELECT id FROM tickets
+    WHERE worker_step_claim='out' AND conversation_id IS NOT NULL`,
+    )
+    .filter((row) => ticket_needs_memory_notice(sql, row.id))
+    .map((row) => row.id);
 }
 export function ticket_needs_memory_notice(sql: ReadSql, ticket_id: string): boolean {
-  const row = sql.get<{conversation_id: string | null; locale: import('../tickets/contracts.ts').TicketLocale}>(
-    "SELECT conversation_id, locale FROM tickets WHERE id=? AND worker_step_claim='out'", [ticket_id]);
+  const row = sql.get<{
+    conversation_id: string | null;
+    locale: import('../tickets/contracts.ts').TicketLocale;
+  }>("SELECT conversation_id, locale FROM tickets WHERE id=? AND worker_step_claim='out'", [
+    ticket_id,
+  ]);
   if (!row || !can_execute_locale(sql, row.locale)) return false;
   if (!conversation_holds_an_unanswered_memory_loss(sql, row.conversation_id)) return false;
-  return sql.get(`SELECT 1 FROM conversation_events e JOIN conversations c USING(conversation_id)
+  return (
+    sql.get(
+      `SELECT 1 FROM conversation_events e JOIN conversations c USING(conversation_id)
     WHERE e.conversation_id=? AND e.kind='prompt_delivery_uncertain'
       AND e.sequence>c.automatically_compacted_through_sequence
       AND substr(json_extract(e.payload,'$.sender_message_id'),1,?)=? LIMIT 1`,
-    [row.conversation_id, MEMORY_NOTICE_MESSAGE_PREFIX.length, MEMORY_NOTICE_MESSAGE_PREFIX]) === undefined;
+      [row.conversation_id, MEMORY_NOTICE_MESSAGE_PREFIX.length, MEMORY_NOTICE_MESSAGE_PREFIX],
+    ) === undefined
+  );
 }
