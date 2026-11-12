@@ -1,3 +1,4 @@
+import { requestOrigin } from './origin.ts';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { HttpError } from './errors.ts';
 import { PlannerError } from '../contracts.ts';
@@ -33,7 +34,7 @@ export function installCompatibility(app: FastifyInstance): void {
     });
   });
   const rejectUnmatched = (request: FastifyRequest, reply: FastifyReply): boolean => {
-    const url = new URL(request.url, `${request.protocol}://${request.host}`);
+    const url = new URL(request.url, requestOrigin(request));
     const matches = routes.filter((route) => route.pattern.test(url.pathname));
     if (matches.some((route) => route.methods.includes(request.method))) return false;
     const match = matches[0];

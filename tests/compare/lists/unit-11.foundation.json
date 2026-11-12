@@ -1,0 +1,153 @@
+{
+  "candidate": "typescript",
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/core/"
+  ],
+  "requests": [
+    {
+      "area": "foundation-regression",
+      "method": "GET",
+      "path": "/api/meta",
+      "status": 200
+    },
+    {
+      "area": "foundation-regression",
+      "method": "GET",
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "area": "foundation-regression",
+      "method": "GET",
+      "path": "/api/meta/?x=1",
+      "status": 307
+    },
+    {
+      "area": "foundation-regression",
+      "method": "GET",
+      "path": "/missing",
+      "status": 404
+    },
+    {
+      "area": "foundation-regression",
+      "method": "DELETE",
+      "path": "/api/meta",
+      "status": 405
+    },
+    {
+      "area": "foundation-regression",
+      "method": "HEAD",
+      "path": "/api/meta",
+      "status": 405
+    },
+    {
+      "area": "foundation-regression",
+      "method": "OPTIONS",
+      "path": "/api/meta",
+      "status": 405
+    },
+    {
+      "area": "foundation-regression",
+      "method": "GET",
+      "path": "/",
+      "status": 200,
+      "response_bytes": true,
+      "headers": {
+        "Accept-Encoding": "identity"
+      }
+    },
+    {
+      "area": "foundation-regression",
+      "method": "GET",
+      "path": "/assets/tokens.css",
+      "status": 200,
+      "response_bytes": true,
+      "headers": {
+        "Accept-Encoding": "identity"
+      }
+    },
+    {
+      "area": "foundation-regression",
+      "method": "GET",
+      "path": "/",
+      "status": 200,
+      "response_bytes": true,
+      "headers": {
+        "Accept-Encoding": "gzip"
+      }
+    },
+    {
+      "area": "foundation-regression",
+      "method": "GET",
+      "path": "/assets/tokens.css",
+      "status": 200,
+      "response_bytes": true,
+      "headers": {
+        "Accept-Encoding": "gzip"
+      }
+    },
+    {
+      "area": "foundation-regression",
+      "method": "GET",
+      "path": "/assets/tokens.css",
+      "status": 206,
+      "response_bytes": true,
+      "headers": {
+        "Range": "bytes=0-15",
+        "Accept-Encoding": "identity"
+      }
+    },
+    {
+      "area": "foundation-regression",
+      "method": "GET",
+      "path": "/assets/tokens.css",
+      "status": 206,
+      "response_bytes": true,
+      "headers": {
+        "Range": "bytes=-5",
+        "Accept-Encoding": "identity"
+      }
+    },
+    {
+      "area": "foundation-regression",
+      "method": "GET",
+      "path": "/assets/tokens.css",
+      "status": 416,
+      "response_bytes": true,
+      "headers": {
+        "Range": "bytes=9999999-",
+        "Accept-Encoding": "identity"
+      }
+    },
+    {
+      "area": "foundation-regression",
+      "method": "GET",
+      "path": "/assets/tokens.css",
+      "status": 400,
+      "response_bytes": true,
+      "headers": {
+        "Range": "items=0-2",
+        "Accept-Encoding": "identity"
+      }
+    },
+    {
+      "area": "foundation-regression",
+      "method": "GET",
+      "path": "/assets/tokens.css",
+      "status": 206,
+      "response_bytes": true,
+      "headers": {
+        "Range": "bytes=2-1",
+        "Accept-Encoding": "identity"
+      }
+    },
+    {
+      "area": "foundation-regression",
+      "method": "GET",
+      "path": "/service-worker.js",
+      "status": 200,
+      "response_bytes": true
+    }
+  ]
+}

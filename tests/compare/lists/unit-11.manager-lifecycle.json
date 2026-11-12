@@ -1,0 +1,134 @@
+{
+  "candidate": "typescript",
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/files/",
+    "src/planner/managers/"
+  ],
+  "compare_managed_files": true,
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Populated deletion owner",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "manager": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/managers/${manager}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Retained history after managed files deletion."
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "unit11-deletion-history"
+      },
+      "capture": {
+        "conversation": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversation/conversations/${conversation}/kill",
+      "status": 204
+    },
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Unaffected file owner",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "survivor": "id"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/files/managers/${survivor}/keep.txt",
+      "status": 200,
+      "json": {
+        "content": "Unrelated Manager bytes stay intact."
+      }
+    }
+  ],
+  "requests": [
+    {
+      "area": "files",
+      "method": "PUT",
+      "path": "/files/managers/${manager}/artifacts/site/index.html",
+      "status": 200,
+      "json": {
+        "content": "<!doctype html><h1>Quarantine caf\u00e9 \ud83d\ude00</h1>"
+      }
+    },
+    {
+      "area": "files",
+      "method": "PUT",
+      "path": "/files/managers/${manager}/artifacts/site/payload.txt",
+      "status": 200,
+      "json": {
+        "content": "Exact nested bytes 0123456789 caf\u00e9 \ud83d\ude00"
+      }
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/workspace",
+      "status": 200,
+      "capture": {
+        "populated_workspace": ""
+      }
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/managers/${manager}/artifacts/site/payload.txt",
+      "status": 200,
+      "response_bytes": true
+    },
+    {
+      "area": "managers",
+      "method": "DELETE",
+      "path": "/api/managers/${manager}",
+      "status": 200,
+      "capture": {
+        "deleted_manager": ""
+      }
+    },
+    {
+      "area": "files",
+      "method": "GET",
+      "path": "/files/managers/${manager}/artifacts/site/payload.txt",
+      "status": 404
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/conversation/conversations/${conversation}/view",
+      "status": 200,
+      "capture": {
+        "retained_transcript": ""
+      }
+    }
+  ],
+  "probes": [
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22blocked%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D"
+  ],
+  "report_captures": [
+    "populated_workspace",
+    "deleted_manager",
+    "retained_transcript"
+  ]
+}
