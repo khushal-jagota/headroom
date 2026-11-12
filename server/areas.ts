@@ -13,6 +13,7 @@ import { admission as measure_admission } from './measures/routes.ts';
 import { configure_measure_resources } from './measures/resource_versions.ts';
 import { routes as goals } from './goals/routes.ts';
 import { routes as attention } from './attention/routes.ts';
+import { routes as conversationHistory } from './conversation/history/routes.ts';
 import { configure_goal_resources } from './goals/resource_versions.ts';
 import { configure_goal_manager_documents } from './goals/manager_documents.ts';
 import { routes as credentials } from './credentials/routes.ts';
@@ -164,6 +165,7 @@ export function createAreasRuntime(
         { prefix: '/api', routes: datasets, admission: measure_admission },
         { prefix: '/api', routes: goals },
         { prefix: '/api', routes: attention },
+        { prefix: '/api', routes: conversationHistory },
         { prefix: '', routes: files },
         { prefix: '/api', routes: credentials },
         { prefix: '/api', routes: managers },
