@@ -19,6 +19,15 @@ async function wait(condition: () => boolean, description: string): Promise<void
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
+function read_trace(path: string): Record<string, unknown>[] {
+  return existsSync(path)
+    ? readFileSync(path, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+    : [];
+}
 export async function run_provider_parity(spec: ProviderParitySpec): Promise<unknown> {
   const original = {
     spawn: childProcess.spawn,
@@ -59,8 +68,7 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
   const { saved_codex_login_source } = await import('../../backends/codex_app_server/providers.ts');
   const { RememberedCodexLoginRejection } =
     await import('../../backends/codex_app_server/login.ts');
-  const { CodexSignInService, UnknownSignInSession } =
-    await import('../../backends/codex_app_server/login_session.ts');
+  const { CodexSignInService } = await import('../../backends/codex_app_server/login_session.ts');
   const { CodexUsageAdapter } = await import('../../backend_usage/codex.ts');
   const home = process.env.CODEX_HOME!;
   const loginPath = join(home, 'auth.json');
@@ -131,16 +139,6 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
       });
       try {
         const pending = await service.start();
-        const duplicate = await service.start();
-        if (duplicate.session_id !== pending.session_id)
-          throw new Error('Duplicate start replaced a pending session');
-        let stale = false;
-        try {
-          await service.cancel('stale-session');
-        } catch (error) {
-          if (!(error instanceof UnknownSignInSession)) throw error;
-          stale = true;
-        }
         let terminal;
         if (name === 'signin-cancel' || name === 'signin-race')
           terminal = await service.cancel(pending.session_id);
@@ -156,7 +154,6 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
           name,
           pending,
           terminal,
-          stale_refused: stale,
           joined: joined(),
           login: saved(),
         });
@@ -200,13 +197,9 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
         try {
           await wait(
             () =>
-              readFileSync(spec.trace, 'utf8')
-                .trim()
-                .split('\n')
-                .some((line) => {
-                  const frame = JSON.parse(line) as { mode?: string; method?: string };
-                  return frame.mode === name && frame.method === 'account/rateLimits/read';
-                }),
+              read_trace(spec.trace).some(
+                (frame) => frame.mode === name && frame.method === 'account/rateLimits/read',
+              ),
             'usage cancellation reaches native request',
           );
           abort.abort(reason);
@@ -230,13 +223,7 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
     sign_in: signIns,
     usage,
     raw,
-    trace: readFileSync(spec.trace, 'utf8')
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line)),
-    children: readFileSync(`${spec.trace}.children`, 'utf8')
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line)),
+    trace: read_trace(spec.trace),
+    children: read_trace(`${spec.trace}.children`),
   };
 }

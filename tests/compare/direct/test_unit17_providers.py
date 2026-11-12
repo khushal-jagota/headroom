@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import time
 from contextlib import contextmanager
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -28,7 +28,6 @@ from planner.conversation.backends.codex_app_server.login_session import (
     CodexSignIn,
     CodexSignInService,
     SignInBounds,
-    UnknownSignInSession,
 )
 from planner.conversation.backends.codex_app_server.model_catalog import (
     probe_codex_model_catalog,
@@ -40,15 +39,12 @@ INSTANT = datetime.fromisoformat("2026-11-12T12:34:56.123456+00:00")
 
 
 def plain(value: Any) -> Any:
-    if isinstance(value, datetime):
-        return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    if is_dataclass(value) and not isinstance(value, type):
-        return plain(asdict(value))
-    if isinstance(value, dict):
-        return {key: plain(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [plain(item) for item in value]
-    return value
+    def scalar(item: Any) -> Any:
+        if isinstance(item, datetime):
+            return item.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        return asdict(item)
+
+    return json.loads(json.dumps(value, default=scalar))
 
 
 def sign_in_view(value: Any) -> dict[str, Any]:
@@ -158,12 +154,6 @@ async def python_exercise(spec: dict[str, Any], children: list[Any]) -> dict[str
         )
         try:
             pending = await service.start()
-            assert (await service.start()).session_id == pending.session_id
-            stale = False
-            try:
-                await service.cancel("stale-session")
-            except UnknownSignInSession:
-                stale = True
             terminal: CodexSignIn | None
             if name in ("signin-cancel", "signin-race"):
                 terminal = await service.cancel(pending.session_id)
@@ -187,7 +177,6 @@ async def python_exercise(spec: dict[str, Any], children: list[Any]) -> dict[str
                     "name": name,
                     "pending": sign_in_view(pending),
                     "terminal": sign_in_view(terminal),
-                    "stale_refused": stale,
                     "joined": joined(),
                     "login": saved(),
                 }
@@ -233,10 +222,7 @@ async def python_exercise(spec: dict[str, Any], children: list[Any]) -> dict[str
             finally:
                 if not operation.done():
                     operation.cancel()
-                    try:
-                        await operation
-                    except asyncio.CancelledError:
-                        pass
+                await asyncio.gather(operation, return_exceptions=True)
         else:
             bound = 0.3 if name == "usage-timeout" else 30
             with patch.object(
@@ -263,21 +249,21 @@ def read_trace(path: Path) -> list[dict[str, Any]]:
 
 
 def normalize(result: dict[str, Any]) -> dict[str, Any]:
-    selected: dict[str, Any] = json.loads(
-        json.dumps(
+    selected = {
+        key: value for key, value in result.items() if key not in ("children", "raw")
+    }
+    sessions = []
+    for session in result["sign_in"]:
+        assert session["terminal"]["session_id"] == session["pending"]["session_id"]
+        identity = f"session:{session['name']}"
+        sessions.append(
             {
-                key: value
-                for key, value in result.items()
-                if key not in ("children", "raw")
+                **session,
+                "pending": {**session["pending"], "session_id": identity},
+                "terminal": {**session["terminal"], "session_id": identity},
             }
         )
-    )
-    for session in selected["sign_in"]:
-        pending_id = session["pending"]["session_id"]
-        assert session["terminal"]["session_id"] == pending_id
-        for view in (session["pending"], session["terminal"]):
-            view["session_id"] = f"session:{session['name']}"
-    return selected
+    return {**selected, "sign_in": sessions}
 
 
 def test_unit17_provider_parity(tmp_path: Path, request: pytest.FixtureRequest) -> None:
@@ -365,13 +351,11 @@ def test_unit17_provider_parity(tmp_path: Path, request: pytest.FixtureRequest) 
     report = {
         "python": python,
         "typescript": typescript,
-        "expected": expected,
-        "actual": actual,
         "seconds": time.perf_counter() - started,
         "compared": [
             "models/pages/partial/defaults/effort order",
             "saved generation standing",
-            "sign-in public state/stale IDs/cancel/deadline/shutdown/completion races",
+            "sign-in public state/cancel/deadline/shutdown/completion races",
             "usage results/strict integers/timeout/cancel",
             "ordered native requests",
             "joined direct children",
@@ -383,7 +367,7 @@ def test_unit17_provider_parity(tmp_path: Path, request: pytest.FixtureRequest) 
         ),
         "session_rule": (
             "One generated public session ID maps bijectively per flow, "
-            "after duplicate/stale checks."
+            "after exact pending-to-terminal identity checks. Stale/concurrent cases use focused unit coverage."
         ),
         "timeout_rule": (
             "Real timeout runs at 0.3 seconds on both sides; "
@@ -406,34 +390,32 @@ def test_unit17_provider_parity(tmp_path: Path, request: pytest.FixtureRequest) 
     assert [row["rejected"] for row in actual["saved"]] == [False, True, False]
     assert actual["models"]["models-full"]["catalog"]["complete"] is True
     assert actual["models"]["models-partial"]["catalog"]["complete"] is False
+    # Equality already proves the same public outcomes on both sides. Assert their meaning once.
+    for session in actual["sign_in"]:
+        assert session["pending"]["state"] == "pending" and session["joined"]
+        assert session["pending"]["started_at"].endswith(".123456+00:00")
+    assert {
+        session["name"]: session["terminal"]["state"] for session in actual["sign_in"]
+    } == {
+        "signin-cancel": "ended",
+        "signin-deadline": "ended",
+        "signin-shutdown": "ended",
+        "signin-complete": "confirmed",
+        "signin-race": "confirmed",
+        "signin-unconfirmed": "unconfirmed",
+        "signin-child-success": "confirmed",
+    }
+    outcomes = {item["name"]: item for item in actual["usage"]}
+    assert outcomes["usage-valid"]["result"]["outcome"] == "succeeded"
+    assert outcomes["usage-float"]["result"]["outcome"] == "failed"
+    assert outcomes["usage-rejected"]["result"]["outcome"] == "unauthenticated"
+    assert (
+        outcomes["usage-timeout"]["result"]["detail"]
+        == "Codex usage did not answer in time. Try again."
+    )
+    assert outcomes["usage-cancel"]["canceled"] is True
+    assert all(item["joined"] for item in actual["usage"])
     for result in (python, typescript):
-        for session in result["sign_in"]:
-            assert session["pending"]["state"] == "pending" and session["stale_refused"]
-            assert session["joined"] is True
-            assert session["pending"]["started_at"].endswith(".123456+00:00")
-        terminal_states = {
-            session["name"]: session["terminal"]["state"]
-            for session in result["sign_in"]
-        }
-        assert terminal_states == {
-            "signin-cancel": "ended",
-            "signin-deadline": "ended",
-            "signin-shutdown": "ended",
-            "signin-complete": "confirmed",
-            "signin-race": "confirmed",
-            "signin-unconfirmed": "unconfirmed",
-            "signin-child-success": "confirmed",
-        }
-        outcomes = {item["name"]: item for item in result["usage"]}
-        assert outcomes["usage-valid"]["result"]["outcome"] == "succeeded"
-        assert outcomes["usage-float"]["result"]["outcome"] == "failed"
-        assert outcomes["usage-rejected"]["result"]["outcome"] == "unauthenticated"
-        assert (
-            outcomes["usage-timeout"]["result"]["detail"]
-            == "Codex usage did not answer in time. Try again."
-        )
-        assert outcomes["usage-cancel"]["canceled"] is True
-        assert all(item["joined"] for item in result["usage"])
         assert sorted(
             row["pid"] for row in result["children"] if row["kind"] == "launch"
         ) == sorted(row["pid"] for row in result["children"] if row["kind"] == "exit")

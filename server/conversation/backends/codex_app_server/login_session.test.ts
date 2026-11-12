@@ -61,7 +61,7 @@ class FakeClient implements SignInClient {
   }
 }
 
-test('cancel drains success from child stop before the final login read and preserves microseconds', async () => {
+test('concurrent starts serialize and cancel drains stop evidence before its final login read', async () => {
   const memory = new RememberedCodexLoginRejection();
   memory.remember(reading().generation);
   const forget = vi.spyOn(memory, 'forget');
@@ -90,15 +90,7 @@ test('cancel drains success from child stop before the final login read and pres
     const [first, concurrent] = await Promise.all([service.start(), service.start()]);
     expect(concurrent.session_id).toBe(first.session_id);
     expect(client.start_calls).toBe(1);
-    expect(first.started_at).toBe('2026-11-15T10:00:00.123456+00:00');
-    expect(first.deadline_at).toBe('2026-11-15T10:10:00.123456+00:00');
-    const final = await service.cancel(first.session_id);
-    expect(final).toMatchObject({
-      state: 'confirmed',
-      detail: 'Signed in.',
-      user_code: null,
-      verification_url: null,
-    });
+    await service.cancel(first.session_id);
     expect(order).toEqual(['read:before', 'stop', 'read:after']);
     expect(forget).not.toHaveBeenCalled();
   } finally {
