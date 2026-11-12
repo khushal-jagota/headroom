@@ -11,6 +11,7 @@ import ctypes
 import json
 import os
 import selectors
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -40,8 +41,19 @@ TABLES = {
 }
 
 
+def _node_executable() -> str:
+    selected = shutil.which("node")
+    if selected is None:
+        raise FileNotFoundError("Node is absent from the caller's PATH")
+    return str(Path(selected).resolve())
+
+
 def _environment(root: Path) -> dict[str, str]:
-    env = {"PATH": os.defpath, "LANG": "C.UTF-8", **create_synthetic_homes(root)}
+    env = {
+        "PATH": str(Path(_node_executable()).parent) + os.pathsep + os.defpath,
+        "LANG": "C.UTF-8",
+        **create_synthetic_homes(root),
+    }
     for key, name in {
         "PLAN_LOGS_DIR": "logs",
         "PLAN_BACKUP_DIR": "backups",
@@ -523,7 +535,7 @@ def test_unit21_metrics_store_and_rules_match_python(
         spec_path.write_text(json.dumps(spec, ensure_ascii=False))
         output = subprocess.run(
             [
-                "node",
+                _node_executable(),
                 "--input-type=module",
                 "-e",
                 "import {readFileSync} from 'node:fs'; "
@@ -592,7 +604,7 @@ def _runtime(root: Path, mode: str, config: dict[str, Any] | None = None) -> sub
     )
     return subprocess.Popen(
         [
-            "node",
+            _node_executable(),
             str(launcher),
             (ROOT / "server/environments/vps_metrics/testing/runtime.ts").as_uri(),
             str(request),
@@ -1069,7 +1081,7 @@ def test_unit21_metrics_routes_populated_errors_and_callers_match_python(
     )
     result = subprocess.run(
         [
-            "node",
+            _node_executable(),
             str(launcher),
             (ROOT / "server/environments/vps_metrics/testing/routes.ts").as_uri(),
             str(spec),

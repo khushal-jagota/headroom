@@ -33,8 +33,11 @@ EVIDENCE = ROOT / "server/environments/evidence"
 
 
 def _private_environment(root: Path) -> dict[str, str]:
+    selected_node = shutil.which("node")
+    if selected_node is None:
+        raise FileNotFoundError("Node is absent from the caller's PATH")
     environment = {
-        "PATH": os.defpath,
+        "PATH": str(Path(selected_node).resolve().parent) + os.pathsep + os.defpath,
         "LANG": "C.UTF-8",
         "PYTHONDONTWRITEBYTECODE": "1",
         **create_synthetic_homes(root),
