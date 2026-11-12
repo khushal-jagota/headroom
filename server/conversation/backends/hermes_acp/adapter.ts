@@ -67,9 +67,6 @@ export class HermesAcpBackendChild implements BackendChild {
   private client: HermesAcpClient | null = null;
   private configuration: HermesConfiguration | null = null;
   private stopped = false;
-  // Publish the turn only after its actual write. Early notifications wait for that
-  // milestone, while session-load replay still sees no turn and is discarded.
-  private writing_turn: Deferred<void> | null = null;
   constructor(options: {
     launch: AcpChildLaunch;
     resolved_start: ResolvedConversationStart;
@@ -96,11 +93,9 @@ export class HermesAcpBackendChild implements BackendChild {
     try {
       const client = await this.launcher.start(this.launch, resolved_start, {
         session_update: async (params) => {
-          await this.writing_turn?.promise;
           await this.events.session_update(params);
         },
         request_permission: async (params, id) => {
-          await this.writing_turn?.promise;
           return this.events.request_permission(params, id);
         },
         log: (error) => this.log(error),
@@ -264,7 +259,6 @@ export class HermesAcpBackendChild implements BackendChild {
     this.require_running();
     config.require_wire();
     const writing = new Deferred<void>();
-    this.writing_turn = writing;
     let turn: HermesTurn | null = null;
     const request = client.begin_request<PromptResponse>(
       'session/prompt',
@@ -288,7 +282,6 @@ export class HermesAcpBackendChild implements BackendChild {
     );
     try {
       await request.written;
-      this.require_running();
       turn = this.events.begin(token, request.response, automatic_compaction);
       turn.ending_reporter = this.events.report_ending(turn, () =>
         this.launcher.standard_error_tail(),
@@ -301,7 +294,6 @@ export class HermesAcpBackendChild implements BackendChild {
       });
       throw new PromptWriteFailed(`the prompt did not reach the wire: ${hermes_error_text(error)}`);
     } finally {
-      if (this.writing_turn === writing) this.writing_turn = null;
       writing.resolve();
     }
   }
@@ -344,14 +336,12 @@ export class HermesAcpBackendChild implements BackendChild {
     const turnToken = wire_token(token);
     let response: unknown;
     try {
-      response = await bound.config.guarded(() =>
-        bound.client.request('_panels/steer', {
-          sessionId: bound.sessionId,
-          turnToken,
-          text: wire_content.map((piece) => (piece as MessageText).text).join('\n\n'),
-          senderLabel: options.sender_label,
-        }),
-      );
+      response = await bound.config.control_request('_panels/steer', {
+        sessionId: bound.sessionId,
+        turnToken,
+        text: wire_content.map((piece) => (piece as MessageText).text).join('\n\n'),
+        senderLabel: options.sender_label,
+      });
     } catch (error) {
       if (!(error instanceof PromptWriteFailed)) throw error;
       return new BackendSteerUncertain({ composed_content_delivered: !native_command });
@@ -423,7 +413,6 @@ export class HermesAcpBackendChild implements BackendChild {
   }
   async stop(): Promise<void> {
     this.stopped = true;
-    this.writing_turn?.resolve();
     const turn = this.events.turn;
     this.events.turn = null;
     if (turn) {

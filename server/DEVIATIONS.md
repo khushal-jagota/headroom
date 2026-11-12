@@ -246,3 +246,17 @@ TypeScript bounds ask withdrawal before shutdown to two seconds. When that bound
 client stop breaks the wire and stops and joins the owned child. Python waits for the
 withdrawal without this bound. The bound prevents a parked ask or blocked write from
 holding process cleanup open.
+
+## Hermes ACP ordering and bounded retirement
+
+The Manager accepted strict read-order handling for Hermes in the Hermes Brief and Part2 review. Python's ACP dispatcher starts separate callback tasks and handles replies directly. TS finishes each notification, request admission, and asynchronous reply effect before it admits the next frame. This includes managed-image persistence. Normal sink callbacks have no deadline, so a slow database does not break a healthy wire.
+
+The Manager also accepted a 15-second drain bound after the direct child exits while a descendant retains stdout. Python waits without that bound. TS fails the remaining wire operations after the bound. The reused process owner never signals a group after its leader was reaped.
+
+The Manager requested the following proposed control-deadline rule in this entry for review. Acceptance is still pending: steer and configuration RPCs each have a 15-second reply deadline. A hung earlier persistence callback can therefore delay those callers only until their own deadline. The official SDK then sends `$/cancel_request` and stops waiting for that RPC only. Steer returns uncertain. Configuration raises `NeedsRebind`, because the applied value is unknown, and the core retires that child before another prompt. During startup, cleanup precedes `SessionLoadFailed`. Other pending requests and the wire stay intact. Python awaits these control replies without this deadline. Regular turns and image persistence gain no deadline, and TS discards no valid content to release the queue.
+
+Whole-update validation uses the official SDK JSON schema before its best-effort deserializer. Python coerces some out-of-schema numeric strings, including usage occupancy and stated cost. TS rejects those updates whole instead of coercing them. Fresh parser observations show that the original SDK already rejects string occupancy or drops string cost. Acceptance of this strict-wire policy remains pending. The evidence is retained with the Hermes ticket.
+
+Notifications during a prompt write follow Python's existing current-turn/no-turn guard. A successful actual prompt write remains accepted if stop races its continuation. Stderr retains whole lines with Python's final character cap. Fresh direct traces compare initialization exactly: the Python serializer uses `exclude_defaults=True`, so its empty default `clientCapabilities` does not appear on the wire. These are parity fixes, not additional deviations.
+
+The raw backend callback diagnostics compare exact payloads, turn attribution, counts, and order within each event type. Their cross-type order is not a parity claim. Canonical core events, lifecycle/view rows, live frames, and ACP requests keep exact ordered comparison.

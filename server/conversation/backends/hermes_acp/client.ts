@@ -19,6 +19,7 @@ import { spawn_codex_process, within } from '../codex_app_server/process.ts';
 import type { OwnedCodexProcess } from '../codex_app_server/process.ts';
 import type { ResolvedConversationStart } from '../../contracts.ts';
 import { child_environment } from './launch.ts';
+import { require_strict_session_notification } from './strict_updates.ts';
 import type { AcpChildLaunch } from './launch.ts';
 import {
   CHILD_OUTPUT_LINE_LIMIT_BYTES,
@@ -185,6 +186,7 @@ export class HermesAcpClient {
         try {
           if (message.kind === 'notification') {
             if (message.method === 'session/update') {
+              require_strict_session_notification(message.params);
               const params = validators.zSessionNotification.parse(message.params);
               await this.handlers.session_update?.(params);
             }
@@ -364,7 +366,12 @@ export class HermesAcpLauncher {
   private client: HermesAcpClient | null = null;
   private starting: Promise<HermesAcpClient> | null = null;
   private stopping: Promise<void> | null = null;
-  private error_tail = '';
+  private readonly error_lines: string[] = [];
+  private error_line_characters = 0;
+  private error_partial = '';
+  private error_line_bytes = 0;
+  private stderr_reader_failure: unknown = null;
+  private stderr_failure_reported = false;
   private cleanup_log: HermesAcpHandlers['log'];
   private cleanup_failure_reported = false;
   start(
@@ -391,13 +398,60 @@ export class HermesAcpLauncher {
       this.owned = owned;
       if (this.sealed) throw new Error('this child is being shut down');
       const decoder = new StringDecoder('utf8');
-      const keep_stderr = (text: string) => {
-        this.error_tail = Array.from(this.error_tail + text)
-          .slice(-STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS)
-          .join('');
+      const keep_stderr = (text: string, ended = false) => {
+        this.error_partial += text;
+        let newline: number;
+        while ((newline = this.error_partial.indexOf('\n')) !== -1) {
+          this.keep_error_line(this.error_partial.slice(0, newline + 1));
+          this.error_partial = this.error_partial.slice(newline + 1);
+        }
+        if (ended && this.error_partial) {
+          this.keep_error_line(this.error_partial);
+          this.error_partial = '';
+        }
       };
-      owned.child.stderr.on('data', (chunk: Buffer) => keep_stderr(decoder.write(chunk)));
-      owned.child.stderr.on('end', () => keep_stderr(decoder.end()));
+      const fail_stderr_reader = (error: unknown) => {
+        if (this.stderr_reader_failure !== null) return;
+        this.stderr_reader_failure = error;
+        this.error_partial = '';
+        this.error_line_bytes = 0;
+        owned.child.stderr.pause();
+      };
+      owned.child.stderr.on('data', (chunk: Buffer) => {
+        if (this.stderr_reader_failure !== null) return;
+        try {
+          let cursor = 0;
+          while (cursor < chunk.length) {
+            const newline = chunk.indexOf(10, cursor);
+            const end = newline === -1 ? chunk.length : newline;
+            const bytes = end - cursor;
+            if (this.error_line_bytes + bytes > CHILD_OUTPUT_LINE_LIMIT_BYTES) {
+              fail_stderr_reader(
+                new Error(
+                  newline === -1
+                    ? 'Separator is not found, and chunk exceed the limit'
+                    : 'Separator is found, but chunk is longer than limit',
+                ),
+              );
+              return;
+            }
+            this.error_line_bytes = newline === -1 ? this.error_line_bytes + bytes : 0;
+            const through = newline === -1 ? end : end + 1;
+            keep_stderr(decoder.write(chunk.subarray(cursor, through)));
+            cursor = through;
+          }
+        } catch (error) {
+          fail_stderr_reader(error);
+        }
+      });
+      owned.child.stderr.on('end', () => {
+        if (this.stderr_reader_failure !== null) return;
+        try {
+          keep_stderr(decoder.end(), true);
+        } catch (error) {
+          fail_stderr_reader(error);
+        }
+      });
       const output = new WritableStream<Uint8Array>({
         write: (chunk) =>
           new Promise<void>((resolve, reject) => {
@@ -455,8 +509,21 @@ export class HermesAcpLauncher {
       throw new BackendSpawnFailed(detail);
     }
   }
+  private keep_error_line(line: string): void {
+    this.error_lines.push(line);
+    this.error_line_characters += Array.from(line).length;
+    while (
+      this.error_line_characters > STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS &&
+      this.error_lines.length > 1
+    ) {
+      this.error_line_characters -= Array.from(this.error_lines.shift()!).length;
+    }
+  }
   standard_error_tail(): string | null {
-    return this.error_tail || null;
+    if (!this.error_lines.length) return null;
+    return Array.from(this.error_lines.join(''))
+      .slice(-STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS)
+      .join('');
   }
   stop(): Promise<void> {
     this.sealed = true;
@@ -480,6 +547,14 @@ export class HermesAcpLauncher {
     await this.stop_owned();
   }
   private async stop_owned(): Promise<void> {
+    if (this.stderr_reader_failure !== null && !this.stderr_failure_reported) {
+      this.stderr_failure_reported = true;
+      try {
+        this.cleanup_log?.(this.stderr_reader_failure);
+      } catch {
+        /* A failed diagnostic cannot block process cleanup. */
+      }
+    }
     try {
       await this.owned?.stop();
     } catch (error) {

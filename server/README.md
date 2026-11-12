@@ -256,7 +256,7 @@ bound in the Part 2 review. The difference is recorded in `DEVIATIONS.md`.
 
 ## Hermes ACP transport
 
-`conversation/backends/hermes_acp/` supplies the first part of the Hermes port:
+`conversation/backends/hermes_acp/` supplies the Hermes backend:
 the backend child, launch values, ordered ACP transport, and process ownership.
 `create_hermes_backend_child_factory` is exported from `adapter.ts`. The catalog
 binding and production selection remain separate work. Hermes retains Python's exact child environment,

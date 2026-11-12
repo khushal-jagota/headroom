@@ -24,7 +24,14 @@ const save = () => {
   writeFileSync(statePath, JSON.stringify(all));
 };
 const log = (value: unknown) => appendFileSync(trace, JSON.stringify(value) + '\n');
-log({ kind: 'launch', scenario, session });
+log({
+  kind: 'launch',
+  scenario,
+  session,
+  argv: process.argv,
+  cwd: process.cwd(),
+  environment: { ...process.env },
+});
 process.once('exit', () => log({ kind: 'exit', scenario }));
 process.stdin.once('end', () => process.exit(0));
 let controlSerial = existsSync(controlPath)
@@ -110,7 +117,14 @@ async function prompt(responder: Rpc.RequestResponder, params: Record<string, an
     /\[CASE:([^\]]+)\]/.exec(text)?.[1] ??
     (text === '/compress' ? 'compact' : text.startsWith('/native') ? 'native' : 'plain');
   log({ kind: 'prompt', scenario, name, text });
-  if (name === 'hold' || name === 'steer-base' || name === 'compact') return;
+  if (name === 'hold' || name === 'steer-base') return;
+  if (name === 'compact') {
+    await notify({
+      sessionUpdate: 'session_info_update',
+      _meta: { hermes: { sessionProvenance: { reason: 'compression' } } },
+    });
+    return;
+  }
   if (name === 'plain') {
     await notify({
       sessionUpdate: 'agent_thought_chunk',
@@ -165,7 +179,7 @@ async function prompt(responder: Rpc.RequestResponder, params: Record<string, an
       ],
     });
     log({ kind: 'permission-answer', scenario, answer });
-    await finish('permission answered');
+    if (active) await finish('permission answered');
   } else if (name === 'media') {
     await chunk('before image');
     await notify({
@@ -177,10 +191,42 @@ async function prompt(responder: Rpc.RequestResponder, params: Record<string, an
     await finish('');
   } else if (name === 'malformed') {
     await notify({ sessionUpdate: 'agent_message_chunk' });
+    await notify({ sessionUpdate: 'available_commands_update', availableCommands: null });
+    await notify({
+      sessionUpdate: 'available_commands_update',
+      availableCommands: [
+        { name: 'partial-replacement', description: 'must not replace catalog' },
+        { name: 7, description: 'invalid name' },
+      ],
+    });
+    await notify({
+      sessionUpdate: 'plan',
+      entries: [
+        { content: 'partial plan must not escape', priority: 'high', status: 'pending' },
+        { content: 'invalid plan', priority: 'high', status: 'unknown' },
+      ],
+    });
+    await notify({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'unknown-status-tool',
+      status: 'unknown-status',
+      content: [
+        { type: 'content', content: { type: 'text', text: 'unknown status must not escape' } },
+      ],
+    });
     await finish('valid after malformed');
   } else if (name === 'provider-error') await finish('Provider error: synthetic model unavailable');
-  else if (name === 'crash') {
-    process.stderr.write('synthetic crash\n');
+  else if (name === 'rpc-error') {
+    active = null;
+    await responder.respondWithError(new RequestError(-32000, 'synthetic provider RPC failure'));
+  } else if (name === 'crash') {
+    await new Promise<void>((resolve, reject) =>
+      process.stderr.write('X'.repeat(9000) + '\nsynthetic crash\n', (error) =>
+        error ? reject(error) : resolve(),
+      ),
+    );
+    // Let both adapters consume the complete older and final lines before exit.
+    await new Promise((resolve) => setTimeout(resolve, 20));
     process.exit(7);
   } else if (name === 'refuse-load') {
     state.load = false;
@@ -233,9 +279,15 @@ const connection = rpc.Connection.builder()
         }
       } else if (message.method === 'session/set_mode') await message.responder.respond({});
       else if (message.method === 'session/set_model') {
-        state.model = params.modelId;
-        save();
-        await message.responder.respond({});
+        if (params.modelId === 'synthetic-refused') {
+          await message.responder.respondWithError(
+            new RequestError(-32000, 'synthetic model change refused'),
+          );
+        } else {
+          state.model = params.modelId;
+          save();
+          await message.responder.respond({});
+        }
       } else if (message.method === 'session/set_config_option')
         await message.responder.respond({ configOptions: option() });
       else if (message.method === 'session/prompt') {
@@ -244,6 +296,10 @@ const connection = rpc.Connection.builder()
           process.exit(9);
         });
       } else if (message.method === '_panels/steer') {
+        if (params.text.includes('steer-lost-reply')) {
+          log({ kind: 'lost-steer-reply', scenario });
+          process.exit(0);
+        }
         const accepted = !params.text.includes('steer-refused');
         const uncertain = params.text.includes('steer-uncertain');
         await message.responder.respond({ accepted, turnToken: uncertain ? {} : params.turnToken });

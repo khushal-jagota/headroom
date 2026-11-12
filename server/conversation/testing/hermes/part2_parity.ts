@@ -12,11 +12,21 @@ import { create_hermes_backend_child_factory } from '../../backends/hermes_acp/a
 import type { BackendChildFactory } from '../../backends/contracts.ts';
 
 interface Action {
-  operation: 'send' | 'ended' | 'answer' | 'interrupt' | 'kill' | 'finish' | 'sweep';
+  operation:
+    | 'send'
+    | 'ended'
+    | 'answer'
+    | 'interrupt'
+    | 'kill'
+    | 'finish'
+    | 'sweep'
+    | 'remember_ask'
+    | 'late_answer';
   text?: string;
   mode?: 'queue' | 'steer' | 'send_now';
   count?: number;
   effort?: string;
+  model?: string;
   image?: boolean;
   fail_read?: boolean;
   seconds?: number;
@@ -49,6 +59,7 @@ const rowOrders: Record<string, string> = {
   conversation_view_lookups: 'conversation_id,lookup_kind,source_sequence,lookup_id',
 };
 export async function run_part2_parity(spec: Spec): Promise<unknown> {
+  const parentEnvironmentBefore = { ...process.env };
   const database = createDatabase(spec.database);
   database.write((tx) =>
     tx.run(
@@ -166,6 +177,7 @@ export async function run_part2_parity(spec: Spec): Promise<unknown> {
         }),
       );
       let sender = 0;
+      let lastAsk: string | null = null;
       for (const action of item.actions) {
         if (action.operation === 'send') {
           sender++;
@@ -189,6 +201,7 @@ export async function run_part2_parity(spec: Spec): Promise<unknown> {
                 sender_message_id: `${item.name}-sender-${sender}`,
                 mode: action.mode ?? 'queue',
                 reasoning_effort_change: action.effort ?? null,
+                model_change: action.model ?? null,
               }),
             ),
           );
@@ -208,6 +221,12 @@ export async function run_part2_parity(spec: Spec): Promise<unknown> {
           await wait(() => core.has_pending_permission_ask(id), id + ' permission');
           const ask = [...(await core.pending_permission_ask_ids(id))][0]!;
           fates.push({ answer_fate: await core.answer_permission_ask(id, ask, 'allow') });
+        } else if (action.operation === 'remember_ask') {
+          await wait(() => core.has_pending_permission_ask(id), id + ' unanswered permission');
+          lastAsk = [...(await core.pending_permission_ask_ids(id))][0]!;
+        } else if (action.operation === 'late_answer') {
+          if (lastAsk === null) throw new Error('No remembered permission ask');
+          fates.push({ late_answer_fate: await core.answer_permission_ask(id, lastAsk, 'allow') });
         } else if (action.operation === 'interrupt') await core.interrupt(id);
         else if (action.operation === 'kill') await core.kill(id);
         else if (action.operation === 'sweep') {
@@ -255,6 +274,8 @@ export async function run_part2_parity(spec: Spec): Promise<unknown> {
     database.close();
   }
   return {
+    parent_environment_unchanged:
+      JSON.stringify(process.env) === JSON.stringify(parentEnvironmentBefore),
     checkpoints,
     failed_reads: failedReads,
     trace: readFileSync(spec.trace, 'utf8')

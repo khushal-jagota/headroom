@@ -57,7 +57,19 @@ CASES = [
     {"name": "plain", "actions": [send("plain"), ended(1)]},
     {"name": "tools", "actions": [send("tools"), ended(1)]},
     {"name": "media", "actions": [send("media", image=True), ended(1)]},
-    {"name": "permission", "actions": [send("permission"), {"operation": "answer"}, ended(1)]},
+    {
+        "name": "permission",
+        "actions": [
+            send("permission"),
+            {"operation": "answer"},
+            ended(1),
+            send("permission"),
+            {"operation": "remember_ask"},
+            {"operation": "interrupt"},
+            ended(2),
+            {"operation": "late_answer"},
+        ],
+    },
     {
         "name": "steer",
         "actions": [send("steer-base"), send("steer-accepted", mode="steer"), ended(1)],
@@ -78,6 +90,9 @@ CASES = [
             send("steer-uncertain", mode="steer"),
             {"operation": "interrupt"},
             ended(1),
+            send("steer-base"),
+            send("steer-lost-reply", mode="steer"),
+            ended(2),
         ],
     },
     {"name": "cancel", "actions": [send("hold"), {"operation": "interrupt"}, ended(1)]},
@@ -92,7 +107,10 @@ CASES = [
     },
     {"name": "native", "actions": [{"operation": "send", "text": "/native argument"}, ended(1)]},
     {"name": "missing-interpreter", "actions": [send("plain")]},
-    {"name": "provider-error", "actions": [send("provider-error"), ended(1)]},
+    {
+        "name": "provider-error",
+        "actions": [send("provider-error"), ended(1), send("rpc-error"), ended(2)],
+    },
     {"name": "crash", "actions": [send("crash"), ended(1)]},
     {"name": "malformed", "actions": [send("malformed"), ended(1)]},
     {
@@ -100,8 +118,15 @@ CASES = [
         "actions": [
             send("plain"),
             ended(1),
-            send("image-after-config", image=True, effort="low", fail_read=True),
+            send(
+                "image-after-config",
+                image=True,
+                effort="low",
+                model="synthetic-other",
+                fail_read=True,
+            ),
             ended(2),
+            send("model-rejected", model="synthetic-refused"),
         ],
     },
     *[
@@ -129,6 +154,7 @@ CASES = [
 
 
 async def python_exercise(spec: dict[str, Any]) -> dict[str, Any]:
+    parent_environment_before = dict(os.environ)
     now = 100.0
     serial = 0
     fail_reads = 0
@@ -239,6 +265,7 @@ async def python_exercise(spec: dict[str, Any]) -> dict[str, Any]:
                     )
                 )
                 sender = 0
+                last_ask: str | None = None
                 for action in item["actions"]:
                     operation = action["operation"]
                     if operation == "send":
@@ -264,6 +291,7 @@ async def python_exercise(spec: dict[str, Any]) -> dict[str, Any]:
                                     sender_message_id=f"{item['name']}-sender-{sender}",
                                     mode=PromptDeliveryMode(action.get("mode", "queue")),
                                     reasoning_effort_change=action.get("effort"),
+                                    model_change=action.get("model"),
                                 )
                             )
                         )
@@ -289,6 +317,21 @@ async def python_exercise(spec: dict[str, Any]) -> dict[str, Any]:
                             {
                                 "answer_fate": str(
                                     await core.answer_permission_ask(identity, ask, "allow")
+                                )
+                            }
+                        )
+                    elif operation == "remember_ask":
+                        await wait(
+                            lambda identity=identity: core.has_pending_permission_ask(identity),
+                            identity + " unanswered permission",
+                        )
+                        last_ask = next(iter(await core.pending_permission_ask_ids(identity)))
+                    elif operation == "late_answer":
+                        assert last_ask is not None
+                        fates.append(
+                            {
+                                "late_answer_fate": str(
+                                    await core.answer_permission_ask(identity, last_ask, "allow")
                                 )
                             }
                         )
@@ -347,6 +390,7 @@ async def python_exercise(spec: dict[str, Any]) -> dict[str, Any]:
         finally:
             await core.shutdown()
     return {
+        "parent_environment_unchanged": dict(os.environ) == parent_environment_before,
         "checkpoints": checkpoints,
         "failed_reads": failed_reads,
         "trace": [json.loads(line) for line in Path(spec["trace"]).read_text().splitlines()],
@@ -386,7 +430,12 @@ def compared(result: dict[str, Any]) -> dict[str, Any]:
             message["id"] = f"request-{index}"
         requests.append({"scenario": row["scenario"], "message": message})
     value = normalize(
-        {"checkpoints": checkpoints, "requests": requests, "failed_reads": result["failed_reads"]}
+        {
+            "checkpoints": checkpoints,
+            "requests": requests,
+            "failed_reads": result["failed_reads"],
+            "parent_environment_unchanged": result["parent_environment_unchanged"],
+        }
     )
     files: dict[str, str] = {}
 
@@ -403,7 +452,10 @@ def compared(result: dict[str, Any]) -> dict[str, Any]:
             return files.setdefault(item, "received-file-" + str(len(files) + 1))
         return item
 
-    return cast(dict[str, Any], walk(value))
+    compared_value = cast(dict[str, Any], walk(value))
+    # Complete actual launch values bypass every identity normalization above.
+    compared_value["launches"] = [row for row in result["trace"] if row["kind"] == "launch"]
+    return compared_value
 
 
 def test_unit16_adapter_real_core_parity(tmp_path: Path, request: pytest.FixtureRequest) -> None:
@@ -502,63 +554,58 @@ def test_unit16_adapter_real_core_parity(tmp_path: Path, request: pytest.Fixture
             pytrace=False,
         )
     cases = {item["name"]: item for item in left["checkpoints"]}
+    # These anchors prove fixture activation or safety properties that equality
+    # alone cannot prove. Python supplies all remaining expected core behavior.
     assert list(cases) == [item["name"] for item in CASES]
+    malformed = cases["malformed"]["backend_events_by_type"]
+    assert "PlanUpdated" not in malformed and "ToolCallProgress" not in malformed
+    assert len(malformed["ComposerCatalogReported"]) == 1
     assert [
-        item["value"]["text_delta"]
-        for item in cases["plain"]["frames"]
-        if item["frame"] == "AgentMessageDeltaFrame"
-    ] == ["one ", "two ", "three", "next message"]
-    assert len(cases["plain"]["backend_events_by_type"]["ModelThinkingHappened"]) == 1
-    assert {
-        "ToolCallStarted",
-        "ToolCallProgress",
-        "ToolCallFinished",
-        "PlanUpdated",
-        "ContextCompacted",
-        "TokenUsageReported",
-    } <= set(cases["tools"]["backend_events_by_type"])
-    assert cases["permission"]["fates"][-1] == {"answer_fate": "applied"}
-    for name, fate in {
-        "steer": "injected",
-        "steer-refused": "queued",
-        "steer-uncertain": "uncertain",
-        "refused-load": "refused",
-    }.items():
-        assert cases[name]["fates"][-1]["fate"] == fate
-    assert cases["missing-interpreter"]["fates"] == [
-        {"fate": "refused", "refusal_reason": "backend_did_not_start"}
+        entry["display_text"]
+        for entry in malformed["ComposerCatalogReported"][0]["value"]["composer_catalog"]
+    ] == ["/compress", "/native"]
+    assert cases["permission"]["fates"][-1] == {"late_answer_fate": "refused"}
+    assert [
+        row["payload"]["ending"]
+        for row in cases["provider-error"]["rows"]["conversation_events"]
+        if row["kind"] == "turn_ended"
+    ] == ["completed", "failed"]
+    model_writes = [
+        row["message"]["params"]["modelId"]
+        for row in left["requests"]
+        if row["scenario"] == "config-rebind"
+        and row["message"].get("method") == "session/set_model"
     ]
-    for name, endings in {
-        "cancel": ["interrupted"],
-        "send-now": ["interrupted", "completed"],
-        "provider-error": ["completed"],
-        "crash": ["failed"],
-    }.items():
-        assert [
-            row["payload"]["ending"]
-            for row in cases[name]["rows"]["conversation_events"]
-            if row["kind"] == "turn_ended"
-        ] == endings
-    assert cases["media"]["kept"][0]["sha256"] == hashlib.sha256(b"synthetic-image").hexdigest()
-    assert cases["config-rebind"]["rows"]["conversations"][0]["reasoning_effort"] == "low"
-    for name in ("resume", "refused-load", "config-rebind"):
-        methods = [
-            row["message"].get("method") for row in left["requests"] if row["scenario"] == name
-        ]
-        assert methods.count("session/new") == methods.count("session/load") == 1
-    for name, confirmed in (("compact-confirmed", True), ("compact-unconfirmed", False)):
-        record = cases[name]["rows"]["conversations"][0]
-        assert (record["automatically_compacted_through_sequence"] > 0) is confirmed
-        assert record["automatic_compaction_attempted_through_sequence"] > 0
-        prompts = [
-            row for row in python["trace"] if row["kind"] == "prompt" and row["scenario"] == name
-        ]
-        assert [row["name"] for row in prompts] == [
-            "plain",
-            "compact",
-            "released-after-maintenance",
-        ]
+    assert model_writes == [
+        "synthetic-other",
+        "synthetic-model",
+        "synthetic-other",
+        "synthetic-refused",
+    ]
+    assert (
+        sum(
+            row["kind"] == "prompt" and row["scenario"] == "config-rebind"
+            for row in python["trace"]
+        )
+        == 2
+    )
+    assert sum(row["kind"] == "lost-steer-reply" for row in python["trace"]) == 1
+    assert (
+        sum(
+            row["kind"] == "prompt" and row["scenario"] == "steer-uncertain"
+            for row in python["trace"]
+        )
+        == 2
+    )
+    for name, count in (("compact-confirmed", 1), ("compact-unconfirmed", 0)):
+        assert len(cases[name]["backend_events_by_type"].get("ContextCompacted", [])) == count
+        assert (
+            sum(row["kind"] == "prompt" and row["scenario"] == name for row in python["trace"]) == 3
+        )
     assert python["failed_reads"] == typescript["failed_reads"] == 1
+    assert (
+        python["parent_environment_unchanged"] is typescript["parent_environment_unchanged"] is True
+    )
     assert "PRIVATE_THOUGHT_MUST_NEVER_ESCAPE" not in json.dumps(left["checkpoints"])
     assert "REPLAY_MUST_NOT_APPEAR" not in json.dumps(left["checkpoints"])
     assert all(not item["running"] for item in left["checkpoints"])

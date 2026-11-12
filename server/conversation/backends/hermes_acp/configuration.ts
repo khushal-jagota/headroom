@@ -5,6 +5,7 @@ export const STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS = 8192;
 export const CANCELLED_TURN_ENDING_TIMEOUT_SECONDS = 15;
 export const ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS = 15;
 export const AVAILABLE_COMMANDS_WAIT_TIMEOUT_SECONDS = 15;
+export const CONTROL_REQUEST_TIMEOUT_SECONDS = 15;
 
 import { RequestError } from '@agentclientprotocol/sdk/unstable';
 import type {
@@ -67,17 +68,44 @@ export class HermesConfiguration {
       throw new PromptWriteFailed(hermes_error_text(error));
     }
   }
+  async control_request<T>(method: string, params: unknown, configuration = false): Promise<T> {
+    const controller = new AbortController();
+    let timed_out = false;
+    const timer = setTimeout(() => {
+      timed_out = true;
+      controller.abort(new Error('the Hermes control request timed out'));
+    }, CONTROL_REQUEST_TIMEOUT_SECONDS * 1000);
+    try {
+      return await this.client.request<T>(method, params, { signal: controller.signal });
+    } catch (error) {
+      // A stalled ordered reader must not close the healthy wire or fail other
+      // requests. A configuration reply that did not arrive leaves applied state
+      // unknown, so the core must retire this child before another prompt.
+      if (timed_out) {
+        if (configuration)
+          throw new NeedsRebind(
+            'the Hermes configuration request timed out before its result was known',
+          );
+        throw new PromptWriteFailed(
+          'the Hermes steer request timed out before its result was known',
+        );
+      }
+      this.wire_broken = true;
+      throw new PromptWriteFailed(hermes_error_text(error));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   async start_values(start: ResolvedConversationStart): Promise<void> {
     try {
       if (start.access === ConversationAccess.full) {
         const sessionId = this.config_session();
-        await this.config_call(() =>
-          this.client.request('session/set_mode', { sessionId, modeId: 'dont_ask' }),
-        );
+        await this.config_call('session/set_mode', { sessionId, modeId: 'dont_ask' });
       }
       await this.apply_values(start.model, start.reasoning_effort);
     } catch (error) {
-      if (!(error instanceof ConfigurationNotApplied)) throw error;
+      if (!(error instanceof ConfigurationNotApplied) && !(error instanceof NeedsRebind))
+        throw error;
       throw new SessionLoadFailed(error.message);
     }
   }
@@ -98,9 +126,9 @@ export class HermesConfiguration {
       throw new ConfigurationNotApplied(error.message);
     }
   }
-  private async config_call<T>(call: () => Promise<T>): Promise<T> {
+  private async config_call<T>(method: string, params: unknown): Promise<T> {
     try {
-      return await this.guarded(call);
+      return await this.control_request<T>(method, params, true);
     } catch (error) {
       if (!(error instanceof PromptWriteFailed)) throw error;
       throw new ConfigurationNotApplied(error.message);
@@ -108,12 +136,9 @@ export class HermesConfiguration {
   }
   private async set_option(configId: string, value: string): Promise<void> {
     const sessionId = this.config_session();
-    const response = await this.config_call(() =>
-      this.client.request<SetSessionConfigOptionResponse>('session/set_config_option', {
-        configId,
-        sessionId,
-        value,
-      }),
+    const response = await this.config_call<SetSessionConfigOptionResponse>(
+      'session/set_config_option',
+      { configId, sessionId, value },
     );
     if (response?.configOptions?.length) this.options = response.configOptions;
   }
@@ -123,9 +148,7 @@ export class HermesConfiguration {
     if (option) await this.set_option(option.id, model);
     else {
       const sessionId = this.config_session();
-      await this.config_call(() =>
-        this.client.request('session/set_model', { sessionId, modelId: model }),
-      );
+      await this.config_call('session/set_model', { sessionId, modelId: model });
     }
     this.model = model;
   }
