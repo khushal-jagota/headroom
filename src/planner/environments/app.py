@@ -17,7 +17,8 @@ from re import fullmatch
 from planner.environments.runtime_contracts import (
     RUNTIME_CONTRACT_PATH,
     RUNTIME_INVENTORY_PATH,
-    RuntimeContract,
+    AnyRuntimeContract,
+    NodeRuntimeContract,
     parse_optional_runtime_contract,
     runtime_bytes_digest,
 )
@@ -36,7 +37,7 @@ class AppManifest:
     app_sha: str
     source_digest: str
     artifact_digest: str
-    runtime_contract: RuntimeContract | None = None
+    runtime_contract: AnyRuntimeContract | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -105,8 +106,6 @@ def validate_app_manifest(
     if not artifact_matches:
         raise AppValidationError("app artifact digest does not match its manifest")
     _validate_app_tree(app_root)
-    if require_runtime:
-        _validate_runtime_tree(app_root)
     try:
         contract = parse_optional_runtime_contract(value.get("runtime_contract"))
         if contract is not None:
@@ -120,6 +119,8 @@ def validate_app_manifest(
                 raise ValueError("runtime inventory differs from contract")
     except (OSError, ValueError) as exc:
         raise AppValidationError(f"invalid runtime contract: {exc}") from exc
+    if require_runtime:
+        _validate_runtime_tree(app_root, contract)
     return AppManifest(app_sha, source_digest, artifact_digest, contract)
 
 
@@ -183,13 +184,16 @@ def _validate_app_tree(root: Path) -> None:
             raise AppValidationError("app contains a symlink outside its root")
 
 
-def _validate_runtime_tree(root: Path) -> None:
-    """Check structure only. Shared admission checks the host before execution."""
-    python = root / ".venv" / "bin" / "python"
+def _validate_runtime_tree(root: Path, contract: AnyRuntimeContract | None) -> None:
+    """Check structure only. Shared admission checks the host before execution.
+
+    A version 2 Node release has no private Python. Every other release keeps it.
+    """
+    launchers = (root / "bin" / "panels", root / "bin" / "panels-launcher")
     required_files = (
-        python,
-        root / "bin" / "panels",
-        root / "bin" / "panels-launcher",
+        launchers
+        if isinstance(contract, NodeRuntimeContract)
+        else (root / ".venv" / "bin" / "python", *launchers)
     )
     for path in required_files:
         if not path.is_file():

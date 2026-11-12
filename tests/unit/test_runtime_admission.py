@@ -16,6 +16,13 @@ from tests.support.update_apps import build_app as _app
 
 from planner.environments import runtime_admission as admission
 from planner.environments.app import AppValidationError, digest_app_artifact, validate_app_manifest
+from planner.environments.runtime_contracts import (
+    NodeRuntimeContract,
+    RuntimeContract,
+    RuntimeContractError,
+    parse_optional_runtime_contract,
+    runtime_bytes_digest,
+)
 from planner.environments.update_attempts import parse_release
 
 
@@ -46,7 +53,7 @@ def test_contract_survives_receipt_and_pinned_request_roundtrip() -> None:
     publication = release()
     decoded = parse_release(json.loads(json.dumps(asdict(publication))))
     assert decoded == publication
-    assert decoded.manifest.runtime_contract is not None
+    assert isinstance(decoded.manifest.runtime_contract, RuntimeContract)
     changed = replace(decoded.manifest.runtime_contract, python_version="3.12.13")
     assert (
         replace(decoded, manifest=replace(decoded.manifest, runtime_contract=changed))
@@ -161,3 +168,80 @@ def test_runtime_validation_and_admission_keep_credentials_out_of_candidates(
 def test_timeout_kills_owned_probe_group(tmp_path: Path) -> None:
     with pytest.raises(AppValidationError, match="timed out"):
         admission._run_probe(["/bin/sh", "-c", "sleep 30 & wait"], state=tmp_path, timeout=0.05)
+
+
+def test_version_2_contract_is_closed_and_version_1_is_unchanged() -> None:
+    """Risk: a near-miss Node contract, or a Python field on it, is admitted."""
+    node = NodeRuntimeContract("f" * 64)
+    assert parse_optional_runtime_contract(node.as_dict()) == node
+    python = RuntimeContract("3.12.12", "f" * 64)
+    assert parse_optional_runtime_contract(python.as_dict()) == python
+    refused = [
+        node.as_dict() | {"python_version": "3.12.12"},
+        {key: value for key, value in node.as_dict().items() if key != "minimum_node_version"},
+        node.as_dict() | {"minimum_node_version": "22.17.0"},
+        node.as_dict() | {"external_executables": ["sh", "node", "python3"]},
+        node.as_dict() | {"version": 3},
+        node.as_dict() | {"version": True},
+        python.as_dict() | {"version": 2},
+    ]
+    for value in refused:
+        with pytest.raises(RuntimeContractError):
+            parse_optional_runtime_contract(value)
+
+
+def node_app(root: Path) -> Path:
+    """The shared app tree, re-sealed as a version 2 Node release with no private Python."""
+    _app(root, SHA_B, "new")
+    shutil.rmtree(root / ".venv")
+    inventory = b'{"node": []}'
+    contract = NodeRuntimeContract(runtime_bytes_digest(inventory))
+    (root / "runtime/inventory.json").write_bytes(inventory)
+    (root / "runtime/contract.json").write_text(json.dumps(contract.as_dict()))
+    payload = json.loads((root / "manifest.json").read_text())
+    payload["runtime_contract"] = contract.as_dict()
+    payload["artifact_digest"] = digest_app_artifact(root)
+    (root / "manifest.json").write_text(json.dumps(payload))
+    return root
+
+
+@pytest.mark.parametrize("node", ["v22.17.9", "v22.18.0"])
+def test_version_2_admission_needs_node_22_18_and_never_runs_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, node: str
+) -> None:
+    """Risk: a Node release needs a .venv it lacks, or runs on an older Node 22."""
+    root = node_app(tmp_path / "app")
+    manifest = validate_app_manifest(root / "manifest.json", require_runtime=True)
+    assert isinstance(manifest.runtime_contract, NodeRuntimeContract)
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+    monkeypatch.setattr(platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        platform, "freedesktop_os_release", lambda: {"ID": "debian", "VERSION_ID": "13"}
+    )
+    monkeypatch.setattr(platform, "libc_ver", lambda: ("glibc", "2.41"))
+    cpuinfo = "flags: " + " ".join(manifest.runtime_contract.cpu_features)
+    read_text = Path.read_text
+
+    def synthetic_cpuinfo(path: Path, *args: object, **kwargs: object) -> str:
+        if path == Path("/proc/cpuinfo"):
+            return cpuinfo
+        return read_text(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_text", synthetic_cpuinfo)
+    monkeypatch.setattr(ctypes, "CDLL", lambda name: None)
+    monkeypatch.setattr(shutil, "which", lambda *args, **kwargs: "/synthetic/tool")
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: object) -> str:
+        commands.append(command)
+        return node
+
+    monkeypatch.setattr(admission, "_run_probe", run)
+    if node == "v22.17.9":
+        with pytest.raises(AppValidationError, match="22.18.0 or later"):
+            admission.admit_runtime(root, manifest)
+        return
+    admission.admit_runtime(root, manifest)
+    probed = " ".join(" ".join(command) for command in commands)
+    assert "@openai/codex/bin/codex.js" in probed
+    assert ".venv" not in probed

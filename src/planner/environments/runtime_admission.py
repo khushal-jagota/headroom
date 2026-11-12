@@ -12,9 +12,14 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from re import fullmatch
 
 from planner.environments.app import AppManifest, AppValidationError
-from planner.environments.runtime_contracts import RuntimeContract
+from planner.environments.runtime_contracts import (
+    AnyRuntimeContract,
+    NodeRuntimeContract,
+    RuntimeContract,
+)
 
 PROBE_TIMEOUT_SECONDS = 45
 ADMISSION_TIMEOUT_SECONDS = 120
@@ -151,7 +156,7 @@ def _run_probe(
         raise AppValidationError(f"runtime probe failed: {exc}") from exc
 
 
-def verify_runtime_host(contract: RuntimeContract, *, state: Path) -> None:
+def verify_runtime_host(contract: AnyRuntimeContract, *, state: Path) -> None:
     if platform.system().lower() != contract.system or platform.machine() != contract.architecture:
         raise AppValidationError("runtime requires Linux x86_64")
     try:
@@ -188,10 +193,24 @@ def verify_runtime_host(contract: RuntimeContract, *, state: Path) -> None:
     node = _run_probe(["/usr/bin/env", "node", "--version"], state=state)
     if node.split(".")[0] != f"v{contract.node_major}":
         raise AppValidationError(f"runtime requires Node {contract.node_major}")
+    if isinstance(contract, NodeRuntimeContract) and _node_version(node) < _node_version(
+        f"v{contract.minimum_node_version}"
+    ):
+        raise AppValidationError(f"runtime requires Node {contract.minimum_node_version} or later")
 
 
-def native_tool_commands(root: Path, contract: RuntimeContract) -> list[list[str]]:
-    """Offline startup probes for selected Linux packages, never agent sessions."""
+def _node_version(text: str) -> tuple[int, int, int]:
+    match = fullmatch(r"v(\d+)\.(\d+)\.(\d+)", text.strip())
+    if match is None:
+        raise AppValidationError(f"unreadable Node version: {text[:40]}")
+    return int(match[1]), int(match[2]), int(match[3])
+
+
+def native_tool_commands(root: Path, contract: AnyRuntimeContract) -> list[list[str]]:
+    """Offline startup probes for selected Linux packages, never agent sessions.
+
+    A version 2 Node release has no private Python site-packages to probe.
+    """
     modules = root / "agent_backends/node_modules"
     site = root / ".venv/lib/python3.12/site-packages"
     vendor = modules / "@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl"
@@ -199,11 +218,15 @@ def native_tool_commands(root: Path, contract: RuntimeContract) -> list[list[str
         ["node", str(modules / "@anthropic-ai/claude-code/cli-wrapper.cjs"), "--version"],
         ["node", str(modules / "@openai/codex/bin/codex.js"), "--version"],
     ]
+    python_site = (
+        ()
+        if isinstance(contract, NodeRuntimeContract)
+        else (site / "claude_agent_sdk/_bundled/claude", site / "playwright/driver/node")
+    )
     for path in (
         modules / "@anthropic-ai/claude-code-linux-x64/claude",
         modules / "@anthropic-ai/claude-code/bin/claude.exe",
-        site / "claude_agent_sdk/_bundled/claude",
-        site / "playwright/driver/node",
+        *python_site,
         vendor / "bin/codex",
         vendor / "codex-resources/bwrap",
         vendor / "codex-path/rg",
@@ -214,7 +237,10 @@ def native_tool_commands(root: Path, contract: RuntimeContract) -> list[list[str
 
 
 def admit_runtime(root: Path, manifest: AppManifest) -> None:
-    """Reject legacy candidates, verify the host, then execute the private runtime."""
+    """Reject legacy candidates, verify the host, then execute the private runtime.
+
+    Version 1 runs the private CPython probe. Version 2 has no private Python.
+    """
     contract = manifest.runtime_contract
     if contract is None:
         raise AppValidationError("candidate lacks a runtime contract; republish the app")
@@ -222,18 +248,25 @@ def admit_runtime(root: Path, manifest: AppManifest) -> None:
     with tempfile.TemporaryDirectory(prefix="panels-runtime-probe-") as temporary:
         state = Path(temporary)
         verify_runtime_host(contract, state=state)
-        _run_probe(
-            [
-                str(root.resolve() / ".venv/bin/python"),
-                "-I",
-                "-B",
-                "-c",
-                NATIVE_PROBE,
-                str(root.resolve()),
-                contract.python_version,
-                json.dumps(contract.external_libraries),
-            ],
-            state=state, timeout=deadline - time.monotonic(),
-        )
+        if isinstance(contract, RuntimeContract):
+            _run_python_probe(root, contract, state=state, deadline=deadline)
         for command in native_tool_commands(root.resolve(), contract):
             _run_probe(command, state=state, timeout=deadline - time.monotonic())
+
+
+def _run_python_probe(
+    root: Path, contract: RuntimeContract, *, state: Path, deadline: float
+) -> None:
+    _run_probe(
+        [
+            str(root.resolve() / ".venv/bin/python"),
+            "-I",
+            "-B",
+            "-c",
+            NATIVE_PROBE,
+            str(root.resolve()),
+            contract.python_version,
+            json.dumps(contract.external_libraries),
+        ],
+        state=state, timeout=deadline - time.monotonic(),
+    )
