@@ -34,7 +34,11 @@ function stopped(pid: number): boolean {
     const state = stat.slice(stat.lastIndexOf(')') + 2, stat.lastIndexOf(')') + 3);
     return ['Z', 'X', 'x'].includes(state);
   } catch (error) {
-    if (error instanceof Error && 'code' in error && ['ENOENT', 'ESRCH'].includes(String(error.code)))
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      ['ENOENT', 'ESRCH'].includes(String(error.code))
+    )
       return true;
     throw error;
   }
