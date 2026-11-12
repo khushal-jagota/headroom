@@ -194,7 +194,10 @@ export class UpdateService {
       return;
     validate_release(release);
     if (canonical_json(release) === canonical_json(this.ready)) return;
-    await this.options.staging.stage(provider, release, this.options.current_root);
+    const staged = await this.options.staging.stage(provider, release, this.options.current_root);
+    if (!this.active(incarnation)) return;
+    if (release.manifest.runtime_contract?.version === 2)
+      await this.options.installer.require_exact_schema_frontier(this.options.database, staged);
     if (!this.active(incarnation)) return;
     await this.options.mac.prepare(release);
     if (!this.active(incarnation)) return;
@@ -492,7 +495,9 @@ export class UpdateService {
     if (!statSync(staged, { throwIfNoEntry: false })?.isDirectory())
       throw new Error('the staged release is missing');
     let backup: string | null = null;
-    if (this.options.installer.schema_change_pending(this.options.database, staged)) {
+    if (attempt.release.manifest.runtime_contract?.version === 2)
+      await this.options.installer.require_exact_schema_frontier(this.options.database, staged);
+    else if (this.options.installer.schema_change_pending(this.options.database, staged)) {
       backup = await this.options.installer.create_backup(
         this.options.database,
         this.options.backup_directory,

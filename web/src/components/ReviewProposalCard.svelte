@@ -78,6 +78,7 @@
   } = $props();
 
   let revisionDraft = $state("");
+  let revisionInput = $state<HTMLTextAreaElement | null>(null);
   let decisionKey = $state<string | null>(null);
 
   let resolvedAnnounced = false;
@@ -312,22 +313,19 @@
       </div>
 
       {#snippet revisionEditor()}
-        <!-- One line for the Worker, always on the card: Send it back (or Cmd/Ctrl+Enter here,
-             as on staging) sends it as the return's guidance, and Approve delivers it to the
-             Worker and then approves. It is the composer's field (ComposerField); speaking
+        <!-- One line for the Worker, always on the card: Send it back (or Enter here) sends it as the return's
+             guidance, and Approve delivers it to the Worker and then approves. It is the composer's field (ComposerField); speaking
              with words already in the line appends to them. -->
         <div class="review-revise review-arrive review-arrive--4" data-review-revision>
           <ComposerField
             bind:value={revisionDraft}
             placeholder="Add a note for the worker…"
             inputAttributes={{ "data-review-revision-input": "" }}
-            onkeydown={(event) => {
-              if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.repeat) {
-                event.preventDefault();
-                event.currentTarget.closest("[data-approval-block]")
-                  ?.querySelector<HTMLButtonElement>("[data-send-back]")?.click();
-              }
+            onsubmit={() => {
+              revisionInput?.closest("[data-approval-block]")
+                ?.querySelector<HTMLButtonElement>("[data-send-back]")?.click();
             }}
+            bind:input={revisionInput}
             record={voiceAvailable
               ? {
                   label: "Speak a revision",

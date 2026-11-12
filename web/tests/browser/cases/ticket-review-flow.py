@@ -915,6 +915,29 @@ def run(browser, urls):
             except PlaywrightTimeoutError:
                 pass
 
+    def composing_enter(field):
+        # Enter that confirms an input method's text is not a send.
+        return field.evaluate(
+            """field => {
+              const event = new KeyboardEvent('keydown', {key:'Enter', keyCode:229, isComposing:true, bubbles:true, cancelable:true});
+              field.dispatchEvent(event);
+              return event.defaultPrevented;
+            }"""
+        )
+
+    def assert_enter_rules_leave_a_draft(field, draft, writes):
+        """Shift+Enter adds a line and composing Enter does nothing: no write, words kept."""
+        before = writes()
+        field.fill(draft)
+        field.press("End")
+        field.press("Shift+Enter")
+        expect(field).to_have_value(draft + "\n")
+        assert not composing_enter(field)
+        page.wait_for_timeout(100)
+        assert writes() == before
+        expect(field).to_have_value(draft + "\n")
+        field.fill(draft)
+
     def wait_for_held(predicate):
         # A held route never finishes its request, so poll the fixture while the
         # driver hands the route to its handler. Callers assert.
@@ -1400,8 +1423,9 @@ def run(browser, urls):
     page.locator("[data-send-back]").click()
     expect(page.locator("[data-revision-note]")).to_be_focused()
     exact_revision = "Keep the agreed scope.\nPreserve the attributed details."
+    assert_enter_rules_leave_a_draft(page.locator("[data-revision-note]"), "Draft note", lambda: len(revisions))
     page.locator("[data-revision-note]").fill(exact_revision)
-    page.locator("[data-send-back]").click()
+    page.locator("[data-revision-note]").press("Enter")
     wait_for_write(lambda: revisions)
     assert revisions == [{"message": exact_revision}]
     drive("window.__batch()")
@@ -1469,6 +1493,7 @@ def run(browser, urls):
     note_check_started = time.monotonic()
     original_note = "Keep the existing approval boundary."
     note_input = page.locator("[data-review-revision-input]")
+    assert_enter_rules_leave_a_draft(note_input, original_note, lambda: len(review_note_sends) + len(revisions))
     note_input.fill(original_note)
     review_note_fate = "uncertain"
 
@@ -1910,7 +1935,7 @@ def run(browser, urls):
     expect(message_card.locator('[data-review-message-sequence="121"] iframe')).to_have_count(1)
     assert review_read == 0, "Showing review must not mark messages read"
     reply = message_card.locator("[data-review-reply]")
-    reply.fill("Keep these words")
+    assert_enter_rules_leave_a_draft(reply, "Keep these words", lambda: len(review_message_sends))
     page.evaluate("window.__replyNode=document.querySelector('[data-review-reply]')")
     drive("window.__batch()")
     expect(reply).to_have_value("Keep these words")
@@ -1946,7 +1971,7 @@ def run(browser, urls):
     ticket.update(ticket_status="awaiting_approval", pending_proposal={"field":"success_condition","body":"A separate decision","created_at":500,"revision":1})
     drive("window.__refresh()")
     expect(combined.locator('[data-review-item-type="proposal"]')).to_be_visible()
-    message_card.locator("[data-review-send]").click()
+    reply.press("Control+Enter")
     expect(message_card.locator(".error-line")).to_be_visible()
     expect(reply).to_have_value("Keep these words")
     expect(reply).to_be_enabled()
@@ -1968,7 +1993,7 @@ def run(browser, urls):
         return original.call(this,frames,options);
       };
     }""")
-    message_card.locator("[data-review-send]").click()
+    reply.press("Enter")
     expect(message_card.locator('[data-review-message-sequence="122"]')).to_be_visible()
     expect(message_card.locator("[data-review-message-sequence]")).to_have_count(1)
     assert review_read == 121
