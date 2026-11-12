@@ -1,6 +1,7 @@
 # Stop authorization for the TS supervisor
 
-Decision requested: accept a pure TS stop protocol for managed Linux services before supervisor implementation.
+The Manager accepted the pure TS stop protocol for managed Linux services on November 12, 2026.
+This satisfies the design acceptance condition. The implementation and its proofs remain separate work.
 The Manager requested this comparison after approval of the four-part implementation split.
 No supervisor implementation accompanies this document.
 
@@ -38,7 +39,7 @@ A Node addon or helper after signal delivery cannot recover the lost sender iden
 The native option requires the wrapper to receive signals before Node.
 That extra platform surface conflicts with the migration's simpler Electron and Mac packaging goal.
 
-## Recommendation: intent-gated managed stop
+## Accepted design: intent-gated managed stop
 
 Use the third option for managed Linux services. Keep ordinary signals for foreground launches, as Python does.
 Fail closed if the launch mode or required managed-stop capability cannot be established.
@@ -73,7 +74,9 @@ Do not describe this as equal authentication of the signal sender.
 
 Only a separately named TS unit receives the new `ExecStop`. Existing units remain untouched.
 A normal `systemctl stop` runs that command before systemd's remaining termination steps.
-The command must finish only after the supervisor exits, within a stop timeout that includes the application shutdown deadline.
+The command must finish only after the supervisor exits.
+The new unit will use a 60-second stop timeout: a 30-second application shutdown budget plus a 30-second margin.
+The loop deadline is 30 seconds today. The total real-core settlement bound remains an open proof.
 The installer still stops its own identified unit through systemd.
 
 If the supervisor socket or stop command fails, systemd can reach its timeout and SIGKILL fallback.
@@ -95,6 +98,12 @@ The Manager must accept that policy before any Mac service adopts this guard.
 - Prove that child and agent environments contain no stop capability.
 - Prove ordered final writes and lock retention with one shutdown deadline.
 - On a hosted Linux runner, prove actual new-unit `ExecStop`, installer stop, and failed-control timeout behavior.
+- Prove a startup failure before activation, where systemd can skip `ExecStop`.
+- Prove `systemctl restart`: stop intent, clean stop, and a new supervisor incarnation and capability.
+- Prove an accepted stop during an application restart through the existing restart socket. Stop wins without a replacement child afterward.
+- Prove mode 0600 for the capability file and mode 0700 for its parent directory.
+- Prove that neither capability nor capability path reaches the application child or any agent process environment.
+- Prove that the capability path is outside every snapshot and backup root.
 - Start and relocate the packaged supervisor on the Node-only target root. No compiler or Python can be required there.
 
 The real-core hung-provider shutdown proof remains open until the conversation routes pull request merges.

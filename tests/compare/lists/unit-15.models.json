@@ -381,6 +381,169 @@
       "capture": {
         "models_17": ""
       }
+    },
+    {
+      "area": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-model-boundary",
+        "backend_key": "codex",
+        "model": "a-model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-model-boundary/inspect",
+      "status": 200,
+      "capture": {
+        "u15_model_boundary_started": ""
+      }
+    },
+    {
+      "area": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-model-boundary/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "incumbent"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-model-boundary/inspect",
+      "status": 200,
+      "capture": {
+        "u15_model_boundary_incumbent": ""
+      }
+    },
+    {
+      "area": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-model-boundary/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "plain"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-model-boundary/inspect",
+      "status": 200,
+      "capture": {
+        "u15_model_boundary_plain_held": ""
+      }
+    },
+    {
+      "area": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-model-boundary/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "on another model"
+          }
+        ],
+        "sender_label": "owner",
+        "model_change": "other-model"
+      }
+    },
+    {
+      "area": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-model-boundary/inspect",
+      "status": 200,
+      "capture": {
+        "u15_model_boundary_changed_held": ""
+      }
+    },
+    {
+      "area": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-model-boundary/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "after it"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-model-boundary/inspect",
+      "status": 200,
+      "capture": {
+        "u15_model_boundary_following_held": ""
+      }
+    },
+    {
+      "area": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
+      "method": "POST",
+      "path": "/api/test/signals/u15-model-boundary/finish",
+      "status": 200
+    },
+    {
+      "area": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-model-boundary/inspect",
+      "status": 200,
+      "capture": {
+        "u15_model_boundary_plain_released": ""
+      }
+    },
+    {
+      "area": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
+      "method": "POST",
+      "path": "/api/test/signals/u15-model-boundary/finish",
+      "status": 200
+    },
+    {
+      "area": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-model-boundary/inspect",
+      "status": 200,
+      "capture": {
+        "u15_model_boundary_changed_released": ""
+      }
+    },
+    {
+      "area": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
+      "method": "POST",
+      "path": "/api/test/signals/u15-model-boundary/finish",
+      "status": 200
+    },
+    {
+      "area": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-model-boundary/inspect",
+      "status": 200,
+      "capture": {
+        "u15_model_boundary_completed": ""
+      }
     }
   ],
   "probes": [],
@@ -402,7 +565,21 @@
     "models_15",
     "models_16",
     "models_17",
-    "models_positive_http_state"
+    "models_positive_http_state",
+    "u15_model_boundary_started",
+    "u15_model_boundary_incumbent",
+    "u15_model_boundary_plain_held",
+    "u15_model_boundary_changed_held",
+    "u15_model_boundary_following_held",
+    "u15_model_boundary_plain_released",
+    "u15_model_boundary_changed_released",
+    "u15_model_boundary_completed"
   ],
-  "candidate": "typescript"
+  "candidate": "typescript",
+  "external_proofs": [
+    {
+      "source_test": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
+      "coverage": "plain batch stops before model change; changed-model message batches with its following message"
+    }
+  ]
 }

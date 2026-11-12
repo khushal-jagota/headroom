@@ -1,5 +1,4 @@
-import type { ConversationAttention } from '../conversation/contracts.ts';
-import type { CommitStep, TransactionSql } from '../core/database/contracts.ts';
+import type { TransactionSql } from '../core/database/contracts.ts';
 import type {
   NavigationRecord,
   RecordKey,
@@ -17,12 +16,3 @@ export interface NavigationRegistry {
   rebuild(tx: TransactionSql): void;
 }
 export type { NavigationRecord, RecordKey };
-
-/** The conversation dependency supplies facts synchronously in the source transaction. */
-export type PublicationFactory = (
-  publish: (
-    tx: TransactionSql,
-    conversationId: string,
-    attention: ConversationAttention,
-  ) => undefined,
-) => CommitStep;

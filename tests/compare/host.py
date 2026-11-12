@@ -18,7 +18,7 @@ from typing import Any
 from unittest.mock import patch
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from tests.compare.scripted.record_inspection import record_rows
 from tests.compare.scripted.scripted_child import decode_scripted_event
 from tests.compare.scripted.scripted_registry import ScriptedBackendRegistry
@@ -228,21 +228,34 @@ def _scripted_routes(app: FastAPI, registry: ScriptedBackendRegistry, db_path: s
         return {"ok": True}
 
     @app.post("/api/test/signals/{conversation_id}/message")
-    async def message(conversation_id: str, body: dict[str, str]) -> dict[str, bool]:
-        await app.state.conversation.system.record_message_to_owner(
-            conversation_id,
-            text_message_content(body.get("text", "Explicit message to owner")),
-            sender_label=body["label"],
-            sender=Principal(PrincipalKind(body["kind"]), body["id"]),
-            recipient=OWNER_PRINCIPAL,
-        )
+    async def message(conversation_id: str, body: dict[str, Any]) -> dict[str, bool]:
+        try:
+            await app.state.conversation.system.record_message_to_owner(
+                conversation_id,
+                text_message_content(body.get("text", "Explicit message to owner")),
+                sender_label=body["label"],
+                sender=Principal(PrincipalKind(body["kind"]), body["id"]),
+                recipient=OWNER_PRINCIPAL,
+                sender_message_id=body.get("sender_message_id"),
+                sent_at_unix_milliseconds=body.get("sent_at_unix_milliseconds"),
+            )
+        except ValueError as error:
+            if str(error) != "sender_message_id already names a different message":
+                raise
+            raise HTTPException(status_code=422, detail=str(error)) from error
         await settled()
         return {"ok": True}
 
     @app.post("/api/test/signals/{conversation_id}/backend-news")
     async def backend_news(conversation_id: str, body: dict[str, Any]) -> dict[str, int]:
         child = children[conversation_id]
-        assert child.token is not None
+        if "turn" in body:
+            if body["turn"] is not None:
+                raise HTTPException(status_code=422, detail="scripted session turn must be null")
+            turn = None
+        else:
+            assert child.token is not None
+            turn = child.token
         aliases = {
             "tool_call_started": "ToolCallStarted",
             "tool_call_finished": "ToolCallFinished",
@@ -261,14 +274,23 @@ def _scripted_routes(app: FastAPI, registry: ScriptedBackendRegistry, db_path: s
             if kind == "permission_asked":
                 values = {"ask": {"detail": None, **values}}
             news = decode_scripted_event({"kind": aliases.get(kind, kind), "values": values})
-            await child.emit(news, turn=child.token)
+            await child.emit(news, turn=turn)
         await child.flush_events()
         await settled()
         return {"reported": len(body["events"])}
 
+    @app.post("/api/test/signals/{conversation_id}/sweep-idle-children")
+    async def sweep_idle_children(conversation_id: str) -> dict[str, bool]:
+        await app.state.conversation.system._sweep_idle_children()
+        await settled()
+        return {"ok": True}
+
     @app.post("/api/test/signals/{conversation_id}/configure")
     async def configure(conversation_id: str, body: dict[str, Any]) -> dict[str, bool]:
-        await registry.configure(conversation_id, body["command"], body["behavior"])
+        target = body.get("target", "current")
+        if target not in ("current", "next"):
+            raise HTTPException(status_code=422, detail="invalid scripted child target")
+        await registry.configure(conversation_id, body["command"], body["behavior"], target=target)
         return {"configured": True}
 
     @app.get("/api/test/signals/{conversation_id}/inspect")
@@ -313,7 +335,11 @@ def build_app(config: Config) -> FastAPI:
     ).start()
     patch(
         "planner.conversation.runtime_composition.SqliteProcessConversationSystem",
-        partial(SqliteProcessConversationSystem, unix_time_now=clock.now_unix),
+        partial(
+            SqliteProcessConversationSystem,
+            unix_time_now=clock.now_unix,
+            monotonic_now=clock.now_unix,
+        ),
     ).start()
 
     patch(

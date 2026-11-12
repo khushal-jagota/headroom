@@ -1,14 +1,7 @@
 import { assert_test_database_path } from './test_paths.ts';
 import type { FastifyInstance, FastifyListenOptions } from 'fastify';
-import {
-  areas,
-  commitSteps,
-  initializeAreas,
-  prepareAreas,
-  closeAreas,
-  getConversationRuntime,
-  bindConversationRuntimeFacts,
-} from '../areas.ts';
+import { createAreasRuntime } from '../areas.ts';
+import type { AreaLoopOptions } from '../areas.ts';
 import { createApp } from '../app.ts';
 import { loadConfig, SHUTDOWN_GRACE_SECONDS } from './config.ts';
 import { buildClock } from './clock.ts';
@@ -20,14 +13,12 @@ import type { Database } from './database/index.ts';
 import { acquireRuntimeOwnership, acquireLock } from './locks/index.ts';
 
 import type { Area } from './authority/register.ts';
-import type { AreaLoopOptions } from '../areas.ts';
 import type { OwnedAreaContext } from './authority/register.ts';
 import type { ConversationSystem } from '../conversation/contracts.ts';
 import type { ConversationViewRuntime } from '../conversation/views/routes.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import { createConversationRoutes } from '../conversation/routes.ts';
-import { createIdlePublicationAuthority } from '../conversation/publication/authority.ts';
-import type { SignalPublicationAuthority } from '../conversation/publication/authority.ts';
+import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 
 import {
   compose_background_services,
@@ -38,7 +29,6 @@ import type {
   BackgroundCompositionContext,
   BackgroundServiceFactory,
   ComposedBackgroundService,
-  RunningServer,
 } from '../lifecycle/contracts.ts';
 export type {
   BackgroundCompositionContext,
@@ -52,7 +42,9 @@ export interface ConversationCompositionContext extends Omit<
   'assert_database_owned'
 > {
   record: ConversationViewRuntime;
+  publication: SignalPublicationCoordinator;
   require_runtime_ownership(): void;
+  revoke_signal(): void;
 }
 export interface TestCompositionContext extends ConversationCompositionContext {
   core?: SqliteProcessConversationSystem;
@@ -74,24 +66,45 @@ export interface ServerOptions {
   notificationDelivery?: BackgroundServiceFactory;
   stallChecker?: BackgroundServiceFactory;
   conversationSystem?: ConversationSystem;
-  createSignalAuthority?: (database: Database) => SignalPublicationAuthority;
+  /** Test-host projection bootstrap, after reconciliation and before publication. */
+  beforePublication?: (database: Database) => void;
 }
-export async function startServer(options: ServerOptions = {}): Promise<RunningServer> {
+export interface StartedServer {
+  readonly address: string;
+  close(): Promise<void>;
+}
+export async function startServer(options: ServerOptions = {}): Promise<StartedServer> {
   const config = loadConfig();
   config.db_path = assert_test_database_path(config.db_path);
   const ownership = acquireRuntimeOwnership(config.db_path);
+  const areas = createAreasRuntime();
   let dispatcher: ReturnType<typeof acquireLock> = null;
   let database: ReturnType<typeof createDatabase> | undefined;
   let background: ComposedBackgroundService | undefined;
-  let signalAuthority: SignalPublicationAuthority | undefined;
+  let publication: SignalPublicationCoordinator | undefined;
   let core: SqliteProcessConversationSystem | undefined;
   let app: FastifyInstance | undefined;
   let ownership_current = true;
+  let signalRevoked = false;
   let closing: Promise<void> | undefined;
-  const signalHandlers = new Map<NodeJS.Signals, () => void>();
+  const requireOwnership = () => {
+    if (!ownership_current) throw new Error('the conversation runtime is shut down');
+  };
+  const revokeSignal = () => {
+    if (signalRevoked) return;
+    signalRevoked = true;
+    publication?.invalidate('shutdown');
+  };
+  const onSignal = () => {
+    void close().catch((error) => {
+      console.error(error);
+      process.exitCode = 1;
+    });
+  };
   const close = (): Promise<void> => {
     if (closing) return closing;
-    signalAuthority?.invalidate('shutdown');
+    revokeSignal();
+    areas.closeSubscriptions();
     const deadline = performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
     const failures: unknown[] = [];
     const attempt = async (operation: () => unknown) => {
@@ -103,31 +116,40 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
     };
     closing = (async () => {
       await attempt(() => background?.close({ deadline }));
-      // Core and record settlement have no deadline contract. Retain ownership
-      // through their final writes; the total provider bound remains open.
+      // Loop cancellation shares one deadline. Core and record settlement have
+      // no deadline contract, so retain ownership through their final writes.
       await attempt(() => core?.shutdown());
-      await attempt(() => closeAreas());
+      await attempt(() => areas.closeRecord());
       await attempt(() => app?.close());
+      await attempt(() => areas.detachNavigation());
       if (failures.length)
         throw new AggregateError(failures, 'Server shutdown failed; ownership retained');
       ownership_current = false;
       database?.close();
       dispatcher?.close();
       ownership.close();
-      for (const [signal, handler] of signalHandlers) process.removeListener(signal, handler);
+      process.off('SIGTERM', onSignal);
+      process.off('SIGINT', onSignal);
     })();
     return closing;
   };
   try {
     const changes = new ChangeSignal();
     const clock = buildClock(config);
-    database = createDatabase(config.db_path, { commitSteps, onChange: () => changes.emit() });
-    prepareAreas(database);
-    signalAuthority = (options.createSignalAuthority ?? createIdlePublicationAuthority)(database);
+    database = createDatabase(config.db_path, {
+      commitSteps: areas.commitSteps,
+      onChange: () => changes.emit(),
+    });
+    publication = new SignalPublicationCoordinator({
+      database,
+      require_runtime_ownership: requireOwnership,
+    });
+    areas.bindPublication(publication);
+    areas.prepare(database);
     if (!config.test_mode && config.dispatch_enabled) {
       dispatcher = acquireLock(config.dispatcher_lock_path);
     }
-    initializeAreas(database, signalAuthority, config, clock, () => {
+    areas.initialize(database, config, clock, () => {
       if (dispatcher_admitted(config, dispatcher !== null)) {
         reconcile_background_attention({ database: database! });
       }
@@ -137,21 +159,25 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
       config,
       clock,
       changes,
-      record: getConversationRuntime(),
-      require_runtime_ownership() {
-        if (!ownership_current) throw new Error('the conversation runtime is shut down');
-      },
+      record: areas.getRuntime(),
+      publication,
+      require_runtime_ownership: requireOwnership,
+      revoke_signal: revokeSignal,
     };
     core = options.createConversationCore?.(context);
     const conversationSystem = options.conversationSystem ?? core;
     if (core) {
       const current = core;
-      bindConversationRuntimeFacts(async (conversation_id) => ({
+      areas.bindRuntimeFacts(async (conversation_id) => ({
         running: await current.is_running(conversation_id),
         permissions: [...(await current.pending_permission_ask_ids(conversation_id))],
         inputs: [...(await current.pending_user_input_request_ids(conversation_id))],
       }));
     }
+    publication.bind_runtime((conversation_id) => core?.runtime_turn(conversation_id) ?? null);
+    options.beforePublication?.(database);
+    publication.initialize();
+    areas.attachNavigation();
     const testContext: TestCompositionContext = { ...context, core, conversationSystem };
     const testAreas =
       typeof options.testAreas === 'function'
@@ -162,7 +188,7 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
       config,
       clock,
       changes,
-      signalAuthority,
+      signalAuthority: publication,
       conversationSystem,
       assert_database_owned: context.require_runtime_ownership,
     };
@@ -178,7 +204,7 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
       database,
       changes,
       areas: [
-        ...areas,
+        ...areas.areas,
         ...(core
           ? [
               {
@@ -190,34 +216,28 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
         ...testAreas,
       ],
       clock,
-      signalAuthority,
+      signalAuthority: publication,
       conversationSystem,
       workspaceAdmission: conversationSystem?.workspace_admission,
     });
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-      const handler = () => {
-        void close().catch((error) => {
-          console.error(error);
-          process.exitCode = 1;
-        });
-      };
-      signalHandlers.set(signal, handler);
-      process.once(signal, handler);
+      process.once(signal, onSignal);
     }
     await background.start();
     if (closing) {
       await closing;
-      return { close };
+      throw new Error('Server closed during startup');
     }
     const inherited = process.env.PLAN_SERVER_LISTENER_FD;
     if (inherited !== undefined) {
       const fd = Number(inherited);
       if (!Number.isInteger(fd) || fd < 0) throw new Error('invalid PLAN_SERVER_LISTENER_FD');
-      await app.listen({ fd } as FastifyListenOptions & { fd: number });
+      const address = await app.listen({ fd } as FastifyListenOptions & { fd: number });
+      return { address, close };
     } else {
-      await app.listen({ host: '127.0.0.1', port: config.port });
+      const address = await app.listen({ host: '127.0.0.1', port: config.port });
+      return { address, close };
     }
-    return { close };
   } catch (error) {
     try {
       await close();

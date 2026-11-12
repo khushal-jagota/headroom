@@ -16,4 +16,4 @@ another provider write or committed append. This is no longer an intentional dif
 `publication failure after receipt commit does not append or deliver twice`. It also proves
 that a repeated sender identity returns its receipt and later backend news still persists.
 
-- Projection rebuild uses TEMP tables on the single writer connection in batches of 500 events. Python uses a second connection. Results match. Sustained-load latency is not measured.
+- Projection rebuild uses TEMP tables on the single writer connection in batches of 500 events. Python uses a second connection. Results match. See the [accepted performance difference and follow-up](../DEVIATIONS.md). Concurrent full-server latency remains unmeasured.
