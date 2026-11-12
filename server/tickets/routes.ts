@@ -11,10 +11,11 @@ import { configured_worker_type_registry } from '../worker_types/configuration.t
 import { custom_workflow_from_dict } from '../worker_types/store.ts';
 import * as data from './data/index.ts';
 import { TITLE_MAX_CHARS } from './contracts.ts';
-import type { TicketEdit } from './contracts.ts';
+import type { TicketEdit, ReviewTransferNotice } from './contracts.ts';
 import type { WorkflowDefinition } from '../worker_types/contracts.ts';
 import { ticket_json, ticket_creation_json, ticket_detail, list_tickets, list_ticket_summaries, copy_text, review_view } from './views.ts';
 import type { Json } from './views.ts';
+import { notify_review_transfers } from './review_transfer.ts';
 import { workspace_ticket, workspace_field } from './workspace/views.ts';
 import { add_work_attention, read_running_conversation_count } from '../work_attention.ts';
 
@@ -54,7 +55,7 @@ export function write_create_ticket(sql:TransactionSql,raw:Json,principal:Princi
   const ticket=data.create_ticket(sql,{title,principal,now,title_max_chars:TITLE_MAX_CHARS,brief,project_id:project?.id??(manager.kind==='manager'?null:'project_other'),deadline,manager_id:manager.kind==='manager'?manager.id:null,manager_kind:manager.kind,worker_type,workflow,locale,employee_backend,employee_launch_model,employee_launch_reasoning_effort,reasoning_effort_is_set:'employee_launch_reasoning_effort' in raw,blocked_by_ticket_ids,stated_ceiling,stated_holder:parse_principal(raw.ceiling_holder,'ceiling_holder')});
   return ticket_creation_json(sql,ticket,now);
 }
-export function write_patch_ticket(sql:TransactionSql,ticket_id:string,body:Json,principal:Principal,now:number):Json {
+export function write_patch_ticket(sql:TransactionSql,ticket_id:string,body:Json,principal:Principal,now:number,review_transfer_notices:ReviewTransferNotice[]=[]):Json {
   const recognized=['title','deadline','project','project_id','manager','recap','field_values','ceiling','ceiling_holder'];
   for(const field of Object.keys(body))if(!recognized.includes(field))throw new PlannerError('validation','unknown ticket field',{field});
   if(!Object.keys(body).length)throw new PlannerError('validation','no ticket fields to update');
@@ -72,7 +73,7 @@ export function write_patch_ticket(sql:TransactionSql,ticket_id:string,body:Json
     for(const [field,value] of Object.entries(raw)){if(typeof value!=='string')throw new PlannerError('validation','a field value must be a string',{field});validate_field(definition,field);values[field]=value;}
     edit.field_values=values;
   }
-  return ticket_json(data.edit_ticket(sql,ticket_id,{edit,title_max_chars:TITLE_MAX_CHARS,principal,now}),now);
+  return ticket_json(data.edit_ticket(sql,ticket_id,{edit,title_max_chars:TITLE_MAX_CHARS,principal,now,review_transfer_notices}),now);
 }
 function query_values(request:FastifyRequest):URLSearchParams {return new URL(request.url,'http://panels.invalid').searchParams;}
 function boolean_query(value:string|null,key:string):boolean|null {
@@ -118,7 +119,18 @@ export const routes:FastifyPluginAsync<AreaServices>=async(app,services)=> {
     if(t.conversation_id!==null){const owner=data.read_ticket_by_conversation_id(sql,t.conversation_id);if(owner.id!==t.id)throw new PlannerError('validation','ticket durable session is owned by another ticket',{ticket_id:t.id,conversation_id:t.conversation_id,owner_ticket_id:owner.id});}
     return ticket_detail(sql,t.id,services.clock.nowUnix(),services.config.db_path);
   }));
-  app.patch<{Params:{ticket_id:string}}>('/tickets/:ticket_id',async(request,reply)=>{if(!dictionaryBody(request.body,reply))return;const raw=request.body;return services.database.write(tx=>write_patch_ticket(tx,request.params.ticket_id,raw,services.identity(request).principal,services.clock.nowUnix()));});
+  app.patch<{ Params: { ticket_id: string } }>('/tickets/:ticket_id', async (request, reply) => {
+    if (!dictionaryBody(request.body, reply)) return;
+    const raw = request.body;
+    const notices: ReviewTransferNotice[] = [];
+    const now = services.clock.nowUnix();
+    const result = services.database.write(tx => write_patch_ticket(tx, request.params.ticket_id,
+      raw, services.identity(request).principal, now, notices));
+    if (services.conversationSystem) {
+      await notify_review_transfers(services.conversationSystem, services.database, notices, { now });
+    }
+    return result;
+  });
   app.post<{Params:{ticket_id:string}}>('/tickets/:ticket_id/propose',async(request,reply)=>{
     if(!dictionaryBody(request.body,reply))return;
     const principal=services.identity(request).principal,id=request.params.ticket_id;

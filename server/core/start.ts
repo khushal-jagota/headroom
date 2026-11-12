@@ -1,5 +1,5 @@
 import type { FastifyListenOptions } from 'fastify';
-import { areas, commitSteps, initializeAreas, closeAreas } from '../areas.ts';
+import { areas, commitSteps, initializeAreas, prepareAreas, closeAreas } from '../areas.ts';
 import { createApp } from '../app.ts';
 import { loadConfig } from './config.ts';
 import { buildClock } from './clock.ts';
@@ -28,6 +28,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
   try {
     const changes = new ChangeSignal();
     database = createDatabase(config.db_path, { commitSteps, onChange: () => changes.emit() });
+    prepareAreas(database);
     signalAuthority = (options.createSignalAuthority ?? createIdlePublicationAuthority)(database);
     initializeAreas(database, signalAuthority, config);
     if (!config.test_mode && config.dispatch_enabled) {

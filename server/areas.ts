@@ -1,3 +1,7 @@
+import { conversation_routes } from './tickets/conversation_routes.ts';
+import { routes as membership } from './membership/routes.ts';
+import { configure_conversation_start } from './runtime/conversation_start.ts';
+import { configure_chief_resources } from './worker_settings/resource_versions.ts';
 import { audit_ticket_registry_integrity } from './tickets/data/index.ts';
 import { routes as tickets } from './tickets/routes.ts';
 import { finalize as artifactLinks } from './files/catalog/links.ts';
@@ -14,9 +18,14 @@ import { createNavigationRuntime } from './navigation/index.ts';
 import { idle_publication } from './conversation/publication/idle.ts';
 
 const navigation = createNavigationRuntime(idle_publication);
+/** Diagnose retained Tickets before the first projection-producing commit. */
+export const prepareAreas = (database: Database): void => {
+  database.write(tx => audit_ticket_registry_integrity(tx, {startup:true}));
+};
 export const initializeAreas = (database: Database, authority: SignalNavigationAuthority, config: Config): void => {
   initialize_worker_settings(database, config);
-  database.write(tx => audit_ticket_registry_integrity(tx, {startup:true}));
+  configure_conversation_start(database, config);
+  configure_chief_resources(config);
   navigation.initialize(database, authority);
 };
 export const closeAreas = (): void => navigation.close();
@@ -24,6 +33,8 @@ export const closeAreas = (): void => navigation.close();
 /** Add one area registration here. Core has no area identity branches. */
 export const areas: readonly Area[] = [
   { prefix: '/api', routes: tickets },
+  { prefix: '/api', routes: conversation_routes },
+  { prefix: '/api', routes: membership },
   { prefix: '/api', routes: projects },
   { prefix: '/api', routes: ideas },
   { prefix: '/api', routes: workerSettings },
