@@ -1,0 +1,557 @@
+{
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/tickets/",
+    "src/planner/core/ticket_blocks.py",
+    "src/planner/work_attention.py",
+    "src/planner/attention/history.py",
+    "src/planner/notifications/attention.py",
+    "src/planner/manager_wakes/data.py",
+    "src/planner/files/catalog/links.py"
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Unrelated Manager",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "manager": "id"
+      }
+    }
+  ],
+  "requests": [
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Lifecycle proof",
+        "worker_type": "coding",
+        "brief": "Agreed brief",
+        "ceiling": "needs_what_changes",
+        "ceiling_holder": {
+          "kind": "owner",
+          "id": "owner"
+        }
+      },
+      "capture": {
+        "ticket": "id"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Blocked proof",
+        "worker_type": "coding",
+        "blocked_by_ticket_ids": [
+          "${ticket}"
+        ]
+      },
+      "capture": {
+        "blocked": "id"
+      }
+    },
+    {
+      "area": "evidence",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22blocked%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+      "status": 200,
+      "capture": {
+        "blocked_window": "content.windows.0"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "GET",
+      "path": "/api/tickets?id=${blocked}&detail=full",
+      "status": 200
+    },
+    {
+      "area": "tickets",
+      "method": "GET",
+      "path": "/api/tickets?id=${ticket}&detail=full",
+      "status": 200
+    },
+    {
+      "area": "tickets",
+      "method": "GET",
+      "path": "/api/tickets/${ticket}/workspace",
+      "status": 200
+    },
+    {
+      "area": "tickets",
+      "method": "GET",
+      "path": "/api/tickets/${ticket}/workspace/fields/brief",
+      "status": 200
+    },
+    {
+      "area": "tickets",
+      "method": "GET",
+      "path": "/api/tickets/${ticket}/worker-self",
+      "status": 200,
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "PATCH",
+      "path": "/api/tickets/${ticket}",
+      "status": 200,
+      "json": {
+        "title": "Renamed lifecycle",
+        "recap": "Current recap"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/propose",
+      "status": 200,
+      "json": {
+        "body": "Review [artifact](/files/tickets/${ticket}/proof.md)"
+      },
+      "capture": {
+        "rev": "pending_proposal.revision",
+        "old_revision": "pending_proposal.revision"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "evidence",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+      "status": 200,
+      "capture": {
+        "owner_approval_window": "content.windows.0"
+      }
+    },
+    {
+      "area": "evidence",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22review%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+      "status": 200,
+      "capture": {
+        "review_window": "content.windows.0"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/reject",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/propose",
+      "status": 200,
+      "json": {
+        "body": "Revised [artifact](/files/tickets/${ticket}/proof.md)"
+      },
+      "capture": {
+        "rev": "pending_proposal.revision"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/accept/what_changes",
+      "status": 400,
+      "json": {
+        "expected_proposal_revision": "${old_revision}",
+        "next_ceiling": "needs_implementation",
+        "next_holder": {
+          "kind": "owner",
+          "id": "owner"
+        }
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/accept/what_changes",
+      "status": 200,
+      "json": {
+        "expected_proposal_revision": "${rev}",
+        "next_ceiling": "needs_implementation",
+        "next_holder": {
+          "kind": "owner",
+          "id": "owner"
+        }
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "PATCH",
+      "path": "/api/tickets/${ticket}",
+      "status": 200,
+      "json": {
+        "field_values": {
+          "what_changes": "Corrected [artifact](/files/tickets/${ticket}/corrected.md) and ![image](/files/tickets/${ticket}/image.png).\n\n<div>\n[Ignored HTML block](/files/tickets/${ticket}/ignored.md)\n</div>\n\n[Preview](#/preview?source=ticket&ticket=${ticket}&path=a?b.md)"
+        }
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/backlog",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/resume",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/propose",
+      "status": 200,
+      "json": {
+        "body": "implementation proof"
+      },
+      "capture": {
+        "rev": "pending_proposal.revision"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/accept/implementation",
+      "status": 200,
+      "json": {
+        "expected_proposal_revision": "${rev}",
+        "next_ceiling": "needs_consequences",
+        "next_holder": {
+          "kind": "owner",
+          "id": "owner"
+        }
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/propose",
+      "status": 200,
+      "json": {
+        "body": "consequences proof"
+      },
+      "capture": {
+        "rev": "pending_proposal.revision"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/accept/consequences",
+      "status": 200,
+      "json": {
+        "expected_proposal_revision": "${rev}",
+        "next_ceiling": "done",
+        "next_holder": {
+          "kind": "owner",
+          "id": "owner"
+        }
+      }
+    },
+    {
+      "area": "evidence",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22done%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+      "status": 200,
+      "capture": {
+        "done_window": "content.windows.0"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "GET",
+      "path": "/api/tickets/${ticket}/copy-text",
+      "status": 200
+    },
+    {
+      "area": "tickets",
+      "method": "GET",
+      "path": "/api/review",
+      "status": 200
+    },
+    {
+      "area": "tickets",
+      "method": "GET",
+      "path": "/api/tickets?detail=summary",
+      "status": 200
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Parked proof",
+        "worker_type": "coding",
+        "brief": "Park this",
+        "ceiling": "needs_brief",
+        "ceiling_holder": {
+          "kind": "owner",
+          "id": "owner"
+        }
+      },
+      "capture": {
+        "parked": "id"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Chief review proof",
+        "worker_type": "coding",
+        "brief": "Chief review",
+        "ceiling": "needs_brief",
+        "ceiling_holder": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "chief_review": "id"
+      }
+    },
+    {
+      "area": "evidence",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22status_awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+      "status": 200,
+      "capture": {
+        "agent_approval_window": "content.windows.0"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "GET",
+      "path": "/api/review",
+      "status": 200
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${parked}/backlog",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "evidence",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22backlog%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+      "status": 200,
+      "capture": {
+        "backlog_window": "content.windows.0"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "GET",
+      "path": "/api/review",
+      "status": 200
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${parked}/resume",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Assigned proof",
+        "worker_type": "coding",
+        "workflow": {
+          "label": "User gate",
+          "guidance": "",
+          "stages": [
+            {
+              "id": "needs_brief",
+              "label": "Brief",
+              "gating_field": "brief",
+              "is_terminal": false,
+              "ownership_mode": "user",
+              "instructions": ""
+            },
+            {
+              "id": "needs_consequences",
+              "label": "Consequences",
+              "gating_field": "consequences",
+              "is_terminal": false,
+              "ownership_mode": "worker",
+              "instructions": ""
+            },
+            {
+              "id": "done",
+              "label": "Done",
+              "gating_field": null,
+              "is_terminal": true,
+              "ownership_mode": null,
+              "instructions": ""
+            }
+          ],
+          "fields": [
+            {
+              "id": "brief",
+              "label": "Brief"
+            },
+            {
+              "id": "consequences",
+              "label": "Consequences"
+            }
+          ]
+        }
+      },
+      "capture": {
+        "assigned": "id"
+      }
+    },
+    {
+      "area": "evidence",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22assigned%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+      "status": 200,
+      "capture": {
+        "assigned_window": "content.windows.0"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${assigned}/complete/brief",
+      "status": 200,
+      "json": {
+        "body": "Completed by owner"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "GET",
+      "path": "/api/tickets?id=${blocked}&detail=full",
+      "status": 200
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${parked}/propose",
+      "status": 400,
+      "json": {
+        "body": "Other Worker refused"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${parked}/propose",
+      "status": 400,
+      "json": {
+        "body": "Chief refused"
+      },
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${parked}/propose",
+      "status": 400,
+      "json": {
+        "body": "Manager refused"
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 400,
+      "json": {
+        "title": "Invalid done",
+        "worker_type": "coding",
+        "ceiling": "done"
+      }
+    },
+    {
+      "area": "tickets",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/propose",
+      "status": 400,
+      "json": {
+        "body": "Owner cannot propose"
+      }
+    }
+  ],
+  "probes": [
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22status_awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22assigned%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22backlog%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22blocked%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22done%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22empty%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22waiting_to_closeout%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22review%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1%7D%5D%7D",
+    "/api/tickets/${ticket}/workspace",
+    "/api/resource-body?key=/api/tickets/${ticket}/workspace",
+    "/api/resource-body?key=/api/tickets/${ticket}/workspace/fields/brief",
+    "/api/resource-versions?keys=%5B%22%2Fapi%2Ftickets%2F${ticket}%2Fworkspace%22%2C%20%22%2Fapi%2Ftickets%2F${ticket}%2Fworkspace%2Ffields%2Fbrief%22%2C%20%22%2Fapi%2Funknown%22%5D",
+    "/api/resource-body?key=/api/tickets/${ticket}/workspace/fields/what_changes"
+  ],
+  "candidate": "typescript",
+  "report_captures": [
+    "blocked_window",
+    "owner_approval_window",
+    "review_window",
+    "done_window",
+    "agent_approval_window",
+    "backlog_window",
+    "assigned_window"
+  ]
+}
