@@ -4,7 +4,7 @@ struct ReviewView: View {
     let savedWork: ReviewSavedWork
     var isActive = true
     @State private var appeared = false
-    private var active: Bool { isActive && appeared && scenePhase == .active }
+    private var active: Bool { isActive && appeared && scenePhase == .active && !store.serverUnreachable }
     var openTicket: ((String) -> Void)? = nil
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
