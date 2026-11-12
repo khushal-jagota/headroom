@@ -39,7 +39,7 @@ export async function createApp(config: Config, services: AppServices): Promise<
   const request_lifetime = install_request_lifetime(app, services.request_lifetime);
   const changes = services.changes ?? new ChangeSignal();
   installCompatibility(app);
-  installMiddleware(app, config, services.workspaceAdmission, request_lifetime);
+  installMiddleware(app, config, services.workspaceAdmission, undefined, request_lifetime);
   const configuredRoot = process.env.PLAN_APP_ROOT;
   const root = configuredRoot
     ? resolve(

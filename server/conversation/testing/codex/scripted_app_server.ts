@@ -79,29 +79,60 @@ function nativeEnded(status = 'completed', error?: string): void {
     },
   });
 }
+// Retained observations name these methods only. Empty params are synthetic, not native payload evidence.
+function unconsumedNotifications(...methods: string[]): void {
+  for (const method of methods) send({ method, params: {} });
+}
 function nativeText(text: string): void {
-  nativeNotification('item/agentMessage/delta', { itemId: `message-${nativeTurn}`, delta: text });
+  if (text === 'malformed output') {
+    const user = { type: 'userMessage', id: 'synthetic-user' };
+    nativeNotification('item/started', { item: user });
+    nativeNotification('item/completed', { item: user });
+    nativeNotification('item/started', {
+      item: { type: 'agentMessage', id: `message-${nativeTurn}`, text: '' },
+    });
+  }
+  const chunks = text === 'malformed output' ? ['malformed ', 'output'] : [text];
+  for (const delta of chunks)
+    nativeNotification('item/agentMessage/delta', { itemId: `message-${nativeTurn}`, delta });
+  if (text === 'malformed output') unconsumedNotifications('turn/moderationMetadata');
   nativeNotification('item/completed', {
     item: { type: 'agentMessage', id: `message-${nativeTurn}`, text },
   });
+  if (text === 'malformed output')
+    unconsumedNotifications(
+      'account/rateLimits/updated',
+      'thread/readState/changed',
+      'thread/status/changed',
+    );
 }
 function coreMessage(message: Record<string, unknown>): boolean {
   if (!coreProof) return false;
   const params = (message.params ?? {}) as Record<string, unknown>;
   const answer = (result: unknown) => send({ id: message.id, result });
-  if (message.method === 'initialize') answer({ userAgent: 'scripted-codex' });
-  else if (message.method === 'initialized') {
+  if (message.method === 'initialize') {
+    answer({ userAgent: 'scripted-codex' });
+    // Only the method was observed. Its payload stays synthetic and unconsumed.
+    send({ method: 'remoteControl/status/changed', params: {} });
+  } else if (message.method === 'initialized') {
     /* one-way handshake */
-  } else if (message.method === 'thread/start')
+  } else if (message.method === 'thread/start') {
     answer({ thread: { id: nativeThread, ephemeral: false } });
-  else if (message.method === 'thread/resume') {
+    unconsumedNotifications('thread/started');
+  } else if (message.method === 'thread/resume') {
     nativeState.resumes += 1;
     saveNative();
+    unconsumedNotifications('deprecationNotice', 'thread/status/changed');
     answer({
       thread: {
         id: nativeState.resumes === 1 ? nativeThread : 'substituted-thread',
         ephemeral: false,
       },
+    });
+    // Native resume can announce historical usage before the next turn starts.
+    nativeNotification('thread/tokenUsage/updated', {
+      turnId: `turn-${nativeState.nextTurn}`,
+      tokenUsage: { total: { inputTokens: 11, outputTokens: 5, cachedInputTokens: 2 } },
     });
   } else if (message.method === 'skills/list')
     answer({
@@ -244,7 +275,10 @@ function coreMessage(message: Record<string, unknown>): boolean {
       send(started);
     }
     answer({ turn: { id: nativeTurn, status: 'inProgress' } });
+    unconsumedNotifications('thread/settings/updated', 'thread/status/changed');
+    // Ordinary cases retain receipt-before-start ordering, alongside the early plain-case lifecycle.
     if (scenario !== 'plain') send(started);
+    unconsumedNotifications('account/updated');
     if (['steer-base', 'steer-race-base', 'queue-base', 'interrupt-base'].includes(scenario))
       return true;
     if (scenario === 'permission') {
