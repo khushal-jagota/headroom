@@ -68,8 +68,13 @@ export async function start_production_server(
         save_attempt: context.publication.save_attempt,
         on_shutdown: context.revoke_signal,
         on_held_model_change: (conversation_id, model, reasoning_effort) =>
-          write_held_ticket_configuration(context.database, conversation_id, model,
-            reasoning_effort, context.clock.nowUnix()),
+          write_held_ticket_configuration(
+            context.database,
+            conversation_id,
+            model,
+            reasoning_effort,
+            context.clock.nowUnix(),
+          ),
         publish_event: (event) => context.record.live_tail.publish_event(event),
         publish_frame: (id, frame) => context.record.live_tail.publish_frame(id, frame),
         publish_status_changed: (id) => context.record.live_tail.views.publish_status_changed(id),

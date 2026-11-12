@@ -12,7 +12,7 @@ export interface ProductionEnvironmentDependencies {
   readonly application_root: string;
   readonly node_executable: string;
 }
-/** Implemented by environments/production.ts. There is no successful missing adapter. */
+/** Production requires this explicit adapter. There is no successful missing adapter. */
 export type ProductionEnvironmentFactory = (
   context: TestCompositionContext,
   dependencies: ProductionEnvironmentDependencies,
