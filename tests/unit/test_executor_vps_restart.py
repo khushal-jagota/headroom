@@ -58,6 +58,7 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.db import connect, create_schema
 from planner.execution_configuration import PROTOCOL_VERSION
 from planner.execution_identity import ChildReference
+from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
 
 RECOVERY_TEXT = "Inspect the interrupted work and continue the current authorized step."
 
@@ -68,7 +69,7 @@ def _present_harness(
     """The retained-factory bench models a present executor, like server wiring does."""
     harness = _Harness(db_path, factory_wrapper=factory_wrapper)
     harness.system.start_admission.configure_destinations(
-        lambda destination: destination in {"home", "macos"}
+        lambda destination: destination in {HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID}
     )
     return harness
 
