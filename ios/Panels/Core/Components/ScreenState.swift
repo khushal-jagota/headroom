@@ -49,7 +49,6 @@ struct ServerUnreachableView: View {
                 .accessibilityIdentifier("server-unreachable.retry")
         }
         .panelsScreen()
-        .accessibilityIdentifier("server-unreachable")
     }
 }
 

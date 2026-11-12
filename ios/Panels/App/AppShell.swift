@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct AppShell: View {
     @Environment(AppStore.self) private var store
@@ -13,12 +14,10 @@ struct AppShell: View {
     @State private var morePath: [AppRoute] = []
 
     var body: some View {
-        // Keep every route mounted while a separate accessibility container hides
-        // the UIKit-backed tabs and their descendants beneath the connection cover.
-        ZStack { tabs }
+        // Keep routes mounted. Each stack hides the containing UIKit tab controller
+        // from accessibility while the separate connection cover remains available.
+        tabs
         .allowsHitTesting(!store.serverUnreachable)
-        .accessibilityElement(children: store.serverUnreachable ? .ignore : .contain)
-        .accessibilityHidden(store.serverUnreachable)
         .overlay {
             if store.serverUnreachable {
                 ServerUnreachableView { await store.refresh() }
@@ -99,17 +98,20 @@ struct AppShell: View {
                 })
                     .navigationDestination(for: AppRoute.self) { detail($0) }
             }
+                .background(TabAccessibilityIsolation(isHidden: store.serverUnreachable))
                 .tabItem { Label("Review", systemImage: "checkmark.circle") }
                 .badge(reviewBadge).tag(AppTab.review)
             NavigationStack(path: $workspacePath) {
                 WorkspaceView()
                     .navigationDestination(for: AppRoute.self) { detail($0) }
             }
+                .background(TabAccessibilityIsolation(isHidden: store.serverUnreachable))
                 .tabItem { Label("Workspace", systemImage: "rectangle.3.group") }.tag(AppTab.workspace)
             NavigationStack(path: $morePath) {
                 MoreView()
                     .navigationDestination(for: AppRoute.self) { detail($0) }
             }
+                .background(TabAccessibilityIsolation(isHidden: store.serverUnreachable))
                 .tabItem { Label { Text("More") } icon: { Image(uiImage: moreTabImage) } }.tag(AppTab.more)
         }
     }
@@ -152,5 +154,60 @@ struct AppShell: View {
 
     private func detail(_ route: AppRoute) -> some View {
         RouteDestination(route: route)
+    }
+}
+
+/// SwiftUI accessibility traits do not hide the UIKit navigation and tab descendants.
+/// A stack-local probe changes only its containing tab controller, without replacing views.
+private struct TabAccessibilityIsolation: UIViewControllerRepresentable {
+    let isHidden: Bool
+
+    func makeUIViewController(context: Context) -> Controller { Controller(isHidden: isHidden) }
+
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.contentIsHidden = isHidden
+        controller.applyIsolation()
+    }
+
+    final class Controller: UIViewController {
+        var contentIsHidden: Bool
+
+        init(isHidden: Bool) {
+            contentIsHidden = isHidden
+            super.init(nibName: nil, bundle: nil)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override func loadView() {
+            let probe = AttachmentView()
+            probe.isUserInteractionEnabled = false
+            probe.onAttachment = { [weak self] in self?.applyIsolation() }
+            view = probe
+        }
+
+        override func didMove(toParent parent: UIViewController?) {
+            super.didMove(toParent: parent)
+            applyIsolation()
+        }
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            applyIsolation()
+        }
+
+        func applyIsolation() {
+            // Do not fall back to a hosting root: that also contains the cover.
+            guard let tabBarController else { return }
+            tabBarController.view.accessibilityElementsHidden = contentIsHidden
+        }
+    }
+
+    private final class AttachmentView: UIView {
+        var onAttachment: (() -> Void)?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window != nil { onAttachment?() }
+        }
     }
 }
