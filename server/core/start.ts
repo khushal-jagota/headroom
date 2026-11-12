@@ -1,5 +1,12 @@
 import type { FastifyListenOptions } from 'fastify';
-import { areas, commitSteps, initializeAreas, prepareAreas, closeAreas } from '../areas.ts';
+import {
+  areas,
+  commitSteps,
+  initializeAreas,
+  prepareAreas,
+  closeAreas,
+  composeAreaLoops,
+} from '../areas.ts';
 import { createApp } from '../app.ts';
 import { loadConfig } from './config.ts';
 import { buildClock } from './clock.ts';
@@ -9,8 +16,8 @@ import type { Database } from './database/index.ts';
 import { acquireRuntimeOwnership, acquireLock } from './locks/index.ts';
 
 import type { Area } from './authority/register.ts';
-import { ManagerWakeLoop } from '../manager_wakes/runtime.ts';
-import type { OwnedWakeContext } from '../manager_wakes/testing.ts';
+import type { AreaLoopOptions } from '../areas.ts';
+import type { OwnedAreaContext } from './authority/register.ts';
 import type { ConversationSystem } from '../conversation/contracts.ts';
 import { createIdlePublicationAuthority } from '../conversation/publication/authority.ts';
 import type { SignalPublicationAuthority } from '../conversation/publication/authority.ts';
@@ -19,9 +26,9 @@ import type { SignalPublicationAuthority } from '../conversation/publication/aut
 export interface ServerOptions {
   testAreas?: readonly Area[];
   /** Factories execute only after this process owns the database. */
-  ownedTestAreas?: readonly ((context: OwnedWakeContext) => Area)[];
+  ownedTestAreas?: readonly ((context: OwnedAreaContext) => Area)[];
   /** Lifecycle composition opts in explicitly. Ordinary startup never polls wakes. */
-  managerWakes?: boolean;
+  areaLoops?: AreaLoopOptions;
   conversationSystem?: ConversationSystem;
   createSignalAuthority?: (database: Database) => SignalPublicationAuthority;
 }
@@ -31,8 +38,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
   let dispatcher: ReturnType<typeof acquireLock> = null;
   let database: ReturnType<typeof createDatabase> | undefined;
   let ownsDatabase = true;
-  let managerWakes: ManagerWakeLoop | undefined;
-  let unsubscribeWakes: (() => void) | undefined;
+  let areaLoops: ReturnType<typeof composeAreaLoops> | undefined;
   let signalAuthority: SignalPublicationAuthority | undefined;
   try {
     const changes = new ChangeSignal();
@@ -50,21 +56,14 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     const ownedContext = {
       database,
       clock,
-      conversation_system: options.conversationSystem,
-      workspace_context: { db_path: config.db_path, workspace_root: config.workspace_root },
+      config,
+      changes,
+      signalAuthority,
+      conversationSystem: options.conversationSystem,
       assert_database_owned,
     };
     const ownedTestAreas = (options.ownedTestAreas ?? []).map((factory) => factory(ownedContext));
-    if (options.managerWakes) {
-      if (!options.conversationSystem)
-        throw new Error('Manager wakes require a conversation system');
-      managerWakes = new ManagerWakeLoop({
-        ...ownedContext,
-        conversation_system: options.conversationSystem,
-      });
-      unsubscribeWakes = changes.subscribe(() => managerWakes?.wake());
-      managerWakes.start(config.tick_seconds);
-    }
+    areaLoops = composeAreaLoops(ownedContext, options.areaLoops);
     const app = await createApp(config, {
       database,
       changes,
@@ -78,8 +77,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     const close = () => {
       if (closing) return closing;
       signalAuthority?.invalidate('shutdown');
-      unsubscribeWakes?.();
-      return (closing = Promise.resolve(managerWakes?.stop())
+      return (closing = Promise.resolve(areaLoops?.stop())
         .then(() => closeAreas())
         .then(() => app.close())
         .finally(() => {
@@ -107,8 +105,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     }
   } catch (error) {
     signalAuthority?.invalidate('shutdown');
-    unsubscribeWakes?.();
-    await managerWakes?.stop();
+    await areaLoops?.stop();
     await closeAreas();
     database?.close();
     dispatcher?.close();

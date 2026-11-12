@@ -15,4 +15,4 @@ This encoder supplies the page paths' `ensure_ascii=False` form with ordinary sp
 
 Plain documents work without these dependencies. A held goal or chart requires its dependency explicitly. Empty goal or readings arrays are not evidence of rich behavior. The goals unit must compose the dependencies and rerun all six page routes with populated data.
 
-The wake loop remains behind `ServerOptions.managerWakes`, which defaults to off. The lifecycle unit controls later production composition and dispatch admission. Its test-only pass route is one owned factory entry in `test_host.ts`. That factory runs only after the server acquires database ownership.
+The wake loop remains behind `AreaLoopOptions.managerWakes` in `areas.ts` (passed through `ServerOptions.areaLoops`), which defaults to off. The lifecycle unit controls later production composition and dispatch admission. Its test-only pass route is one owned factory entry in `test_host.ts`. That factory runs only after the server acquires database ownership.

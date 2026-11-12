@@ -1,3 +1,5 @@
+import { ManagerWakeLoop } from './manager_wakes/runtime.ts';
+import type { OwnedAreaContext } from './core/authority/register.ts';
 import { routes as managers } from './managers/routes.ts';
 import { routes as messageDelivery } from './message_delivery/routes.ts';
 import { configure_manager_resources } from './managers/resource_versions.ts';
@@ -66,3 +68,34 @@ export const commitSteps: readonly CommitStep[] = [
   artifactLinks,
   navigation.navigationCommitStep,
 ];
+
+/** The lifecycle composer opts into production loops at this composition point. */
+export interface AreaLoopOptions {
+  managerWakes?: boolean;
+}
+export function composeAreaLoops(context: OwnedAreaContext, options: AreaLoopOptions = {}) {
+  let wakes: ManagerWakeLoop | undefined;
+  let unsubscribe: (() => void) | undefined;
+  if (options.managerWakes) {
+    context.assert_database_owned();
+    if (!context.conversationSystem) throw new Error('Manager wakes require a conversation system');
+    wakes = new ManagerWakeLoop({
+      database: context.database,
+      clock: context.clock,
+      conversation_system: context.conversationSystem,
+      assert_database_owned: context.assert_database_owned,
+      workspace_context: {
+        db_path: context.config.db_path,
+        workspace_root: context.config.workspace_root,
+      },
+    });
+    unsubscribe = context.changes.subscribe(() => wakes?.wake());
+    wakes.start(context.config.tick_seconds);
+  }
+  return {
+    async stop(): Promise<void> {
+      unsubscribe?.();
+      await wakes?.stop();
+    },
+  };
+}
