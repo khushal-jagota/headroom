@@ -169,10 +169,34 @@ def test_stop_deadline_retains_uncertainty(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr("planner.worker_supervision.get_platform_adapter", lambda: _Adapter(native))
     monkeypatch.setattr(config, "STOP_SECONDS", 0.06)
     monkeypatch.setattr(config, "TERM_SECONDS", 0.02)
-    started = time.monotonic()
+
+    class Clock:
+        now = 100.0
+
+        def monotonic(self) -> float:
+            return self.now
+
+        def sleep(self, duration: float) -> None:
+            self.now += duration
+
+    clock = Clock()
+    monkeypatch.setattr("planner.worker_supervision.time", clock)
+    monkeypatch.setattr("planner.worker_supervision.records.time", clock)
+    phase_times: list[float] = []
+    original_signal = native.signal
+
+    def observed_signal(process: WorkerProcess, signum: int, deadline: float) -> bool:
+        phase_times.append(clock.monotonic())
+        return original_signal(process, signum, deadline)
+
+    monkeypatch.setattr(native, "signal", observed_signal)
+    started = clock.monotonic()
     result = stop_record(path)
-    assert not result.complete and time.monotonic() - started < 0.3
+    assert not result.complete
+    assert result.reason == "Worker stop deadline expired"
+    assert clock.monotonic() - started == pytest.approx(config.STOP_SECONDS)
     assert [sig for _, sig in native.signals] == [signal.SIGTERM, signal.SIGKILL]
+    assert phase_times == pytest.approx([started, started + config.TERM_SECONDS])
     assert records.read(path)["state"] == "not_proven"
     assert not inspect_record(path).complete
 
