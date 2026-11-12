@@ -12,6 +12,9 @@ use the local filesystem and bounded ffprobe. The probe owns a detached process
 group, stops it on abort or limit failure, joins its exit, and closes its streams.
 Tests inject only the boundary that their case needs to control.
 
+Storage uses the supplied database path's bare parent, like Python, without
+resolving a DB-file symlink: `<supplied-parent>/files/video-uploads`.
+
 The public intake methods mirror Python: `reserve(request)`, `status(upload_id)`,
 `cancel(upload_id)`, `transfer(upload_id, chunks)`, and `recover_and_cleanup()`.
 Transfer accepts an async iterable of byte arrays. Each incoming array is divided

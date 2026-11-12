@@ -5,7 +5,8 @@ import { open } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Database, ReadSql } from '../../core/database/contracts.ts';
-import { ServerLifecycleError } from '../../lifecycle/contracts.ts';
+import type { StopOptions } from '../../lifecycle/contracts.ts';
+import { observe_shutdown } from '../shutdown.ts';
 import type { KeptMessageFile } from '../message_files.ts';
 import { MEDIA_TYPE_SUFFIX } from '../record/message_files.ts';
 import { destination_from_json, destination_to_json, VideoUploadError } from './contracts.ts';
@@ -246,27 +247,17 @@ export class VideoUploadService {
     this.sealed = true;
   }
 
-  async drain(options: { deadline: number }): Promise<void> {
+  drain(options: StopOptions): Promise<void> {
     this.seal();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        Promise.allSettled([...this.transfers]),
-        new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(
-            () =>
-              reject(
-                new ServerLifecycleError(
-                  'Video transfers remain unfinished at the shutdown deadline.',
-                ),
-              ),
-            Math.max(0, (options.deadline - performance.now() / 1000) * 1000),
-          );
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
+    return observe_shutdown(
+      this.settled(),
+      options,
+      'Video transfers remain unfinished at the shutdown deadline.',
+    );
+  }
+
+  async settled(): Promise<void> {
+    while (this.transfers.size !== 0) await Promise.allSettled([...this.transfers]);
   }
 
   private async receive_transfer(

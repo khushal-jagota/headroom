@@ -26,7 +26,10 @@ from fastapi.testclient import TestClient
 from tests.compare.scripted.scripted_registry import ScriptedBackendRegistry
 from tests.e2e.conversation_signals_server import NoInstalledBackends
 from tests.e2e.ticket_model_controls import install_ticket_model_controls
-from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
+from tests.support.synthetic_homes import (
+    create_synthetic_homes,
+    synthetic_home_environment,
+)
 
 from planner.conversation import api
 from planner.conversation.backend_state import BackendStateStore
@@ -102,7 +105,9 @@ def fixture_cards() -> list[dict[str, Any]]:
                         "resolved_model_id": model,
                     }
                 ],
-                "reasoning_effort_options": [] if backend == "hermes" else ["medium", "high"],
+                "reasoning_effort_options": (
+                    [] if backend == "hermes" else ["medium", "high"]
+                ),
                 "default_model_id": model,
                 "default_reasoning_effort": None if backend == "hermes" else "medium",
                 "update_advisory": (
@@ -126,12 +131,17 @@ def fixture_cards() -> list[dict[str, Any]]:
 def card(value: dict[str, Any]) -> BackendSnapshot:
     raw = dict(value)
     raw["backend_key"] = Backend(raw["backend_key"])
-    raw["available_models"] = tuple(BackendModel(**model) for model in raw["available_models"])
+    raw["available_models"] = tuple(
+        BackendModel(**model) for model in raw["available_models"]
+    )
     raw["reasoning_effort_options"] = tuple(raw["reasoning_effort_options"])
     raw["diagnoses"] = tuple(raw["diagnoses"])
     if raw["identity"] is not None:
         raw["identity"] = BackendIdentity(
-            **{**raw["identity"], "status": BackendIdentityStatus(raw["identity"]["status"])}
+            **{
+                **raw["identity"],
+                "status": BackendIdentityStatus(raw["identity"]["status"]),
+            }
         )
     if raw["update_advisory"] is not None:
         advisory = raw["update_advisory"]
@@ -247,14 +257,21 @@ def test_unit19_backend_route_answers_and_rows(
             "json": {"enabled": False},
         },
         {"method": "GET", "path": "/api/conversation/backends"},
-        {"method": "POST", "path": "/api/conversation/backends", "json": {"ticket_id": ticket.id}},
+        {
+            "method": "POST",
+            "path": "/api/conversation/backends",
+            "json": {"ticket_id": ticket.id},
+        },
         {"method": "POST", "path": "/api/conversation/backends/refresh"},
         {"method": "POST", "path": "/api/conversation/backends/codex/update"},
         {"method": "GET", "path": "/api/conversation/backends/codex/sign-in"},
         {"method": "POST", "path": "/api/conversation/backends/codex/sign-in"},
         {"method": "POST", "path": "/api/conversation/backends/codex/sign-in"},
         {"method": "DELETE", "path": "/api/conversation/backends/codex/sign-in/stale"},
-        {"method": "DELETE", "path": "/api/conversation/backends/codex/sign-in/recorded"},
+        {
+            "method": "DELETE",
+            "path": "/api/conversation/backends/codex/sign-in/recorded",
+        },
         {"method": "GET", "path": "/api/conversation/backends/codex/sign-in"},
         {"method": "POST", "path": "/api/conversation/backends/claude/sign-in"},
         {
@@ -303,6 +320,14 @@ def test_unit19_backend_route_answers_and_rows(
             {"method": "GET", "path": "/api/conversation/backends"},
         ]
     )
+    requests.append(
+        {
+            "method": "POST",
+            "path": "/api/conversation/backends",
+            "json": {"ticket_id": ticket.id},
+            "headers": {"x-plan-actor": "worker"},
+        }
+    )
     usage: list[dict[str, Any]] = [
         {
             "backend_key": backend,
@@ -350,13 +375,18 @@ def test_unit19_backend_route_answers_and_rows(
 
     async def probe(key: Backend, machine: Any, **options: Any) -> BackendSnapshot:
         result = card(next(value for value in cards if value["backend_key"] == key))
-        return replace(result, version=environment.version) if key == Backend.codex else result
+        return (
+            replace(result, version=environment.version)
+            if key == Backend.codex
+            else result
+        )
 
     with (
         synthetic_home_environment(homes),
         patch("planner.conversation.snapshot.probe_backend", probe),
         patch(
-            "planner.conversation.snapshot.SubprocessBackendProbeEnvironment", NoInstalledBackends
+            "planner.conversation.snapshot.SubprocessBackendProbeEnvironment",
+            NoInstalledBackends,
         ),
     ):
         config = load_config(
@@ -374,7 +404,9 @@ def test_unit19_backend_route_answers_and_rows(
             config,
             FakeClock(now),
             lambda: connect(str(paths[0])),
-            backend_child_factories_for_test={key: registry.make_child for key in Backend},
+            backend_child_factories_for_test={
+                key: registry.make_child for key in Backend
+            },
         )
         runtime = SimpleNamespace(
             database_path=str(paths[0]),
@@ -405,12 +437,17 @@ def test_unit19_backend_route_answers_and_rows(
                     json=operation.get("json"),
                     headers=operation.get("headers"),
                 )
-                answers.append({"status": response.status_code, "body": response.json()})
+                answers.append(
+                    {"status": response.status_code, "body": response.json()}
+                )
         asyncio.run(registry.close())
     with closing(sqlite3.connect(paths[0])) as conn:
         conn.row_factory = sqlite3.Row
         tables = {
-            table: [dict(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")]
+            table: [
+                dict(row)
+                for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")
+            ]
             for table in (
                 "backend_model_enablement",
                 "backend_usage_snapshots",
@@ -435,7 +472,8 @@ def test_unit19_backend_route_answers_and_rows(
         400,
         400,
         400,
-    ] + [422] + [200] * 6
+    ] + [422] + [200] * 6 + [400]
+    assert answers[-1]["body"]["error"]["code"] == "agent_forbidden"
     spec = tmp_path / "spec.json"
     spec.write_text(
         json.dumps(
@@ -462,7 +500,9 @@ def test_unit19_backend_route_answers_and_rows(
                     "const spec=JSON.parse(readFileSync(process.argv[1],'utf8')); "
                     "process.stdout.write(JSON.stringify(await run(spec)));",
                     str(spec),
-                    str(ROOT / "server/conversation/snapshot/testing/http_comparison.ts"),
+                    str(
+                        ROOT / "server/conversation/snapshot/testing/http_comparison.ts"
+                    ),
                 ],
                 cwd=ROOT,
                 text=True,
@@ -480,5 +520,7 @@ def test_unit19_backend_route_answers_and_rows(
     if destination:
         folder = Path(destination)
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / "unit19-backend-routes.json").write_text(json.dumps(report, indent=2) + "\n")
+        (folder / "unit19-backend-routes.json").write_text(
+            json.dumps(report, indent=2) + "\n"
+        )
     assert actual == expected

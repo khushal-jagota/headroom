@@ -213,6 +213,7 @@ export async function compare_http(spec: HttpSpec) {
               readSummary: (input: UsageSummaryInput) => current.readSummary(input),
               refreshRates: () => current.refreshRates(),
               finish_operations: () => current.finish_operations(),
+              settled: () => current.settled(),
             },
             backend_state: new BackendStateStore(database),
           }),

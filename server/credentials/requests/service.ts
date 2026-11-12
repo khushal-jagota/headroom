@@ -19,6 +19,8 @@ import * as actions from './actions.ts';
 import * as data from './data.ts';
 import type { CredentialRequestRowBody, RequestDeliveryStatus } from './contracts.ts';
 import type { CredentialRequestRuntime } from './runtime.ts';
+import type { StopOptions } from '../../lifecycle/contracts.ts';
+import { observe_shutdown } from '../../conversation/shutdown.ts';
 
 type Delivery = readonly [RequestDeliveryStatus, string | null];
 export class CredentialRequestOperations {
@@ -46,7 +48,15 @@ export class CredentialRequestOperations {
     return await task;
   }
 
-  async finish_operations(): Promise<void> {
+  finish_operations(options: Partial<StopOptions> = {}): Promise<void> {
+    return observe_shutdown(
+      this.settled(),
+      options,
+      'Credential operations remain unfinished at the shutdown deadline.',
+    );
+  }
+
+  async settled(): Promise<void> {
     while (this.tasks.size !== 0) await Promise.allSettled([...this.tasks]);
   }
 
