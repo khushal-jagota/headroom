@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, cast
@@ -232,6 +233,33 @@ def test_unit17_startup_environment(
         check=True,
     )
     actual = json.loads(completed.stdout)
+    python_script = ROOT / "src/planner/conversation/tool_shell_startup.bash"
+    typescript_script = ROOT / "server/conversation/tool_shell_startup.bash"
+    script_bytes_equal = python_script.read_bytes() == typescript_script.read_bytes()
+    environment_differences = []
+    for python_launch, typescript_launch in zip(
+        expected["launches"], actual["launches"], strict=True
+    ):
+        for python_call, typescript_call in zip(
+            python_launch["calls"], typescript_launch["calls"], strict=True
+        ):
+            python_environment = python_call["environment"]
+            typescript_environment = typescript_call["environment"]
+            differences = {
+                name: {
+                    "python": python_environment.get(name),
+                    "typescript": typescript_environment.get(name),
+                }
+                for name in python_environment.keys() | typescript_environment.keys()
+                if python_environment.get(name) != typescript_environment.get(name)
+            }
+            environment_differences.append(
+                {
+                    "launch": python_launch["name"],
+                    "operation": python_call["operation"],
+                    "variables": differences,
+                }
+            )
     report = {
         "case": "unit17-startup-environment",
         "python": expected,
@@ -239,6 +267,12 @@ def test_unit17_startup_environment(
         "seconds": time.perf_counter() - started,
         "real_children": ["owned Node export evaluator"],
         "normalization_rules": [],
+        "environment_differences": environment_differences,
+        "tool_shell_scripts": {
+            "python": str(python_script),
+            "typescript": str(typescript_script),
+            "exact_bytes_equal": script_bytes_equal,
+        },
     }
     destination = request.config.getoption("--compare-report-dir")
     if destination:
@@ -247,4 +281,37 @@ def test_unit17_startup_environment(
         (directory / "unit17-startup-environment.json").write_text(
             json.dumps(report, indent=2) + "\n"
         )
-    assert actual == expected
+    assert script_bytes_equal
+    assert actual["cases"] == expected["cases"]
+    assert (
+        actual["provider_processes_started"]
+        == expected["provider_processes_started"]
+        == 0
+    )
+    assert actual["service_manager_calls"] == expected["service_manager_calls"] == 0
+    for difference in environment_differences:
+        assert difference["variables"] == (
+            {
+                "BASH_ENV": {
+                    "python": str(python_script),
+                    "typescript": str(typescript_script),
+                }
+            }
+            if sys.platform == "linux"
+            else {}
+        )
+    for python_launch, typescript_launch in zip(
+        expected["launches"], actual["launches"], strict=True
+    ):
+        assert typescript_launch["name"] == python_launch["name"]
+        assert typescript_launch["unit_stops"] == python_launch["unit_stops"]
+        for python_call, typescript_call in zip(
+            python_launch["calls"], typescript_launch["calls"], strict=True
+        ):
+            assert {
+                key: value
+                for key, value in typescript_call.items()
+                if key != "environment"
+            } == {
+                key: value for key, value in python_call.items() if key != "environment"
+            }

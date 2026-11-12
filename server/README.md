@@ -188,6 +188,10 @@ Raw response text is retained for usage reads that must preserve numeric token s
 
 The direct Unit 17 checks compare fresh Python answers and the same scripted TypeScript
 executable. The startup check intercepts all provider and service-manager launches and
-compares complete environments, command arguments, and working directories exactly.
-On Linux, Codex retains `src/planner/conversation/tool_shell_startup.bash` as `BASH_ENV`
-for that equality. The cutover unit must move this retained-source dependency.
+records complete environments, command arguments, and working directories.
+On Linux, the one child-environment difference is `BASH_ENV`: Python names
+`src/planner/conversation/tool_shell_startup.bash`, and TypeScript names
+`server/conversation/tool_shell_startup.bash` through the shared TypeScript helper.
+The Manager requested this runtime independence from Python source. The startup check
+asserts both exact paths, compares the scripts byte for byte, and compares every other
+environment variable, command argument, and working directory without normalization.

@@ -13,7 +13,7 @@ import {
   VERSION_TIMEOUT_SECONDS,
 } from '../cli_compatibility.ts';
 import { WorkerUnit } from '../../worker_unit/index.ts';
-import { fileURLToPath } from 'node:url';
+import { with_tool_shell_kill_priority } from '../../tool_shell_kill_priority.ts';
 import { CONSUMED_SERVER_NOTIFICATIONS, decode_server_request } from './protocol.ts';
 import { OwnedCodexProcess, spawn_codex_process, within } from './process.ts';
 import {
@@ -197,12 +197,7 @@ export class CodexAppServerClient {
     const assert_current = () => {
       if (!current()) throw new CodexChildWouldNotStart('the codex child stopped during startup');
     };
-    const environment = { ...options.environment };
-    // Until cutover, retain the identical script path that Python puts on its wire.
-    if (process.platform === 'linux')
-      environment.BASH_ENV = fileURLToPath(
-        new URL('../../../../src/planner/conversation/tool_shell_startup.bash', import.meta.url),
-      );
+    const environment = with_tool_shell_kill_priority({ ...options.environment });
     let owned: OwnedCodexProcess | null = null;
     let unit: WorkerUnit | null = null;
     try {
