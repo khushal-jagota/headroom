@@ -10,6 +10,7 @@ from tests.unit.test_executor_native_runtime import ScriptedChild
 from tests.unit.test_executor_native_runtime import native_registry as native_registry
 
 from planner.conversation.contracts import ResolvedConversationStart
+from planner.conversation.worker_scratch import WorkerScratch
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.mac_runner import MacRunner
 from planner.executor.protocol import ChildCommand, StartRun
@@ -71,6 +72,9 @@ def test_cleanup_retains_unpublished_dirty_and_unverifiable_work_then_removes_sa
     folder = root / "t_aaaaaaaa"
     workspace = prepare_workspace(folder, layout.repository, "t_aaaaaaaa")
     assert prepare_workspace(folder, layout.repository, "t_aaaaaaaa") == workspace
+    # A crashed backend leaves scratch outside Git, so it must not block retirement.
+    scratch = WorkerScratch({"PLAN_TICKET_FILES_DIR": str(folder)})
+    (scratch.directory / "leftover").write_text("disposable")
     _git(workspace, "commit", "-q", "--allow-empty", "-m", "unpublished")
     states = {"t_aaaaaaaa": WorkspaceState("t_aaaaaaaa", 0, False)}
     result = cleanup_local_workspaces(root, states, RETENTION_SECONDS)

@@ -177,7 +177,7 @@ def test_a_short_corrupt_or_foreign_upload_is_refused_and_leaves_nothing(
                 ErrorCode.agent_forbidden,
                 ErrorCode.agent_forbidden,
             )
-            for private_path in ("worktree/.env", ".panels-workspace.json"):
+            for private_path in ("worktree/.env", "tmp/.env", ".panels-workspace.json"):
                 private = replace(_manifest(), relative_path=private_path)
                 assert await _refused(world.upload(_chunks(BYTES), private)) is ErrorCode.validation
             assert world.staged() == []

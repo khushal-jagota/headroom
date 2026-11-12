@@ -456,6 +456,8 @@ def test_ticket_checkout_is_private_through_routes_aliases_and_catalog(tmp_path:
     root = _ticket_root(db_path) / ticket.id
     (root / "worktree").mkdir(parents=True)
     (root / "worktree" / "secret.html").write_text("private source")
+    (root / "tmp").mkdir()
+    (root / "tmp" / "secret.html").write_text("private scratch")
     (root / ".panels-workspace.json").write_text('{"repository":"private"}')
     (root / "artifacts").mkdir()
     (root / "artifacts" / "index.html").write_text("public artifact")
@@ -463,7 +465,9 @@ def test_ticket_checkout_is_private_through_routes_aliases_and_catalog(tmp_path:
     prefix = f"/files/tickets/{ticket.id}/"
     # Already indexed links can predate the privacy rule or point through aliases.
     with connect(str(db_path)) as conn:
-        for ordinal, relative in enumerate(("worktree/secret.html", "artifacts/alias.html")):
+        for ordinal, relative in enumerate((
+            "worktree/secret.html", "tmp/secret.html", "artifacts/alias.html",
+        )):
             conn.execute(
                 "INSERT INTO ticket_artifact_links "
                 "(ticket_id,field_id,ordinal,href,target,origin,stem,parent,kind) "
@@ -473,7 +477,10 @@ def test_ticket_checkout_is_private_through_routes_aliases_and_catalog(tmp_path:
             )
         conn.commit()
     with TestClient(app) as client:
-        for relative in ("worktree/secret.html", ".panels-workspace.json", "artifacts/alias.html"):
+        for relative in (
+            "worktree/secret.html", "tmp/secret.html", ".panels-workspace.json",
+            "artifacts/alias.html",
+        ):
             assert client.get(prefix + relative).status_code == 404
         assert client.get(
             prefix + "artifacts/alias.html",

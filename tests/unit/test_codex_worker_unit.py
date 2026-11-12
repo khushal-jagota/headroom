@@ -27,7 +27,6 @@ from planner.conversation.worker_unit import WorkerUnit, WorkerUnitError
 class _ObservedUnit:
     def __init__(self, environment: Mapping[str, str]) -> None:
         self.environment = dict(environment)
-        self.environment["TMPDIR"] = environment["TEST_DISK_TMP"]
         self.stopped = False
 
     def argv(self, original: Sequence[str]) -> tuple[str, ...]:
@@ -63,7 +62,8 @@ def test_only_explicit_worker_identity_selects_containment(
             _resolved_start(tmp_path),
             role_materials=ConversationRoleMaterials(
                 role_text="Worker",
-                identity_environment_variables=(("PLAN_TICKET_ID", "this-worker"),),
+                identity_environment_variables=(("PLAN_TICKET_ID", "this-worker"),
+                                                ("PLAN_TICKET_FILES_DIR", str(tmp_path))),
             ),
         )
         async with _scripted_child(tmp_path, script={}) as scripted:
@@ -72,7 +72,10 @@ def test_only_explicit_worker_identity_selects_containment(
             await scripted.sink.wait_for_the_turn_to_end()
             assert len(units) == 1
             assert units[0].environment["PLAN_TICKET_ID"] == "this-worker"
-            assert scripted.launched()["environment"]["TMPDIR"] == str(tmp_path / "disk-temp")
+            scratch = Path(units[0].environment["TMPDIR"])
+            assert scratch.parent == tmp_path / "tmp"
+            assert scratch.is_dir()
+            assert scripted.launched()["environment"]["TMPDIR"] == str(scratch)
             assert units[0].environment["BASH_ENV"] == str(TOOL_SHELL_STARTUP)
             assert not units[0].stopped
             scripted.sink.expect_another_turn()
@@ -80,6 +83,7 @@ def test_only_explicit_worker_identity_selects_containment(
             await scripted.sink.wait_for_the_turn_to_end()
             assert len(units) == 1
         assert units[0].stopped
+        assert not list((tmp_path / "tmp").iterdir())
 
     _run(exercise)
 
@@ -108,7 +112,8 @@ def test_worker_launch_failure_cleans_up_its_prepared_unit(
             _resolved_start(tmp_path),
             role_materials=ConversationRoleMaterials(
                 role_text="Worker",
-                identity_environment_variables=(("PLAN_TICKET_ID", "this-worker"),),
+                identity_environment_variables=(("PLAN_TICKET_ID", "this-worker"),
+                                                ("PLAN_TICKET_FILES_DIR", str(tmp_path))),
             ),
         )
         async with _scripted_child(tmp_path, script={}) as scripted:
@@ -116,6 +121,7 @@ def test_worker_launch_failure_cleans_up_its_prepared_unit(
                 await scripted.child.start(start, vendor_session_cursor=None)
         assert len(units) == 1
         assert units[0].stopped
+        assert not list((tmp_path / "tmp").iterdir())
 
     _run(exercise)
 
@@ -149,7 +155,8 @@ def test_failed_unit_stop_keeps_the_handle_for_a_retry(
             _resolved_start(tmp_path),
             role_materials=ConversationRoleMaterials(
                 role_text="Worker",
-                identity_environment_variables=(("PLAN_TICKET_ID", "this-worker"),),
+                identity_environment_variables=(("PLAN_TICKET_ID", "this-worker"),
+                                                ("PLAN_TICKET_FILES_DIR", str(tmp_path))),
             ),
         )
         async with _scripted_child(tmp_path, script={}) as scripted:
@@ -159,5 +166,6 @@ def test_failed_unit_stop_keeps_the_handle_for_a_retry(
             assert not units[0].stopped
         assert stop_calls == 2
         assert units[0].stopped
+        assert not list((tmp_path / "tmp").iterdir())
 
     _run(exercise)

@@ -21,7 +21,6 @@ from planner.conversation.worker_unit.config import (
     CONTROL_TIMEOUT_SECONDS,
     SLICE_CPU_WEIGHT_MAX,
     WORKER_SLICE,
-    WORKER_TEMP_ROOT,
 )
 
 
@@ -63,22 +62,6 @@ def _environment_file(environment: Mapping[str, str]) -> str:
         escaped = escaped.replace("$", "\\$").replace("`", "\\`")
         lines.append(f'{name}="{escaped}"\n')
     return "".join(lines)
-
-
-def _disk_directory(path: Path) -> None:
-    """Reject memory filesystems, including a home directory mounted on tmpfs."""
-    resolved = path.resolve()
-    mounts = []
-    for line in Path("/proc/self/mountinfo").read_text().splitlines():
-        before, after = line.split(" - ", 1)
-        mount = re.sub(
-            r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), before.split()[4],
-        )
-        mount_path = Path(mount)
-        if resolved.is_relative_to(mount_path):
-            mounts.append((len(mount_path.parts), after.split()[0]))
-    if not mounts or max(mounts)[1] in {"tmpfs", "ramfs"}:
-        raise WorkerUnitError(f"Worker temporary storage must use disk: {path}")
 
 
 class WorkerUnit:
@@ -138,21 +121,13 @@ class WorkerUnit:
                 raise WorkerUnitError(
                     "Install panels.slice with its lower CPU weight before Workers."
                 )
-        # UNIX sockets have a short pathname limit. Keep the disk root short
-        # enough for pytest and tool-created subdirectories beneath TMPDIR.
-        # PrivateTmp also hides /var/tmp from the user manager. The real home
-        # is shared with that manager, and a direct child keeps socket paths short.
-        root = Path(WORKER_TEMP_ROOT).expanduser()
-        _disk_directory(root)
-        directory = Path(tempfile.mkdtemp(prefix=".pw-", dir=root))
+        # Only the service environment file belongs to this Linux unit.
+        # WorkerScratch owns the backend's temporary storage on every platform.
+        root = Path(environment["TMPDIR"])
+        directory = Path(tempfile.mkdtemp(prefix=".u", dir=root))
         try:
             directory.chmod(0o700)
-            if directory.stat().st_uid != os.getuid():
-                raise WorkerUnitError("Worker temporary directory has a different owner")
-            temporary = directory / "t"
-            temporary.mkdir(mode=0o700)
             child_environment = dict(environment)
-            child_environment.update(TMPDIR=str(temporary), TMP=str(temporary), TEMP=str(temporary))
             file = directory / "environment"
             with file.open("x", encoding="utf-8") as output:
                 file.chmod(0o600)

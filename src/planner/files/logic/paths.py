@@ -9,7 +9,7 @@ from urllib.parse import unquote, urlsplit
 from planner.files.contracts import GoalFile, ManagerFile, TicketFile
 
 PRIVATE_TICKET_NAMES = frozenset({
-    "worktree", ".panels-workspace.json", ".panels-workspace.json.tmp",
+    "worktree", "tmp", ".panels-workspace.json", ".panels-workspace.json.tmp",
 })
 
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")

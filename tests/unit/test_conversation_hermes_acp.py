@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 from tempfile import mkdtemp
 
@@ -59,6 +60,7 @@ from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ConversationAccess,
     ConversationBackendKey,
+    ConversationRoleMaterials,
     ConversationStartRequest,
     PromptDeliveryMode,
     PromptDeliveryQueued,
@@ -616,6 +618,12 @@ def test_absent_hermes_interpreter_preserves_spawn_failure_without_session_or_pr
         **kwargs: object,
     ) -> AsyncIterator[object]:
         launches.append(executable)
+        environment = kwargs["env"]
+        assert isinstance(environment, dict)
+        scratch = Path(environment["TMPDIR"])
+        assert scratch.parent == tmp_path / "tmp"
+        assert scratch.is_dir()
+        assert environment["TEMP"] == environment["TMP"] == str(scratch)
         raise failure
         yield  # pragma: no cover - an async context manager that refuses entry
 
@@ -625,7 +633,11 @@ def test_absent_hermes_interpreter_preserves_spawn_failure_without_session_or_pr
     )
 
     async def exercise() -> None:
-        start = _resolved_start(tmp_path)
+        start = replace(_resolved_start(tmp_path), role_materials=ConversationRoleMaterials(
+            role_text="Worker", identity_environment_variables=(
+                ("PLAN_TICKET_ID", "ticket"), ("PLAN_TICKET_FILES_DIR", str(tmp_path)),
+            ),
+        ))
         sink = _RecordingSink()
         child = HermesAcpBackendChild(
             launch=AcpChildLaunch((str(missing_interpreter), "-m", "hermes.acp")),
@@ -638,6 +650,7 @@ def test_absent_hermes_interpreter_preserves_spawn_failure_without_session_or_pr
         assert str(refusal.value) == str(failure)
         assert refusal.value.__cause__ is failure
         assert launches == [str(missing_interpreter)]
+        assert not list((tmp_path / "tmp").iterdir())
         assert sink.vendor_session_cursor is None
         assert sink.agent_contents == []
         assert sink.endings == []

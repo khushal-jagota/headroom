@@ -14,8 +14,6 @@ from planner.conversation.worker_unit import WorkerUnit, WorkerUnitError
 @pytest.fixture
 def unit_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AsyncMock:
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setattr(worker_unit, "WORKER_TEMP_ROOT", str(tmp_path))
-    monkeypatch.setattr(worker_unit, "_disk_directory", lambda path: None)
     control = AsyncMock(return_value=(0, "LoadState=loaded\nCPUWeight=10"))
     monkeypatch.setattr(worker_unit, "_control", control)
     return control
@@ -34,17 +32,21 @@ def test_missing_slice_refuses_worker_instead_of_uncontained_fallback(
     async def scenario() -> None:
         unit_setup.return_value = (0, "LoadState=not-found\nCPUWeight=100")
         with pytest.raises(WorkerUnitError, match="lacks its lower CPU weight"):
-            await WorkerUnit.create({"PLAN_TICKET_ID": "test"}, tmp_path)
+            await WorkerUnit.create({"PLAN_TICKET_ID": "test", "TMPDIR": str(tmp_path)}, tmp_path)
         assert not list(tmp_path.iterdir())
     asyncio.run(scenario())
 
 
-def test_service_keeps_environment_private_and_temp_lifetime(
+def test_service_keeps_environment_private_and_control_directory_lifetime(
     unit_setup: AsyncMock, tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
         secret = 'private $token "quoted" \\ slash\nsecond line'
-        unit = await WorkerUnit.create({"PLAN_TICKET_ID": "test", "SECRET": secret}, tmp_path)
+        environment = {
+            "PLAN_TICKET_ID": "test", "SECRET": secret,
+            "TMPDIR": str(tmp_path), "TMP": str(tmp_path), "TEMP": str(tmp_path),
+        }
+        unit = await WorkerUnit.create(environment, tmp_path)
         assert unit is not None
         executable = tmp_path / "agent"
         executable.write_text("#!/bin/sh\n")
@@ -57,7 +59,7 @@ def test_service_keeps_environment_private_and_temp_lifetime(
         assert "--property=OOMPolicy=continue" in argv
         assert not any("MemoryMax" in item or "MemorySwapMax" in item for item in argv)
         assert argv[-2:] == (str(executable), "argument $with %specifiers")
-        assert unit.environment["TMPDIR"] == unit.environment["TMP"] == unit.environment["TEMP"]
+        assert unit.environment == environment
         assert Path(unit.environment["TMPDIR"]).is_dir()
         assert unit.directory.parent == tmp_path
         assert unit.directory.stat().st_mode & 0o777 == 0o700
@@ -75,7 +77,9 @@ def test_stop_failure_retains_files_until_descendants_can_stop(
     unit_setup: AsyncMock, tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
-        unit = await WorkerUnit.create({"PLAN_TICKET_ID": "test"}, tmp_path)
+        unit = await WorkerUnit.create(
+            {"PLAN_TICKET_ID": "test", "TMPDIR": str(tmp_path)}, tmp_path,
+        )
         assert unit is not None
         unit_setup.side_effect = [(0, "LoadState=loaded"), (1, "manager unavailable")]
         with pytest.raises(WorkerUnitError, match="Cannot stop Worker unit"):
@@ -93,18 +97,6 @@ def test_parent_slice_must_deprioritize_workers_against_app_slice(
             (0, "LoadState=loaded\nCPUWeight=100"),
         ]
         with pytest.raises(WorkerUnitError, match="Install panels.slice"):
-            await WorkerUnit.create({"PLAN_TICKET_ID": "test"}, tmp_path)
+            await WorkerUnit.create({"PLAN_TICKET_ID": "test", "TMPDIR": str(tmp_path)}, tmp_path)
         assert not list(tmp_path.iterdir())
     asyncio.run(scenario())
-
-
-def test_temp_root_rejects_ram_mount_even_below_disk_mount(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-) -> None:
-    mounts = (
-        "1 0 8:1 / / rw - ext4 /dev/root rw\n"
-        f"2 1 0:1 / {tmp_path} rw - tmpfs tmpfs rw\n"
-    )
-    monkeypatch.setattr(Path, "read_text", lambda path: mounts)
-    with pytest.raises(WorkerUnitError, match="must use disk"):
-        worker_unit._disk_directory(tmp_path / "worker-runs")

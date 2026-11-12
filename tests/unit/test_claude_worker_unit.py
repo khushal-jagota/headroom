@@ -22,13 +22,14 @@ def test_worker_launch_preserves_sdk_arguments_and_keeps_unit_across_messages(
 
     async def exercise() -> None:
         unit = AsyncMock()
-        unit.environment = {"TMPDIR": str(tmp_path / "disk")}
+        unit.environment = {}
         unit.argv = lambda command: ("contained", *command)
         create = AsyncMock(return_value=unit)
         monkeypatch.setattr(WorkerUnit, "create", create)
         options = ClaudeAgentOptions(
             cli_path="/claude", cwd=str(tmp_path), model="model",
-            env={"PLAN_TICKET_ID": "ticket", "AUTH_VALUE": "secret"},
+            env={"PLAN_TICKET_ID": "ticket", "PLAN_TICKET_FILES_DIR": str(tmp_path),
+                 "AUTH_VALUE": "secret"},
         )
         transport = _ClaudeCleanupTransport("", options)
         original_command = SubprocessCLITransport._build_command(transport)
@@ -51,11 +52,18 @@ def test_worker_launch_preserves_sdk_arguments_and_keeps_unit_across_messages(
         assert environment["CLAUDE_CODE_ENTRYPOINT"] == "sdk-py"
         assert environment["BASH_ENV"] == str(TOOL_SHELL_STARTUP)
         assert workspace == tmp_path
-        assert options.env["TMPDIR"] == str(tmp_path / "disk")
+        scratch = Path(options.env["TMPDIR"])
+        assert scratch.parent == tmp_path / "tmp"
+        assert scratch.is_dir()
+        process = AsyncMock()
+        process.returncode = 0
+        transport._process = process
         assert len([item async for item in transport._read_messages_impl()]) == 2
+        assert not scratch.exists()
         unit.stop.assert_awaited_once()
         await transport.close()
         assert unit.stop.await_count == 2
+        assert not scratch.exists()
 
     asyncio.run(exercise())
 
@@ -73,7 +81,9 @@ def test_nonworker_does_not_inherit_parent_containment(monkeypatch: pytest.Monke
     asyncio.run(exercise())
 
 
-def test_partial_worker_start_failure_stops_unit(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_partial_worker_start_failure_stops_unit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def exercise() -> None:
         unit = AsyncMock()
         unit.environment = {}
@@ -82,10 +92,13 @@ def test_partial_worker_start_failure_stops_unit(monkeypatch: pytest.MonkeyPatch
             SubprocessCLITransport, "connect", AsyncMock(side_effect=RuntimeError("startup failed"))
         )
         transport = _ClaudeCleanupTransport(
-            "", ClaudeAgentOptions(cli_path="/claude", env={"PLAN_TICKET_ID": "ticket"})
+            "", ClaudeAgentOptions(cli_path="/claude", env={
+                "PLAN_TICKET_ID": "ticket", "PLAN_TICKET_FILES_DIR": str(tmp_path),
+            })
         )
         with pytest.raises(RuntimeError, match="startup failed"):
             await transport.connect()
         unit.stop.assert_awaited_once()
+        assert not list((tmp_path / "tmp").iterdir())
 
     asyncio.run(exercise())

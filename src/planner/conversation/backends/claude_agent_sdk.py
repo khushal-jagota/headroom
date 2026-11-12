@@ -180,6 +180,7 @@ from planner.conversation.message_files import (
     MessageFileMissing,
 )
 from planner.conversation.tool_shell_kill_priority import with_tool_shell_kill_priority
+from planner.conversation.worker_scratch import WorkerScratch
 from planner.conversation.worker_unit import WorkerUnit
 
 LOGGER = logging.getLogger("planner.conversation.backends.claude_agent_sdk")
@@ -431,6 +432,7 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
         self._cleanup_process: Process | None = None
         self._cleanup_started = False
         self._worker_unit: WorkerUnit | None = None
+        self._worker_scratch: WorkerScratch | None = None
 
     def _build_command(self) -> list[str]:
         command = super()._build_command()
@@ -442,6 +444,16 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
         if self._cleanup_started:
             raise RuntimeError("a Claude transport cannot reconnect after cleanup")
         with_tool_shell_kill_priority(self._options.env)
+        try:
+            await self._connect_worker()
+        except BaseException:
+            if self._worker_unit is not None:
+                await self._worker_unit.stop()
+            if self._worker_scratch is not None:
+                self._worker_scratch.close()
+            raise
+
+    async def _connect_worker(self) -> None:
         # Use the role's explicit identity, never an inherited Worker identity.
         if self._options.env.get("PLAN_TICKET_ID"):
             environment = {
@@ -454,21 +466,15 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
                 environment["PWD"] = self._cwd
             if self._options.enable_file_checkpointing:
                 environment["CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING"] = "true"
+            self._worker_scratch = WorkerScratch(environment)
+            environment = self._worker_scratch.environment
+            self._options.env.update(environment)
             self._worker_unit = await WorkerUnit.create(
                 environment, Path(self._cwd or os.getcwd())
             )
             if self._worker_unit is not None:
                 self._options.env.update(self._worker_unit.environment)
-        try:
-            await super().connect()
-        except asyncio.CancelledError:
-            if self._worker_unit is not None:
-                await self._worker_unit.stop()
-            raise
-        except Exception:
-            if self._worker_unit is not None:
-                await self._worker_unit.stop()
-            raise
+        await super().connect()
 
     async def _read_messages_impl(self) -> AsyncIterator[dict[str, Any]]:
         try:
@@ -477,10 +483,16 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
         except Exception:
             if self._worker_unit is not None:
                 await self._worker_unit.stop()
+            if (self._worker_scratch is not None and self._process is not None
+                    and self._process.returncode is not None):
+                self._worker_scratch.close()
             raise
         else:
             if self._worker_unit is not None:
                 await self._worker_unit.stop()
+            if self._worker_scratch is not None and self._process is not None:
+                await self._process.wait()
+                self._worker_scratch.close()
 
     async def close(self) -> None:
         self._cleanup_started = True
@@ -491,6 +503,8 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
         await super().close()
         if self._cleanup_process is not None and self._cleanup_process.returncode is None:
             raise RuntimeError("Claude process termination remains unconfirmed")
+        if self._worker_scratch is not None:
+            self._worker_scratch.close()
 
 
 @dataclass(slots=True)

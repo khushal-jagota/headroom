@@ -175,6 +175,7 @@ from planner.conversation.storage import (
     ConversationStore,
     StoredConversationEvent,
 )
+from planner.conversation.worker_scratch import with_worker_files_root
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core import change_signal
 from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
@@ -4324,7 +4325,9 @@ class SqliteProcessConversationSystem:
         if child is not None:
             return child
 
-        resolved_start = state.record.resolved_start()
+        resolved_start = with_worker_files_root(
+            state.record.resolved_start(), self._store._db_path,
+        )
         if model is not None or reasoning_effort is not None or reasoning_effort_is_set:
             resolved_start = replace(
                 resolved_start,
@@ -4947,7 +4950,9 @@ class SqliteProcessConversationSystem:
         async def deliver() -> None:
             if start_needed:
                 # Started on the values the prompt carries, as _ensure_child would.
-                resolved_start = state.record.resolved_start()
+                resolved_start = with_worker_files_root(
+                    state.record.resolved_start(), self._store._db_path,
+                )
                 if (
                     prompt.model_change is not None
                     or prompt.reasoning_effort_change is not None
