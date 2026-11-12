@@ -56,6 +56,13 @@ The `*` response path segment denotes an array item. It is not an arbitrary wild
 
 ## Run a list
 
+A list can set `"compare_skill_files": true` to compare the files beneath each
+server database parent's `skills/` tree after its requests. The runner compares
+relative filenames and exact bytes, including supporting files. Missing, extra,
+or changed files appear in `differences` with the filename and each side's hex
+bytes (`null` means absent). No normalization or rule applies to these bytes.
+The report also lists the reference filenames in `skill_files`.
+
 From the repository root:
 
 ```sh

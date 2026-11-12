@@ -1,0 +1,167 @@
+{
+  "executor": {
+    "run": null,
+    "retry": null,
+    "health": null,
+    "quiesce": null,
+    "permissions": null
+  },
+  "environment": {
+    "status": null,
+    "cleanup": null,
+    "backup": null,
+    "app-build": null,
+    "app-identity": null,
+    "backup-current": null,
+    "provision-skills": null,
+    "restore": null,
+    "prepare": null,
+    "inspect": null,
+    "reset": null,
+    "remove": null,
+    "run": null
+  },
+  "credential": {
+    "list": null,
+    "rename": null,
+    "request": null
+  },
+  "goal": {
+    "schema": null,
+    "list": null,
+    "show": null,
+    "create": null,
+    "edit": null,
+    "read": null,
+    "artifact": {
+      "list": null,
+      "read": null,
+      "write": null,
+      "delete": null
+    },
+    "make-manager": null,
+    "delete": null
+  },
+  "page": {
+    "show": null,
+    "edit": null,
+    "schema": null
+  },
+  "measure": {
+    "schema": null,
+    "list": null,
+    "show": null,
+    "create": null,
+    "edit": null,
+    "read": null,
+    "delete": null,
+    "manual-state": null,
+    "manual-write": null
+  },
+  "dataset": {
+    "list": null,
+    "show": null,
+    "create": null,
+    "edit": null,
+    "read": null
+  },
+  "attention": {
+    "summary": null,
+    "setup-collection": null
+  },
+  "measure-source": {
+    "schema": null,
+    "runtime": null,
+    "list": null,
+    "show": null,
+    "status": null,
+    "create": null,
+    "delete": null,
+    "set-schedule": null,
+    "set-responsible": null,
+    "submit-script": null,
+    "request-run": null,
+    "runs": null,
+    "run-show": null
+  },
+  "preview": {
+    "prepare": null,
+    "register": null,
+    "show": null,
+    "stop": null
+  },
+  "stalls": {
+    "watchdog": null
+  },
+  "send-message": null,
+  "serve": null,
+  "restart": null,
+  "server-event-loop-tasks": null,
+  "worker-type": {
+    "list": null,
+    "show": null,
+    "save": null,
+    "delete": null,
+    "skill": null
+  },
+  "skill": {
+    "list": null,
+    "show": null,
+    "edit": null,
+    "apply": null,
+    "delete": null,
+    "write-file": null,
+    "check": null
+  },
+  "project": {
+    "list": null,
+    "show": null,
+    "create": null,
+    "set": null
+  },
+  "ticket": {
+    "create": null,
+    "show": null,
+    "backlog": null,
+    "resume": null,
+    "delete": null,
+    "list": null,
+    "edit": null,
+    "complete": null,
+    "employee-configuration": null,
+    "history": null,
+    "restart-worker": null,
+    "block": null,
+    "unblock": null,
+    "proposal": null,
+    "request-help": null,
+    "assign": null
+  },
+  "manager": {
+    "create": null,
+    "list": null,
+    "show": null,
+    "delete": null,
+    "set": null,
+    "add-ticket": null,
+    "remove-ticket": null,
+    "workspace": null,
+    "artifact": {
+      "list": null,
+      "read": null,
+      "write": null,
+      "delete": null
+    },
+    "conversation": {
+      "send": null,
+      "reset": null
+    },
+    "settle": null
+  },
+  "worker": {
+    "my-ticket": null,
+    "propose": null,
+    "request-help": null,
+    "recap": null
+  }
+}

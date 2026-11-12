@@ -1,0 +1,1405 @@
+{
+  "conversation_system": "in_memory",
+  "compare_skill_files": true,
+  "source_roots": [
+    "src/planner/worker_types/",
+    "src/planner/worker_settings/",
+    "src/planner/managed_skills.py",
+    "src/planner/skill_sources.py",
+    "src/planner/skill_versions.py",
+    "src/planner/skill_staleness.py"
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "title": "Comparison Manager",
+        "goal": "",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "manager": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "title": "Comparison caller",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "brief": "Caller identity"
+      },
+      "capture": {
+        "ticket": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/backlog",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {}
+    },
+    {
+      "method": "POST",
+      "path": "/api/worker-types",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "fields": [
+          {
+            "id": "brief",
+            "label": "Brief"
+          },
+          {
+            "id": "what_changes",
+            "label": "What Changes"
+          },
+          {
+            "id": "implementation",
+            "label": "Implementation"
+          },
+          {
+            "id": "consequences",
+            "label": "Consequences"
+          }
+        ],
+        "label": "Comparison Worker",
+        "profile": {
+          "default_backend": "codex",
+          "default_model": "gpt-6.1-sol",
+          "default_reasoning_effort": "medium",
+          "specialist_skill": "comparison-worker",
+          "toolset_profile": "default"
+        },
+        "stages": [
+          {
+            "gating_field": "brief",
+            "id": "needs_brief",
+            "is_terminal": false,
+            "label": "Brief",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "what_changes",
+            "id": "needs_what_changes",
+            "is_terminal": false,
+            "label": "What Changes",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "implementation",
+            "id": "needs_implementation",
+            "is_terminal": false,
+            "label": "Implementation",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "consequences",
+            "id": "needs_consequences",
+            "is_terminal": false,
+            "label": "Consequences",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": null,
+            "id": "done",
+            "is_terminal": true,
+            "label": "Done",
+            "ownership_mode": null
+          }
+        ],
+        "worker_type": "comparison_worker",
+        "guidance": "Keep exact prose.\n",
+        "skill": {
+          "description": "Comparison specialist."
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "title": "Saved workflow",
+        "worker_type": "comparison_worker",
+        "project_id": "project_other",
+        "brief": "Keep the saved workflow"
+      },
+      "capture": {
+        "saved_ticket": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets/${saved_ticket}/backlog",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {}
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/worker-types",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/worker-types?supported=true",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/worker-types/coding/manifest",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/worker-types/comparison_worker/manifest",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/worker-types/coding",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workers",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workers/coding",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workers/chief-of-staff/settings",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/skills",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/skills/panels",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-versions?keys=%5B%22%2Fapi%2Fworker-types%22%2C%22%2Fapi%2Fworker-types%3Fsupported%3Dtrue%22%2C%22%2Fapi%2Fworker-types%2Fcomparison_worker%2Fmanifest%22%2C%22%2Fapi%2Fworker-types%2Funknown%2Fmanifest%22%5D",
+      "status": 200,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fworker-types",
+      "status": 200,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fworker-types%3Fsupported%3Dtrue",
+      "status": 200,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fworker-types%2Fcomparison_worker%2Fmanifest",
+      "status": 200,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fworker-types%2Funknown%2Fmanifest",
+      "status": 404,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "POST",
+      "path": "/api/worker-types",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "fields": [
+          {
+            "id": "brief",
+            "label": "Brief"
+          },
+          {
+            "id": "what_changes",
+            "label": "What Changes"
+          },
+          {
+            "id": "implementation",
+            "label": "Implementation"
+          },
+          {
+            "id": "consequences",
+            "label": "Consequences"
+          }
+        ],
+        "label": "New comparison Worker",
+        "profile": {
+          "default_backend": "codex",
+          "default_model": "gpt-6.1-sol",
+          "default_reasoning_effort": "medium",
+          "specialist_skill": "comparison-new",
+          "toolset_profile": "default"
+        },
+        "stages": [
+          {
+            "gating_field": "brief",
+            "id": "needs_brief",
+            "is_terminal": false,
+            "label": "Brief",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "what_changes",
+            "id": "needs_what_changes",
+            "is_terminal": false,
+            "label": "What Changes",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "implementation",
+            "id": "needs_implementation",
+            "is_terminal": false,
+            "label": "Implementation",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "consequences",
+            "id": "needs_consequences",
+            "is_terminal": false,
+            "label": "Consequences",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": null,
+            "id": "done",
+            "is_terminal": true,
+            "label": "Done",
+            "ownership_mode": null
+          }
+        ],
+        "worker_type": "comparison_new",
+        "guidance": "Changed shared rules.\n",
+        "skill": {
+          "description": "Comparison specialist."
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/worker-types/comparison_new",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/worker-types/comparison_new",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/skills/comparison-new",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "POST",
+      "path": "/api/worker-types",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "fields": [
+          {
+            "id": "brief",
+            "label": "Brief"
+          },
+          {
+            "id": "what_changes",
+            "label": "What Changes"
+          },
+          {
+            "id": "implementation",
+            "label": "Implementation"
+          },
+          {
+            "id": "consequences",
+            "label": "Consequences"
+          }
+        ],
+        "label": "Changed comparison Worker",
+        "profile": {
+          "default_backend": "codex",
+          "default_model": "gpt-6.1-sol",
+          "default_reasoning_effort": "medium",
+          "specialist_skill": "comparison-worker",
+          "toolset_profile": "missing"
+        },
+        "stages": [
+          {
+            "gating_field": "brief",
+            "id": "needs_brief",
+            "is_terminal": false,
+            "label": "Brief",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "what_changes",
+            "id": "needs_what_changes",
+            "is_terminal": false,
+            "label": "What Changes",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "implementation",
+            "id": "needs_implementation",
+            "is_terminal": false,
+            "label": "Implementation",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "consequences",
+            "id": "needs_consequences",
+            "is_terminal": false,
+            "label": "Consequences",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": null,
+            "id": "done",
+            "is_terminal": true,
+            "label": "Done",
+            "ownership_mode": null
+          }
+        ],
+        "worker_type": "comparison_worker",
+        "guidance": "Changed shared rules.\n",
+        "skill": {
+          "description": "This bundled edit must roll back."
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/skills/comparison-worker",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "POST",
+      "path": "/api/worker-types",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "fields": [
+          {
+            "id": "brief",
+            "label": "Brief"
+          },
+          {
+            "id": "what_changes",
+            "label": "What Changes"
+          },
+          {
+            "id": "implementation",
+            "label": "Implementation"
+          },
+          {
+            "id": "consequences",
+            "label": "Consequences"
+          }
+        ],
+        "label": "Changed comparison Worker",
+        "profile": {
+          "default_backend": "codex",
+          "default_model": "gpt-6.1-sol",
+          "default_reasoning_effort": "medium",
+          "specialist_skill": "comparison-worker",
+          "toolset_profile": "default"
+        },
+        "stages": [
+          {
+            "gating_field": "brief",
+            "id": "needs_brief",
+            "is_terminal": false,
+            "label": "Brief",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "what_changes",
+            "id": "needs_what_changes",
+            "is_terminal": false,
+            "label": "What Changes",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "implementation",
+            "id": "needs_implementation",
+            "is_terminal": false,
+            "label": "Implementation",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "consequences",
+            "id": "needs_consequences",
+            "is_terminal": false,
+            "label": "Consequences",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": null,
+            "id": "done",
+            "is_terminal": true,
+            "label": "Done",
+            "ownership_mode": null
+          }
+        ],
+        "worker_type": "comparison_worker",
+        "guidance": "Changed shared rules.\n",
+        "skill": {
+          "description": "Comparison specialist."
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/worker-types/comparison_worker",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workers/comparison_worker",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-versions?keys=%5B%22%2Fapi%2Fworker-types%22%2C%22%2Fapi%2Fworker-types%3Fsupported%3Dtrue%22%2C%22%2Fapi%2Fworker-types%2Fcomparison_worker%2Fmanifest%22%2C%22%2Fapi%2Fworker-types%2Funknown%2Fmanifest%22%5D",
+      "status": 200,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fworker-types",
+      "status": 200,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fworker-types%3Fsupported%3Dtrue",
+      "status": 200,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fworker-types%2Fcomparison_worker%2Fmanifest",
+      "status": 200,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fworker-types%2Funknown%2Fmanifest",
+      "status": 404,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/workers/comparison_worker/launch-defaults",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "employee_backend": "codex",
+        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_reasoning_effort": "high"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/workers/chief-of-staff/launch-defaults",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "employee_backend": "codex",
+        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_reasoning_effort": "high"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/workers/chief-of-staff/recap",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "recap": "A real comparison recap."
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-versions?keys=%5B%22%2Fapi%2Fworker-types%22%2C%22%2Fapi%2Fworker-types%3Fsupported%3Dtrue%22%2C%22%2Fapi%2Fworker-types%2Fcomparison_worker%2Fmanifest%22%2C%22%2Fapi%2Fworker-types%2Funknown%2Fmanifest%22%5D",
+      "status": 200,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fworker-types",
+      "status": 200,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fworker-types%3Fsupported%3Dtrue",
+      "status": 200,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fworker-types%2Fcomparison_worker%2Fmanifest",
+      "status": 200,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fworker-types%2Funknown%2Fmanifest",
+      "status": 404,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "POST",
+      "path": "/api/skills/apply",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "skills": [
+          {
+            "name": "comparison-notes",
+            "source_text": "---\nname: comparison-notes\ndescription: Exact source.\n---\n\n# Notes\n\nUse `panels nonexistent-command`. Stage `needs_unknown`. Retired panels-rollover.\n"
+          }
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/skills/apply",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "skills": [
+          {
+            "name": "comparison-notes",
+            "source_text": "---\nname: comparison-notes\ndescription: Exact source.\n---\n\n# Notes\n\nUse `panels nonexistent-command`. Stage `needs_unknown`. Retired panels-rollover.\n"
+          }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/skills/comparison-notes",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/skills/stale",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/skills/comparison-notes",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "description": "Description with \u00e9 and quotes \"yes\"."
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/skills/comparison-notes/files",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "path": "notes/example.txt",
+        "content": "Preserve exact bytes: \u00e9\n"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/skills/comparison-worker",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "description": "Generic specialist description."
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/workers/comparison_worker/skill",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "description": "PUT specialist description."
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/workers/comparison_worker/skill",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "description": "PATCH specialist description."
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/workers/chief-of-staff/skill",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "description": "PUT Chief description."
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/workers/chief-of-staff/skill",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "description": "PATCH Chief description."
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/workers",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workers/comparison_worker",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workers/chief-of-staff/settings",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-versions?keys=%5B%22%2Fapi%2Fworker-types%22%2C%22%2Fapi%2Fworker-types%3Fsupported%3Dtrue%22%2C%22%2Fapi%2Fworker-types%2Fcomparison_worker%2Fmanifest%22%2C%22%2Fapi%2Fworker-types%2Funknown%2Fmanifest%22%5D",
+      "status": 200,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fworker-types",
+      "status": 200,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fworker-types%3Fsupported%3Dtrue",
+      "status": 200,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fworker-types%2Fcomparison_worker%2Fmanifest",
+      "status": 200,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fworker-types%2Funknown%2Fmanifest",
+      "status": 404,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "POST",
+      "path": "/api/worker-types",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "fields": [
+          {
+            "id": "brief",
+            "label": "Brief"
+          },
+          {
+            "id": "what_changes",
+            "label": "What Changes"
+          },
+          {
+            "id": "implementation",
+            "label": "Implementation"
+          },
+          {
+            "id": "consequences",
+            "label": "Consequences"
+          }
+        ],
+        "label": "Comparison Worker",
+        "profile": {
+          "default_backend": "codex",
+          "default_model": "gpt-6.1-sol",
+          "default_reasoning_effort": "medium",
+          "specialist_skill": "comparison-worker",
+          "toolset_profile": "default"
+        },
+        "stages": [
+          {
+            "gating_field": "brief",
+            "id": "needs_brief",
+            "is_terminal": false,
+            "label": "Brief",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "what_changes",
+            "id": "needs_what_changes",
+            "is_terminal": false,
+            "label": "What Changes",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "implementation",
+            "id": "needs_implementation",
+            "is_terminal": false,
+            "label": "Implementation",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "consequences",
+            "id": "needs_consequences",
+            "is_terminal": false,
+            "label": "Consequences",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": null,
+            "id": "done",
+            "is_terminal": true,
+            "label": "Done",
+            "ownership_mode": null
+          }
+        ],
+        "worker_type": "comparison_worker",
+        "guidance": "Keep exact prose.\n",
+        "skill": {
+          "description": "Comparison specialist."
+        }
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/worker-types/comparison_worker",
+      "status": 400,
+      "area": "worker-settings",
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/skills/apply",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "skills": [
+          {
+            "name": "comparison-notes",
+            "source_text": "---\nname: comparison-notes\ndescription: Exact source.\n---\n\n# Notes\n\nUse `panels nonexistent-command`. Stage `needs_unknown`. Retired panels-rollover.\n"
+          }
+        ]
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/skills/comparison-notes",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "description": "Forbidden"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/skills/comparison-notes",
+      "status": 400,
+      "area": "worker-settings",
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/skills/comparison-notes/files",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "path": "forbidden.txt",
+        "content": "Forbidden"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/workers/comparison_worker/skill",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "description": "Forbidden"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/workers/comparison_worker/skill",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "description": "Forbidden"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/workers/chief-of-staff/skill",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "description": "Forbidden"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/workers/chief-of-staff/skill",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "description": "Forbidden"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/workers/comparison_worker/launch-defaults",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "employee_backend": "codex",
+        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_reasoning_effort": "high"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/workers/chief-of-staff/launch-defaults",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "employee_backend": "codex",
+        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_reasoning_effort": "high"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/workers/chief-of-staff/recap",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "recap": "Forbidden"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/worker-types",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "fields": [
+          {
+            "id": "brief",
+            "label": "Brief"
+          },
+          {
+            "id": "what_changes",
+            "label": "What Changes"
+          },
+          {
+            "id": "implementation",
+            "label": "Implementation"
+          },
+          {
+            "id": "consequences",
+            "label": "Consequences"
+          }
+        ],
+        "label": "Comparison Worker",
+        "profile": {
+          "default_backend": "codex",
+          "default_model": "gpt-6.1-sol",
+          "default_reasoning_effort": "medium",
+          "specialist_skill": "comparison-worker",
+          "toolset_profile": "default"
+        },
+        "stages": [
+          {
+            "gating_field": "brief",
+            "id": "needs_brief",
+            "is_terminal": false,
+            "label": "Brief",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "what_changes",
+            "id": "needs_what_changes",
+            "is_terminal": false,
+            "label": "What Changes",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "implementation",
+            "id": "needs_implementation",
+            "is_terminal": false,
+            "label": "Implementation",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": "consequences",
+            "id": "needs_consequences",
+            "is_terminal": false,
+            "label": "Consequences",
+            "ownership_mode": "worker"
+          },
+          {
+            "gating_field": null,
+            "id": "done",
+            "is_terminal": true,
+            "label": "Done",
+            "ownership_mode": null
+          }
+        ],
+        "worker_type": "comparison_worker",
+        "guidance": "Keep exact prose.\n",
+        "skill": {
+          "description": "Comparison specialist."
+        }
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/worker-types/comparison_worker",
+      "status": 400,
+      "area": "worker-settings",
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/skills/apply",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "skills": [
+          {
+            "name": "comparison-notes",
+            "source_text": "---\nname: comparison-notes\ndescription: Exact source.\n---\n\n# Notes\n\nUse `panels nonexistent-command`. Stage `needs_unknown`. Retired panels-rollover.\n"
+          }
+        ]
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/skills/comparison-notes",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "description": "Forbidden"
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/skills/comparison-notes",
+      "status": 400,
+      "area": "worker-settings",
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/skills/comparison-notes/files",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "path": "forbidden.txt",
+        "content": "Forbidden"
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/workers/comparison_worker/skill",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "description": "Forbidden"
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/workers/comparison_worker/skill",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "description": "Forbidden"
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/workers/chief-of-staff/skill",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "description": "Forbidden"
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/workers/chief-of-staff/skill",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "description": "Forbidden"
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/workers/comparison_worker/launch-defaults",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "employee_backend": "codex",
+        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_reasoning_effort": "high"
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/workers/chief-of-staff/launch-defaults",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "employee_backend": "codex",
+        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_reasoning_effort": "high"
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/workers/chief-of-staff/recap",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "recap": "Forbidden"
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/worker-types",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "worker_type": "broken"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/skills/comparison-notes/files",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "path": "../escape",
+        "content": "Refused"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/skills/comparison-worker",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "markdown_body": "Overwrite the structured guide"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/worker-types",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "worker_type": "broken"
+      },
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/skills/comparison-notes/files",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "path": "../escape",
+        "content": "Refused"
+      },
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/skills/comparison-worker",
+      "status": 400,
+      "area": "worker-settings",
+      "json": {
+        "markdown_body": "Overwrite the structured guide"
+      },
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/skills/apply",
+      "status": 200,
+      "area": "worker-settings",
+      "json": {
+        "skills": [
+          {
+            "name": "comparison-delete",
+            "source_text": "---\nname: comparison-delete\ndescription: Delete me.\n---\n\nTemporary.\n"
+          }
+        ]
+      },
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/skills/comparison-delete",
+      "status": 200,
+      "area": "worker-settings",
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/skills/comparison-delete",
+      "status": 404,
+      "area": "worker-settings"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/skills/panels",
+      "status": 400,
+      "area": "worker-settings"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/worker-types/comparison_worker",
+      "status": 200,
+      "area": "worker-settings",
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/worker-types/comparison_worker",
+      "status": 404,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/skills/comparison-worker",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-versions?keys=%5B%22%2Fapi%2Fworker-types%22%2C%22%2Fapi%2Fworker-types%3Fsupported%3Dtrue%22%2C%22%2Fapi%2Fworker-types%2Fcomparison_worker%2Fmanifest%22%2C%22%2Fapi%2Fworker-types%2Funknown%2Fmanifest%22%5D",
+      "status": 200,
+      "area": "worker-type-resources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fworker-types%2Fcomparison_worker%2Fmanifest",
+      "status": 404,
+      "area": "worker-type-resources"
+    },
+    {
+      "kind": "restart"
+    },
+    {
+      "method": "GET",
+      "path": "/api/skills/comparison-notes",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/skills",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workers",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/worker-types",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/skills/stale",
+      "status": 200,
+      "area": "worker-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D",
+      "status": 200,
+      "area": "navigation"
+    }
+  ],
+  "probes": [
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D"
+  ]
+}

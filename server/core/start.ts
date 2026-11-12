@@ -29,7 +29,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     const changes = new ChangeSignal();
     database = createDatabase(config.db_path, { commitSteps, onChange: () => changes.emit() });
     signalAuthority = (options.createSignalAuthority ?? createIdlePublicationAuthority)(database);
-    initializeAreas(database, signalAuthority);
+    initializeAreas(database, signalAuthority, config);
     if (!config.test_mode && config.dispatch_enabled) {
       dispatcher = acquireLock(config.dispatcher_lock_path);
     }
