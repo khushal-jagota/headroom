@@ -19,6 +19,7 @@ import { BackendUsageService } from '../backend_usage/service.ts';
 import { BackendStateStore, create_durable_codex_login_rejection } from '../backend_state.ts';
 import { SubprocessBackendProbeEnvironment, backend_io_is_test } from './environment.ts';
 import { RecordingBackendProbeEnvironment } from './recording_environment.ts';
+import { observe_shutdown } from '../shutdown.ts';
 export interface BackendProviders {
   readonly codex: CodexModelCatalogSource | null;
   readonly claude: ClaudeModelCatalogSource | null;
@@ -42,18 +43,36 @@ export function create_backend_runtime(options: {
       ? new RecordingBackendProbeEnvironment()
       : new SubprocessBackendProbeEnvironment());
   const rejection = create_durable_codex_login_rejection(database, now);
+  let resolve_resource_join!: () => void;
+  const resource_join = new Promise<void>((resolve) => {
+    resolve_resource_join = resolve;
+  });
+  let shutdown_result: Promise<void> | undefined;
   return {
-    async shutdown() {
-      const settled = await Promise.allSettled([
-        Promise.resolve().then(() => environment.shutdown?.()),
-        Promise.resolve().then(() => providers.codex_sign_in?.shutdown()),
-      ]);
-      const failed = settled.filter((result) => result.status === 'rejected');
-      if (failed.length)
-        throw new AggregateError(
-          failed.map((result) => result.reason),
-          'Backend shutdown failed',
-        );
+    shutdown(options = {}) {
+      if (shutdown_result === undefined) {
+        const cleanup = Promise.allSettled([
+          Promise.resolve().then(() => environment.shutdown?.()),
+          Promise.resolve().then(() => providers.codex_sign_in?.shutdown()),
+        ]);
+        void cleanup.then(() => resolve_resource_join());
+        shutdown_result = cleanup.then((results) => {
+          const failed = results.filter((result) => result.status === 'rejected');
+          if (failed.length)
+            throw new AggregateError(
+              failed.map((result) => result.reason),
+              'Backend shutdown failed',
+            );
+        });
+      }
+      return observe_shutdown(
+        shutdown_result,
+        options,
+        'Backend resources remain unfinished at the shutdown deadline.',
+      );
+    },
+    settled() {
+      return resource_join;
     },
     database,
     backend_snapshots: new BackendSnapshotService({

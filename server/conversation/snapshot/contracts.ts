@@ -7,6 +7,7 @@ import type { BackendUsageResult } from '../backend_usage/contracts.ts';
 import type { RemoteCatalogSource } from '../model_resolution/contracts.ts';
 import type { CodexSignInService } from './provider_contracts.ts';
 import type { StoredCodexLogin, CodexLoginGeneration } from './provider_contracts.ts';
+import type { StopOptions } from '../../lifecycle/contracts.ts';
 export type BackendInstallMethod =
   'npm_global' | 'bun_global' | 'pnpm_global' | 'homebrew' | 'native' | 'manual_only';
 export type BackendIdentityStatus = 'authenticated' | 'unauthenticated' | 'unknown';
@@ -89,7 +90,9 @@ export interface BackendSnapshotServiceContract extends BackendSnapshotSource {
   ): Promise<BackendUpdateResult>;
 }
 export interface BackendHttpRuntime {
-  shutdown?(): Promise<void>;
+  shutdown?(options?: Partial<StopOptions>): Promise<void>;
+  /** Actual cleanup completion, independent of any shutdown deadline observer. */
+  settled(): Promise<void>;
   readonly database: Database;
   backend_snapshots: BackendSnapshotServiceContract;
   readonly backend_state: BackendStateStore | null;

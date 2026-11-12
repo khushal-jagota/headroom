@@ -1,3 +1,4 @@
+import { python_string_repr } from '../core/python_repr.ts';
 /** Function-only environment commands. No argv parser, installed wrapper or process IO. */
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -57,20 +58,7 @@ const os_error_numbers = new Map(
 );
 let native_strerror: ((number: number) => string) | undefined;
 function path_repr(path: string): string {
-  const quote = path.includes("'") && !path.includes('"') ? '"' : "'";
-  let result = quote;
-  for (const character of path) {
-    const point = character.codePointAt(0)!;
-    if (character === quote || character === '\\') result += `\\${character}`;
-    else if (character === '\n') result += '\\n';
-    else if (character === '\r') result += '\\r';
-    else if (character === '\t') result += '\\t';
-    else if (character !== ' ' && /[\p{C}\p{Z}]/u.test(character)) {
-      const width = point <= 0xff ? 2 : point <= 0xffff ? 4 : 8;
-      result += `\\${width === 2 ? 'x' : width === 4 ? 'u' : 'U'}${point.toString(16).padStart(width, '0')}`;
-    } else result += character;
-  }
-  return result + quote;
+  return python_string_repr(path);
 }
 function error_message(error: Error): string {
   if (!('code' in error) || typeof error.code !== 'string') return error.message;

@@ -10,6 +10,7 @@ import { ServerLifecycleError } from '../lifecycle/contracts.ts';
 import { VideoUploadService } from '../conversation/video_uploads/service.ts';
 import { createVideoUploadRoutes } from '../conversation/video_uploads/routes.ts';
 import { createVoiceRoutes } from '../conversation/voice_transcription/routes.ts';
+import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
 import { fixture, fixture_path } from './ticket_fixture.ts';
 
 // Reuse the ordinary app and Ticket fixture. No listener, host, or media process is needed.
@@ -75,6 +76,7 @@ test('shutdown waits for upload settlement and a disconnect records Python inter
       {
         prefix: '/api/conversation',
         routes: createVoiceRoutes({
+          writes: new ConversationHttpWriteScope(),
           adapters: {
             trim_surrounding_silence: async (audio) => [audio, false] as const,
             http_post: async (request) => {

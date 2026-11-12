@@ -67,7 +67,9 @@ another provider write or committed append. This is no longer an intentional dif
 `publication failure after receipt commit does not append or deliver twice`. It also proves
 that a repeated sender identity returns its receipt and later backend news still persists.
 
-- Projection rebuild uses TEMP tables on the single writer connection in batches of 500 events. Python uses a second connection. Results match. The Manager accepted 373.7 seconds in TS versus 94.5 seconds in Python for 200,000 events (about 3.96 times as long). The follow-up must precede the first projection-version change after cutover ([measured profile](https://github.com/khushal-jagota/headroom/blob/a201941e82dde385572a87602f127e0ae18e379d/server/lifecycle/REBUILD_PROFILE.md)). Sustained-load latency is not measured.
+## Projection rebuild on the writer connection
+
+Projection rebuild uses TEMP tables on the single writer connection in batches of 500 events. Python uses a second connection. Results match. The Manager accepted 373.7 seconds in TS versus 94.5 seconds in Python for 200,000 events (about 3.96 times as long). The follow-up must precede the first projection-version change after cutover ([measured profile](lifecycle/REBUILD_PROFILE.md)). Sustained-load latency is not measured.
 
 ## Fixed measure and Goal depth budgets
 
@@ -89,7 +91,7 @@ The first applicable TypeScript budget determines the boundary error. At total g
 
 Python also crashes during response serialization for a sufficiently deep accepted formula. In the measured JsonDict response, AST depth 253 succeeds. Depth 254 commits the definition, then returns HTTP 500. TypeScript preserves the committed row and returns the same status, content type, and text through a deliberate, handled response-depth error. It does not reproduce an unhandled Pydantic exception. Request-validation errors retain their separate response path.
 
-See [the measure README](measures/README.md) for the fixed policy and proof commands. Unit 12's Part 2 still supplies the Goal HTTP routes and populated Manager/Chief page checks. The independent-root seam proof does not claim those routes exist in Part 1.
+See [the measure README](measures/README.md) for the fixed policy and proof commands. Unit 12 Part 2 supplies the merged Goal HTTP routes and populated Manager/Chief page checks. The independent-root seam proof remains separate from those route checks.
 
 ## Managed Linux supervisor stop
 
@@ -148,7 +150,7 @@ Existing positive-value and consistency checks still apply.
 The existing [configuration proof](../tests/compare/direct/test_unit21_metrics_config.py),
 `test_unit21_metrics_configuration_and_sidecar_paths`, asserts the TS refusal as a gating result.
 It records Python's different answer as informational evidence. The ten keys share the same admission predicate.
-This policy acceptance does not approve the remaining Part 2 source or its merge.
+Unit 21 Part 2, including the metrics source, is merged into the migration branch.
 
 ## JavaScript source execution limits
 
@@ -267,10 +269,11 @@ November 12, 2026:
   default composition selects ambient provider homes and can fetch LiteLLM rates.
   Explicit source directories and recording fetchers remain injectable. Tests do
   not read owner transcripts or contact the public rates source.
-- TypeScript summary and rate-refresh requests receive HTTP 503 after the shared
-  conversation write admission seals during shutdown. This retains ownership of
-  previously admitted work through its drain. Python has no equivalent shared
-  write-admission gate on these routes.
+- TypeScript summary, rate-refresh, backend, and voice requests receive HTTP 503
+  after the shared conversation write admission seals during shutdown. This retains
+  ownership of previously admitted work through its drain. The Manager extended
+  this seal to backend and voice requests in the whole-unit review. Python has no
+  equivalent shared write-admission gate on these routes.
 
 ## Recorded usage timezone data and nonstandard JSON
 
@@ -297,6 +300,29 @@ client stop breaks the wire and stops and joins the owned child. Python waits fo
 withdrawal without this bound. The bound prevents a parked ask or blocked write from
 holding process cleanup open.
 
+## Source credentials across redirect origins
+
+The migration Manager accepted this correction for the cross-area repair.
+Python follows source redirects and retains custom credential headers across origins.
+TypeScript does not reproduce this Python weakness. A credential reference, or any caller-supplied header except `Accept` and `Content-Type`,
+restricts redirects to the same origin (scheme, host, and port). Header names are case-insensitive.
+It refuses before a cross-origin hop with a transport failure that names the refused origin,
+without the credential value. Requests without credential headers retain Python's redirect limit.
+At these three call sites, TypeScript limits the wait for headers and each body read without a total deadline.
+It does not time connect, write, and pool phases separately as HTTPX does.
+Node fetch sets Host from the URL and ignores a caller-supplied Host, which Python HTTPX can retain.
+
+`tests/compare/direct/test_cross_area_http.py` pins same-origin delivery, cross-origin refusal,
+and Python's contrasting header behavior with synthetic loopback servers.
+
+## Python string printability reference
+
+The migration Manager fixed the repr reference to installed Python 3.12.16 and Unicode 15.0.0, also used by CI.
+`core/python_repr_unicode.ts` contains generated ranges assigned in Node's Unicode 17.0.0 but absent from Unicode 15.0.0.
+The shared string repr escapes those code points. The direct repr proof checks the Node Unicode version so that upgrades require regeneration.
+Local Python 3.13 uses Unicode 15.1.0 and prints U+2EBF0. This documented local exception does not change the CI reference.
+Regenerate the ranges with `tests/compare/direct/generate_repr_unicode.py` and the two official UnicodeData files named in its header.
+
 ## Conversation history locale data
 
 The migration Manager accepted Node's bundled locale data for history labels in
@@ -312,6 +338,7 @@ conversation IDs, ranks, revisions, or arbitrary label text. Prefix search remai
 case-folded against the actual label that each runtime displays, so a prefix that
 includes different locale-data text can select a different entry. Unknown locale
 and zone inputs retain the documented fallback behavior.
+
 ## Codex sign-in admission after shutdown
 
 The migration Manager required this safety difference in the Part 3 source review. TypeScript closes sign-in admission when shutdown begins. Later or queued starts fail with `CodexSignInUnavailable`. Python permits a later start on the same service instance.

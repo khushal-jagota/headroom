@@ -63,7 +63,7 @@ function decodeCacheDocument(raw: Uint8Array): unknown {
 }
 
 /** Worker-owned implementation. Its cache never crosses the worker boundary. */
-export class UsageEngine implements Omit<RecordedUsageService, 'stop'> {
+export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled'> {
   readonly stateDir: string;
   readonly transcriptDirs: TranscriptDirectories;
   readonly ratesCachePath: string;
