@@ -154,26 +154,49 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
 
 
 def test_a_claude_model_change_rebinds_the_child_and_preserves_the_conversation(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A same-provider model change must cross Claude's fresh-child boundary."""
     from claude_agent_sdk import ResultMessage
 
     from planner.conversation.backends.claude_agent_sdk import (
+        ClaudeAgentSdkBackendChild,
         ClaudeAgentSdkBackendChildFactory,
         ClaudeAgentSdkChildLaunch,
     )
+    from planner.conversation.child_custody import host_boot_identity
     from planner.conversation.contracts import (
         ConversationBackendKey,
         ConversationStartRequest,
         PromptDeliveryStarted,
+        ResolvedConversationStart,
     )
     from planner.conversation.live_tail import ConversationLiveTail
+    from planner.conversation.local_child_contracts import LocalChildIdentity
     from planner.conversation.message_files import ConversationMessageFiles
     from planner.conversation.storage import ConversationStore
     from planner.conversation.system import SqliteProcessConversationSystem
     from planner.core.db import connect, create_schema
 
+    original_start = ClaudeAgentSdkBackendChild.start
+
+    async def start_scripted_child(
+        child: ClaudeAgentSdkBackendChild,
+        resolved_start: ResolvedConversationStart,
+        *,
+        vendor_session_cursor: str | None,
+    ) -> None:
+        await original_start(
+            child, resolved_start, vendor_session_cursor=vendor_session_cursor
+        )
+        # The scripted client has no process. Never identify pytest as its child.
+        host = host_boot_identity()
+        assert host is not None
+        await child._sink.record_local_child_custody(  # type: ignore[attr-defined]
+            LocalChildIdentity(pid=2_147_483_647, birth="test-child", boot=host.boot)
+        )
+
+    monkeypatch.setattr(ClaudeAgentSdkBackendChild, "start", start_scripted_child)
     db_path = str(tmp_path / "claude-model-change.db")
     conn = connect(db_path)
     create_schema(conn)

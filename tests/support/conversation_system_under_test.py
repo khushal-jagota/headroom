@@ -89,6 +89,7 @@ from planner.conversation.events import (
     UserInputAnswer,
 )
 from planner.conversation.live_tail import ConversationLiveTail, ConversationTailSubscription
+from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.conversation.message_content import (
     MessageContent,
     MessageImage,
@@ -173,6 +174,9 @@ class _ObservingSink:
     def __init__(self, sink: BackendEventSink, conversation: _ScriptedConversation) -> None:
         self._sink = sink
         self._conversation = conversation
+
+    async def record_local_child_custody(self, identity: LocalChildIdentity) -> None:
+        await self._sink.record_local_child_custody(identity)  # type: ignore[attr-defined]
 
     async def report(self, turn: TurnToken | None, event: BackendEventValue) -> None:
         await self._sink.report(turn, event)
