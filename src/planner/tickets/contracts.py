@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Final, Literal, TypedDict
+from typing import TYPE_CHECKING, Final, Literal, NotRequired, TypedDict
 
-from planner.core.contracts import Principal
+from planner.core.contracts import JsonDict, Principal
 from planner.execution_identity import TicketLocale as TicketLocale
 
 if TYPE_CHECKING:
@@ -312,3 +312,49 @@ class BrokenTicketProjection(TypedDict):
     stage: str
     ticket_status: Literal["errored"]
     integrity_error: TicketIntegrityIssue
+
+
+class DecisionHolder(TypedDict):
+    kind: Literal["owner", "chief", "manager"]
+    id: str
+
+
+class DecisionCommand(TypedDict):
+    decision: Literal["approve", "send_back"]
+    field: str
+    expected_proposal_revision: int
+    edited_body: NotRequired[str | None]
+    next_ceiling: NotRequired[str | None]
+    next_holder: NotRequired[DecisionHolder | None]
+    message: NotRequired[str | None]
+
+
+class DecisionTransition(TypedDict):
+    stage: str
+    ceiling: str
+    ceiling_holder: DecisionHolder
+    ticket_status: str
+    pending_proposal_revision: int
+
+
+class DecisionError(TypedDict):
+    code: str
+    message: str
+    detail: JsonDict
+
+
+class DecisionReceipt(TypedDict):
+    operation_id: str
+    ticket_id: str
+    decision: Literal["approve", "send_back"]
+    field: str
+    expected_proposal_revision: int
+    outcome: Literal["applied", "refused"]
+    transition: DecisionTransition | None
+    error: DecisionError | None
+    created_at: int
+
+
+class DecisionOperationResponse(TypedDict):
+    receipt_contract: Literal[1]
+    receipt: DecisionReceipt | None

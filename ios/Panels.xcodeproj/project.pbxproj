@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B5942D46F3E7BB7F9B63B23C /* DecisionOperationContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F227E7C7F71A43D8A9DD11E /* DecisionOperationContracts.swift */; };
 		63A32B23575095075DAD9437 /* PendingWork.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDC4FEDBE5073D44A5451412 /* PendingWork.swift */; };
 		676A69D1F7F1CA258ED8C3A1 /* OutgoingStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 936AC27CECC8F20CE153B3F8 /* OutgoingStorage.swift */; };
 		A7DDA71271634AF76DC57401 /* review-decision-requests.json in Resources */ = {isa = PBXBuildFile; fileRef = 7D78E3AC2EAA0E3DCC74F883 /* review-decision-requests.json */; };
@@ -188,6 +189,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		6F227E7C7F71A43D8A9DD11E /* DecisionOperationContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionOperationContracts.swift; sourceTree = "<group>"; };
 		EDC4FEDBE5073D44A5451412 /* PendingWork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingWork.swift; sourceTree = "<group>"; };
 		936AC27CECC8F20CE153B3F8 /* OutgoingStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutgoingStorage.swift; sourceTree = "<group>"; };
 		7D78E3AC2EAA0E3DCC74F883 /* review-decision-requests.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "review-decision-requests.json"; sourceTree = "<group>"; };
@@ -457,6 +459,7 @@
 				7687EE6822ECA78D49FE1A64 /* ManagerModels.swift */,
 				52AB95DA1ED9D0782197ADB9 /* MoreModels.swift */,
 				0AA980845BC1C25E5F54217D /* ReviewModels.swift */,
+				6F227E7C7F71A43D8A9DD11E /* DecisionOperationContracts.swift */,
 				47A70D70AFB6D9EF5EF29D49 /* TicketModels.swift */,
 				8A5D14EA57A2657834B8F3D9 /* WorkspaceModels.swift */,
 			);
@@ -1321,6 +1324,7 @@
 				4C122B448E47564B447F3276 /* TicketArtifactRoute.swift in Sources */,
 				345DE70A3823FDB0F0004F7F /* TicketExpandableText.swift in Sources */,
 				F3784DFC79283CDE139D6BAC /* TicketLifecycle.swift in Sources */,
+				B5942D46F3E7BB7F9B63B23C /* DecisionOperationContracts.swift in Sources */,
 				701B0B2A9B89BAC975737D3E /* TicketModels.swift in Sources */,
 				D7A0E00FFBF4883BBB6C28D8 /* TicketPresentation.swift in Sources */,
 				879EEAAEAC965C8C99800D5E /* TicketProposalCard.swift in Sources */,
