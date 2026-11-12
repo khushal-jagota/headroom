@@ -21,6 +21,16 @@ The core retains its per-conversation ordering across that wait. No provider cal
 belongs in the retry operation. Before shutdown releases database ownership, the
 core awaits `finish_writes()`.
 
+`RecordingSettlementOptions.shutdown_signal` belongs only to runtime shutdown.
+It cancels a new outer settlement attempt or the generic exponential-backoff wait.
+An already-started write, including every SQLite BUSY retry, keeps its original
+promise and runs to completion. Caller departure never aborts this signal.
+The core fences native observers and new operations separately. It joins the
+fenced task cleanup before it detaches children, including a child that an
+interrupted stop restores. This never joins an unfenced provider promise.
+It then awaits `finish_writes()` before runtime ownership can be released.
+The lifecycle awaits the core's `shutdown()` and performs no second detach.
+
 `transact_events` accepts domain writes and returned event payloads. The store
 alone appends those payloads. A domain that already owns a transaction uses
 `append_in_transaction` with its scoped `TransactionSql`. Neither path opens or

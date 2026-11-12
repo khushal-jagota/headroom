@@ -11,6 +11,8 @@ const WRITE_FAILURE_MAX_RETRY_MILLISECONDS = 30_000;
 export interface RecordingSettlementOptions {
   /** Monotonic seconds, as asyncio's loop.time() uses in Python. */
   readonly retry_later_at?: number | null;
+  /** Runtime shutdown cancels outer generic retry waits, never an active write/BUSY loop. */
+  readonly shutdown_signal?: AbortSignal;
 }
 function error_code(error: unknown): string | null {
   if (
@@ -44,7 +46,12 @@ export class RecordSettlement {
     operation: () => T | Promise<T>,
     options: RecordingSettlementOptions = {},
   ): Promise<T> {
-    const task = this.#settle(conversation_id, operation, options.retry_later_at ?? null);
+    const task = this.#settle(
+      conversation_id,
+      operation,
+      options.retry_later_at ?? null,
+      options.shutdown_signal,
+    );
     this.#pending.add(task);
     void task.finally(() => this.#pending.delete(task)).catch(() => {});
     return task;
@@ -70,7 +77,9 @@ export class RecordSettlement {
     conversation_id: string,
     operation: () => T | Promise<T>,
     retry_later_at: number | null,
+    shutdown_signal?: AbortSignal,
   ): Promise<T> {
+    shutdown_signal?.throwIfAborted();
     if (retry_later_at !== null) {
       try {
         return await this.#write(operation, retry_later_at);
@@ -88,19 +97,21 @@ export class RecordSettlement {
     let delay = WRITE_FAILURE_FIRST_RETRY_MILLISECONDS;
     let failures = 0;
     while (true) {
+      shutdown_signal?.throwIfAborted();
       try {
         return await this.#write(operation, null);
       } catch (error) {
-        // The future core uses AbortError for caller cancellation, not save failure.
+        // Only runtime shutdown cancels this outer wait. Caller departure keeps the save owned.
         if (error instanceof Error && error.name === 'AbortError') {
           throw error;
         }
+        shutdown_signal?.throwIfAborted();
         failures += 1;
         console.error(
           `conversation ${conversation_id} save failed (failure ${failures}); retrying in ${delay / 1000} s`,
           error,
         );
-        await pause(delay);
+        await pause(delay, undefined, shutdown_signal ? { signal: shutdown_signal } : undefined);
         delay = Math.min(delay * 2, WRITE_FAILURE_MAX_RETRY_MILLISECONDS);
       }
     }

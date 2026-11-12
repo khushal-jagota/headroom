@@ -18,6 +18,7 @@ import {
 import type { BackendEventSink, BackendEventValue, TurnToken } from './backends/contracts.ts';
 import {
   ConversationBackendKey,
+  AnswerFate,
   HeldPrompt,
   PromptDeliveryInjected,
   PromptDeliveryMode,
@@ -31,6 +32,8 @@ import {
 } from './contracts.ts';
 import type {
   ConversationStartRequest,
+  ConversationSystem,
+  HeldPromptPromotionMode,
   PromptDeliveryFate,
   RecordMessageToOwnerOptions,
   SendOptions,
@@ -67,6 +70,22 @@ import type {
 } from './runtime/contracts.ts';
 import { deliver_prompt, stop_child } from './runtime/delivery.ts';
 import { MODEL_THINKING_PULSE_INTERVAL_SECONDS } from './runtime/configuration.ts';
+import { take_backend_event } from './runtime/backend_events.ts';
+import * as controls from './runtime/controls.ts';
+import * as answers from './runtime/answers.ts';
+import {
+  acquire_after_steers,
+  acquire_settled,
+  contention_only_write,
+} from './runtime/synchronization.ts';
+import type { LockLease } from './runtime/synchronization.ts';
+import {
+  automatic_compaction_is_due,
+  deliver_automatic_compaction,
+  background_tasks_ended_with_child,
+  IdleChildJanitor,
+  detach_children,
+} from './runtime/maintenance.ts';
 import {
   discarded_row,
   outcome_fate,
@@ -121,12 +140,15 @@ function new_running_turn(reservation: ReservedTurn): RunningTurn {
   };
 }
 
-export class SqliteProcessConversationSystem implements DeliveryServices {
+export class SqliteProcessConversationSystem implements DeliveryServices, ConversationSystem {
   readonly options: ConversationCoreOptions;
   readonly workspace_admission = new WorkspaceAdmission();
   readonly conversations = new Map<string, ConversationState>();
   shutting_down = false;
   private shutdown_task: Promise<void> | null = null;
+  private readonly shutdown_controller = new AbortController();
+  private readonly native_waiters = new Set<() => void>();
+  private idle_janitor: IdleChildJanitor | null = null;
   constructor(options: ConversationCoreOptions) {
     for (const key of Object.values(ConversationBackendKey)) {
       if (!options.backend_child_factories[key])
@@ -175,9 +197,58 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
     work: () => T,
     mutations: readonly RuntimeMutation[] = [],
   ): Promise<T> {
-    return this.options.store.settle_recording(state.record.conversation_id, () =>
-      (this.options.save_attempt ?? save_attempt)(state.record.conversation_id, work, mutations),
+    let failures = 0;
+    let tracked: import('./runtime/contracts.ts').TrackedSaveRetry | null = null;
+    const task = this.options.store.settle_recording(
+      state.record.conversation_id,
+      () => {
+        try {
+          return (this.options.save_attempt ?? save_attempt)(
+            state.record.conversation_id,
+            work,
+            mutations,
+          );
+        } catch (error) {
+          const code =
+            error !== null && typeof error === 'object' && 'code' in error ? error.code : null;
+          if (
+            !(typeof code === 'string' && code.startsWith('SQLITE_BUSY')) &&
+            !(error instanceof Error && error.name === 'AbortError')
+          ) {
+            failures += 1;
+            const detail = `Stuck at write ${failures}`;
+            if (tracked) tracked.set_detail(detail);
+            else
+              tracked =
+                this.options.wait_registry?.track(
+                  'vps_save_retrying',
+                  state.record.conversation_id,
+                  { detail, conversation_id: state.record.conversation_id },
+                ) ?? null;
+          }
+          throw error;
+        }
+      },
+      { shutdown_signal: this.shutdown_controller.signal },
     );
+    return task.finally(() => tracked?.close());
+  }
+  native_operation<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.shutting_down)
+      return Promise.reject(new DOMException('The operation was aborted', 'AbortError'));
+    let cancel!: () => void;
+    const closing = new Promise<T>((_resolve, reject) => {
+      cancel = () => reject(new DOMException('The operation was aborted', 'AbortError'));
+    });
+    this.native_waiters.add(cancel);
+    let native: Promise<T>;
+    try {
+      native = operation();
+    } catch (error) {
+      this.native_waiters.delete(cancel);
+      return Promise.reject(error);
+    }
+    return Promise.race([native, closing]).finally(() => this.native_waiters.delete(cancel));
   }
   note_written(state: ConversationState, rows: readonly StoredConversationEvent[]): void {
     if (rows.length === 0) return;
@@ -192,6 +263,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
       }
     }
     state.record = new ConversationRecord(values);
+    if (this.shutting_down) return;
     // A subscriber failure occurs after commit. Never put it inside a save retry.
     for (const row of rows) {
       try {
@@ -230,9 +302,6 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
     options: SendOptions,
   ): Promise<PromptDeliveryFate> {
     const mode = options.mode ?? PromptDeliveryMode.queue;
-    if (mode !== PromptDeliveryMode.queue) {
-      throw new Error('The local turn-control slice is not registered yet.');
-    }
     state.last_touched_monotonic = this.monotonic_now();
     const boundary = await state.lock.run(() => {
       if (options.owner_read_through_sequence != null) {
@@ -270,7 +339,12 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
     const duplicate = await this.admit_sender(state, message);
     if (duplicate) return duplicate;
     try {
-      const fate = await this.queue(state, message);
+      const fate =
+        mode === PromptDeliveryMode.steer
+          ? await controls.steer(this, state, message)
+          : mode === PromptDeliveryMode.send_now
+            ? await controls.send_now(this, state, message)
+            : await this.queue(state, message);
       if (
         options.record_refusal &&
         fate instanceof PromptDeliveryRefused &&
@@ -389,12 +463,24 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
   }
   async queue(state: ConversationState, message: Message): Promise<PromptDeliveryFate> {
     const admission = await state.lock.run(async () => {
-      if (state.child_is_quarantined || state.phase !== 'idle' || state.held_prompts.length > 0) {
+      if (
+        state.child_is_quarantined ||
+        state.phase !== 'idle' ||
+        state.held_prompts.length > 0 ||
+        state.late_steers.size > 0
+      )
         return this.hold_prompt(state, message);
+      if (this.automatic_compaction_is_due(state)) {
+        const fate = this.hold_prompt(state, message);
+        return { automatic: await this.reserve_turn(state, true), fate };
       }
       return this.reserve_turn(state);
     });
     if (admission instanceof PromptDeliveryQueued) return admission;
+    if ('automatic' in admission) {
+      await this.deliver_automatic_compaction(state, admission.automatic);
+      return admission.fate;
+    }
     return this.deliver_and_finalize(state, admission, [message], false);
   }
   hold_prompt(
@@ -438,8 +524,10 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
     reservation: ReservedTurn,
     batch: readonly Message[],
     queued: boolean,
+    drain_after_delivery_exception = true,
   ): Promise<PromptDeliveryFate> {
     reservation.messages = batch;
+    const promoted = queued && reservation.mode === PromptDeliveryMode.send_now;
     let delivery: DeliveryAttempt;
     try {
       reservation.automatic_notice = await this.persist(state, () =>
@@ -450,6 +538,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
       );
       delivery = await deliver_prompt(this, state, reservation, batch);
     } catch (error) {
+      if (this.shutting_down) throw error;
       if (error instanceof PromptWriteFailed) {
         await this.record_delivery_uncertainty(state, reservation, batch);
         return new PromptDeliveryUncertain();
@@ -463,23 +552,31 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
         }
         this.abandon_reservation(state, reservation, 'idle');
       });
-      if (!queued) {
-        this.schedule_drain(state);
+      if (!queued || promoted) {
+        if (drain_after_delivery_exception) this.schedule_drain(state);
         throw error;
       }
       return new PromptDeliveryUncertain();
     }
     if (delivery.suppression_reason !== null) {
       await state.lock.run(() => {
-        this.abandon_reservation(state, reservation, queued ? 'draining' : 'idle');
+        this.abandon_reservation(state, reservation, queued && !promoted ? 'draining' : 'idle');
         this.finish_held_deliveries(state, batch);
       });
-      if (!queued) this.schedule_drain(state);
+      if (!queued || promoted) this.schedule_drain(state);
       return new PromptDeliverySuppressed({ reason: delivery.suppression_reason });
     }
     reservation.automatic_notice = delivery.automatic_notice;
     const survivors = delivery.messages.length > 0 ? delivery.messages : batch;
-    let held_change: ModelChangedEventPayload | null = null;
+    // A drain credits only the successful admission envelopes returned by delivery.
+    // A definite refusal returns none. The remaining refused rows never carry read credit.
+    const drain_bounds = delivery.messages
+      .filter(
+        (message) =>
+          message.sender?.kind === 'owner' && message.owner_read_through_sequence !== null,
+      )
+      .map((message) => message.owner_read_through_sequence!);
+    const drain_read_through = drain_bounds.length > 0 ? Math.max(...drain_bounds) : null;
     const fate = await state.lock.run(async () => {
       try {
         if (delivery.refusal_reason !== null) {
@@ -504,9 +601,14 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
                   {
                     lifecycle: index === 0 ? lifecycle : [],
                     recording_receipt: message.recording_receipt,
-                    owner_read_through_sequence: message.acknowledge_owner_on_failure
-                      ? message.owner_read_through_sequence
-                      : null,
+                    owner_read_through_sequence:
+                      index !== 0
+                        ? null
+                        : queued && !promoted
+                          ? drain_read_through
+                          : message.acknowledge_owner_on_failure
+                            ? message.owner_read_through_sequence
+                            : null,
                   },
                 ),
               );
@@ -517,7 +619,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
               this.options.store.transition_lifecycle(state.record.conversation_id, lifecycle),
             );
           }
-          set_phase(state, queued ? 'draining' : 'idle');
+          set_phase(state, queued && !promoted ? 'draining' : 'idle');
           return new PromptDeliveryRefused({ refusal_reason: delivery.refusal_reason });
         }
         const first = survivors[0];
@@ -583,8 +685,17 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
         state.has_delivered_prompt = true;
         state.delivery_uncertain = false;
         set_phase(state, 'running');
-        if (change && queued) held_change = change;
-        this.options.emit_change?.();
+        this.finish_held_deliveries(state, reservation.messages);
+        if (!this.shutting_down) {
+          this.options.emit_change?.();
+          if (change && queued) {
+            await this.options.on_held_model_change?.(
+              state.record.conversation_id,
+              change.model,
+              change.reasoning_effort,
+            );
+          }
+        }
         return new PromptDeliveryStarted();
       } finally {
         if (state.phase !== 'starting') {
@@ -594,15 +705,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
       }
     });
     await state.lock.run(() => this.finish_held_deliveries(state, batch));
-    if (held_change !== null) {
-      const committed_change = held_change as ModelChangedEventPayload;
-      await this.options.on_held_model_change?.(
-        state.record.conversation_id,
-        committed_change.model,
-        committed_change.reasoning_effort,
-      );
-    }
-    if (fate instanceof PromptDeliveryRefused && !queued) this.schedule_drain(state);
+    if (fate instanceof PromptDeliveryRefused && (!queued || promoted)) this.schedule_drain(state);
     return fate;
   }
   abandon_reservation(
@@ -645,7 +748,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
       this.publish_held_prompts_changed(state);
     });
   }
-  private finish_held_deliveries(state: ConversationState, batch: readonly Message[]): void {
+  finish_held_deliveries(state: ConversationState, batch: readonly Message[]): void {
     for (const message of batch) {
       if (message.sender_message_id === null) continue;
       const admission = state.sender_messages_being_delivered.get(message.sender_message_id);
@@ -668,7 +771,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
         state.child_is_quarantined ||
         state.phase !== 'idle' ||
         state.held_prompts.length === 0 ||
-        state.held_prompts.some((held) => held.delivery_uncertain)
+        state.held_prompts.some((held) => held.delivery_uncertain) ||
+        state.late_steers.size > 0
       )
         return false;
       set_phase(state, 'draining');
@@ -774,11 +878,9 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
     // Start after assignment, so a synchronous event cannot clear then overwrite the pump.
     state.backend_event_pump = Promise.resolve().then(pump);
   }
-  private async wait_for_reservation(
-    state: ConversationState,
-    token: TurnToken | null,
-  ): Promise<void> {
+  async wait_for_reservation(state: ConversationState, token: TurnToken | null): Promise<void> {
     while (state.reserved_turn && same_turn(state.reserved_turn.token, token)) {
+      if (this.shutting_down) return;
       await state.reserved_turn.resolved.promise;
     }
   }
@@ -788,145 +890,268 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
     event: BackendEventValue,
     expected_sink?: BackendEventSink,
   ): Promise<boolean> {
-    await this.wait_for_reservation(state, token);
-    let drain = false;
-    const applied = await state.lock.run(async () => {
-      if (this.shutting_down || (expected_sink && state.child_event_sink !== expected_sink))
-        return false;
-      const running = state.running_turn;
-      const session =
-        token === null &&
-        (event instanceof VendorSessionCursorRebound || event instanceof ComposerCatalogReported);
-      const live =
-        session ||
-        (running !== null &&
-          same_turn(running.token, token) &&
-          !running.ended &&
-          !running.ending_is_the_cores);
+    return take_backend_event(this, state, token, event, expected_sink);
+  }
+  async begin_attempt(
+    state: ConversationState,
+    token: TurnToken,
+    operation: LifecycleFact['operation'],
+    provider_identity: string | null = null,
+    related: readonly LifecycleFact[] = [],
+    mutations: readonly RuntimeMutation[] = [],
+  ): Promise<LifecycleFact> {
+    const attempt: LifecycleFact = {
+      kind: K.attempt,
+      identity: randomUUID().replaceAll('-', ''),
+      turn_number: token.turn_number,
+      operation,
+      status: S.intent,
+      provider_identity,
+    };
+    await this.persist(
+      state,
+      () =>
+        this.options.store.transition_lifecycle(state.record.conversation_id, [
+          attempt,
+          ...related,
+        ]),
+      mutations,
+    );
+    return attempt;
+  }
+  async revoke_turn_requests(state: ConversationState, running: RunningTurn): Promise<void> {
+    const facts = this.options.store
+      .lifecycle_facts(state.record.conversation_id)
+      .filter(
+        (fact) =>
+          fact.kind === K.request &&
+          fact.turn_number === running.token.turn_number &&
+          (fact.status === S.pending || fact.status === S.answering),
+      )
+      .map((fact) => ({ ...fact, status: S.unavailable }));
+    await this.persist(state, () =>
+      this.options.store.transition_lifecycle(state.record.conversation_id, facts),
+    );
+    running.callbacks_revoked = true;
+  }
+  async end_turn(
+    state: ConversationState,
+    running: RunningTurn,
+    ending: import('./events.ts').ConversationTurnEnding,
+    error: string | null,
+    cancel_fact: LifecycleFact | null = null,
+  ): Promise<StoredConversationEvent | null> {
+    if (running.ended) return null;
+    await this.revoke_turn_requests(state, running);
+    const interpreted = interpret_backend_event(
+      running.token,
+      new TurnEnded({ ending, error_summary: error }),
+      running,
+      this.options.store.lifecycle_facts(state.record.conversation_id),
+    );
+    const written = await this.persist(
+      state,
+      () =>
+        this.options.store.append_turn_ending(state.record.conversation_id, interpreted.payloads, {
+          lifecycle: [
+            interpreted.lifecycle[0],
+            ...(cancel_fact ? [cancel_fact] : []),
+            ...interpreted.lifecycle.slice(1),
+          ],
+          agent_activity: !running.automatic_compaction,
+          automatic_compaction_confirmed: running.compaction_confirmed,
+          automatic_compaction_result: interpreted.compaction_result,
+          create_failure_notice: interpreted.failure_notice,
+        }),
+      [
+        field_mutation(running, 'ended', true),
+        field_mutation(running, 'pending_permission_ask_ids', new Set()),
+        field_mutation(running, 'pending_user_input_questions', new Map()),
+        field_mutation(running, 'permission_provider_ids', new Map()),
+        field_mutation(running, 'user_input_provider_ids', new Map()),
+        field_mutation(state, 'last_ended_turn_token', running.token),
+        field_mutation(
+          state,
+          'last_ended_turn_was_automatic_compaction',
+          running.automatic_compaction,
+        ),
+        field_mutation(state, 'running_turn', null),
+      ],
+    );
+    this.note_written(state, written);
+    if (written.length > 0) {
+      const last = written[written.length - 1];
+      const latest_agent_activity_sequence = running.automatic_compaction
+        ? state.record.latest_agent_activity_sequence
+        : last.sequence;
+      state.record = new ConversationRecord({
+        ...state.record,
+        latest_agent_activity_at: running.automatic_compaction
+          ? state.record.latest_agent_activity_at
+          : last.created_at,
+        latest_agent_activity_sequence,
+        automatically_compacted_through_sequence: running.compaction_confirmed
+          ? latest_agent_activity_sequence
+          : state.record.automatically_compacted_through_sequence,
+        automatic_compaction_attempted_through_sequence:
+          running.compaction_confirmed || interpreted.compaction_result !== null
+            ? latest_agent_activity_sequence
+            : state.record.automatic_compaction_attempted_through_sequence,
+      });
+    }
+    if (!this.shutting_down) this.options.emit_change?.();
+    return written[written.length - 1] ?? null;
+  }
+  acquire_after_steers(state: ConversationState): Promise<LockLease> {
+    return acquire_after_steers(state);
+  }
+  acquire_settled(state: ConversationState): Promise<LockLease> {
+    return acquire_settled(state);
+  }
+  async discard_child(
+    state: ConversationState,
+    child: import('./backends/contracts.ts').BackendChild,
+  ): Promise<boolean> {
+    if (state.child === child) state.child = null;
+    const stopped = await stop_child(state, child, (operation) => this.native_operation(operation));
+    if (stopped) {
+      state.local_child_retirement_proven = true;
+      state.child_event_sink = null;
+      state.child_is_quarantined = false;
+      await background_tasks_ended_with_child(this, state);
+    } else {
+      state.child = child;
+      state.child_is_quarantined = true;
+    }
+    return stopped;
+  }
+  automatic_compaction_is_due(state: ConversationState): boolean {
+    return automatic_compaction_is_due(this, state);
+  }
+  deliver_automatic_compaction(state: ConversationState, reservation: ReservedTurn): Promise<void> {
+    return deliver_automatic_compaction(this, state, reservation);
+  }
+  async start_idle_child_janitor(): Promise<void> {
+    this.require_runtime_ownership();
+    if (!this.idle_janitor) {
+      this.idle_janitor = new IdleChildJanitor(this);
+      this.idle_janitor.start();
+    }
+  }
+  async sweep_idle_children(): Promise<void> {
+    return import('./runtime/maintenance.ts').then((module) => module.sweep_idle_children(this));
+  }
+  async interrupt(conversation_id: string): Promise<void> {
+    const state = this.conversation_state(conversation_id);
+    if (state) await own_settlement(state, controls.interrupt(this, state));
+  }
+  async kill(conversation_id: string): Promise<void> {
+    const state = this.conversation_state(conversation_id);
+    if (state) await own_settlement(state, controls.kill(this, state));
+  }
+  async promote_held_prompt(
+    conversation_id: string,
+    held_prompt_id: string,
+    mode: HeldPromptPromotionMode,
+  ): Promise<PromptDeliveryFate | null> {
+    const state = this.conversation_state(conversation_id);
+    return state
+      ? own_settlement(state, controls.promote_held_prompt(this, state, held_prompt_id, mode))
+      : null;
+  }
+  async discard_held_prompt(conversation_id: string, held_prompt_id: string): Promise<boolean> {
+    const state = this.conversation_state(conversation_id);
+    return state
+      ? own_settlement(state, controls.discard_held_prompt(this, state, held_prompt_id))
+      : false;
+  }
+  async retirement_is_confirmed(conversation_id: string): Promise<boolean> {
+    const state = this.conversation_state(conversation_id);
+    return state
+      ? state.lock.run(
+          () =>
+            state.child === null &&
+            !state.child_is_quarantined &&
+            (state.local_child_retirement_proven || !state.has_delivered_prompt),
+        )
+      : false;
+  }
+  async answer_permission_ask(
+    conversation_id: string,
+    ask_id: string,
+    option_id: string,
+  ): Promise<AnswerFate> {
+    const state = this.conversation_state(conversation_id);
+    return state
+      ? own_settlement(state, answers.answer_permission_ask(this, state, ask_id, option_id))
+      : AnswerFate.refused;
+  }
+  async answer_user_input(
+    conversation_id: string,
+    request_id: string,
+    values: readonly import('./events.ts').UserInputAnswer[],
+  ): Promise<AnswerFate> {
+    const state = this.conversation_state(conversation_id);
+    return state
+      ? own_settlement(state, answers.answer_user_input(this, state, request_id, values))
+      : AnswerFate.refused;
+  }
+  async pending_permission_ask_ids(conversation_id: string): Promise<ReadonlySet<string>> {
+    return new Set(
+      this.conversation_state(conversation_id)?.running_turn?.pending_permission_ask_ids ?? [],
+    );
+  }
+  async pending_user_input_request_ids(conversation_id: string): Promise<ReadonlySet<string>> {
+    return new Set(
+      this.conversation_state(conversation_id)?.running_turn?.pending_user_input_questions.keys() ??
+        [],
+    );
+  }
+  async run_if_idle(conversation_id: string, operation: () => void): Promise<boolean> {
+    const state = this.conversation_state(conversation_id);
+    if (!state) {
+      operation();
+      return true;
+    }
+    if (state.lock.locked) return false;
+    return state.lock.run(() => {
       if (
-        !live ||
-        (running?.callbacks_revoked &&
-          (event instanceof PermissionAskRaised || event instanceof UserInputRequested))
+        state.phase !== 'idle' ||
+        state.reserved_turn ||
+        state.running_turn ||
+        state.held_prompts.length ||
+        state.admitted_sender_messages.size ||
+        state.sender_messages_being_delivered.size ||
+        state.steer_settlements.size ||
+        state.settlement_tasks.size
       )
         return false;
-      state.last_touched_monotonic = this.monotonic_now();
-      const interpreted = interpret_backend_event(
-        token,
-        event,
-        running,
-        event instanceof TurnEnded
-          ? this.options.store.lifecycle_facts(state.record.conversation_id)
-          : [],
-      );
-      if (
-        interpreted.lifecycle.length > 0 &&
-        (event instanceof PermissionAskRaised || event instanceof UserInputRequested)
-      ) {
-        const identity = interpreted.lifecycle[0].identity;
-        if (
-          this.options.store
-            .lifecycle_facts(state.record.conversation_id)
-            .some((fact) => fact.kind === K.request && fact.identity === identity)
-        )
-          return false;
-      }
-      const predicted = interpreted.predicted;
-      const mutations: RuntimeMutation[] = [];
-      if (predicted) {
-        mutations.push(field_mutation(state, 'running_turn', predicted.ended ? null : predicted));
-        if (predicted.ended) {
-          mutations.push(field_mutation(state, 'last_ended_turn_token', predicted.token));
-          mutations.push(
-            field_mutation(
-              state,
-              'last_ended_turn_was_automatic_compaction',
-              predicted.automatic_compaction,
-            ),
-          );
-        }
-      }
-      const result = await this.persist(
-        state,
-        () =>
-          this.options.store.commit_backend_event((tx) => {
-            const written = this.options.store.append_in_transaction(
-              tx,
-              state.record.conversation_id,
-              interpreted.payloads,
-              {
-                lifecycle: interpreted.lifecycle,
-                agent_activity:
-                  interpreted.payloads.length > 0 &&
-                  !interpreted.compacted &&
-                  running !== null &&
-                  !running.automatic_compaction,
-                automatic_compaction_confirmed:
-                  interpreted.compacted ||
-                  (event instanceof TurnEnded && running?.compaction_confirmed === true),
-                automatic_compaction_result: interpreted.compaction_result,
-                create_failure_notice: interpreted.failure_notice,
-              },
-            );
-            if (event instanceof VendorSessionCursorRebound)
-              this.options.store.update_session_in_transaction(tx, state.record.conversation_id, {
-                vendor_session_cursor: event.vendor_session_cursor,
-              });
-            else if (event instanceof ComposerCatalogReported)
-              this.options.store.update_session_in_transaction(tx, state.record.conversation_id, {
-                composer_catalog: event.composer_catalog,
-              });
-            return { result: true, written };
-          }),
-        mutations,
-      );
-      this.note_written(state, result.written);
-      if (event instanceof VendorSessionCursorRebound)
-        state.record = new ConversationRecord({
-          ...state.record,
-          vendor_session_cursor: event.vendor_session_cursor,
-        });
-      else if (event instanceof ComposerCatalogReported)
-        state.record = new ConversationRecord({
-          ...state.record,
-          composer_catalog: event.composer_catalog,
-        });
-      if (result.written.length > 0) {
-        const last = result.written[result.written.length - 1];
-        if (running !== null && !running.automatic_compaction && !interpreted.compacted) {
-          state.record = new ConversationRecord({
-            ...state.record,
-            latest_agent_activity_at: last.created_at,
-            latest_agent_activity_sequence: last.sequence,
-          });
-        }
-        if (interpreted.compacted)
-          state.record = new ConversationRecord({
-            ...state.record,
-            automatically_compacted_through_sequence: state.record.latest_agent_activity_sequence,
-            automatic_compaction_attempted_through_sequence:
-              state.record.latest_agent_activity_sequence,
-          });
-        else if (interpreted.compaction_result !== null)
-          state.record = new ConversationRecord({
-            ...state.record,
-            automatic_compaction_attempted_through_sequence:
-              state.record.latest_agent_activity_sequence,
-          });
-      }
-      if (predicted?.ended) {
-        set_phase(state, 'idle');
-        this.options.emit_change?.();
-        drain = true;
-      }
-      if (event instanceof TurnEnded && event.ending === 'failed')
-        console.error(
-          `conversation ${state.record.conversation_id} turn ${token?.turn_number} failed: ${event.error_summary ?? 'the turn failed for an unknown reason'}`,
-          event.standard_error_tail?.slice(-4000) ?? '',
-        );
-      return result.taken;
+      operation();
+      return true;
     });
-    if (drain) this.schedule_drain(state);
-    return applied;
+  }
+  async record_events_transaction<T>(
+    conversation_id: string,
+    operation: (
+      tx: import('../core/database/contracts.ts').TransactionSql,
+    ) => import('./record/contracts.ts').EventMutation<T>,
+  ): Promise<T> {
+    return this.workspace_admission.operation(async (admitted) => {
+      if (!admitted) throw new Error('Workspace admission is closed for an owner update.');
+      const state = this.conversation_state(conversation_id);
+      if (!state) throw new Error('conversation is absent');
+      return own_settlement(
+        state,
+        state.lock.run(async () => {
+          if (this.shutting_down) throw new DOMException('The operation was aborted', 'AbortError');
+          const result = await contention_only_write(() =>
+            this.options.store.transact_events(conversation_id, operation),
+          );
+          this.note_written(state, result.written);
+          return result.value;
+        }),
+      );
+    });
   }
   async held_prompts(conversation_id: string): Promise<readonly HeldPrompt[]> {
     const state = this.conversation_state(conversation_id);
@@ -1015,6 +1240,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
         state.held_prompts.length ||
         state.admitted_sender_messages.size ||
         state.sender_messages_being_delivered.size ||
+        state.steer_settlements.size ||
         state.child_is_quarantined ||
         state.settlement_tasks.size
       )
@@ -1043,21 +1269,39 @@ export class SqliteProcessConversationSystem implements DeliveryServices {
   }
   async shutdown(): Promise<void> {
     if (this.shutdown_task) return this.shutdown_task;
+    const states = [...this.conversations.values()];
+    const pumps = states.flatMap((state) =>
+      state.backend_event_pump ? [state.backend_event_pump] : [],
+    );
+    // A child can already exist while its native start still awaits a response.
+    for (const state of states) {
+      if (state.child === null && state.preparing_child !== null)
+        state.child = state.preparing_child;
+      state.closing = true;
+      state.child_event_sink = null;
+      if (state.running_turn) state.running_turn.callbacks_revoked = true;
+      state.backend_events.length = 0;
+      state.backend_event_pump = null;
+      state.late_steer_generation += 1;
+      state.late_steers.clear();
+      for (const barrier of state.steer_settlements) barrier.resolve();
+      state.steer_settlements.clear();
+      state.phase_settled.resolve();
+      state.reserved_turn?.resolved.resolve();
+    }
     this.shutting_down = true;
+    for (const cancel of this.native_waiters) cancel();
+    this.native_waiters.clear();
+    this.shutdown_controller.abort();
     this.shutdown_task = (async () => {
-      for (const state of this.conversations.values()) {
-        if (state.running_turn) state.running_turn.callbacks_revoked = true;
-        state.backend_events.length = 0;
-      }
-      // Caller departure never cancels an accepted exchange. Keep the record door open.
-      await Promise.allSettled(
-        [...this.conversations.values()].flatMap((state) => [...state.settlement_tasks]),
-      );
-      await Promise.allSettled(
-        [...this.conversations.values()].map(async (state) => {
-          if (state.child) await stop_child(state, state.child);
-        }),
-      );
+      await this.idle_janitor?.stop();
+      // These are fenced observers, never raw provider promises. Cleanup can restore
+      // an uncertain child which must participate in the detach below.
+      await Promise.allSettled([
+        ...pumps,
+        ...states.flatMap((state) => [...state.settlement_tasks]),
+      ]);
+      await detach_children(states);
       await this.options.store.finish_writes();
     })();
     return this.shutdown_task;
