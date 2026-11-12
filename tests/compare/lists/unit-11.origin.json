@@ -1,0 +1,126 @@
+{
+  "conversation_system": "in_memory",
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "File owner",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "manager": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Other owner",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "other": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Artifact owner",
+        "worker_type": "coding",
+        "brief": "Agreed artifact brief",
+        "manager": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "ticket": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 200,
+      "json": {
+        "title": "File goal",
+        "project_id": "project_other",
+        "kind": "binary",
+        "primary_checklist_block_id": null
+      },
+      "capture": {
+        "goal": "id"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/files/managers/${manager}/seed.txt",
+      "status": 200,
+      "json": {
+        "content": "Seed caf\u00e9 \\u0000 bytes"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/propose",
+      "status": 200,
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      },
+      "json": {
+        "body": "[One](/files/tickets/${ticket}/one/report.md) [Two](/files/tickets/${ticket}/two/report.md) [Repeat](/files/tickets/${ticket}/one/report.md)"
+      }
+    }
+  ],
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/reject",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/propose",
+      "status": 200,
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      },
+      "json": {
+        "body": "[Absolute](https://panels.comparison.invalid/files/tickets/${ticket}/absolute.md)"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/artifact-catalog/ticket/${ticket}",
+      "status": 200,
+      "headers": {
+        "Host": "panels.comparison.invalid",
+        "X-Forwarded-Proto": "https"
+      }
+    },
+    {
+      "area": "origin",
+      "method": "GET",
+      "path": "/api/meta/?x=1",
+      "status": 307,
+      "headers": {
+        "Host": "panels.comparison.invalid",
+        "X-Forwarded-Proto": "https",
+        "X-Forwarded-Host": "wrong.comparison.invalid"
+      },
+      "response_bytes": true
+    }
+  ],
+  "candidate": "typescript",
+  "source_roots": [
+    "src/planner/files/",
+    "src/planner/core/"
+  ]
+}

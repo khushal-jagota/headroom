@@ -1,3 +1,4 @@
+import { requestOrigin } from '../core/http/origin.ts';
 import { mimeType } from './mime.ts';
 import { open } from 'node:fs/promises';
 import { dirname, join, basename } from 'node:path';
@@ -232,7 +233,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
         const links = linked(
           sql,
           owner,
-          `${request.protocol}://${request.host}`,
+          requestOrigin(request),
           kept.seen,
           Math.max(0, offset - rows.length),
           Math.max(0, limit - window.length),
