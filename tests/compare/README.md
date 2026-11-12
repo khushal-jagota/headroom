@@ -151,3 +151,5 @@ After each `after_open` write, the runner also executes the list's read probes. 
 For review evidence, `report_captures` can name existing captures to include in the report. It changes no comparison or substitution behavior. Navigation uses this to retain ordered overview windows and the actual stream frames.
 
 The shared `navigation_view_ordered` index is a TypeScript-only representation. The runner classifies that single table explicitly as derived storage for every list and includes the reason in each report. This prevents unrelated domain comparisons from treating the index as a canonical source table. Navigation's populated list compares its member IDs, order, paging, counts, and closures.
+
+For later domain lists, a navigation snapshot probe after each write is enough. No source registration is required. Existing source triggers and the shared navigation commit step update the records and views.
