@@ -17,7 +17,7 @@
       "method": "POST",
       "path": "/api/projects",
       "json": {
-        "name": "\u00c9clair 12",
+        "name": "Éclair 12",
         "summary": "Comparison project"
       },
       "capture": {
@@ -34,7 +34,7 @@
       "method": "PATCH",
       "path": "/api/projects/${project}",
       "json": {
-        "name": "\u00e9clair 2",
+        "name": "éclair 2",
         "summary": "Updated summary"
       },
       "area": "projects"
@@ -111,7 +111,7 @@
       "method": "POST",
       "path": "/api/projects",
       "json": {
-        "name": "\u00e9clair 2"
+        "name": "éclair 2"
       },
       "area": "projects"
     },
