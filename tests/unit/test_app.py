@@ -207,10 +207,10 @@ def _runtime_app(app: Path) -> Path:
     cli.chmod(0o755)
     (app / "web" / "dist").mkdir(parents=True)
     (app / "web" / "dist" / "index.html").write_text("ok", encoding="utf-8")
-    (app / "agent_backends" / "node_modules").mkdir(parents=True)
-    (app / "agent_backends" / "node_modules" / ".package-lock.json").write_text(
-        "{}\n", encoding="utf-8"
-    )
+    for package in ("@anthropic-ai/claude-code", "@openai/codex"):
+        metadata = app / "agent_backends/node_modules" / package / "package.json"
+        metadata.parent.mkdir(parents=True)
+        metadata.write_text('{"version": "test"}\n', encoding="utf-8")
     (app / "manifest.json").write_text(
         json.dumps(
             {

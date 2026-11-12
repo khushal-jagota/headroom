@@ -52,10 +52,11 @@ for a different configured server and never changes the server automatically.
 Conversation reading and replies remain owned by the destination page.
 Notification handling only opens that page.
 
-The default build intentionally reports **Server delivery is not connected yet**.
-`APNS_REGISTRATION_ENABLED=NO` prevents all device-registration requests. Merely
-allowing notifications does not claim that background delivery works. The build
-can still receive Simulator injections, which bypass the provider and APNs.
+Release builds for physical iPhones enable server registration by default. Debug
+and Simulator builds retain `APNS_REGISTRATION_ENABLED=NO` and report **Server
+delivery is not connected yet**. For a signed Debug build, explicitly set
+`APNS_REGISTRATION_ENABLED=YES` and match `APNS_ENVIRONMENT` to its signed entitlement.
+Permission alone does not prove delivery. Simulator injections bypass Apple and the server.
 
 ## Native registration contract
 
@@ -65,7 +66,7 @@ The backend now serves this endpoint:
 PUT /api/notifications/apns/devices
 Content-Type: application/json
 
-{"device_token":"lowercase hex", "bundle_id":"app.panels.ios", "environment":"development"}
+{"device_token":"lowercase hex", "bundle_id":"com.khushaljagota.panels", "environment":"development"}
 ```
 
 The endpoint returns 200 only after the device is durably registered. The app uses the same
@@ -142,7 +143,7 @@ The server reads these environment variables; none has a committed credential va
 | `PLAN_APNS_KEY_PATH` | Absolute path to the secret `.p8` signing key readable by the server |
 | `PLAN_APNS_KEY_ID` | Apple's key identifier |
 | `PLAN_APNS_TEAM_ID` | Apple Developer team identifier |
-| `PLAN_APNS_BUNDLE_IDS` | Comma-separated exact allowed app IDs, such as `app.panels.ios`; include a separate test ID only when needed |
+| `PLAN_APNS_BUNDLE_IDS` | Comma-separated exact allowed app IDs, such as `com.khushaljagota.panels`; include a separate test ID only when needed |
 
 Native sending quietly skips network access when these inputs or a canonical HTTPS
 origin are absent. Partial credentials disable registration with 503. A complete but
@@ -156,27 +157,115 @@ Owner authentication and the payload origin use the existing
 the HTTPS Panels server selected in the app, without user credentials, a path,
 query or fragment. The endpoint must sit behind the verified owner access boundary.
 
-1. Register the production bundle ID in the intended Apple Developer team and
-   enable Push Notifications. Register a distinct test App ID if physical-device
-   tests use `app.panels.ios.pios-notify`.
-2. Create or select an APNs authentication key with the correct team, key ID and
-   topic permissions. Store the `.p8` private key only in server secrets. Build
-   short-lived APNs provider JWTs on the server; never embed that key in the app.
-3. Set `DEVELOPMENT_TEAM`, enable signing, and regenerate provisioning profiles
-   including the push entitlement. This repository's default unsigned Simulator
-   build cannot establish physical-device APNs registration.
-4. `Panels/Panels.entitlements` uses `APNS_ENVIRONMENT`. Set `development` for a
-   development profile and `production` for TestFlight/App Store; set the same
-   value for the registration body. Inspect the signed archive entitlement.
-5. Deploy the authenticated endpoint and sender, verify the app's access session,
-   then build with the explicit Xcode override `APNS_REGISTRATION_ENABLED=YES`.
-   The checked-in default remains NO. Set `APNS_ENVIRONMENT` to the signed profile's
-   environment. Registration already uses the server endpoint through the app's API session.
-6. On a signed physical device verify token upsert, every event type, opt-out,
-   failed registration/retry, foreground/background/terminated taps, token
-   rotation, invalid-token cleanup and notification settings changes. Test both
-   APNs environments through actual Apple delivery. Simulator injection does not
-   prove any of these server/Apple-account steps.
+### Live server credentials
+
+The live service loads `/home/vps/.config/panels/panels-live.env`. The launcher
+passes the four APNs settings explicitly. Keep the private key in
+`/home/vps/.config/panels/secrets/apns.p8`, outside the app and repository. App
+updates must not replace it. Only the service account needs read access.
+
+1. Open Apple Developer → Certificates, Identifiers & Profiles → Identifiers.
+2. Select `com.khushaljagota.panels` in team `FB99BBDJBA` and check that Push Notifications is enabled.
+3. Open Keys, select **+**, and name the key **Panels native push**.
+4. Enable Apple Push Notification service, then select **Configure**.
+5. Choose the environment for the signed app: production for TestFlight, sandbox for a development profile.
+6. Choose a key scope that permits `com.khushaljagota.panels`, then confirm and register the key.
+7. Download this APNs key once and retain a secure backup.
+8. Transfer that specific key to the VPS through a private file transfer.
+9. Do not use the App Store Connect keys in `~/Downloads`.
+10. Do not paste the key, provider JWT, or device token into chat or logs.
+
+Apple requires Account Holder or Admin access for key creation. Its current key
+screen offers Team Scoped and Topic Specific keys with environment configuration.
+The sender uses one key configuration. Its key must permit the environment and
+topic of the registered device. Do not assume that a newly created key permits both environments.
+See [Apple's key creation instructions](https://developer.apple.com/help/account/keys/create-a-private-key).
+
+On the VPS, prepare the destination before the private transfer:
+
+```sh
+install -d -m 700 /home/vps/.config/panels/secrets
+```
+
+After the transfer, restrict the key and edit the existing environment file privately:
+
+```sh
+chmod 600 /home/vps/.config/panels/secrets/apns.p8
+chmod 600 /home/vps/.config/panels/panels-live.env
+```
+
+Preserve the existing settings. Add these entries with the real key ID from Apple's key details:
+
+```ini
+PLAN_APNS_KEY_PATH=/home/vps/.config/panels/secrets/apns.p8
+PLAN_APNS_KEY_ID=REPLACE_WITH_APNS_KEY_ID
+PLAN_APNS_TEAM_ID=FB99BBDJBA
+PLAN_APNS_BUNDLE_IDS=com.khushaljagota.panels
+```
+
+Keep the configured canonical origin `https://panels-vps.tail687c57.ts.net` and
+owner ingress settings. Do not copy the key into an environment variable.
+Chief coordinates deployment and the live restart with Khushal. A Worker must not
+restart or reload the live server. A changed file alone does not change its environment.
+
+### Signed build on the Mac
+
+First inspect the exact `.app` that supplied the installed build. Match its version
+and build number to the iPhone's installed version. A repository setting does not
+prove the settings of an installed binary. For an archive, use:
+
+```sh
+PANELS_ARCHIVE=/absolute/path/to/Panels.xcarchive
+PANELS_APP="$PANELS_ARCHIVE/Products/Applications/Panels.app"
+/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PANELS_APP/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PANELS_APP/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PANELS_APP/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :PanelsAPNsRegistrationEnabled' "$PANELS_APP/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :PanelsAPNsEnvironment' "$PANELS_APP/Info.plist"
+codesign -d --entitlements :- "$PANELS_APP"
+```
+
+For TestFlight, check `YES`, `production`, the exact bundle ID, team, and signed
+`aps-environment=production`. Also inspect the exported distribution app because
+export can change its provisioning. If the matching installed binary disables
+registration, build and install a replacement. An unknown installed binary needs
+inspection before any claim that it supports native delivery.
+
+Run the build on the Mac, from the ticket checkout. Choose an unused archive path:
+
+```sh
+sh ios/scripts/generate-project.sh
+PANELS_ARCHIVE="$HOME/projects/panels/task-tmp/t_421nxrms/Panels.xcarchive"
+xcodebuild -project ios/Panels.xcodeproj -scheme Panels \
+  -configuration Release -destination 'generic/platform=iOS' \
+  -archivePath "$PANELS_ARCHIVE" -allowProvisioningUpdates archive
+```
+
+The Release device settings select signing, production APNs, and server registration.
+Use the intended Apple account in Xcode. Regenerate the provisioning profile if
+it lacks Push Notifications. Inspect the archive before distribution. Use the
+normal owner-approved TestFlight distribution route, then install the matching build.
+No `.p8` key belongs in the archive, project, or build inputs.
+
+### Physical delivery proof
+
+1. Check that the server release with the launcher fix is live after Chief coordinates the restart.
+2. Open the signed app against the canonical server through Tailscale.
+3. Allow notifications under More → Settings → Notifications.
+4. Check that the app reports **This device is registered for notifications**.
+5. Check the server's device count, bundle ID, and environment without printing its token.
+6. Enable the notification preference for the chosen attention event.
+7. Put the app in the background and lock the phone.
+8. Trigger one new, permitted attention edge through its normal Panels action.
+9. Check the matching APNs delivery record without printing tokens or provider credentials.
+10. Ask Khushal to confirm that the alert arrived and its tap opened the correct destination.
+
+Use a subject whose selected attention flag is false before the action. An old,
+unchanged flag does not create a new alert. Keep unrelated preferences unchanged.
+Provider acceptance, Simulator injection, and a queue row do not prove phone receipt.
+Record the app version, environment, event, delivery result, and Khushal's confirmation
+in the ticket. If deployment, credentials, or the signed build are unavailable,
+keep physical proof pending and request the required owner or Chief action.
 
 Apple references: [APNs registration](https://developer.apple.com/documentation/usernotifications/registering-your-app-with-apns),
 [notification responses](https://developer.apple.com/documentation/usernotifications/unusernotificationcenterdelegate),

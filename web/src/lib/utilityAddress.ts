@@ -57,8 +57,8 @@ export function parseUtilityPath(
   if (utility === "settings") {
     const section = path[0] || "config";
     if (section !== "config") {
-      // VPS is a Settings section (owner), beside Notifications.
-      if ((section !== "notifications" && section !== "vps") || path.length > 1) return null;
+      // These owner settings share the same addresses in the standalone page and pane.
+      if ((section !== "notifications" && section !== "vps" && section !== "backends") || path.length > 1) return null;
       return { utility, settings: { section, roleKind: "index" } };
     }
     const config = parseConfigSelection(path.slice(1));

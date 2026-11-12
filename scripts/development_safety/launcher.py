@@ -195,6 +195,12 @@ def npm_command(tree: Path, args: Sequence[str], env: Mapping[str, str]) -> list
     if not node:
         refuse(destination, "executable lookup", "node is absent from PATH.")
     check_paths([Path(executable), Path(node)], environment=env)
+    # Backend CLIs track current releases; they have no repository lockfile.
+    if package == "agent_backends" and operation == "ci":
+        refuse(destination, "npm command grammar", "Backend CLIs have no lockfile. Use install.")
+    if package == "agent_backends" and operation == "install":
+        tail = ["--package-lock=false", "--save=false",
+                "@anthropic-ai/claude-code@latest", "@openai/codex@latest"]
     return [str(executable), "--prefix", str(destination), operation, *tail]
 
 
@@ -353,7 +359,10 @@ def setup(tree: Path, env: Mapping[str, str]) -> int:
         subprocess.run([python, *arguments], cwd=tree, env=install_environment, check=True)
     for package in PACKAGES:
         subprocess.run(
-            npm_command(tree, ["--prefix", package, "ci"], env),
+            npm_command(
+                tree, ["--prefix", package, "install" if package == "agent_backends" else "ci"],
+                env,
+            ),
             cwd=tree,
             env=install_environment,
             check=True,
@@ -381,12 +390,23 @@ def main(args: Sequence[str] | None = None) -> int:
             if arguments[0] == "npm"
             else python_command(TREE, arguments, environment)
         )
+        # Keep original deployment evidence for the existing dependency check above.
+        # Only test commands receive replacement runtime paths, never setup or mypy.
+        is_pytest = arguments[0] != "npm" and (
+            Path(arguments[0]).name == "pytest"
+            or (len(arguments) > 2 and arguments[1:3] == ["-m", "pytest"])
+        )
+        if is_pytest:
+            from test_runtime import RuntimeIsolation
+
+            with RuntimeIsolation(environment) as runtime:
+                return subprocess.run(command, cwd=TREE, env=runtime.environment).returncode
         os.chdir(TREE)
         os.execvpe(command[0], command, environment)
     except SafetyRefusal as exc:
         print(f"Command: {' '.join(arguments)}\n{exc}", file=sys.stderr)
         return 2
-    except (OSError, subprocess.CalledProcessError) as exc:
+    except (OSError, subprocess.CalledProcessError, ValueError) as exc:
         print(f"Development command failed: {exc}", file=sys.stderr)
         return 2
     return 0

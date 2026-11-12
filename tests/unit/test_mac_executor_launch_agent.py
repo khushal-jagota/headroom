@@ -141,10 +141,7 @@ def test_production_layout_keeps_account_home_and_separates_job_resources(tmp_pa
     env = plist["EnvironmentVariables"]
     assert env["HOME"] == str(tmp_path)
     assert env["PATH"].split(":")[0] == str(tmp_path / "Production/venv/bin")
-    assert env["PLAN_CLAUDE_EXECUTABLE"] == str(
-        tmp_path
-        / "Production/source/agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
-    )
+    assert "PLAN_CLAUDE_EXECUTABLE" not in env
     assert env["PLAN_EXECUTOR_ROOT"] == str(root)
     paths = ExecutorPaths(root)
     assert paths.ipc_socket.is_relative_to(root)

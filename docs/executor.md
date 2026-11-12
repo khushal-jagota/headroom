@@ -57,7 +57,7 @@ The Mac saves each piece of output before it sends it. Each conversation sends i
 
 The VPS answers each batch quickly, with receipts or "retry later". A dropped request never cancels a save. If one conversation's items fail, only that conversation waits. One conversation never blocks another. An item from a replaced Mac process is refused, and the new process replays it.
 
-A file reaches the VPS before any item that refers to it, so a Ticket link never points at a missing file. Live text, thinking, and tool progress skip the outbox and are lost while the Mac is away. Finished messages and recorded events are saved and resent.
+A file reaches the VPS before any item that refers to it, so a Ticket link never points at a missing file. An upload waits in private staging until an item that names it is accepted. The VPS checks the item's files before it takes the database's single write lock, so a large artifact set does not hold up other saves. It then moves the files into the Ticket's folder in small groups. Each group rechecks that the agent still owns that Ticket. The item and its receipt then commit together, and only if no file changed after its check. Live text, thinking, and tool progress skip the outbox and are lost while the Mac is away. Finished messages and recorded events are saved and resent.
 
 ## Restarts
 
@@ -88,6 +88,8 @@ One installation lives in the owner's normal account:
 Agent processes run at a lower priority than the service, so builds cannot starve it. At start, the service ends any agent processes its previous run left, and the tools they started, so a replaced Mac process's agents are really gone.
 
 **Updates.** One press of Update covers both machines ([Deployment](deployment.md#the-card-and-the-mac)). If the new runtime does not lease in time, the supervisor reverts. The VPS accepts one protocol version; an older Mac is refused with "Mac needs update".
+
+Claude and Codex use the Mac's external CLI installations. A runtime update preserves that selection. It does not replace their versions with the copies inside the archive. An explicit external Claude executable remains an operator choice.
 
 The steps are in the [Mac executor installation runbook](../ops/mac-executor/installation.md).
 
@@ -120,4 +122,4 @@ Not yet proven:
 - `src/planner/environments/mac_executor.py` and `environments/mac_app/`: the LaunchAgent and signed app.
 - `scripts/executor_sleep_cycles.py`: the 100-cycle harness. `scripts/mac_sleep_test.py`: the real Mac sleep test.
 
-_Last verified: 2026-11-09._
+_Last verified: 2026-11-11._

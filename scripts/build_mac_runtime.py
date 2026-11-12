@@ -230,11 +230,8 @@ for path in (sys.executable, sys.prefix, sys.base_prefix):
     pathlib.Path(path).resolve().relative_to(root)
 import planner.cli.main, planner.executor.mac_service, aiohttp, cryptography, icu, ssl
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from planner.conversation.production_backends import PANELS_OWNED_CLAUDE_EXECUTABLE
 for module in (planner.cli.main, planner.executor.mac_service, aiohttp, cryptography, icu):
     pathlib.Path(module.__file__).resolve().relative_to(root)
-assert PANELS_OWNED_CLAUDE_EXECUTABLE.resolve().is_relative_to(root)
-assert PANELS_OWNED_CLAUDE_EXECUTABLE.is_file()
 with sqlite3.connect(":memory:") as db:
     assert db.execute("select 6 * 7").fetchone()[0] == 42
 cipher = AESGCM(bytes(32))
@@ -306,14 +303,14 @@ def prove_archive(archive: Path, work: Path, *, revision: str) -> dict[str, obje
     ):
         entry = backend_root / relative
         if not entry.is_file():
-            raise ValueError("Mac runtime lacks a locked backend entry point")
+            raise ValueError("Mac runtime lacks a packaged backend entry point")
         run([node, "--check", str(entry)], cwd=state, environment=environment)
-    run(
+    codex_version = run(
         [node, str(backend_root / "@openai/codex/bin/codex.js"), "--version"],
         cwd=state, environment=environment,
-    )
+    ).strip()
     claude = backend_root / "@anthropic-ai/claude-code/bin/claude.exe"
-    run([str(claude), "--version"], cwd=state, environment=environment)
+    claude_version = run([str(claude), "--version"], cwd=state, environment=environment).strip()
     libraries = audit_native_dependencies(extracted, environment)
     return {
         "passed": True,
@@ -323,6 +320,7 @@ def prove_archive(archive: Path, work: Path, *, revision: str) -> dict[str, obje
         "native": libraries,
         "cli_help": True,
         "backend_entrypoints": True,
+        "backend_versions": {"claude": claude_version, "codex": codex_version},
         "forbidden_dependencies": [],
         "external_requirements": [
             "macOS 15 or newer on arm64",
@@ -505,10 +503,9 @@ def build(source: Path, output: Path, revision: str, run_id: int) -> None:
             )
         )
         validate_installed_pins(installed, canonical_pins(source), bootstrap)
-        # Use the requested source's guarded npm entry, then copy only its exact
-        # lock-controlled, development-owned tree into the runtime archive.
+        # Resolve current CLIs in development-owned storage, then seal those bytes.
         run(
-            [str(source / "scripts/dev"), "npm", "--prefix", "agent_backends", "ci"],
+            [str(source / "scripts/dev"), "npm", "--prefix", "agent_backends", "install"],
             cwd=source,
             environment=environment,
         )

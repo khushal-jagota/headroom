@@ -1773,6 +1773,35 @@ def test_explicit_usage_refresh_preserves_observation_after_all_failure_outcomes
     _run(exercise)
 
 
+def test_backend_updates_require_owner_before_an_update_can_run(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.conversation.snapshot import BackendUpdateOutcome, BackendUpdateResult
+
+    called: list[ConversationBackendKey] = []
+
+    async def update(backend: ConversationBackendKey) -> BackendUpdateResult:
+        called.append(backend)
+        return BackendUpdateResult(BackendUpdateOutcome.succeeded, "Updated.", "")
+
+    monkeypatch.setattr(harness.runtime.backend_snapshots, "update_backend", update)
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            with pytest.raises(PlannerError, match="only to the owner"):
+                await client.post(
+                    f"{CONVERSATION_PREFIX}/backends/claude/update",
+                    headers={"X-Plan-Actor": "chief"},
+                )
+            assert called == []
+            response = await client.post(f"{CONVERSATION_PREFIX}/backends/claude/update")
+            assert response.status_code == 200
+            assert response.json()["outcome"] == "succeeded"
+            assert called == [ConversationBackendKey.claude]
+
+    _run(exercise)
+
+
 def test_executor_default_view_never_presents_placeholder_as_workspace(harness: _Harness) -> None:
     from planner.conversation.contracts import ConversationStartRequest, WorkspacePathPolicy
 

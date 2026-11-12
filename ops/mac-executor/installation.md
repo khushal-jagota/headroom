@@ -276,7 +276,7 @@ cd "$SOURCE"
 rm -rf -- "$SOURCE/build"
 "$VENV/bin/python" -m pip install --force-reinstall --no-deps --no-build-isolation "$SOURCE"
 "$VENV/bin/python" -m pip check
-PATH="$BACKEND_PATH" npm ci --prefix "$SOURCE/agent_backends"
+PATH="$BACKEND_PATH" "$SOURCE/scripts/dev" npm --prefix agent_backends install
 ```
 
 Require every command to succeed before continuation.
@@ -393,11 +393,10 @@ The program is `$APP/Contents/MacOS/Panels executor run`. This runbook uses the 
 as its diagnostic revision label; the executor accepts other nonempty labels too.
 Protocol and outbox versions decide compatibility, not that label.
 The environment includes the owner's HOME, persistent root, and PATH with `venv/bin` first.
-`PLAN_CLAUDE_EXECUTABLE` names the absolute
-`source/agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe` executable.
-Check that this executable and the reviewed provider commands exist.
+Claude and Codex resolve from the owner's backend PATH.
+An explicit external `PLAN_CLAUDE_EXECUTABLE` can select another Claude installation.
+Check that the reviewed provider commands exist outside the app and runtime folders.
 Check that the job label, app path, associated bundle identity, and embedded Python all match the selected installation.
-The noneditable Python installation cannot discover that source path itself.
 
 The selected GUI job uses RunAtLoad, `KeepAlive={SuccessfulExit:false}` and
 `ProcessType=Interactive`, so macOS schedules the executor as foreground work and its
@@ -442,7 +441,7 @@ Never reuse the old process's receipt against the candidate.
 If fresh state is unavailable or uncertain, stop and return the exact dependency to the operator.
 
 For an explicitly approved compatible recovery, select the recorded prior SHA in the fixed source checkout.
-Repeat the pinned pip commands, build-cache removal, forced source reinstall, pip check, and npm ci sequence above.
+Repeat the pinned pip commands, build-cache removal, forced source reinstall, pip check, and backend npm install sequence above.
 Check spool compatibility with that prior package before startup.
 Render a plist for the prior SHA and its recorded inputs, then follow the same bootstrap and proof procedure.
 Retained old apps and runtimes are recovery inputs, not an automatic fallback command.

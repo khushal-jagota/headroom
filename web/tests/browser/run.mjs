@@ -32,8 +32,11 @@ export function runCommand(command, args, options = {}) {
 }
 
 function cleanEnvironment() {
-  return Object.fromEntries(Object.entries(process.env).filter(([key]) =>
-    !/^(PLAN_|PANELS_REAL_)/.test(key) && !["HERMES_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"].includes(key)));
+  return {
+    ...Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+      !/^(PLAN_|PANELS_REAL_)/.test(key) && !["HERMES_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"].includes(key))),
+    PLAN_SERVER_URL: "http://127.0.0.1:0",
+  };
 }
 
 function printScope(entries, receipt, requiredCompanions, selections) {
@@ -147,6 +150,8 @@ async function runSelected(entries, options, receipt, requiredCompanions) {
         await runCommand(process.env.PANELS_TEST_PYTHON || join(repositoryRoot, ".venv/bin/python"), [fileURLToPath(new URL("./execute.py", import.meta.url)), manifestPath, resultsPath], {
           cwd: repositoryRoot, stdio: ["ignore", log.fd, log.fd],
           env: {...environment, PYTHONUNBUFFERED: "1",
+            // The Python entry point records original paths before replacement.
+            ...Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith("PLAN_"))),
             PANELS_SIDEBAR_ARTIFACT_DIR: join(environment.PANELS_SIDEBAR_ARTIFACT_DIR, case_.id),
             PANELS_E2E_FAILURE_DIR: join(environment.PANELS_E2E_FAILURE_DIR, case_.id)}});
       } catch (error) {

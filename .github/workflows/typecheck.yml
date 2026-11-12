@@ -47,3 +47,10 @@ jobs:
         run: .venv/bin/python scripts/check_executor_protocol.py --base "$PANELS_BASE_SHA"
       - name: Check complete merged tree
         run: .venv/bin/mypy
+      - name: Check generated contracts
+        run: |
+          .venv/bin/python scripts/generate_conversation_view_contracts.py --check
+          .venv/bin/python scripts/generate_goal_browser_contracts.py --check
+          .venv/bin/python scripts/generate_navigation_browser_contracts.py --check
+          .venv/bin/python scripts/generate_resource_browser_contracts.py --check
+          .venv/bin/python scripts/generate_ticket_workspace_contracts.py --check

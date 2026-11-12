@@ -260,7 +260,7 @@ assert 'planner.core.db' not in sys.modules
                 "--panels-server-url",
                 paths.panels_server_url,
                 "--backend-path",
-                "/usr/bin:/bin",
+                str(paths.home / ".local/bin") + ":/usr/bin:/bin",
             ],
             cwd=outside_source,
             env=environment,
@@ -289,8 +289,8 @@ assert 'planner.core.db' not in sys.modules
         capture_output=True,
         check=True,
     )
-    # A noneditable installation must use the explicit backend under retained source.
-    claude = Path(plist["EnvironmentVariables"]["PLAN_CLAUDE_EXECUTABLE"])
+    # A noneditable installation resolves the owner-maintained external backend.
+    claude = paths.home / ".local/bin/claude"
     claude.parent.mkdir(parents=True)
     claude.write_text("#!/bin/sh\nprintf 'fixture backend'\n")
     claude.chmod(0o755)
@@ -303,7 +303,7 @@ assert 'planner.core.db' not in sys.modules
 import os, shutil, subprocess
 from planner.conversation.production_backends import _claude_launch
 launch = _claude_launch('https://panels.example')
-assert str(launch.claude_executable) == os.environ['PLAN_CLAUDE_EXECUTABLE']
+assert str(launch.claude_executable) == shutil.which('claude')
 assert subprocess.check_output([str(launch.claude_executable)], text=True) == 'fixture backend'
 assert shutil.which('panels') == os.environ['PATH'].split(':')[0] + '/panels'
 """,

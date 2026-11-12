@@ -363,3 +363,113 @@ def test_goal_record_commands_emit_saved_pages_in_human_and_json_modes(
         readings = runner.invoke(main, ["goal", "read", goal_id, *options])
         assert readings.exit_code == 0, readings.output
         assert json.loads(readings.stdout)["goal_id"] == goal_id
+
+
+def _page_invoke(
+    runner: CliRunner, actor: str, manager_id: str | None, *args: str, stdin: str | None = None
+) -> Result:
+    return runner.invoke(
+        main, list(args), input=stdin,
+        env={
+            "PLAN_SERVER_URL": "http://testserver", "PLAN_ACTOR": actor,
+            "PLAN_MANAGER_ID": manager_id or "",
+        },
+    )
+
+
+def test_page_cli_targets_preserve_authority_and_documents(
+    artifact_cli: tuple[TestClient, CliRunner],
+) -> None:
+    """New selectors must address each holder without changing the caller identity."""
+    client, runner = artifact_cli
+    manager_id = _create_item(client, "Keep this purpose.")
+    schema = _page_invoke(runner, "manager", manager_id, "page", "schema", "--json")
+    document = json.loads(schema.stdout)["examples"]["checklist_and_workers"]["page"]
+    for actor, selector in (("manager", ["--manager", manager_id]), ("chief", ["--chief"])):
+        edited = _page_invoke(
+            runner, actor, manager_id, "page", "edit", *selector, "--json",
+            stdin=json.dumps({"page": document}),
+        )
+        assert edited.exit_code == 0, edited.output
+        accepted = json.loads(edited.stdout)
+        assert accepted["page"] == document and accepted["page_revision"] == 1
+        shown = _page_invoke(runner, actor, manager_id, "page", "show", *selector)
+        assert shown.exit_code == 0, shown.output
+        assert json.loads(shown.stdout) == accepted
+    denied = _page_invoke(
+        runner, "manager", manager_id, "page", "edit", "--chief", "--json",
+        stdin=json.dumps({"page": document}),
+    )
+    assert denied.exit_code == 1
+    assert json.loads(denied.stderr)["error"]["code"] == "agent_forbidden"
+    manifest = _invoke(runner, manager_id, "show", manager_id, "--json")
+    assert manifest.exit_code == 0, manifest.output
+    assert json.loads(manifest.stdout)["manifest"]["page"]["character_count"] == len(
+        json.dumps(document, ensure_ascii=False)
+    )
+    expanded = _invoke(runner, manager_id, "show", manager_id, "page", "--json")
+    assert expanded.exit_code == 0, expanded.output
+    assert json.loads(expanded.stdout)["parts"]["page"]["value"] == document
+    foreign_id = _create_item(client)
+    foreign = _page_invoke(
+        runner, "manager", manager_id, "page", "edit", "--manager", foreign_id, "--json",
+        stdin=json.dumps({"page": document}),
+    )
+    assert foreign.exit_code == 1
+    assert json.loads(foreign.stderr)["error"]["code"] == "agent_forbidden"
+    assert client.get(f"/api/managers/{foreign_id}/page").json()["page"] is None
+    invalid = _page_invoke(
+        runner, "manager", manager_id, "page", "edit", "--manager", manager_id, stdin="{}"
+    )
+    assert invalid.exit_code == 1 and "panels page schema" in invalid.stderr
+    for invalid_input in ("{", "[]", '{"page":{"kind":"wrong"}}'):
+        malformed = _page_invoke(
+            runner, "manager", manager_id, "page", "edit", "--manager", manager_id,
+            stdin=invalid_input,
+        )
+        assert malformed.exit_code == 1 and "panels page schema" in malformed.stderr
+    unchanged = client.get(f"/api/managers/{manager_id}/page").json()
+    assert unchanged["page_revision"] == 1 and unchanged["page"] == document
+    cleared = _page_invoke(
+        runner, "manager", manager_id, "page", "edit", "--manager", manager_id, "--json",
+        stdin='{"page":null}',
+    )
+    assert cleared.exit_code == 0, cleared.output
+    assert json.loads(cleared.stdout) == {"page": None, "page_revision": 2}
+    workspace = client.get(f"/api/managers/{manager_id}/workspace").json()
+    assert workspace["goal"] == "Keep this purpose."
+
+
+def test_workspace_commands_follow_all_held_goal_cardinalities(
+    artifact_cli: tuple[TestClient, CliRunner],
+) -> None:
+    """An inactive held goal still supplies the sole-goal view used by the browser."""
+    client, runner = artifact_cli
+    manager_id = _create_item(client)
+    empty = _invoke(runner, manager_id, "workspace", manager_id)
+    assert empty.exit_code == 0, empty.output
+    assert f"Edit: panels page edit --manager {manager_id}" in empty.stdout
+    created = client.post("/api/goals", json={
+        "title": "Held outcome", "project_id": "project_other", "kind": "binary",
+        "holder_kind": "manager", "holder_id": manager_id, "active": False,
+        "primary_checklist_block_id": None,
+    })
+    assert created.status_code == 200, created.text
+    goal_id = created.json()["id"]
+    sole = _invoke(runner, manager_id, "workspace", manager_id)
+    assert sole.exit_code == 0, sole.output
+    assert f"Edit: panels goal edit {goal_id}" in sole.stdout
+    assert "own document is hidden" in sole.stdout
+    second = client.post("/api/goals", json={
+        "title": "Second outcome", "project_id": "project_other", "kind": "binary",
+        "holder_kind": "manager", "holder_id": manager_id,
+        "primary_checklist_block_id": None,
+    })
+    assert second.status_code == 200, second.text
+    multiple = _invoke(runner, manager_id, "workspace", manager_id)
+    assert multiple.exit_code == 0, multiple.output
+    assert f"Edit: panels page edit --manager {manager_id}" in multiple.stdout
+    assert "Held outcome" in multiple.stdout and "Second outcome" in multiple.stdout
+    manifest = _invoke(runner, manager_id, "show", manager_id, "--json")
+    assert manifest.exit_code == 0, manifest.output
+    assert json.loads(manifest.stdout)["manifest"]["page"]["character_count"] == 0

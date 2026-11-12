@@ -6,7 +6,23 @@ Khushal, Chief, Managers, and Workers all call the same routes. There is no sepa
 
 ## Who can call
 
-The server knows four kinds of caller: the **owner** (Khushal), **Chief**, a **Manager**, and a **Ticket** (its Worker). Goals have no agent. Old goal transcripts remain stored without a goal conversation interface. The browser and an ordinary `panels` call are the owner. An agent's `panels` calls carry its identity, set by the conversation that launched it.
+The server knows four kinds of caller: the **owner** (Khushal), **Chief**, a **Manager**, and a **Ticket** (its Worker). Goals have no agent. Old goal transcripts remain stored without a goal conversation interface. The authenticated browser is the owner. An agent's `panels` calls carry its identity, set by the conversation that launched it.
+
+The live service sets `PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS=1`. For loopback calls without a nonempty `X-Plan-Actor`, the server checks the socket's holders through `/proc`. Ticket or Manager IDs alone do not skip this check. It refuses callers inside `panels-live.service` or `panels-workers.slice` with `agent_forbidden` and asks them to restore `PLAN_ACTOR`. At least one readable holder must establish the caller's identity. Every readable holder must remain outside both agent cgroups.
+
+Calls with a nonempty actor, authenticated browser calls, and nonloopback callers retain their existing path without a socket lookup. Missing or unknown client addresses still require evidence.
+
+If a same-user process has unreadable descriptors, the server checks its cgroup. The server skips that process only if the cgroup is readable and outside both agent cgroups. Otherwise it refuses the call. The refusal detail and debug log include the number of skipped processes. Missing socket evidence or unreadable holder evidence also causes refusal. Other local callers remain the owner.
+
+This environment-only setting defaults to off. The application removes it from its environment at startup, so agents and their scratch servers do not inherit it. Generic agents with no role identity also lose implicit owner access to Panels when the setting is on.
+
+The Hermes gateway (`hermes-gateway.service`) is a known owner-level caller outside Panels. Its calls without identity remain the owner.
+
+A known gap remains: a local process can send a forged `tailscale-user-login` header directly to loopback. Trusted ingress then treats it as the owner. This rule does not close that gap.
+
+Uvicorn also trusts `X-Forwarded-For` from `127.0.0.1` by default. A local process can forge a nonloopback address there and skip this check. This deliberate forgery stays out of scope.
+
+Deliberate forgery through hidden descriptors outside the agent cgroups is also outside this rule. The scan cannot inspect descriptors that the kernel hides from it.
 
 Manager requests use the `manager` actor and `X-Plan-Manager-ID`. Old Sprint Item actors and identity headers do not establish authority.
 
@@ -59,4 +75,4 @@ Reading Tickets and Managers is open to every caller. The rule guards writes.
 - `src/planner/core/authority/service.py`: supplies the database facts for the rank rule.
 - `src/planner/core/authctx.py`: turns a request into a caller, and holds the owner-only doors.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-12._

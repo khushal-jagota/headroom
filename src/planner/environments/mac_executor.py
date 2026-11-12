@@ -106,10 +106,6 @@ def render_launch_agent(configuration: ServiceConfiguration) -> bytes:
             "ThrottleInterval": LAUNCH_AGENT_RESTART_THROTTLE_SECONDS,
             "EnvironmentVariables": {
                 "HOME": str(configuration.home),
-                "PLAN_CLAUDE_EXECUTABLE": str(
-                    configuration.source
-                    / "agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
-                ),
                 "PLAN_EXECUTOR_ROOT": str(executor_root),
                 "PATH": str(configuration.venv / "bin") + os.pathsep + backend_path,
             },

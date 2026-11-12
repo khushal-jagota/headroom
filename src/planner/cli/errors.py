@@ -30,6 +30,8 @@ COMMAND_RECOVERY_SHAPES: dict[str, str] = {
     "panels ticket complete": "panels ticket complete TICKET_ID FIELD --value VALUE",
     "panels manager create": ("panels manager create --title TEXT --project-id PROJECT_ID"),
     "panels manager delete": "panels manager delete ITEM_ID --yes",
+    "panels page edit": "panels page schema",
+    "panels page show": "panels page show --manager ID",
     "panels manager set": "panels manager set ITEM_ID FIELD --value VALUE",
     "panels manager conversation send": ("panels manager conversation send ITEM_ID --message TEXT"),
     "panels worker propose": "panels worker propose TICKET_ID < PROPOSAL_FILE",
@@ -157,7 +159,7 @@ def _show_usage_error(error: click.UsageError, args: Sequence[str]) -> None:
             )
             return
         path = _canonical_command_path(ctx) if ctx is not None else "panels"
-        recovery = None
+        recovery = "panels page --help" if tuple(args[:2]) == ("manager", "page") else None
         if recovery is None and ctx is not None and error.possibilities:
             child_ctx = _context_for_child(ctx, error.possibilities[0])
             recovery = command_shape(child_ctx) if child_ctx is not None else None

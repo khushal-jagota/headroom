@@ -88,9 +88,6 @@
     if(delivered.conversation_id!==null) conversationId=delivered.conversation_id;
     return delivered;
   }
-  function saveRecap(recap: string): Promise<unknown> {
-    return mutateJson("/api/workers/chief-of-staff/recap", { method: "PUT", body: { recap } });
-  }
   async function newConversation():Promise<void> {
     await mutateJson("/api/chief/conversation/reset",{method:"POST"});
     conversationId=null;
@@ -109,7 +106,7 @@
 <ManagerFrame class="chief-workspace" bind:conversationState {openedFile} {onOpenFile}>
   {#if goals.error}<ErrorLine error={goals.error}/>{/if}
   <ManagerHeader signal={chief?.conversation_signal} conversationId={chief?.conversation_id}
-    recap={chiefSettings.data?.recap} onSaveRecap={saveRecap} recapTarget={{ kind: "chief", id: "chief" }}>
+    recap={chiefSettings.data?.recap} recapTarget={{ kind: "chief", id: "chief" }}>
     {#snippet title()}Chief of Staff{/snippet}
   </ManagerHeader>
   {#if chiefHoldsGoals}<GoalsOverview goals={goals.data?.goals??[]}/>{/if}

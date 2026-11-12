@@ -14,7 +14,9 @@ transcript of what it was sent — lives in
 
 from __future__ import annotations
 
+import asyncio
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -505,7 +507,18 @@ def test_early_output_waits_for_start_response_and_stale_turn_does_not_bind(tmp_
                     "started_turn_id": "stale-turn",
                     "response_order": "after_actions",
                     "actions": [
+                        {"do": "item_started", "item": {"type": "futureItem", "newField": 1}},
                         {"do": "agent_delta", "item_id": "a", "text": "early output"},
+                        {
+                            "do": "item_completed",
+                            "item": {
+                                "type": "agentMessage",
+                                "id": "a",
+                                "text": "early output",
+                                "futureField": {"anything": True},
+                            },
+                        },
+                        {"do": "item_completed", "item": {"type": "futureItem"}},
                         {"do": "complete", "status": "completed"},
                     ],
                 }
@@ -517,5 +530,100 @@ def test_early_output_waits_for_start_response_and_stale_turn_does_not_bind(tmp_
             await scripted.sink.wait_for_the_turn_to_end()
             assert scripted.sink.agent_message_texts == ["early output"]
             assert len(scripted.sink.endings) == 1
+
+    _run(exercise)
+
+
+def test_selective_codex_reads_preserve_strict_identities_outcomes_and_permissions() -> None:
+    """Selective reads cannot turn malformed control data into valid operations."""
+    from pydantic import BaseModel, ValidationError
+
+    from planner.conversation.backends.codex_app_server import protocol
+
+    malformed: list[tuple[type[BaseModel], dict[str, Any]]] = [
+        (protocol.ThreadStartResponse, {"thread": {"id": " ", "ephemeral": False}}),
+        (protocol.TurnSteerResponse, {"turnId": 1}),
+        (protocol.Turn, {"id": "turn", "status": "futureOutcome"}),
+        (protocol.ThreadGoalClearResponse, {"cleared": "false"}),
+        (protocol.CommandExecutionRequestApprovalResponse, {"decision": "futureApproval"}),
+        (
+            protocol.ToolRequestUserInputParams,
+            {"threadId": "thread", "turnId": "turn", "questions": []},
+        ),
+        (
+            protocol.ItemCompletedNotification,
+            {"threadId": "thread", "turnId": "turn", "item": {"type": []}},
+        ),
+        (
+            protocol.ItemCompletedNotification,
+            {
+                "threadId": "thread",
+                "turnId": "turn",
+                "item": {"type": "agentMessage", "text": "missing identity"},
+            },
+        ),
+    ]
+    for model, payload in malformed:
+        with pytest.raises(ValidationError):
+            model.model_validate(payload)
+
+    assert protocol.ThreadGoalGetResponse.model_validate({}).goal is None
+    changed = protocol.FileChangeThreadItem.model_validate(
+        {
+            "type": "fileChange",
+            "id": "file",
+            "status": "completed",
+            "changes": [{"path": "new-name", "kind": {"type": "futureRename"}}],
+        }
+    )
+    assert changed.changes[0].kind.type == "futureRename"
+
+    # Optional upstream diagnostics and unrelated required upstream fields do not bind us.
+    completed = protocol.TurnCompletedNotification.model_validate(
+        {
+            "threadId": "thread",
+            "turn": {
+                "id": "turn",
+                "status": "failed",
+                "futureField": True,
+                "error": {
+                    "message": "provider refused",
+                    "codexErrorInfo": {"newKind": {"value": 1}},
+                },
+            },
+        }
+    )
+    assert completed.turn.error is not None
+    assert completed.turn.error.message == "provider refused"
+
+
+def test_a_child_whose_reader_died_with_an_error_still_stops(tmp_path: Path) -> None:
+    """A task that died raises its error on every await, so stop() once never got past it.
+
+    The reader died of a database lock during an outage. Every later stop hit the same
+    dead task, never reached the process, and the conversation kept trying to stop it.
+    """
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={"turns": []}) as scripted:
+            await scripted.start(cursor=None)
+            client = scripted.child._client
+            process = client._process
+            assert process is not None and process.returncode is None
+            assert client._reader is not None
+            client._reader.cancel()
+            await asyncio.gather(client._reader, return_exceptions=True)
+
+            async def died_of_a_lock() -> None:
+                raise sqlite3.OperationalError("database is locked")
+
+            client._reader = asyncio.create_task(died_of_a_lock())
+            await asyncio.gather(client._reader, return_exceptions=True)
+
+            await scripted.child.stop()
+
+            assert process.returncode is not None
+            assert client._process is None
+            assert client._reader is None
 
     _run(exercise)

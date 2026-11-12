@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -89,6 +90,7 @@ def test_codex_catalog_walks_pages_and_retains_partial_positive_evidence(
 def test_claude_handshake_supplies_pinned_models_and_default_without_a_turn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(claude, "ensure_cli_compatible", AsyncMock())
     class Client:
         def __init__(self, *, options: Any) -> None:
             assert options.cli_path == "/scripted/claude"
@@ -139,6 +141,7 @@ def test_claude_handshake_supplies_pinned_models_and_default_without_a_turn(
 def test_claude_failed_handshake_reports_no_invented_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(claude, "ensure_cli_compatible", AsyncMock())
     class Client:
         def __init__(self, **kwargs: Any) -> None:
             raise ValueError("scripted failure")

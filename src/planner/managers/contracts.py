@@ -58,6 +58,12 @@ class ManagerDeletion:
     title: str
 
 
+class HolderPageEditBody(TypedDict):
+    """CLI input for replacement of a Manager or Chief page document."""
+
+    page: PageDocument | None
+
+
 class ManagerWorkspaceDocument(TypedDict):
     """Selected document and held goals; catalogs have separate bounded readers."""
 

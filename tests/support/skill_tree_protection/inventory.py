@@ -7,7 +7,7 @@ import os
 import pwd
 import stat
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import yaml
@@ -37,34 +37,52 @@ def _absolute(path: str | Path, cwd: Path, home: Path) -> str:
 
 
 def capture_launch_inventory(
-    env: Mapping[str, str], cwd: Path, account_home: Path | None = None
+    env: Mapping[str, str], cwd: Path, account_home: Path | None = None,
+    *, extra_environments: Sequence[Mapping[str, str]] = (),
 ) -> tuple[ProtectionInventory, Manifest]:
     """Discover defaults/overrides without importing planner or opening its DB."""
     started = time.perf_counter()
     account = account_home or Path(pwd.getpwuid(os.getuid()).pw_dir)
-    home = Path(env.get("HOME") or account)
     roots: set[str] = set()
-    for base in (account, home):
-        for backend in (".hermes", ".codex", ".claude"):
-            roots.add(_absolute(base / backend / "skills", cwd, home))
-    for name in ("PLAN_HERMES_HOME", "HERMES_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"):
-        if env.get(name):
-            roots.add(_absolute(Path(env[name]) / "skills", cwd, home))
-    # Match core.config's file -> environment precedence, with no runtime imports.
-    config_file = cwd / "config.yaml"
-    config: Mapping[str, object] = {}
-    if config_file.exists():
-        loaded: object = yaml.safe_load(config_file.read_text())
-        if loaded is not None:
-            if not isinstance(loaded, dict):
-                raise RuntimeError(f"skill guard config root must be a mapping: {config_file}")
-            config = loaded
-    db = env.get("PLAN_DB_PATH", str(config.get("db_path", "data/planning.db")))
-    roots.add(str(Path(_absolute(db, cwd, home)).parent / "skills"))
-    entries, targets, protected, resolutions = _traverse(tuple(sorted(roots)), discover=True)
+    codex_roots: set[str] = set()
+    for environment in (env, *extra_environments):
+        home = Path(environment.get("HOME") or account)
+        for base in (account, home):
+            for backend in (".hermes", ".codex", ".claude"):
+                root = _absolute(base / backend / "skills", cwd, home)
+                roots.add(root)
+                if backend == ".codex":
+                    codex_roots.add(root)
+        for name in ("PLAN_HERMES_HOME", "HERMES_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"):
+            if environment.get(name):
+                root = _absolute(Path(environment[name]) / "skills", cwd, home)
+                roots.add(root)
+                if name == "CODEX_HOME":
+                    codex_roots.add(root)
+        # Match core.config's file -> environment precedence, with no runtime imports.
+        config_file = cwd / "config.yaml"
+        config: Mapping[str, object] = {}
+        if config_file.exists():
+            loaded: object = yaml.safe_load(config_file.read_text())
+            if loaded is not None:
+                if not isinstance(loaded, dict):
+                    raise RuntimeError(f"skill guard config root must be a mapping: {config_file}")
+                config = loaded
+        db = environment.get("PLAN_DB_PATH", str(config.get("db_path", "data/planning.db")))
+        roots.add(str(Path(_absolute(db, cwd, home)).parent / "skills"))
+    # Freeze both spellings of each Codex skills root. Do not resolve .system
+    # itself: a link there must not exempt an external target used by other skills.
+    exclusions = tuple(sorted({
+        str(base / ".system")
+        for root in codex_roots
+        for base in (Path(root), Path(root).resolve(strict=False))
+    }))
+    entries, targets, protected, resolutions = _traverse(
+        tuple(sorted(roots)), discover=True, exclusions=exclusions,
+    )
     inventory = ProtectionInventory(
         tuple(sorted(roots)), tuple(sorted(protected)), tuple(sorted(targets)),
-        tuple(sorted(resolutions.items())),
+        tuple(sorted(resolutions.items())), exclusions,
     )
     return inventory, _manifest(entries, started)
 
@@ -72,7 +90,9 @@ def capture_launch_inventory(
 def _traverse(
     roots: tuple[str, ...], *, discover: bool,
     expected_resolutions: Mapping[str, str] | None = None,
+    exclusions: tuple[str, ...] = (),
 ) -> tuple[list[ManifestEntry], set[tuple[str, str]], set[str], dict[str, str]]:
+    excluded_paths = tuple(map(Path, exclusions))
     pending = list(reversed(roots))
     visited: set[str] = set()
     directories: set[tuple[int, int]] = set()
@@ -86,6 +106,14 @@ def _traverse(
             continue
         visited.add(name)
         path = Path(name)
+        # A link target can spell an outside skill as .system/../user. Let
+        # normal traversal resolve such paths before applying the exclusion.
+        if any(
+            path.is_relative_to(excluded)
+            and ".." not in path.relative_to(excluded).parts
+            for excluded in excluded_paths
+        ):
+            continue
         if name in protected:
             entry_alias = str(path.parent.resolve(strict=False) / path.name)
             resolutions[name] = entry_alias
@@ -202,7 +230,7 @@ def snapshot(inventory: ProtectionInventory) -> Manifest:
     """Visit only the frozen graph: new links are evidence, never new traversal."""
     started = time.perf_counter()
     entries, _, _, _ = _traverse(
-        inventory.protected_paths, discover=False,
+        inventory.protected_paths, discover=False, exclusions=inventory.manifest_exclusions,
         expected_resolutions=(
             dict(inventory.parent_resolutions) if inventory.parent_resolutions else None
         ),

@@ -177,6 +177,7 @@ from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core import change_signal
 from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
 from planner.execution_identity import ChildReference
+from planner.runtime import worker_memory
 
 LOGGER = logging.getLogger("planner.conversation")
 
@@ -321,11 +322,21 @@ class _ReservedTurn:
     resolved: asyncio.Event
     automatic_compaction: bool = False
     automatic_notice: bool = False
+    memory_notice_only: bool = False
     prompt_accepted: bool = False
     shutdown_owned: bool = False
     shutdown_fate: PromptDeliveryFate | None = None
     messages: tuple[_Message, ...] = ()
     mode: PromptDeliveryMode = PromptDeliveryMode.queue
+
+
+def _turn_is_maintenance(running: RunningTurn) -> bool:
+    """Whether this turn is Panels' own upkeep rather than work.
+
+    The automatic /compact and a turn holding only Worker memory-loss notices are upkeep.
+    Neither renews automatic compaction eligibility, so upkeep cannot schedule more upkeep.
+    """
+    return running.automatic_compaction or running.memory_notice_only
 
 
 def _ending_context(running: RunningTurn) -> TurnEndingContext:
@@ -499,6 +510,7 @@ class _PromptDeliveryAttempt:
     suppression_reason: str | None = None
     messages: tuple[_Message, ...] = ()
     automatic_notice: bool = False
+    memory_notice_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -506,6 +518,7 @@ class _SteerAttempt:
     lifecycle: LifecycleFact
     outcome: BackendSteerOutcome | PromptDeliverySuppressed
     automatic_notice: bool = False
+    memory_notice_only: bool = False
     adapter_error: Exception | None = None
 
 
@@ -541,7 +554,6 @@ class _ConversationState:
     last_ended_turn_token: TurnToken | None = None
     last_ended_turn_was_automatic_compaction: bool = False
     child: BackendChild | None = None
-    local_child_retirement_proven: bool = False
     child_is_quarantined: bool = False
     retained_child_reference: ChildReference | None = None
     delivery_uncertain: bool = False
@@ -1120,26 +1132,6 @@ class SqliteProcessConversationSystem:
                 recording_receipt=recording_receipt,
             )
 
-    async def retirement_is_confirmed(self, conversation_id: str) -> bool:
-        """Require an actual cleanup receipt or proof that no source ever started."""
-        state = await self._conversation_state(conversation_id)
-        if state is None:
-            return False
-        retained = self._retained_run(state)
-        remote_receipt = retained is not None and retained.retirement_confirmed
-        async with state.lock:
-            return (
-                state.child is None
-                and state.retained_child_reference is None
-                and not state.child_is_quarantined
-                and (state.retirement_task is None or state.retirement_task.done())
-                and (
-                    remote_receipt
-                    or state.local_child_retirement_proven
-                    or not state.has_delivered_prompt
-                )
-            )
-
     async def kill(self, conversation_id: str) -> None:
         state = await self._conversation_state(conversation_id)
         if state is None:
@@ -1636,6 +1628,7 @@ class SqliteProcessConversationSystem:
                 await self._drain_held_prompts(state)
                 return PromptDeliverySuppressed(delivery.suppression_reason)
             reservation.automatic_notice = delivery.automatic_notice
+            reservation.memory_notice_only = delivery.memory_notice_only
             try:
                 started = await self._finalize_delivery(
                     state=state,
@@ -1722,6 +1715,7 @@ class SqliteProcessConversationSystem:
                 attempt=attempt,
                 turn_token=steer_turn_token,
                 automatic_notice=automatic_notice,
+                memory_notice_only=steer.memory_notice_only,
                 message=held,
                 held_before=held_before,
             )
@@ -2059,8 +2053,6 @@ class SqliteProcessConversationSystem:
                 if child is not None:
                     try:
                         await child.detach()
-                        if not child.stop_outside_lock:
-                            state.local_child_retirement_proven = True
                     except Exception:
                         state.child = child
                         state.child_is_quarantined = True
@@ -2138,7 +2130,7 @@ class SqliteProcessConversationSystem:
                 or state.late_steers
             ):
                 return self._hold_prompt(state=state, queue_reason=queue_reason, message=message)
-            if self._automatic_compaction_is_due(state):
+            if await self._automatic_compaction_may_start(state):
                 held_fate = self._hold_prompt(
                     state=state, queue_reason=queue_reason, message=message
                 )
@@ -2226,6 +2218,20 @@ class SqliteProcessConversationSystem:
             > state.record.automatic_compaction_attempted_through_sequence
         )
 
+    async def _automatic_compaction_may_start(self, state: _ConversationState) -> bool:
+        """Due by time and activity, and the conversation may receive maintenance now.
+
+        The eligibility read happens only once the in-memory conditions pass. The sweep's
+        own selection already applies the rule, and dispatch admission rechecks it last.
+        """
+        return (
+            self._automatic_compaction_is_due(state)
+            and await self._store.automated_maintenance_suppression_reason(
+                state.record.conversation_id
+            )
+            is None
+        )
+
     async def _send_now(
         self,
         state: _ConversationState,
@@ -2255,7 +2261,7 @@ class SqliteProcessConversationSystem:
                 if state.child_is_quarantined:
                     self._settle_phase(state)
                     return self._hold_prompt(state=state, message=message)
-                if self._automatic_compaction_is_due(state):
+                if await self._automatic_compaction_may_start(state):
                     held_fate = self._hold_prompt(state=state, message=message)
                     automatic_reservation = await self._reserve_turn(
                         state, automatic_compaction=True
@@ -2290,7 +2296,12 @@ class SqliteProcessConversationSystem:
         message: _Message,
     ) -> _SteerAttempt:
         attempt = await self._begin_attempt(state, turn_token, LifecycleOperation.steer)
-        messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
+        (
+            messages,
+            suppression_reason,
+            automatic_notice,
+            memory_notice_only,
+        ) = await self._admit_dispatch_messages(
             state,
             (message,),
             lifecycle_if_all_suppressed=(replace(attempt, status=LifecycleStatus.suppressed),),
@@ -2314,7 +2325,7 @@ class SqliteProcessConversationSystem:
             # Unknown adapter faults must be recorded as uncertain before being raised.
             adapter_error = error
             outcome = BackendSteerUncertain()
-        return _SteerAttempt(attempt, outcome, automatic_notice, adapter_error)
+        return _SteerAttempt(attempt, outcome, automatic_notice, memory_notice_only, adapter_error)
 
     async def _steer(
         self,
@@ -2431,6 +2442,7 @@ class SqliteProcessConversationSystem:
                 attempt=attempt,
                 turn_token=running.token,
                 automatic_notice=automatic_notice,
+                memory_notice_only=steer.memory_notice_only,
                 message=message,
                 held_before=held_before,
             )
@@ -2605,6 +2617,7 @@ class SqliteProcessConversationSystem:
             await self._drain_held_prompts(state)
             return PromptDeliverySuppressed(delivery.suppression_reason)
         reservation.automatic_notice = delivery.automatic_notice
+        reservation.memory_notice_only = delivery.memory_notice_only
         started = await self._finalize_delivery(
             state=state,
             reservation=reservation,
@@ -2632,8 +2645,13 @@ class SqliteProcessConversationSystem:
         messages: tuple[_Message, ...],
         *,
         lifecycle_if_all_suppressed: tuple[LifecycleFact, ...] = (),
-    ) -> tuple[tuple[_Message, ...], str | None, bool]:
-        """Keep sender envelopes intact until the final transactional dispatch decision."""
+        automatic_compaction: bool = False,
+    ) -> tuple[tuple[_Message, ...], str | None, bool, bool]:
+        """Keep sender envelopes intact until the final transactional dispatch decision.
+
+        Returns the survivors, the first suppression reason, and whether the survivors are
+        all Manager notices and all Worker memory-loss notices respectively.
+        """
         async with state.lock:
             decisions = await self._persist(
                 state,
@@ -2642,6 +2660,7 @@ class SqliteProcessConversationSystem:
                     state.record.conversation_id,
                     tuple(_discarded_row(m) for m in messages),
                     lifecycle_if_all_suppressed=lifecycle_if_all_suppressed,
+                    automatic_compaction=automatic_compaction,
                 ),
             )
             written = await self._store.read_events_after(
@@ -2655,7 +2674,10 @@ class SqliteProcessConversationSystem:
         automatic_notice = bool(survivors) and all(
             d.is_manager_notice for d in decisions if d.suppression_reason is None
         )
-        return survivors, reason, automatic_notice
+        memory_notice_only = bool(survivors) and all(
+            d.is_memory_notice for d in decisions if d.suppression_reason is None
+        )
+        return survivors, reason, automatic_notice, memory_notice_only
 
     async def _deliver_prompt(
         self,
@@ -2870,6 +2892,27 @@ class SqliteProcessConversationSystem:
                 # the lock was free starts no agent.
                 async with state.lock:
                     check_delivery_owner()
+            if messages and (
+                automatic_compaction
+                or all(
+                    worker_memory.is_memory_notice_sender_message_id(m.sender_message_id)
+                    for m in messages
+                )
+            ):
+                # Maintenance is also admitted before a child is made, so a stale /compact
+                # or notice for a replaced or backlogged Worker starts no agent. The
+                # admission after preparation below still decides last.
+                messages, suppression_reason, _, _ = await self._admit_dispatch_messages(
+                    state,
+                    messages,
+                    lifecycle_if_all_suppressed=(
+                        _turn_fact(turn_token, LifecycleStatus.unavailable),
+                        _prompt_fact(turn_token, LifecycleStatus.suppressed),
+                    ),
+                    automatic_compaction=automatic_compaction,
+                )
+                if not messages:
+                    return _PromptDeliveryAttempt(suppression_reason=suppression_reason)
             child = await self._ensure_child(
                 state,
                 model=model_change,
@@ -2903,14 +2946,21 @@ class SqliteProcessConversationSystem:
         if check_delivery_owner is not None:
             await still_owned()
         automatic_notice = False
+        memory_notice_only = False
         if messages:
-            messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
+            (
+                messages,
+                suppression_reason,
+                automatic_notice,
+                memory_notice_only,
+            ) = await self._admit_dispatch_messages(
                 state,
                 messages,
                 lifecycle_if_all_suppressed=(
                     _turn_fact(turn_token, LifecycleStatus.unavailable),
                     _prompt_fact(turn_token, LifecycleStatus.suppressed),
                 ),
+                automatic_compaction=automatic_compaction,
             )
             if not messages:
                 # Preparation can spawn on uncommitted model values. Never retain that child.
@@ -3000,6 +3050,7 @@ class SqliteProcessConversationSystem:
         return _PromptDeliveryAttempt(
             messages=messages,
             automatic_notice=automatic_notice,
+            memory_notice_only=memory_notice_only,
             composed_content_delivered=accepted.composed_content_delivered,
         )
 
@@ -3195,6 +3246,7 @@ class SqliteProcessConversationSystem:
                     token=reservation.token,
                     automatic_compaction=reservation.automatic_compaction,
                     automatic_notice=reservation.automatic_notice,
+                    memory_notice_only=reservation.memory_notice_only,
                 )
                 # One transaction: the change, the conversation's new values and the
                 # prompt are one fact about one delivery, and a half-written one would
@@ -3227,29 +3279,6 @@ class SqliteProcessConversationSystem:
                         PlainFieldMutation(state, "running_turn", accepted_turn),
                     ),
                 )
-                if carried_change is not None and any(
-                    message.held_prompt_id for message in reservation.messages
-                ):
-                    from planner.core.db import connect
-                    from planner.tickets.data import write_ticket_last_chosen_configuration
-
-                    conn = connect(self._store._db_path)
-                    try:
-                        row = conn.execute(
-                            "SELECT id FROM tickets WHERE conversation_id=?",
-                            (state.record.conversation_id,),
-                        ).fetchone()
-                        if row is not None:
-                            write_ticket_last_chosen_configuration(
-                                conn,
-                                row[0],
-                                expected_conversation_id=state.record.conversation_id,
-                                model=carried_change.model,
-                                reasoning_effort=carried_change.reasoning_effort,
-                                now=int(self._unix_time_now()),
-                            )
-                    finally:
-                        conn.close()
                 self._take_in_written_rows(state, written)
                 owner_prompt_sequences = [
                     event.sequence
@@ -3281,10 +3310,36 @@ class SqliteProcessConversationSystem:
                 if self._signal is None:
                     state.running_turn = accepted_turn
                 self._set_phase(state, _ConversationPhase.running)
+                # The receipt already owns these sender identities. A later Ticket
+                # preference write cannot leave duplicate callers behind its barrier.
+                self._settle_held_deliveries(state, reservation.messages)
                 # The prompt commit can announce before this process-owned state is
                 # visible. Publish again after the runtime transition, so a reader of
                 # that earlier announcement cannot keep an idle answer indefinitely.
                 change_signal.emit()
+                if carried_change is not None and any(
+                    message.held_prompt_id for message in reservation.messages
+                ):
+                    from planner.core.db import connect
+                    from planner.tickets.data import write_ticket_last_chosen_configuration
+
+                    conn = connect(self._store._db_path)
+                    try:
+                        row = conn.execute(
+                            "SELECT id FROM tickets WHERE conversation_id=?",
+                            (state.record.conversation_id,),
+                        ).fetchone()
+                        if row is not None:
+                            write_ticket_last_chosen_configuration(
+                                conn,
+                                row[0],
+                                expected_conversation_id=state.record.conversation_id,
+                                model=carried_change.model,
+                                reasoning_effort=carried_change.reasoning_effort,
+                                now=int(self._unix_time_now()),
+                            )
+                    finally:
+                        conn.close()
                 return True
             finally:
                 if state.phase is not _ConversationPhase.starting:
@@ -3462,6 +3517,7 @@ class SqliteProcessConversationSystem:
                     self._settle_held_deliveries(state, batch)
                 continue
             reservation.automatic_notice = delivery.automatic_notice
+            reservation.memory_notice_only = delivery.memory_notice_only
             if delivery.messages:
                 held, *surviving_rest = delivery.messages
                 rest = tuple(surviving_rest)
@@ -3546,6 +3602,7 @@ class SqliteProcessConversationSystem:
         turn_token: TurnToken | None,
         attempt: LifecycleFact | None = None,
         automatic_notice: bool = False,
+        memory_notice_only: bool = False,
         held_before: tuple[str, ...] = (),
     ) -> PromptDeliveryInjected | PromptDeliveryRefused | PromptDeliveryUncertain:
         """Record and map one steering outcome while the conversation lock is held.
@@ -3579,6 +3636,9 @@ class SqliteProcessConversationSystem:
             ):
                 state.running_turn.automatic_notice = (
                     state.running_turn.automatic_notice and automatic_notice
+                )
+                state.running_turn.memory_notice_only = (
+                    state.running_turn.memory_notice_only and memory_notice_only
                 )
             return PromptDeliveryInjected()
         if isinstance(outcome, BackendSteerRefused):
@@ -3627,6 +3687,9 @@ class SqliteProcessConversationSystem:
             # matches the delivery's non-retry fate.
             state.running_turn.automatic_notice = (
                 state.running_turn.automatic_notice and automatic_notice
+            )
+            state.running_turn.memory_notice_only = (
+                state.running_turn.memory_notice_only and memory_notice_only
             )
         if outcome.not_delivered is not None:
             self._watch_late_steer(state, outcome.not_delivered, message, held_before)
@@ -3889,7 +3952,7 @@ class SqliteProcessConversationSystem:
                     *((cancel_fact,) if cancel_fact is not None else ()),
                     *interpreted.lifecycle[1:],
                 ),
-                agent_activity=not running.automatic_compaction,
+                agent_activity=not _turn_is_maintenance(running),
                 automatic_compaction_confirmed=running.compaction_confirmed,
                 automatic_compaction_result=automatic_compaction_result,
                 create_failure_notice=interpreted.failure_notice,
@@ -3920,7 +3983,7 @@ class SqliteProcessConversationSystem:
         self._note_written(
             state,
             written,
-            agent_activity=not running.automatic_compaction,
+            agent_activity=not _turn_is_maintenance(running),
             compaction_confirmed=running.compaction_confirmed,
             compaction_result=automatic_compaction_result,
         )
@@ -3986,7 +4049,6 @@ class SqliteProcessConversationSystem:
         # up — the session cursor it mints — has somewhere to go.
         self._ensure_backend_event_pump(state)
         start_reservation = state.reserved_turn
-        state.local_child_retirement_proven = False
         await child.start(
             resolved_start,
             vendor_session_cursor=state.record.vendor_session_cursor,
@@ -4037,7 +4099,6 @@ class SqliteProcessConversationSystem:
                 state.record.conversation_id,
             )
             return False
-        state.local_child_retirement_proven = True
         # News still queued from the stopped child is not about any child that follows.
         state.child_event_sink = None
         await self._background_tasks_ended_with_child(state)
@@ -4391,6 +4452,10 @@ class SqliteProcessConversationSystem:
             user_input_questions,
             executor_process_current=retained.incarnation_current,
         )
+        if running is not None:
+            running.memory_notice_only = self._store._open_turn_holds_only_memory_notices_sync(
+                conversation_id
+            )
         child: BackendChild | None = None
         sink = _CoreBackendEventSink(self, state)
         # A delivery the lost process left uncertain keeps the fence it had.
@@ -5045,7 +5110,7 @@ class SqliteProcessConversationSystem:
                 bool(payloads)
                 and not compacted
                 and running is not None
-                and not running.automatic_compaction
+                and not _turn_is_maintenance(running)
             )
             compaction_confirmed = compacted or (
                 live
@@ -5125,7 +5190,7 @@ class SqliteProcessConversationSystem:
                     state,
                     written,
                     agent_activity=running is not None
-                    and not running.automatic_compaction
+                    and not _turn_is_maintenance(running)
                     and not compacted,
                     compaction_confirmed=compacted,
                     compaction_result=compaction_result,

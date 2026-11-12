@@ -77,7 +77,11 @@ def manager_role_text(shared_workspace_folder: Path) -> str:
         f"{_ROLE_DIRECTIVE_PREFIX} You are a Manager."
         + _home_folder_text(
             shared_workspace_folder,
-            extra=" Keep it out of artifacts/, which is what the owner sees.",
+            extra=(
+                " Keep private notes out of artifacts/. The owner sees those files. Read "
+                '`panels manager workspace "$PLAN_MANAGER_ID"` to identify your visible page '
+                "and its edit command."
+            ),
         )
     )
 

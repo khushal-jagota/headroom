@@ -81,6 +81,17 @@ def run(browser, urls):
     metrics = MetricsFixture()
     metrics.append()
     metrics_calls = []
+    backend_updates = {"enabled": False, "hold": [], "calls": [], "fail_discovery": False, "mode": "succeeded", "unsupported": False}
+    backend_versions = {"claude": "2.1.1", "codex": "0.1.0"}
+
+    def backend_snapshots():
+        return [{"backend_key": key, "installed": True, "executable_path": f"/home/fixture/.local/bin/{key}",
+                 "version": version, "identity": None, "available_models": [], "reasoning_effort_options": [],
+                 "cached_usage": None, "diagnoses": [], "update_advisory": {
+                     "install_method": "npm_global", "update_command": None if backend_updates["unsupported"] and key == "codex" else f"npm install {key}@latest",
+                     "latest_version": None if backend_updates["unsupported"] and key == "codex" else {"claude": "2.1.2", "codex": "0.2.0"}[key],
+                     "update_available": True, "detail": "This installation needs a manual update."}}
+                for key, version in backend_versions.items()]
 
     fold = {"enabled": False, "count": 3, "overflow": False, "active_count": 1, "release_sha": "fixture-boot"}
     card_fixture = {"enabled": False}
@@ -91,6 +102,47 @@ def run(browser, urls):
     def respond(route):
         parts = urlsplit(route.request.url)
         path = parts.path
+        if card_fixture.get("preview_details"):
+            preview_launch = {"backend_key": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "medium"}
+            if path == "/api/artifact-catalog/manager/preview_manager":
+                route.fulfill(json={"revision": "fixture", "directory": "", "offset": 0, "total": 0, "entries": []})
+                return
+            if path == "/api/managers/preview_manager/page":
+                route.fulfill(json={"page": None, "page_revision": 0})
+                return
+            if path == "/api/managers/preview_manager/conversation/start-values":
+                route.fulfill(json=preview_launch)
+                return
+            if path == "/api/resource-body":
+                key = parse_qs(parts.query).get("key", [""])[0]
+                body = {"goal": "Make previews useful", "recap": "Preview work", "goals": []} if key == "/api/managers/preview_manager/workspace-content" else preview_launch if key == "/api/chief/conversation/start-values" else None
+                if body is not None:
+                    route.fulfill(json={"key": key, "epoch": "fixture", "revision": "1", "body": body})
+                    return
+        if card_fixture.get("enabled") and path.endswith("/conversation/start-values"):
+            preview_owners = [item for manager in card_fixture.get("board", {}).get("managers", []) for item in manager.get("tickets", [])]
+            preview_owners.extend(item for column in card_fixture.get("board", {}).get("columns", []) for item in column.get("cards", []))
+            if any(path == f"/api/tickets/{item['id']}/conversation/start-values" for item in preview_owners):
+                route.fulfill(json={"backend_key": "codex", "model": "gpt-6.1-sol" if card_fixture.get("preview_details") else None,
+                                    "reasoning_effort": "medium" if card_fixture.get("preview_details") else None})
+                return
+        if backend_updates["enabled"] and path == "/api/conversation/backends":
+            if backend_updates["fail_discovery"] and parse_qs(parts.query).get("refresh") == ["true"]:
+                route.fulfill(status=503, json={"detail": "Registry discovery failed"})
+            else:
+                route.fulfill(json={"backends": backend_snapshots()})
+            return
+        if backend_updates["enabled"] and path in {"/api/conversation/backends/claude/update", "/api/conversation/backends/codex/update"}:
+            assert route.request.method == "POST"
+            key = path.split("/")[-2]
+            backend_updates["calls"].append(key)
+            if key == "claude":
+                backend_updates["hold"].append(route)
+            else:
+                outcome = backend_updates["mode"]
+                route.fulfill(json={"outcome": outcome, "detail": "The installed version did not change." if outcome == "unchanged" else "The update command failed.",
+                                    "output_tail": "Controlled npm failure" if outcome == "failed" else ""})
+            return
         # The standalone artifact resolves its owner and launch settings. Keep these
         # exact: an unrelated ticket read must still fail this case's request guard.
         if route.request.method == "GET" and path == "/api/tickets" and parse_qs(parts.query) == {"detail": ["full"], "id": [artifact_owner["id"]]}:
@@ -180,7 +232,7 @@ def run(browser, urls):
             route.fulfill(json={"key": key, "epoch": "fixture", "revision": "1", "body": inner})
             return
         if path == "/api/updates":
-            route.fulfill(json={"state": "updating" if fold["release_sha"] == "fixture-boot" else "up_to_date", "allowed_actions": [],
+            route.fulfill(json={"state": "updating" if fold["release_sha"] == "fixture-boot" and not backend_updates["enabled"] else "up_to_date", "allowed_actions": [],
                                 "activity": "unknown", "available": None, "attempt": None, "app_sha": fold["release_sha"], "detail": None,
                                 "deadline_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3600)), "mac_details": None})
             return
@@ -257,6 +309,65 @@ def run(browser, urls):
     pane.get_by_role("link", name="Notifications").click()
     page.wait_for_function("location.hash === '#/workspace/utility/settings/notifications?view=managers'")
     expect(rail).to_be_visible()
+
+    # Settings updates use the same routed shell and wire requests. The subprocess
+    # itself belongs to backend coverage. This browser boundary protects the click,
+    # per-backend busy state, outcome feedback, and refreshed installed version.
+    backend_started = time.monotonic()
+    backend_updates["enabled"] = True
+    pane.get_by_role("link", name="Backends", exact=True).click()
+    page.wait_for_function("location.hash === '#/workspace/utility/settings/backends?view=managers'")
+    # Reload proves the nested address and starts with an idle app-update fixture.
+    page.reload(wait_until="domcontentloaded")
+    settings = pane.locator('[data-backend-settings]')
+    claude = settings.locator('[data-backend="claude"]')
+    codex = settings.locator('[data-backend="codex"]')
+    expect(claude.locator('[data-installed]')).to_have_text('2.1.1')
+    expect(claude.locator('[data-latest]')).to_have_text('2.1.2')
+    expect(codex.locator('[data-latest]')).to_have_text('0.2.0')
+    expect(codex.get_by_role('button', name='Update Codex')).to_be_enabled()
+    evidence = Path(os.environ.get('PANELS_BACKEND_ARTIFACT_DIR', os.environ['PANELS_SIDEBAR_ARTIFACT_DIR']))
+    evidence.mkdir(parents=True, exist_ok=True)
+    page.screenshot(animations="disabled", path=str(evidence / 'backend-settings-desktop.png'))
+    page.set_viewport_size({"width": 390, "height": 844})
+    expect(settings).to_be_visible()
+    expect(claude.get_by_role('button', name='Update Claude')).to_be_in_viewport()
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+    page.screenshot(animations="disabled", path=str(evidence / 'backend-settings-mobile.png'))
+    page.set_viewport_size({"width": 1280, "height": 700})
+    claude.get_by_role('button', name='Update Claude').click()
+    expect(claude.get_by_role('button', name='Update Claude')).to_be_disabled()
+    expect(codex.get_by_role('button', name='Update Codex')).to_be_enabled()
+    assert backend_updates["calls"] == ["claude"]
+    backend_versions["claude"] = "2.1.2"
+    backend_updates["hold"].pop().fulfill(json={"outcome": "succeeded", "detail": "Updated to 2.1.2.", "output_tail": ""})
+    expect(claude.get_by_role('status')).to_have_text('Updated to 2.1.2.')
+    expect(claude.locator('[data-installed]')).to_have_text('2.1.2')
+    expect(claude.get_by_role('button', name='Update Claude')).to_be_enabled()
+    backend_updates["mode"] = "unchanged"
+    codex.get_by_role('button', name='Update Codex').click()
+    expect(codex.get_by_role('status')).to_have_text('The installed version did not change.')
+    expect(codex.get_by_role('button', name='Update Codex')).to_be_enabled()
+    backend_updates["mode"] = "failed"
+    codex.get_by_role('button', name='Update Codex').click()
+    expect(codex.get_by_role('alert')).to_have_text('The update command failed.')
+    codex.get_by_text('Update output', exact=True).click()
+    expect(codex.locator('pre')).to_have_text('Controlled npm failure')
+    expect(codex.get_by_role('button', name='Update Codex')).to_be_enabled()
+    backend_updates["fail_discovery"] = True
+    settings.get_by_role('button', name='Refresh', exact=True).click()
+    expect(settings.get_by_role('alert').first).to_contain_text('Could not refresh backend versions.')
+    expect(claude.locator('[data-latest]')).to_have_text('Unavailable')
+    # Latest discovery does not prevent an otherwise supported update.
+    expect(claude.get_by_role('button', name='Update Claude')).to_be_enabled()
+    backend_updates["fail_discovery"] = False
+    backend_updates["unsupported"] = True
+    settings.get_by_role('button', name='Refresh', exact=True).click()
+    expect(codex.get_by_role('button', name='Update Codex')).to_be_disabled()
+    expect(codex.get_by_text('This installation needs a manual update.', exact=True)).to_be_visible()
+    page.screenshot(animations="disabled", path=str(evidence / 'backend-settings-errors.png'))
+    print(f"Backend Settings browser boundary: {time.monotonic() - backend_started:.2f}s", flush=True)
+    backend_updates["enabled"] = False
 
     # A row of the Config index is a link like any other, and it was never reported.
     page.goto(url + "#/workspace/utility/settings?view=managers", wait_until="domcontentloaded")
@@ -399,10 +510,13 @@ def run(browser, urls):
     if os.environ.get("PANELS_BROWSER_VIDEO") == "1":
         capture_card_motion(browser, url, card_fixture, respond, evidence)
     verify_card_geometry(page, url, card_fixture, evidence)
+    verify_card_background_motion(page, url, card_fixture, evidence)
     verify_empty_handoff(page, url, card_fixture, evidence)
     verify_rail_pagination(page, url, card_fixture, evidence)
+    verify_offscreen_rows_stay_drawn(page, url, card_fixture, evidence)
     fold["release_sha"] = "fixture-boot"
     verify_recap_pointer_floor(browser, page, url, card_fixture, respond, evidence)
+    verify_ticket_preview_details(page, url, card_fixture, evidence)
     verify_vps_route_leave(page, url, pane, rail, metrics_calls)
     verify_owner_updates(browser, url)
     verify_conversation_overlay(browser, url)
@@ -620,7 +734,21 @@ def verify_card_geometry(page, url, fixture, evidence):
         const rect = card.getBoundingClientRect(), title = card.querySelector('.item-title');
         const titleRect = title.getBoundingClientRect();
         const style = getComputedStyle(title);
-        return {top:rect.top,bottom:rect.bottom,height:rect.height,
+        for (const row of card.querySelectorAll('.worker-row.rail-travelling')) {
+          const r=row.getBoundingClientRect(), scroller=card.closest('.active-work-scroll').getBoundingClientRect();
+          const x=r.left+r.width/2,y=r.top+r.height/2;
+          if(y>scroller.top && y<scroller.bottom) {
+            const painted=document.elementFromPoint(x,y);
+            if(!row.contains(painted) || getComputedStyle(row).zIndex!=='2')
+              throw new Error('Travelling Worker must paint above other groups');
+          }
+        }
+        const bubble = getComputedStyle(card, '::before');
+        if (bubble.content === 'none' || bubble.zIndex !== '-2' ||
+            Math.abs(parseFloat(bubble.height)-rect.height) > 1 ||
+            getComputedStyle(card.parentElement, '::before').content !== 'none')
+          throw new Error('Bubble must share the animated card border: '+id);
+        return {bubbleHeight:parseFloat(bubble.height),top:rect.top,bottom:rect.bottom,height:rect.height,
           gap:next ? next.getBoundingClientRect().top-rect.bottom : null,
           titleHeight:titleRect.height,titleScale:titleRect.height/parseFloat(style.lineHeight),
           tickets:[...card.querySelectorAll('[data-ticket-id]')].map(n=>n.dataset.ticketId),
@@ -785,7 +913,7 @@ def verify_card_geometry(page, url, fixture, evidence):
     scroll.evaluate("async n=>{n.scrollTop=n.scrollHeight; await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);}")
     expect(page.locator('[data-manager="geometry_b"]')).to_be_in_viewport()
     assert page.locator('.settled-head').is_visible()
-    assert not page.locator('.manager-card [style*="height:"]').count()
+    assert not page.locator('.manager-card [style*="height:"]:not(.rail-wash):not(.rail-wash-origin)').count()
     page.screenshot(path=str(evidence / "card-short-wrapped-final.png"))
     # A bottom-anchored scroll can clamp when the final slot shrinks. The same
     # border/gap proof must hold there, while the real scroll anchor is active.
@@ -862,6 +990,91 @@ def verify_card_geometry(page, url, fixture, evidence):
         "method": "Real browser border boxes at normalized WAAPI progress; rapid changes use animation frames", "flows": proof,
     }, indent=2))
 
+
+
+
+def verify_card_background_motion(page, url, fixture, evidence):
+    """Reuse the App host to prove card exits, arrivals and reflow share a bubble.
+
+    Existing resize samples cover row changes, scrolling and reduced motion.
+    They did not check the painted layer or a whole card's opacity lifecycle.
+    """
+    started = time.perf_counter()
+    managers = [{"id": "bubble_"+str(i), "title": "Background travels with Manager "+str(i),
+                 "created_at": i+1, "settled": False, "tickets": []} for i in range(5)]
+    worker={"id":"bubble_worker","title":"Worker changes group during settle","manager_id":"bubble_4",
+            "worker_type":"coding","stage":"needs_implementation","ticket_status":"agent"}
+    managers[4]["tickets"]=[worker]
+    goal={"id":"bubble_goal","title":"Keep the rail together","active":True,"completed":False,
+          "kind":"binary","holder_kind":"manager","holder_id":"bubble_3","created_at":1,"updated_at":1,
+          "project_id":None,"why":"","deadline":None,"primary_chart":None,"primary_checklist_block_id":None,
+          "revision":0,"status":"attention","status_date":time.strftime("%Y-%m-%d"),
+          "next_refresh_at":int(time.time())+86400,"employee_backend":"codex","employee_launch_model":"",
+          "employee_launch_reasoning_effort":None,
+          "page":{"kind":"headroom.page","version":1,"title":"Approach","summary":"","blocks":[]}}
+    fixture.update(enabled=True, board={"managers": managers, "columns": []}, chief={"label": "Chief"},goals=[goal])
+    page.set_viewport_size({"width": 1100, "height": 700})
+    page.mouse.move(1000, 650)
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator('[data-manager="bubble_4"]')).to_be_visible()
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+    page.evaluate("""() => {
+      window.__bubbleFrames=[];
+      window.__bubbleCapture=true;
+      const take=()=>{
+        const cards=[...document.querySelectorAll('.manager-card')];
+        window.__bubbleFrames.push(cards.map(card=>{
+          const r=card.getBoundingClientRect(), b=getComputedStyle(card,'::before');
+          const title=card.querySelector('.item-title').getBoundingClientRect();
+          const tint=getComputedStyle(card,'::after');
+          return {tint:tint.content,tintHeight:parseFloat(tint.height),tintZ:tint.zIndex,id:card.dataset.railMotion,top:r.top,bottom:r.bottom,height:r.height,
+            titleTop:title.top,titleBottom:title.bottom,
+            bubble:b.content,bubbleHeight:parseFloat(b.height),bubbleZ:b.zIndex,
+            slotBubble:getComputedStyle(card.parentElement,'::before').content,
+            opacity:+getComputedStyle(card).opacity,transform:getComputedStyle(card).transform};
+        }));
+        if(window.__bubbleCapture)requestAnimationFrame(take);
+      };take();
+    }""")
+    proof=[]
+
+    def change(name, mutate):
+        mutate()
+        page.evaluate("async () => {await window.__refreshNavigation();await new Promise(requestAnimationFrame);}")
+        # Pause the actual effects for a reviewable midpoint, then let them finish.
+        page.evaluate("""() => {
+          window.__bubbleEffects=document.getAnimations().filter(a=>a.effect && a.effect.getTiming().iterations!==Infinity);
+          window.__bubbleEffects.forEach(a=>{a.pause();a.currentTime=Number(a.effect.getTiming().duration)*.5;});
+        }""")
+        page.screenshot(path=str(evidence / ("bubble-"+name+"-midpoint.png")))
+        page.evaluate("window.__bubbleEffects.forEach(a=>a.play())")
+        page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+        proof.append(name)
+
+    expect(page.locator('[data-manager="bubble_3"]')).to_have_attribute("data-goal-status", "attention")
+    change("settle-one", lambda: managers[0].update(settled=True))
+    change("reopen", lambda: managers[0].update(settled=False))
+    for i in range(3):
+        change("settle-sequence-"+str(i), lambda i=i: managers[i].update(settled=True))
+    change("settle-with-group-transfer", lambda: (managers[3].update(settled=True), worker.update(awaiting_approval=True)))
+    change("manager-arrives", lambda: managers.append({"id":"bubble_new", "title":"A new Manager and its bubble",
+                                                      "created_at":10,"tickets":[]}))
+    page.emulate_media(reduced_motion="reduce")
+    change("reduced-reopen", lambda: managers[0].update(settled=False))
+    page.emulate_media(reduced_motion="no-preference")
+    fixture["goals"]=[]
+    frames=page.evaluate("window.__bubbleCapture=false;window.__bubbleFrames")
+    for frame in frames:
+        for card in frame:
+            assert card["bubble"] != 'none' and card["slotBubble"] == 'none', card
+            assert card["bubbleZ"] == '-2' and abs(card["bubbleHeight"]-card["height"]) < 1, card
+            if card["tint"] != 'none':
+                assert card["tintZ"] == '-1' and abs(card["tintHeight"]-card["height"]) < 1, card
+            assert card["titleTop"] >= card["top"]-1 and card["titleBottom"] <= card["bottom"]+1, card
+    assert any(0 < card["opacity"] < 1 for frame in frames for card in frame), frames
+    assert any(card["transform"] != 'none' for frame in frames for card in frame), frames
+    (evidence / "bubble-motion-frames.json").write_text(json.dumps({
+        "seconds":round(time.perf_counter()-started,3),"newHosts":0,"flows":proof,"frames":frames},indent=2))
 
 
 def verify_empty_handoff(page, url, fixture, evidence):
@@ -1286,6 +1499,66 @@ def verify_rail_pagination(page, url, fixture, evidence):
         "seconds":round(time.perf_counter()-started,3),"newHosts":0,
         "continuedScrollSeconds":round(continued_scroll_seconds,3),"flows":proof,
     }, indent=2))
+
+
+def verify_offscreen_rows_stay_drawn(page, url, fixture, evidence):
+    """A card scrolled out of the rail keeps its Ticket rows mounted.
+
+    The rail used to ask for a card's Ticket rows only while the card was on screen,
+    so rows left the DOM and came back new, with an enter animation. No unit test
+    reaches this: it needs real layout, a real scroll container and the real request
+    path. This reuses the real App host and the fixture's scoped projection.
+    """
+    def ticket(identity, parent):
+        return {"id": identity, "manager_id": parent, "title": "Worker " + identity,
+                "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent",
+                "conversation_id": "conversation_" + identity,
+                "conversation_signal": {"working": False, "message_for_owner": False}}
+
+    managers = [{"id": f"drawn_manager_{i:02}", "title": f"Drawn manager {i:02}", "created_at": i + 1,
+                 "tickets": [ticket(f"drawn_{i:02}_{j}", f"drawn_manager_{i:02}") for j in range(3)]}
+                for i in range(12)]
+    fixture.update(enabled=True, board={"managers": managers, "columns": [{"cards": []}]}, chief={"label": "Chief"})
+    page.set_viewport_size({"width": 1100, "height": 650})
+    page.emulate_media(reduced_motion="no-preference")
+    # Keep the pointer off the rail: a pointer over a row defers rail structure.
+    page.mouse.move(900, 600)
+    page.reload(wait_until="domcontentloaded")
+    rows = page.locator('[data-active-work-scroll] [data-ticket-id]')
+    scroll = page.locator('[data-active-work-scroll]')
+    # Every Ticket is drawn at once, including rows of cards far below the viewport.
+    expect(rows).to_have_count(36)
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+    assert scroll.evaluate('n=>n.scrollHeight>n.clientHeight*2'), "the rail must be long enough to scroll away from rows"
+    page.evaluate("""() => {
+      const nodes = [...document.querySelectorAll('[data-active-work-scroll] [data-ticket-id]')];
+      window.__drawn = {nodes, added: 0, animated: new Set()};
+      for (const node of nodes) node.__drawnMark = true;
+      new MutationObserver(records => {
+        for (const record of records) for (const node of record.addedNodes)
+          if (node instanceof HTMLElement) window.__drawn.added += +node.matches('[data-ticket-id]') + node.querySelectorAll('[data-ticket-id]').length;
+      }).observe(document.querySelector('[data-active-work-scroll]'), {childList: true, subtree: true});
+      const watch = () => {
+        for (const animation of document.getAnimations()) {
+          const target = animation.effect?.target;
+          if (target instanceof HTMLElement && /^(row|card):/.test(target.dataset.railMotion ?? '')) window.__drawn.animated.add(target.dataset.railMotion);
+        }
+        requestAnimationFrame(watch);
+      };
+      watch();
+    }""")
+    for position in ("n.scrollHeight", "0"):
+        scroll.evaluate(f"n=>{{n.scrollTop={position};}}")
+        page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+        page.evaluate("() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))")
+    outcome = page.evaluate("""() => ({
+      added: window.__drawn.added, animated: [...window.__drawn.animated],
+      detached: window.__drawn.nodes.filter(node => !node.isConnected).length,
+      replaced: [...document.querySelectorAll('[data-active-work-scroll] [data-ticket-id]')].filter(node => !node.__drawnMark).length,
+      count: document.querySelectorAll('[data-active-work-scroll] [data-ticket-id]').length})""")
+    page.screenshot(path=str(evidence / 'rail-offscreen-rows-final.png'))
+    (evidence / 'rail-offscreen-rows.json').write_text(json.dumps(outcome, indent=2))
+    assert outcome == {"added": 0, "animated": [], "detached": 0, "replaced": 0, "count": 36}, outcome
 
 
 def verify_conversation_overlay(browser, url):
@@ -2295,7 +2568,7 @@ def verify_focus_slide_fill(page, url, fixture):
         page.evaluate("""() => {
           window.__focusFill = {frames: [], done: false}; let count = 0;
           const take = () => {
-            const fill = document.querySelector('.rail-wash--item:not(.rail-wash--leaving)');
+            const fill = document.querySelector('.rail-wash--item:not(.rail-wash--leaving):not([hidden])');
             const group = document.querySelector('[data-bucket-key="agent"]');
             if (fill && !fill.hidden && group) {
               const box = fill.getBoundingClientRect();
@@ -2352,7 +2625,7 @@ def verify_selection_washes(page, url, fixture, evidence):
         const target=document.querySelector(selector);
         if(!target)return {missing:true};
         const rect=n=>{if(!n)return null;const r=n.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};};
-        const host=target.closest('.active-work-scroll,.settled-body,.rail-utilities');
+        const host=target.closest('.manager-card,.active-work-scroll,.settled-body,.rail-utilities');
         const group=target.closest('.manager-card');
         const item=host.querySelector('.rail-wash--item:not(.rail-wash--leaving)');
         // Only the open item is lit: no layer marks the Manager the item sits in (owner).
@@ -2457,22 +2730,41 @@ def verify_selection_washes(page, url, fixture, evidence):
     page.mouse.move(1300, 950)
     row.hover()
     expect(page.locator('[data-manager="wash_a"] .settle')).to_have_css('opacity', '0')
-    hover = page.locator('.active-work-scroll > .rail-wash--hover:not(.rail-wash--leaving)')
+    hover = page.locator('[data-manager="wash_a"] > .rail-wash--hover:not(.rail-wash--leaving)')
     expect(hover).not_to_have_attribute('hidden', '')
+    wait_settled(page, ".rail-wash")
+    # A correct wash box can still hide behind an opaque card bubble. Compare a
+    # flat painted pixel with the same token composited above the bubble.
+    def painted_fill(layer):
+        box=layer.bounding_box()
+        clip={"x":int(box["x"]+3),"y":int(box["y"]+box["height"]/2),"width":1,"height":1}
+        actual=page.screenshot(clip=clip)
+        layer.evaluate("""(node,clip)=>{
+          const ref=document.createElement('div');ref.id='wash-paint-reference';
+          const fill=getComputedStyle(node).backgroundColor;
+          Object.assign(ref.style,{position:'fixed',left:clip.x+'px',top:clip.y+'px',width:'1px',height:'1px',
+            zIndex:'99999',background:`linear-gradient(${fill},${fill}),var(--rail-bubble-fill)`});
+          document.body.append(ref);
+        }""",clip)
+        expected=page.screenshot(clip=clip)
+        page.locator('#wash-paint-reference').evaluate("node=>node.remove()")
+        assert actual==expected, "The card bubble obscures the rail fill"
+    painted_fill(hover)
     row.click()
     # The fills are see-through: a click on the hovered row lights it at once and never shows the
     # hover fill (or a fading copy of it) under the selected one, which would flash brighter.
     page.evaluate('async () => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); }')
-    lit = page.evaluate("""() => { const host=document.querySelector('.active-work-scroll'); const item=host.querySelector(':scope > .rail-wash--item:not(.rail-wash--leaving)');
+    lit = page.evaluate("""() => { const host=document.querySelector('[data-manager=wash_a]'); const item=host.querySelector(':scope > .rail-wash--item:not(.rail-wash--leaving)');
       return {hover:[...host.querySelectorAll(':scope > .rail-wash--hover')].filter(n=>!n.hidden).length, itemOpacity:+getComputedStyle(item).opacity, itemHidden:item.hidden}; }""")
     assert lit == {"hover": 0, "itemOpacity": 1, "itemHidden": False}, lit
+    painted_fill(page.locator('[data-manager=wash_a] > .rail-wash--item:not(.rail-wash--leaving)'))
     page.mouse.move(1300, 950)
     selection_settled(selector)
     expect(hover).to_have_attribute('hidden', '')
     page.keyboard.press("Tab")
     row.focus()
     page.evaluate('async () => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); }')
-    ring = page.locator('.active-work-scroll > .rail-wash--focus')
+    ring = page.locator('[data-manager="wash_a"] > .rail-wash--focus')
     expect(ring).not_to_have_attribute('hidden', '')
     expect(row).to_have_css('outline-style', 'none')
     ring_box, item_box = ring.bounding_box(), sample(selector)['item']
@@ -2584,12 +2876,12 @@ def verify_selection_washes(page, url, fixture, evidence):
     def middle(box):
         return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
 
-    responds(hover_at('[data-manager="wash_a"] .identity', '.active-work-scroll', bottom_edge))
-    responds(hover_at('[data-manager="wash_b"] .identity', '.active-work-scroll', left_edge))
-    responds(hover_at('[data-manager="wash_b"] .identity', '.active-work-scroll', bottom_edge))
-    responds(hover_at(sole_row, '.active-work-scroll', left_edge))
-    responds(hover_at(sole_row, '.active-work-scroll', middle))
-    outside = hover_at('[data-manager="wash_b"] .identity', '.active-work-scroll', lambda box: (box["x"] + box["width"] / 2, box["y"] - 2))
+    responds(hover_at('[data-manager="wash_a"] .identity', '[data-manager="wash_a"]', bottom_edge))
+    responds(hover_at('[data-manager="wash_b"] .identity', '[data-manager="wash_b"]', left_edge))
+    responds(hover_at('[data-manager="wash_b"] .identity', '[data-manager="wash_b"]', bottom_edge))
+    responds(hover_at(sole_row, '[data-manager="wash_b"]', left_edge))
+    responds(hover_at(sole_row, '[data-manager="wash_b"]', middle))
+    outside = hover_at('[data-manager="wash_b"] .identity', '[data-manager="wash_b"]', lambda box: (box["x"] + box["width"] / 2, box["y"] - 2))
     assert not outside["hover"] and outside["hidden"], outside
     page.mouse.click(*left_edge(page.locator(sole_row).bounding_box()))
     expect(page.locator(sole_row)).to_have_attribute("aria-current", "page")
@@ -2612,3 +2904,107 @@ def verify_selection_washes(page, url, fixture, evidence):
         'boundary': 'Real App layout and WAAPI with existing mocked navigation source',
         'samples': samples,
     }, indent=2))
+
+
+def verify_ticket_preview_details(page, url, fixture, evidence):
+    """Real hit testing and shared live duration in the existing App host.
+
+    Existing hover-controller units cannot prove access to a panel beside a wide
+    Manager row, or that dock and preview share the conversation's live turn clock.
+    """
+    started = time.perf_counter()
+    worker = {"id": "preview_worker", "manager_id": "preview_manager", "title": "Fix Ticket previews", "worker_type": "coding",
+              "stage": "needs_implementation", "ticket_status": "agent", "recap": "The preview stays open for recap requests.",
+              "conversation_id": "preview-conversation", "conversation_signal": {"working": True, "message_for_owner": False}}
+    manager = {"id": "preview_manager", "title": "Preview work", "created_at": 1,
+               "conversation_id": "preview-manager", "tickets": [worker, {**worker, "id": "preview_new", "title": "New Ticket", "conversation_id": None}]}
+    fixture.update(enabled=True, preview_details=True, recap_worker=worker,
+                   board={"managers": [manager]}, chief={"label": "Chief", "conversation_id": "preview-chief"})
+    page.evaluate("localStorage.removeItem('panels.workspace.rail-width')")
+    page.goto(url + '?preview-clock&unread=0#/workspace/manager/preview_manager', wait_until='domcontentloaded')
+    page.wait_for_selector('[data-worker-ticket-id="preview_worker"]')
+    panels = page.locator('[data-rail-hover-panel][aria-hidden="false"]')
+    rail_row = page.locator('[data-ticket-id="preview_worker"]')
+    rail_row.hover()
+    expect(panels).to_have_count(1)
+    wait_settled(page, '[data-rail-hover-panel]')
+    page.screenshot(path=str(evidence / 'ticket-preview-sidebar.png'), animations='disabled')
+    expect(panels.locator('[data-preview-model]')).to_have_text('GPT 6.1 Sol medium')
+    expect(panels.locator('[data-preview-activity]')).to_contain_text('Working · 4m')
+    # The shared preview resolves both supervisor sources and a new Worker's launch values.
+    for selector, model in [('[data-chief-destination]', 'GPT 6.1 Terra medium'), ('[data-manager="preview_manager"] .item-head', 'GPT 6.1 Sol medium')]:
+        page.locator(selector).hover()
+        expect(panels.locator('[data-preview-model]')).to_have_text(model)
+        expect(panels.locator('[data-preview-activity]')).to_contain_text('Working · 4m')
+    page.locator('[data-ticket-id="preview_new"]').hover()
+    expect(panels.locator('[data-preview-model]')).to_have_text('GPT 6.1 Sol medium')
+    expect(panels.locator('[data-preview-activity]')).to_have_text('Idle')
+    rail_row.hover()
+    expect(panels.locator('[data-preview-activity]')).to_contain_text('Working · 4m')
+    # A real model change at the next turn refreshes the same visible preview.
+    page.evaluate("window.__previewActivity('model')")
+    expect(panels.locator('[data-preview-model]')).to_have_text('GPT 6.1 Terra medium')
+    page.mouse.move(1200, 680)
+    expect(panels).to_have_count(0)
+    row = page.locator('[data-worker-ticket-id="preview_worker"]')
+    row.hover()
+    expect(panels).to_have_count(1)
+    wait_settled(page, '[data-rail-hover-panel]')
+    page.screenshot(path=str(evidence / 'ticket-preview-manager-before-click.png'), animations='disabled')
+    before = fixture.get('recap_requests', 0)
+    # Cross the gap with real pointer events; a forced click would miss the bug.
+    panels.hover()
+    with page.expect_response('**/api/recap-requests'):
+        panels.get_by_role('button', name='Ask for a recap', exact=True).click()
+    assert fixture['recap_requests'] == before + 1
+    refresh_projection(page, required_recaps=[{"id": worker["id"], "text": ""}])
+    expect(panels.locator('[data-recap-text]')).to_have_count(0)
+    expect(panels).to_have_count(1)
+    page.screenshot(path=str(evidence / 'ticket-preview-manager-recap-clicked.png'), animations='disabled')
+    page.mouse.move(1200, 680)
+    expect(panels).to_have_count(0)
+    line = page.locator('[data-conversation-rest-line]')
+    expect(line).to_contain_text('Working')
+    page.screenshot(path=str(evidence / 'ticket-preview-composer-working.png'), animations='disabled')
+    expect(line).to_contain_text('Working · 4m')
+    old = line.inner_text()
+    expect(line).not_to_have_text(old, timeout=2500)
+    row.hover()
+    expect(panels).to_have_count(1)
+    page.wait_for_function("""() => document.querySelector('[data-rail-hover-panel][aria-hidden="false"] [data-preview-activity]')?.textContent
+      === document.querySelector('[data-conversation-rest-line]')?.textContent""")
+    page.mouse.move(1200, 680)
+    expect(panels).to_have_count(0)
+    # Hover-only reads must never send an owner-read request.
+    calls = page.evaluate('window.__viewCalls')
+    assert not any('/owner-read' in call for call in calls), calls
+    # Reopen the same conversation: the turn head uses exactly the same duration.
+    page.locator('[data-conversation-expand]').click()
+    page.wait_for_function("""() => {
+      const head=[...document.querySelectorAll('[data-conversation-turn]')].find(n=>n.textContent.includes('Working for'));
+      return Boolean(head);
+    }""")
+    head_text = page.locator('[data-conversation-turn][data-conversation-turn-settled="false"]').inner_text()
+    assert 'Working for 4m' in head_text, head_text
+    page.screenshot(path=str(evidence / 'ticket-preview-open-conversation.png'), animations='disabled')
+    page.keyboard.press('Escape')
+    expect(line).to_be_visible()
+    row.hover()
+    expect(panels).to_have_count(1)
+    page.evaluate("window.__previewActivity('permission')")
+    expect(panels.locator('[data-preview-activity]')).to_have_text('Waiting for you')
+    expect(line).to_contain_text('Working · 4m')
+    page.evaluate("window.__previewActivity('background')")
+    expect(panels.locator('[data-preview-activity]')).to_have_text('Background work running: Run checks')
+    expect(line).to_have_text('Background work running: Run checks')
+    page.evaluate("window.__previewActivity('idle')")
+    expect(panels.locator('[data-preview-activity]')).to_have_text('Idle')
+    page.evaluate("window.__previewActivity('unknown')")
+    expect(panels.locator('[data-preview-activity]')).to_have_text('Activity unknown')
+    page.evaluate("window.__previewActivity('working')")
+    expect(panels.locator('[data-preview-activity]')).to_contain_text('Working · 4m')
+    (evidence / 'ticket-preview-proof.json').write_text(json.dumps({
+        'seconds': round(time.perf_counter() - started, 3), 'newHosts': 0,
+        'boundary': 'Existing App host, navigation and compact live conversation transport; real pointer and recap request',
+    }, indent=2))
+    fixture['preview_details'] = False

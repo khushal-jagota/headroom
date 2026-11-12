@@ -2,6 +2,7 @@
 type Box = { left: number; top: number; width: number; height: number; radius?: string };
 type Layer = { node: HTMLDivElement; box: string; animation: Animation | null; fade: Animation | null; arrival: number };
 type Host = { node: HTMLElement; origin: HTMLDivElement; item: Layer; hover: Layer; focus: Layer };
+// Card-local layers sit above the card bubble and below its words.
 // `group` is the Manager block the row sits in: moving within one block glides the fill.
 type Target = { node: HTMLElement; host: Host; group: HTMLElement | null; itemBox: Box };
 const properties = ['left', 'top', 'width', 'height'] as const;
@@ -48,7 +49,7 @@ export function workspaceRailWash(root: HTMLElement) {
     return node;
   }
   function discover() {
-    for (const node of root.querySelectorAll<HTMLElement>('.active-work-scroll, .settled-body, .rail-utilities')) {
+    for (const node of root.querySelectorAll<HTMLElement>('.manager-card, .active-work-scroll, .settled-body, .rail-utilities')) {
       if (!hosts.has(node)) { hosts.set(node, {node, origin: originOf(node), item:layer(node,'item'), hover:layer(node,'hover'), focus:layer(node,'focus')}); resize.observe(node); }
     }
     for (const node of root.querySelectorAll('.manager-card, .identity, .worker-row, .goal, .settled-row')) { if (!observed.has(node)) {observed.add(node);resize.observe(node);} }
@@ -73,7 +74,7 @@ export function workspaceRailWash(root: HTMLElement) {
     return new DOMRect(rect.left, top, rect.width, bottom - top);
   }
   function geometry(node: HTMLElement): Target | null {
-    const hostNode = node.closest<HTMLElement>('.active-work-scroll, .settled-body, .rail-utilities');
+    const hostNode = node.closest<HTMLElement>('.manager-card, .active-work-scroll, .settled-body, .rail-utilities');
     const host = hostNode && hosts.get(hostNode);
     if (!host || !root.contains(node) || !node.getClientRects().length) return null;
     const base = host.origin.getBoundingClientRect();
@@ -138,7 +139,7 @@ export function workspaceRailWash(root: HTMLElement) {
     if (clicked) {hovered=null;lastHover=null;hide(next!.host.hover);}
     const sameHost=prev && next && prev.host===next.host;
     const sameGroup=sameHost && prev.group && prev.group===next.group;
-    const deepen=sameHost && prev.group && next.group && prev.group!==next.group;
+    const deepen=prev && next && prev.group && next.group && prev.group!==next.group;
     if (prev && !sameGroup) fadeOut(prev.host.item,prev.node,ms(deepen?'--motion-wash':'--motion-base'));
     if (next) {
       if (clicked) {hide(next.host.item);draw(next.host.item,next.itemBox);next.host.item.node.hidden=false;}

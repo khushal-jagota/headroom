@@ -31,7 +31,7 @@
     type DeliveredMessage,
     type OwnerSendBody
   } from "../lib/conversation/wire";
-  import InlineEdit from "./InlineEdit.svelte";
+  import MarkdownBlock from "./MarkdownBlock.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import ResourceState from "./ResourceState.svelte";
   import ManagerHeader from "./ManagerHeader.svelte";
@@ -158,17 +158,6 @@
       .catch(() => undefined);
   });
 
-  function saveItem(field: "title" | "recap", value: string): Promise<unknown> {
-    return mutateJson(`/api/managers/${encodeURIComponent(itemId)}`, {method:"PATCH",body:{[field]:value}});
-  }
-
-  // No navigation record carries the goal: the rail and the board show the recap. So this
-  // takes the plain mutation route, like the Chief's recap, and the ordinary invalidation
-  // refreshes the page.
-  function saveGoal(value: string): Promise<unknown> {
-    return mutateJson(`/api/managers/${encodeURIComponent(itemId)}`, {method:"PATCH",body:{goal:value}});
-  }
-
   let settleBusy = $state(false);
   let settleError = $state("");
   let recapNote = $state<string | null>(null);
@@ -217,18 +206,18 @@
       {#if workspace.data}
         {@const item = workspace.data}
           <div bind:this={headerElement}>
-          {#snippet managerTitle()}<InlineEdit value={item.title} placeholder="(untitled Manager)" ariaLabel="Manager name" onSave={(value)=>saveItem("title",value)}/>{/snippet}
+          {#snippet managerTitle()}{item.title}{/snippet}
           {#snippet settleButton()}
             <Button variant="ghost" class="page-settle" disabled={settleBusy} onclick={()=>void setSettled(!(item.settled??false))} aria-label={`${item.settled?'Reopen':'Settle'} ${item.title}`}><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>{item.settled?'Reopen':'Settle'}</Button>
           {/snippet}
           {#snippet goalHeading()}
-            {#if soleGoal}<GoalHeader goal={soleGoal}>
+            {#if soleGoal}<GoalHeader goal={soleGoal} textEditable={false}>
               {#snippet title()}{@render managerTitle()}<ConversationSignalMark signal={item.conversation_signal && {...item.conversation_signal, working:false}} conversationId={item.conversation_id}/>{/snippet}
               {#snippet mark()}<span class="goal-head-actions">{@render settleButton()}<RequestRecapAction kind="manager" id={item.id} bind:note={recapNote} noteInline={false} /></span>{/snippet}
             </GoalHeader>{/if}
           {/snippet}
           <ManagerHeader bind:recapNote heading={soleGoal?goalHeading:undefined} signal={item.conversation_signal} conversationId={item.conversation_id}
-            recap={item.recap} onSaveRecap={(value)=>saveItem("recap",value)} recapTarget={{kind:"manager",id:item.id}}>
+            recap={item.recap} recapTarget={{kind:"manager",id:item.id}}>
             {#snippet eyebrow()}<div class="page-eyebrow"><span>{item.project}</span>{#if backHref!==null}<a class="page-back" href={backHref} aria-label={`Back to ${workspaceName}`} title={`Back to ${workspaceName}`}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11 11 5 5M5 10V5h5"/></svg></a>{/if}</div>{/snippet}
             {#snippet actions()}{@render settleButton()}{/snippet}
             {#snippet title()}{@render managerTitle()}{/snippet}
@@ -246,7 +235,7 @@
             </section>{/if}
           {/snippet}
           <!-- A Manager exists for its goals, so they lead its page; its tickets follow. -->
-          {#if soleGoal}<GoalContent goal={soleGoal}/>
+          {#if soleGoal}<GoalContent goal={soleGoal} textEditable={false}/>
           {:else}
             {#if held.held.length>1}<GoalsOverview goals={item.goals} holderKind="manager" holderId={itemId}/>{/if}
             {#if holderPage.data?.page}<HolderDocument holder={{kind:"manager",id:itemId}}/>{/if}
@@ -257,14 +246,7 @@
               <summary>Goal<span class="disclosure-band-trailing goal-chevron" aria-hidden="true"></span></summary>
               <div class="disclosure-band-body">
                 <div class="manager-goal">
-                  <InlineEdit
-                    value={item.goal}
-                    markdown
-                    multiline
-                    ariaLabel="Manager goal"
-                    placeholder="Write what this manager is for…"
-                    onSave={saveGoal}
-                  />
+                  <MarkdownBlock text={item.goal} quiet="" />
                 </div>
               </div>
             </details>

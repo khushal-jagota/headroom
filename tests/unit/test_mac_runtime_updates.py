@@ -98,6 +98,31 @@ def runtime_archive(tmp_path: Path, *, unsafe: bool = False) -> tuple[Path, str,
     return archive, hashlib.sha256(data).hexdigest(), len(data)
 
 
+def test_runtime_handoff_preserves_external_cli_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "runtime"
+    atomic_record(
+        root / "mac-runtime.json", asdict(MacRuntimeManifest(1, "b" * 40, "darwin", "arm64"))
+    )
+    seen: list[dict[str, str]] = []
+
+    def spawn(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        seen.append(cast(dict[str, str], kwargs["env"]))
+        return cast("subprocess.Popen[bytes]", object())
+
+    monkeypatch.setattr(subprocess, "Popen", spawn)
+    monkeypatch.setenv("PATH", "/owner/.local/bin:/usr/bin")
+    monkeypatch.setenv("PLAN_CLAUDE_EXECUTABLE", "/operator/claude")
+    arguments = ["executor", "run", "--application-revision", "a" * 40]
+    runtime_bootstrap._launch(arguments, str(root), "b" * 40)
+    assert seen[-1]["PLAN_CLAUDE_EXECUTABLE"] == "/operator/claude"
+    assert seen[-1]["PATH"] == f"{root}/python/bin:/owner/.local/bin:/usr/bin"
+    monkeypatch.delenv("PLAN_CLAUDE_EXECUTABLE")
+    runtime_bootstrap._launch(arguments, str(root), "b" * 40)
+    assert "PLAN_CLAUDE_EXECUTABLE" not in seen[-1]
+
+
 def test_executor_run_validates_required_options_before_bootstrap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -111,9 +111,6 @@ def _launch(
         python = str(root / "python/bin/python3")
         environment["PATH"] = str(root / "python/bin") + os.pathsep + environment.get("PATH", "")
         environment["PLAN_APP_ROOT"] = str(root)
-        environment["PLAN_CLAUDE_EXECUTABLE"] = str(
-            root / "agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
-        )
     if ready is not None:
         environment[MAC_RUNTIME_READY_ENV] = str(ready)
     if handoff is not None:

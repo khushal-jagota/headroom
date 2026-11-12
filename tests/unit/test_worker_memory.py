@@ -104,3 +104,18 @@ def test_only_an_uncertain_notice_suppresses_the_scan_until_the_next_boundary(
     )
     conn.execute("INSERT INTO conversation_events VALUES ('c1',13,'context_compacted','{}',0)")
     assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(conn) == ("worker",)
+
+
+def test_a_backlogged_ticket_is_not_woken_but_still_owes_its_memory_loss_note(
+    conn: sqlite3.Connection,
+) -> None:
+    _make_conversation(conn, "c1", compacted=7)
+    _add_prompt(conn, "c1", sequence=3, sender_message_id="worker_step_message_first")
+    _add_ticket(conn, "worker", claim="out", conversation_id="c1")
+    conn.execute("INSERT INTO ticket_conversations VALUES ('c1','worker')")
+    assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(conn) == ("worker",)
+
+    # Backlog keeps the claim out, so the claim alone must not permit the notice.
+    conn.execute("UPDATE tickets SET is_backlogged=1 WHERE id='worker'")
+    assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(conn) == ()
+    assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c1")

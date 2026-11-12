@@ -319,15 +319,15 @@ jobs:
           python3 -m venv .venv
           .venv/bin/python -m pip install -r requirements.txt
           .venv/bin/python -m pip install --editable .
-          # Candidate construction also needs both lockfile-controlled dependency trees.
+          # Keep web dependencies locked; resolve current agent CLIs for this build.
           npm ci --prefix web
-          npm ci --prefix agent_backends
+          npm install --prefix agent_backends --package-lock=false --save=false @anthropic-ai/claude-code@latest @openai/codex@latest
           if [ "$PANELS_REHEARSAL" = true ]; then
             .venv/bin/python -m playwright install --with-deps chromium
           else
             .venv/bin/python -m playwright install chromium
           fi
-          codex_bin="$(.venv/bin/python "$GITHUB_WORKSPACE/scripts/deployment_codex.py" setup --source-root "$PANELS_CANDIDATE_SOURCE" --tools-dir "$PANELS_CODEX_TOOLS")"
+          codex_bin="$(.venv/bin/python "$GITHUB_WORKSPACE/scripts/deployment_codex.py" setup --source-root "$PANELS_CANDIDATE_SOURCE")"
           echo "$codex_bin" >> "$GITHUB_PATH"
           export PATH="$codex_bin:$PATH"
           npm --prefix web run build

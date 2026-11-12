@@ -1718,6 +1718,7 @@ def authored_goal_presentation(browser, url):
 
 
 def run(browser, urls):
+    manager_text_readonly(browser, urls[0])
     started = time.monotonic()
     manager_goal_tags(browser, urls[0])
     checklist_deadline_controls(browser, urls[0])
@@ -2387,25 +2388,19 @@ def native_goal_edits(browser, url):
                     )
             nested = goal.locator('[data-block="segmented"]')
             count = len(fixture.writes)
-            label = nested.get_by_role("textbox", name="View label: Evidence", exact=True)
+            expect(nested.get_by_role(
+                "textbox", name="View label: Evidence", exact=True
+            )).to_have_count(0)
+            tab = nested.get_by_role("tab", name="Evidence", exact=True)
             if phone:
-                label.tap()
-                label.press("ArrowLeft")
-                expect(
-                    nested.get_by_role("radio", name="Show Readiness view", exact=True)
-                ).to_have_attribute("aria-checked", "true")
-                label.press("Escape")
+                tab.tap()
             else:
-                page_text(label, "Proof", "native-views", ["views", 1, "label"])
-            selected_label = "Evidence" if phone else "Proof"
-            radio = nested.get_by_role("radio", name=f"Show {selected_label} view", exact=True)
-            if phone:
-                radio.tap()
-            else:
-                native_radio = nested.get_by_role("radio", name="Show Readiness view", exact=True)
-                native_radio.focus()
-                native_radio.press("ArrowRight")
-            expect(radio).to_have_attribute("aria-checked", "true")
+                first_tab = nested.get_by_role("tab", name="Readiness", exact=True)
+                first_tab.focus()
+                first_tab.press("ArrowRight")
+                expect(tab).to_be_focused()
+            expect(tab).to_have_attribute("aria-selected", "true")
+            assert len(fixture.writes) == count
             count = len(fixture.writes)
             table = nested.locator('[data-block="table"]').first
             sort = table.get_by_role("button", name="Sort by Name", exact=True)
@@ -2431,7 +2426,7 @@ def native_goal_edits(browser, url):
                 empty = nested.get_by_role("textbox", name="Table empty message", exact=True)
                 page_text(empty, "No evidence yet", "native-empty", ["empty_message"])
 
-            nested.get_by_role("radio", name="Show Readiness view", exact=True).click()
+            nested.get_by_role("tab", name="Readiness", exact=True).click()
             checklist = nested.locator('[data-block="checklist"]')
             if phone:
                 expect(checklist).to_have_attribute("data-presentation", "smallest")
@@ -2683,7 +2678,7 @@ def score_table_layout(browser, url):
     """Score tables fit when they can, scroll with a pinned label column when not."""
     started = time.monotonic()
     context = browser.new_context(
-        viewport={"width": 1280, "height": 1400}, reduced_motion="reduce"
+        viewport={"width": 1280, "height": 1400}, reduced_motion="reduce", has_touch=True
     )
     page = context.new_page()
     page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
@@ -2749,6 +2744,14 @@ def score_table_layout(browser, url):
         scrolled = score_table_geometry(table)
         screenshot("ten-columns-scrolled.png")
         assert abs(scrolled["labelOffset"]) <= 1, scrolled
+        # Hidden column handles must remain behind the pinned first header.
+        assert table.locator('th[data-key="0"]').evaluate("""head => {
+            const rect = head.getBoundingClientRect();
+            for (let x = rect.left + 2; x < rect.right - 2; x += 4) {
+                if (!head.contains(document.elementFromPoint(x, rect.top + rect.height / 2))) return false;
+            }
+            return true;
+        }""")
         assert max(scrolled["spill"]) <= 0.5, scrolled
 
         # A narrower page keeps every column at its content and scrolls further.
@@ -2758,6 +2761,102 @@ def score_table_layout(browser, url):
         narrow = score_table_geometry(table)
         assert max(narrow["spill"]) <= 0.5, narrow
         assert narrow["scrolls"], narrow
+
+        resize_started = time.monotonic()
+        page.set_viewport_size({"width": 1280, "height": 1400})
+        table.evaluate("table => table.parentElement.scrollTo({left: 0})")
+        handle = table.get_by_role("separator", name="Resize Round 1 column", exact=True)
+        handle.scroll_into_view_if_needed()
+        before = score_table_geometry(table)["widths"]
+        sorted_before = table.locator("th[data-sorted]").get_attribute("data-key")
+        bounds = handle.bounding_box()
+        x, y = bounds["x"] + bounds["width"] / 2, bounds["y"] + bounds["height"] / 2
+        page.mouse.move(x, y)
+        page.mouse.down()
+        page.mouse.move(x + 96, y + 60, steps=6)
+        page.mouse.up()
+        # Capture keeps the drag alive after the pointer leaves the header.
+        page.wait_for_function(
+            "table => table.querySelectorAll('th[data-key]')[1].getBoundingClientRect().width > 140",
+            arg=table.element_handle())
+        dragged = score_table_geometry(table)["widths"]
+        assert abs(dragged[1] - before[1] - 96) <= 1, (before, dragged)
+        assert all(abs(left - right) <= 1 for index, (left, right) in
+                   enumerate(zip(before, dragged, strict=True)) if index != 1), (before, dragged)
+        expect(table.locator("th[data-sorted]")).to_have_attribute("data-key", sorted_before)
+
+        handle.focus()
+        page.keyboard.press("ArrowRight")
+        after_key = float(handle.get_attribute("aria-valuenow"))
+        assert after_key > dragged[1], (after_key, dragged)
+        expect(handle).to_be_focused()
+        # Repeated left arrows reach the published minimum without moving focus.
+        for _ in range(40):
+            page.keyboard.press("ArrowLeft")
+        expect(handle).to_have_attribute("aria-valuenow", "80")
+        assert abs(score_table_geometry(table)["widths"][1] - 80) <= 1
+        # Touch sorting and the wider coarse resize edge share the same header.
+        table.get_by_role("button", name="Sort by Category", exact=True).tap()
+        expect(table.locator("th[data-sorted]")).to_have_attribute("data-key", "0")
+
+        # Chromium's touch input exercises pointer capture and touch-action together.
+        first_handle = table.get_by_role("separator", name="Resize Category column", exact=True)
+        first_handle.scroll_into_view_if_needed()
+        touch_before = score_table_geometry(table)["widths"][0]
+        bounds = first_handle.bounding_box()
+        x, y = bounds["x"] + bounds["width"] / 2, bounds["y"] + bounds["height"] / 2
+        touch = context.new_cdp_session(page)
+        touch.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
+        touch.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y}]})
+        touch.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{"x": x + 40, "y": y}]})
+        touch.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+        touch.detach()
+        page.wait_for_function(
+            "([table, width]) => table.querySelector('th[data-key]').getBoundingClientRect().width > width + 30",
+            arg=[table.element_handle(), touch_before])
+        saved = score_table_geometry(table)["widths"]
+        assert abs(saved[0] - touch_before - 40) <= 1, (saved, touch_before)
+        # CDP drag suppresses Chromium's next synthesized tap even on plain HTML.
+        # The earlier tap proves touch sorting. Check the coarse hit area after resize.
+        category_sort = table.get_by_role("button", name="Sort by Category, currently ascending", exact=True)
+        assert category_sort.evaluate("""button => {
+            const rect = button.getBoundingClientRect();
+            return document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.closest('button') === button;
+        }""")
+        category_sort.click()
+        expect(table.locator("th[data-sorted]")).to_have_attribute("aria-sort", "descending")
+        assert score_table_geometry(table)["widths"] == saved
+        assert fixture.writes == [], fixture.writes
+
+        # Reload restores this table without a shared document write.
+        page.reload(wait_until="domcontentloaded")
+        expect(table.get_by_role("separator", name="Resize Round 1 column", exact=True)).to_have_attribute("aria-valuenow", "80")
+        restored = score_table_geometry(table)["widths"]
+        assert all(abs(left - right) <= 1 for left, right in zip(saved, restored, strict=True)), (saved, restored)
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.wait_for_function("table => table.parentElement.clientWidth < 390", arg=table.element_handle())
+        assert table.evaluate("table => getComputedStyle(table).display") == "table"
+        assert table.evaluate("table => table.parentElement.scrollWidth > table.parentElement.clientWidth")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        screenshot("resized-phone.png")
+        page.set_viewport_size({"width": 1280, "height": 1400})
+        other = fixture.goal("goal_resizeother", "Other table page", 20)
+        other["page"]["blocks"] = [score_table(9)]
+        page.goto(url + "#/workspace/goal/goal_resizeother", wait_until="domcontentloaded")
+        other_table = page.locator('[data-goal-page="goal_resizeother"] [data-block="table"] table')
+        expect(other_table).to_have_attribute("data-fixed", "")
+        assert abs(score_table_geometry(other_table)["widths"][0] - saved[0]) > 20
+        page.goto(url + f"#/workspace/goal/{identity}", wait_until="domcontentloaded")
+        expect(table.get_by_role("separator", name="Resize Round 1 column", exact=True)).to_have_attribute("aria-valuenow", "80")
+        # A replacement block on the same page does not inherit its predecessor's widths.
+        goal["page"]["blocks"][-1]["id"] = "other-scores"
+        goal["revision"] += 1
+        fixture.version += 1
+        page.reload(wait_until="domcontentloaded")
+        expect(table).to_have_attribute("data-fixed", "")
+        assert abs(score_table_geometry(table)["widths"][0] - saved[0]) > 20
+        assert fixture.writes == [], fixture.writes
+        print(f"score table resize coverage: passed (+{time.monotonic() - resize_started:.2f}s)", flush=True)
         assert errors == [], errors
     finally:
         context.close()
@@ -3195,7 +3294,7 @@ def manager_goal_tags(browser, url):
 
         def haze_opacity(card, value):
             page.wait_for_function(
-                "([card,value]) => getComputedStyle(card.parentElement,'::after').opacity===value",
+                "([card,value]) => getComputedStyle(card,'::after').opacity===value",
                 arg=[card.element_handle(), value])
 
         for card, token, percent in (
@@ -3203,7 +3302,7 @@ def manager_goal_tags(browser, url):
                 (chief, '--accent-attention', 9)):
             haze_opacity(card, '1')
             assert card.evaluate("""(card, [token,percent]) => {
-              const slot=card.parentElement, haze=getComputedStyle(slot,'::after');
+              const slot=card, haze=getComputedStyle(card,'::after');
               const expected=document.createElement('div');
               const tint=`color-mix(in srgb,var(${token}) ${percent}%,transparent)`;
               expected.style.backgroundImage=`linear-gradient(${tint},transparent 70px)`;
@@ -3216,7 +3315,7 @@ def manager_goal_tags(browser, url):
             page.mouse.move(1100, 820)
             haze_opacity(card, '1')
         assert none.evaluate(
-            "card => getComputedStyle(card.parentElement,'::after').content") == 'none'
+            "card => getComputedStyle(card,'::after').content") == 'none'
         if output:
             page.locator('.workspace-rail').screenshot(path=str(output / 'haze-rest.png'))
         for control in (one.locator('.item-head'),
@@ -3238,7 +3337,7 @@ def manager_goal_tags(browser, url):
         one.locator('.identity').hover()
         haze_opacity(one, '0')
         assert one.evaluate(
-            "card => getComputedStyle(card.parentElement,'::after').transitionDuration") == '0s'
+            "card => getComputedStyle(card,'::after').transitionDuration") == '0s'
         page.mouse.move(1100, 820)
         haze_opacity(one, '1')
         page.emulate_media(reduced_motion='no-preference')
@@ -3444,7 +3543,7 @@ def manager_goal_tags(browser, url):
             page.screenshot(path=str(output / 'chief-sidebar-rows.png'), animations='disabled')
         expect(page.locator('a[data-goal-id]')).not_to_have_count(0)
         expect(page.get_by_role('button', name=re.compile(r'^Goals: '))).to_have_count(0)
-        expect(page.locator('.manager-card-slot[data-goal-status]')).to_have_count(0)
+        expect(page.locator('.manager-card[data-goal-status]')).to_have_count(0)
         many.locator('.identity').hover()
         expect(panel.locator('[data-manager-goals]')).to_have_count(0)
         setting.uncheck()
@@ -3544,3 +3643,334 @@ def manager_goal_tags(browser, url):
     print(
         'manager goal header/preview pointer and settings: '
         f'passed ({time.monotonic()-started:.2f}s, rail {rail_width}px)', flush=True)
+
+
+def manager_text_readonly(browser, url):
+    """One App host proves text capability separation from native data controls.
+
+    Existing Goal editor tests do not cover the same content embedded in a Manager.
+    This uses the existing navigation/Goal fixture, without another server or host.
+    """
+    started = time.monotonic()
+    fixture = GoalFixture()
+    fixture.managers = [
+        {
+            "id": "text",
+            "title": "Release manager",
+            "project_id": "project",
+            "project": "Field guide",
+            "created_at": 1,
+            "recap": "Release status stays visible.",
+            "tickets": [],
+        },
+        {
+            "id": "sole",
+            "title": "Checklist manager",
+            "project_id": "project",
+            "project": "Field guide",
+            "created_at": 2,
+            "recap": "Checklist status stays visible.",
+            "tickets": [],
+        },
+    ]
+    fixture.goals = {"checklist": fixture.goals["checklist"]}
+    goal = fixture.goals["checklist"]
+    goal.update(holder_kind="manager", holder_id="sole", why="Why the guide matters")
+    goal["page"]["blocks"].append(
+        {"type": "text", "id": "context", "text": "Guide background stays visible."}
+    )
+    document = {
+        "kind": "headroom.page",
+        "version": 1,
+        "title": "Release plan",
+        "summary": "",
+        "blocks": [
+            {
+                "type": "text",
+                "id": "opening",
+                "text": "Release guidance with a [documentation link](https://example.com/guide).",
+            },
+            {
+                "type": "section",
+                "id": "plan",
+                "title": "Release overview",
+                "summary": "Saved context",
+                "views": [
+                    {
+                        "id": "status",
+                        "label": "Status",
+                        "blocks": [
+                            {
+                                "type": "table",
+                                "id": "status-table",
+                                "caption": "Release table",
+                                "columns": ["Name", "Count"],
+                                "rows": [["Beta", "2"], ["Alpha", "1"]],
+                            }
+                        ],
+                    },
+                    {
+                        "id": "notes",
+                        "label": "Notes",
+                        "blocks": [
+                            {
+                                "type": "text",
+                                "id": "notes-text",
+                                "text": "The second view remains reachable.",
+                            }
+                        ],
+                    },
+                ],
+            },
+        ],
+    }
+    context = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = context.new_page()
+    page.set_default_timeout(5000)
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    mutations = []
+
+    def respond(route):
+        parts = urlsplit(route.request.url)
+        path = parts.path
+        key = parse_qs(parts.query).get("key", [path])[0]
+        result = None
+        if route.request.method not in ("GET", "HEAD"):
+            mutations.append(path)
+        if key.endswith("/workspace-content"):
+            identity = key.split("/")[3]
+            result = {
+                "goal": "The Manager purpose remains visible.",
+                "recap": "Release status stays visible.",
+                "goals": [goal] if identity == "sole" else [],
+            }
+        elif key in ("/api/chief/page", "/api/managers/text/page", "/api/managers/sole/page"):
+            result = {"page": document, "page_revision": 1}
+        elif key.endswith("/page/readings"):
+            result = {
+                "values": [],
+                "sources": [],
+                "charts": {},
+                "status_date": TODAY,
+                "next_refresh_at": int(time.time()) + 86400,
+            }
+        elif key == "/api/workers/chief-of-staff/settings":
+            result = {
+                "employee_id": "chief",
+                "label": "Chief of Staff",
+                "recap": "Chief status stays visible.",
+                "skill": None,
+                "launch_defaults": {
+                    "employee_backend": "codex",
+                    "employee_launch_model": None,
+                    "employee_launch_reasoning_effort": None,
+                },
+            }
+        if result is not None:
+            route.fulfill(
+                json={
+                    "key": key,
+                    "epoch": "readonly-fixture",
+                    "revision": str(fixture.version),
+                    "body": result,
+                }
+                if path == "/api/resource-body"
+                else result
+            )
+            return
+        fixture.respond(route)
+
+    page.route("**/api/**", respond)
+    evidence = os.environ.get("PANELS_READONLY_EVIDENCE_DIR")
+    output = Path(evidence) if evidence else None
+    if output:
+        output.mkdir(parents=True, exist_ok=True)
+    try:
+        for identity, title in (
+            ("text", "Release manager"),
+            ("chief-of-staff", "Chief of Staff"),
+            ("sole", "Checklist manager"),
+        ):
+            address = "chief-of-staff" if identity == "chief-of-staff" else f"manager/{identity}"
+            page.goto(url + "#/workspace/" + address, wait_until="domcontentloaded")
+            doc = page.locator(".manager-doc")
+            expect(doc.locator("h1")).to_have_text(title)
+            if identity != "sole":
+                expect(doc.get_by_text("Release overview", exact=True)).to_be_visible()
+            else:
+                expect(doc.get_by_text("Why the guide matters", exact=True)).to_be_visible()
+            if output:
+                page.screenshot(path=str(output / f"{identity}-after.png"), animations="disabled")
+            expect(
+                doc.locator('[contenteditable="true"], [data-markdown-inline-edit], .ed')
+            ).to_have_count(0)
+            assert doc.locator("h1").evaluate("el => getComputedStyle(el).cursor") != "text"
+            expect(doc.locator('h1 [role="textbox"], h1 [tabindex="0"]')).to_have_count(0)
+            doc.locator("h1").click()
+            page.keyboard.press("Enter")
+            expect(doc.locator('[contenteditable="true"]')).to_have_count(0)
+            expect(doc.get_by_role("button", name="Ask for a recap", exact=True)).to_be_visible()
+            if identity == "sole":
+                # Structured completion remains writable in the read-only Manager.
+                with page.expect_request("**/api/goals/checklist"):
+                    doc.get_by_role("checkbox", name="Publish guide", exact=True).click()
+                expect(doc.get_by_role("progressbar")).to_have_attribute("aria-valuenow", "2")
+            else:
+                tabs = doc.get_by_role("tablist", name="Views")
+                tabs.get_by_role("tab", name="Notes", exact=True).click()
+                expect(
+                    doc.get_by_text("The second view remains reachable.", exact=True)
+                ).to_be_visible()
+                tabs.get_by_role("tab", name="Notes", exact=True).press("ArrowLeft")
+                expect(doc.get_by_role("table")).to_be_visible()
+                doc.get_by_role("button", name="Sort by Name", exact=True).click()
+                expect(doc.locator("tbody tr").first).to_contain_text("Alpha")
+                expect(
+                    doc.get_by_role("link", name="documentation link", exact=True)
+                ).to_have_attribute("href", "https://example.com/guide")
+            if identity == "text":
+                doc.locator("[data-goal-band] summary").click()
+                expect(
+                    doc.get_by_text("The Manager purpose remains visible.", exact=True)
+                ).to_be_visible()
+            expect(doc.locator('[contenteditable="true"]')).to_have_count(0)
+        # Reuse this Chief/App host: DOM mocks cannot prove clipped focus, overflow,
+        # actual underline transitions, or the section layout in the page column.
+        tab_started = time.monotonic()
+        original_views = copy.deepcopy(document["blocks"][1]["views"])
+        names = [
+            "All projects", "Panels", "Wren", "Write", "Atlas",
+            "Headroom", "Website", "Docs", "Infra",
+        ]
+        for width in (1280, 390):
+            page.set_viewport_size({"width": width, "height": 900})
+            for count in (4, 9):
+                views = [
+                    {"id": f"view-{index}", "label": name,
+                     "blocks": copy.deepcopy(original_views[index % 2]["blocks"])}
+                    for index, name in enumerate(names[:count])
+                ]
+                document["blocks"][1]["views"] = views
+                document["blocks"] = document["blocks"][:2] + [
+                    {"type": "segmented", "id": "standalone-tabs", "views": copy.deepcopy(views)}
+                ]
+                fixture.version += 1
+                page.goto(url + "#/workspace/chief-of-staff", wait_until="domcontentloaded")
+                page.reload(wait_until="domcontentloaded")
+                doc = page.locator(".manager-doc")
+                strips = doc.get_by_role("tablist", name="Views")
+                expect(strips).to_have_count(2)
+                for strip_index in range(2):
+                    strip = strips.nth(strip_index)
+                    tabs = strip.get_by_role("tab")
+                    expect(tabs).to_have_count(count)
+                    first, last = tabs.first, tabs.last
+                    expect(first).to_have_attribute("aria-selected", "true")
+                    expect(first).to_have_attribute("tabindex", "0")
+                    # Every placement supplies a real panel and a unique link.
+                    panel_id = first.get_attribute("aria-controls")
+                    panel = doc.locator(f'[id="{panel_id}"]')
+                    expect(panel).to_have_attribute("role", "tabpanel")
+                    expect(panel).to_have_attribute("aria-labelledby", first.get_attribute("id"))
+                    strip.evaluate("el => window.__tabStrip = el")
+                    ink = strip.locator(".ink")
+                    expect(ink).to_have_count(1)
+                    assert ink.evaluate("el => getComputedStyle(el).transitionDuration") == "0s"
+                    first.focus()
+                    first.press("ArrowLeft")
+                    expect(first).to_be_focused()
+                    first.press("End")
+                    expect(last).to_be_focused()
+                    expect(last).to_have_attribute("aria-selected", "true")
+                    expect(panel).to_have_attribute("aria-labelledby", last.get_attribute("id"))
+                    last.press("ArrowRight")
+                    expect(last).to_be_focused()
+                    # Manual scroll can hide the selected label. A boundary key
+                    # must restore it even when selection does not change.
+                    strip.evaluate("el => el.closest('.tabstrip-scroll').scrollLeft = 0")
+                    last.press("End")
+                    page.wait_for_function("""() => {
+                      const tab=window.__tabStrip.querySelector('[aria-selected="true"]');
+                      const a=tab.getBoundingClientRect();
+                      const b=tab.closest('.tabstrip-scroll').getBoundingClientRect();
+                      return a.left>=b.left-1 && a.right<=b.right+1;
+                    }""")
+                    last.press("Home")
+                    expect(first).to_be_focused()
+                    first.press("ArrowRight")
+                    expect(tabs.nth(1)).to_be_focused()
+                    expect(tabs.nth(1)).to_have_attribute("aria-selected", "true")
+                    page.wait_for_function("""() => {
+                      const strip=window.__tabStrip, ink=strip.querySelector('.ink');
+                      const tab=strip.querySelector('[aria-selected="true"]');
+                      return !ink.classList.contains('nomove') &&
+                        Math.abs(ink.getBoundingClientRect().width-tab.offsetWidth)<1;
+                    }""")
+                    assert ink.evaluate("el => getComputedStyle(el).transitionDuration") != "0s"
+                    assert strip.evaluate("el => el === window.__tabStrip"), (
+                        "selection replaced the tab strip"
+                    )
+                    expect(strip.locator('[tabindex="0"]')).to_have_count(1)
+                    tabs.last.click()
+                    expect(last).to_have_attribute("aria-selected", "true")
+                    # Fades must follow the actual clipped edge, not just a class.
+                    page.wait_for_function("""() => {
+                      const strip=window.__tabStrip.closest('.tabstrip');
+                      const scroll=strip.querySelector('.tabstrip-scroll');
+                      if(scroll.scrollWidth<=scroll.clientWidth+2)return true;
+                      return getComputedStyle(strip,'::before').opacity === '1' &&
+                        getComputedStyle(strip,'::after').opacity === '0';
+                    }""")
+                    # Selection must bring the last label inside the scroll viewport.
+                    page.wait_for_function("""() => {
+                      const tab=window.__tabStrip.querySelector('[aria-selected="true"]');
+                      const scroll=tab.closest('.tabstrip-scroll');
+                      const a=tab.getBoundingClientRect(),b=scroll.getBoundingClientRect();
+                      return a.left >= b.left-1 && a.right <= b.right+1;
+                    }""")
+                    assert first.evaluate("el => getComputedStyle(el).whiteSpace") == "nowrap"
+                    assert first.evaluate(
+                        "el => parseFloat(getComputedStyle(el).outlineOffset)"
+                    ) <= 0
+                    # Neither width nor the number of labels can overflow the page.
+                    assert doc.evaluate("el => el.getBoundingClientRect().right <= innerWidth + 1")
+                title = doc.get_by_text("Release overview", exact=True)
+                title_box = title.bounding_box()
+                assert strips.first.bounding_box()["y"] >= title_box["y"] + title_box["height"]
+                if output:
+                    page.screenshot(
+                        path=str(output / f"chief-tabs-{width}-{count}.png"), animations="disabled"
+                    )
+        touch = context.new_cdp_session(page)
+        touch.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
+        assert page.evaluate("matchMedia('(pointer: coarse)').matches")
+        assert strips.first.get_by_role("tab").first.evaluate(
+            "el => el.getBoundingClientRect().height"
+        ) == 44
+        touch.send("Emulation.setTouchEmulationEnabled", {"enabled": False})
+        page.emulate_media(reduced_motion="reduce")
+        ink = doc.locator(".ink").first
+        expect(ink).to_have_count(1)
+        assert ink.evaluate("el => getComputedStyle(el).transitionDuration") == "0s"
+        page.emulate_media(reduced_motion="no-preference")
+        print(
+            "Chief underline tabs on reused App host: passed "
+            f"(+{time.monotonic() - tab_started:.2f}s)", flush=True
+        )
+        # A sole Manager-held goal routes to its Manager. A Chief-held copy opens
+        # the separate Goal workspace with the same shared content and header.
+        standalone = copy.deepcopy(goal)
+        standalone.update(id="standalone", holder_kind="chief", holder_id=None)
+        fixture.goals["standalone"] = standalone
+        fixture.version += 1
+        page.goto(url + "#/workspace/goal/standalone", wait_until="domcontentloaded")
+        doc = page.locator('[data-goal-page="standalone"]')
+        expect(doc.get_by_role("textbox", name="Goal title", exact=True)).to_be_visible()
+        expect(doc.get_by_role("textbox", name="Why this goal matters", exact=True)).to_be_visible()
+        expect(doc.locator('[data-block="text"] [contenteditable="true"]')).to_be_visible()
+        assert mutations == ["/api/goals/checklist"], mutations
+        assert errors == [], errors
+    finally:
+        context.close()
+    print(f"Manager/Chief text boundary: passed (+{time.monotonic() - started:.2f}s)", flush=True)
