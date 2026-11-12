@@ -128,3 +128,43 @@ Passing Unit 21 lists use `"candidate": "typescript"`; existing branch CI runs t
 Part 3 supplies backup/operator behavior. Part 4 supplies release packaging, the required real adapters, and production enablement.
 Real installer/systemd behavior, the absolute production-adapter/core shutdown deadline, loop-provider cancellation, and executor-save recovery remain unproven.
 Hosted native-platform proofs remain open. Review and merge do not deploy this package.
+
+## Backup, fixtures, and operator functions
+
+Part 3 adds backup capture and stopped-destination restore across Python and TypeScript.
+New snapshots include skills and Worker settings. They leave Ticket files outside the snapshot.
+Legacy snapshots still restore their recorded files. A later managed-root failure does not undo the database replacement, as in Python.
+
+The build-time [schema generator](../../tests/compare/direct/unit21_schema_seed.py) records 330 DDL statements and the exact Alembic frontier.
+Runtime bootstrap creates fresh identities and uses the existing TS domain writers. Runtime requires no Python interpreter for this operation.
+The staging fixture uses those writers for its fictional projects, Managers, Tickets, notes, and image.
+Its navigation starts at the prepared schema version. Normal server publication performs the runtime upgrade.
+
+The [command table](commands.ts) exports `environment_commands` for the future CLI dispatcher.
+Each entry supplies its Python command path, option types/defaults, and a plain [handler](cli.ts).
+Handlers return separate stdout, stderr, and exit-code values. They do not parse arguments or write to process streams.
+The Manager chose this seam because the CLI unit has no executable dispatcher yet.
+Executable binding, parsing, help, and process exit behavior remain open for that unit.
+
+Ten handlers cover status, cleanup, backup, backup-current, skill provisioning, restore, prepare, inspect, reset, and remove.
+Cleanup remains a dry run unless the caller supplies apply. Each invocation collects a fresh inventory.
+Backup-current requires Part 4's real app validator as an explicit dependency. It has no successful default validator.
+App build, app identity, and the final environment launch remain with Part 4's real packaging adapters.
+
+Focused comparisons reuse private paths and existing fixtures:
+
+| Boundary | Evidence and measured local cost |
+| --- | --- |
+| Fresh DDL, required bootstrap rows, unique identities, atomic failure | Existing fresh-schema case, 1.89 seconds in its initial run. Regeneration also passes after the target integration. |
+| Backup/restore in both languages, open WAL, managed bytes/links, legacy files, retention | The same case now uses a real Ticket. Ordinary readers and writers preserve its complete payload and persist edits after reopen. Its populated run takes 4.75 seconds, versus 2.63 seconds before that extension. |
+| Restore refusal and failed swaps | Existing filesystem failure case, 1.10 seconds. |
+| Registry lifecycle, TS-written fixture, private lease, rollback, launch environment | One connected comparison, 2.43 seconds. |
+| Scratch database admission, real Git preservation, timer and cancellation | Three distinct existing comparisons, 2.61 seconds for their process. |
+| Scratch ownership during startup and shutdown | Two existing composition cases extended, 5.61 seconds for their process. |
+| Command streams, option metadata, and caught/uncaught failures | One function comparison, 2.64 seconds in the body and 4.92 seconds for its process. It reuses the existing storage and scratch fixtures. |
+
+The restore proof covers domain reads and writes. It does not install application commit projections or claim HTTP/server startup.
+Part 4's hosted rehearsal supplies the real process, installer, supervisor, and packaged-runtime proofs.
+Scratch cleanup starts only for a matching database outside test mode, with a ten-minute initial wait independent of dispatcher admission.
+Its close fences new work at the shared deadline. An already dispatched filesystem removal or a Git child that ignores TERM can outlive that join.
+Production environment activation remains off until Part 4 supplies the real adapters.

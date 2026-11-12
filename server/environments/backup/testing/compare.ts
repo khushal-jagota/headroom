@@ -111,7 +111,10 @@ function ticket_probe(path: string, ticket: NonNullable<Request['ticket']>) {
   }
   const reopened = createReadAccess(path);
   try {
-    return { before: payload(before), after: reopened.read((sql) => payload(read_ticket(sql, ticket.id))) };
+    return {
+      before: payload(before),
+      after: reopened.read((sql) => payload(read_ticket(sql, ticket.id))),
+    };
   } finally {
     reopened.close();
   }
