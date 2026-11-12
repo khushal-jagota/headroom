@@ -153,3 +153,82 @@ For review evidence, `report_captures` can name existing captures to include in 
 The shared `navigation_view_ordered` index is a TypeScript-only representation. The runner classifies that single table explicitly as derived storage for every list and includes the reason in each report. This prevents unrelated domain comparisons from treating the index as a canonical source table. Navigation's populated list compares its member IDs, order, paging, counts, and closures.
 
 For later domain lists, a navigation snapshot probe after each write is enough. No source registration is required. Existing source triggers and the shared navigation commit step update the records and views.
+
+## Conversation record comparison (Unit 14)
+
+`unit-14.json` uses a Python-only seed and compares the six selected-view routes
+beneath `/api/conversation/conversations/{conversation_id}/view`. The seed host
+keeps the existing `ScriptedChild` handles. Its finish, questions, rejection, and
+owner-message controls reuse the existing browser host's child methods and core
+operations. Each completed control awaits the real core's `wait_until_quiescent`.
+No timer guess decides that a seed is ready.
+
+The additional `backend-news` control reports typed tool, plan, usage, compaction,
+command, failed-input, permission, and turn-ending facts through the child's real
+`BackendEventSink`. The core owns their event rows and projections. These facts
+have no existing `ScriptedChild` method. This control is absent from the TS host.
+It never injects stored event payloads or performs comparison-time stream writes.
+
+When seed requests keep attachments, the runner copies the seed's synthetic
+`files/conversations/` tree into each server database directory. The database and
+attachments therefore name the same durable bytes and media sidecars. Existing
+restart steps retain those files in the same isolated directory. The runner does
+not copy live files or provider homes.
+
+The TS comparison host replays each seeded conversation through its real TS
+projection writer before area initialization. The Python host retains the Python
+projection. The request list therefore checks both the projection rows and the
+public reads, rather than merely reading copied Python projections on both sides.
+All five `conversation_view_*` tables remain in the source-row comparison.
+
+The 42 seed requests create these visible facts:
+
+| Seed conversation | Facts exposed by compared reads |
+| --- | --- |
+| Rich completed history | A durable CSV attachment, owner prompts and steer, two explicit owner messages, orphan and settled tools, plans, token usage, compaction, command output, answered asks, expired unanswered asks, discarded and refused prompts, sender-ID deduplication, and a run-setting change |
+| Small completed turn | A short snapshot and bounded replay from cursor zero |
+| Open turn | Simultaneous permission and input requests plus an owner message, left open for startup reconciliation |
+| Interrupted turn | The real interrupt path and its durable ending |
+| Failed turn | A scripted backend failure and its durable error text |
+
+The rich history includes 125 settled tools in one work group. Compared pages
+exercise the 100-item boundary, older and newer cursors, and turn/group expansion.
+Its command output exceeds 128 KiB. Body reads compare consecutive bounded UTF-8
+chunks, complete content, and stale references. The existing first chunk request
+uses `offset=0_0`, an accepted Pydantic integer spelling. Receipt reads include a
+repeated sender ID and an absent ID.
+
+Tail requests compare SSE headers, snapshots, replay from zero, and gap resets for
+an old or future cursor. Version and malformed-cursor refusals compare their
+explicit product error text. Restart reads compare the stopped view again. A new
+event on an already open HTTP stream remains a named Unit 15 proof. Local tail
+handoff and overflow use the admitted in-process proof instead.
+
+### What the HTTP list proves from the view oracle
+
+The oracle fixture is a fixed historical vocabulary. The current core cannot
+produce every historical row. The following map preserves that distinction:
+
+| Existing oracle fixture | HTTP comparison coverage and explicit limit |
+| --- | --- |
+| `owner-visible-turn-work-and-final-answer` | Owner prompt, tools, two addressed owner messages, closed turn, and collapsed/expanded work. Historical `agent_message` rows cannot be created by the current core, which keeps backend prose in the live tail |
+| `hidden-prompt-turn-and-owner-steer` | Owner steer, addressed owner messages, and multiple turn boundaries. A hidden non-owner prompt is not produced by the owner-only unassociated send path in this list |
+| `legacy-owner-and-forged-label` | Modern owner provenance is compared. Missing legacy provenance and deliberately forged non-owner labels cannot be minted through current intake |
+| `settlement-and-reconciliation` | Refusal, discard, exact sender-ID retry, and receipt lookup. Uncertain prompt reconciliation needs native delivery evidence and remains outside this HTTP seed |
+| `asks-answer-and-turn-expiry` | Permission and input answers, plus unanswered asks that expire with a completed turn |
+| `failed-input-without-request-and-retired-missing-reply` | A failed input with no request is produced. The retired `explicit_reply_missing` kind is no longer written by the current core |
+| `stopped-without-ending` | The open seeded turn and both pending request kinds lose their process on restart, with no synthetic ending event |
+| `tool-orphans-plan-and-work-run-boundaries` | Orphan tool settlement, work groups, newest plan, token usage, compaction, model metadata, and owner messages. A tool event before the first prompt and historical durable backend prose cannot be produced by the active-token backend control |
+| `simultaneous-pending-permission-and-input` | Both asks coexist in seed rows. Their post-restart dead state is compared; their active callbacks and live ask status require Unit 15 |
+| `running-multiple-owner-messages-and-time-skew` | Two owner messages, owner steer, a valid minted timestamp, and an out-of-window timestamp clamp. The copied database does not preserve a running process |
+
+The list's real core produces `command_reply` and `user_input_failed`, two of the
+four kinds absent from the backup audit. It does not produce `answer_applied` or
+`credential_request`. The separate 13 Python-generated examples cover all four
+codecs. Credential writer/delivery integration belongs to Unit 19. Saved-answer
+callback application and native uncertainty remain their owning core/executor
+integration proofs.
+
+The fixed oracle still proves its full ten-case vocabulary locally. Its committed
+generator and the record README describe regeneration after a staging merge. The
+unreachable rows above do not receive a false claim of new HTTP coverage.

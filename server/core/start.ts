@@ -47,12 +47,13 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     const close = () => {
       if (closing) return closing;
       signalAuthority?.invalidate('shutdown');
-      closeAreas();
-      return (closing = app.close().finally(() => {
-        database?.close();
-        dispatcher?.close();
-        ownership.close();
-      }));
+      return (closing = closeAreas()
+        .then(() => app.close())
+        .finally(() => {
+          database?.close();
+          dispatcher?.close();
+          ownership.close();
+        }));
     };
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       process.once(signal, () => {
@@ -72,7 +73,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     }
   } catch (error) {
     signalAuthority?.invalidate('shutdown');
-    closeAreas();
+    await closeAreas();
     database?.close();
     dispatcher?.close();
     ownership.close();

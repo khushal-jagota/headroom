@@ -23,17 +23,26 @@ from tests.e2e.ticket_model_controls import TicketModelSnapshots
 from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
 from planner.conversation import contracts
+from planner.conversation.backends import contracts as backend
 from planner.conversation.backends.contracts import BackendEventSink
 from planner.conversation.contracts import ConversationBackendKey
+from planner.conversation.events import (
+    ConversationTurnEnding,
+    PermissionAskOption,
+    PlanEntry,
+    PlanEntryStatus,
+    ToolCallStatus,
+)
 from planner.conversation.message_content import (
     MessageFile,
     MessageImage,
     MessageText,
     message_content_from_stored,
+    text_message_content,
 )
 from planner.core.clock import build_clock
 from planner.core.config import Config, load_config
-from planner.core.contracts import Principal
+from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect
 from planner.core.server import create_app
 from planner.manager_wakes.runtime import ManagerWakeLoop
@@ -195,15 +204,96 @@ def _in_memory_routes(app: FastAPI, system: InMemoryConversationSystem) -> None:
         return {"complete": True}
 
 
+def _scripted_routes(app: FastAPI, children: dict[str, ScriptedChild]) -> None:
+    """Drive the existing scripted child through the real Python core for shared seeds."""
+
+    async def settled() -> None:
+        await app.state.conversation.system.wait_until_quiescent()
+
+    @app.post("/api/test/signals/{conversation_id}/finish")
+    async def finish(conversation_id: str) -> dict[str, bool]:
+        await children[conversation_id].finish()
+        await settled()
+        return {"ok": True}
+
+    @app.post("/api/test/signals/{conversation_id}/questions")
+    async def questions(conversation_id: str) -> dict[str, bool]:
+        await children[conversation_id].request_questions()
+        await settled()
+        return {"ok": True}
+
+    @app.post("/api/test/signals/{conversation_id}/reject-next-prompt")
+    async def reject_next_prompt(conversation_id: str) -> dict[str, bool]:
+        children[conversation_id].reject_next_prompt = True
+        return {"ok": True}
+
+    @app.post("/api/test/signals/{conversation_id}/message")
+    async def message(conversation_id: str, body: dict[str, str]) -> dict[str, bool]:
+        await app.state.conversation.system.record_message_to_owner(
+            conversation_id,
+            text_message_content(body.get("text", "Explicit message to owner")),
+            sender_label=body["label"],
+            sender=Principal(PrincipalKind(body["kind"]), body["id"]),
+            recipient=OWNER_PRINCIPAL,
+        )
+        await settled()
+        return {"ok": True}
+
+    @app.post("/api/test/signals/{conversation_id}/backend-news")
+    async def backend_news(conversation_id: str, body: dict[str, Any]) -> dict[str, int]:
+        # ScriptedChild has no controls for these backend facts. Keep them on the
+        # backend seam: the real core decides which durable rows and views to write.
+        child = children[conversation_id]
+        assert child.token is not None
+        for scripted in body["events"]:
+            values = dict(scripted)
+            kind = values.pop("kind")
+            news: backend.BackendEventValue
+            if kind == "tool_call_started":
+                news = backend.ToolCallStarted(**values)
+            elif kind == "tool_call_finished":
+                values["tool_call_status"] = ToolCallStatus(values["tool_call_status"])
+                news = backend.ToolCallFinished(**values)
+            elif kind == "plan_updated":
+                news = backend.PlanUpdated(entries=tuple(
+                    PlanEntry(text=entry["text"], status=PlanEntryStatus(entry["status"]))
+                    for entry in values["entries"]
+                ))
+            elif kind == "token_usage":
+                news = backend.TokenUsageReported(**values)
+            elif kind == "context_compacted":
+                news = backend.ContextCompacted()
+            elif kind == "command_reply":
+                news = backend.CommandReplyReported(**values)
+            elif kind == "user_input_failed":
+                news = backend.UserInputFailed(**values)
+            elif kind == "turn_ended":
+                values["ending"] = ConversationTurnEnding(values["ending"])
+                news = backend.TurnEnded(**values)
+            elif kind == "permission_asked":
+                news = backend.PermissionAskRaised(ask=backend.BackendPermissionAsk(
+                    ask_id=values["ask_id"], title=values["title"],
+                    detail=values.get("detail"),
+                    options=tuple(PermissionAskOption(**option) for option in values["options"]),
+                ))
+            else:
+                raise ValueError(f"unsupported scripted backend news: {kind}")
+            await child.sink.report(child.token, news)
+        await settled()
+        return {"reported": len(body["events"])}
+
+
 def build_app(config: Config) -> FastAPI:
     assert config.test_mode, "The comparison host requires test mode"
     clock = build_clock(config)
+    children: dict[str, ScriptedChild] = {}
 
     def make_child(
         *, resolved_start: Any, event_sink: BackendEventSink, message_files: Any,
     ) -> ScriptedChild:
-        # Turns remain open until cancellation. No real provider executes a prompt.
-        return ScriptedChild(event_sink)
+        child = ScriptedChild(event_sink)
+        children[resolved_start.conversation_id] = child
+        return child
 
     patch(
         "planner.conversation.snapshot.SubprocessBackendProbeEnvironment", NoInstalledBackends,
@@ -222,6 +312,8 @@ def build_app(config: Config) -> FastAPI:
     )
     if in_memory is not None:
         _in_memory_routes(app, in_memory)
+    else:
+        _scripted_routes(app, children)
     original_lifespan = app.router.lifespan_context
 
     @asynccontextmanager
