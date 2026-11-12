@@ -1,3 +1,4 @@
+import { python_string_repr } from './python_repr.ts';
 import type { APNsConfig } from '../notifications/contracts.ts';
 import { load_apns_config } from '../notifications/config.ts';
 import { readFileSync, existsSync, realpathSync, statSync } from 'node:fs';
@@ -40,8 +41,7 @@ export interface Config {
 export function pythonRepr(value: unknown): string {
   if (value === null) return 'None';
   if (typeof value === 'boolean') return value ? 'True' : 'False';
-  if (typeof value === 'string')
-    return `'${value.replaceAll('\\', '\\\\').replaceAll("'", "\\'").replaceAll('\n', '\\n').replaceAll('\r', '\\r')}'`;
+  if (typeof value === 'string') return python_string_repr(value);
   return String(value);
 }
 export function parseConfigBoolean(
