@@ -131,7 +131,10 @@ class PendingSteerProbe:
             self.pending = None
 
 
-async def live_status_before_adoption(system: Any, conversation_id: str) -> dict[str, Any]:
+async def live_status_before_adoption(
+    system: Any, conversation_id: str, *,
+    include_runtime_epoch: bool = False, db_path: str | None = None,
+) -> dict[str, Any]:
     store = system._store
     before_keys = sorted(system._conversations)
     original = store.read_conversation
@@ -154,11 +157,22 @@ async def live_status_before_adoption(system: Any, conversation_id: str) -> dict
                 "has_pending_permission_ask": await system.has_pending_permission_ask(identity),
                 "has_pending_user_input": await system.has_pending_user_input(identity),
             }
-        return {
+        result: dict[str, Any] = {
             "values": values,
             "read_count": reads,
             "before_keys": before_keys,
             "after_keys": sorted(system._conversations),
         }
+        if include_runtime_epoch:
+            if db_path is None:
+                raise ValueError("Runtime epoch probe requires an admitted database path")
+            with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as connection:
+                connection.row_factory = sqlite3.Row
+                result["runtime_epoch_rows"] = [
+                    dict(row) for row in connection.execute(
+                        "SELECT singleton,epoch FROM conversation_runtime_epoch ORDER BY singleton"
+                    )
+                ]
+        return result
     finally:
         store.read_conversation = original

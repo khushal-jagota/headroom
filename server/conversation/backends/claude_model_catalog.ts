@@ -1,8 +1,8 @@
 /** Model choices come from the selected CLI's startup handshake, without a prompt. */
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { load_claude_sdk, CLAUDE_AGENT_SDK_VERSION } from './claude_sdk.ts';
+import type { Query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { ensure_cli_compatible } from './cli_compatibility.ts';
 
 export const MODEL_CATALOG_TIMEOUT_SECONDS = 30;
@@ -108,7 +108,7 @@ export async function probe_claude_model_catalog(
   const state: {
     child: ChildProcess | null;
     child_exit: Promise<void> | null;
-    cli: ReturnType<typeof query> | null;
+    cli: Query | null;
     expired: boolean;
     child_error: Error | null;
   } = { child: null, child_exit: null, cli: null, expired: false, child_error: null };
@@ -138,9 +138,14 @@ export async function probe_claude_model_catalog(
       const child_environment: NodeJS.ProcessEnv = {
         ...process.env,
         CLAUDE_CODE_ENTRYPOINT: 'sdk-ts',
-        CLAUDE_AGENT_SDK_VERSION: '0.3.316',
+        CLAUDE_AGENT_SDK_VERSION,
       };
       delete child_environment.CLAUDECODE;
+      const { query } = await load_claude_sdk();
+      if (state.expired)
+        throw new ClaudeModelCatalogUnavailable(
+          'claude did not finish its startup handshake in time',
+        );
       state.cli = query({
         prompt: prompt(),
         options: {

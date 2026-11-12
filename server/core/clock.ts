@@ -4,10 +4,14 @@ export interface Clock {
   nowUnix(): number;
   isoformat(): string;
 }
-function parseNow(raw: string): {
+export interface ParsedIsoDatetime {
   date: Date;
   iso: string;
-} {
+  aware: boolean;
+  epochMicroseconds: bigint;
+}
+/** Shared clock parsing with explicit awareness and retained microsecond precision. */
+export function parseIsoDatetime(raw: string): ParsedIsoDatetime {
   const invalid = (): never => {
     throw new Error(`Invalid isoformat string: '${raw}'`);
   };
@@ -77,11 +81,16 @@ function parseNow(raw: string): {
   const normalizedLocal = offset
     ? local
     : `${n(date.getFullYear(), 4)}-${n(date.getMonth() + 1)}-${n(date.getDate())}T${n(date.getHours())}:${n(date.getMinutes())}:${n(date.getSeconds())}${micros}`;
-  return { date, iso: normalizedLocal + (offset ?? localOffset(date)) };
+  return {
+    date,
+    iso: normalizedLocal + (offset ?? localOffset(date)),
+    aware: offset !== undefined,
+    epochMicroseconds: BigInt(date.getTime()) * 1000n + BigInt(Number(micros.slice(1)) % 1000),
+  };
 }
 /** Shared Python-compatible ISO validation, also used by provider timestamp readers. */
 export function parse_iso_datetime(raw: string): Date {
-  return parseNow(raw).date;
+  return parseIsoDatetime(raw).date;
 }
 function localOffset(date: Date): string {
   const m = -date.getTimezoneOffset();
@@ -107,7 +116,7 @@ export class TestClock implements Clock {
     iso: string;
   };
   constructor(raw: string) {
-    this.#value = parseNow(raw);
+    this.#value = parseIsoDatetime(raw);
   }
   now(): Date {
     return new Date(this.#value.date);
@@ -119,7 +128,7 @@ export class TestClock implements Clock {
     return this.#value.iso;
   }
   set(raw: string): void {
-    this.#value = parseNow(raw);
+    this.#value = parseIsoDatetime(raw);
   }
 }
 export function buildClock(config: Config): Clock {

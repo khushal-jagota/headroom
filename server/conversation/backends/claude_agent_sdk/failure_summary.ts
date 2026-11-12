@@ -1,0 +1,67 @@
+const SECRET_ASSIGNMENT =
+  /(["']?\b(?:authorization|password|api[ -]key|(?:[a-z0-9]+[_-])*(?:api[_-]?key|authorization|password|secret|token)(?:[_-][a-z0-9]+)*)\b["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:bearer\s+)?[^,;}]+)/gi;
+const BEARER_VALUE = /\bbearer\s+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/gi;
+
+export function python_repr(value: unknown): string {
+  if (value === null || value === undefined) return 'None';
+  if (value === true) return 'True';
+  if (value === false) return 'False';
+  if (typeof value === 'string') {
+    const quote = value.includes("'") && !value.includes('"') ? '"' : "'";
+    let result = quote;
+    for (const character of value) {
+      const point = character.codePointAt(0)!;
+      if (character === quote || character === '\\') result += '\\' + character;
+      else if (character === '\n') result += '\\n';
+      else if (character === '\r') result += '\\r';
+      else if (character === '\t') result += '\\t';
+      else if (point < 32 || (point >= 127 && point < 160)) {
+        result += '\\x' + point.toString(16).padStart(2, '0');
+      } else result += character;
+    }
+    return result + quote;
+  }
+  if (Array.isArray(value)) return '[' + value.map(python_repr).join(', ') + ']';
+  if (typeof value === 'object') {
+    return (
+      '{' +
+      Object.entries(value)
+        .map(([key, item]) => python_repr(key) + ': ' + python_repr(item))
+        .join(', ') +
+      '}'
+    );
+  }
+  return String(value);
+}
+export function python_str(value: unknown): string {
+  return typeof value === 'string' ? value : python_repr(value);
+}
+export function error_text(error: unknown): string {
+  return error instanceof Error ? error.message : python_str(error);
+}
+export function normalized_failure_summary(
+  detail: unknown,
+  http_status: number | null = null,
+): string {
+  if (http_status === 401) return 'authentication was rejected (HTTP 401)';
+  let text =
+    detail === null || detail === undefined
+      ? ''
+      : python_str(detail).trim().split(/\s+/u).join(' ');
+  text = text.replace(SECRET_ASSIGNMENT, '$1[redacted]').replace(BEARER_VALUE, 'Bearer [redacted]');
+  if (!text)
+    return http_status === null
+      ? 'the turn failed for an unknown reason'
+      : `the provider request failed (HTTP ${http_status})`;
+  if (http_status !== null && !text.includes(`HTTP ${http_status}`))
+    text += ` (HTTP ${http_status})`;
+  const points = Array.from(text);
+  return points.length > 240 ? points.slice(0, 239).join('').trimEnd() + '…' : text;
+}
+export function result_error_summary(message: Record<string, unknown>): string {
+  const status = typeof message.api_error_status === 'number' ? message.api_error_status : null;
+  if (status === 401) return normalized_failure_summary(null, status);
+  if (Array.isArray(message.errors) && message.errors.length)
+    return normalized_failure_summary(message.errors.map(python_str).join('; '), status);
+  return normalized_failure_summary(message.result || message.subtype, status);
+}
