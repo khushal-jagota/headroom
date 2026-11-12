@@ -52,7 +52,7 @@ One guarded write takes the claim, re-running every readiness check inside it, s
 | any other refusal, or suppressed | The claim returns to rest, and a tentative opener is forgotten, so a later pass can try again. |
 | uncertain | The claim becomes errored. Headroom does not resend a prompt that may have arrived. |
 
-On a Worker-owned stage the claim stays out until the Worker files a proposal or someone decides the parked one. A turn that merely ends does not give it back. A Worker that was compacted while its step was still out also gets a short memory-loss note, because nothing in its shortened conversation says that it forgot.
+On a Worker-owned stage the claim stays out until the Worker files a proposal or someone decides the parked one. A turn that merely ends does not give it back. A Worker that was compacted while its step was still out also gets a short memory-loss note, because nothing in its shortened conversation says that it forgot. A backlogged Ticket gets no note until its next wake carries it.
 
 Every Ticket receives its complete workflow guide at kickoff, from its own copy, so a later edit to its Worker type does not change what it reads. Context recovery restores access to that guide. Ordinary later stage prompts identify the current step.
 

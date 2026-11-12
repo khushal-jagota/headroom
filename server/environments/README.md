@@ -128,3 +128,67 @@ Passing Unit 21 lists use `"candidate": "typescript"`; existing branch CI runs t
 Part 3 supplies backup/operator behavior. Part 4 supplies release packaging, the required real adapters, and production enablement.
 Real installer/systemd behavior, the absolute production-adapter/core shutdown deadline, loop-provider cancellation, and executor-save recovery remain unproven.
 Hosted native-platform proofs remain open. Review and merge do not deploy this package.
+
+## Backup, fixtures, and operator functions
+
+Part 3 adds backup capture and stopped-destination restore across Python and TypeScript.
+The native full-copy step is synchronous on its calling Node event loop. It requests the largest positive SQLite page budget instead of 100-page turns.
+Snapshot metadata and managed-file manifests use Python's sorted, ASCII-escaped, two-space JSON bytes.
+UTC timestamps use `+00:00`, with six fractional digits when nonzero, matching Python's `isoformat()` form.
+New snapshots include skills and Worker settings. They leave Ticket files outside the snapshot.
+Legacy snapshots still restore their recorded files. A later managed-root failure does not undo the database replacement, as in Python.
+
+The build-time [schema generator](../../tests/compare/direct/unit21_schema_seed.py) records 330 DDL statements and the exact Alembic frontier.
+Runtime bootstrap creates fresh identities and uses the existing TS domain writers. Runtime requires no Python interpreter for this operation.
+The staging fixture uses those writers for its fictional projects, Managers, Tickets, notes, and image.
+Its navigation starts at the prepared schema version. Normal server publication performs the runtime upgrade.
+Alembic owns application schema changes until cutover. TS bootstrap creates only new isolated fixture/test databases and never upgrades an existing application database.
+
+The schema drift check runs in this branch's workflow. A merge that changes the Python schema fails until the generated file matches.
+From the independent worktree, with the private environment described above, regenerate and check it with:
+
+```sh
+.venv/bin/python tests/compare/direct/unit21_schema_seed.py
+.venv/bin/python tests/compare/direct/unit21_schema_seed.py --check
+```
+
+The generator creates its own temporary Python database and migrates it through Alembic.
+The JSON stores DDL and the exact revision, without seeded data or shared identities.
+
+The first real drift exercise used target `d42fa18dd` and its `memory_notice_turns_are_maintenance` migration.
+Before regeneration, `--check` exited 1 and the existing fresh-schema comparison failed against the saved frontier.
+After regeneration, both passed. Only the revision changed; all 330 DDL statements remained identical.
+The fresh-schema body took 1.03 seconds and produced zero skill-tree guard receipts.
+
+The registry uses blocking kernel `flock`. Its wait blocks the Node event loop.
+Use this registry layer only from a command process, never from a server request or background loop.
+
+The [command table](commands.ts) exports `environment_commands` for the future CLI dispatcher.
+Each entry supplies its Python command path, option types/defaults, and a plain [handler](cli.ts).
+Handlers return separate stdout, stderr, and exit-code values. They do not parse arguments or write to process streams.
+The Manager chose this seam because the CLI unit has no executable dispatcher yet.
+Executable binding, parsing, help, and process exit behavior remain open for that unit.
+
+Ten handlers cover status, cleanup, backup, backup-current, skill provisioning, restore, prepare, inspect, reset, and remove.
+Cleanup remains a dry run unless the caller supplies apply. Each invocation collects a fresh inventory.
+Backup-current requires Part 4's real app validator as an explicit dependency. It has no successful default validator.
+App build, app identity, and the final environment launch remain with Part 4's real packaging adapters.
+
+Focused comparisons reuse private paths and existing fixtures:
+
+| Boundary | Evidence and measured local cost |
+| --- | --- |
+| Fresh DDL, required bootstrap rows, unique identities, atomic failure | Existing fresh-schema case, 0.97 seconds. It also compares page size, auto-vacuum, user version, and journal mode with Python. Regeneration passes after the target integration. |
+| Backup/restore in both languages, open WAL, managed bytes/links, legacy files, retention | The same case uses a real Ticket. Ordinary readers and writers preserve its complete payload and persist edits after reopen. Its populated run takes 5.53 seconds and compares exact metadata/manifest bytes. |
+| Concurrent source commits during backup | One new case, 0.27 seconds. A second SQLite connection commits after each partial-copy yield. The copy completes with a coherent counter/audit snapshot and integrity check. |
+| Restore refusal and failed swaps | Existing filesystem failure case, 2.14 seconds. It includes the early destination guard and the accepted unknown-root error. |
+| Registry lifecycle, TS-written fixture, private lease, rollback, launch environment | One connected comparison, 2.43 seconds. |
+| Scratch database admission, real Git preservation, timer and cancellation | Three distinct existing comparisons, 2.61 seconds for their process. |
+| Scratch ownership during startup and shutdown | Two existing composition cases extended, 5.61 seconds for their process. |
+| Command streams, option metadata, and caught/uncaught failures | One function comparison, 2.08 seconds in the body and 5.37 seconds for its process. It includes a real permission refusal and deterministic EINTR retry over the real kernel lock. |
+
+The restore proof covers domain reads and writes. It does not install application commit projections or claim HTTP/server startup.
+Part 4's hosted rehearsal supplies the real process, installer, supervisor, and packaged-runtime proofs.
+Scratch cleanup starts only for a matching database outside test mode, with a ten-minute initial wait independent of dispatcher admission.
+Its close fences new work at the shared deadline. An already dispatched filesystem removal or a Git child that ignores TERM can outlive that join.
+Production environment activation remains off until Part 4 supplies the real adapters.

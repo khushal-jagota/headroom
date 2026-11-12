@@ -1,5 +1,5 @@
 /** Explicit connected proofs use the actual pool and sampler, without another HTTP host. */
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fork } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
@@ -33,7 +33,13 @@ export const scripted_collector: BuildCollector = (raw): Collector => {
       const call = ++calls;
       appendFileSync(
         options.root + '/collection.jsonl',
-        encode({ type: 'start', call, include_slow, wall: Date.now() / 1000 }) + '\n',
+        encode({
+          type: 'start',
+          call,
+          include_slow,
+          wall: Date.now() / 1000,
+          monotonic: performance.now() / 1000,
+        }) + '\n',
       );
       while (options.gate && !existsSync(options.gate)) await delay(5);
       if (options.fail && call === 1) throw new Error('scripted collector failure');
@@ -130,7 +136,7 @@ export async function metrics_runtime_probe(input: string): Promise<string> {
     path: spec.database,
     config,
     collector: factory,
-    wall_clock: () => 100,
+    wall_clock: spec.mode === 'sampler' ? () => Date.now() / 1000 : () => 100,
   });
   const before = performance.now(),
     rss_before = process.memoryUsage().rss;
@@ -248,23 +254,50 @@ export async function metrics_runtime_probe(input: string): Promise<string> {
     await contender!.settled();
     return encode({ settled: true, owner: runtime.owns_collection, contender_took_over });
   }
-  // The first failure retries on the next cadence. Activity must wake the independent loop.
-  await runtime.renew_activity();
-  const blocked_at = Date.now() / 1000,
-    blocked_until = performance.now() + 160;
-  while (performance.now() < blocked_until) {
-    /* sampler must continue on its own event loop */
+  const starts = (): { include_slow: boolean }[] => {
+    const text = readFileSync(spec.root + '/collection.jsonl', 'utf8');
+    // The worker can append concurrently. Never parse an incomplete final record.
+    return text
+      .slice(0, text.lastIndexOf('\n') + 1)
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string; include_slow: boolean })
+      .filter((event) => event.type === 'start');
+  };
+  let blocked_start_count = 0,
+    blocked_end_count = 0,
+    observation_ms = 0,
+    latest: LatestResponse;
+  try {
+    // Activity uses the same real clock as the worker for this fixture only.
+    await runtime.renew_activity();
+    blocked_start_count = starts().length;
+    const began = performance.now(),
+      deadline = began + 10_000,
+      waiter = new Int32Array(new SharedArrayBuffer(4));
+    for (;;) {
+      const observed = starts();
+      blocked_end_count = observed.length;
+      const added = observed.slice(blocked_start_count);
+      if (performance.now() >= deadline)
+        throw new Error(`sampler made insufficient progress: ${JSON.stringify(added)}`);
+      if (added.length >= 3 && added.some((event) => !event.include_slow)) break;
+      // APP never yields its event loop. The independent worker must create these records.
+      Atomics.wait(waiter, 0, 0, 2);
+    }
+    observation_ms = performance.now() - began;
+    latest = await runtime.latest();
+  } finally {
+    await runtime.stop({ deadline: performance.now() / 1000 + 1 });
+    await runtime.settled();
   }
-  const unblocked_at = Date.now() / 1000;
-  const latest = await runtime.latest();
-  await runtime.stop({ deadline: performance.now() / 1000 + 1 });
-  await runtime.settled();
   return encode({
     latest,
     failure: runtime.failure,
     owner: runtime.owns_collection,
     startup_ms,
-    blocked_at,
-    unblocked_at,
+    blocked_start_count,
+    blocked_end_count,
+    observation_ms,
   });
 }

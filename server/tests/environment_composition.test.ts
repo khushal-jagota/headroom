@@ -7,6 +7,11 @@ import { startServer } from '../core/start.ts';
 import { acquireRuntimeOwnership } from '../core/locks/index.ts';
 import { InMemoryConversationSystem } from '../conversation/in_memory_conversation_system.ts';
 import { create_test_environment_runtime } from '../environments/testing/composition.ts';
+import * as scratchLayout from '../environments/ticket_scratch/collect.ts';
+import * as scratchRuntime from '../environments/ticket_scratch/runtime.ts';
+import { MetricsRuntime } from '../environments/vps_metrics/runtime.ts';
+import { UpdateService } from '../environments/updates/service.ts';
+import type { StopOptions } from '../lifecycle/contracts.ts';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -25,6 +30,7 @@ function setup() {
   const root = dirname(path);
   database.write((tx) => tx.run("INSERT INTO navigation_meta VALUES(1,'env',10,'env-epoch',0)"));
   database.close();
+  mkdirSync(path + '.scratch');
   for (const [key, suffix] of Object.entries({
     HOME: 'home',
     CODEX_HOME: 'codex',
@@ -46,6 +52,8 @@ function setup() {
     PLAN_DISPATCHER_LOCK_PATH: path + '.dispatcher',
     PLAN_SERVER_CONTROL_SOCKET: path + '.control',
     PLAN_CREDENTIAL_KEY_PATH: path + '.key',
+    PLAN_TICKET_SCRATCH_ROOT: path + '.scratch',
+    PLAN_TICKET_SCRATCH_DATABASE: path,
     PLAN_PORT: '0',
     PLAN_TEST_MODE: '0',
     PLAN_DISPATCH_ENABLED: 'true',
@@ -58,10 +66,25 @@ test('environment providers and poll hooks share the server, and both producer g
   const path = setup();
   const backgroundDrain = deferred();
   const environmentDrain = deferred();
+  const scratchDrain = deferred();
   const trace: string[] = [];
   const deadlines: number[] = [];
   const environmentPoll = vi.fn(() => true);
   const explicitPoll = vi.fn(() => false);
+  let environmentStop: StopOptions | undefined;
+  const scratchClose = vi.fn((options: StopOptions) => {
+    trace.push('scratch fenced');
+    deadlines.push(options.deadline);
+    return scratchDrain.promise;
+  });
+  const scratchStart = vi.fn();
+  const scratchFactory = vi.spyOn(scratchRuntime, 'create_ticket_scratch_runtime').mockReturnValue({
+    start: scratchStart,
+    close: scratchClose,
+  });
+  const layout = vi.spyOn(scratchLayout, 'layout_for');
+  const metricsStop = vi.spyOn(MetricsRuntime.prototype, 'stop');
+  const updatesStop = vi.spyOn(UpdateService.prototype, 'stop');
   const server = await startServer({
     conversationSystem: new InMemoryConversationSystem(),
     enableWorkerReadiness: true,
@@ -96,11 +119,12 @@ test('environment providers and poll hooks share the server, and both producer g
           trace.push('environment started');
           return environment.start();
         },
-        close({ deadline }) {
+        close(options) {
           context.require_runtime_ownership();
+          environmentStop = options;
           trace.push('environment fenced');
-          deadlines.push(deadline);
-          return Promise.all([environment.close({ deadline }), environmentDrain.promise]).then(
+          deadlines.push(options.deadline);
+          return Promise.all([environment.close(options), environmentDrain.promise]).then(
             () => undefined,
           );
         },
@@ -110,6 +134,9 @@ test('environment providers and poll hooks share the server, and both producer g
   try {
     expect(environmentPoll).toHaveBeenCalled();
     expect(explicitPoll).toHaveBeenCalled();
+    expect(layout).toHaveBeenCalledWith(path + '.scratch', path, path);
+    expect(scratchFactory).toHaveBeenCalledTimes(1);
+    expect(scratchStart).toHaveBeenCalledTimes(1);
     const response = await fetch(
       server.address +
         '/api/resource-body?key=' +
@@ -134,17 +161,26 @@ test('environment providers and poll hooks share the server, and both producer g
     expect(captured.body.state).toBe('idle');
     expect(JSON.parse(captured.revision)).toEqual(captured.body);
     const closing = server.close();
-    expect(trace).toEqual(['environment started', 'background fenced', 'environment fenced']);
-    expect(deadlines).toHaveLength(2);
-    expect(deadlines[0]).toBe(deadlines[1]);
+    expect(trace).toEqual([
+      'environment started',
+      'background fenced',
+      'environment fenced',
+      'scratch fenced',
+    ]);
+    expect(new Set(deadlines).size).toBe(1);
+    expect(metricsStop.mock.calls[0]![0]).toBe(environmentStop);
+    expect(updatesStop.mock.calls[0]![0]).toBe(environmentStop);
+    expect(scratchClose.mock.calls[0]![0]).toBe(environmentStop);
     environmentDrain.resolve();
+    backgroundDrain.resolve();
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(() => acquireRuntimeOwnership(path)).toThrow('ConversationRuntimeAlreadyOwned');
-    backgroundDrain.resolve();
+    scratchDrain.resolve();
     await closing;
   } finally {
     backgroundDrain.resolve();
     environmentDrain.resolve();
+    scratchDrain.resolve();
     await server.close();
   }
   acquireRuntimeOwnership(path).close();
@@ -159,27 +195,46 @@ test('shutdown during environment setup retains ownership and prevents later pro
   const background = vi.fn(() => {
     throw new Error('a producer must not start after shutdown');
   });
+  const scratchStart = vi.fn();
+  const scratchFactory = vi.spyOn(scratchRuntime, 'create_ticket_scratch_runtime').mockReturnValue({
+    start: scratchStart,
+    close() {},
+  });
+  const layout = vi.spyOn(scratchLayout, 'layout_for');
+  const updatesStart = vi.spyOn(UpdateService.prototype, 'start');
   const starting = startServer({
     notificationDelivery: background,
-    createEnvironments(context) {
-      return {
-        areas: [],
-        resourceProviders: [],
-        before_worker_readiness_poll: () => false,
-        async start() {
-          const stop = process
-            .listeners('SIGTERM')
-            .find((handler) => !priorHandlers.includes(handler));
-          expect(stop).toBeDefined();
-          // Reenter shutdown before this start call even returns its pending promise.
-          stop!('SIGTERM');
-          entered.resolve();
-          await finish.promise;
+    async createEnvironments(context) {
+      const inert = await create_test_environment_runtime({
+        ...context,
+        config: { ...context.config, test_mode: true },
+      });
+      try {
+        expect(layout).not.toHaveBeenCalled();
+        expect(scratchFactory).not.toHaveBeenCalled();
+      } finally {
+        await inert.close({ deadline: performance.now() / 1000 });
+      }
+      vi.spyOn(MetricsRuntime.prototype, 'start').mockImplementationOnce(() => {
+        const stop = process
+          .listeners('SIGTERM')
+          .find((handler) => !priorHandlers.includes(handler));
+        expect(stop).toBeDefined();
+        // Reenter shutdown before this start call even returns its pending promise.
+        stop!('SIGTERM');
+        entered.resolve();
+        return finish.promise.then(() => {
           context.require_runtime_ownership();
           context.database.read((sql) => sql.get('SELECT 1'));
-        },
-        close() {
+        });
+      });
+      const environment = await create_test_environment_runtime(context);
+      return {
+        ...environment,
+        close(options) {
+          const flight = environment.close(options);
           closed.resolve();
+          return flight;
         },
       };
     },
@@ -207,5 +262,8 @@ test('shutdown during environment setup retains ownership and prevents later pro
     expect(result).toMatchObject({ error: { message: 'Server closed during startup' } });
   }
   expect(background).not.toHaveBeenCalled();
+  expect(updatesStart).not.toHaveBeenCalled();
+  expect(scratchFactory).toHaveBeenCalledTimes(1);
+  expect(scratchStart).not.toHaveBeenCalled();
   acquireRuntimeOwnership(path).close();
 });

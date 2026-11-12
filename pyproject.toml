@@ -76,7 +76,7 @@ strict = true
 # a time.
 # The tree guard is checked at the same strictness as what it protects. The rest of
 # scripts/ keeps its separate operational scope.
-files = ["src", "tests", "scripts/tree_environment.py", "scripts/development_safety"]
+files = ["src", "tests", "scripts/tree_environment.py", "scripts/development_safety", "scripts/test_runtime"]
 mypy_path = "src:scripts"
 # ``tests`` has no __init__.py — it is a PEP 420 namespace package rooted at the repo root
 # (see the pytest ``pythonpath`` setting below). Without this, mypy fails on package layout

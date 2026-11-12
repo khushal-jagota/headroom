@@ -24,6 +24,9 @@ import type { CollectorFactory } from './vps_metrics/sampler/contracts.ts';
 import { create_metrics_routes } from './vps_metrics/routes.ts';
 import { create_vps_status_routes } from './vps_status/routes.ts';
 import type { VpsStatusSnapshot } from './vps_status/contracts.ts';
+import { layout_for } from './ticket_scratch/collect.ts';
+import { clean_finished_ticket_scratch } from './ticket_scratch/apply.ts';
+import { create_ticket_scratch_runtime } from './ticket_scratch/runtime.ts';
 
 export interface EnvironmentOperations {
   app_root: string;
@@ -51,6 +54,20 @@ export async function createEnvironmentRuntime(
     database,
     operations.service_unit,
   );
+  const scratch_layout = config.test_mode
+    ? null
+    : await layout_for(config.ticket_scratch_root, config.ticket_scratch_database, database);
+  const scratch =
+    scratch_layout === null
+      ? null
+      : create_ticket_scratch_runtime({
+          layout: scratch_layout,
+          db_path: database,
+          test_mode: config.test_mode,
+          now_unix: () => context.clock.nowUnix(),
+          assert_database_owned: context.require_runtime_ownership,
+          clean_finished_ticket_scratch,
+        });
   const metrics = new MetricsRuntime({
     path: await store_path(database),
     config: load_metrics_config(),
@@ -106,18 +123,20 @@ export async function createEnvironmentRuntime(
         if (closing) return;
         await metrics.start();
         if (!closing) updates.start();
+        if (!closing) scratch?.start();
       });
       return starting;
     },
     close(options) {
       if (closing) return closing;
-      // Begin both stops now, including when setup still owns a continuation.
+      // Fence every producer now, including when setup still owns a continuation.
       const begin = async (operation: () => void | Promise<void>) => {
         await operation();
       };
       const drains = [
         begin(() => metrics.stop(options)),
         begin(() => updates.stop(options)),
+        begin(() => scratch?.close(options)),
         starting?.catch(() => {}),
       ];
       closing = Promise.allSettled(drains).then((results) => {

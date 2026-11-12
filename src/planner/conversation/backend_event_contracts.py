@@ -82,6 +82,9 @@ class RunningTurn:
         default_factory=dict
     )
     automatic_notice: bool = False
+    # Every prompt in this turn is a Worker memory-loss notice. Like automatic compaction,
+    # such a turn is maintenance: its ending does not renew compaction eligibility.
+    memory_notice_only: bool = False
     ended: bool = False
     callbacks_revoked: bool = False
     # Set when the core is part-way through ending this turn itself — an interrupt, or a

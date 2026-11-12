@@ -137,6 +137,8 @@ The SDK public spawn hook owns the exact child and its required WorkerUnit. An i
 
 On Linux, `BASH_ENV` points to the absolute source path of `server/conversation/tool_shell_startup.bash` for TS and `src/planner/conversation/tool_shell_startup.bash` for Python. The direct proof permits only this exact source-location pair and requires identical file bytes. A byte difference fails the proof. Other environment differences require explicit acceptance in `DEVIATIONS.md`.
 
+The paired scripted proof also exercises the real CLI's observed ordering, status and rate-limit frames, and optional message fields. The one-attempt provider driver and its results remain Ticket artifacts, outside automatic discovery.
+
 ## In-memory conversation instrument
 
 `conversation/contracts.ts` is the 15-member in-process conversation boundary.
@@ -192,8 +194,8 @@ this helper's current contract.
 
 `conversation/backends/codex_app_server/` supplies the small consumed wire contracts,
 JSONL client, saved-login reader, inherited child environment, and bounded process-group
-ownership. This is the first part of the Codex port. It does not yet supply a configured
-Codex backend child or the model/sign-in/usage provider bindings.
+ownership. `adapter.ts` exports `create_codex_backend_child_factory` for the real core.
+The model/sign-in/usage provider bindings remain the next part of this port.
 
 The client checks the selected CLI version before it starts the app-server. Unknown
 notifications and item kinds remain unconsumed. A malformed consumed notification warns
@@ -236,3 +238,20 @@ The Manager requested documentation of these remaining wire differences:
 
 These limits do not change the strict checks for consumed identities, outcomes, and
 permission decisions. They are not hidden by broad comparison rules.
+
+The Codex child preserves correlated admission, provisional-event buffering, native thread
+resume, steer certainty, parked asks, catalog refresh, and generation-scoped login diagnosis.
+Its paired direct proof uses the same scripted app-server behind both real SQLite cores.
+Sixteen checkpoints compare ordered native requests, delivery fates, events, lifecycle facts,
+all five populated view tables, live output, and durable login rejection. The script supports
+numeric ask IDs, delayed JSONL fragments inside a UTF-8 character, and stdin EOF exit.
+The driver waits for each child's native metadata request before its first prompt, so
+catalog discovery precedes input without a scripted turn-response barrier. The pair
+does not prove nonblocking discovery. It includes early turn-start news, refused steer,
+delayed interruption, file and MCP items, retryable and final errors, and child exit
+before and after admission. Request timeout and write-failure transport checks use
+injected clients rather than this paired core run.
+
+The adapter bounds ask withdrawal before child shutdown, then always invokes client cleanup.
+The existing Python withdrawal wait is unbounded. The Manager accepted the two-second
+bound in the Part 2 review. The difference is recorded in `DEVIATIONS.md`.

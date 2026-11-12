@@ -25,6 +25,7 @@ import { ManagerWakeLoop } from './manager_wakes/runtime.ts';
 import {
   all_sender_messages_are_manager_notices,
   admit_notice_batch,
+  mark_notices_leaving_queue,
   create_ticket_failure_notice,
 } from './manager_wakes/data.ts';
 import { PromptDispatchDecision } from './conversation/contracts.ts';
@@ -45,7 +46,11 @@ import { conversation_routes } from './tickets/conversation_routes.ts';
 import { routes as membership } from './membership/routes.ts';
 import { configure_conversation_start } from './runtime/conversation_start.ts';
 import { configure_chief_resources } from './worker_settings/resource_versions.ts';
-import { audit_ticket_registry_integrity } from './tickets/data/index.ts';
+import {
+  audit_ticket_registry_integrity,
+  automated_maintenance_suppression_reason,
+} from './tickets/data/index.ts';
+import { is_memory_notice_sender_message_id } from './runtime/worker_memory.ts';
 import { routes as tickets } from './tickets/routes.ts';
 import { finalize as artifactLinks } from './files/catalog/links.ts';
 import type { Config } from './core/config.ts';
@@ -110,6 +115,9 @@ export function createAreasRuntime(
         startup_participant: reconcile_credential_requests,
         integer_now: () => clock.nowUnix(),
         all_are_notices: all_sender_messages_are_manager_notices,
+        mark_notices_leaving_queue,
+        automated_maintenance_suppression_reason,
+        is_memory_notice: is_memory_notice_sender_message_id,
         failure_notice: create_ticket_failure_notice,
         admit_notice(tx, conversation_id, sender_message_id, now) {
           const [is_manager_notice, suppression_reason] = admit_notice_batch(tx, {

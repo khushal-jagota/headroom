@@ -26,3 +26,19 @@ export type BackgroundServiceFactory = (
 export interface RunningServer {
   close(): Promise<void>;
 }
+/** The retained advisory lease shared by environment operators and the future supervisor. */
+export interface LifecycleLease {
+  close(): void;
+}
+export class ServerLifecycleError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ServerLifecycleError';
+  }
+}
+export class ServerLifecycleAlreadyOwnedError extends ServerLifecycleError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ServerLifecycleAlreadyOwnedError';
+  }
+}

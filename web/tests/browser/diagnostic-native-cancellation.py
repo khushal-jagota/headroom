@@ -13,6 +13,9 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+
+from test_runtime import RuntimeIsolation  # noqa: E402
 
 EXPECTED_FAILURE = {
     "late-wheel": "SETUP_LATEST_WHEEL",
@@ -107,4 +110,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    with RuntimeIsolation(os.environ) as runtime:
+        os.environ.clear()
+        os.environ.update(runtime.environment)
+        main()

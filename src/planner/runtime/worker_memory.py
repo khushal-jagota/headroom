@@ -19,6 +19,7 @@ from typing import Final
 from uuid import uuid4
 
 from planner.conversation.contracts import HeldPrompt
+from planner.tickets import data as tickets_data
 from planner.tickets import locale_configuration
 from planner.tickets.contracts import TicketLocale
 
@@ -34,6 +35,17 @@ def new_worker_step_message_id() -> str:
 
 def new_memory_notice_message_id() -> str:
     return f"{MEMORY_NOTICE_MESSAGE_PREFIX}{uuid4().hex}"
+
+
+def is_memory_notice_sender_message_id(sender_message_id: str | None) -> bool:
+    """Whether a prompt is the memory-loss notice, known by the id Panels minted for it.
+
+    The notice is maintenance, not work, so the conversation core treats a turn that holds
+    only notices as maintenance. It goes by delivery origin, never by the text.
+    """
+    return sender_message_id is not None and sender_message_id.startswith(
+        MEMORY_NOTICE_MESSAGE_PREFIX
+    )
 
 
 def an_answer_is_already_waiting(held_prompts: Iterable[HeldPrompt]) -> bool:
@@ -120,6 +132,9 @@ def ticket_needs_memory_notice(conn: sqlite3.Connection, ticket_id: str) -> bool
         return False
     conversation_id = row[0]
     if not conversation_holds_an_unanswered_memory_loss(conn, conversation_id):
+        return False
+    # A backlogged Ticket keeps its claim, so the claim alone does not permit a wake.
+    if tickets_data.automated_maintenance_suppression_reason(conn, conversation_id) is not None:
         return False
     # A possibly sent notice must not be retried automatically. It is not a delivered
     # prompt, so ordinary wakes still owe their memory-loss note. Uncertain owner
