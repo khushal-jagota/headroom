@@ -82,13 +82,14 @@ test('HTTP lifetime independently retains a handler and a pending iterator retur
     release.resolve();
     await Promise.all([returning, iterator_drain]);
   }
-  // end() is not proof of a flushed response. A second pipelined response can
+  // response.end() is not proof of flushed bytes. A second pipelined response can
   // already be finished=true while its output still waits behind the first.
   const sockets = new HttpRequestScope();
   const socket = Object.assign(new EventEmitter(), {
     destroyed: false,
-    writableEnded: false,
-    end: vi.fn(() => {
+    // Rejected preview upgrades can already be half-closed when shutdown starts.
+    writableEnded: true,
+    destroySoon: vi.fn(() => {
       socket.writableEnded = true;
     }),
   });
@@ -99,16 +100,16 @@ test('HTTP lifetime independently retains a handler and a pending iterator retur
   sockets.own_response(socket as unknown as Socket, second as unknown as ServerResponse);
   sockets.seal();
   sockets.close_idle_connections();
-  expect(socket.end).not.toHaveBeenCalled();
+  expect(socket.destroySoon).not.toHaveBeenCalled();
   first.writableFinished = true;
   first.emit('finish');
   first.emit('close');
-  expect(socket.end).not.toHaveBeenCalled();
+  expect(socket.destroySoon).not.toHaveBeenCalled();
   second.writableFinished = true;
   second.emit('finish');
-  expect(socket.end).toHaveBeenCalledOnce();
+  expect(socket.destroySoon).toHaveBeenCalledOnce();
   second.emit('close');
-  expect(socket.end).toHaveBeenCalledOnce();
+  expect(socket.destroySoon).toHaveBeenCalledOnce();
   console.info(`HTTP lifetime unit proof: ${(performance.now() - began).toFixed(3)} ms`);
 });
 afterEach(() => vi.restoreAllMocks());

@@ -39,10 +39,10 @@ export class HttpRequestScope {
     response.once('finish', finish);
     response.once('close', finish);
   }
-  /** end() flushes completed responses; active and queued responses retain their socket. */
+  /** Flush then close both directions; active and queued responses retain their socket. */
   close_idle_connections(): void {
     for (const [socket, unfinished] of this.#connections)
-      if (unfinished === 0 && !socket.destroyed && !socket.writableEnded) socket.end();
+      if (unfinished === 0 && !socket.destroyed) socket.destroySoon();
   }
   /** Only sockets accepted by this invocation, including upgraded connections. */
   force_close_connections(): void {
