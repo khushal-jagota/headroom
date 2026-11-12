@@ -185,21 +185,27 @@ import XCTest
     /// SwiftUI starts the next run before the cancelled one unwinds, as when the server
     /// address changes. The old run's exit must not stop the new run from opening streams.
     func testCancelledRunUnwindingAfterNewRunKeepsItFollowing() async throws {
-        RefreshProtocol.state.withLock { $0 = RefreshFixture() }
+        RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.holdCancellationStreams = true }
         let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
         let old = Task { await store.run() }
-        // Stream 1 ends at its gap; the old run then waits a second before it reconnects.
-        try await until { store.view?.contentVersion == "2" }
+        defer { old.cancel() }
+        // Keep the first stream open, so its own reconnect cannot race the new run.
+        try await until {
+            RefreshProtocol.state.withLock { $0.events.count } == 1 &&
+                store.view?.contentVersion == "2" && store.view?.mode == "current"
+        }
         let new = Task { await store.run() }
         defer { new.cancel() }
         try await until { RefreshProtocol.state.withLock { $0.events.count } == 2 }
         old.cancel()
         await old.value
-        // The new scope opens its stream at once, not when stream 2's first frame arrives 1 s later.
+        // Stream 2 holds every frame. A new scope must open without that snapshot.
         store.setNavigationDemand("ticket:Z", selected: ViewOwner(kind: "ticket", id: "Z"))
-        try await until(within: .milliseconds(500)) { RefreshProtocol.state.withLock { $0.events.count } == 3 }
-        XCTAssertEqual(RefreshProtocol.state.withLock { $0.events.last?.selected }, "ticket:Z")
-        XCTAssertNotEqual(store.view?.contentVersion, "7")
+        try await until { RefreshProtocol.state.withLock { $0.events.last?.selected } == "ticket:Z" }
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.events.count }, 3)
+        XCTAssertEqual(store.view?.contentVersion, "2")
+        new.cancel()
+        await new.value
     }
 
     private func until(within limit: Duration = .seconds(10), _ condition: @MainActor () -> Bool) async throws {
@@ -236,6 +242,7 @@ private struct RefreshFixture {
     var failure: URLError.Code?
     var healthFailure: URLError.Code?
     var sections: [String] = []
+    var holdCancellationStreams = false
     static var authority: [String: Any] { ["delivery_session_id": "d", "availability": ["state": "current", "generation": "1", "reason": NSNull()], "permit": ["scope": "s", "runtime_epoch": "r", "installation_id": "i", "generation": "1"]] }
     static func coverage(_ revision: String) -> [String: Any] {
         ["scope": "s", "schema_version": 10, "semantics": "attention-knowledge-v10-ticket-workflows", "epoch": "e", "revision": revision]
@@ -296,6 +303,14 @@ private struct RefreshFixture {
              "coverage": Self.coverage(to), "previous_coverage": Self.coverage(from), "content_version": to, "previous_content_version": from,
              "authority": Self.authority, "upserts": upserts, "evictions": evictions, "windows": Self.windows(windowRequests, members: members),
              "counts": Self.counts, "review_context": [], "review_summary": ["skipped": 0, "new": 0]]
+        }
+        if holdCancellationStreams {
+            // No delayed gap or snapshot can advance this cancellation test's phases.
+            if events.count == 1 {
+                let frame = try Self.frame(snapshot("2", working: true, updated: 2))
+                return ([(0, [frame])], false)
+            }
+            return ([], false)
         }
         switch events.count {
         case 1:
