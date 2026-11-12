@@ -61,7 +61,9 @@ from planner.executor.protocol import (
     CanonicalSkillSource,
     ChildCommand,
     ChildOperation,
+    CommandDisposition,
     CommandOutcome,
+    StopRun,
     WritePrompt,
 )
 from planner.executor.vps_transport import VpsExecutor
@@ -279,6 +281,12 @@ def test_native_worker_context_reaches_actual_provider_prompts(
                 assert (await account())["steer_writes"][-1]["text"] == "/inspect"
         finally:
             await system.shutdown()
+            # Remote shutdown detaches the home adapter. This test also owns the
+            # native registry, whose child and custody observer need their own stop.
+            stopped = await registry.run(ChildCommand(
+                uuid4().hex, reference, ChildOperation.stop, None, StopRun(),
+            ))
+            assert stopped.disposition is CommandDisposition.succeeded
             spool.close()
 
     asyncio.run(asyncio.wait_for(exercise(), 20))

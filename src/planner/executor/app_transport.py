@@ -27,7 +27,7 @@ from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.response_compression import answers_uncompressed
 from planner.environments.mac_updates import MacUpdateService
 from planner.environments.update_attempts import UpdateConflict
-from planner.execution_identity import ExecutorIdentity, ProtocolRefused
+from planner.execution_identity import ExecutorIdentity, ProtocolRefused, parse_identity
 from planner.executor.configuration import (
     EXECUTOR_COMMAND_FILE_PATH,
     EXECUTOR_COMMAND_OUTCOMES_PATH,
@@ -198,9 +198,18 @@ def build_executor_router() -> APIRouter:
             # Any lease attempt past ingress is contact, whatever fails next, so a
             # failing lease cannot look like a sleeping Mac (mac_lease_failing).
             endpoint.record_contact()
-            lease_request = _decode(
-                await _body(request, MAX_ENVELOPE_BYTES), LeaseRequest, MAX_ENVELOPE_BYTES
-            )
+            body = await _body(request, MAX_ENVELOPE_BYTES)
+            raw = _decode(body, dict, MAX_ENVELOPE_BYTES)
+            try:
+                identity = parse_identity(raw.get("identity"), check_versions=False)
+            except (ValidationError, ProtocolRefused, ValueError) as error:
+                raise PlannerError(
+                    ErrorCode.validation, f"malformed executor request: {error}"
+                ) from error
+            refusal = await endpoint.refuse_lease_version(identity)
+            if refusal is not None:
+                return _json(encode_bounded(refusal), 409)
+            lease_request = _decode(body, LeaseRequest, MAX_ENVELOPE_BYTES)
             reply = await endpoint.lease(lease_request)
         except PlannerError as error:
             return _error(error)

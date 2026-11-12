@@ -47,9 +47,11 @@ from planner.core.response_compression import (
     uncompressed_route_patterns,
 )
 from planner.core.trusted_ingress import TrustedIngressConfig, TrustedIngressMiddleware
+from planner.environments.app import AppManifest
 from planner.environments.mac_updates import MacUpdateService
 from planner.environments.update_attempts import FileUpdateAttemptStore
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.environments.update_contracts import PublishedMacUpdate, PublishedUpdate, UpdateAttempt
+from planner.execution_configuration import PROTOCOL_VERSION
 from planner.execution_identity import MAC_NEEDS_UPDATE, ChildReference, ExecutorIdentity
 from planner.executor.app_transport import build_executor_router
 from planner.executor.configuration import MAX_ITEM_BATCH_BYTES
@@ -268,17 +270,85 @@ def test_every_executor_route_over_real_https(tmp_path: Path) -> None:
                     assert status == 200 and "Content-Encoding" not in headers
                     assert decode_bounded(body, MacUpdateCheck).target is None
 
-                    # Route 1: an old protocol is refused with its LeaseRefused body.
-                    old = ExecutorIdentity(21, "a" * 40, SPOOL_FORMAT_VERSION, str(uuid4()))
-                    status, body, _ = await call(
-                        "POST", "/api/executor/lease", only_id, encode_bounded(lease_request(old))
+                    # A real persisted update target, shared by lease refusal and recovery.
+                    archive_bytes = b"retained runtime fixture"
+                    archive_sha = hashlib.sha256(archive_bytes).hexdigest()
+                    archive = updates.root / "archives" / (archive_sha + ".tar.gz")
+                    archive.parent.mkdir(parents=True)
+                    archive.write_bytes(archive_bytes)
+                    published = PublishedUpdate(
+                        1, 2, 3, AppManifest("b" * 40, "c" * 64, "d" * 64),
+                        "e" * 64, "video_upload_ledger", "2099-01-01T00:00:00+00:00",
+                        PublishedMacUpdate(4, archive_sha, len(archive_bytes)),
                     )
-                    assert status == 409
-                    lease_refused = decode_bounded(body, LeaseRefused)
-                    assert lease_refused.error["code"] == "executor_version_refused"
-                    assert lease_refused.refusal is not None
-                    assert lease_refused.refusal.reason == MAC_NEEDS_UPDATE
-                    assert lease_refused.refusal.peer_identity == old
+                    updates.attempts.create(UpdateAttempt(
+                        "upgrade", "a" * 40, "b" * 40, "now", True, "installing",
+                        "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00",
+                        published, mac_attempt_id="mac_upgrade",
+                    ))
+                    endpoint.presence.update_check = updates.check
+                    target = updates.check().target
+                    assert target is not None
+                    # Literal wire fields from d94945d8 (22) and 41ed6b5f (23).
+                    # Neither historical LeaseRequest contains cleanup evidence.
+                    for version in (22, 23):
+                        old = ExecutorIdentity(version, "a" * 40, 5, str(uuid4()))
+                        historical_lease = {
+                            "identity": {
+                                "protocol_version": version,
+                                "application_revision": old.application_revision,
+                                "spool_format_version": 5,
+                                "executor_incarnation": old.executor_incarnation,
+                                "connection_generation": 0,
+                            },
+                            "process_id": 4242,
+                            "mac_wall_clock_ms": 1,
+                            "queue_depth": 0,
+                            "oldest_item_age_ms": None,
+                            "waiting_conversations": [],
+                            "waiting_conversations_truncated": False,
+                            "working_turns": [],
+                            "admission_stopped": False,
+                            "going_to_sleep": False,
+                        }
+                        status, body, _ = await call(
+                            "POST", "/api/executor/lease", only_id,
+                            json.dumps(historical_lease).encode(),
+                        )
+                        assert status == 409
+                        lease_refused = decode_bounded(body, LeaseRefused)
+                        assert lease_refused.error["code"] == "executor_version_refused"
+                        assert lease_refused.refusal is not None
+                        assert lease_refused.refusal.reason == MAC_NEEDS_UPDATE
+                        assert lease_refused.refusal.peer_identity == old
+                        assert lease_refused.update is not None
+                        assert lease_refused.update.target == target
+                        assert endpoint.health().presence == "refused"
+                        status, body, _ = await call("GET", "/api/executor/update", only_id)
+                        assert status == 200
+                        assert decode_bounded(body, MacUpdateCheck).target == target
+                        status, body, _ = await call("GET", target.archive_path, only_id)
+                        assert (status, body) == (200, archive_bytes)
+                        status, body, _ = await call(
+                            "POST", "/api/executor/update", only_id,
+                            json.dumps({
+                                "request_id": target.request_id,
+                                "application_revision": target.application_revision,
+                                "phase": "downloading", "detail": None,
+                                "identity": None,
+                            }).encode(),
+                        )
+                        assert status == 200 and json.loads(body) == {"confirmed": False}
+                    # Current leases still need explicit proof, even with an offered update.
+                    missing_cleanup = json.loads(lease_body)
+                    del missing_cleanup["cleanup_uncertainties"]
+                    status, body, _ = await call(
+                        "POST", "/api/executor/lease", only_id,
+                        json.dumps(missing_cleanup).encode(),
+                    )
+                    assert (status, _error_code(body)) == (400, "validation")
+                    assert b"cleanup evidence" in body
+                    updates.attempts.path.unlink()
                     # The current process's lease is accepted and clears the refusal.
                     status, body, _ = await call("POST", "/api/executor/lease", only_id, lease_body)
                     assert status == 200
