@@ -1,3 +1,5 @@
+import type { APNsConfig } from '../notifications/contracts.ts';
+import { load_apns_config } from '../notifications/config.ts';
 import { readFileSync, existsSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -9,6 +11,7 @@ export const DB_BUSY_TIMEOUT_MS = 5000;
 export const SHUTDOWN_GRACE_SECONDS = 30;
 export const MAX_CONVERSATION_SEND_REQUEST_BYTES = 20 * 1024 * 1024;
 export interface Config {
+  apns?: APNsConfig | null;
   db_path: string;
   port: number;
   tick_seconds: number;
@@ -155,6 +158,7 @@ export function loadConfig(path = 'config.yaml', env: NodeJS.ProcessEnv = proces
       `measure_source_timeout_seconds must be greater than zero: ${timeout}`,
     );
   return {
+    apns: load_apns_config(env),
     db_path,
     port: integer('port', 'PLAN_PORT', 8767),
     tick_seconds: integer('tick_seconds', 'PLAN_TICK_SECONDS', 60),

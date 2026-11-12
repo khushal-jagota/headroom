@@ -1,3 +1,4 @@
+import { notificationTestArea } from './notifications/testing.ts';
 /** Comparison composition. Each area appends its test-only route registration here. */
 import { managerWakeTestArea } from './manager_wakes/testing.ts';
 import type { Area } from './core/authority/register.ts';
@@ -14,6 +15,7 @@ const conversationSystem =
     ? new InMemoryConversationSystem()
     : undefined;
 const testAreas: readonly Area[] = [
+  notificationTestArea,
   ...(conversationSystem ? inMemoryConversationRoutes(conversationSystem) : []),
 ];
 
