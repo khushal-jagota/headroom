@@ -1,4 +1,5 @@
 {
+  "candidate": "typescript",
   "source_roots": [
     "src/planner/projects/",
     "src/planner/ideas/",
