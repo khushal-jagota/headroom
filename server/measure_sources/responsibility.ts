@@ -1,3 +1,4 @@
+import { python_string_repr } from '../core/python_repr.ts';
 /** Canonical responsibility transfer used by Goal deletion; source execution stays separate. */
 import { PlannerError } from '../core/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
@@ -36,24 +37,7 @@ export function failure_message(
   return message;
 }
 function repr(value: string): string {
-  const quote = value.includes("'") && !value.includes('"') ? '"' : "'";
-  let result = quote;
-  for (const character of value) {
-    if (character === quote || character === '\\') result += '\\' + character;
-    else if (character === '\n') result += '\\n';
-    else if (character === '\r') result += '\\r';
-    else if (character === '\t') result += '\\t';
-    else if (character !== ' ' && /[\p{C}\p{Z}]/u.test(character)) {
-      const code = character.codePointAt(0)!;
-      result +=
-        code < 256
-          ? '\\x' + code.toString(16).padStart(2, '0')
-          : code < 65536
-            ? '\\u' + code.toString(16).padStart(4, '0')
-            : '\\U' + code.toString(16).padStart(8, '0');
-    } else result += character;
-  }
-  return result + quote;
+  return python_string_repr(value);
 }
 export function notify_episode(
   sql: TransactionSql,
