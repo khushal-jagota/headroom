@@ -42,12 +42,14 @@ export const initializeAreas = (
   authority: SignalNavigationAuthority,
   config: Config,
   clock: Clock = buildClock(config),
+  beforeRuntime: () => void = () => {},
 ): void => {
   database.write((tx) => initialize_notifications(tx, clock.nowUnix()));
   initialize_worker_settings(database, config);
   configure_conversation_start(database, config);
   configure_chief_resources(config);
   configure_manager_resources(clock);
+  beforeRuntime();
   conversation.initialize(database, config, { integer_now: () => clock.nowUnix() });
   navigation.initialize(database, authority);
 };
@@ -105,10 +107,13 @@ export function composeAreaLoops(context: OwnedAreaContext, options: AreaLoopOpt
         workspace_root: context.config.workspace_root,
       },
     });
-    unsubscribe = context.changes.subscribe(() => wakes?.wake());
-    wakes.start(context.config.tick_seconds);
   }
   return {
+    start(): void {
+      if (!wakes) return;
+      unsubscribe = context.changes.subscribe(() => wakes?.wake());
+      wakes.start(context.config.tick_seconds);
+    },
     async stop(options: { deadline?: number } = {}): Promise<void> {
       unsubscribe?.();
       await wakes?.stop(options);

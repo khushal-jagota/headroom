@@ -42,7 +42,11 @@ export function pythonRepr(value: unknown): string {
     return `'${value.replaceAll('\\', '\\\\').replaceAll("'", "\\'").replaceAll('\n', '\\n').replaceAll('\r', '\\r')}'`;
   return String(value);
 }
-export function loadConfig(path = 'config.yaml', env: NodeJS.ProcessEnv = process.env): Config {
+export function loadConfig(
+  path: string | undefined = undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): Config {
+  path ??= env.PLAN_CONFIG_PATH ?? 'config.yaml';
   const file: unknown = existsSync(path) ? parse(readFileSync(path, 'utf8')) : {};
   if (file !== null && (typeof file !== 'object' || Array.isArray(file)))
     throw new PlannerError('validation', `config root must be a mapping: ${path}`);

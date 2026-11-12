@@ -6,15 +6,12 @@ import {
   initializeAreas,
   prepareAreas,
   closeAreas,
-  composeAreaLoops,
   getConversationRuntime,
   bindConversationRuntimeFacts,
 } from '../areas.ts';
 import { createApp } from '../app.ts';
 import { loadConfig, SHUTDOWN_GRACE_SECONDS } from './config.ts';
 import { buildClock } from './clock.ts';
-import { prepare_background_loops, type BackgroundLoops } from './loops.ts';
-import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import type { Clock } from './clock.ts';
 import type { Config } from './config.ts';
 import { ChangeSignal } from './changes/index.ts';
@@ -32,23 +29,28 @@ import { createConversationRoutes } from '../conversation/routes.ts';
 import { createIdlePublicationAuthority } from '../conversation/publication/authority.ts';
 import type { SignalPublicationAuthority } from '../conversation/publication/authority.ts';
 
-/** Unit 21 supplies these factories explicitly. Undefined means off. */
-export interface ComposedBackgroundService {
-  start(): void | Promise<void>;
-  close(): void | Promise<void>;
-}
-export interface BackgroundCompositionContext {
-  database: Database;
-  config: Config;
-  clock: Clock;
-  changes: ChangeSignal;
-}
-export type BackgroundServiceFactory = (
-  context: BackgroundCompositionContext,
-) => ComposedBackgroundService;
+import {
+  compose_background_services,
+  dispatcher_admitted,
+  reconcile_background_attention,
+} from '../lifecycle/background.ts';
+import type {
+  BackgroundCompositionContext,
+  BackgroundServiceFactory,
+  ComposedBackgroundService,
+  RunningServer,
+} from '../lifecycle/contracts.ts';
+export type {
+  BackgroundCompositionContext,
+  BackgroundServiceFactory,
+  ComposedBackgroundService,
+} from '../lifecycle/contracts.ts';
 
 /** One reconciled record is shared by the core, ordinary areas, and view readers. */
-export interface ConversationCompositionContext extends BackgroundCompositionContext {
+export interface ConversationCompositionContext extends Omit<
+  BackgroundCompositionContext,
+  'assert_database_owned'
+> {
   record: ConversationViewRuntime;
   require_runtime_ownership(): void;
 }
@@ -74,29 +76,47 @@ export interface ServerOptions {
   conversationSystem?: ConversationSystem;
   createSignalAuthority?: (database: Database) => SignalPublicationAuthority;
 }
-export async function startServer(options: ServerOptions = {}): Promise<void> {
+export async function startServer(options: ServerOptions = {}): Promise<RunningServer> {
   const config = loadConfig();
   config.db_path = assert_test_database_path(config.db_path);
   const ownership = acquireRuntimeOwnership(config.db_path);
   let dispatcher: ReturnType<typeof acquireLock> = null;
   let database: ReturnType<typeof createDatabase> | undefined;
-  let areaLoops: ReturnType<typeof composeAreaLoops> | undefined;
-  let loops: BackgroundLoops | undefined;
+  let background: ComposedBackgroundService | undefined;
   let signalAuthority: SignalPublicationAuthority | undefined;
   let core: SqliteProcessConversationSystem | undefined;
   let app: FastifyInstance | undefined;
   let ownership_current = true;
-  const background: ComposedBackgroundService[] = [];
-  const closeBackground = async () => {
-    let failure: unknown;
-    for (const service of background.splice(0).reverse()) {
+  let closing: Promise<void> | undefined;
+  const signalHandlers = new Map<NodeJS.Signals, () => void>();
+  const close = (): Promise<void> => {
+    if (closing) return closing;
+    signalAuthority?.invalidate('shutdown');
+    const deadline = performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
+    const failures: unknown[] = [];
+    const attempt = async (operation: () => unknown) => {
       try {
-        await service.close();
+        await operation();
       } catch (error) {
-        failure ??= error;
+        failures.push(error);
       }
-    }
-    if (failure) throw failure;
+    };
+    closing = (async () => {
+      await attempt(() => background?.close({ deadline }));
+      // Core and record settlement have no deadline contract. Retain ownership
+      // through their final writes; the total provider bound remains open.
+      await attempt(() => core?.shutdown());
+      await attempt(() => closeAreas());
+      await attempt(() => app?.close());
+      if (failures.length)
+        throw new AggregateError(failures, 'Server shutdown failed; ownership retained');
+      ownership_current = false;
+      database?.close();
+      dispatcher?.close();
+      ownership.close();
+      for (const [signal, handler] of signalHandlers) process.removeListener(signal, handler);
+    })();
+    return closing;
   };
   try {
     const changes = new ChangeSignal();
@@ -104,7 +124,14 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     database = createDatabase(config.db_path, { commitSteps, onChange: () => changes.emit() });
     prepareAreas(database);
     signalAuthority = (options.createSignalAuthority ?? createIdlePublicationAuthority)(database);
-    initializeAreas(database, signalAuthority, config, clock);
+    if (!config.test_mode && config.dispatch_enabled) {
+      dispatcher = acquireLock(config.dispatcher_lock_path);
+    }
+    initializeAreas(database, signalAuthority, config, clock, () => {
+      if (dispatcher_admitted(config, dispatcher !== null)) {
+        reconcile_background_attention({ database: database! });
+      }
+    });
     const context: ConversationCompositionContext = {
       database,
       config,
@@ -130,9 +157,6 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
       typeof options.testAreas === 'function'
         ? options.testAreas(testContext)
         : (options.testAreas ?? []);
-    if (!config.test_mode && config.dispatch_enabled) {
-      dispatcher = acquireLock(config.dispatcher_lock_path);
-    }
     const ownedContext: OwnedAreaContext = {
       database,
       config,
@@ -142,21 +166,13 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
       conversationSystem,
       assert_database_owned: context.require_runtime_ownership,
     };
-    areaLoops = composeAreaLoops(ownedContext, options.areaLoops);
-    loops = prepare_background_loops({
-      enable_worker_readiness: options.enableWorkerReadiness ?? false,
-      test_mode: config.test_mode,
-      dispatch_enabled: config.dispatch_enabled,
+    background = compose_background_services(ownedContext, {
       dispatcher_owned: dispatcher !== null,
+      enable_worker_readiness: options.enableWorkerReadiness,
       before_poll: options.beforeWorkerReadinessPoll,
-      worker: conversationSystem
-        ? {
-            connect_database: () => database!,
-            conversation_system: conversationSystem,
-            worker_type_registry: configured_worker_type_registry(),
-            now: () => clock.nowUnix(),
-          }
-        : null,
+      areaLoops: options.areaLoops,
+      notificationDelivery: options.notificationDelivery,
+      stallChecker: options.stallChecker,
     });
     app = await createApp(config, {
       database,
@@ -178,51 +194,21 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
       conversationSystem,
       workspaceAdmission: conversationSystem?.workspace_admission,
     });
-    // Comparison mode never invokes composition factories, even when supplied.
-    if (!config.test_mode) {
-      const context = { database, config, clock, changes };
-      if (dispatcher && options.notificationDelivery) {
-        const delivery = options.notificationDelivery(context);
-        background.push(delivery);
-        await delivery.start();
-      }
-      if (options.stallChecker) {
-        const checker = options.stallChecker(context);
-        background.push(checker);
-        await checker.start();
-      }
-    }
-    let closing: Promise<void> | undefined;
-    const close = () => {
-      if (closing) return closing;
-      signalAuthority?.invalidate('shutdown');
-      const deadline = performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
-      return (closing = Promise.resolve(areaLoops?.stop({ deadline }))
-        .finally(() => loops?.stop({ deadline }))
-        .finally(() => closeBackground())
-        .finally(() => core?.shutdown())
-        .finally(() => closeAreas())
-        .finally(() => app?.close())
-        .finally(() => {
-          database?.close();
-          dispatcher?.close();
-          ownership_current = false;
-          ownership.close();
-        })
-        .catch((error) => {
-          closing = undefined;
-          throw error;
-        }));
-    };
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-      process.once(signal, () => {
+      const handler = () => {
         void close().catch((error) => {
           console.error(error);
           process.exitCode = 1;
         });
-      });
+      };
+      signalHandlers.set(signal, handler);
+      process.once(signal, handler);
     }
-    loops.start(config.tick_seconds, changes);
+    await background.start();
+    if (closing) {
+      await closing;
+      return { close };
+    }
     const inherited = process.env.PLAN_SERVER_LISTENER_FD;
     if (inherited !== undefined) {
       const fd = Number(inherited);
@@ -231,43 +217,12 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     } else {
       await app.listen({ host: '127.0.0.1', port: config.port });
     }
+    return { close };
   } catch (error) {
-    signalAuthority?.invalidate('shutdown');
-    const deadline = performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
     try {
-      await areaLoops?.stop({ deadline });
+      await close();
     } catch (cleanupError) {
-      console.error('area loop cleanup failed', cleanupError);
-    }
-    try {
-      await loops?.stop({ deadline });
-    } catch (cleanupError) {
-      console.error('Worker loop cleanup failed', cleanupError);
-    }
-    try {
-      await closeBackground();
-    } catch (cleanupError) {
-      console.error('background cleanup failed', cleanupError);
-    }
-    try {
-      await core?.shutdown();
-    } catch (cleanupError) {
-      console.error('conversation cleanup failed', cleanupError);
-    }
-    try {
-      await closeAreas();
-    } catch (cleanupError) {
-      console.error('area cleanup failed', cleanupError);
-    }
-    try {
-      await app?.close();
-    } catch (cleanupError) {
-      console.error('application cleanup failed', cleanupError);
-    } finally {
-      database?.close();
-      dispatcher?.close();
-      ownership_current = false;
-      ownership.close();
+      throw new AggregateError([error, cleanupError], 'Startup and cleanup failed');
     }
     throw error;
   }
