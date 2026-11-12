@@ -64,6 +64,14 @@ retains audio on disk for retry after reconnect or relaunch. Closing the compose
 preserves the recording; only explicit discard removes it. Sending requires nonempty
 text and locks the field until the response. Failure keeps the words available.
 
+Review and its tab badge share one server-specific snapshot of outgoing work.
+The snapshot reads the store once after an outgoing payload changes or a row is
+removed. Queue evaluation and message-attempt presentation use memory. Draft edits,
+cache writes, and unchanged outgoing saves do not refresh the snapshot. A different
+server replaces it. Review pauses store reads while its root is hidden or the app
+is not active. On return, it restores changed proposals and saved voice drafts.
+This preserves the existing decision matching and outgoing retention policy.
+
 A decision is saved before its ask leaves the screen. Like desktop, Review shows no
 receipt or status row for a saved decision. Both queued writes first check that
 the proposal is still current. Both send the displayed revision to the server,

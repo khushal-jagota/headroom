@@ -2,6 +2,7 @@ import SwiftUI
 
 struct FeedbackView: View {
     @Environment(AppStore.self) private var store
+    @Environment(ReviewSavedWork.self) private var savedReviewWork
     @State private var model = FeedbackModel()
     @State private var handled = false
 
@@ -145,7 +146,7 @@ struct FeedbackView: View {
     @ViewBuilder private func pageDestination(_ destination: FeedbackPageDestination) -> some View {
         switch destination {
         case .workspace: WorkspaceView()
-        case .review: ReviewView()
+        case .review: ReviewView(savedWork: savedReviewWork)
         case .route(let route): RouteDestination(route: route)
         }
     }

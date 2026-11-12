@@ -14,10 +14,10 @@ import Observation
 
     init(awake: KeepAwake = .shared) { self.awake = awake }
 
-    func restore(api: APIClient, draftID: String?) {
+    func restore(api: APIClient, draftID: String?, savedWork: [PendingWork]) {
         guard recorder == nil, let draftID else { return }
         self.api = api
-        work = Outbox.shared.entries(LocalStore.server(api.baseURL)).last { $0.kind == .voice && $0.draftID == draftID && $0.state != .sent }
+        work = savedWork.last { $0.kind == .voice && $0.draftID == draftID && $0.state != .sent }
         guard var saved = work else { phase = .idle; return }
         if saved.state == .recording {
             saved.state = .waiting; saved.note = "Recording recovered · waiting for connection"
