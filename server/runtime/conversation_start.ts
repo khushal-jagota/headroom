@@ -1,4 +1,5 @@
 /** Route-owned start/send/reset phases. No SQL capability survives an await. */
+import { observe_conversation_operation, ConversationStartAborted } from './abort.ts';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, statSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -61,14 +62,15 @@ export class ConversationLinkLock {
     unlock();
   }
   private tail: Promise<void> = Promise.resolve();
-  async run<T>(operation: () => Promise<T>): Promise<T> {
+  async run<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     const previous = this.tail;
     let release!: () => void;
-    this.tail = new Promise<void>((resolve) => {
+    const current = new Promise<void>((resolve) => {
       release = resolve;
     });
-    await previous;
+    this.tail = previous.then(() => current);
     try {
+      await observe_conversation_operation(() => previous, signal);
       return await operation();
     } finally {
       this.release(release);
@@ -312,11 +314,12 @@ export async function start_ticket_conversation(
   values: ConversationStartValues,
   options: {
     conversation_id: string;
+    signal?: AbortSignal;
     now: number;
   },
 ): Promise<LinkedConversation> {
   const request = start_request(options.conversation_id, values);
-  await system.start_conversation(request);
+  await observe_conversation_operation(() => system.start_conversation(request), options.signal);
   let linked: Ticket;
   try {
     // Python autocommits the durable identity before its separate guarded link.
@@ -360,6 +363,7 @@ export async function start_ticket_conversation(
   return { conversation_id: now_in, made_here: now_in === options.conversation_id };
 }
 interface MessageOptions {
+  signal?: AbortSignal;
   conversation_id: string | null;
   created_conversation_id?: string | null;
   runs_under?: ConversationStartOverrides;
@@ -410,7 +414,10 @@ async function send_existing_ticket(
   content: MessageContent,
   options: TicketMessageOptions,
 ): Promise<DeliveredMessage> {
-  const fate = await system.send(sending_into, content, send_options(options, true));
+  const fate = await observe_conversation_operation(
+    async () => system.send(sending_into, content, send_options(options, true)),
+    options.signal,
+  );
   const runs = options.runs_under ?? NO_CONVERSATION_START_OVERRIDES;
   if (
     fate instanceof PromptDeliveryStarted &&
@@ -471,6 +478,7 @@ export async function send_to_ticket_conversation(
     const linked = await start_ticket_conversation(system, database, ticket, values, {
       conversation_id: making,
       now: options.now,
+      signal: options.signal,
     });
     if (!linked.made_here) {
       await let_go_ticket(system, database, ticket_id, making, options.now);
@@ -479,16 +487,26 @@ export async function send_to_ticket_conversation(
         database,
         ticket_id,
         linked.conversation_id,
-        await message_content_for(content, linked.conversation_id),
+        await observe_conversation_operation(
+          () => message_content_for(content, linked.conversation_id),
+          options.signal,
+        ),
         options,
       );
     }
     let fate: PromptDeliveryFate;
     try {
-      fate = await system.send(
-        making,
-        await message_content_for(content, making),
-        send_options(options, true),
+      fate = await observe_conversation_operation(
+        async () =>
+          system.send(
+            making,
+            await observe_conversation_operation(
+              () => message_content_for(content, making),
+              options.signal,
+            ),
+            send_options(options, true),
+          ),
+        options.signal,
       );
       if (fate instanceof PromptDeliveryStarted)
         database.write((tx) =>
@@ -501,6 +519,7 @@ export async function send_to_ticket_conversation(
           }),
         );
     } catch (error) {
+      if (error instanceof ConversationStartAborted) throw error;
       await let_go_ticket(system, database, ticket_id, making, options.now);
       throw error;
     }
@@ -523,7 +542,10 @@ export async function send_to_ticket_conversation(
     database,
     ticket_id,
     sending_into,
-    await message_content_for(content, sending_into),
+    await observe_conversation_operation(
+      () => message_content_for(content, sending_into),
+      options.signal,
+    ),
     options,
   );
 }
@@ -606,6 +628,7 @@ export async function start_agent_conversation(
   values: ConversationStartValues,
   options: {
     conversation_id: string;
+    signal?: AbortSignal;
     required_manager_id?: string | null;
   },
 ): Promise<LinkedConversation> {
@@ -616,7 +639,10 @@ export async function start_agent_conversation(
         ? manager_home_folder(database, options.required_manager_id)
         : null;
   if (home !== null && values.workspace_folder === home) mkdirSync(home, { recursive: true });
-  await system.start_conversation(start_request(options.conversation_id, values));
+  await observe_conversation_operation(
+    () => system.start_conversation(start_request(options.conversation_id, values)),
+    options.signal,
+  );
   const now_in = database.write((tx) => {
     if (options.required_manager_id == null)
       tx.run(
@@ -684,7 +710,9 @@ export async function send_to_agent_conversation(
   let in_now = read_agent_conversation(database, agent_key);
   let runs_under = options.runs_under ?? NO_CONVERSATION_START_OVERRIDES;
   if (options.required_manager_id != null && in_now !== null) {
-    const steering = options.mode === 'steer' && (await system.is_running(in_now));
+    const steering =
+      options.mode === 'steer' &&
+      (await observe_conversation_operation(() => system.is_running(in_now!), options.signal));
     runs_under = database.read((sql) =>
       manager_reuse_overrides(sql, options.required_manager_id!, values, runs_under, steering),
     );
@@ -701,14 +729,22 @@ export async function send_to_agent_conversation(
     const linked = await start_agent_conversation(system, database, agent_key, values, {
       conversation_id: making,
       required_manager_id: options.required_manager_id,
+      signal: options.signal,
     });
     if (linked.made_here) {
       let fate: PromptDeliveryFate;
       try {
-        fate = await system.send(
-          making,
-          await message_content_for(content, making),
-          send_options(sending_options, false, options.retain_created_conversation ?? false),
+        fate = await observe_conversation_operation(
+          async () =>
+            system.send(
+              making,
+              await observe_conversation_operation(
+                () => message_content_for(content, making),
+                options.signal,
+              ),
+              send_options(sending_options, false, options.retain_created_conversation ?? false),
+            ),
+          options.signal,
         );
       } catch (error) {
         if (!options.retain_created_conversation)
@@ -730,10 +766,17 @@ export async function send_to_agent_conversation(
       agent_key,
       conversation_id: options.conversation_id,
     });
-  const fate = await system.send(
-    sending_into,
-    await message_content_for(content, sending_into),
-    send_options(sending_options, true, options.retain_created_conversation ?? false),
+  const fate = await observe_conversation_operation(
+    async () =>
+      system.send(
+        sending_into,
+        await observe_conversation_operation(
+          () => message_content_for(content, sending_into),
+          options.signal,
+        ),
+        send_options(sending_options, true, options.retain_created_conversation ?? false),
+      ),
+    options.signal,
   );
   return { conversation_id: sending_into, fate };
 }

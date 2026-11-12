@@ -1,0 +1,45 @@
+{
+  "ignore": {
+    "attention_history_metadata.started_at": "Schema initialization reads real wall time."
+  },
+  "response_tokens": {
+    "body.coverage.revision": "Navigation continuity revisions count source commits, so compare changes.",
+    "body.ordering_generation": "TypeScript uses Intl.Collator under its own approved ordering generation.",
+    "body.content.windows.*.next": "Opaque cursor/binding digest includes backend-specific collation operands or epoch. Ordered members and record contents are compared without normalization.",
+    "body.content.windows.*.previous": "Opaque cursor/binding digest includes backend-specific collation operands or epoch. Ordered members and record contents are compared without normalization.",
+    "body.content.windows.*.forward_overlap": "Opaque cursor/binding digest includes backend-specific collation operands or epoch. Ordered members and record contents are compared without normalization.",
+    "body.content.windows.*.backward_overlap": "Opaque cursor/binding digest includes backend-specific collation operands or epoch. Ordered members and record contents are compared without normalization.",
+    "body.content.windows.*.request.anchor": "Opaque cursor/binding digest includes backend-specific collation operands or epoch. Ordered members and record contents are compared without normalization.",
+    "body.content_version": "Navigation content digest covers opaque installation continuity, so compare changes.",
+    "body.view_id": "Opaque cursor/binding digest includes backend-specific collation operands or epoch. Ordered members and record contents are compared without normalization."
+  },
+  "derived_tables": {
+    "navigation_meta": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "navigation_records": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "navigation_dependencies": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "navigation_root_records": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "navigation_dirty": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "navigation_journal": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "navigation_delivery_retention": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "navigation_signal_installation": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "navigation_signal_publications": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "signal_publication_meta": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "signal_publication_values": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "signal_publication_dirty": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "signal_publication_associations": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "navigation_view_meta": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "navigation_view_index": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "navigation_view_memberships": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "navigation_view_counts": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "navigation_view_current_conversations": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "navigation_view_unread_conversations": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "navigation_view_globals": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "navigation_view_changes": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15.",
+    "conversation_runtime_epoch": "Derived navigation/publication storage under the temporary idle source. Populated navigation snapshots are compared after every write; real-core publication remains deferred to Unit 15."
+  },
+  "tokens": {},
+  "response_ignore": {
+    "body.coverage.scope": "Navigation continuity scope is specific to each installation.",
+    "body.coverage.epoch": "Navigation continuity epoch is specific to each process."
+  }
+}
