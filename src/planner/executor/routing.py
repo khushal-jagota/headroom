@@ -45,7 +45,9 @@ class LocaleBackendChildFactory:
         if ticket_id:
             conn = connect(self.db_path)
             try:
-                row = conn.execute("SELECT locale FROM tickets WHERE id=?", (ticket_id,)).fetchone()
+                row = conn.execute(
+                    "SELECT locale FROM tickets WHERE id=?", (ticket_id,)
+                ).fetchone()
                 remote = row is not None and row["locale"] == "macos"
             finally:
                 conn.close()

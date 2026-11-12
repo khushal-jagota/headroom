@@ -298,15 +298,18 @@ def _published(store: InboxStore, files: tuple[FileManifest, ...]) -> bool:
 
 
 class _Transactions:
-    """Count the store's write transactions and the renames each one holds."""
+    """Count the store's write transactions, the renames each one holds, and the path
+    checks made under any of them."""
 
     def __init__(self, store: InboxStore, monkeypatch: pytest.MonkeyPatch) -> None:
         self.renames: list[int] = []
+        self.paths_checked_under_writer = 0
         self.before: dict[int, Any] = {}
         self.renamed_under_writer: list[bool] = []
         self.open = False
         original = store._transaction
         original_replace = os.replace
+        original_target = store.file_target
 
         @contextmanager
         def counted() -> Iterator[sqlite3.Connection]:
@@ -327,7 +330,12 @@ class _Transactions:
                 self.renamed_under_writer.append(not _probe_writer_free(store))
             original_replace(*args, **kwargs)
 
+        def target(manifest: FileManifest) -> Path:
+            self.paths_checked_under_writer += self.open
+            return original_target(manifest)
+
         monkeypatch.setattr(store, "_transaction", counted)
+        monkeypatch.setattr(store, "file_target", target)
         monkeypatch.setattr(os, "replace", replaced)
 
 
@@ -343,6 +351,9 @@ def test_many_files_publish_in_bounded_groups_each_under_the_writer(
     # Three publication transactions of at most two renames, then the receipt's, with none.
     assert transactions.renames == [2, 2, 1, 0]
     assert all(transactions.renamed_under_writer)
+    # Each path is checked once, before any writer: a group's hold must not grow with
+    # the whole item (1,511 checks held each group for about 0.5 s).
+    assert transactions.paths_checked_under_writer == 0
     assert _published(store, files)
 
 

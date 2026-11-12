@@ -222,7 +222,7 @@ class InboxStore(VpsDatabase):
         connection.execute("SAVEPOINT domain_write")
         try:
             if check_files:
-                self._validate_envelope(connection, envelope)
+                self.require_file_owner(connection, envelope)
             result = writer(connection, envelope)
             if not connection.in_transaction:
                 raise RuntimeError("Executor domain writer committed its transaction")
@@ -302,7 +302,7 @@ class InboxStore(VpsDatabase):
         """
         connection = connect(self.db_path)
         try:
-            self._validate_envelope(connection, envelope)
+            self.require_file_owner(connection, envelope)
         finally:
             connection.close()
         ready: list[PublishedFile | None] = []
@@ -355,7 +355,7 @@ class InboxStore(VpsDatabase):
                 )
                 if self._prior_receipt(connection, envelope, identity) is not None:
                     raise PlannerError(ErrorCode.retry_later, "This item was saved meanwhile")
-                self._validate_envelope(connection, envelope)
+                self.require_file_owner(connection, envelope)
                 with directory_descriptor(staging_path) as staging:
                     for index, source, file in group:
                         if file_version(source) != file.version:
@@ -440,8 +440,12 @@ class InboxStore(VpsDatabase):
             stored.accepted_at_vps_ms,
         )
 
-    def _validate_envelope(self, connection: sqlite3.Connection, envelope: QueuedEnvelope) -> None:
-        """The child's open assignment owns every file dependency. Reads rows only."""
+    def require_file_owner(self, connection: sqlite3.Connection, envelope: QueuedEnvelope) -> None:
+        """The child's open assignment owns every file dependency. Reads rows only.
+
+        Path safety is checked once, where publish_file_dependencies resolves each
+        target, with no writer held: the writer guards rows, not the file tree.
+        """
         if envelope.file_dependencies:
             reference = type_adapter(ChildReference).validate_python(
                 payload_child(envelope.payload)
@@ -453,7 +457,6 @@ class InboxStore(VpsDatabase):
             ):
                 raise PlannerError(ErrorCode.agent_forbidden, "child has no VPS assignment", {})
             for manifest in envelope.file_dependencies:
-                self.file_target(manifest)
                 if (
                     reference.conversation_id != envelope.conversation_id
                     or assignment is None

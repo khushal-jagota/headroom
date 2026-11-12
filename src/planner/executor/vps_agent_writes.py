@@ -292,7 +292,7 @@ class AgentWrites:
                 body,
             )
             # The files' owner is the child's open assignment, read under this writer.
-            self.store._validate_envelope(conn, envelope)
+            self.store.require_file_owner(conn, envelope)
             self.store.require_unchanged_files(envelope, published)
             result: JsonObject = {
                 "target": {"kind": recipient.kind.value, "id": recipient.id},
