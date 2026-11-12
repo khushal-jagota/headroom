@@ -3,7 +3,10 @@ export interface JsonFailure {
   position: number;
   message: string;
 }
-export function jsonFailure(source: string): JsonFailure {
+export function jsonFailure(
+  source: string,
+  options: { allow_non_finite?: boolean } = {},
+): JsonFailure {
   let i = 0;
   const fail = (message: string, position = i): never => {
     throw { position: Array.from(source.slice(0, position)).length, message };
@@ -78,7 +81,12 @@ export function jsonFailure(source: string): JsonFailure {
         i++;
       }
     }
-    for (const literal of ['true', 'false', 'null'])
+    for (const literal of [
+      'true',
+      'false',
+      'null',
+      ...(options.allow_non_finite ? ['NaN', 'Infinity', '-Infinity'] : []),
+    ])
       if (source.startsWith(literal, i)) {
         i += literal.length;
         return;

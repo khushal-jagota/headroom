@@ -2,6 +2,15 @@
 
 This file records intentional differences that the migration Manager accepted. No new difference enters this file without that acceptance. Close an entry when Python adopts the same behavior.
 
+## Unknown managed root in a verified backup
+
+The migration Manager accepted this difference during Unit 21 Part 3 source review.
+Python indexes its fixed destination-root map with each recorded root name. An unknown name raises an uncaught `KeyError`.
+TypeScript reports an operational error instead. The plain environment restore handler returns exit code 1 and an error on stderr.
+It does not reproduce the Python fault. Snapshot verification and the database/managed-root restore order retain their existing behavior.
+
+The existing `test_unit21_restore_refusals_and_failed_swaps_preserve_owned_files` comparison pins this accepted refusal.
+
 ## Backend discovery in test mode
 
 The migration Manager accepted this safer rule during Unit 19's backend review.
@@ -192,6 +201,17 @@ and the session cursor from `session_id`. Provider-private session-file effects 
 no provider session file or owner executable was inspected for this check. The adapter follows
 this accepted policy.
 
+## Credential request UUID text
+
+Python's `UUID()` accepts additional integer-text forms, including a `0x` prefix,
+a leading plus sign, and underscores when the resulting text has the required
+length. Credential requests in TS accept canonical
+hexadecimal UUID text and the ordinary UUID wrappers, but refuse those lenient
+integer-text forms. The Manager accepts this narrower rule as Python leniency
+that TS does not reproduce. The focused credential-request check pins refusal of
+one `0x`-prefixed form. Canonical UUID identities and all normal request outcomes
+still match Python.
+
 ## Codex process cleanup and blocked writes
 
 The migration Manager accepted these three differences in the Part 1 review on
@@ -218,3 +238,11 @@ on November 12, 2026. On Linux, Python sets `BASH_ENV` to
 `server/conversation/tool_shell_startup.bash` through the shared TypeScript helper.
 The paired startup check asserts each exact path and identical script bytes. Every other
 child environment value and launch argument compares exactly.
+
+## Codex ask withdrawal at shutdown
+
+The migration Manager accepted this difference in the Part 2 review on November 12, 2026.
+TypeScript bounds ask withdrawal before shutdown to two seconds. When that bound expires,
+client stop breaks the wire and stops and joins the owned child. Python waits for the
+withdrawal without this bound. The bound prevents a parked ask or blocked write from
+holding process cleanup open.

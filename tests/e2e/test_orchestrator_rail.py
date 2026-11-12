@@ -28,7 +28,6 @@ from tests.support.server_fixtures import rail_server as rail_server
 
 from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
 
-EVIDENCE = Path("/home/vps/Deployments/Panels/current/data/files/tickets/t_0kjtqmge/artifacts/rail")
 LONG_TITLE = "Review the entire Worker title when the adjustable rail clips this long approval row"
 
 
@@ -120,6 +119,7 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     api: ApiHelper,
+    tmp_path: Path,
 ) -> None:
     server = rail_server
     item, empty, ticket, question = _seed(server, api)
@@ -216,7 +216,7 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
         "() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))"
     )
     expect(page.locator("[data-rail-hover-panel]")).to_have_attribute("aria-hidden", "true")
-    capture_success(page, str(EVIDENCE / "settled-lean-no-popover.png"))
+    capture_success(page, str(tmp_path / "settled-lean-no-popover.png"))
     scoped_parent = left.locator(f'[data-settled-item="{item["id"]}"]')
     expect(scoped_parent).to_be_visible(timeout=WAIT_MS)
     expect(left.locator('[data-settled-item] .settled-title > span')).to_have_text(
@@ -225,7 +225,7 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     expect(left.locator('[data-settled-scroll] [data-message-conversation]')).to_have_count(0)
     expect(left.locator('[data-settled-scroll] [data-workspace-messages]')).to_have_count(0)
     expect(scoped_parent.get_by_role("button", name=f"Reopen {item['title']}")).to_be_visible()
-    capture_success(page, str(EVIDENCE / "settled-managers-only.png"))
+    capture_success(page, str(tmp_path / "settled-managers-only.png"))
     scoped_parent.locator(".settled-title").click()
     scoped_pane = page.locator(f'[data-manager-workspace="{item["id"]}"]')
     scoped_row = scoped_pane.locator(f'[data-worker-ticket-id="{ticket["id"]}"]')
@@ -255,7 +255,7 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
             == 0
         )
     expect(attention).to_be_visible()
-    capture_success(page, str(EVIDENCE / "rail-1440.png"))
+    capture_success(page, str(tmp_path / "rail-1440.png"))
     _message(server, "rail-chief", CHIEF_PRINCIPAL, "Chief own direct message")
     _message(
         server,
@@ -273,4 +273,4 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0, timeout=WAIT_MS)
     expect(card.locator(".item-head .stage-mark")).to_be_visible()
     expect(attention).to_be_visible()
-    capture_success(page, str(EVIDENCE / "own-conversation-marks.png"))
+    capture_success(page, str(tmp_path / "own-conversation-marks.png"))

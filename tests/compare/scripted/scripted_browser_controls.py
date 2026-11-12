@@ -22,6 +22,67 @@ def install_browser_controls(
 ) -> None:
     install_connected_controls(app, db_path)
 
+    review_departures: dict[str, list[dict[str, Any]]] = {}
+    departure_trace_installed = False
+
+    def batch_rows(identity: str) -> list[dict[str, Any]]:
+        with closing(connect(db_path)) as connection:
+            return [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT id,status,sender_message_id FROM manager_wake_batches "
+                    "WHERE conversation_id=? ORDER BY id",
+                    (identity,),
+                )
+            ]
+
+    @app.get("/api/test/signals/{conversation_id}/review-batch")
+    async def review_batch_state(conversation_id: str) -> dict[str, Any]:
+        return {
+            "departures": review_departures.get(conversation_id, []),
+            "batches": batch_rows(conversation_id),
+        }
+
+    @app.post("/api/test/signals/{conversation_id}/review-batch")
+    async def review_batch(conversation_id: str) -> dict[str, Any]:
+        nonlocal departure_trace_installed
+        review_departures.setdefault(conversation_id, [])
+        if not departure_trace_installed:
+            store = app.state.conversation.store
+            original = store.mark_held_sender_messages_leaving_queue
+
+            async def traced(identity: str, senders: tuple[str, ...]) -> int:
+                if identity not in review_departures:
+                    return int(await original(identity, senders))
+                before = batch_rows(identity)
+                changed = await original(identity, senders)
+                review_departures.setdefault(identity, []).append(
+                    {"before": before, "changed": changed, "after": batch_rows(identity)}
+                )
+                return int(changed)
+
+            store.mark_held_sender_messages_leaving_queue = traced
+            departure_trace_installed = True
+        # Claim a real proposal batch without dispatch, so the list owns dispatch timing.
+        from dataclasses import asdict
+
+        from planner.manager_wakes import data as wakes
+
+        with closing(connect(db_path)) as connection:
+            batch = wakes.claim_next_batch(
+                connection, process_token="unit15b", now=clock.now_unix()
+            )
+            if batch is None:
+                raise ValueError("No review batch to claim")
+            wakes.record_batch_offering(
+                connection,
+                batch.id,
+                conversation_id=conversation_id,
+                process_token="unit15b",
+                now=clock.now_unix(),
+            )
+            return asdict(batch)
+
     @app.post("/api/test/signals/{conversation_id}/start")
     async def start(conversation_id: str, body: dict[str, str] | None = None) -> dict[str, bool]:
         ticket_id = (body or {}).get("ticket_id")

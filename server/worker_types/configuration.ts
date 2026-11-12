@@ -37,3 +37,16 @@ export function configured_worker_runtime_definitions(): ConfiguredWorkerRuntime
 export function configured_worker_type_registry(): WorkerTypeRegistry {
   return configured.worker_type_registry;
 }
+/** Fixture transitions are synchronous and must not replace a running server's registry. */
+export function with_worker_runtime_definitions<T>(
+  sql: ReadSql,
+  action: () => T & (T extends PromiseLike<unknown> ? never : unknown),
+): T {
+  const previous = configured;
+  try {
+    load_worker_runtime_definitions(sql);
+    return action();
+  } finally {
+    configured = previous;
+  }
+}

@@ -245,6 +245,9 @@ def run(
                     if not provider:
                         raise RuntimeError(f"{variable} requires explicit --provider selection")
                     env[variable] = "1"
+            from test_runtime import environment_for
+
+            env = environment_for(scratch / "runtime", env)
             env.update(create_synthetic_homes(scratch))
             env.update(
                 {
