@@ -5,8 +5,8 @@ Both executor halves import their wire types from `wire.generated.ts`. Python re
 From the repository root, in an isolated development environment:
 
 ```sh
-scripts/dev python server/executor/tools/export_wire.py | node server/executor/tools/generate_wire.ts
-scripts/dev python server/executor/tools/export_wire.py | node server/executor/tools/generate_wire.ts --check
+scripts/dev python tests/compare/direct/export_unit22_wire.py | node server/executor/tools/generate_wire.ts
+scripts/dev python tests/compare/direct/export_unit22_wire.py | node server/executor/tools/generate_wire.ts --check
 ```
 
 Remove inherited `PLAN_*` and provider-home variables before repository execution. Supply private paths and an explicit non-live server URL. Ticket actions through `panels` retain the Worker's identity variables. The generator starts no server and opens no database, provider home, or network connection.

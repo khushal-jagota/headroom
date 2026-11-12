@@ -55,7 +55,9 @@ def test_unit22_shared_wire_types_are_current(
             check=False,
         )
 
-    exported = run([sys.executable, str(TOOLS / "export_wire.py")])
+    exported = run(
+        [sys.executable, str(ROOT / "tests/compare/direct/export_unit22_wire.py")]
+    )
     assert exported.returncode == 0, exported.stderr
     schema = json.loads(exported.stdout)
     manifest = schema["manifest"]
