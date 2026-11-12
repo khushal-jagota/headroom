@@ -9,7 +9,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import httpx
@@ -35,7 +35,7 @@ def test_cross_area_http(tmp_path: Path) -> None:
 
         def do_GET(self) -> None:
             self.rfile.read(int(self.headers.get("Content-Length", "0")))
-            seen.append({"port": self.server.server_port, "path": self.path,
+            seen.append({"port": cast(ThreadingHTTPServer, self.server).server_port, "path": self.path,
                          "secret": self.headers.get("X-Synthetic-Key"),
                          "custom": self.headers.get("X-Test-Secret"),
                          "authorization": self.headers.get("Authorization")})
