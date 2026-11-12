@@ -24,6 +24,7 @@ from planner.environments.runtime_contracts import (
 
 PROBE_TIMEOUT_SECONDS = 45
 ADMISSION_TIMEOUT_SECONDS = 120
+PROBE_REPORT_LIMIT = 1024 * 1024
 
 # Isolated Python excludes cwd and environment paths. Use its installed packages
 # and require every imported native package to stay in its root.
@@ -282,7 +283,9 @@ def _run_json_probe(command: list[str], *, state: Path, timeout: float) -> objec
             if code:
                 raise AppValidationError(f"runtime probe failed: {_tail(errors)}")
             output.seek(0)
-            text = output.read()
+            text = output.read(PROBE_REPORT_LIMIT + 1)
+            if len(text) > PROBE_REPORT_LIMIT:
+                raise AppValidationError("runtime probe report is too large")
     except (OSError, subprocess.SubprocessError) as exc:
         raise AppValidationError(f"runtime probe failed: {exc}") from exc
     try:
