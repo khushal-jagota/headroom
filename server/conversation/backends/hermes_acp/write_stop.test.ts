@@ -1,3 +1,4 @@
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { afterEach, expect, test, vi } from 'vitest';
 import { BackendPromptAccepted } from '../contracts.ts';
 import {
@@ -52,6 +53,7 @@ test('stop after a successful prompt write cannot turn acceptance into an unwrit
   });
   const seen: string[] = [];
   const child = new HermesAcpBackendChild({
+    child_processes: new ChildProcesses(),
     launch: { argv: ['/synthetic'], environment_overrides: [] },
     resolved_start: resolved,
     event_sink: {

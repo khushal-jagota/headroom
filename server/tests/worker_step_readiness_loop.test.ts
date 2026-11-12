@@ -22,6 +22,7 @@ import {
   PromptDeliveryRefused,
   PromptDeliverySuppressed,
   PromptDeliveryUncertain,
+  PromptDeliveryStarted,
 } from '../conversation/contracts.ts';
 import {
   start_ready_worker_step,
@@ -34,6 +35,8 @@ import { configure_conversation_start } from '../runtime/conversation_start.ts';
 import { readinessTestRoutes } from '../runtime/testing.ts';
 import { loadConfig } from '../core/config.ts';
 import { TestClock } from '../core/clock.ts';
+import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
+import { Deferred } from '../conversation/runtime/state.ts';
 import { acquireLock } from '../core/locks/index.ts';
 import { ChangeSignal } from '../core/changes/index.ts';
 afterEach(() => vi.restoreAllMocks());
@@ -439,7 +442,7 @@ test('an unanswered compaction sends one queued notice and an uncertain notice p
 });
 
 // Gap: normal drain cases cannot prove that a stalled provider permits loop shutdown.
-test('loop stop aborts a hung start at its deadline and releases dispatcher ownership', async () => {
+test('loop stop aborts its observer immediately and retains raw start ownership past the deadline', async () => {
   const { db, system, options } = setup();
   const ticket = create(db);
   const path = fixture_path(db) + '.hung-dispatcher.lock';
@@ -448,23 +451,45 @@ test('loop stop aborts a hung start at its deadline and releases dispatcher owne
   const sending = new Promise<void>((resolve) => {
     entered = resolve;
   });
+  const provider = new Deferred<PromptDeliveryStarted>();
   vi.spyOn(system, 'send').mockImplementation(() => {
     entered();
-    return new Promise(() => {});
+    return provider.promise;
   });
   const loop = new WorkerStepReadinessLoop(options);
   loop.poll_once();
-  await sending;
-  const departure = read(db, ticket.id);
-  await loop.stop({ deadline: performance.now() / 1000 + 0.01 });
-  owner.close();
-  const next = acquireLock(path);
-  expect(next).not.toBeNull();
-  next!.close();
-  expect(read(db, ticket.id)).toMatchObject({
-    conversation_id: departure.conversation_id,
-    worker_step_claim: 'out',
-    worker_step_claim_revision: departure.worker_step_claim_revision,
-  });
-  expect(loop.poll_once()).toEqual([]);
+  try {
+    await sending;
+    const departure = read(db, ticket.id);
+    const abort = vi.spyOn(AbortController.prototype, 'abort');
+    const stopping = loop.stop({ deadline: performance.now() / 1000 + 0.01 });
+    expect(abort).toHaveBeenCalledOnce();
+    await expect(stopping).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
+    expect(acquireLock(path)).toBeNull();
+    let actual_done = false;
+    const actual = loop.settled().then(() => {
+      actual_done = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(actual_done).toBe(false);
+    provider.resolve(new PromptDeliveryStarted());
+    await actual;
+    owner.close();
+    const next = acquireLock(path);
+    expect(next).not.toBeNull();
+    next!.close();
+    expect(read(db, ticket.id)).toMatchObject({
+      conversation_id: departure.conversation_id,
+      worker_step_claim: 'out',
+      worker_step_claim_revision: departure.worker_step_claim_revision,
+    });
+    expect(loop.poll_once()).toEqual([]);
+  } finally {
+    provider.resolve(new PromptDeliveryStarted());
+    await loop.stop({ deadline: performance.now() / 1000 + 1 }).catch((error: unknown) => {
+      if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+    });
+    await loop.settled();
+    owner.close();
+  }
 });

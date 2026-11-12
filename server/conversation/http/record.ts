@@ -91,7 +91,8 @@ export function send_event_tail(
       subscription.close();
     }
   }
-  const stream = Readable.from(output());
+  const source = output();
+  const stream = Readable.from(reply.request.request_lifetime?.iterator(source) ?? source);
   reply.raw.once('close', () => {
     subscription.close();
     stream.destroy();

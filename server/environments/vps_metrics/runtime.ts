@@ -8,6 +8,8 @@ import { error_from_wire } from './errors.ts';
 import { MetricsReaders } from './readers/pool.ts';
 import type { MetricsRead } from './readers/contracts.ts';
 import type { CollectorFactory, SamplerReply } from './sampler/contracts.ts';
+import { observe_shutdown } from '../../lifecycle/deadline.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../../core/config.ts';
 
 export interface MetricsRuntimeOptions {
   path: string;
@@ -29,6 +31,8 @@ export class MetricsRuntime {
   private stopped = false;
   private starting?: Promise<void>;
   private stopping?: Promise<void>;
+  private shutdown_settlement?: Promise<void>;
+  private readers_closing?: Promise<void>;
   private exited?: Promise<void>;
   private activities = new Map<
     string,
@@ -60,7 +64,7 @@ export class MetricsRuntime {
         for (const entry of this.activities.values())
           entry.reject(new MetricsOperationalError('VPS metrics storage is unavailable'));
         this.activities.clear();
-        if (!this.stopped) void this.reads.close();
+        if (!this.stopped) void this.close_readers().catch(() => {});
         resolve();
       }),
     );
@@ -93,9 +97,8 @@ export class MetricsRuntime {
     } catch (error) {
       this.stopped = true;
       worker.postMessage({ type: 'stop' });
-      await this.reads.close();
-      // A factory still under construction retains its handle until it settles.
-      worker.unref();
+      await this.close_readers();
+      // A factory still under construction remains referenced and owned until exit.
       throw error;
     }
   }
@@ -119,6 +122,9 @@ export class MetricsRuntime {
       this.worker!.postMessage({ type: 'activity', request, now: this.wall_clock() });
     });
   }
+  private close_readers(): Promise<void> {
+    return (this.readers_closing ??= this.reads.close());
+  }
   /** Deadline uses the server's monotonic seconds convention. */
   stop(options: { deadline?: number } = {}): Promise<void> {
     if (this.stopping) return this.stopping;
@@ -127,30 +133,46 @@ export class MetricsRuntime {
     for (const entry of this.activities.values())
       entry.reject(new MetricsOperationalError('VPS metrics runtime is stopped'));
     this.activities.clear();
-    this.worker?.postMessage({ type: 'stop' });
-    const readers = this.reads.close();
-    this.stopping = (async () => {
-      const deadline = options.deadline ?? performance.now() / 1000 + 30;
-      const remaining = Math.max(0, (deadline - performance.now() / 1000) * 1000);
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const all = Promise.all([readers, this.exited]).then(() => undefined);
-      await Promise.race([
-        all,
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, remaining);
-        }),
+    const actuals: Promise<unknown>[] = [];
+    this.shutdown_settlement = Promise.resolve().then(async () => {
+      const results = await Promise.allSettled([
+        ...actuals,
+        this.starting?.catch(() => {}),
+        this.exited,
       ]);
-      if (timer) clearTimeout(timer);
-      // Keep a pending collector's lock until settlement, like Python's daemon thread.
-      // Unref permits APP exit without an indefinitely live collector retaining Node.
-      this.worker?.unref();
-      await readers;
-    })();
+      const failures = results.filter((result) => result.status === 'rejected');
+      if (failures.length)
+        throw new AggregateError(
+          failures.map((result) => result.reason),
+          'VPS metrics shutdown failed',
+        );
+    });
+    this.stopping = observe_shutdown(
+      this.shutdown_settlement,
+      {
+        deadline: options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS,
+      },
+      'VPS metrics',
+    );
+    try {
+      this.worker?.postMessage({ type: 'stop' });
+    } catch (error) {
+      actuals.push(Promise.reject(error));
+    }
+    try {
+      actuals.push(this.close_readers());
+    } catch (error) {
+      actuals.push(Promise.reject(error));
+    }
     return this.stopping;
   }
-  /** Tests that release a pending synthetic collector can await actual descriptor closure. */
+  /** Reader reap and collector exit remain owned beyond a caller's deadline. */
   settled(): Promise<void> {
-    this.worker?.ref();
-    return this.exited ?? Promise.resolve();
+    return (
+      this.shutdown_settlement ??
+      Promise.all([this.starting?.catch(() => {}), this.readers_closing, this.exited]).then(
+        () => {},
+      )
+    );
   }
 }

@@ -2,6 +2,9 @@
  * late-transport fencing at lifecycle shutdown. Reuse the Ticket DB and locks.
  */
 import { afterEach, expect, test, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
+import type { Socket } from 'node:net';
+import type { ServerResponse } from 'node:http';
 import { create, fixture, fixture_path, now, read } from './ticket_fixture.ts';
 import { createDatabase } from '../core/database/index.ts';
 import { record_attention } from '../notifications/attention.ts';
@@ -12,6 +15,7 @@ import { TestClock } from '../core/clock.ts';
 import { acquireLock, acquireRuntimeOwnership } from '../core/locks/index.ts';
 import type { OwnedAreaContext } from '../core/authority/register.ts';
 import type { BackgroundServiceFactory } from '../lifecycle/contracts.ts';
+import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import {
   compose_background_services,
   dispatcher_admitted,
@@ -32,8 +36,82 @@ import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { configure_conversation_start } from '../runtime/conversation_start.ts';
 import * as wakeData from '../manager_wakes/data.ts';
+import { HttpRequestScope } from '../core/http/lifetime.ts';
 
 const next_turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+// A combined HTTP host can hide one untracked path behind another held path.
+// Independent gates prove each actual lifetime without another connected host.
+test('HTTP lifetime independently retains a handler and a pending iterator return', async () => {
+  const began = performance.now();
+  const scope = new HttpRequestScope();
+  const handler = done<void>();
+  const handled = scope.run(() => handler.promise);
+  let handler_done = false;
+  const handler_drain = scope.settled().then(() => {
+    handler_done = true;
+  });
+  await next_turn();
+  expect(handler_done).toBe(false);
+  handler.resolve();
+  await Promise.all([handled, handler_drain]);
+  const entered = done<void>(),
+    release = done<void>();
+  const source = (async function* () {
+    try {
+      yield 'owned content';
+    } finally {
+      entered.resolve();
+      await release.promise;
+    }
+  })();
+  const iterator = scope.iterator(source)[Symbol.asyncIterator]();
+  await iterator.next();
+  scope.seal();
+  const returning = iterator.return!();
+  await entered.promise;
+  let iterator_done = false;
+  const iterator_drain = scope.settled().then(() => {
+    iterator_done = true;
+  });
+  try {
+    await next_turn();
+    expect(iterator_done).toBe(false);
+    await expect(scope.run(() => 'new work')).rejects.toMatchObject({ statusCode: 503 });
+  } finally {
+    release.resolve();
+    await Promise.all([returning, iterator_drain]);
+  }
+  // response.end() is not proof of flushed bytes. A second pipelined response can
+  // already be finished=true while its output still waits behind the first.
+  const sockets = new HttpRequestScope();
+  const socket = Object.assign(new EventEmitter(), {
+    destroyed: false,
+    // Rejected preview upgrades can already be half-closed when shutdown starts.
+    writableEnded: true,
+    destroySoon: vi.fn(() => {
+      socket.writableEnded = true;
+    }),
+  });
+  const first = Object.assign(new EventEmitter(), { finished: true, writableFinished: false });
+  const second = Object.assign(new EventEmitter(), { finished: true, writableFinished: false });
+  sockets.own_connection(socket as unknown as Socket);
+  sockets.own_response(socket as unknown as Socket, first as unknown as ServerResponse);
+  sockets.own_response(socket as unknown as Socket, second as unknown as ServerResponse);
+  sockets.seal();
+  sockets.close_idle_connections();
+  expect(socket.destroySoon).not.toHaveBeenCalled();
+  first.writableFinished = true;
+  first.emit('finish');
+  first.emit('close');
+  expect(socket.destroySoon).not.toHaveBeenCalled();
+  second.writableFinished = true;
+  second.emit('finish');
+  expect(socket.destroySoon).toHaveBeenCalledOnce();
+  second.emit('close');
+  expect(socket.destroySoon).toHaveBeenCalledOnce();
+  console.info(`HTTP lifetime unit proof: ${(performance.now() - began).toFixed(3)} ms`);
+});
 afterEach(() => vi.restoreAllMocks());
 function setup() {
   const database = fixture();
@@ -77,6 +155,7 @@ test('one dispatcher owner admits all loops and test mode admits no factories', 
       close: () => {
         calls.push('close');
       },
+      settled: async () => {},
     };
   };
   const wakes = vi.spyOn(ManagerWakeLoop.prototype, 'start');
@@ -101,7 +180,7 @@ test('one dispatcher owner admits all loops and test mode admits no factories', 
         },
       );
       await inert.start();
-      await inert.close({ deadline: performance.now() / 1000 });
+      await inert.close({ deadline: performance.now() / 1000 + 1 });
     }
     expect(calls).toEqual([]);
     expect(wakes).not.toHaveBeenCalled();
@@ -141,6 +220,7 @@ test('notification wakes subscribe to commits and stop before the shared drain w
       deadlines.push(options.deadline);
       return first.promise;
     },
+    settled: () => first.promise,
   });
   const services = compose_background_services(context, {
     dispatcher_owned: true,
@@ -189,6 +269,8 @@ test('notification deadline fences late web and native results and bounds adapte
   const { context, database } = setup();
   const web = done<WebPushResult>();
   const native = done<APNsResult>();
+  const webEntered = done<void>();
+  const nativeEntered = done<void>();
   const close = done<void>();
   vi.spyOn(notificationData, 'queue_deliveries').mockReturnValue(1);
   vi.spyOn(notificationData, 'read_web_push_identity').mockReturnValue({
@@ -229,19 +311,47 @@ test('notification deadline fences late web and native results and bounds adapte
   ]);
   const webRecord = vi.spyOn(notificationData, 'record_delivery_result');
   const nativeRecord = vi.spyOn(apnsData, 'record_result');
-  const nativeSend = vi.fn(() => native.promise);
+  const nativeSend = vi.fn(() => {
+    nativeEntered.resolve();
+    return native.promise;
+  });
+  const adapterClose = vi.fn(() => close.promise);
   const loop = new NotificationLoop({
     database,
     clock: context.clock,
     canonical_origin: 'https://unit21.invalid',
-    adapter: { send: () => web.promise },
-    apns_adapter: { send: nativeSend, close: () => close.promise },
+    adapter: {
+      send: () => {
+        webEntered.resolve();
+        return web.promise;
+      },
+    },
+    apns_adapter: { send: nativeSend, close: adapterClose },
   });
   const pass = loop.poll_once();
-  await loop.stop({ deadline: performance.now() / 1000 + 0.01 });
-  web.resolve({ delivered: true });
-  close.resolve();
-  await pass;
+  try {
+    await webEntered.promise;
+    const stopping = loop.stop({ deadline: performance.now() / 1000 + 0.01 });
+    expect(adapterClose).not.toHaveBeenCalled();
+    await expect(stopping).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
+    expect(adapterClose).not.toHaveBeenCalled();
+  } finally {
+    web.resolve({ delivered: true });
+    try {
+      await pass;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(adapterClose).toHaveBeenCalledOnce();
+      let actual_done = false;
+      void loop.settled().then(() => {
+        actual_done = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(actual_done).toBe(false);
+    } finally {
+      close.resolve();
+      await loop.settled();
+    }
+  }
   expect(webRecord).not.toHaveBeenCalled();
   expect(nativeSend).not.toHaveBeenCalled();
   expect(await loop.poll_once()).toBe(0);
@@ -255,9 +365,16 @@ test('notification deadline fences late web and native results and bounds adapte
     apns_adapter: { send: nativeSend, close() {} },
   });
   const nativePass = nativeLoop.poll_once();
-  await nativeLoop.stop({ deadline: performance.now() / 1000 + 0.01 });
-  native.resolve({ delivered: true });
-  await nativePass;
+  try {
+    await nativeEntered.promise;
+    await expect(
+      nativeLoop.stop({ deadline: performance.now() / 1000 + 0.01 }),
+    ).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
+  } finally {
+    native.resolve({ delivered: true });
+    await nativePass;
+    await nativeLoop.settled();
+  }
   expect(nativeRecord).not.toHaveBeenCalled();
 });
 
@@ -313,6 +430,7 @@ test('startServer reconciles only its dispatcher before runtime factories and cl
             expect(acquireLock(configuration.PLAN_DISPATCHER_LOCK_PATH)).toBeNull();
             stopped.push('notification close');
           },
+          settled: async () => {},
         }),
         stallChecker: () => ({
           start() {
@@ -322,6 +440,7 @@ test('startServer reconciles only its dispatcher before runtime factories and cl
           close() {
             stopped.push('stall close');
           },
+          settled: async () => {},
         }),
       }),
     ).rejects.toThrow('synthetic service refusal');
@@ -404,7 +523,11 @@ test('composed Worker and Manager sends share a deadline and leave no late datab
     expect(workerStop).toHaveBeenCalledWith({ deadline });
     expect(managerStop).toHaveBeenCalledWith({ deadline });
     expect(acquireLock(path + '.held-dispatcher')).toBeNull();
-    await closing;
+    await expect(closing).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
+    // The parent deadline observer can run before this producer's cancellation callback.
+    await expect(managerStop.mock.results[0]!.value).rejects.toBeInstanceOf(
+      ShutdownDeadlineExceeded,
+    );
     expect(read(database, ticket.id)).toMatchObject({
       conversation_id: departure.conversation_id,
       worker_step_claim: 'out',
@@ -414,18 +537,21 @@ test('composed Worker and Manager sends share a deadline and leave no late datab
       status: 'uncertain',
     });
     const before = accesses;
+    expect(acquireLock(path + '.held-dispatcher')).toBeNull();
+    provider.resolve(new PromptDeliveryStarted());
+    await services.settled();
+    context.changes.emit();
+    await next_turn();
+    expect(accesses).toBe(before);
     owned = false;
     dispatcher.close();
     const successor = acquireLock(path + '.held-dispatcher');
     expect(successor).not.toBeNull();
     successor?.close();
-    provider.resolve(new PromptDeliveryStarted());
-    await next_turn();
-    context.changes.emit();
-    await next_turn();
-    expect(accesses).toBe(before);
   } finally {
-    await services.close({ deadline: performance.now() / 1000 });
+    provider.resolve(new PromptDeliveryStarted());
+    await Promise.resolve(services.close({ deadline: performance.now() / 1000 })).catch(() => {});
+    await services.settled();
     dispatcher.close();
   }
 });
@@ -454,6 +580,7 @@ test('close fences later starts and waits for the active start before ownership 
       close() {
         trace.push('close entered');
       },
+      settled: () => finish.promise,
     }),
     stallChecker: () => {
       throw new Error('a later service must never start');
@@ -461,19 +588,18 @@ test('close fences later starts and waits for the active start before ownership 
   });
   const starting = services.start();
   await entered.promise;
-  const closing = Promise.resolve(services.close({ deadline: performance.now() / 1000 })).then(
-    () => {
-      closed = true;
-      owned = false;
-      owner.close();
-    },
-  );
+  const closing = Promise.resolve(services.close({ deadline: performance.now() / 1000 }));
+  const expired = expect(closing).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
   await next_turn();
   expect(closed).toBe(false);
   expect(acquireLock(path + '.startup-dispatcher')).toBeNull();
   expect(trace).toEqual(['start entered', 'close entered']);
   finish.resolve();
-  await Promise.all([starting, closing]);
+  await expired;
+  await Promise.all([starting, services.settled()]);
+  closed = true;
+  owned = false;
+  owner.close();
   expect(trace).toEqual(['start entered', 'close entered', 'start settled']);
   const successor = acquireLock(path + '.startup-dispatcher');
   expect(successor).not.toBeNull();
@@ -521,7 +647,12 @@ test('a notification queue commit cannot reenter its active provider send', asyn
     ).toEqual({ status: 'delivered', attempts: 1 });
   } finally {
     result.resolve({ delivered: true });
-    await services.close({ deadline: performance.now() / 1000 });
+    await Promise.resolve(services.close({ deadline: performance.now() / 1000 + 1 })).catch(
+      (error: unknown) => {
+        if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+      },
+    );
+    await services.settled();
     database.close();
   }
 });

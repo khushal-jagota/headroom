@@ -5,4 +5,5 @@ export interface SlotParticipant {
   start(): void;
   poll(database: Database, clock: Clock): void;
   stop(options: { deadline?: number }): void | Promise<void>;
+  settled(): Promise<void>;
 }
