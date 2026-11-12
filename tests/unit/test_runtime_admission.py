@@ -273,6 +273,8 @@ def test_version_2_admission_runs_the_trusted_probe_and_never_python(
         {"node_version": "22.17.9"},
         {"node_version": "24.1.0"},
         {"loaded_libraries": ["libc.so.6"]},
+        {"loaded_libraries": ["/usr/lib/node_modules/better-sqlite3/linux-x64.node"]},
+        {"loaded_libraries": ["/usr/lib/x86_64-linux-gnu/libc.so.6.node"]},
         {"package_paths": {name: "/usr/lib/node_modules/x/index.js" for name in DEPENDENCIES}},
         {"package_paths": {"better-sqlite3": "/app/x.js"}},
     ],
@@ -280,7 +282,8 @@ def test_version_2_admission_runs_the_trusted_probe_and_never_python(
 def test_version_2_refuses_a_probe_report_that_is_not_exact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: dict[str, object]
 ) -> None:
-    """Risk: a malformed, failed, old-Node or outside-package report is accepted."""
+    """Risk: a malformed, failed, old-Node, outside-package or outside-addon report is
+    accepted. A host addon never qualifies through a glibc-like name."""
     root = node_app(tmp_path / "app")
     contract = NodeRuntimeContract("f" * 64)
     monkeypatch.setattr(
@@ -314,4 +317,21 @@ def test_trusted_probe_refuses_a_package_that_resolves_outside_the_candidate(
             [node, "--input-type=module", "-e",
              admission.node_probe_source(NodeRuntimeContract("f" * 64)), str(root)],
             state=state, timeout=30,
+        )
+
+
+def test_probe_report_is_read_whole_up_to_its_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Risk: the 2,000-character failure tail truncates a long successful report."""
+    long = json.dumps({"package_paths": {f"p{index}": "x" * 40 for index in range(200)}})
+    assert len(long) > 2000
+    report = admission._run_json_probe(
+        ["/bin/sh", "-c", 'printf "%s" "$0"', long], state=tmp_path, timeout=10
+    )
+    assert report == json.loads(long)
+    monkeypatch.setattr(admission, "PROBE_REPORT_LIMIT", 100)
+    with pytest.raises(AppValidationError, match="too large"):
+        admission._run_json_probe(
+            ["/bin/sh", "-c", 'printf "%s" "$0"', long], state=tmp_path, timeout=10
         )

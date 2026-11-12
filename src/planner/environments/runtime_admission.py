@@ -196,6 +196,8 @@ fs.closeSync(lock);
 
 const loaded = libraries();
 for (const file of loaded) {
+  // An addon must be the candidate's own: no glibc name or baseline entry qualifies it.
+  if (file.endsWith('.node') && !inside(file)) fail(`addon outside the candidate: ${file}`);
   if (!baseline.has(file) && !inside(file) && !EXTERNAL.has(path.basename(file))) {
     fail(`candidate loaded a host library: ${file}`);
   }
@@ -436,6 +438,11 @@ def _run_node_probe(
         or libraries != sorted(libraries)
     ):
         raise AppValidationError("runtime probe reported malformed loaded libraries")
+    if any(
+        item.endswith(".node") and not Path(item).resolve().is_relative_to(app_root)
+        for item in libraries
+    ):
+        raise AppValidationError("runtime probe loaded a native addon outside the candidate")
     declared = json.loads((app_root / "server/package.json").read_text()).get("dependencies")
     if (
         not isinstance(packages, dict)
