@@ -41,8 +41,19 @@ _THREAD_FILLER: dict[str, Any] = {
 
 def scripted_app_server_launch(script_path: Path) -> tuple[tuple[str, ...], dict[str, str]]:
     """The argv and environment overrides that run this file as a codex app-server."""
+    executable = script_path.with_name("scripted-codex")
+    executable.write_text(
+        f"#!{sys.executable}\n"
+        "import runpy, sys\n"
+        "if sys.argv[1:] == ['--version']:\n"
+        "    print('codex-cli 0.148.0')\n"
+        "else:\n"
+        f"    runpy.run_path({str(Path(__file__).resolve())!r}, run_name='__main__')\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
     return (
-        (sys.executable, str(Path(__file__).resolve()), "app-server"),
+        (str(executable), "app-server"),
         {SCRIPT_PATH_ENVIRONMENT_NAME: str(script_path)},
     )
 
