@@ -68,9 +68,9 @@ import Observation
     func transcribe(api: APIClient) async -> String? {
         guard let work else { return nil }
         phase = .transcribing
-        if work.state == .failed { Outbox.shared.retry(work.id, api: api) }
+        if work.state == .failed || work.state == .waiting || work.state == .uncertain { Outbox.shared.retry(work.id, api: api) }
         await Outbox.shared.drain(api: api)
-        let current = Outbox.shared.entries(LocalStore.server(api.baseURL)).first { $0.id == work.id }
+        let current = Outbox.shared.work(LocalStore.server(api.baseURL), id: work.id)
         if current?.state == .sent { phase = .idle; self.work = nil; error = nil; return "" }
         phase = .failed; error = current?.note ?? "Recording saved on this phone"
         return nil
@@ -83,7 +83,7 @@ import Observation
         guard let work, let api else { phase = .idle; return }
         do {
             try LocalStore.shared.remove(server: LocalStore.server(api.baseURL), kind: "outbox", id: work.id)
-            if let file = work.audioFile { try? FileManager.default.removeItem(at: LocalStore.directory.appendingPathComponent(file)) }
+            if let file = work.audioFile, (try? LocalStore.shared.outgoing.audioIsUnowned(file)) == true { try? FileManager.default.removeItem(at: LocalStore.directory.appendingPathComponent(file)) }
             self.work = nil; phase = .idle; error = nil
         } catch { self.error = error.localizedDescription }
     }

@@ -49,12 +49,21 @@ extension APIClient {
 
 @MainActor @Observable final class ReviewMessageDecision {
     let composer = ConversationModel()
-    @ObservationIgnored private let savedWork: (String) -> [PendingWork]
+    @ObservationIgnored private let savedWork: ((String) -> [PendingWork])?
     @ObservationIgnored private let refreshSavedWork: (String) -> Void
-    init(savedWork: @escaping (String) -> [PendingWork] = { Outbox.shared.entries($0) },
+    init(savedWork: ((String) -> [PendingWork])? = nil,
          refreshSavedWork: @escaping (String) -> Void = { _ in }) {
         self.savedWork = savedWork
         self.refreshSavedWork = refreshSavedWork
+    }
+    private func saved(_ server: String) -> [PendingWork] {
+        if let savedWork { return savedWork(server) }
+        guard let id = item?.conversationId else { return [] }
+        let summaries = (try? LocalStore.shared.outgoing.replySummaries(server: server, conversationID: id)) ?? []
+        let relevant = summaries.last { !["sent", "serverQueued", "changed"].contains($0.state) || ($0.ownerReadThroughSequence ?? 0) >= through }
+        let accepted = summaries.last { ["sent", "serverQueued"].contains($0.state) }
+        let ids = Set([relevant?.id, accepted?.id].compactMap { $0 })
+        return summaries.filter { ids.contains($0.id) }.compactMap { Outbox.shared.work(server, id: $0.id) }
     }
     var events: [ReviewMessageEvent] = []
     var loaded = false
@@ -74,10 +83,18 @@ extension APIClient {
     static func freshness(_ item: ReviewItem) -> String { "\(item.ownerReadThroughSequence)|\(item.addressCurrent)" }
     func isCurrent(for item: ReviewItem) -> Bool { loaded && loadedFreshness == Self.freshness(item) }
     var through: Int { events.last?.sequence ?? 0 }
-    var attempt: PendingWork? {
-        guard let api, let attemptID else { return nil }
-        return savedWork(LocalStore.server(api.baseURL)).first { $0.id == attemptID }
+    private(set) var attempt: PendingWork?
+    @ObservationIgnored private var attemptFact: OutgoingStore.Summary?
+    func refreshAttempt() {
+        guard let api, let attemptID else { attempt = nil; return }
+        let server = LocalStore.server(api.baseURL)
+        if let savedWork { attempt = savedWork(server).first { $0.id == attemptID }; return }
+        let fact = try? LocalStore.shared.outgoing.summary(server: server, id: attemptID)
+        guard fact != attemptFact else { return }
+        attemptFact = fact
+        attempt = Outbox.shared.work(server, id: attemptID)
     }
+
     var accepted: Bool { attempt.map { [.sent, .serverQueued].contains($0.state) } ?? false }
     var pending: Bool { attempt.map { [.waiting, .sending, .uncertain].contains($0.state) } ?? false }
 
@@ -101,7 +118,7 @@ extension APIClient {
         refreshSavedWork(LocalStore.server(api.baseURL))
         if !loaded {
             composer.conversationID = id
-            composer.restore(owner: owner, api: api, draftID: "review-message:\(id)", savedWork: savedWork(LocalStore.server(api.baseURL)))
+            composer.restore(owner: owner, api: api, draftID: "review-message:\(id)", savedWork: self.saved(LocalStore.server(api.baseURL)))
             composer.deliveryMode = "queue"
         }
         do {
@@ -109,12 +126,12 @@ extension APIClient {
             try Task.checkCancellation()
             events = messages; historical = !item.addressCurrent
             refreshSavedWork(LocalStore.server(api.baseURL))
-            let saved = savedWork(LocalStore.server(api.baseURL)).last {
+            let saved = self.saved(LocalStore.server(api.baseURL)).last {
                 $0.message?.conversationId == id && $0.message?.ownerReadThroughSequence != nil &&
                 (![.sent, .serverQueued, .changed].contains($0.state) || ($0.message?.ownerReadThroughSequence ?? 0) >= (messages.last?.sequence ?? Int.max))
             }
-            attemptID = saved?.id
-            if saved == nil, let delivered = savedWork(LocalStore.server(api.baseURL)).last(where: {
+            attemptID = saved?.id; refreshAttempt()
+            if saved == nil, let delivered = self.saved(LocalStore.server(api.baseURL)).last(where: {
                 $0.message?.conversationId == id && $0.message?.ownerReadThroughSequence != nil && [.sent, .serverQueued].contains($0.state)
             }), let message = delivered.message,
                composer.draft == message.content.compactMap(\.text).joined(separator: "\n"),
@@ -150,7 +167,7 @@ extension APIClient {
             }
             attemptID = replacement
             await Outbox.shared.drain(api: api)
-            refreshSavedWork(LocalStore.server(api.baseURL))
+            refreshSavedWork(LocalStore.server(api.baseURL)); refreshAttempt()
             return accepted
         }
         let messageID = UUID().uuidString
@@ -162,7 +179,7 @@ extension APIClient {
             try Outbox.shared.enqueue(work, api: api)
             attemptID = messageID
             await Outbox.shared.drain(api: api)
-            refreshSavedWork(LocalStore.server(api.baseURL))
+            refreshSavedWork(LocalStore.server(api.baseURL)); refreshAttempt()
             return accepted
         } catch { self.error = error.localizedDescription; return false }
     }

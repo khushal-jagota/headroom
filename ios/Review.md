@@ -61,16 +61,19 @@ keeping the draft for that ask. Swipe-to-skip is disabled while it is open. The
 mic records AAC locally after permission, then calls the existing conversation
 voice-transcription endpoint. Words append to typed guidance. Failed transcription
 retains audio on disk for retry after reconnect or relaunch. Closing the composer
-preserves the recording; only explicit discard removes it. Sending requires nonempty
+preserves the recording. Explicit discard and the documented expiry policy remove
+owned audio only after committed ownership checks. Sending requires nonempty
 text and locks the field until the response. Failure keeps the words available.
 
-Review and its tab badge share one server-specific snapshot of outgoing work.
-The snapshot reads the store once after an outgoing payload changes or a row is
-removed. Queue evaluation and message-attempt presentation use memory. Draft edits,
-cache writes, and unchanged outgoing saves do not refresh the snapshot. A different
-server replaces it. Review pauses store reads while its root is hidden or the app
-is not active. On return, it restores changed proposals and saved voice drafts.
-This preserves the existing decision matching and outgoing retention policy.
+Review and its tab badge share a server-specific snapshot of decision metadata
+summaries. An outgoing fact change or removal refreshes that indexed query. Queue
+evaluation reads memory. A reply selects metadata for its conversation and read
+boundary, then decodes only the latest relevant and accepted work. Message-attempt
+presentation uses its selected memory snapshot. Voice restoration selects its draft
+or exact operation. Draft edits, cache writes and unchanged outgoing saves do not
+refresh the decision snapshot. A different server replaces it. Review pauses store
+reads while its root is hidden or the app is not active. On return, it restores
+changed proposals, selected reply status and saved voice drafts.
 
 A decision is saved before its ask leaves the screen. Like desktop, Review shows no
 receipt or status row for a saved decision. Both queued writes first check that
@@ -86,9 +89,11 @@ Conversation. Its draft is separate from the full conversation's draft and survi
 Skip and relaunch. A reply is saved in the outbox with its conversation ID, message
 identity and the last displayed message sequence. Accepted and server-queued replies
 acknowledge only that sequence. A later message stays unread and returns to Review.
-A refused or uncertain reply keeps its words and attachments. Receipt reconciliation
-and held-prompt checks avoid sending an accepted reply twice. An explicit retry after
-a terminal refusal receives a new identity while retaining the original read boundary.
+A refused or uncertain reply keeps its words and attachments. Attempted and queued
+replies check only their exact receipts. An absent receipt never permits an automatic
+POST. Confirmed server queue acceptance releases a later submission without a wait
+for the eventual prompt receipt. An explicit retry after a terminal refusal receives
+a new identity while retaining the original read boundary.
 
 Mark read acknowledges only the displayed run and does not send a reply. Both
 Mark read and Open conversation use the existing secondary action style. Open

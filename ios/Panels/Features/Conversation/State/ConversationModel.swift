@@ -33,17 +33,38 @@ import UniformTypeIdentifiers
     }
     func syncOutbox(savedWork: [PendingWork]? = nil) {
         guard let api = persistenceAPI, let owner = persistenceOwner else { return }
-        let saved = (savedWork ?? Outbox.shared.entries(LocalStore.server(api.baseURL))).filter { $0.kind == .message && $0.owner == owner && (conversationID == nil || $0.message?.conversationId == conversationID) }
+        let server = LocalStore.server(api.baseURL)
+        let summaries = (try? LocalStore.shared.outgoing.summaries(server: server, owner: owner)) ?? []
+        if conversationID == nil { conversationID = summaries.last(where: { $0.scheduled })?.conversationID }
+        var selectedIDs = Set(summaries.filter { $0.conversationID == conversationID }.map(\.id))
+        // Only originals of this selected replacement chain join this destination.
+        var added = true
+        while added {
+            added = false
+            for fact in summaries where !fact.scheduled && (fact.conversationID == nil || fact.conversationID == conversationID) {
+                if let replacement = fact.replacementID, selectedIDs.contains(replacement), selectedIDs.insert(fact.id).inserted { added = true }
+            }
+        }
+        let selected = summaries.filter { selectedIDs.contains($0.id) }
+        let facts = Dictionary(uniqueKeysWithValues: summaries.map { ($0.id, $0) })
+        let saved = (savedWork ?? selected.compactMap { Outbox.shared.work(server, id: $0.id) }).filter { $0.kind == .message && $0.owner == owner }
+        recoveries = [:]
+        for fact in selected where fact.scheduled {
+            if fact.holdReason != nil { recoveries[fact.id] = .held(unknownDestination: fact.conversationID == nil) }
+            else if fact.state == "uncertain" || (fact.state == "waiting" && fact.provenance == "unknown") {
+                recoveries[fact.id] = .resend(unknownDestination: fact.conversationID == nil)
+            } else if fact.state == "failed" { recoveries[fact.id] = .retry }
+        }
         for work in saved {
             if let previous = work.priorMessageIDs, let first = previous.first {
                 supersededIDs.formUnion(previous)
                 retryAliases[work.id] = first
             }
         }
-        if conversationID == nil { conversationID = saved.last?.message?.conversationId }
+        if conversationID == nil { conversationID = saved.last(where: { facts[$0.id]?.scheduled == true })?.message?.conversationId }
         let received = Set(items.compactMap(\.senderMessageId))
         outgoing = saved.filter { !supersededIDs.contains($0.id) && (!received.contains($0.id) || $0.state != .sent) }.map {
-            Outgoing(id: $0.id, text: $0.message?.content.compactMap(\.text).joined(separator: "\n") ?? $0.displayText, note: $0.note, retryable: $0.state == .failed,
+            Outgoing(id: $0.id, text: $0.message?.content.compactMap(\.text).joined(separator: "\n") ?? $0.displayText, note: $0.note, retryable: recoveries[$0.id] != nil,
                      attachments: $0.message?.content.filter { $0.piece != "text" } ?? [])
         }
         rememberRows(saved.map { retryAliases[$0.id] ?? $0.id })
@@ -67,6 +88,30 @@ import UniformTypeIdentifiers
         var note: String?
         var retryable = false
         var attachments: [ConversationSend.Piece] = []
+    }
+    enum Recovery: Equatable {
+        case retry, resend(unknownDestination: Bool), held(unknownDestination: Bool)
+        var unknownDestination: Bool {
+            switch self { case .retry: false; case .resend(let value), .held(let value): value }
+        }
+    }
+    private(set) var recoveries: [String: Recovery] = [:]
+    func recoveryLabel(_ id: String) -> String {
+        switch recoveries[id] { case .held: "Send this message"; case .resend: "Send again"; default: "Retry" }
+    }
+    func recover(_ id: String, using api: APIClient, startNew: Bool = false) {
+        let server = LocalStore.server(api.baseURL)
+        guard let recovery = recoveries[id] else { return }
+        switch recovery {
+        case .held(let unknown):
+            if unknown { guard startNew else { return }; Outbox.shared.sendHeld(id, api: api, destination: .newConversation) }
+            else if let target = Outbox.shared.work(server, id: id)?.message?.conversationId { Outbox.shared.sendHeld(id, api: api, destination: .conversation(target)) }
+        case .resend(let unknown):
+            guard !unknown || startNew else { return }
+            Outbox.shared.retry(id, api: api, destination: unknown ? .newConversation : nil)
+        case .retry: Outbox.shared.retry(id, api: api)
+        }
+        syncOutbox()
     }
     var deliveryMode = "steer"
     var attachments: [ConversationSend.Piece] = [] {
@@ -94,9 +139,13 @@ import UniformTypeIdentifiers
     // that names a different model until a new turn, so only a real change is sent.
     private var runningModel: String?
     private var runningEffort: String?
-    private var runChange: (model: String?, reasoningEffort: String?) {
-        guard conversationID != nil else { return (selectedModel, reasoningEffort) }
-        return (selectedModel == runningModel ? nil : selectedModel, reasoningEffort == runningEffort ? nil : reasoningEffort)
+    private func configureIntent(_ message: inout ConversationSend) {
+        message.mode = deliveryMode
+        message.backendKey = conversationID == nil ? backendKey : nil
+        message.model = conversationID == nil || selectedModel != runningModel ? selectedModel : nil
+        let effortChanged = conversationID == nil || reasoningEffort != runningEffort
+        message.reasoningEffort = effortChanged ? reasoningEffort : nil
+        message.reasoningEffortIsSet = effortChanged
     }
     private var pinnedMessageIDs: Set<String> = []
     private var rowOrder: [String] = [] { didSet { if oldValue != rowOrder { projectionRevision += 1 } } }
@@ -462,12 +511,14 @@ import UniformTypeIdentifiers
             let id = UUID().uuidString
             var message = ConversationSend(conversationId: conversationID, content: (text.isEmpty ? [] : [.init(text: text)]) + attachments,
                 senderMessageId: id, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000))
-            message.mode = deliveryMode; message.backendKey = backendKey; message.model = runChange.model; message.reasoningEffort = runChange.reasoningEffort
+            configureIntent(&message)
             let work = PendingWork(id: id, created: .now, kind: .message, owner: owner, message: message)
             do {
-                try LocalStore.shared.put(server: LocalStore.server(api.baseURL), kind: "outbox", id: id,
-                    data: Outbox.encode(work), draft: (draftKey, ""))
-                draft = ""; attachments = []; syncOutbox()
+                let server = LocalStore.server(api.baseURL)
+                let capture = try LocalStore.shared.outgoing.captureDraft(server: server, id: draftKey)
+                try LocalStore.shared.outgoing.enqueue(work, server: server, capturedDraft: capture)
+                restoring = true; draft = ""; attachments = []; restoring = false
+                syncOutbox()
                 Task { await Outbox.shared.drain(api: api); syncOutbox() }
                 return true
             } catch { self.error = "Message is still in the composer: \(error.localizedDescription)"; return false }
@@ -503,10 +554,7 @@ import UniformTypeIdentifiers
         sending = true
         defer { sending = false }
         var message = ConversationSend(conversationId: conversationID, content: (text.isEmpty ? [] : [.init(text: text)]) + (outgoingAttachments[id] ?? []), senderMessageId: id, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000))
-        message.mode = deliveryMode
-        message.backendKey = backendKey
-        message.model = runChange.model
-        message.reasoningEffort = runChange.reasoningEffort
+        configureIntent(&message)
         do {
             let result = try await service.sendConversation(owner, message: message)
             if let newID = result.conversationId { conversationID = newID }

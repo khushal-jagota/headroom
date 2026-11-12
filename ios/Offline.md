@@ -21,16 +21,33 @@ does not, because each key press saves the draft. A draft saved together with
 outgoing work, such as a voice transcript, still raises it.
 
 Review and its badge share an in-memory snapshot. A separate server-specific revision
-refreshes it only after an outgoing payload changes or a record is removed. An
-unchanged outgoing save, draft edit, or cache write does not refresh this snapshot.
+refreshes it only after outgoing facts change or a record is removed. It holds
+only decision summaries. Reply and voice composers query their selected conversation
+or draft. Rendered decision membership and reply status read memory. An unchanged
+outgoing save, draft edit, or cache write does not refresh this snapshot.
+
+Outgoing payload bytes live once in LocalRecord. Indexed OutgoingMetadata holds
+mutable delivery state, attempt provenance, destinations, lane order, dependencies,
+proposal identity, audio ownership and expiry. State updates and receipts never
+reencode the original intent. Both installed date schemas migrate without changing
+existing keys, bytes, drafts, attachment or audio references. A completion marker
+shares the backfill transaction. Later opens use that exact marker and a bounded
+metadata error query. Undecodable work stays visible through the persistent storage
+error surface. Legacy waiting or sending work has unknown provenance and remains
+uncertain rather than receiving permission to POST.
 
 Responses are bounded to 96 entries and 16 MiB across servers. A response larger
 than the budget is not cached. Drafts and outgoing work are separate records and
-are never removed by this eviction. Outgoing list reads still fetch the whole list,
-so each send pass first clears finished work, before it checks the
-network. The foreground loop runs a pass when it starts and every 3 seconds. Sent and changed work is removed
-24 hours after it finished, and uncertain work after 7 days. Failed work stays
-until the user retries it. Waiting, sending, recording and server-queued work stays.
+are never removed by this eviction. Each foreground pass first clears a due batch
+of at most 64 outgoing metadata rows through the expiry index. The foreground loop
+runs a pass when it starts and every 3 seconds. Sent and changed work expires after
+24 hours, and uncertain work after 7 days. Failed and pending work has no age limit.
+Before an uncertain predecessor expires, its dependent message receives a durable
+hold in the same transaction. The expired operation leaves no receipt or payload
+shadow. A known destination requires Send this message. An unknown destination
+requires an explicit destination or a new-conversation choice. Later dependent
+messages follow that choice. Expired audio is unlinked after commit only when no
+retained metadata record on any origin owns it.
 Everything is partitioned by server origin;
 changing the server address cannot send one server's work to another server.
 
@@ -43,24 +60,38 @@ until the outgoing message and composer clear have committed together.
 
 Messages appear immediately with a clock and “Waiting for connection”. They keep
 their original sender identity, timestamp, owner, conversation and attachment
-bytes. The outbox processes work oldest first. Foreground entry, network-path
+bytes. The outbox preserves logical order within each conversation lane. Before
+creation returns, queued messages share their exact owner/start lane. Decisions
+use a ticket lane and voice uses a draft lane. At most two requests run per server,
+and at most one per lane. A stalled lane leaves the other server slot available.
+Foreground entry, network-path
 recovery and the foreground retry loop prompt a drain. URLSession and the existing
 change, navigation view and conversation streams remain the network interfaces. A network path is
 only a reason to try; request results determine delivery.
 
-A message in “Waiting” goes straight to the send POST without receipt or
-held-message reads. The drainer saves “Sending” before the POST. Responses that confirm
+A proven-unattempted message in “Waiting” goes straight to the send POST without
+receipt or held-message reads. The drainer saves attempted provenance and “Sending”
+before the POST. Responses that confirm
 started or injected delivery mark the message “Sent” as before.
 
-For an existing conversation, work in “Sending”, “Uncertain” or “Queued on server”
-keeps receipt reconciliation before replay. If no receipt exists, a message with
-a saved read boundary also checks held messages before replay. Work already
-marked “Queued on server” only checks receipts and never replays automatically.
-A receipt settles the local message even when it is outside the visible transcript. A timeout or interrupted response
-retains the message for reconciliation. A confirmed refusal says “Not sent · tap
-to retry”; the explicit retry creates a new server identity because the refused
-identity already has a final receipt. The old payload is retained until its
-replacement has been saved.
+For an existing conversation, attempted or uncertain work only checks its exact
+receipt. An absent receipt never grants permission to POST again. Server-queued
+work also remains receipt-only, but its confirmed acceptance releases the next
+submission without a wait for the eventual prompt receipt. A timeout, HTTP 408,
+or interrupted response retains uncertainty. A receipt settles its own operation
+even outside the visible transcript.
+
+A confirmed refusal permits an explicit retry with a new identity. An uncertain
+resend requires confirmation that delivery can duplicate. The replacement occupies
+the original logical position, and the dependency transfer commits atomically.
+The original retains its independent receipt outcome until expiry. It cannot
+retarget the replacement's successors after a late response. An unknown creation
+replacement stays held until its explicit destination choice.
+
+When a creation returns, only unattempted dependent messages receive its destination.
+Their backend field is creation-only. Model and nullable effort changes compare
+with the immediately preceding captured choice, so an explicit change and a later
+revert both survive. Existing-conversation messages omit unchanged settings.
 
 A message that created a conversation but lost the response has no known
 conversation ID to query. It remains “Delivery uncertain” rather than being
@@ -90,7 +121,8 @@ keeps the audio. Returning online transcribes saved audio; the returned words an
 completed operation commit together before the file is deleted. A failed
 transcription retains the audio. An interrupted recording is offered for recovery
 when its composer opens; a damaged recording can still fail transcription.
-Only explicitly discarding a recording removes pending audio.
+Explicit discard removes pending audio. Uncertain audio follows the seven-day
+retention window and the committed ownership check above.
 
 Automatic draining runs while the app is in the foreground. Suspended or
 force-quit apps cannot promise an immediate send; foreground relaunch restores

@@ -28,7 +28,7 @@ import XCTest
                 try outbox.save(PendingWork(id: "receipt-\(index)", created: Date(timeIntervalSince1970: Double(index)), kind: .message, state: .sent, message: message), server: "a")
             }
             var reads = 0
-            let read: (String) -> [PendingWork] = { server in reads += 1; return outbox.entries(server) }
+            let read: (String) -> [OutgoingStore.Summary] = { server in reads += 1; return outbox.decisionSummaries(server) }
             let snapshot = ReviewSavedWork(outbox: outbox, read: read)
             let cold = milliseconds { snapshot.refresh("a") }
             XCTAssertEqual(reads, 1)
@@ -40,7 +40,8 @@ import XCTest
                     // The old Review getter performed this full read inside each part.
                     baseline = queue.compactMap { card in
                         let parts = card.parts.filter { item in
-                            let decisions = read("a").filter { $0.kind == .approval || $0.kind == .sendBack }
+                            reads += 1
+                            let decisions = ((try? store.records(server: "a", kind: "outbox")) ?? []).compactMap { try? JSONDecoder().decode(PendingWork.self, from: $0.payload) }.filter { $0.kind == .approval || $0.kind == .sendBack }
                             return !decisions.contains { $0.ticketID == item.ticketId && $0.proposal?.field == item.field && $0.proposal?.createdAt == item.waitingSince && [.waiting, .sending, .uncertain, .sent].contains($0.state) }
                         }
                         return parts.isEmpty ? nil : ReviewCard(id: card.id, ticketId: card.ticketId, parts: parts)
@@ -65,14 +66,14 @@ import XCTest
         defer { try? FileManager.default.removeItem(at: directory) }
         let outbox = Outbox(store: store)
         var reads = 0
-        let snapshot = ReviewSavedWork(outbox: outbox) { server in reads += 1; return outbox.entries(server) }
+        let snapshot = ReviewSavedWork(outbox: outbox) { server in reads += 1; return outbox.decisionSummaries(server) }
         let proposal = TicketProposal(field: "brief", body: "Read this", proposedBy: "worker", createdAt: 1, revision: 2)
         var work = PendingWork(id: "decision", created: .now, kind: .approval, ticketID: "ticket-0", proposal: proposal)
         try outbox.save(work, server: "a")
         snapshot.refresh("a")
         XCTAssertEqual(reads, 1)
         XCTAssertTrue(ReviewSavedWork.cards(cards(1), decisions: snapshot.decisions("a")).isEmpty)
-        XCTAssertTrue(snapshot.entries("b").isEmpty)
+        XCTAssertTrue(snapshot.decisions("b").isEmpty)
         let revision = store.outgoingRevision("a")
         try outbox.save(work, server: "a")
         store.saveDraft("Typed", server: "a", id: "draft")
@@ -90,14 +91,14 @@ import XCTest
         XCTAssertEqual(ReviewSavedWork.cards(cards(1), decisions: snapshot.decisions("a")).count, 1)
         snapshot.refresh("b")
         XCTAssertEqual(reads, 3)
-        XCTAssertEqual(snapshot.decisions("b").first?.state, .waiting)
-        XCTAssertTrue(snapshot.entries("a").isEmpty)
+        XCTAssertEqual(snapshot.decisions("b").first?.state, "waiting")
+        XCTAssertTrue(snapshot.decisions("a").isEmpty)
         snapshot.refresh("a")
         XCTAssertEqual(reads, 4)
-        XCTAssertEqual(snapshot.decisions("a").first?.state, .changed)
+        XCTAssertEqual(snapshot.decisions("a").first?.state, "changed")
         try store.remove(server: "a", kind: "outbox", id: work.id)
         snapshot.refresh("a")
         XCTAssertEqual(reads, 5)
-        XCTAssertTrue(snapshot.entries("a").isEmpty)
+        XCTAssertTrue(snapshot.decisions("a").isEmpty)
     }
 }

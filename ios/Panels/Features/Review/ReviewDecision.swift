@@ -160,12 +160,12 @@ struct ReviewQueue {
         let revision: Int
     }
     @ObservationIgnored private let outbox: Outbox
-    @ObservationIgnored private let read: (String) -> [PendingWork]
+    @ObservationIgnored private let read: (String) -> [OutgoingStore.Summary]
     private(set) var key: Key?
-    private var saved: [PendingWork] = []
-    init(outbox: Outbox = .shared, read: ((String) -> [PendingWork])? = nil) {
+    private var saved: [OutgoingStore.Summary] = []
+    init(outbox: Outbox = .shared, read: ((String) -> [OutgoingStore.Summary])? = nil) {
         self.outbox = outbox
-        self.read = read ?? outbox.entries
+        self.read = read ?? outbox.decisionSummaries
     }
     func refresh(_ server: String) {
         let next = Key(server: server, revision: outbox.store.outgoingRevision(server))
@@ -173,12 +173,13 @@ struct ReviewQueue {
         saved = read(server)
         key = next
     }
-    func entries(_ server: String) -> [PendingWork] { key?.server == server ? saved : [] }
-    func decisions(_ server: String) -> [PendingWork] { entries(server).filter { $0.kind == .approval || $0.kind == .sendBack } }
-    static func cards(_ cards: [ReviewCard], decisions: [PendingWork]) -> [ReviewCard] {
+    func decisions(_ server: String) -> [OutgoingStore.Summary] { key?.server == server ? saved : [] }
+    func messages(_ server: String, conversationID: String) -> [PendingWork] { outbox.entries(server, conversationID: conversationID) }
+    func voice(_ server: String, draftID: String) -> [PendingWork] { outbox.entries(server, draftID: draftID) }
+    static func cards(_ cards: [ReviewCard], decisions: [OutgoingStore.Summary]) -> [ReviewCard] {
         cards.compactMap { card in
             let parts = card.parts.filter { item in
-                !decisions.contains { $0.ticketID == item.ticketId && $0.proposal?.field == item.field && $0.proposal?.createdAt == item.waitingSince && [.waiting, .sending, .uncertain, .sent].contains($0.state) }
+                !decisions.contains { $0.ticketID == item.ticketId && $0.proposalField == item.field && $0.proposalCreatedAt == item.waitingSince && ["waiting", "sending", "uncertain", "sent"].contains($0.state) }
             }
             return parts.isEmpty ? nil : ReviewCard(id: card.id, ticketId: card.ticketId, parts: parts)
         }

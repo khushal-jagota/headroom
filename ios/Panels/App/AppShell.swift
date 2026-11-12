@@ -60,7 +60,7 @@ struct AppShell: View {
         .onChange(of: morePath) { old, new in if old != new { Haptics.light() } }
         .onChange(of: store.baseURL) { _, _ in reviewPath = []; workspacePath = []; morePath = [] }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if let error = LocalStore.shared.saveError { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error).padding(8) }
+            if let error = LocalStore.shared.outgoingError ?? LocalStore.shared.saveError { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error).padding(8) }
         }
         .onChange(of: Outbox.shared.networkAvailable) { _, available in
             if available, scenePhase == .active { Task { await store.refresh() } }
@@ -103,7 +103,7 @@ struct AppShell: View {
 
     private var reviewBadge: Int {
         let pending = Set(savedReviewWork.decisions(LocalStore.server(store.baseURL)).filter {
-            ($0.kind == .approval || $0.kind == .sendBack) && [.waiting, .sending].contains($0.state)
+            ($0.kind == "approval" || $0.kind == "sendBack") && ["waiting", "sending"].contains($0.state)
         }.compactMap(\.ticketID))
         let count = store.counts?.review ?? 0
         return store.presentation?.reviewBadge(count: count, pendingDecisionTickets: pending) ?? max(0, count - pending.count)

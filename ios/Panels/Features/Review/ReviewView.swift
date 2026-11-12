@@ -18,7 +18,7 @@ struct ReviewView: View {
     @State private var emptyVisible = false
     private var server: String { LocalStore.server(store.baseURL) }
     private var snapshotCurrent: Bool { savedWork.key == ReviewSavedWork.Key(server: server, revision: LocalStore.shared.outgoingRevision(server)) }
-    private var savedDecisions: [PendingWork] { savedWork.decisions(server) }
+    private var savedDecisions: [OutgoingStore.Summary] { savedWork.decisions(server) }
     /// Live cards without the proposals a saved decision will clear.
     private var queueCards: [ReviewCard] { ReviewSavedWork.cards(store.review?.cards ?? [], decisions: savedDecisions) }
     /// On a later page the skipped cards of earlier pages are not loaded; they still count.
@@ -104,7 +104,8 @@ struct ReviewView: View {
     private func restoreSavedWork() {
         guard active, snapshotCurrent else { return }
         for decision in decisions.values { decision.refreshVoiceDraft() }
-        for work in savedDecisions where work.state == .changed {
+        messageDecisions.refreshAttempts()
+        for work in savedDecisions where work.state == "changed" {
             if let card = queueCards.first(where: { $0.ticketId == work.ticketID }), let item = card.parts.first(where: { !$0.isMessage }) {
                 queue.restore(item)
                 if decisions[item.id]?.resolved == true { decisions[item.id] = nil }
@@ -188,10 +189,11 @@ struct ReviewView: View {
     private var decisions: [String: ReviewMessageDecision] = [:]
     func decision(for item: ReviewItem, savedWork: ReviewSavedWork) -> ReviewMessageDecision {
         if let existing = decisions[item.id] { return existing }
-        let decision = ReviewMessageDecision(savedWork: savedWork.entries, refreshSavedWork: savedWork.refresh)
+        let decision = ReviewMessageDecision(refreshSavedWork: savedWork.refresh)
         decisions[item.id] = decision
         return decision
     }
+    func refreshAttempts() { for decision in decisions.values { decision.refreshAttempt() } }
     func retain(_ ids: Set<String>) { decisions = decisions.filter { ids.contains($0.key) } }
     func drop(_ id: String) { decisions[id] = nil }
 }
@@ -652,13 +654,13 @@ private struct ReviewReturnComposer: View {
                 guard active else { return }
                 savedWork.refresh(LocalStore.server(api.baseURL))
                 decision.refreshVoiceDraft(); focused = true
-                voice.restore(api: api, draftID: decision.revisionDraftID, savedWork: savedWork.entries(LocalStore.server(api.baseURL)))
+                voice.restore(api: api, draftID: decision.revisionDraftID, savedWork: decision.revisionDraftID.map { savedWork.voice(LocalStore.server(api.baseURL), draftID: $0) } ?? [])
             }
             .onChange(of: savedWork.key) { _, _ in
                 let server = LocalStore.server(api.baseURL)
                 guard isActive, savedWork.key == ReviewSavedWork.Key(server: server, revision: LocalStore.shared.outgoingRevision(server)) else { return }
                 decision.refreshVoiceDraft()
-                voice.restore(api: api, draftID: decision.revisionDraftID, savedWork: savedWork.entries(LocalStore.server(api.baseURL)))
+                voice.restore(api: api, draftID: decision.revisionDraftID, savedWork: decision.revisionDraftID.map { savedWork.voice(LocalStore.server(api.baseURL), draftID: $0) } ?? [])
             }
             .onDisappear { voice.preserve() }
     }
