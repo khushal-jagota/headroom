@@ -1287,3 +1287,83 @@ def test_executor_default_file_refuses_without_provider_construction(
         assert retained.read_text() == "retain"
 
     asyncio.run(run())
+
+
+def test_failed_start_keeps_child_and_ticket_fence_until_cleanup_proves_stop(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stop failure after partial spawn must remain addressable for retirement."""
+
+    async def run() -> None:
+        registry, _, native, start = native_registry
+
+        async def failed_start(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("partial native start")
+
+        async def failed_stop() -> None:
+            raise RuntimeError("cleanup not proven")
+
+        monkeypatch.setattr(native, "start", failed_start)
+        monkeypatch.setattr(native, "stop", failed_stop)
+        outcome = await registry.run(start)
+        assert outcome.disposition is CommandDisposition.uncertain
+        assert outcome.result["error_message"] == "cleanup not proven"
+        assert start.child.child_id in registry._children
+        replacement = replace(
+            start, command_id="replacement", child=replace(start.child, child_id=str(uuid4()))
+        )
+        refused = await registry.run(replacement)
+        assert refused.disposition is not CommandDisposition.succeeded
+        assert start.child.child_id in registry._children
+
+        async def stopped() -> None:
+            return None
+
+        monkeypatch.setattr(native, "stop", stopped)
+        retired = await registry.run(
+            ChildCommand("retire_failed", start.child, ChildOperation.stop, None, StopRun())
+        )
+        assert retired.disposition is CommandDisposition.succeeded
+        assert start.child.child_id not in registry._children
+
+    asyncio.run(run())
+
+
+def test_executor_restart_preserves_legacy_uncertainty_and_fences_new_work(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replacing the aggregate recorder must not discard unproven old ownership."""
+    from planner.executor import mac_service
+    from planner.worker_supervision.contracts import CleanupResult
+
+    async def run() -> None:
+        registry, _, native, start = native_registry
+        legacy = registry.paths.run / "agent-processes.json"
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        evidence = '{"processes":[{"process_id":123,"started":"old evidence"}]}'
+        legacy.write_text(evidence)
+        roots: list[Path] = []
+
+        def reconciled(root: Path) -> CleanupResult:
+            roots.append(root)
+            return CleanupResult(True, "recorded processes ended")
+
+        monkeypatch.setattr(mac_service, "reconcile", reconciled)
+        service = object.__new__(MacService)
+        service.paths = registry.paths
+        service.runner = registry
+        from planner.worker_supervision import WorkerCleanupError
+
+        with pytest.raises(WorkerCleanupError, match="Legacy agent process evidence"):
+            await service._reconcile_worker_processes()
+        assert roots == [registry.paths.run / "worker-processes"]
+        assert legacy.read_text() == evidence
+        registry.resume_after_cancelled_update()
+        assert registry.admission_stopped
+        outcome = await registry.run(start)
+        assert outcome.disposition is CommandDisposition.refused
+        assert native.starts == 0
+
+    asyncio.run(run())

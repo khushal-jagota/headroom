@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import hashlib
 import logging
 import secrets
@@ -102,6 +101,7 @@ from planner.ticket_workspaces.filesystem import (
 from planner.ticket_workspaces.filesystem import (
     retire_workspace as detach_workspace,
 )
+from planner.worker_supervision.config import RECORD_ROOT_ENV
 from planner.workspace_localization import localize_workspace, require_safe_relative_workspace
 
 if TYPE_CHECKING:
@@ -120,10 +120,6 @@ class MacLiveEvents(Protocol):
     """Lossy live delivery; sending never waits on the VPS."""
 
     def send(self, event: BackendEvent) -> None: ...
-
-
-class MacAgentProcesses(Protocol):
-    def record_children(self) -> None: ...
 
 
 class _CommandAdmissionRefused(Exception):
@@ -302,7 +298,6 @@ class MacRunner:
         journal: CommandJournalApi | None = None,
         files: MacFilesApi | None = None,
         live: MacLiveEvents | None = None,
-        agent_processes: MacAgentProcesses | None = None,
         retire_workspace: Callable[[WorkspaceState, WorkspaceIdentity], Awaitable[bool]]
         | None = None,
         retirement_is_committed: Callable[[WorkspaceState, WorkspaceIdentity], Awaitable[bool]]
@@ -317,7 +312,6 @@ class MacRunner:
         self.journal = journal
         self.files = files
         self.live = live
-        self.agent_processes = agent_processes
         self._retire_workspace = retire_workspace
         self._retirement_is_committed = retirement_is_committed
         self._register_workspace = register_workspace
@@ -327,6 +321,7 @@ class MacRunner:
         self._workspace_lock = asyncio.Lock()
         self._withdrawn_commands: set[str] = set()
         self._commands: dict[str, _CommandRecord] = {}
+        self.supervision_cleanup_uncertain: str | None = None
         self.admission_stopped = False
         self.planned_update_replay = False
         self._planned_replay_finished = asyncio.Event()
@@ -337,6 +332,14 @@ class MacRunner:
         self._failed_source_work: set[ChildReference] = set()
         # Children whose start ended refused or uncertain, with the reason shown for it.
         self._start_failed: dict[str, str] = {}
+
+    @property
+    def admission_stopped(self) -> bool:
+        return self._admission_stopped or self.supervision_cleanup_uncertain is not None
+
+    @admission_stopped.setter
+    def admission_stopped(self, stopped: bool) -> None:
+        self._admission_stopped = stopped
 
     def authenticate(self, child_id: str | None, capability: str | None) -> RunningChild:
         child = self._children.get(child_id or "")
@@ -516,6 +519,7 @@ class MacRunner:
         identity[EXECUTOR_CAPABILITY_ENV] = capability
         identity[EXECUTOR_ROOT_ENV] = str(self.paths.root)
         identity["PLAN_TICKET_FILES_DIR"] = str(artifact_root)
+        identity[RECORD_ROOT_ENV] = str(self.paths.run / "worker-processes")
         identity[NATIVE_SKILLS_DIR_ENV] = str(skill_generation / "skills")
         role_text = original.role_text if original else ""
         if managed:
@@ -699,20 +703,13 @@ class MacRunner:
                     vendor_session_cursor=args.vendor_session_cursor,
                 )
         except BaseException:
-            # A failed start leaves no child to address: its prompts are refused (R1, R2).
+            # Keep exact custody until stop proves cleanup. A failed stop leaves the
+            # same-Ticket fence and an address for a later explicit retirement.
+            self._retiring_children.add(command.child.child_id)
+            await native.stop()
             if self._children.get(command.child.child_id) is child:
                 del self._children[command.child.child_id]
-            with contextlib.suppress(Exception):
-                await native.stop()
             raise
-        finally:
-            if self.agent_processes is not None:
-                try:
-                    await asyncio.to_thread(self.agent_processes.record_children)
-                except Exception as error:  # Priority is best effort; the start stands.
-                    logging.getLogger(__name__).warning(
-                        "agent processes were not recorded error=%s", type(error).__name__
-                    )
         return {}
 
     def _check_start_admission(self, command: ChildCommand, ticket_id: str) -> None:

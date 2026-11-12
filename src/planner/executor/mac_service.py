@@ -12,7 +12,6 @@ import asyncio
 import contextlib
 import os
 import ssl
-import sys
 from functools import partial
 from pathlib import Path
 from uuid import uuid4
@@ -26,7 +25,6 @@ from planner.executor.configuration import (
     validate_server_url,
 )
 from planner.executor.mac_agent_gateway import AgentGateway
-from planner.executor.mac_agent_processes import AgentProcesses
 from planner.executor.mac_catalog import MacCatalog
 from planner.executor.mac_files import MacFiles
 from planner.executor.mac_http import MacHttpClient, create_update_session
@@ -46,6 +44,7 @@ from planner.executor.update_configuration import (
     MAC_RUNTIME_HANDOFF_ENV,
     MAC_RUNTIME_UPDATE_EXIT_CODE,
 )
+from planner.worker_supervision import WorkerCleanupError, reconcile
 
 # A replaced incarnation exits with this code, so launchd starts a fresh process.
 REPLACED_INCARNATION_EXIT_CODE = 1
@@ -87,10 +86,6 @@ class MacService:
         )
         self.files = MacFiles(self.client, paths)
         self.live = MacLiveSender(self.client)
-        # Agent priority and orphan cleanup act on the Mac's own processes only.
-        self.agent_processes = (
-            AgentProcesses(paths.run, os.getpid()) if sys.platform == "darwin" else None
-        )
         self.catalog = MacCatalog()
         self.runner = MacRunner(
             paths=paths,
@@ -101,7 +96,6 @@ class MacService:
             journal=self.journal,
             files=self.files,
             live=self.live,
-            agent_processes=self.agent_processes,
             register_workspace=self.client.register_workspace,
             retire_workspace=self.client.retire_workspace,
             retirement_is_committed=partial(self.client.retire_workspace, replay=True),
@@ -146,7 +140,6 @@ class MacService:
             runner=self.runner,
             journal=self.journal,
             updates=self.updates,
-            agent_processes=self.agent_processes,
             replaced=partial(self._exit, REPLACED_INCARNATION_EXIT_CODE),
         )
 
@@ -159,13 +152,30 @@ class MacService:
             self._exit_code = code
         self._stop.set()
 
+    async def _reconcile_worker_processes(self) -> None:
+        """Retain uncertain startup evidence and refuse new work on every OS."""
+        try:
+            legacy_path = self.paths.run / "agent-processes.json"
+            if legacy_path.exists():
+                legacy = await asyncio.to_thread(read_record, legacy_path)
+                if legacy is None or legacy.get("processes") != []:
+                    self.runner.supervision_cleanup_uncertain = (
+                        "Legacy agent process evidence requires explicit retirement"
+                    )
+            result = await asyncio.to_thread(reconcile, self.paths.run / "worker-processes")
+            if not result.complete:
+                self.runner.supervision_cleanup_uncertain = result.reason
+        except (OSError, ValueError) as error:
+            self.runner.supervision_cleanup_uncertain = str(error)
+        if self.runner.supervision_cleanup_uncertain is not None:
+            # A fresh lease replaces old custody at the home. Never publish it
+            # while old native processes lack positive cleanup evidence.
+            raise WorkerCleanupError(self.runner.supervision_cleanup_uncertain)
+
     async def run(self) -> None:
         loops: list[asyncio.Task[None]] = []
         try:
-            if self.agent_processes is not None:
-                # Before the first lease, so the VPS's "process replaced, agents gone"
-                # holds even for agents launchd did not end.
-                await asyncio.to_thread(self.agent_processes.end_orphans)
+            await self._reconcile_worker_processes()
             # What an earlier process owed goes into the outbox before the first lease
             # reports the backlog and before any command can add behind it. A spool that
             # keeps failing still lets the lease go out within one interval.

@@ -405,11 +405,13 @@ class CodexAppServerBackendChild:
             overrides=self._launch.environment_overrides,
             identity=self._identity_environment(resolved_start),
         )
+        environment["PLAN_CONVERSATION_ID"] = resolved_start.conversation_id
         try:
             await self._client.start(
                 argv=self._launch.argv,
                 environment=environment,
                 working_directory=resolved_start.workspace_folder,
+                supervision_reporter=getattr(self._sink, "record_local_child_supervision", None),
                 worker_ticket_id=dict(self._identity_environment(resolved_start)).get(
                     "PLAN_TICKET_ID"
                 ),

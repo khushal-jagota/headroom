@@ -37,6 +37,7 @@ from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import partial
+from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Final, Literal
 from uuid import uuid4
 
@@ -182,6 +183,7 @@ from planner.core.contracts import ErrorCode, PlannerError, Principal, Principal
 from planner.core.db import connect
 from planner.core.task_settlement import run_on_worker_thread
 from planner.execution_identity import ChildReference
+from planner.ticket_workspaces.contracts import WorkspaceIdentity
 
 LOGGER = logging.getLogger("planner.conversation")
 
@@ -714,6 +716,35 @@ class SqliteProcessConversationSystem:
             idle=lambda: self.workspace_activity() == "idle",
             require_idle=require_idle,
         )
+
+    async def retire_local_workspace(
+        self,
+        ticket_id: str,
+        identity: WorkspaceIdentity,
+        operation: Callable[[], Path | str],
+    ) -> Path | str:
+        """Exclude starts until exact local children stop and the folder detaches."""
+        if not self.workspace_admission.claim(
+            lambda: None, idle=lambda: True, require_idle=True
+        ):
+            return "Workspace admission is busy or closed"
+
+        async def owned() -> Path | str:
+            try:
+                ids = await self._store.workspace_conversation_ids(ticket_id, identity)
+                for conversation_id in ids:
+                    await self.kill(conversation_id)
+                    if not await self.retirement_is_confirmed(conversation_id):
+                        return "Local child retirement is not proven"
+                return await run_on_worker_thread(operation)
+            except Exception:
+                LOGGER.exception("Local workspace retirement failed")
+                return "Local child retirement failed"
+            finally:
+                self.workspace_admission.reopen()
+
+        # A canceled cleanup caller cannot reopen admission while detach still runs.
+        return await asyncio.shield(asyncio.create_task(owned()))
 
     async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
         state = await self._conversation_state(conversation_id)
@@ -5925,6 +5956,11 @@ class _CoreBackendEventSink:
         self._system = system
         self._state = state
         self.generation = uuid4().hex
+
+    async def record_local_child_supervision(self, path: str) -> None:
+        await self._system._store.record_child_supervision(
+            self._state.record.conversation_id, self.generation, path
+        )
 
     async def record_local_child_custody(self, identity: LocalChildIdentity) -> None:
         await self._system._store.record_child_custody(

@@ -79,7 +79,7 @@ Held messages live in memory, so a restart loses anything not yet delivered.
 
 New conversation ends the running turn, discards held work, and links a fresh conversation. The old notebook stays as history, and only the active conversation accepts sends.
 
-After a deploy or ordinary crash interrupts a session, an eligible conversation gets one inspection prompt through the ordinary send path. Headroom never replays uncertain actions. Recovery requires proof that the exact previous child stopped. The home records its identity before dispatch and checks its process birth, host boot, and Worker service where applicable.
+After a deploy or ordinary crash interrupts a session, an eligible conversation gets one inspection prompt through the ordinary send path. Headroom never replays uncertain actions. Recovery requires proof that the exact previous child stopped. The home records its identity before dispatch and checks its process birth, host boot, and supervision records. Older unit-backed children retain exact-unit checks.
 
 Missing evidence, a live child, or a failed inspection keeps the conversation fenced. An unresolved owner never counts as an idle workspace.
 
@@ -87,13 +87,13 @@ A pre-upgrade in-flight turn without a child ownership record keeps the existing
 
 A restart of the Mac's executor process interrupts its turns the same way: once the Mac has sent everything it held for a conversation, that turn ends interrupted and gets the same one recovery prompt, which resumes the session in a fresh agent. A message the old process never fetched goes to the fresh agent instead, and nothing is interrupted. A steer the Mac does not take in time, or that later proves it never reached its turn, waits in the queue as the next message.
 
-## Worker resources on Linux
+## Worker processes
 
-Each Claude or Codex Ticket agent and its tools run in a separate systemd user service. It keeps a Worker's processes apart from the Panels server and stops them all when the Worker ends. Workers have no memory cap. When the machine runs out of memory, Linux kills one process and everything else carries on. Every agent's tool shells mark themselves to be killed first, so a test or browser goes before an agent, and the live service asks to go last.
+One subsystem supervises Claude, Codex, and Hermes Workers on the home and on executors. It lowers process priority, records exact ownership, bounds shutdown, and reconciles records after restart. Cleanup proves that identified processes ended. An unobserved detached tool can survive. Unknown cleanup retains custody and blocks replacement or folder removal. On macOS, the owned transport stops the ordinary root. A surviving orphan or tool without a safe signal handle needs operator retirement, then another proof check.
 
-Each Worker receives a disk directory for temporary files. The directory survives across turns until the agent process stops. Unit shutdown stops its tools before cleanup. Account and login probes keep their separate lifetime. Non-Linux platforms retain their existing launch path.
+Workers on Linux share the home's resource domain. They do not inherit its protected OOM score: each Worker raises its own score before the backend starts. Tools inherit the Worker score. Separate Worker units, aggregate CPU weight, and the tool-first OOM hook no longer apply. The [operator inputs](../ops/panels-environments/README.md#worker-processes) describe the inherited service properties.
 
-The host must supply the Worker slice and its lower CPU weight before Linux Workers can start. A missing slice stops the launch with an error. The [user-service inputs](../ops/panels-environments/README.md#worker-resource-units) describe installation and the operator-owned restart.
+`WorkerScratch` supplies temporary disk storage separately. The directory survives across turns and closes after confirmed cleanup. Account and login probes retain their separate lifetime.
 
 ## Models and asks
 

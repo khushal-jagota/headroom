@@ -611,6 +611,18 @@ def test_absent_hermes_interpreter_preserves_spawn_failure_without_session_or_pr
     scratch_root = tmp_path / "runs"
     monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: scratch_root)
     scratch_paths: list[Path] = []
+    from unittest.mock import AsyncMock, Mock
+
+    from planner.worker_supervision import WorkerSupervisor
+    from planner.worker_supervision.contracts import CleanupResult
+
+    supervisor = Mock()
+    supervisor.argv.side_effect = tuple
+    supervisor.stop = AsyncMock(return_value=CleanupResult(True, ""))
+    async def create(environment: dict[str, str], directory: Path) -> object:
+        supervisor.environment = environment
+        return supervisor
+    monkeypatch.setattr(WorkerSupervisor, "create", create)
     missing_interpreter = tmp_path / "missing-hermes-python"
     failure = FileNotFoundError(2, "No such file or directory", str(missing_interpreter))
     launches: list[str] = []
@@ -653,6 +665,9 @@ def test_absent_hermes_interpreter_preserves_spawn_failure_without_session_or_pr
         assert str(refusal.value) == str(failure)
         assert refusal.value.__cause__ is failure
         assert launches == [str(missing_interpreter)]
+        supervisor.argv.assert_called_once_with((str(missing_interpreter), "-m", "hermes.acp"))
+        supervisor.cancel_unspawned.assert_called_once()
+        supervisor.stop.assert_awaited_once()
         assert len(scratch_paths) == 1 and not scratch_paths[0].exists()
         assert sink.vendor_session_cursor is None
         assert sink.agent_contents == []

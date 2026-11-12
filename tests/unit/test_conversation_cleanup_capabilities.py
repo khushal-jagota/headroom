@@ -348,3 +348,57 @@ def test_retained_sink_cannot_publish_after_shutdown_starts(
             subscription.close()
 
     asyncio.run(asyncio.wait_for(exercise(), 15))
+
+
+def test_local_workspace_stop_holds_start_admission_through_detach(tmp_path: Path) -> None:
+    """A quiet cached child must stop while the exact folder still excludes starts."""
+    from planner.ticket_workspaces.contracts import WorkspaceIdentity
+    from planner.ticket_workspaces.data import register_workspace
+
+    db_path = tmp_path / "planner.db"
+    _create_database(db_path)
+
+    async def exercise() -> None:
+        harness = _Harness(db_path)
+        identity = WorkspaceIdentity("physical-host", "physical-folder")
+        await _start(harness, "c")
+        with closing_connection(connect(str(db_path))) as conn:
+            # The owning Ticket clock normally supplies this row.
+            conn.execute(
+                "INSERT INTO ticket_workspace_lifecycle(ticket_id,ended_at,deleted) "
+                "VALUES('t_retirement',0,1)"
+            )
+            register_workspace(conn, "t_retirement", "c", identity)
+            conn.commit()
+        await harness.system.send("c", text_message_content("work"), sender_label="owner")
+        await harness.complete_turn("c")
+        backend = harness.backend("c")
+        backend.stop_has_begun = asyncio.Event()
+        backend.stops_wait_for_release = asyncio.Event()
+        detached = False
+
+        def detach() -> Path:
+            nonlocal detached
+            assert backend.stops == 1
+            assert harness.system.workspace_admission.closed
+            detached = True
+            return tmp_path / "retired"
+
+        task = asyncio.create_task(harness.system.retire_local_workspace(
+            "t_retirement", identity, detach
+        ))
+        try:
+            await asyncio.wait_for(backend.stop_has_begun.wait(), 5)
+            with pytest.raises(RuntimeError, match="admission is closed"):
+                await _start(harness, "replacement")
+            assert not detached
+            backend.stops_wait_for_release.set()
+            assert await task == tmp_path / "retired"
+            assert detached
+            assert not harness.system.workspace_admission.closed
+        finally:
+            backend.stops_wait_for_release.set()
+            await task
+            await harness.system.shutdown()
+
+    asyncio.run(exercise())

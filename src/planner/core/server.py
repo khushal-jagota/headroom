@@ -499,9 +499,24 @@ def create_app(
                         await asyncio.to_thread(video_uploads.recover_and_cleanup)
 
     async def _clean_ticket_scratch(layout: ticket_scratch.ScratchLayout | None) -> None:
+        from planner.conversation.system import SqliteProcessConversationSystem
         from planner.ticket_workspaces.cleanup import clean_for_database
+        from planner.ticket_workspaces.contracts import WorkspaceIdentity
 
         logger = logging.getLogger(__name__)
+        loop = asyncio.get_running_loop()
+
+        def retire_local_children(
+            ticket_id: str, identity: WorkspaceIdentity, operation: Callable[[], Path | str]
+        ) -> Path | str:
+            system = cast(SqliteProcessConversationSystem | None, app.state.conversation_system)
+            if system is None:
+                return "Conversation runtime is unavailable"
+            future = asyncio.run_coroutine_threadsafe(
+                system.retire_local_workspace(ticket_id, identity, operation), loop
+            )
+            return future.result()
+
         while True:
             await asyncio.sleep(ticket_scratch.CLEANUP_INTERVAL_SECONDS)
             try:
@@ -510,6 +525,7 @@ def create_app(
                     config.db_path,
                     clock.now_unix(),
                     extra_roots=layout.folders if layout is not None else (),
+                    retire_local_children=retire_local_children,
                 )
             except Exception:
                 logger.exception("Ticket scratch cleanup failed")

@@ -99,75 +99,48 @@ tmpfiles rules, or root-owned environment-manager path.
 
 Backup and restore instructions are in [backup-restore.md](backup-restore.md).
 
-## Worker resource units
+## Worker processes
 
-Linux Ticket agents run in transient user services under `panels-workers.slice`.
-Their tools inherit that unit, and it stops them all when the Worker ends. Workers
-have no memory cap. The slice and its parent `panels.slice` only give Workers CPU
-weight 10, below the foreground `app.slice`, where Panels uses weight 100.
+One supervisor owns Worker processes on the home and on executors. It records process
+identities, lowers CPU priority to nice 10, and bounds shutdown. Cleanup proves that
+identified processes ended. A tool that detaches before observation can survive.
+Unknown cleanup retains ownership and blocks replacement and folder removal.
 
-When the machine runs out of memory, Linux kills one process by score and the rest
-carry on:
+Linux Workers share the home service resource domain. New launches do not use
+`panels-workers.slice`, `panels.slice`, or transient Worker services. Nice priority
+does not replace their old aggregate CPU share or control-group cleanup.
 
-- Every agent's tool shell sets its own score to 1000 through `BASH_ENV`, so tests and
-  browsers go first.
-- Worker agents keep the user manager's default score of 200.
-- The live service asks for -500, so Panels goes last but can still be stopped if it
-  leaks itself.
-- Worker units and the live service use `OOMPolicy=continue`, so one kill ends only
-  the killed process.
+| Home service property | Worker behavior |
+|---|---|
+| `CPUWeight=100` | Shared by the home and Workers. Each Worker uses nice 10. |
+| `OOMScoreAdjust=-500` | The home keeps its protection. At spawn, each Worker raises its own score to at least 0. Higher inherited scores stay higher. Tools inherit that score. |
+| `MemoryAccounting=yes`, `MemoryLow=1G` | Apply to the combined home and Worker group. There is no separate memory reservation against Workers. |
+| `OOMPolicy=continue` | Remains the home service policy. Workers have no independent unit policy or memory cap. |
+| `NoNewPrivileges=yes`, `PrivateTmp=yes` | Inherited from the home service. These are not portable per-Worker containment. |
+| Service stop and restart | Apply to the home service and its processes. The supervisor reconciles Worker records after restart. |
+| Environment and working directory | Each backend preserves its explicit launch inputs and role identity. |
 
-A user service cannot go below the user manager's own score, which is 100, without
-root. Until the root step below is applied, the live service starts at 100.
+The Linux adapter writes the Worker OOM score before the backend executes. A failed
+write refuses launch. The removed Bash startup hook raised tool shells and their
+children to 1000, above the agent. That tool-first preference no longer exists.
+macOS has no equivalent OOM score, so that primitive does nothing there.
 
-Worker temporary files use a private `~/.pw-XXXXXXXX/t` directory on disk for the
-agent process lifetime, including successive conversation turns. Shutdown removes
-the directory after the tools stop. The unit boundary controls resources, not access
-to files or credentials. Worker units retain `NoNewPrivileges=yes`.
+`WorkerScratch` supplies short disk directories independently of supervision. Scratch
+survives successive turns and closes only after confirmed process cleanup. Account
+and login probes retain their separate lifetime.
 
-### Activation
+### Operator installation
 
-Run these steps after the release that removes the Worker memory caps is installed.
-Older releases refuse to start Workers if the slice lacks its 24 GiB limit, so the
-slice file must not be installed before them.
+Install the home service through the ordinary release route. Workers must not reload
+or restart the live service. Existing unit-backed custody remains readable until
+exact retirement proves cleanup. Do not erase old process records to clear a fence.
 
-1. **Lower the user manager's floor and pin its default (root).** The drop-in makes it
-   persistent. The last command applies it to the running manager without a restart.
-   The pinned default keeps every other user unit at today's 200.
+After old Worker units retire, the operator can remove the obsolete slice files from
+the user service directory. New Worker launches need neither slice. Keep the home's
+existing OOM protection and service properties. No root OOM or memory configuration
+change is part of Worker supervision.
 
-   ```sh
-   sudo mkdir -p /etc/systemd/system/user@1000.service.d /etc/systemd/user.conf.d
-   printf '[Service]\nOOMScoreAdjust=-500\n' | sudo tee /etc/systemd/system/user@1000.service.d/panels-oom.conf
-   printf '[Manager]\nDefaultOOMScoreAdjust=200\n' | sudo tee /etc/systemd/user.conf.d/panels-oom.conf
-   sudo systemctl daemon-reload
-   echo -500 | sudo tee /proc/"$(systemctl show -p MainPID --value user@1000.service)"/oom_score_adj
-   ```
-
-2. **Make the 1 GiB reservation effective (root).** `MemoryLow` protects Panels only
-   when every ancestor supplies the same protection. It does not preallocate RAM.
-
-   ```sh
-   sudo systemctl set-property user.slice MemoryLow=1G
-   sudo systemctl set-property user-1000.slice MemoryLow=1G
-   sudo systemctl set-property user@1000.service MemoryLow=1G
-   systemctl --user set-property app.slice MemoryLow=1G
-   ```
-
-3. **Install the unit files and restart Panels.** Workers must not perform this step.
-
-   ```sh
-   cd "$HOME/Deployments/Panels/current/app/ops/panels-environments"
-   cp panels-live.service panels-workers.slice "$HOME/.config/systemd/user/"
-   systemctl --user daemon-reload
-   systemctl --user restart panels-live.service
-   ```
-
-4. **Check.** The live service reports `OOMPolicy=continue`, `OOMScoreAdjust=-500`
-   and `MemoryLow=1073741824`. Its process score is -500. The Worker slice reports
-   `MemoryMax=infinity`.
-
-   ```sh
-   systemctl --user show panels-live.service -p OOMPolicy -p OOMScoreAdjust -p MemoryLow
-   cat /proc/"$(systemctl --user show -p MainPID --value panels-live.service)"/oom_score_adj
-   systemctl --user show panels-workers.slice -p MemoryMax
-   ```
+On a disposable Linux home, verify that the home retains its configured OOM score,
+that each Worker uses at least 0, and that its tools inherit the Worker score. Check
+home responsiveness under heavy builds and low memory. These checks must not run on
+the live home. Native Mac checks require an authorized test machine.

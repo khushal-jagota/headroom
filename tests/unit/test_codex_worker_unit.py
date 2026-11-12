@@ -1,7 +1,7 @@
-"""The Codex adapter contains Workers, without containing shared account probes.
+"""The Codex adapter supervises Workers, without containing shared account probes.
 
-The unit lifecycle itself has separate coverage. These cases reuse the scripted Codex
-wire to prove the adapter selects containment from explicit identity.
+The supervisor lifecycle itself has separate coverage. These cases reuse the scripted Codex
+wire to prove the adapter selects supervision from explicit identity.
 """
 
 from __future__ import annotations
@@ -21,41 +21,52 @@ from tests.support.conversation_codex_app_server_bench import (
 from planner.conversation import worker_scratch
 from planner.conversation.contracts import ConversationRoleMaterials
 from planner.conversation.message_content import text_message_content
-from planner.conversation.tool_shell_kill_priority import TOOL_SHELL_STARTUP
-from planner.conversation.worker_unit import WorkerUnit, WorkerUnitError
+from planner.worker_supervision import WorkerCleanupError, WorkerSupervisor
+from planner.worker_supervision.contracts import CleanupResult
 
 
 class _ObservedUnit:
     def __init__(self, environment: Mapping[str, str]) -> None:
         self.environment = dict(environment)
         self.stopped = False
+        self.path = Path(environment["TMPDIR"]) / "process-record"
 
     def argv(self, original: Sequence[str]) -> tuple[str, ...]:
         return tuple(original)
 
-    async def stop(self) -> None:
+    async def started(self, pid: int) -> None:
+        pass
+
+    def cancel_unspawned(self) -> None:
+        pass
+
+    async def stop(self, *, native_stop=None) -> CleanupResult:  # type: ignore[no-untyped-def]
+        if native_stop is not None:
+            await native_stop()
         self.stopped = True
+        return CleanupResult(True, "")
 
 
-def test_only_explicit_worker_identity_selects_containment(
+def test_only_explicit_worker_identity_selects_supervision(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
     units: list[_ObservedUnit] = []
+    monkeypatch.setenv("BASH_ENV", str(tmp_path / "user-bash-env"))
 
-    async def create(environment: Mapping[str, str], working_directory: Path) -> WorkerUnit:
+    async def create(environment: Mapping[str, str], working_directory: Path) -> WorkerSupervisor:
         assert working_directory == tmp_path
         unit = _ObservedUnit(environment)
         units.append(unit)
-        return cast(WorkerUnit, unit)
+        return cast(WorkerSupervisor, unit)
 
-    monkeypatch.setattr(WorkerUnit, "create", create)
+    monkeypatch.setattr(WorkerSupervisor, "create", create)
     monkeypatch.setenv("PLAN_TICKET_ID", "inherited-parent-ticket")
     monkeypatch.setenv("TEST_DISK_TMP", str(tmp_path / "disk-temp"))
 
     async def exercise() -> None:
         # Shared probes and non-Worker conversations inherit the server's environment.
-        # Ambient Worker identity must not opt them into containment.
+        # Ambient Worker identity must not opt them into supervision.
         async with _scripted_child(tmp_path, script={}) as scripted:
             await scripted.start(cursor=None)
             assert units == []
@@ -77,7 +88,7 @@ def test_only_explicit_worker_identity_selects_containment(
             assert scratch.parent == tmp_path / "runs"
             assert scratch.is_dir()
             assert scripted.launched()["environment"]["TMPDIR"] == str(scratch)
-            assert units[0].environment["BASH_ENV"] == str(TOOL_SHELL_STARTUP)
+            assert units[0].environment["BASH_ENV"] == str(tmp_path / "user-bash-env")
             assert not units[0].stopped
             scripted.sink.expect_another_turn()
             await scripted.write_prompt(2, text_message_content("second turn"))
@@ -97,15 +108,15 @@ def test_worker_launch_failure_cleans_up_its_prepared_unit(
     monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
     units: list[_ObservedUnit] = []
 
-    async def create(environment: Mapping[str, str], working_directory: Path) -> WorkerUnit:
+    async def create(environment: Mapping[str, str], working_directory: Path) -> WorkerSupervisor:
         unit = _ObservedUnit(environment)
         units.append(unit)
-        return cast(WorkerUnit, unit)
+        return cast(WorkerSupervisor, unit)
 
     def missing_executable(self: _ObservedUnit, original: Sequence[str]) -> tuple[str, ...]:
-        return (str(tmp_path / "missing-systemd-run"),)
+        return (str(tmp_path / "missing-launcher"),)
 
-    monkeypatch.setattr(WorkerUnit, "create", create)
+    monkeypatch.setattr(WorkerSupervisor, "create", create)
     monkeypatch.setattr(_ObservedUnit, "argv", missing_executable)
     monkeypatch.setenv("TEST_DISK_TMP", str(tmp_path))
 
@@ -118,7 +129,7 @@ def test_worker_launch_failure_cleans_up_its_prepared_unit(
             ),
         )
         async with _scripted_child(tmp_path, script={}) as scripted:
-            with pytest.raises(BackendSpawnFailed, match="missing-systemd-run"):
+            with pytest.raises(BackendSpawnFailed, match="missing-launcher"):
                 await scripted.child.start(start, vendor_session_cursor=None)
         assert len(units) == 1
         assert units[0].stopped
@@ -134,21 +145,21 @@ def test_failed_unit_stop_keeps_the_handle_for_a_retry(
     units: list[_ObservedUnit] = []
     stop_calls = 0
 
-    async def create(environment: Mapping[str, str], working_directory: Path) -> WorkerUnit:
+    async def create(environment: Mapping[str, str], working_directory: Path) -> WorkerSupervisor:
         unit = _ObservedUnit(environment)
         units.append(unit)
-        return cast(WorkerUnit, unit)
+        return cast(WorkerSupervisor, unit)
 
     original_stop = _ObservedUnit.stop
 
-    async def retry_stop(unit: _ObservedUnit) -> None:
+    async def retry_stop(unit: _ObservedUnit, *, native_stop=None) -> CleanupResult:  # type: ignore[no-untyped-def]
         nonlocal stop_calls
         stop_calls += 1
         if stop_calls == 1:
-            raise WorkerUnitError("service manager unavailable")
-        await original_stop(unit)
+            raise WorkerCleanupError("cleanup not proven")
+        return await original_stop(unit, native_stop=native_stop)
 
-    monkeypatch.setattr(WorkerUnit, "create", create)
+    monkeypatch.setattr(WorkerSupervisor, "create", create)
     monkeypatch.setattr(_ObservedUnit, "stop", retry_stop)
     monkeypatch.setenv("TEST_DISK_TMP", str(tmp_path))
 
@@ -162,7 +173,7 @@ def test_failed_unit_stop_keeps_the_handle_for_a_retry(
         )
         async with _scripted_child(tmp_path, script={}) as scripted:
             await scripted.child.start(start, vendor_session_cursor=None)
-            with pytest.raises(WorkerUnitError, match="service manager unavailable"):
+            with pytest.raises(WorkerCleanupError, match="cleanup not proven"):
                 await scripted.child.stop()
             assert not units[0].stopped
         assert stop_calls == 2

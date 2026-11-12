@@ -35,7 +35,6 @@ from planner.executor.protocol import (
 
 if TYPE_CHECKING:
     from planner.executor.contracts import CommandJournalApi, MacHttpClient
-    from planner.executor.mac_agent_processes import AgentProcesses
     from planner.executor.mac_outbox import MacOutbox
     from planner.executor.mac_runner import MacRunner
     from planner.executor.mac_updates import MacUpdateController
@@ -93,12 +92,10 @@ class MacLeaseLoop:
         runner: MacRunner,
         journal: CommandJournalApi,
         updates: MacUpdateController,
-        agent_processes: AgentProcesses | None,
         replaced: Callable[[], None],
     ) -> None:
         self.client, self.presence, self.outbox = client, presence, outbox
         self.runner, self.journal, self.updates = runner, journal, updates
-        self.agent_processes = agent_processes
         self._replaced = replaced
         self._next_workspace_cleanup = 0.0
         self._workspace_cleanup_task: asyncio.Task[None] | None = None
@@ -185,16 +182,6 @@ class MacLeaseLoop:
         except Exception as error:
             _LOG.warning("Ticket workspace cleanup failed error=%s", failure_name(error))
 
-    async def _record_agents(self) -> None:
-        """Record the agents' processes each lease interval, with or without the VPS, so
-        a start that hangs while the link is down is still ended after a crash."""
-        if self.agent_processes is None:
-            return
-        try:
-            await asyncio.to_thread(self.agent_processes.record_children)
-        except Exception as error:  # Priority and cleanup are best effort.
-            _LOG.warning("agent processes were not recorded error=%s", failure_name(error))
-
     async def run(self) -> None:
         loop = asyncio.get_running_loop()
         try:
@@ -202,7 +189,6 @@ class MacLeaseLoop:
                 started = loop.time()
                 if not await self.lease_once():
                     return
-                await self._record_agents()
                 await asyncio.sleep(max(0.0, started + LEASE_INTERVAL_SECONDS - loop.time()))
         finally:
             if self._workspace_cleanup_task is not None:

@@ -13,8 +13,11 @@ from pathlib import Path
 from uuid import UUID
 
 from planner.conversation.local_child_contracts import LocalChildIdentity, LocalHostBootIdentity
-from planner.conversation.worker_unit.config import CONTROL_TIMEOUT_SECONDS, WORKER_SLICE
 from planner.executor.configuration import ORPHAN_AGENT_TERMINATION_GRACE_SECONDS
+
+# Legacy exact-unit custody remains readable after new Worker units are retired.
+CONTROL_TIMEOUT_SECONDS = 10
+WORKER_SLICE = "panels-workers.slice"
 
 
 def _boot_identity() -> str | None:
@@ -112,6 +115,15 @@ def process_identity(pid: int, unit: str | None = None) -> LocalChildIdentity | 
 
 def child_is_absent(identity: LocalChildIdentity, host: str | None = None) -> bool:
     """Unknown inspections fail closed. A different boot proves the old child ended."""
+    if identity.supervision_record is not None:
+        from planner.worker_supervision import inspect_record, records
+
+        try:
+            if records.read(Path(identity.supervision_record)).get("host") != host:
+                return False
+        except (OSError, ValueError):
+            return False
+        return inspect_record(Path(identity.supervision_record), identity=identity).complete
     current_host = host_boot_identity()
     if current_host is None or current_host.host != host:
         return False
@@ -185,6 +197,15 @@ def _unit_is_retired(unit: str) -> bool:
 
 def stop_recorded_child(identity: LocalChildIdentity, host: str | None) -> bool:
     """Explicit Stop owns only the exact durable child or Worker service, never an inventory."""
+    if identity.supervision_record is not None:
+        from planner.worker_supervision import records, stop_record
+
+        try:
+            if records.read(Path(identity.supervision_record)).get("host") != host:
+                return False
+        except (OSError, ValueError):
+            return False
+        return stop_record(Path(identity.supervision_record), identity=identity).complete
     current_host = host_boot_identity()
     if current_host is None or current_host.host != host:
         return False
@@ -239,7 +260,7 @@ def write_pending(conn: sqlite3.Connection, conversation_id: str, generation: st
         "INSERT INTO conversation_child_custody(conversation_id,generation,state,host,boot) "
         "VALUES (?,?,'launch_pending',?,?) ON CONFLICT(conversation_id) DO UPDATE SET "
         "generation=excluded.generation,state=excluded.state,pid=NULL,birth=NULL,"
-        "boot=excluded.boot,host=excluded.host,unit=NULL",
+        "boot=excluded.boot,host=excluded.host,unit=NULL,supervision_record=NULL",
         (
             conversation_id,
             generation,
@@ -284,21 +305,54 @@ def occurrence_matches(
     return row is not None and tuple(row) == (occurrence_id, runtime_epoch)
 
 
+def write_supervision_record(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    generation: str,
+    path: str,
+) -> None:
+    from planner.worker_supervision import records
+
+    record = records.read(Path(path))
+    if record.get("conversation_id") != conversation_id:
+        raise ValueError("Worker supervision record does not own this conversation")
+    cursor = conn.execute(
+        "UPDATE conversation_child_custody SET supervision_record=? "
+        "WHERE conversation_id=? AND generation=? AND state='launch_pending'",
+        (path, conversation_id, generation),
+    )
+    if cursor.rowcount != 1:
+        raise ValueError("Worker supervision record lost pending custody")
+
+
 def write_started(
     conn: sqlite3.Connection, conversation_id: str, generation: str, identity: LocalChildIdentity
 ) -> None:
     if (
-        identity.pid <= 0 or not identity.birth.strip() or not identity.boot.strip()
-        or (identity.unit is not None
-            and re.fullmatch(r"panels-worker-[0-9a-f]{32}\.service", identity.unit) is None)
+        identity.pid <= 0
+        or not identity.birth.strip()
+        or not identity.boot.strip()
+        or (
+            identity.unit is not None
+            and re.fullmatch(r"panels-worker-[0-9a-f]{32}\.service", identity.unit) is None
+        )
     ):
         return
     conn.execute(
-        "UPDATE conversation_child_custody SET state='started',pid=?,birth=?,boot=?,unit=? "
+        "UPDATE conversation_child_custody SET state='started',pid=?,birth=?,boot=?,unit=?,"
+        "supervision_record=? "
         "WHERE conversation_id=? AND generation=? AND state='launch_pending' "
         "AND host IS NOT NULL AND host!='' AND boot=?",
-        (identity.pid, identity.birth, identity.boot, identity.unit,
-         conversation_id, generation, identity.boot),
+        (
+            identity.pid,
+            identity.birth,
+            identity.boot,
+            identity.unit,
+            identity.supervision_record,
+            conversation_id,
+            generation,
+            identity.boot,
+        ),
     )
 
 
@@ -323,12 +377,23 @@ def retirement_row_proven(row: sqlite3.Row) -> bool:
     if row["state"] == "retired":
         return True
     if row["state"] == "launch_pending":
+        path = row["supervision_record"]
+        if path is not None:
+            from planner.worker_supervision import inspect_record
+
+            return inspect_record(Path(path)).complete
         return recorded_boot_ended(row["host"], row["boot"])
     if (
-        not isinstance(row["pid"], int) or row["pid"] <= 0
-        or not row["birth"] or not row["boot"] or not row["host"]
+        not isinstance(row["pid"], int)
+        or row["pid"] <= 0
+        or not row["birth"]
+        or not row["boot"]
+        or not row["host"]
     ):
         return False
     return child_is_absent(
-        LocalChildIdentity(row["pid"], row["birth"], row["boot"], row["unit"]), row["host"]
+        LocalChildIdentity(
+            row["pid"], row["birth"], row["boot"], row["unit"], row["supervision_record"]
+        ),
+        row["host"],
     )

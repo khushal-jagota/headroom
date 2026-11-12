@@ -59,3 +59,9 @@ def pytest_configure(config: pytest.Config) -> None:
     tempfile.tempdir = None
 
     config.pluginmanager.register(_SKILL_TREE_PROTECTION, "skill-tree-protection")
+
+
+@pytest.fixture(autouse=True)
+def worker_process_records(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Worker launches never write custody into an inherited deployment directory."""
+    monkeypatch.setenv("PLAN_WORKER_PROCESS_ROOT", str(tmp_path / "worker-processes"))

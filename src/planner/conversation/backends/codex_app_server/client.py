@@ -31,7 +31,7 @@ import json
 import logging
 import os
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Protocol
@@ -49,9 +49,8 @@ from planner.conversation.backends.codex_app_server.login import (
 )
 from planner.conversation.child_custody import process_identity
 from planner.conversation.local_child_contracts import LocalChildIdentity
-from planner.conversation.tool_shell_kill_priority import with_tool_shell_kill_priority
 from planner.conversation.worker_scratch import WorkerScratch
-from planner.conversation.worker_unit import WorkerUnit, WorkerUnitError
+from planner.worker_supervision import WorkerCleanupError, WorkerSupervisor
 
 LOGGER = logging.getLogger("planner.conversation.backends.codex_app_server")
 
@@ -180,7 +179,7 @@ class CodexAppServerClient:
             else consumed_notifications
         )
         self._process: asyncio.subprocess.Process | None = None
-        self._worker_unit: WorkerUnit | None = None
+        self._worker_supervisor: WorkerSupervisor | None = None
         self._worker_scratch: WorkerScratch | None = None
         self._end_reason: str | None = None
         self._request_ids = itertools.count(1)
@@ -206,37 +205,57 @@ class CodexAppServerClient:
         environment: Mapping[str, str],
         working_directory: Path,
         worker_ticket_id: str | None = None,
+        supervision_reporter: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         """Spawn the child and begin reading it. Raises ``CodexChildWouldNotStart``."""
-        environment = with_tool_shell_kill_priority(dict(environment))
+        environment = dict(environment)
+        process: asyncio.subprocess.Process | None = None
         try:
             await ensure_cli_compatible(
                 "codex", argv[0], environment=environment, working_directory=working_directory
             )
             if worker_ticket_id:
                 environment = {**environment, "PLAN_TICKET_ID": worker_ticket_id}
-                self._worker_scratch = WorkerScratch(environment)
-                environment = self._worker_scratch.environment
-                self._worker_unit = await WorkerUnit.create(
-                    {**environment, "PLAN_TICKET_ID": worker_ticket_id}, working_directory
+                self._worker_supervisor = await WorkerSupervisor.create(
+                    environment, working_directory
                 )
-            unit = self._worker_unit
+                try:
+                    self._worker_scratch = WorkerScratch(environment)
+                except BaseException:
+                    if self._worker_supervisor is not None:
+                        self._worker_supervisor.cancel_unspawned()
+                    raise
+                environment = self._worker_scratch.environment
+                if self._worker_supervisor is not None:
+                    self._worker_supervisor.environment.update(environment)
+            supervisor = self._worker_supervisor
+            if supervisor is not None and supervision_reporter is not None:
+                try:
+                    await supervision_reporter(str(supervisor.path))
+                except BaseException:
+                    supervisor.cancel_unspawned()
+                    raise
             process = await asyncio.create_subprocess_exec(
-                *(argv if unit is None else unit.argv(argv)),
+                *(argv if supervisor is None else supervisor.argv(argv)),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=dict(environment) if unit is None else unit.environment,
+                env=dict(environment) if supervisor is None else supervisor.environment,
                 cwd=str(working_directory),
                 limit=CHILD_OUTPUT_LINE_LIMIT_BYTES,
             )
+            self._process = process
+            if supervisor is not None:
+                await supervisor.started(process.pid)
         except BaseException as would_not_spawn:
-            if self._worker_unit is not None:
-                await self._worker_unit.stop()
-                self._worker_unit = None
+            if self._worker_supervisor is not None:
+                if process is None and isinstance(would_not_spawn, OSError):
+                    self._worker_supervisor.cancel_unspawned()
+                await self._stop_worker()
+                self._worker_supervisor = None
             if self._worker_scratch is not None:
                 self._worker_scratch.close()
-            if isinstance(would_not_spawn, (OSError, WorkerUnitError, BackendCliIncompatible)):
+            if isinstance(would_not_spawn, (OSError, WorkerCleanupError, BackendCliIncompatible)):
                 raise CodexChildWouldNotStart(str(would_not_spawn)) from would_not_spawn
             raise
         self._process = process
@@ -253,12 +272,19 @@ class CodexAppServerClient:
             name=f"planner.conversation.codex.child.{self._description}",
         )
 
+    async def _stop_worker(self) -> None:
+        supervisor = self._worker_supervisor
+        if supervisor is not None:
+            result = await supervisor.stop(native_stop=self._stop_native_process)
+            if not result.complete:
+                raise WorkerCleanupError(result.reason)
+
     def local_child_identity(self) -> LocalChildIdentity | None:
         """Read only after the adapter completes the child protocol handshake."""
         if self._process is None:
             return None
-        unit = self._worker_unit
-        return process_identity(self._process.pid, None if unit is None else unit.name)
+        supervisor = self._worker_supervisor
+        return process_identity(self._process.pid) if supervisor is None else supervisor.identity()
 
     async def stop(self) -> None:
         """End the child: stop reading it, close its input, and make sure it is gone."""
@@ -272,15 +298,19 @@ class CodexAppServerClient:
         self._standard_error_reader = None
         self._child_watcher = None
         self._fail_everything_pending("this child is being shut down")
-        unit = self._worker_unit
-        if unit is not None:
-            await unit.stop()
-            self._worker_unit = None
-        process = self._process
+        supervisor = self._worker_supervisor
+        if supervisor is not None:
+            await self._stop_worker()
+            self._worker_supervisor = None
+        if supervisor is None:
+            await self._stop_native_process()
         self._process = None
+        if self._worker_scratch is not None:
+            self._worker_scratch.close()
+
+    async def _stop_native_process(self) -> None:
+        process = self._process
         if process is None:
-            if self._worker_scratch is not None:
-                self._worker_scratch.close()
             return
         if process.stdin is not None:
             with suppress(Exception):
@@ -293,10 +323,7 @@ class CodexAppServerClient:
             except TimeoutError:
                 with suppress(ProcessLookupError):
                     process.kill()
-                with suppress(Exception):
-                    await process.wait()
-        if self._worker_scratch is not None:
-            self._worker_scratch.close()
+                await asyncio.wait_for(process.wait(), CHILD_SHUTDOWN_GRACE_SECONDS)
 
     @property
     def end_reason(self) -> str | None:
@@ -589,15 +616,15 @@ class CodexAppServerClient:
     async def _watch_for_the_child_ending(self, process: asyncio.subprocess.Process) -> None:
         """Wait for the process to go, then stop everything that is waiting on its wire."""
         await process.wait()
-        unit = self._worker_unit
-        if unit is not None:
+        supervisor = self._worker_supervisor
+        if supervisor is not None:
             try:
-                await unit.stop()
-            except (WorkerUnitError, TimeoutError) as cleanup_failed:
-                self._end_reason = f"Worker stopped, but its unit cleanup failed: {cleanup_failed}"
+                await self._stop_worker()
+            except (WorkerCleanupError, TimeoutError) as cleanup_failed:
+                self._end_reason = f"Worker cleanup remains unproven: {cleanup_failed}"
             else:
-                self._worker_unit = None
-        if self._worker_unit is None and self._worker_scratch is not None:
+                self._worker_supervisor = None
+        if self._worker_supervisor is None and self._worker_scratch is not None:
             self._worker_scratch.close()
         # The pipes reach EOF separately. Finish draining stderr before the adapter
         # classifies the turn that ended with the child.

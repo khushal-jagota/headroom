@@ -459,17 +459,20 @@ permission and question callbacks. Check that an ordinary Worker reads canonical
 writes an artifact through `PLAN_TICKET_FILES_DIR`, and that the served Ticket link opens it.
 Check a short network loss and a VPS restart against
 [the restart rules](../../docs/executor.md).
-A Mac service restart must also establish that launchd ends its provider processes;
-scripted tests cannot prove that host behavior. As a backstop, the executor records its
-agent processes in `$EXECUTOR_ROOT/run/agent-processes.json`; at its next start, before
-its first lease, it sends SIGTERM and then, after 10 seconds, SIGKILL to each recorded
-process whose start time still matches. Mac application previews remain
+A Mac service restart must also establish what happens to its provider processes.
+Scripted Linux tests cannot prove that host behavior. The shared Worker supervisor
+records per-Worker process ownership under `$EXECUTOR_ROOT/run/worker-processes` and
+reconciles it before the first lease. Unknown cleanup fences new work. On macOS, a
+surviving process without a safe signal handle requires operator retirement. A tool
+that detaches before observation can escape. An older nonempty or unreadable
+`agent-processes.json` remains evidence and fences startup instead of disappearing.
+Mac application previews remain
 unavailable. Retain evidence separately from production and preserve pending bytes.
 This runbook does not authorize changing application routes or account policy.
 
 Code paths: `src/planner/environments/mac_executor.py`, `src/planner/executor/cli.py`,
 `src/planner/executor/mac_outbox.py`, `src/planner/executor/mac_mailbox.py`,
-`src/planner/executor/mac_agent_processes.py`, `requirements-build.txt`, `requirements-executor.txt`,
+`src/planner/worker_supervision/`, `requirements-build.txt`, `requirements-executor.txt`,
 `agent_backends/package-lock.json`.
 
 ## Narrow permission setup and native evidence

@@ -398,3 +398,56 @@ def test_legacy_scratch_outside_ticket_files_stays_for_owner_review(
     assert legacy.exists() and _git(layout.repository, "worktree", "list", "--porcelain") == before
     assert not (root.parent / ".ticket-retired").exists()
     assert "one-time owner review" in result.skipped[0]["reason"]
+
+
+def test_recorded_child_uncertainty_blocks_local_detach_and_retirement_replay(
+    tmp_db: Connection,
+) -> None:
+    """Database activity and an old grant cannot substitute for child retirement."""
+    import asyncio
+
+    from tests.support.in_memory_conversation_system import InMemoryConversationSystem
+
+    from planner.files.lifecycle import database_path
+    from planner.files.logic.paths import ticket_files_root
+    from planner.runtime.conversation_start import start_ticket_conversation, worker_resolve
+    from planner.ticket_workspaces.cleanup import clean_for_database
+
+    ticket = create_ticket(
+        tmp_db, title="Retain child custody", principal=OWNER_PRINCIPAL,
+        now=1, title_max_chars=200, worker_type="coding",
+    )
+    folder = ticket_files_root(database_path(tmp_db)) / ticket.id
+    prepare_workspace(folder, None, ticket.id)
+    asyncio.run(start_ticket_conversation(
+        InMemoryConversationSystem(), tmp_db, ticket, worker_resolve(tmp_db, ticket),
+        conversation_id="retained_local_child", now=2,
+    ))
+    tmp_db.execute(
+        "INSERT INTO conversation_child_custody(conversation_id,generation,state) "
+        "VALUES('retained_local_child','partial-start','launch_pending')"
+    )
+    tmp_db.execute("UPDATE tickets SET stage='done',updated_at=100 WHERE id=?", (ticket.id,))
+    tmp_db.commit()
+    result = clean_for_database(database_path(tmp_db), RETENTION_SECONDS + 100)
+    assert folder.exists()
+    assert any("retirement is not proven" in item["reason"] for item in result.skipped)
+
+    # An earlier detach grant does not erase newly discovered uncertain custody.
+    identity = workspace_identity(folder)
+    from planner.ticket_workspaces.data import authorize_retirement
+    state = read_workspace_states(tmp_db)[ticket.id]
+    assert authorize_retirement(tmp_db, state, RETENTION_SECONDS + 100, identity)
+    from planner.ticket_workspaces.filesystem import retire_workspace
+    retired = retire_workspace(folder, state, identity=identity)
+    assert isinstance(retired, Path)
+    tmp_db.commit()
+    result = clean_for_database(database_path(tmp_db), RETENTION_SECONDS + 100)
+    assert retired.exists()
+    tmp_db.execute(
+        "UPDATE conversation_child_custody SET state='retired' "
+        "WHERE conversation_id='retained_local_child'"
+    )
+    tmp_db.commit()
+    clean_for_database(database_path(tmp_db), RETENTION_SECONDS + 100)
+    assert not retired.exists()
