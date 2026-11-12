@@ -7,7 +7,8 @@ import http from 'node:http';
 import net from 'node:net';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
+import { Deferred } from '../conversation/runtime/state.ts';
 import WebSocket, { WebSocketServer } from 'ws';
 import { PreviewTransport } from '../previews/transport.ts';
 import type { PreviewService } from '../previews/service.ts';
@@ -75,6 +76,8 @@ async function host(upstream_port: number) {
   const port = await listen(server);
   return {
     port,
+    service,
+    transport,
     path: `/dev/tickets/${record.ticket_id}/${record.generation}/`,
     close: async () => {
       transport.close();
@@ -149,6 +152,12 @@ test('preserves upgrade frames and enforces raw header and transfer limits on on
   const setup_ms = performance.now() - started;
   const browser = new WebSocket(`ws://127.0.0.1:${downstream.port}${downstream.path}`);
   let deadline: NodeJS.Timeout | undefined;
+  const before = new Deferred<void>(),
+    release_before = new Deferred<void>();
+  const after = new Deferred<void>(),
+    release_after = new Deferred<void>();
+  let grace_request: ReturnType<typeof read_http> | undefined;
+  let grace_ms: number | undefined;
   try {
     const received = await new Promise<string[]>((resolve, reject) => {
       const messages: string[] = [];
@@ -174,13 +183,13 @@ test('preserves upgrade frames and enforces raw header and transfer limits on on
         status: 502,
         body: 'Preview headers exceed the supported limit.',
       });
-    const before = connections;
+    const before_connections = connections;
     expect(
       await read_http(downstream.port, downstream.path + 'oversized-body', {
         'Content-Length': String(REQUEST_BODY_BYTES + 1),
       }),
     ).toEqual({ status: 413, body: 'Preview request body exceeds the supported limit.' });
-    expect(connections).toBe(before);
+    expect(connections).toBe(before_connections);
     await new Promise<void>((resolve, reject) => {
       deadline = setTimeout(
         () => reject(new Error('oversized WebSocket message did not close')),
@@ -190,7 +199,37 @@ test('preserves upgrade frames and enforces raw header and transfer limits on on
       browser.send(Buffer.alloc(WEBSOCKET_MESSAGE_BYTES + 1));
     });
     expect(browser.readyState).toBe(WebSocket.CLOSED);
+    // Distinct gap: generic HTTP draining does not cross preview's asynchronous
+    // process verification. Reuse this same listener pair and actual relay.
+    const verification_started = performance.now();
+    vi.spyOn(downstream.service, 'before_connection').mockImplementation(async () => {
+      before.resolve();
+      await release_before.promise;
+    });
+    vi.spyOn(downstream.service, 'after_connection').mockImplementation(async () => {
+      after.resolve();
+      await release_after.promise;
+    });
+    grace_request = read_http(downstream.port, downstream.path + 'supported');
+    void grace_request.catch(() => {});
+    await before.promise;
+    downstream.transport.lifetime.seal();
+    downstream.transport.close_websockets();
+    release_before.resolve();
+    await Promise.race([
+      after.promise,
+      grace_request.then(() => {
+        throw new Error('Preview returned before post-connect verification');
+      }),
+    ]);
+    release_after.resolve();
+    expect(await grace_request).toEqual({ status: 200, body: 'OK' });
+    grace_ms = performance.now() - verification_started;
   } finally {
+    release_before.resolve();
+    release_after.resolve();
+    if (grace_request) await Promise.allSettled([grace_request]);
+    vi.restoreAllMocks();
     clearTimeout(deadline);
     browser.terminate();
     await downstream.close();
@@ -204,7 +243,8 @@ test('preserves upgrade frames and enforces raw header and transfer limits on on
         total_ms: performance.now() - started,
         listeners: 2,
         websocket_connections: 1,
-        http_requests: 6,
+        http_requests: 7,
+        grace_verification_ms: grace_ms,
       }),
     );
   }

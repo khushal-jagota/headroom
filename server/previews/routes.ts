@@ -44,6 +44,16 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     timer.unref();
   });
   app.addHook('onClose', async () => {
+    // Ordinary admitted HTTP relays finish before destructive service shutdown.
+    closing ??= Promise.allSettled([
+      Promise.resolve().then(() => transport.close()),
+      Promise.resolve().then(() => service.close()),
+    ]).then((results) => {
+      const failures = results.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : [],
+      );
+      if (failures.length) throw new AggregateError(failures, 'Preview shutdown failed');
+    });
     await closing;
   });
   // onClose runs after listener shutdown; terminate WS first so server.close can finish.
@@ -51,10 +61,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     clearInterval(timer);
     unsubscribe?.();
     app.server.off('upgrade', upgrade);
-    transport.close();
-    // Existing service owns inspection admission and its outstanding work.
-    closing ??= service.close();
-    void closing.catch(() => {});
+    transport.close_websockets();
   });
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof PreviewError) {

@@ -168,7 +168,10 @@ export function installMiddleware(
           reply.code(413).send({ detail: 'a conversation send request is too large' });
       }
     };
-    return lifetime ? lifetime.run(operation) : operation();
+    if (!lifetime) return operation();
+    return request.request_lifetime === lifetime
+      ? lifetime.track(operation)
+      : lifetime.run(operation);
   });
   app.addHook('preParsing', async (request, _reply, payload) => {
     const path = new URL(request.url, 'http://localhost').pathname;
