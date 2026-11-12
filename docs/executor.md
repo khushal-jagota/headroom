@@ -57,7 +57,7 @@ The Mac saves each piece of output before it sends it. Each conversation sends i
 
 The VPS answers each batch quickly, with receipts or "retry later". A dropped request never cancels a save. If one conversation's items fail, only that conversation waits. One conversation never blocks another. An item from a replaced Mac process is refused, and the new process replays it.
 
-A file reaches the VPS before any item that refers to it, so a Ticket link never points at a missing file. Live text, thinking, and tool progress skip the outbox and are lost while the Mac is away. Finished messages and recorded events are saved and resent.
+A file reaches the VPS before any item that refers to it, so a Ticket link never points at a missing file. An upload waits in private staging until an item that names it is accepted. The VPS checks the item's files before it takes the database's single write lock, so a large artifact set does not hold up other saves. It then moves the files into the Ticket's folder in small groups. Each group rechecks that the agent still owns that Ticket. The item and its receipt then commit together, and only if no file changed after its check. Live text, thinking, and tool progress skip the outbox and are lost while the Mac is away. Finished messages and recorded events are saved and resent.
 
 ## Restarts
 

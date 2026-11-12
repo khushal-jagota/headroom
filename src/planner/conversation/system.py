@@ -541,7 +541,6 @@ class _ConversationState:
     last_ended_turn_token: TurnToken | None = None
     last_ended_turn_was_automatic_compaction: bool = False
     child: BackendChild | None = None
-    local_child_retirement_proven: bool = False
     child_is_quarantined: bool = False
     retained_child_reference: ChildReference | None = None
     delivery_uncertain: bool = False
@@ -1118,26 +1117,6 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 ),
                 recording_receipt=recording_receipt,
-            )
-
-    async def retirement_is_confirmed(self, conversation_id: str) -> bool:
-        """Require an actual cleanup receipt or proof that no source ever started."""
-        state = await self._conversation_state(conversation_id)
-        if state is None:
-            return False
-        retained = self._retained_run(state)
-        remote_receipt = retained is not None and retained.retirement_confirmed
-        async with state.lock:
-            return (
-                state.child is None
-                and state.retained_child_reference is None
-                and not state.child_is_quarantined
-                and (state.retirement_task is None or state.retirement_task.done())
-                and (
-                    remote_receipt
-                    or state.local_child_retirement_proven
-                    or not state.has_delivered_prompt
-                )
             )
 
     async def kill(self, conversation_id: str) -> None:
@@ -2059,8 +2038,6 @@ class SqliteProcessConversationSystem:
                 if child is not None:
                     try:
                         await child.detach()
-                        if not child.stop_outside_lock:
-                            state.local_child_retirement_proven = True
                     except Exception:
                         state.child = child
                         state.child_is_quarantined = True
@@ -3989,7 +3966,6 @@ class SqliteProcessConversationSystem:
         # up — the session cursor it mints — has somewhere to go.
         self._ensure_backend_event_pump(state)
         start_reservation = state.reserved_turn
-        state.local_child_retirement_proven = False
         await child.start(
             resolved_start,
             vendor_session_cursor=state.record.vendor_session_cursor,
@@ -4040,7 +4016,6 @@ class SqliteProcessConversationSystem:
                 state.record.conversation_id,
             )
             return False
-        state.local_child_retirement_proven = True
         # News still queued from the stopped child is not about any child that follows.
         state.child_event_sink = None
         await self._background_tasks_ended_with_child(state)
