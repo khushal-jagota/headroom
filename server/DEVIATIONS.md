@@ -192,6 +192,17 @@ and the session cursor from `session_id`. Provider-private session-file effects 
 no provider session file or owner executable was inspected for this check. The adapter follows
 this accepted policy.
 
+## Credential request UUID text
+
+Python's `UUID()` accepts additional integer-text forms, including a `0x` prefix,
+a leading plus sign, and underscores when the resulting text has the required
+length. Credential requests in TS accept canonical
+hexadecimal UUID text and the ordinary UUID wrappers, but refuse those lenient
+integer-text forms. The Manager accepts this narrower rule as Python leniency
+that TS does not reproduce. The focused credential-request check pins refusal of
+one `0x`-prefixed form. Canonical UUID identities and all normal request outcomes
+still match Python.
+
 ## Codex process cleanup and blocked writes
 
 The migration Manager accepted these three differences in the Part 1 review on
