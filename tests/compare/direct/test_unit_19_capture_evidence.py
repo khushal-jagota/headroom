@@ -11,23 +11,36 @@ import subprocess
 import time
 from contextlib import closing
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
-from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
+from tests.support.synthetic_homes import (
+    create_synthetic_homes,
+    synthetic_home_environment,
+)
 
 from planner.conversation.deploy_interruptions import data
-from planner.conversation.deploy_interruptions.files import read_manifests
+from planner.conversation.deploy_interruptions.files import (
+    manifest_root,
+    read_manifests,
+)
+from planner.conversation.usage.composition import makeUsageService
+from planner.conversation.video_uploads.service import VideoUploadService
+from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_unit19_unreadable_capture_evidence(tmp_path: Path, request: pytest.FixtureRequest) -> None:
+def test_unit19_unreadable_capture_evidence(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
     started = time.perf_counter()
     homes = create_synthetic_homes(tmp_path)
     paths = [tmp_path / side / "data.sqlite" for side in ("python", "typescript")]
+    links = []
     for path in paths:
         path.parent.mkdir()
         with synthetic_home_environment(homes), closing(connect(str(path))) as conn:
@@ -53,12 +66,35 @@ def test_unit19_unreadable_capture_evidence(tmp_path: Path, request: pytest.Fixt
         (root / "linked.json").symlink_to(root / "complete.json")
         (root / "directory.json").mkdir()
         (root / ".capture-temporary").write_text("{")
+        link = path.parent / "db-link" / "alias.sqlite"
+        link.parent.mkdir()
+        link.symlink_to(path)
+        links.append(link)
     with synthetic_home_environment(homes):
-        manifests = read_manifests(paths[0])
-        with closing(connect(str(paths[0]))) as conn:
+        manifests = read_manifests(links[0])
+        usage = makeUsageService(
+            load_config(
+                None,
+                env={
+                    "PLAN_DB_PATH": str(links[0]),
+                    "PLAN_TEST_MODE": "1",
+                },
+            ),
+            now=lambda: datetime(2026, 11, 12, tzinfo=UTC),
+        )
+        video = VideoUploadService(links[0])
+        folders = {
+            "usage": str(usage.stateDir.relative_to(paths[0].parent)),
+            "deploy": str(manifest_root(links[0]).relative_to(paths[0].parent)),
+            "video": str(video.root.relative_to(paths[0].parent)),
+        }
+        with closing(connect(str(links[0]))) as conn:
             data.reconcile(conn, manifests, 100)
             expected: dict[str, Any] = {
-                "manifests": json.loads(json.dumps([asdict(manifest) for manifest in manifests])),
+                "folders": folders,
+                "manifests": json.loads(
+                    json.dumps([asdict(manifest) for manifest in manifests])
+                ),
                 "accounts": data.read_summary(conn),
                 "rows": [
                     dict(row)
@@ -78,9 +114,13 @@ def test_unit19_unreadable_capture_evidence(tmp_path: Path, request: pytest.Fixt
                     "const {inspect_capture_evidence}=await "
                     "import(pathToFileURL(process.argv[2]).href); "
                     "process.stdout.write(JSON.stringify("
-                    "inspect_capture_evidence(process.argv[1])));",
-                    str(paths[1]),
-                    str(ROOT / "server/conversation/deploy_interruptions/testing/direct.ts"),
+                    "inspect_capture_evidence(process.argv[1],process.argv[3])));",
+                    str(links[1]),
+                    str(
+                        ROOT
+                        / "server/conversation/deploy_interruptions/testing/direct.ts"
+                    ),
+                    str(paths[1].parent),
                 ],
                 cwd=ROOT,
                 text=True,
@@ -89,6 +129,11 @@ def test_unit19_unreadable_capture_evidence(tmp_path: Path, request: pytest.Fixt
     assert len(expected["manifests"]) == 6
     assert sum(value["state"] == "unavailable" for value in expected["manifests"]) == 5
     assert expected["eligible"] == {}
+    assert folders == {
+        "usage": "usage",
+        "deploy": "deploy-interruptions",
+        "video": "db-link/files/video-uploads",
+    }
     report = {
         "kind": "direct",
         "case": "unit19-unreadable-capture",
@@ -101,5 +146,7 @@ def test_unit19_unreadable_capture_evidence(tmp_path: Path, request: pytest.Fixt
     if destination:
         folder = Path(destination)
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / "unit19-unreadable-capture.json").write_text(json.dumps(report, indent=2) + "\n")
+        (folder / "unit19-unreadable-capture.json").write_text(
+            json.dumps(report, indent=2) + "\n"
+        )
     assert actual == expected

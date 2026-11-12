@@ -323,6 +323,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
                 await conversationWrites.run(() => usage.readSummary(input)),
               refreshRates: async () => await conversationWrites.run(() => usage.refreshRates()),
               finish_operations: () => usage.finish_operations(),
+              settled: () => usage.settled(),
             },
             backend_state: backendServices.backend_state,
           }),
@@ -333,11 +334,17 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         },
         {
           prefix: '/api/conversation',
-          routes: createVoiceRoutes({ signal: media_lifetime.signal }),
+          routes: createVoiceRoutes({ signal: media_lifetime.signal, writes: conversationWrites }),
         },
         ...(environments?.areas ?? []),
 
-        { prefix: '/api/conversation', routes: createBackendRoutes(backendServices) },
+        {
+          prefix: '/api/conversation',
+          routes: createBackendRoutes(backendServices, {
+            available: conversationSystem !== undefined,
+            writes: conversationWrites,
+          }),
+        },
         ...(core
           ? [
               {
