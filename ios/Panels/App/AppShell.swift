@@ -17,6 +17,8 @@ struct AppShell: View {
         // Keep the tab graph mounted inside an owned UIKit view. Hide that exact
         // view while the separate connection cover remains visible and accessible.
         MountedTabContent(content: tabs, isCovered: store.serverUnreachable)
+        // The inner UIKit host owns physical and keyboard safe areas once.
+        .ignoresSafeArea(.all)
         .allowsHitTesting(!store.serverUnreachable)
         .overlay {
             if store.serverUnreachable {

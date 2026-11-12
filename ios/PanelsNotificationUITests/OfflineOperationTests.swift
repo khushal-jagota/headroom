@@ -30,6 +30,16 @@ final class OfflineOperationTests: XCTestCase {
         XCTAssertTrue(pending.waitForExistence(timeout: 5))
         pending.tap()
         XCTAssertTrue(app.staticTexts["Delivery uncertain · check before another attempt"].firstMatch.waitForExistence(timeout: 5))
+        // Capture the full conversation inside AppShell without changing its draft.
+        let composer = app.otherElements["conversation-composer-region"]
+        let conversationInput = composer.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
+        XCTAssertTrue(conversationInput.waitForExistence(timeout: 8))
+        conversationInput.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 8))
+        let keyboardComposer = XCTAttachment(screenshot: app.screenshot())
+        keyboardComposer.name = "owned-host-conversation-keyboard"
+        keyboardComposer.lifetime = .keepAlways
+        add(keyboardComposer)
         // The conversation page and the Chief page each have the shared Back control.
         app.buttons["detail-back"].tap()
         XCTAssertTrue(app.staticTexts["Chief of Staff"].waitForExistence(timeout: 8))

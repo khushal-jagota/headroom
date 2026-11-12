@@ -40,6 +40,10 @@ final class ServerReachabilityTests: XCTestCase {
         review.tap()
         let proposal = app.buttons["review.openTicket"]
         XCTAssertTrue(proposal.waitForExistence(timeout: 15))
+        let tabRoot = XCTAttachment(screenshot: app.screenshot())
+        tabRoot.name = "owned-host-tab-root"
+        tabRoot.lifetime = .keepAlways
+        add(tabRoot)
         // Stop the actual listener, then let the active scene observe its failed read.
         try await state("offline")
         XCUIDevice.shared.press(.home)
@@ -71,6 +75,10 @@ final class ServerReachabilityTests: XCTestCase {
             XCTAssertFalse(coveredElement.exists)
         }
         XCTAssertEqual(refreshRetries.count, 0)
+        let cover = XCTAttachment(screenshot: app.screenshot())
+        cover.name = "owned-host-server-cover"
+        cover.lifetime = .keepAlways
+        add(cover)
         try await state("online")
         XCTAssertTrue(proposal.waitForExistence(timeout: 70))
         XCTAssertTrue(title.waitForNonExistence(timeout: 5))
