@@ -17,11 +17,10 @@
    * turn ends moves everything under it for no reason anybody reading could name.
    */
   import {
-    elapsedSecondsSince,
-    millisecondsUntilNextSecond,
     turnFoldLabel,
     workingSentence
   } from "../../lib/conversation/transcript";
+  import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
   import type { ConversationTurnEnding } from "../../lib/conversation/wire";
 
   /** How long a sign of life is still recent. Long enough to ride out the gaps between
@@ -67,7 +66,7 @@
   let fresh = $state(true);
   // The one thing that changes every second. The transcript is not rebuilt on a tick and
   // no row is touched: only this number moves.
-  let elapsedSeconds = $state<number | null>(null);
+  const elapsed = elapsedTurnTime(() => settled ? null : startedAtUnixMilliseconds);
 
   let foldLabel = $derived(turnFoldLabel({ durationSeconds, ending, isLatest }));
   // A turn that only talked folds too: five paragraphs of commentary is exactly as long
@@ -87,23 +86,7 @@
     return () => clearTimeout(decay);
   });
 
-  $effect(() => {
-    if (settled || startedAtUnixMilliseconds === null) {
-      elapsedSeconds = null;
-      return;
-    }
-    const begun = startedAtUnixMilliseconds;
-    let waiting: ReturnType<typeof setTimeout> | undefined;
-    // Each tick is aimed at the next whole second since the turn began, and the number is
-    // worked out from that instant every time — so nothing drifts and nothing accumulates.
-    const tick = (): void => {
-      const now = Date.now();
-      elapsedSeconds = elapsedSecondsSince(begun, now);
-      waiting = setTimeout(tick, millisecondsUntilNextSecond(begun, now));
-    };
-    tick();
-    return () => clearTimeout(waiting);
-  });
+
 </script>
 
 {#if visible}
@@ -139,7 +122,7 @@
           class:live-text-shimmer={fresh && !activityUncertain}
           data-conversation-alive-word
         >
-          {activityUncertain ? "Current activity on Mac is unknown." : workingSentence(elapsedSeconds)}
+          {activityUncertain ? "Current activity on Mac is unknown." : workingSentence(elapsed.seconds)}
         </span>
       </div>
     {/if}

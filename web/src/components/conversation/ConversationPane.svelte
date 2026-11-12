@@ -17,6 +17,7 @@
   import type { OutgoingMessage } from "../../lib/conversation/outgoing";
   import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
   import {
+    conversationThreadItemsForLens,
     keyTogglesConversationLens,
     type ConversationLens
   } from "../../lib/conversation/lens";
@@ -260,6 +261,10 @@
         )
       : null
   );
+
+  let turnStartedAt = $derived(reader?.status
+    ? reader.status.rest.latest_turn?.started_at_unix_milliseconds ?? null
+    : conversationThreadItemsForLens(rows, rowsForLens, lens).filter(item => item.kind === "turn").at(-1)?.startedAtUnixMilliseconds ?? null);
 
   /** The one control through the states, and what it means where it is standing.
    *
@@ -557,6 +562,7 @@
   {#if conversationState === "rest"}
     <ConversationRestBar preview={unreadPreview} {roleLabel} {activityKnown}
       {connectionTrouble} running={running && !activityUncertain}
+      startedAtUnixMilliseconds={turnStartedAt}
       backgroundWork={backgroundTasks.length > 0 ? backgroundWorkSentence(backgroundTasks.map(task => task.task_description)) : null}
       feedback={activityUncertain ? "Current activity on Mac is unknown." : dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
