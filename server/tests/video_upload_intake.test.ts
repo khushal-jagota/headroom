@@ -16,7 +16,9 @@ test('shutdown wakes a pending upload stream and removes its failed temporary fi
   const original = fixture();
   const controller = new AbortController();
   let failed!: () => void;
-  const failure_committed = new Promise<void>((resolve) => { failed = resolve; });
+  const failure_committed = new Promise<void>((resolve) => {
+    failed = resolve;
+  });
   let scheduled = false;
   const database: Database = {
     read: (work) => original.read(work),
@@ -56,30 +58,32 @@ test('shutdown wakes a pending upload stream and removes its failed temporary fi
     filename: 'synthetic.mp4',
     byte_count: 8,
   });
-  const config = loadConfig(undefined, { PLAN_TEST_MODE: '1', PLAN_DB_PATH: fixture_path(original) });
+  const config = loadConfig(undefined, {
+    PLAN_TEST_MODE: '1',
+    PLAN_DB_PATH: fixture_path(original),
+  });
   const voice_calls: unknown[] = [];
-  const app = await createApp(
-    config,
-    {
-      database,
-      areas: [
-        {
-          prefix: '/api/conversation',
-          routes: createVoiceRoutes({ adapters: {
+  const app = await createApp(config, {
+    database,
+    areas: [
+      {
+        prefix: '/api/conversation',
+        routes: createVoiceRoutes({
+          adapters: {
             trim_surrounding_silence: async (audio) => [audio, false] as const,
             http_post: async (request) => {
               voice_calls.push(request);
               return { status_code: 200, json: () => ({ text: 'Recorded words.' }) };
             },
-          } }),
-        },
-        {
-          prefix: '/api/conversation/video-uploads',
-          routes: createVideoUploadRoutes(service, null, controller.signal),
-        },
-      ],
-    },
-  );
+          },
+        }),
+      },
+      {
+        prefix: '/api/conversation/video-uploads',
+        routes: createVideoUploadRoutes(service, null, controller.signal),
+      },
+    ],
+  });
   let sent = false;
   const stream = new Readable({
     read() {
@@ -103,13 +107,24 @@ test('shutdown wakes a pending upload stream and removes its failed temporary fi
     });
     expect(voice_calls).toEqual([]);
     config.voice_transcription_api_key = 'synthetic-voice-key';
-    const transcribed = await app.inject({ method: 'POST', url: '/api/conversation/voice-transcriptions',
-      payload: { audio: 'aGVsbG8=', media_type: 'audio/webm;codecs=opus' } });
+    const transcribed = await app.inject({
+      method: 'POST',
+      url: '/api/conversation/voice-transcriptions',
+      payload: { audio: 'aGVsbG8=', media_type: 'audio/webm;codecs=opus' },
+    });
     expect(transcribed.statusCode).toBe(200);
     expect(transcribed.json()).toEqual({ transcript: 'Recorded words.' });
-    expect(voice_calls).toMatchObject([{ headers: { Authorization: 'Bearer synthetic-voice-key' },
-      file: { contents: Buffer.from('hello'), media_type: 'audio/ogg' } }]);
-    expect(original.read((sql) => sql.get<{ count: number }>('SELECT count(*) AS count FROM conversations'))?.count).toBe(0);
+    expect(voice_calls).toMatchObject([
+      {
+        headers: { Authorization: 'Bearer synthetic-voice-key' },
+        file: { contents: Buffer.from('hello'), media_type: 'audio/ogg' },
+      },
+    ]);
+    expect(
+      original.read((sql) =>
+        sql.get<{ count: number }>('SELECT count(*) AS count FROM conversations'),
+      )?.count,
+    ).toBe(0);
     const response = app.inject({
       method: 'PUT',
       url: `/api/conversation/video-uploads/${reserved.upload_id}/bytes`,
