@@ -4,7 +4,9 @@ export class ChangeSignal {
 
   subscribe(subscriber: () => void): () => void {
     this.#subscribers.add(subscriber);
-    return () => { this.#subscribers.delete(subscriber); };
+    return () => {
+      this.#subscribers.delete(subscriber);
+    };
   }
 
   emit(): void {
