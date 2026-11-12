@@ -26,6 +26,7 @@ import SwiftData
     private var cacheWriter: ResponseCacheWriter?
     private var outgoingStorage: OutgoingStore?
     private var startupError: Error?
+    private let beforeSave: (() throws -> Void)?
     // Cached GET responses are handed to their screen by the caller. Only durable
     // user work needs to wake draft restoration and outgoing-work observers.
     private(set) var workRevision = 0
@@ -36,14 +37,15 @@ import SwiftData
     private(set) var cacheErrors: [String: String] = [:]
     private var cacheWriteGenerations: [String: Int] = [:]
 
-    init(url: URL? = nil, cacheWrite: (@Sendable () throws -> Void)? = nil) {
+    init(url: URL? = nil, cacheWrite: (@Sendable () throws -> Void)? = nil, beforeSave: (() throws -> Void)? = nil) {
+        self.beforeSave = beforeSave
         do {
             let location = url ?? Self.directory.appendingPathComponent("phone.store")
             try FileManager.default.createDirectory(at: location.deletingLastPathComponent(), withIntermediateDirectories: true)
             container = try ModelContainer(for: Schema(versionedSchema: PhoneOutgoingSchema.self), migrationPlan: PhoneStoreMigration.self, configurations: [ModelConfiguration(url: location)])
             container?.mainContext.autosaveEnabled = false
             if let container {
-                saveError = try OutgoingStoreMigration.backfill(container.mainContext)
+                saveError = try OutgoingStoreMigration.backfill(container.mainContext, beforeSave: beforeSave)
                 outgoingError = saveError
                 cacheWriter = ResponseCacheWriter(container: container, beforeWrite: cacheWrite)
             }
@@ -69,7 +71,7 @@ import SwiftData
     var outgoing: OutgoingStore {
         get throws {
             if let outgoingStorage { return outgoingStorage }
-            let storage = OutgoingStore(context: try context) { [weak self] server in
+            let storage = OutgoingStore(context: try context, beforeSave: beforeSave) { [weak self] server in
                 self?.outgoingRevisions[server, default: 0] += 1
                 self?.workRevision += 1
             } failed: { [weak self] error in

@@ -198,14 +198,40 @@ import XCTest
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("test.store")
-        let store = LocalStore(url: url)
+        var failSave = false
+        var injectedFailures = 0
+        let store = LocalStore(url: url, beforeSave: {
+            if failSave { injectedFailures += 1; throw CocoaError(.fileWriteUnknown) }
+        })
         store.saveDraft("Unsent", server: "a", id: "draft")
         let attachments = Data("[{\"name\":\"photo.jpg\",\"bytes\":\"AQID\"}]".utf8)
         try store.put(server: "a", kind: "attachments", id: "draft", data: attachments)
         let outgoing = try store.outgoing
         let capture = try outgoing.captureDraft(server: "a", id: "draft")
         let work = pending("stable", conversation: "c")
+        let draftBefore = try XCTUnwrap(store.record(server: "a", kind: "draft", id: "draft"))
+        let textBytes = draftBefore.payload, textDate = draftBefore.updatedAt
+        let attachmentBefore = try XCTUnwrap(store.record(server: "a", kind: "attachments", id: "draft"))
+        let attachmentDate = attachmentBefore.updatedAt
+        let workRevision = store.workRevision, outgoingRevision = store.outgoingRevision("a")
+        failSave = true
+        XCTAssertThrowsError(try outgoing.enqueue(work, server: "a", capturedDraft: capture))
+        XCTAssertEqual(injectedFailures, 1)
+        XCTAssertNotNil(store.outgoingError)
+        XCTAssertEqual(store.workRevision, workRevision)
+        XCTAssertEqual(store.outgoingRevision("a"), outgoingRevision)
+        for inspected in [store, LocalStore(url: url)] {
+            XCTAssertEqual(try inspected.record(server: "a", kind: "draft", id: "draft")?.payload, textBytes)
+            XCTAssertEqual(try inspected.record(server: "a", kind: "draft", id: "draft")?.updatedAt, textDate)
+            XCTAssertEqual(try inspected.record(server: "a", kind: "attachments", id: "draft")?.payload, attachments)
+            XCTAssertEqual(try inspected.record(server: "a", kind: "attachments", id: "draft")?.updatedAt, attachmentDate)
+            XCTAssertNil(try inspected.record(server: "a", kind: "outbox", id: work.id))
+            XCTAssertNil(try inspected.outgoing.summary(server: "a", id: work.id))
+        }
+        failSave = false
         try outgoing.enqueue(work, server: "a", capturedDraft: capture)
+        XCTAssertEqual(store.workRevision, workRevision + 1)
+        XCTAssertEqual(store.outgoingRevision("a"), outgoingRevision + 1)
         let reopened = LocalStore(url: url)
         XCTAssertEqual(reopened.draft(server: "a", id: "draft"), "")
         XCTAssertEqual(try reopened.record(server: "a", kind: "attachments", id: "draft")?.payload, Data("[]".utf8))
@@ -897,6 +923,33 @@ extension OfflineTests {
             try audio.write(to: source.appendingPathComponent("owned.m4a"))
             try FileManager.default.copyItem(at: source, to: copied)
             let migratedURL = copied.appendingPathComponent("phone.store")
+            var injectedFailures = 0
+            let failed = LocalStore(url: migratedURL, beforeSave: {
+                injectedFailures += 1
+                throw CocoaError(.fileWriteUnknown)
+            })
+            XCTAssertEqual(injectedFailures, 1)
+            XCTAssertNotNil(failed.saveError)
+            XCTAssertThrowsError(try failed.records(server: server, kind: "outbox"))
+            XCTAssertThrowsError(try failed.outgoing)
+            XCTAssertEqual(failed.workRevision, 0)
+            XCTAssertEqual(failed.outgoingRevision(server), 0)
+            // Inspect durable state without LocalStore, which would retry backfill.
+            try autoreleasepool {
+                let container = try ModelContainer(for: Schema(versionedSchema: PhoneOutgoingSchema.self), configurations: [ModelConfiguration(url: migratedURL)])
+                let context = ModelContext(container)
+                context.autosaveEnabled = false
+                let rawRows = try context.fetch(FetchDescriptor<LocalRecord>())
+                XCTAssertFalse(rawRows.contains { $0.kind == "outgoingMigration" })
+                XCTAssertTrue(try context.fetch(FetchDescriptor<OutgoingMetadata>()).isEmpty)
+                for (origin, kind, id, bytes) in records {
+                    let row = try XCTUnwrap(rawRows.first { $0.key == LocalStore.key(origin, kind, id) })
+                    XCTAssertEqual(row.payload, bytes)
+                    XCTAssertEqual(row.updatedAt, date)
+                }
+            }
+            XCTAssertEqual(try Data(contentsOf: copied.appendingPathComponent("owned.m4a")), audio)
+            // The same copied store can retry successfully after the failed precommit.
             let migrated = LocalStore(url: migratedURL)
             XCTAssertTrue(migrated.saveError?.contains("original bytes remain") == true, "The corrupt row remains visible as a storage error")
             for (origin, kind, id, bytes) in records {

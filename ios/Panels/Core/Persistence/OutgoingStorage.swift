@@ -122,7 +122,7 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         query.fetchLimit = 1
         return try context.fetch(query).first?.failure
     }
-    static func backfill(_ context: ModelContext) throws -> String? {
+    static func backfill(_ context: ModelContext, beforeSave: (() throws -> Void)? = nil) throws -> String? {
         do {
             let markerKey = LocalStore.key("", "outgoingMigration", markerID)
             var marker = FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == markerKey })
@@ -150,7 +150,7 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
                 context.insert(metadata)
             }
             context.insert(LocalRecord(key: markerKey, server: "", kind: "outgoingMigration", payload: Data([1]), updated: .now))
-            try context.save()
+            if context.hasChanges { try beforeSave?(); try context.save() }
             return try storageError(context)
         } catch {
             context.rollback()
@@ -204,15 +204,16 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         }
     }
     private let context: ModelContext
+    private let beforeSave: (() throws -> Void)?
     private let changed: (String) -> Void
     private let failed: (Error) -> Void
-    init(context: ModelContext, changed: @escaping (String) -> Void, failed: @escaping (Error) -> Void) {
-        self.context = context; self.changed = changed; self.failed = failed
+    init(context: ModelContext, beforeSave: (() throws -> Void)? = nil, changed: @escaping (String) -> Void, failed: @escaping (Error) -> Void) {
+        self.context = context; self.beforeSave = beforeSave; self.changed = changed; self.failed = failed
     }
     private func transaction<T>(_ server: String, _ body: () throws -> T) throws -> T {
         do {
             let result = try body()
-            if context.hasChanges { try context.save(); changed(server) }
+            if context.hasChanges { try beforeSave?(); try context.save(); changed(server) }
             return result
         } catch { context.rollback(); failed(error); throw error }
     }
