@@ -21,4 +21,3 @@ export type ManagedFilesManifest = Record<string, Record<string, string>>;
 export interface RestoreOptions {
   readonly live_stopped: boolean;
 }
-
