@@ -151,7 +151,6 @@ test('shutdown retains an unconfirmed child and revokes its callbacks', async ()
     await child.release('pending-native');
     expect(state.child).toBe(child);
     expect(state.child_is_quarantined).toBe(true);
-    expect(state.local_child_retirement_proven).toBe(false);
     expect(state.backend_event_pump).toBeNull();
     await child.emit(
       new ToolCallStarted({ tool_call_id: 'late', title: 'Late', tool_kind: 'read' }),

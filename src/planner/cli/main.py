@@ -1381,6 +1381,11 @@ def ticket_restart_worker(
         human_result = f"{ticket_id} start delivery was refused"
     else:
         human_result = f"{ticket_id} did not start: {data['not_started_because']}"
+    if data["revision_restarted_in_fresh_conversation"]:
+        human_result += (
+            "\nThe revision continues in a fresh conversation. The old working context is "
+            "gone, and only the revision feedback carries over."
+        )
     http.emit(
         data,
         as_json,

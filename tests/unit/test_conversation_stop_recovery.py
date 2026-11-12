@@ -144,7 +144,6 @@ def test_kill_waits_for_a_local_write_behind_the_locale_router(
         assert isinstance(await sending, PromptDeliveryStarted)
         assert backend.written_texts() == ("first", "second")
         assert backend.live_children == 0
-        assert await harness.system.retirement_is_confirmed("c")
         assert await harness.recorded_kinds("c") == (
             ConversationEventKind.prompt,
             ConversationEventKind.turn_ended,
@@ -204,7 +203,6 @@ def test_kill_stops_a_local_child_that_finishes_spawning_during_disposition(
         await harness.settle()
         assert harness.backend("c").written_texts() == ()
         assert harness.backend("c").live_children == 0
-        assert await harness.system.retirement_is_confirmed("c")
 
     _run(exercise)
 

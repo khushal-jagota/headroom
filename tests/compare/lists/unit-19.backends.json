@@ -1,0 +1,112 @@
+{
+  "source_roots": [
+    "src/planner/conversation/api.py",
+    "src/planner/conversation/snapshot.py",
+    "src/planner/conversation/backend_state.py",
+    "src/planner/conversation/backend_usage.py",
+    "src/planner/conversation/model_resolution/"
+  ],
+  "external_proofs": [
+    {
+      "source_test": "test_unit19_backend_route_answers_and_rows",
+      "coverage": "All eight backend routes through the actual HTTP adapters with recorded sign-in, CLI updates, allowance refresh and nonempty catalog/state rows. The shared Python browser host cannot run successful updates through its fixture, so the direct driver supplies the complete real snapshot service."
+    },
+    {
+      "source_test": "ticket-model-catalog",
+      "coverage": "The direct route driver invokes the unchanged Python eleventh control and the same TypeScript control as the browser host. It compares subsequent GET and scoped POST cards and credential changes. The shared comparison host does not install the Python control."
+    }
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Backend catalog scope",
+        "worker_type": "coding"
+      },
+      "capture": {
+        "ticket": "id"
+      }
+    }
+  ],
+  "requests": [
+    {
+      "area": "backend-catalog",
+      "method": "GET",
+      "path": "/api/conversation/backends",
+      "status": 200,
+      "capture": {
+        "backend_model": "backends.1.available_models.0.model_id"
+      }
+    },
+    {
+      "area": "backend-catalog",
+      "method": "GET",
+      "path": "/api/conversation/backends?refresh=true",
+      "status": 200
+    },
+    {
+      "area": "backend-enablement",
+      "method": "PUT",
+      "path": "/api/conversation/backends/codex/models/${backend_model}/enablement",
+      "status": 200,
+      "json": {
+        "enabled": false
+      }
+    },
+    {
+      "area": "backend-catalog",
+      "method": "GET",
+      "path": "/api/conversation/backends",
+      "status": 200
+    },
+    {
+      "area": "backend-scope",
+      "method": "POST",
+      "path": "/api/conversation/backends",
+      "status": 200,
+      "json": {
+        "ticket_id": "${ticket}"
+      }
+    },
+    {
+      "area": "backend-enablement",
+      "method": "PUT",
+      "path": "/api/conversation/backends/codex/models/${backend_model}/enablement",
+      "status": 200,
+      "json": {
+        "enabled": true
+      }
+    },
+    {
+      "area": "backend-catalog",
+      "method": "GET",
+      "path": "/api/conversation/backends",
+      "status": 200
+    },
+    {
+      "area": "navigation-operand-public-order",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22review%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_routes_en_us": ""
+      }
+    },
+    {
+      "area": "navigation-operand-public-order",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22de-DE%22%2C%22selected%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22review%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_routes_de_de": ""
+      }
+    }
+  ],
+  "report_captures": [
+    "navigation_routes_en_us",
+    "navigation_routes_de_de"
+  ],
+  "candidate": "typescript"
+}

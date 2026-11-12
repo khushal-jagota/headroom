@@ -67,7 +67,6 @@ export class ConversationState {
   last_ended_turn_was_automatic_compaction = false;
   child: BackendChild | null = null;
   child_event_sink: BackendEventSink | null = null;
-  local_child_retirement_proven = false;
   readonly steer_settlements = new Set<Deferred<void>>();
   late_steer_generation = 0;
   readonly late_steers = new Set<Promise<void>>();
