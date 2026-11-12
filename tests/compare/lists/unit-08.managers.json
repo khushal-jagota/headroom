@@ -1,0 +1,519 @@
+{
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/managers/",
+    "src/planner/work_attention.py"
+  ],
+  "requests": [
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/launch-defaults",
+      "status": 200,
+      "capture": {
+        "defaults": ""
+      }
+    },
+    {
+      "area": "managers",
+      "method": "PUT",
+      "path": "/api/managers/launch-defaults",
+      "status": 200,
+      "json": "${defaults}"
+    },
+    {
+      "area": "managers",
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Manager route proof",
+        "project_id": "project_other",
+        "goal": "Carry this goal into the actual Manager prompt."
+      },
+      "capture": {
+        "manager": "id",
+        "conversation": "startup.conversation_id"
+      }
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${conversation}/state",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/${conversation}/complete",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/launch-defaults",
+      "status": 200,
+      "capture": {
+        "choice": ""
+      }
+    },
+    {
+      "area": "managers",
+      "method": "PUT",
+      "path": "/api/managers/${manager}/launch-defaults",
+      "status": 200,
+      "json": "${choice}"
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers?detail=summary",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers?detail=full",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers?search=route&settled=false&limit=1&offset=0&detail=summary",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers?detail=full&id=${manager}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/workspace",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/workspace-content",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/conversation/start-values",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}",
+      "status": 200,
+      "json": {
+        "title": "Renamed Manager",
+        "goal": "An updated goal",
+        "recap": "A current Manager recap"
+      }
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/settled",
+      "status": 200,
+      "json": {
+        "settled": true
+      }
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers?settled=true&detail=summary",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/settled",
+      "status": 200,
+      "json": {
+        "settled": false
+      }
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/page",
+      "status": 200,
+      "json": {
+        "page": {
+          "kind": "headroom.page",
+          "version": 1,
+          "title": "Plain document",
+          "summary": "Manager and Chief route proof",
+          "blocks": [
+            {
+              "type": "text",
+              "text": "The stored content is real. Unicode: caf\u00e9 \ud83e\udded."
+            },
+            {
+              "type": "table",
+              "columns": [
+                "Small",
+                "Remainder"
+              ],
+              "rows": [
+                [
+                  "A",
+                  "B"
+                ]
+              ],
+              "column_widths": [
+                1e-07,
+                99.9999999
+              ]
+            }
+          ]
+        }
+      },
+      "capture": {
+        "manager_page": "page"
+      }
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers?id=${manager}&detail=full",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/page",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/page/readings",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/page",
+      "status": 200,
+      "json": {
+        "page": "${manager_page}"
+      }
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/page",
+      "status": 200,
+      "json": {
+        "page": null
+      }
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/page",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/chief/page",
+      "status": 400,
+      "json": {
+        "page": {
+          "kind": "headroom.page",
+          "version": 1,
+          "title": "Invalid tones",
+          "summary": "",
+          "blocks": [
+            {
+              "type": "table",
+              "columns": [
+                "a"
+              ],
+              "rows": [
+                [
+                  "x"
+                ]
+              ],
+              "cell_tones": [
+                [
+                  [
+                    "good"
+                  ]
+                ]
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/chief/page",
+      "status": 200,
+      "json": {
+        "page": {
+          "kind": "headroom.page",
+          "version": 1,
+          "title": "Plain document",
+          "summary": "Manager and Chief route proof",
+          "blocks": [
+            {
+              "type": "section",
+              "title": "Nested document",
+              "blocks": [
+                {
+                  "type": "checklist",
+                  "items": [
+                    {
+                      "label": "A real checklist item",
+                      "state": "open",
+                      "deadline": "2026-11-15"
+                    }
+                  ]
+                },
+                {
+                  "type": "table",
+                  "columns": [
+                    "Small",
+                    "Remainder"
+                  ],
+                  "rows": [
+                    [
+                      "A",
+                      "B"
+                    ]
+                  ],
+                  "column_widths": [
+                    1e-07,
+                    99.9999999
+                  ],
+                  "cell_tones": [
+                    [
+                      "good",
+                      null
+                    ]
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capture": {
+        "chief_page": "page"
+      }
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/chief/page",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/chief/page/readings",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/chief/page",
+      "status": 200,
+      "json": {
+        "page": "${chief_page}"
+      }
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/chief/page",
+      "status": 200,
+      "json": {
+        "page": null
+      }
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/chief/page",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Authority worker",
+        "worker_type": "coding"
+      },
+      "capture": {
+        "worker": "id"
+      }
+    },
+    {
+      "area": "managers",
+      "method": "PUT",
+      "path": "/api/managers/launch-defaults",
+      "status": 400,
+      "json": "${defaults}",
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${worker}"
+      }
+    },
+    {
+      "area": "managers",
+      "method": "PUT",
+      "path": "/api/managers/launch-defaults",
+      "status": 400,
+      "json": "${defaults}",
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/settled",
+      "status": 400,
+      "json": {
+        "settled": true
+      },
+      "headers": {
+        "X-Plan-Actor": "chief_of_staff"
+      }
+    },
+    {
+      "area": "managers",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/settled",
+      "status": 400,
+      "json": {
+        "settled": "yes"
+      }
+    },
+    {
+      "area": "managers",
+      "method": "POST",
+      "path": "/api/managers/${manager}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "A second real Manager prompt"
+          }
+        ],
+        "sender_message_id": "unit08-manager-second",
+        "conversation_id": "${conversation}",
+        "sender_label": "Owner"
+      }
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${conversation}/state",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "POST",
+      "path": "/api/managers/${manager}/conversation/reset",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/workspace",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/resource-versions?keys=%5B%22%2Fapi%2Fchief%2Fpage%22%2C%20%22%2Fapi%2Fmanagers%2F${manager}%2Fworkspace-content%22%2C%20%22%2Fapi%2Fchief%2Fconversation%2Fstart-values%22%2C%20%22%2Fapi%2Fworkers%2Fchief-of-staff%2Fsettings%22%5D",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fchief%2Fpage",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fmanagers%2F${manager}%2Fworkspace-content",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Deletion guard child",
+        "worker_type": "coding",
+        "manager": {
+          "kind": "manager",
+          "id": "${manager}"
+        }
+      },
+      "capture": {
+        "child": "id"
+      }
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers/${manager}/workspace",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "DELETE",
+      "path": "/api/managers/${manager}",
+      "status": 400
+    },
+    {
+      "area": "managers",
+      "method": "DELETE",
+      "path": "/api/tickets/${child}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "DELETE",
+      "path": "/api/managers/${manager}",
+      "status": 200
+    },
+    {
+      "area": "managers",
+      "method": "GET",
+      "path": "/api/managers?detail=full",
+      "status": 200
+    }
+  ],
+  "report_captures": [
+    "manager",
+    "conversation",
+    "manager_page",
+    "chief_page"
+  ]
+}

@@ -1,4 +1,6 @@
 /** Manager readers and launch writer used by Ticket message delivery. */
+import { newId } from '../core/ids.ts';
+import { validate_launch_configuration } from './launch_settings.ts';
 import { isDeepStrictEqual } from 'node:util';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
@@ -86,5 +88,160 @@ export function update_manager_launch_configuration(
       id,
     ],
   );
+  return read_manager(tx, id).item;
+}
+
+export function read_launch_defaults(sql: ReadSql): ManagerLaunchConfiguration {
+  const row = sql.get<ManagerLaunchConfiguration>(
+    'SELECT employee_backend, employee_launch_model, employee_launch_reasoning_effort ' +
+      'FROM manager_launch_defaults WHERE singleton=1',
+  );
+  if (!row) throw new PlannerError('validation', 'Manager launch defaults are absent');
+  return { ...row, employee_backend: require_conversation_backend_key(row.employee_backend) };
+}
+export function update_launch_defaults(
+  tx: TransactionSql,
+  configuration: ManagerLaunchConfiguration,
+  principal: Principal,
+): ManagerLaunchConfiguration {
+  if (principal.kind !== 'owner' && principal.kind !== 'chief') {
+    throw new PlannerError(
+      'agent_forbidden',
+      'Only the owner or Chief can change Manager defaults',
+    );
+  }
+  validate_launch_configuration(tx, configuration);
+  tx.run(
+    'UPDATE manager_launch_defaults SET employee_backend=?, employee_launch_model=?, employee_launch_reasoning_effort=? WHERE singleton=1',
+    [
+      configuration.employee_backend,
+      configuration.employee_launch_model,
+      configuration.employee_launch_reasoning_effort,
+    ],
+  );
+  return read_launch_defaults(tx);
+}
+export function create_manager(
+  tx: TransactionSql,
+  options: { title: string; project_id: string; goal?: string; clock: Clock },
+): Manager {
+  if (!options.title) throw new PlannerError('validation', 'item title is required', {});
+  const id = newId('si');
+  const now = options.clock.nowUnix();
+  if (!tx.get('SELECT 1 FROM projects WHERE id=?', [options.project_id])) {
+    throw new PlannerError('validation', 'invalid project_id', { project_id: options.project_id });
+  }
+  tx.run('INSERT INTO agents(agent_key, conversation_id) VALUES (?, NULL)', [
+    manager_agent_key(id),
+  ]);
+  const defaults = read_launch_defaults(tx);
+  tx.run(
+    'INSERT INTO managers (id, title, goal, project_id, manager_backend, manager_model, manager_reasoning_effort, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [
+      id,
+      options.title,
+      options.goal ?? '',
+      options.project_id,
+      defaults.employee_backend,
+      defaults.employee_launch_model,
+      defaults.employee_launch_reasoning_effort,
+      now,
+      now,
+    ],
+  );
+  return read_manager(tx, id).item;
+}
+export function update_manager(
+  tx: TransactionSql,
+  id: string,
+  options: { edits: Record<string, string | null>; clock: Clock },
+): Manager {
+  const allowed = ['title', 'goal', 'recap', 'project_id'];
+  const invalid = Object.keys(options.edits)
+    .filter((field) => !allowed.includes(field))
+    .sort();
+  if (invalid.length)
+    throw new PlannerError('validation', 'field is not an editable item field', {
+      field: invalid[0],
+    });
+  read_manager(tx, id);
+  if (
+    'project_id' in options.edits &&
+    (options.edits.project_id === null ||
+      !tx.get('SELECT 1 FROM projects WHERE id=?', [options.edits.project_id!]))
+  ) {
+    throw new PlannerError('validation', 'invalid project_id', {
+      project_id: options.edits.project_id,
+    });
+  }
+  const fields = Object.keys(options.edits);
+  const now = options.clock.nowUnix();
+  if (fields.length) {
+    tx.run(
+      `UPDATE managers SET ${fields.map((field) => `${field}=?`).join(', ')}, updated_at=? WHERE id=?`,
+      [...fields.map((field) => options.edits[field]!), now, id],
+    );
+    if ('project_id' in options.edits)
+      tx.run('UPDATE tickets SET updated_at=? WHERE manager_id=?', [now, id]);
+  }
+  return read_manager(tx, id).item;
+}
+export function require_manager_can_delete(sql: ReadSql, id: string): Manager {
+  const item = read_manager(sql, id).item;
+  if (
+    sql.get(
+      "SELECT 1 FROM measure_sources WHERE responsible_kind='manager' AND responsible_manager_id=? LIMIT 1",
+      [id],
+    )
+  )
+    throw new PlannerError(
+      'validation',
+      'Manager is responsible for measure sources; reassign them first',
+    );
+  if (sql.get("SELECT 1 FROM goals WHERE holder_kind='manager' AND holder_id=? LIMIT 1", [id]))
+    throw new PlannerError('validation', 'Manager holds goals; reassign them first');
+  const tickets = sql.all<{ id: string }>('SELECT id FROM tickets WHERE manager_id=? ORDER BY id', [
+    id,
+  ]);
+  if (tickets.length)
+    throw new PlannerError('validation', 'manager has child tickets', {
+      manager_id: id,
+      ticket_ids: tickets.map((row) => row.id),
+    });
+  return item;
+}
+export function delete_manager_rows(
+  tx: TransactionSql,
+  id: string,
+): { manager_id: string; title: string } {
+  const item = require_manager_can_delete(tx, id);
+  const held = tx.get<{ id: string }>(
+    "SELECT id FROM tickets WHERE json_extract(ceiling_holder, '$.kind')='manager' AND json_extract(ceiling_holder, '$.id')=? ORDER BY id LIMIT 1",
+    [id],
+  );
+  if (held)
+    throw new PlannerError(
+      'validation',
+      'Manager cannot be deleted while it holds a Ticket ceiling',
+      { manager_id: id, held_ticket_id: held.id },
+    );
+  tx.run('DELETE FROM managers WHERE id=?', [id]);
+  tx.run('DELETE FROM agents WHERE agent_key=?', [item.manager_agent_key]);
+  return { manager_id: id, title: item.title };
+}
+export function set_manager_settled(
+  tx: TransactionSql,
+  id: string,
+  options: { settled: boolean; principal: Principal; clock: Clock },
+): Manager {
+  if (options.principal.kind !== 'owner')
+    throw new PlannerError('agent_forbidden', 'only the owner can settle a Manager');
+  if (id === 'chief') throw new PlannerError('validation', 'Chief can never be settled');
+  read_manager(tx, id);
+  tx.run('UPDATE managers SET settled=?, updated_at=? WHERE id=?', [
+    Number(options.settled),
+    options.clock.nowUnix(),
+    id,
+  ]);
   return read_manager(tx, id).item;
 }

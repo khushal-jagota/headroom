@@ -1,4 +1,5 @@
 /** Comparison composition. Each area appends its test-only route registration here. */
+import { managerWakeTestArea } from './manager_wakes/testing.ts';
 import type { Area } from './core/authority/register.ts';
 import { startServer } from './core/start.ts';
 import { InMemoryConversationSystem } from './conversation/in_memory_conversation_system.ts';
@@ -18,6 +19,7 @@ const testAreas: readonly Area[] = [
 
 await startServer({
   testAreas,
+  ownedTestAreas: [managerWakeTestArea],
   conversationSystem,
   createSignalAuthority(database) {
     // Rebuild copied Python projections through the actual TS writer. Comparing

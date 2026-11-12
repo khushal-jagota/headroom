@@ -1,3 +1,7 @@
+import { routes as managers } from './managers/routes.ts';
+import { routes as messageDelivery } from './message_delivery/routes.ts';
+import { configure_manager_resources } from './managers/resource_versions.ts';
+import type { Clock } from './core/clock.ts';
 import { conversation_routes } from './tickets/conversation_routes.ts';
 import { routes as membership } from './membership/routes.ts';
 import { configure_conversation_start } from './runtime/conversation_start.ts';
@@ -28,10 +32,12 @@ export const initializeAreas = (
   database: Database,
   authority: SignalNavigationAuthority,
   config: Config,
+  clock: Clock,
 ): void => {
   initialize_worker_settings(database, config);
   configure_conversation_start(database, config);
   configure_chief_resources(config);
+  configure_manager_resources(clock);
   conversation.initialize(database, config);
   navigation.initialize(database, authority);
 };
@@ -42,6 +48,8 @@ export const closeAreas = async (): Promise<void> => {
 
 /** Add one area registration here. Core has no area identity branches. */
 export const areas: readonly Area[] = [
+  { prefix: '/api', routes: managers },
+  { prefix: '/api', routes: messageDelivery },
   { prefix: '/api', routes: tickets },
   { prefix: '/api', routes: conversation_routes },
   { prefix: '/api', routes: membership },

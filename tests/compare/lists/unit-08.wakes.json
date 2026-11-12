@@ -1,0 +1,760 @@
+{
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/managers/",
+    "src/planner/manager_wakes/",
+    "src/planner/tickets/logic/proposal_routing.py"
+  ],
+  "requests": [
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/start",
+      "status": 200,
+      "json": {
+        "conversation_id": "${manager_conversation}",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "/comparison/manager"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/start",
+      "status": 200,
+      "json": {
+        "conversation_id": "${chief_conversation}",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "/comparison/chief"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:01"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "notice_one",
+        "worker_type": "coding",
+        "brief": "Notice comparison",
+        "ceiling": "needs_what_changes",
+        "ceiling_holder": {
+          "kind": "manager",
+          "id": "${manager}"
+        },
+        "manager": {
+          "kind": "manager",
+          "id": "${manager}"
+        }
+      },
+      "capture": {
+        "notice_one": "id"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/tickets/${notice_one}/propose",
+      "status": 200,
+      "json": {
+        "body": "First populated review"
+      },
+      "capture": {
+        "notice_one_rev": "pending_proposal.revision"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${notice_one}"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:02"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "notice_two",
+        "worker_type": "coding",
+        "brief": "Notice comparison",
+        "ceiling": "needs_what_changes",
+        "ceiling_holder": {
+          "kind": "manager",
+          "id": "${manager}"
+        },
+        "manager": {
+          "kind": "manager",
+          "id": "${manager}"
+        }
+      },
+      "capture": {
+        "notice_two": "id"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/tickets/${notice_two}/propose",
+      "status": 200,
+      "json": {
+        "body": "Second populated review in the same batch"
+      },
+      "capture": {
+        "notice_two_rev": "pending_proposal.revision"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${notice_two}"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/test/poll/manager-wakes",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "wake_pass_1": "batch_ids"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/managers?id=${manager}&detail=full",
+      "status": 200,
+      "capture": {
+        "manager_conversation": "manager.conversation_id"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${manager_conversation}/state",
+      "status": 200,
+      "capture": {
+        "prompt_writes_1": "backend_prompt_writes"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/test/poll/manager-wakes",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "wake_pass_2": "batch_ids"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${manager_conversation}/state",
+      "status": 200,
+      "capture": {
+        "prompt_writes_2": "backend_prompt_writes"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:03"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "busy_notice",
+        "worker_type": "coding",
+        "brief": "Notice comparison",
+        "ceiling": "needs_what_changes",
+        "ceiling_holder": {
+          "kind": "manager",
+          "id": "${manager}"
+        },
+        "manager": {
+          "kind": "manager",
+          "id": "${manager}"
+        }
+      },
+      "capture": {
+        "busy_notice": "id"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/tickets/${busy_notice}/propose",
+      "status": 200,
+      "json": {
+        "body": "Wait until the Manager is idle"
+      },
+      "capture": {
+        "busy_notice_rev": "pending_proposal.revision"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${busy_notice}"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/test/poll/manager-wakes",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "wake_pass_3": "batch_ids"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${manager_conversation}/state",
+      "status": 200,
+      "capture": {
+        "prompt_writes_3": "backend_prompt_writes"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/${manager_conversation}/complete",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/test/poll/manager-wakes",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "wake_pass_4": "batch_ids"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${manager_conversation}/state",
+      "status": 200,
+      "capture": {
+        "prompt_writes_4": "backend_prompt_writes"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:04"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "obsolete_notice",
+        "worker_type": "coding",
+        "brief": "Notice comparison",
+        "ceiling": "needs_what_changes",
+        "ceiling_holder": {
+          "kind": "manager",
+          "id": "${manager}"
+        },
+        "manager": {
+          "kind": "manager",
+          "id": "${manager}"
+        }
+      },
+      "capture": {
+        "obsolete_notice": "id"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/tickets/${obsolete_notice}/propose",
+      "status": 200,
+      "json": {
+        "body": "Do not deliver after resolution"
+      },
+      "capture": {
+        "obsolete_notice_rev": "pending_proposal.revision"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${obsolete_notice}"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/tickets/${obsolete_notice}/accept/what_changes",
+      "status": 200,
+      "json": {
+        "expected_proposal_revision": "${obsolete_notice_rev}",
+        "next_ceiling": "needs_implementation",
+        "next_holder": {
+          "kind": "owner",
+          "id": "owner"
+        }
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/test/poll/manager-wakes",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "wake_pass_5": "batch_ids"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${manager_conversation}/state",
+      "status": 200,
+      "capture": {
+        "prompt_writes_5": "backend_prompt_writes"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:05"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "transfer_notice",
+        "worker_type": "coding",
+        "brief": "Notice comparison",
+        "ceiling": "needs_what_changes",
+        "ceiling_holder": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "transfer_notice": "id"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/tickets/${transfer_notice}/propose",
+      "status": 200,
+      "json": {
+        "body": "Transfer current review"
+      },
+      "capture": {
+        "transfer_notice_rev": "pending_proposal.revision"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${transfer_notice}"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "PATCH",
+      "path": "/api/tickets/${transfer_notice}",
+      "status": 200,
+      "json": {
+        "ceiling_holder": {
+          "kind": "manager",
+          "id": "${manager}"
+        },
+        "manager": {
+          "kind": "manager",
+          "id": "${manager}"
+        }
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${chief_conversation}/state",
+      "status": 200,
+      "capture": {
+        "prompt_writes_6": "backend_prompt_writes"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/${manager_conversation}/complete",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/test/poll/manager-wakes",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "wake_pass_6": "batch_ids"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${manager_conversation}/state",
+      "status": 200,
+      "capture": {
+        "prompt_writes_7": "backend_prompt_writes"
+      }
+    },
+    {
+      "kind": "restart"
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/start",
+      "status": 200,
+      "json": {
+        "conversation_id": "${manager_conversation}",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "/comparison/manager"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/test/poll/manager-wakes",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "wake_pass_7": "batch_ids"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${manager_conversation}/state",
+      "status": 200,
+      "capture": {
+        "prompt_writes_8": "backend_prompt_writes"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/test/poll/manager-wakes",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "wake_pass_8": "batch_ids"
+      }
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200
+    },
+    {
+      "area": "manager-wakes",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${manager_conversation}/state",
+      "status": 200,
+      "capture": {
+        "prompt_writes_9": "backend_prompt_writes"
+      }
+    }
+  ],
+  "probes": [
+    "/api/managers?id=${manager}&detail=full"
+  ],
+  "seed_requests": [
+    {
+      "area": "manager-wakes",
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Wake recipient",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "manager": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/managers/${manager}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Seed wake recipient"
+          }
+        ],
+        "sender_message_id": "seed-wake-recipient",
+        "sender_label": "Owner"
+      },
+      "capture": {
+        "manager_conversation": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversation/conversations/${manager_conversation}/kill",
+      "status": 204
+    },
+    {
+      "method": "POST",
+      "path": "/api/chief/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Seed prior Chief reviewer"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "seed-wake-chief"
+      },
+      "capture": {
+        "chief_conversation": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversation/conversations/${chief_conversation}/kill",
+      "status": 204
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Backend failed source",
+        "worker_type": "coding",
+        "brief": "Fail with scripted backend",
+        "ceiling": "needs_what_changes",
+        "manager": {
+          "kind": "manager",
+          "id": "${manager}"
+        },
+        "ceiling_holder": {
+          "kind": "manager",
+          "id": "${manager}"
+        }
+      },
+      "capture": {
+        "failed_source_ticket": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets/${failed_source_ticket}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Produce one actual failure notice"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "seed-failed-source"
+      },
+      "capture": {
+        "failed_source_conversation": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/signals/${failed_source_conversation}/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "turn_ended",
+            "ending": "failed",
+            "error_summary": "Wake comparison backend failure"
+          }
+        ]
+      }
+    }
+  ],
+  "report_captures": [
+    "wake_pass_1",
+    "prompt_writes_1",
+    "wake_pass_2",
+    "prompt_writes_2",
+    "wake_pass_3",
+    "prompt_writes_3",
+    "wake_pass_4",
+    "prompt_writes_4",
+    "wake_pass_5",
+    "prompt_writes_5",
+    "prompt_writes_6",
+    "wake_pass_6",
+    "prompt_writes_7",
+    "wake_pass_7",
+    "prompt_writes_8",
+    "wake_pass_8",
+    "prompt_writes_9"
+  ],
+  "candidate": "typescript"
+}
