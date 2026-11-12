@@ -6,6 +6,7 @@ starting a provider. Unit tests cannot prove mounted queries receive external go
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from collections.abc import Callable
@@ -281,15 +282,26 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     )
 
     def collect(value: int, limitation: str | None = None) -> str:
+        text = (
+            "output=context['required_outputs'][0]\n"
+            f"record(output['measure_id'], output['required_date'], {value}, "
+            f"limitation={limitation!r})"
+        )
+        typescript = os.environ.get("PANELS_TEST_SERVER_BACKEND") == "typescript"
+        if typescript:
+            text = (
+                "export default async function ({context, record}) {\n"
+                "const output = context.required_outputs[0];\n"
+                f"await record(output.measure_id, output.required_date, {value}, "
+                f"{{limitation: {json.dumps(limitation)}}});\n}}"
+            )
         current_source = api.get(server, f"/api/measure-sources/{source['id']}")
         configured = api.direct_put(
             server,
             f"/api/measure-sources/{source['id']}/script",
             {
                 "expected_revision": current_source["source_revision"],
-                "text": "output=context['required_outputs'][0]\n"
-                f"record(output['measure_id'], output['required_date'], {value}, "
-                f"limitation={limitation!r})",
+                "text": text,
             },
         )
         run = api.direct_post(
@@ -300,6 +312,8 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
                 "expected_script_revision": configured["active_script"]["revision"],
             },
         )
+        if typescript:
+            api.direct_post(server, "/api/test/poll/sources", {"dispatch": True})
         return str(run["id"])
 
     first_run = collect(42)
