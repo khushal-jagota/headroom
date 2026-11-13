@@ -572,6 +572,8 @@ The migration Manager accepted this temporary refusal. It remains until the exec
 
 ## Executor message and core admission
 
+The Manager requires the TypeScript command route to forward response disconnects into mailbox poll cancellation; Python's route has no explicit disconnect observer.
+
 ### Encoding validation
 
 The Manager required this admission rule in the shared codec review of PR 806.
@@ -588,6 +590,11 @@ Python accepts unbounded integers. TypeScript refuses remote turn numbers, sende
 ### Replaced-process retry logging
 
 Python logs every failed retirement or close attempt. The Manager accepted TypeScript logging only the first failure of each retry loop, including its cause. Both retry indefinitely with delays rising from one to sixty seconds; TypeScript shutdown cancels the retry and retains its actual settlement.
+
+### Canonical Mac Worker identity
+
+The Manager accepts refusal before child creation when canonical Mac ownership disagrees with absent or different Worker identity hints.
+Python selects a local child in that case. TypeScript refuses so a Mac Ticket never selects a local child.
 
 ## Release archive sparse members — accepted
 

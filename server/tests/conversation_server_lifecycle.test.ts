@@ -430,7 +430,6 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     },
     environments: {
       dependencies: {
-        executor: null,
         application_root: dirname(f.path),
         node_executable: process.execPath,
       },

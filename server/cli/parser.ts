@@ -1,3 +1,4 @@
+import { decimal_digit, integer_text } from '../core/python_integer.ts';
 import { python_string_repr } from '../core/python_repr.ts';
 import { close_matches } from './suggestions.ts';
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
@@ -5,13 +6,6 @@ import { basename, dirname, join, resolve } from 'node:path';
 import type { CommandDefinition, Parameter } from './contracts.ts';
 import { CliFailure, human_error, command_path, command_shape, usage_error } from './errors.ts';
 
-/** Decimal Unicode digits have the same numeric value in Python int(). */
-function decimal_digit(character: string): string {
-  const point = character.codePointAt(0)!;
-  let start = point;
-  while (start > 0 && /\p{Decimal_Number}/u.test(String.fromCodePoint(start - 1))) start--;
-  return String((point - start) % 10);
-}
 function python_strip(text: string): string {
   return text.replace(/^[\p{White_Space}\u001c-\u001f]+|[\p{White_Space}\u001c-\u001f]+$/gu, '');
 }
@@ -47,26 +41,6 @@ function uuid_text(text: string): string | null {
   ].join('-');
 }
 
-/** Python int() accepts decimal Unicode digits and underscores between digits. */
-function integer_text(text: string): bigint | null {
-  if (text.includes('\uFEFF')) return null;
-  const trimmed = text.replace(/^[\s\u001c-\u001f\u0085]+|[\s\u001c-\u001f\u0085]+$/gu, '');
-  if (
-    trimmed.includes('\uFEFF') ||
-    !/^[+-]?\p{Decimal_Number}(?:_?\p{Decimal_Number})*$/u.test(trimmed)
-  )
-    return null;
-  let ascii = '';
-  for (const character of trimmed) {
-    if (character === '_') continue;
-    if (character === '+' || character === '-') {
-      ascii += character;
-      continue;
-    }
-    ascii += decimal_digit(character);
-  }
-  return BigInt(ascii);
-}
 /** Resolve existing prefixes too, as os.path.realpath does for a missing final path. */
 function resolved_path(text: string): string {
   try {
