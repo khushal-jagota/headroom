@@ -280,7 +280,8 @@ class UpdateService:
             release=release,
             deadline_at=self._deadline() if mode == "now" else None,
             steps={"pressed": now},
-            mac_attempt_id=uuid4().hex if release.mac is not None else None,
+            mac_attempt_id=uuid4().hex if (release.mac is not None
+                                           or release.linux_executor is not None) else None,
         ))
         self.schedule_advance()
         return attempt

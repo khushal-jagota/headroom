@@ -17,11 +17,13 @@ router = APIRouter()
 async def register_machine(request: Request, ctx: Ctx) -> dict[str, object]:
     require_owner(ctx)
     body = await request.json()
-    if not isinstance(body, dict) or set(body) != {"name"} or not isinstance(body["name"], str):
+    if (not isinstance(body, dict) or set(body) - {"name", "platform"}
+            or "name" not in body or not isinstance(body["name"], str)):
         raise PlannerError(ErrorCode.validation, "Machine registration requires a name")
     async with connection_off_the_loop(request) as conn:
         grant = await run_on_worker_thread(
-            executor_credentials.register_machine, conn, body["name"]
+            executor_credentials.register_machine, conn, body["name"],
+            body.get("platform", "darwin"),
         )
     registry = getattr(request.app.state, "executor_registry", None)
     if registry is not None:

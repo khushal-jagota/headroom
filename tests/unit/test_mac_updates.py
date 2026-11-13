@@ -36,6 +36,7 @@ from planner.environments.update_attempts import (
     utc_now,
 )
 from planner.environments.update_contracts import (
+    PublishedLinuxExecutorUpdate,
     PublishedMacUpdate,
     PublishedUpdate,
     UpdateAttempt,
@@ -487,3 +488,78 @@ def test_mac_runtimes_in_the_field_read_the_check_response_with_prefetch(tmp_pat
     assert target is not None
     seen = TypeAdapter(FieldMacUpdateCheck).validate_python(json.loads(body))
     assert seen == FieldMacUpdateCheck(1, FieldMacUpdateTarget(**asdict(target)))
+
+
+def test_linux_machine_receives_only_registered_platform_archive(tmp_path: Path) -> None:
+    """Mac-only coverage cannot prove Linux offer selection or role validation."""
+    from planner.machines.executor_credentials import executor_platform, register_machine
+
+    database = tmp_path / "home.db"
+    conn = connect(str(database))
+    try:
+        create_schema(conn)
+        linux_id = register_machine(conn, "Linux", "linux").machine_id
+        mac_id = register_machine(conn, "Mac").machine_id
+        assert executor_platform(conn, linux_id) == "linux"
+        assert executor_platform(conn, mac_id) == "darwin"
+        class PlatformProvider(MacProvider):
+            def download_artifact(self, artifact_id: int, destination: Path) -> None:
+                if artifact_id != 100:
+                    return super().download_artifact(artifact_id, destination)
+                self.downloads.append(artifact_id)
+                with zipfile.ZipFile(destination, "w") as artifact:
+                    artifact.writestr("panels-linux-executor.tar.gz", linux_bytes)
+                    artifact.writestr("linux-executor-publication.json", "{}")
+
+        provider = PlatformProvider()
+        published = provider.publish()
+        archive = BytesIO()
+        with tarfile.open(fileobj=archive, mode="w:gz") as tar:
+            for name, content in (
+                ("mac-runtime.json", json.dumps({
+                    "schema_version": 1, "application_revision": TARGET_SHA,
+                    "platform": "linux", "architecture": "x86_64", "role": "executor",
+                }).encode()),
+                (".venv/bin/python", b"Linux executable"),
+            ):
+                member = tarfile.TarInfo(name)
+                member.size = len(content)
+                tar.addfile(member, BytesIO(content))
+        linux_bytes = archive.getvalue()
+        linux = PublishedLinuxExecutorUpdate(
+            100, hashlib.sha256(linux_bytes).hexdigest(), len(linux_bytes),
+        )
+        published = replace(published, linux_executor=linux)
+        from planner.environments.update_attempts import parse_release
+
+        assert parse_release(json.loads(json.dumps(asdict(published)))) == published
+        service = MacUpdateService(
+            tmp_path / "updates", FileUpdateAttemptStore(tmp_path / "attempt.json"),
+            provider, RUNNING_SHA, lambda: published,
+            platform_for=lambda machine_id: executor_platform(conn, machine_id),
+        )
+        path = service.archive_root / "archives" / (linux.archive_sha256 + ".tar.gz")
+        service.prepare(published)
+        assert provider.downloads == [published.mac.artifact_id, linux.artifact_id]
+        linux_service = service.for_machine(linux_id)
+        mac_service = service.for_machine(mac_id)
+        write(service, attempt(published, "installing"))
+        linux_check, mac_check = linux_service.check(), mac_service.check()
+        assert linux_check.target is not None and mac_check.target is not None
+        assert linux_check.target.archive_sha256 == linux.archive_sha256
+        assert published.mac is not None
+        assert mac_check.target.archive_sha256 == published.mac.archive_sha256
+        assert linux_service.prefetch_archive(linux.archive_sha256) == path
+        with pytest.raises(UpdateConflict):
+            linux_service.prefetch_archive(published.mac.archive_sha256)
+        # The Mac artifact has valid bytes and source but the wrong platform and role.
+        mac_path = service._archive_path(published)
+        with pytest.raises(UpdateConflict, match="source and platform"):
+            linux_service._validate_archive(
+                mac_path, replace(published, linux_executor=PublishedLinuxExecutorUpdate(
+                    published.mac.artifact_id, published.mac.archive_sha256,
+                    published.mac.archive_size,
+                )),
+            )
+    finally:
+        conn.close()

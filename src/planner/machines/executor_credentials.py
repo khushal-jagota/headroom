@@ -155,7 +155,11 @@ def issue_original_credential(
     return grant
 
 
-def register_machine(conn: sqlite3.Connection, name: str) -> MachineCredentialGrant:
+def register_machine(
+    conn: sqlite3.Connection, name: str, platform: str = "darwin"
+) -> MachineCredentialGrant:
+    if not isinstance(platform, str) or platform not in {"darwin", "linux"}:
+        raise PlannerError(ErrorCode.validation, "Executor platform must be darwin or linux")
     name = name.strip()
     if not name or len(name) > 80:
         raise PlannerError(ErrorCode.validation, "Machine name must contain 1 to 80 characters")
@@ -168,7 +172,8 @@ def register_machine(conn: sqlite3.Connection, name: str) -> MachineCredentialGr
             (machine_id, name),
         )
         conn.execute(
-            "INSERT INTO machine_executor_credentials(machine_id) VALUES(?)", (machine_id,),
+            "INSERT INTO machine_executor_credentials(machine_id,platform) VALUES(?,?)",
+            (machine_id, platform),
         )
         grant = _issue(conn, machine_id, None)
         conn.commit()
@@ -192,3 +197,12 @@ def replace_credential(conn: sqlite3.Connection, machine_id: str) -> MachineCred
     except BaseException:
         conn.rollback()
         raise
+
+
+def executor_platform(conn: sqlite3.Connection, machine_id: str) -> str:
+    row = conn.execute(
+        "SELECT platform FROM machine_executor_credentials WHERE machine_id=?", (machine_id,),
+    ).fetchone()
+    if row is None:
+        raise PlannerError(ErrorCode.validation, "Machine has no executor credential")
+    return str(row[0])

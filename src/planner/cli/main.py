@@ -933,10 +933,13 @@ def machine() -> None:
 
 @machine.command("register")
 @click.argument("name")
+@click.option("--platform", type=click.Choice(["darwin", "linux"]), default="darwin")
 @json_option
-def machine_register(name: str, as_json: bool) -> None:
+def machine_register(name: str, platform: str, as_json: bool) -> None:
     """Register an extra machine and print its credential once."""
-    data = http.send("POST", "/api/machines", as_json=as_json, json_body={"name": name})
+    data = http.send(
+        "POST", "/api/machines", as_json=as_json, json_body={"name": name, "platform": platform}
+    )
     http.emit(data, True, "")
 
 

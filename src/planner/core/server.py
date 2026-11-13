@@ -592,12 +592,22 @@ def create_app(
     update_attempts = FileUpdateAttemptStore(attempt_path(data_directory))
     import_legacy_request(update_attempts, data_directory, config.app_sha)
     update_provider = GitHubUpdateProvider.configured() if service_unit is not None else None
+    def executor_update_platform(machine_id: str) -> str:
+        from planner.machines.executor_credentials import executor_platform
+
+        connection = conn_factory()
+        try:
+            return executor_platform(connection, machine_id)
+        finally:
+            connection.close()
+
     app.state.mac_updates = MacUpdateService(
         data_directory / "mac-updates",
         update_attempts,
         update_provider,
         config.app_sha,
         ready_release=lambda: app.state.updates.ready_release(),
+        platform_for=executor_update_platform,
     )
     app.state.updates = UpdateService(
         update_provider,

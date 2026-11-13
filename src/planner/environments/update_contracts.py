@@ -35,6 +35,15 @@ class PublishedMacUpdate:
 
 
 @dataclass(frozen=True, slots=True)
+class PublishedLinuxExecutorUpdate:
+    """The Linux x86_64 executor archive from the publication's exact source."""
+
+    artifact_id: int
+    archive_sha256: str
+    archive_size: int
+
+
+@dataclass(frozen=True, slots=True)
 class PublishedUpdate:
     publication_run_id: int
     artifact_id: int
@@ -44,6 +53,7 @@ class PublishedUpdate:
     schema_floor: str
     expires_at: str
     mac: PublishedMacUpdate | None = None
+    linux_executor: PublishedLinuxExecutorUpdate | None = None
 
 
 @dataclass(frozen=True, slots=True)
