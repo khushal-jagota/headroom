@@ -188,12 +188,14 @@ try {
     if (index === 0) {
       const withdrawn = new MacChildAdmissionRefused('scripted withdrawal');
       const before = calls.length;
-      const rejected = await native.stop_child(reference, () => {
-        throw withdrawn;
-      }).then(
-        () => null,
-        (error: unknown) => error,
-      );
+      const rejected = await native
+        .stop_child(reference, () => {
+          throw withdrawn;
+        })
+        .then(
+          () => null,
+          (error: unknown) => error,
+        );
       if (rejected !== withdrawn || calls.length !== before)
         throw new Error('Withdrawn stop reached native cleanup or changed its refusal.');
     }
