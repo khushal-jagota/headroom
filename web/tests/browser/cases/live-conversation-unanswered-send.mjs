@@ -51,6 +51,7 @@ const indexPath = join(scratchRoot, `unanswered-send-index-${process.pid}.html`)
         (window as any).__resolveDelivery = resolve;
         if ((window as any).__nativeResolveOnSend) {
           (window as any).__nativeResolveOnSend = false;
+          (window as any).__retirementSupersedingSendId = body.sender_message_id;
           resolve();
         }
       });

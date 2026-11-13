@@ -530,6 +530,7 @@ def run_retirement(browser, urls, *, control=""):
         if control == 'late-acceptance':
             page.wait_for_function('n=>window.__sends.length===n+1&&!!window.__resolveDelivery', arg=count)
             page.wait_for_function("!window.__nativeMotion.capture('late').motion")
+            page.evaluate('n=>window.__retirementSupersedingSendId=window.__sends[n].sender_message_id', count)
             page.evaluate('window.__resolveDelivery()')
         page.wait_for_function('window.__nativeAcceptance.length===1')
         superseding_send_id = page.evaluate('n=>window.__retirementSupersedingSendId=window.__sends[n].sender_message_id', count)
