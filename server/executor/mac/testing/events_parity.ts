@@ -301,6 +301,7 @@ try {
   } finally {
     store.pending_count = pending_count;
   }
+  while (failures.length === 0) await yield_turn();
   const retry = observed_error(runner.stop(options));
   await runner.native_children.settled().catch(() => {});
   await yield_turn();
