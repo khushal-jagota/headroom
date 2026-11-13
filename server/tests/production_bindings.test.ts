@@ -1,7 +1,7 @@
 /** Adapter protocols do not prove real selection or the catalog's composed DB barrier. */
 import { afterEach, expect, test, vi } from 'vitest';
 import { dirname, join, resolve } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
 import subprocess from 'node:child_process';
 import http from 'node:http';
 import https from 'node:https';
@@ -21,7 +21,11 @@ import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
 import {
   compose_production_backends,
   create_production_backend_bindings,
+  default_production_dependencies,
 } from '../lifecycle/production_bindings.ts';
+import { start_production_server } from '../lifecycle/production.ts';
+import * as installation from '../environments/updates/installation.ts';
+import * as mac_composition from '../environments/updates/mac/composition.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 
 afterEach(() => {
@@ -30,23 +34,26 @@ afterEach(() => {
   syncBuiltinESMExports();
 });
 
-test('real bindings share owners and durable memory while Hermes cleanup retains server ownership', async () => {
-  const began = performance.now(),
-    database = fixture(),
-    path = fixture_path(database);
-  const root = dirname(path),
+function private_production_environment(
+  database: ReturnType<typeof fixture>,
+  root = dirname(fixture_path(database)),
+  app_root = resolve(import.meta.dirname, '../..'),
+) {
+  const path = fixture_path(database),
     bin = join(root, 'private-agent-bin');
-  mkdirSync(bin);
+  mkdirSync(bin, { recursive: true });
   const claude_path = join(root, 'external-claude');
   const hermes_source = join(root, 'hermes-source');
   const hermes_python = join(hermes_source, 'venv/bin/python');
-  for (const home of ['home', 'codex', 'claude', 'hermes']) mkdirSync(join(root, home));
+  for (const home of ['home', 'codex', 'claude', 'hermes'])
+    mkdirSync(join(root, home), { recursive: true });
   for (const [key, value] of Object.entries({
     HOME: join(root, 'home'),
     CODEX_HOME: join(root, 'codex'),
     CLAUDE_CONFIG_DIR: join(root, 'claude'),
     HERMES_HOME: join(root, 'hermes'),
     PLAN_DB_PATH: path,
+    PLAN_CONFIG_PATH: join(root, 'absent-config.yaml'),
     PLAN_WORKSPACE_ROOT: root,
     PLAN_PORT: '0',
     PLAN_SERVER_URL: 'http://127.0.0.1:0',
@@ -63,7 +70,7 @@ test('real bindings share owners and durable memory while Hermes cleanup retains
     PLAN_HERMES_PYTHON: hermes_python,
     PLAN_CLAUDE_EXECUTABLE: claude_path,
     PATH: bin,
-    PLAN_APP_ROOT: resolve(import.meta.dirname, '../..'),
+    PLAN_APP_ROOT: app_root,
   }))
     vi.stubEnv(key, value);
   vi.stubEnv('PLAN_SERVER_LISTENER_FD', undefined);
@@ -74,6 +81,14 @@ test('real bindings share owners and durable memory while Hermes cleanup retains
     tx.run('INSERT INTO chief_page(singleton) VALUES(1)');
     tx.run("INSERT INTO conversation_runtime_epoch VALUES(1,'old-runtime')");
   });
+  return { path, root, claude_path, hermes_source, hermes_python };
+}
+
+test('real bindings share owners and durable memory while Hermes cleanup retains server ownership', async () => {
+  const began = performance.now(),
+    database = fixture();
+  const { path, root, claude_path, hermes_source, hermes_python } =
+    private_production_environment(database);
   // Keep I/O traps for the entire lifetime, including a mistakenly deferred probe.
   const forbidden = (): never => {
     throw new Error('Unexpected production I/O');
@@ -126,6 +141,7 @@ test('real bindings share owners and durable memory while Hermes cleanup retains
   let context!: ConversationCompositionContext, server: StartedServer | undefined;
   let owned_http!: BackendHttpRuntime;
   const stop: StopOptions = { deadline: performance.now() / 1000 + 30 };
+  const firstStop: StopOptions = { deadline: stop.deadline - 1 };
   try {
     server = await startServer({
       createBackendServices(value) {
@@ -197,7 +213,7 @@ test('real bindings share owners and durable memory while Hermes cleanup retains
     base_stop.mockImplementationOnce(async () => {
       throw retry_failure;
     });
-    await expect(owned_http.shutdown!(stop)).rejects.toMatchObject({ errors: [retry_failure] });
+    await expect(owned_http.shutdown!(firstStop)).rejects.toMatchObject({ errors: [retry_failure] });
     let raw_settled = false;
     void owned_http.settled().then(
       () => {
@@ -210,7 +226,7 @@ test('real bindings share owners and durable memory while Hermes cleanup retains
     await new Promise<void>((yes) => setImmediate(yes));
     expect(raw_settled).toBe(false);
     expect(retry_cleanup).not.toHaveBeenCalled();
-    expect(base_stop).toHaveBeenCalledExactlyOnceWith(stop);
+    expect(base_stop).toHaveBeenCalledExactlyOnceWith(firstStop);
     expect(catalog_stop).toHaveBeenCalledTimes(1);
     expect(() => acquireRuntimeOwnership(path)).toThrow('ConversationRuntimeAlreadyOwned');
     base_stop.mockClear();
@@ -253,6 +269,63 @@ test('real bindings share owners and durable memory while Hermes cleanup retains
     await server?.close(stop).catch(() => {});
     console.info(
       'REAL_BINDINGS_COMPOSITION',
+      JSON.stringify({ milliseconds: performance.now() - began }),
+    );
+  }
+});
+
+/** The scripted backend host above does not prove that the default table activates the real factory. */
+test('default production startup binds the real installer and environment runtime to its invocation', async () => {
+  const began = performance.now(),
+    database = fixture(),
+    path = fixture_path(database);
+  const root = join(dirname(path), 'default-production'),
+    application_root = join(root, 'app');
+  mkdirSync(application_root, { recursive: true });
+  private_production_environment(database, root, application_root);
+  vi.stubEnv('PLAN_APP_SHA', undefined);
+  vi.stubEnv('PLAN_UPDATE_REPOSITORY', undefined);
+  vi.stubEnv('PLAN_UPDATE_TOKEN_FILE', undefined);
+  const installer = vi.spyOn(installation, 'create_installer_operations');
+  const mac = vi.spyOn(mac_composition, 'create_mac_update_composition');
+  const backend = vi.spyOn(snapshot, 'create_backend_runtime');
+  const stop: StopOptions = { deadline: performance.now() / 1000 + 30 };
+  let server: StartedServer | undefined;
+  try {
+    server = await start_production_server(default_production_dependencies());
+    expect(server.address).toMatch(/^http:\/\/127\.0\.0\.1:[1-9]\d*$/);
+    const health = await fetch(`${server.address}/api/health`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    expect(health.status).toBe(200);
+    expect(await health.json()).toEqual({ ready: true, app_sha: null });
+    expect(installer).toHaveBeenCalledTimes(1);
+    expect(mac).toHaveBeenCalledTimes(1);
+    expect(backend).toHaveBeenCalledTimes(1);
+    const inputs = installer.mock.calls[0]![0];
+    const [mac_context, executor] = mac.mock.calls[0]!;
+    expect(inputs).toMatchObject({
+      application_root: realpathSync(application_root),
+      node_executable: process.execPath,
+      admitted_legacy_null_sha: null,
+    });
+    expect(executor).toBeNull();
+    expect(inputs.child_processes).toBe(mac_context.child_processes);
+    expect(inputs.signal).toBe(mac_context.signal);
+    expect(inputs.signal).toBe(backend.mock.calls[0]![0].one_shot_children!.signal);
+    expect(inputs.signal.aborted).toBe(false);
+    expect(backend.mock.calls[0]![0].config.test_mode).toBe(true);
+    expect(() => acquireRuntimeOwnership(path)).toThrow('ConversationRuntimeAlreadyOwned');
+    await server.close(stop);
+    await server.shutdown_settled;
+    expect(inputs.signal.aborted).toBe(true);
+    expect(server.shutdown_state.kind).toBe('closed');
+    const successor = acquireRuntimeOwnership(path);
+    successor.close();
+  } finally {
+    await server?.close(stop).catch(() => {});
+    console.info(
+      'DEFAULT_PRODUCTION_COMPOSITION',
       JSON.stringify({ milliseconds: performance.now() - began }),
     );
   }

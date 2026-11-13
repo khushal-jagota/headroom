@@ -1,11 +1,13 @@
 /** Python production_backend_launches: lexical paths and installed agents stay independent. */
 import { accessSync, constants, statSync } from 'node:fs';
-import { dirname } from 'node:path';
 import { pure_posix_path } from '../core/python_path.ts';
 import { expand_path } from '../environments/paths.ts';
 import { resolve_hermes_python } from '../environments/registry/launch.ts';
 import { codex_app_server_child_launch } from '../conversation/backends/codex_app_server/adapter.ts';
-import { hermes_acp_child_launch } from '../conversation/backends/hermes_acp/launch.ts';
+import {
+  hermes_acp_child_launch,
+  hermes_source_root,
+} from '../conversation/backends/hermes_acp/launch.ts';
 import { hermes_model_catalog_launch } from '../conversation/backends/hermes_acp/catalog.ts';
 import type { ClaudeAgentSdkChildLaunch } from '../conversation/backends/claude_agent_sdk/adapter.ts';
 import { provider_launch_settings } from '../core/config.ts';
@@ -28,17 +30,6 @@ function on_path(name: string, supplied_path: string | undefined): string {
       }
     }
   return name;
-}
-function hermes_source_root(path: string): string {
-  const parents: string[] = [];
-  let current = path;
-  while (parents.length < 3) {
-    const parent = current === '//' ? '//' : dirname(current);
-    if (parent === current) break;
-    parents.push(parent);
-    current = parent;
-  }
-  return parents[2] ?? parents[0] ?? path;
 }
 export function production_backend_launches(panels_server_url: string) {
   const settings = provider_launch_settings();

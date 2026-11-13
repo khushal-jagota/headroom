@@ -7,7 +7,12 @@ import json
 import sqlite3
 from typing import Any, cast, get_args
 
-from planner.navigation.contracts import SCHEMA_VERSION, Continuity, NavigationRecord
+from planner.navigation.contracts import (
+    SCHEMA_VERSION,
+    SUPPORTED_SEMANTICS,
+    Continuity,
+    NavigationRecord,
+)
 from planner.navigation.delivery_authority import DeliveryUnavailable
 from planner.navigation.review import canonical_review_address, review_message_items
 from planner.navigation.views.configuration import DEFAULT_CONFIG, ViewConfig
@@ -178,7 +183,7 @@ def continuity(conn: sqlite3.Connection) -> Continuity:
     return {
         "scope": row[0],
         "schema_version": row[1],
-        "semantics": "attention-knowledge-v10-ticket-workflows",
+        "semantics": SUPPORTED_SEMANTICS,
         "epoch": row[2],
         "revision": str(row[3]),
     }

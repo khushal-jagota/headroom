@@ -19,7 +19,7 @@ from planner.core.task_settlement import run_on_worker_thread
 from planner.executor.clock import now_ms
 from planner.runtime import conversation_start, worker_step_readiness
 from planner.tickets import data as tickets_data
-from planner.tickets import locale_configuration, revision_feedback
+from planner.tickets import decision_messages, locale_configuration
 from planner.tickets.contracts import (
     StageOwnershipMode,
     Ticket,
@@ -94,8 +94,8 @@ async def restart_worker(
         killed_conversation_looked_running = False
         revision_restarted_in_fresh_conversation = False
         if killed_conversation_id is not None:
-            revision_restarted_in_fresh_conversation = (
-                await run_on_worker_thread(revision_feedback.snapshot, conn, ticket_id) is not None
+            revision_restarted_in_fresh_conversation = bool(
+                await run_on_worker_thread(decision_messages.has_undelivered, conn, ticket_id)
             )
             killed_conversation_looked_running = await conversations.is_running(
                 killed_conversation_id
@@ -156,6 +156,7 @@ def _unlink_give_back_the_claim_and_write_configuration(
                 expected_conversation_id=killed_conversation_id,
                 now=now,
             )
+        decision_messages.rearm_after_restart(conn, ticket_id)
         if write_employee_configuration is not None:
             write_employee_configuration(conn, now)
         conn.execute("COMMIT")

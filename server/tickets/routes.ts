@@ -508,6 +508,10 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
           'validation',
           'expected_proposal_revision must be a positive integer',
         );
+      if (raw.message != null && revision === null)
+        throw new PlannerError('validation', 'a decision note requires expected_proposal_revision');
+      const message = body_opt_str(raw, 'message'),
+        decision_id = body_opt_str(raw, 'decision_id');
       const edited_body = body_opt_str(raw, 'edited_body'),
         next = body_opt_str(raw, 'next_ceiling'),
         id = request.params.ticket_id,
@@ -526,6 +530,8 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
             next_ceiling,
             next_holder,
             expected_proposal_revision: revision as number | null,
+            message,
+            decision_id,
           }),
           now,
         ),
@@ -536,12 +542,27 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     '/tickets/:ticket_id/reject',
     async (request, reply) => {
       if (!dictionaryBody(request.body, reply)) return;
-      const message = body_opt_str(request.body, 'message'),
-        now = services.clock.nowUnix();
+      const raw = request.body;
+      const message = body_opt_str(raw, 'message'),
+        decision_id = body_opt_str(raw, 'decision_id');
+      const revision = raw.expected_proposal_revision ?? null;
+      if (
+        revision !== null &&
+        (typeof revision !== 'number' || !Number.isInteger(revision) || revision <= 0)
+      )
+        throw new PlannerError(
+          'validation',
+          'expected_proposal_revision must be a positive integer',
+        );
+      if (raw.message != null && revision === null)
+        throw new PlannerError('validation', 'a decision note requires expected_proposal_revision');
+      const now = services.clock.nowUnix();
       return services.database.write((tx) =>
         ticket_json(
           data.reject_proposal(tx, request.params.ticket_id, {
             message,
+            decision_id,
+            expected_proposal_revision: revision as number | null,
             principal: services.identity(request).principal,
             now,
           }),
@@ -617,9 +638,17 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     );
     return response;
   });
-  app.get<{ Params: { ticket_id: string } }>('/tickets/:ticket_id/workspace', async (request) =>
-    services.database.read((sql) => workspace_ticket(sql, request.params.ticket_id)),
-  );
+  app.get<{ Params: { ticket_id: string } }>('/tickets/:ticket_id/workspace', async (request) => {
+    const response = services.database.read((sql) =>
+      workspace_ticket(sql, request.params.ticket_id),
+    ) as unknown as Json;
+    // Python's valid HTTP response contract filters these fields. Resource bodies retain them.
+    if (!('integrity_error' in response)) {
+      delete response.recap_updated_at;
+      delete response.recap_stage_changed;
+    }
+    return response;
+  });
   app.get<{ Params: { ticket_id: string; field: string } }>(
     '/tickets/:ticket_id/workspace/fields/:field',
     async (request) =>

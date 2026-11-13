@@ -11,7 +11,7 @@ import {
 import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
 import type { ProductionBindingContext } from './production_bindings.ts';
 import type { ProductionBackendLaunches } from './production_launches.ts';
-import { ShutdownDeadlineExceeded, type StopOptions } from './contracts.ts';
+import { ShutdownDeadlineExceeded } from './contracts.ts';
 import { observe_shutdown } from './deadline.ts';
 
 function own_hermes_catalog(
@@ -24,7 +24,6 @@ function own_hermes_catalog(
     reject = no;
   });
   let attempt: Promise<void> | undefined;
-  let stop_options: StopOptions | undefined;
   let invoking = false,
     finished = false;
   const history = new Set<unknown>();
@@ -46,7 +45,6 @@ function own_hermes_catalog(
     codex_sign_in: base.codex_sign_in,
     machine_catalog: () => base.machine_catalog(),
     shutdown(options) {
-      stop_options ??= options;
       if (!finished && !invoking) {
         let resolve_attempt!: () => void, reject_attempt!: (error: unknown) => void;
         // Reserve this observer before either owner can synchronously reenter shutdown.
@@ -54,7 +52,7 @@ function own_hermes_catalog(
           resolve_attempt = yes;
           reject_attempt = no;
         });
-        const base_stop = invoke(() => base.shutdown?.(stop_options!));
+        const base_stop = invoke(() => base.shutdown?.(options));
         const hermes_stop = invoke(() => owner.shutdown());
         void (async () => {
           const results = await Promise.allSettled([
@@ -82,7 +80,7 @@ function own_hermes_catalog(
           await actual;
         })().then(resolve_attempt, reject_attempt);
       }
-      return observe_shutdown(attempt ?? actual, stop_options, 'production backend resources');
+      return observe_shutdown(attempt ?? actual, options, 'production backend resources');
     },
     settled: () => actual,
   };

@@ -16,6 +16,7 @@ import dataclasses
 import json
 import os
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,7 @@ from planner.previews.cli import preview as preview_group
 from planner.server_lifecycle.cli import serve as serve_command
 from planner.stalls.cli import stalls_group
 from planner.tickets.contracts import TicketLocale
+from planner.tickets.logic.recap import recap_preview
 from planner.worker_settings.contracts import SkillPatch
 from planner.worker_types.contracts import BRIEF_FIELD_ID
 
@@ -355,6 +357,29 @@ def _format_tickets(tickets: list[dict[str, Any]]) -> str:
     )
 
 
+def _format_recap(item: dict[str, Any]) -> str:
+    recap = str(item["recap"])
+    if not recap.strip():
+        return "no recap"
+    updated_at = item["recap_updated_at"]
+    if updated_at is None:
+        freshness = "recap age unknown"
+    else:
+        age = max(0, int(time.time()) - int(updated_at))
+        if age < 60:
+            elapsed = f"{age}s"
+        elif age < 3600:
+            elapsed = f"{age // 60}m"
+        elif age < 86400:
+            elapsed = f"{age // 3600}h"
+        else:
+            elapsed = f"{age // 86400}d"
+        freshness = f"recap {elapsed} old"
+    if item.get("recap_stage_changed"):
+        freshness += ", stage changed since"
+    return f"{recap_preview(recap)} ({freshness})"
+
+
 def _format_ticket_summaries(tickets: list[dict[str, Any]]) -> str:
     return _lines(
         tickets,
@@ -363,7 +388,7 @@ def _format_ticket_summaries(tickets: list[dict[str, Any]]) -> str:
             f"{ticket['title']}"
             + (" | backlogged" if ticket.get("is_backlogged") else "")
             + (f" | {ticket['project']}" if ticket["project"] else "")
-            + (f"\n  {ticket['recap_preview']}" if ticket["recap_preview"] else "")
+            + f"\n  {_format_recap(ticket)}"
         ),
     )
 
@@ -1235,6 +1260,8 @@ def _approve_ticket_proposal(
             json_body={"title": kickoff_title},
         )
     field_payload: dict[str, Any] = {
+        "expected_proposal_revision": proposal["revision"],
+        "decision_id": f"{tid}:{proposal['revision']}:accept",
         "next_ceiling": ceiling,
         "next_holder": (
             resolve_holder(holder, as_json) if holder is not None else caller_principal()
@@ -1266,11 +1293,20 @@ def _revise_ticket_proposal(
     if (message is None) == (body_file is None):
         http.fail_validation("reject requires exactly one of --message or --body-file", as_json)
     text = message if message is not None else _read_source(body_file or "", as_json)
+    detail = http.send("GET", "/api/tickets", as_json=as_json, params={"detail": "full", "id": tid})
+    proposal = detail.get("pending_proposal")
+    if not proposal:
+        http.fail_validation("ticket has no pending proposal", as_json)
+    revision = proposal["revision"]
     data = http.send(
         "POST",
         f"/api/tickets/{tid}/reject",
         as_json=as_json,
-        json_body={"message": text},
+        json_body={
+            "message": text,
+            "expected_proposal_revision": revision,
+            "decision_id": f"{tid}:{revision}:reject",
+        },
     )
     http.emit(data, as_json, f"{tid} proposal rejected")
 
@@ -1524,7 +1560,10 @@ def manager_list(
         _format_bounded(
             _lines(
                 data["managers"],
-                lambda i: f"{i['id']} {i['title']} [{'settled' if i['settled'] else 'active'}]",
+                lambda i: (
+                    f"{i['id']} {i['title']} [{'settled' if i['settled'] else 'active'}]"
+                    f"\n  {_format_recap(i)}"
+                ),
             ),
             data["page"],
         ),
@@ -1634,6 +1673,30 @@ def manager_remove_ticket(item_id: str, ticket_id: str, as_json: bool) -> None:
     http.emit(data, as_json, f"{ticket_id} removed from {item_id}")
 
 
+def _request_recap(kind: str, identity: str, as_json: bool) -> None:
+    data = http.send(
+        "POST", "/api/recap-requests", as_json=as_json,
+        json_body={"target": {"kind": kind, "id": identity}},
+    )
+    http.emit(data, as_json, f"Recap requested from {identity}.")
+
+
+@ticket.command("request-recap")
+@click.argument("ticket_id")
+@json_option
+def ticket_request_recap(ticket_id: str, as_json: bool) -> None:
+    """Ask a Ticket below you for a fresh recap."""
+    _request_recap("ticket", ticket_id, as_json)
+
+
+@manager.command("request-recap")
+@click.argument("item_id")
+@json_option
+def manager_request_recap(item_id: str, as_json: bool) -> None:
+    """Ask a Manager below you for a fresh recap."""
+    _request_recap("manager", item_id, as_json)
+
+
 @manager.command("workspace")
 @click.argument("item_id")
 @json_option
@@ -1656,13 +1719,19 @@ def manager_workspace(item_id: str, as_json: bool) -> None:
             f"Schema: panels page schema\nEdit: panels page edit --manager {item_id}"
         )
     human = (
-        f"{data['title']} ({item_id})\nPurpose: {data['goal']}\nRecap: {data['recap']}\n\n"
+        f"{data['title']} ({item_id})\nPurpose: {data['goal']}\nRecap: {_format_recap(data)}\n\n"
         f"{visible}\nOwn page revision: {data['page_revision']}\n"
         "Edits replace the complete document. Artifacts are supporting files.\n\n"
-        "Held goals:\n" + _lines(goals, lambda goal: f"{goal['id']} {goal['title']}")
-        + "\n\nArtifacts:\n" + _lines(data["artifacts"], lambda artifact: str(artifact["path"]))
-        + "\n\nTickets:\n" + _lines(
-            data["tickets"], lambda ticket: f"{ticket['id']} {ticket['title']} [{ticket['stage']}]"
+        "Held goals:\n"
+        + _lines(goals, lambda goal: f"{goal['id']} {goal['title']}")
+        + "\n\nArtifacts:\n"
+        + _lines(data["artifacts"], lambda artifact: str(artifact["path"]))
+        + "\n\nTickets:\n"
+        + _lines(
+            data["tickets"], lambda ticket: (
+                f"{ticket['id']} {ticket['title']} [{ticket['stage']}]"
+                f"\n  {_format_recap(ticket)}"
+            )
         )
     )
     http.emit(data, as_json, human)

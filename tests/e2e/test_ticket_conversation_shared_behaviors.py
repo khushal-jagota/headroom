@@ -12,14 +12,14 @@ from collections.abc import Callable
 from contextlib import closing
 
 import httpx
-from playwright.sync_api import BrowserContext, Page, expect
+from playwright.sync_api import BrowserContext, Page, Response, expect
 from tests.e2e.harness import WAIT_MS, JsonObject, ServerHandle, capture_success
 from tests.e2e.test_conversation_signals import (  # noqa: F401
     _navigate_to_retained_history,
     _post,
     signal_server,
 )
-from tests.support.connected_rows import _bind
+from tests.support.connected_rows import _bind, _propose
 
 
 def _create_ticket_conversation(
@@ -515,3 +515,124 @@ def test_private_credential_save_survives_reload_and_reaches_the_actual_wire(
     expect(card.locator("input")).to_have_count(0)
     expect(card.get_by_text("Saved", exact=True)).to_be_visible(timeout=WAIT_MS)
     capture_success(page, "credential-request-connected-saved.png")
+
+
+def test_decision_notes_reach_backend_and_full_history(
+    signal_server: ServerHandle,  # noqa: F811 - imported pytest fixture
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+) -> None:
+    """One browser host proves the decision controls through actual backend input.
+
+    Existing API and component coverage cannot prove that the complete note crosses
+    both request adapters, the delivery service, and the Full history projection.
+    The existing signal server supplies the real core and a captured backend wire.
+    """
+    server = signal_server
+    conversation_id = "e2e-ticket-decision-notes"
+    ticket_id = _create_ticket_conversation(
+        server, cli, conversation_id=conversation_id, title="Deliver attributed decision notes",
+    )
+    owner = {"kind": "owner", "id": "owner"}
+    response = httpx.patch(
+        server.base + f"/api/tickets/{ticket_id}",
+        json={"ceiling": "needs_what_changes", "ceiling_holder": owner}, timeout=10,
+    )
+    assert response.is_success, response.text
+    _propose(server, ticket_id, "The proposal needs a precise review.")
+    page = open_page(
+        context_factory(), server, f"#/workspace/{ticket_id}", "[data-approval-block]",
+    )
+    page.set_viewport_size({"width": 1280, "height": 1000})
+    page.set_default_timeout(WAIT_MS)
+    # The fixture's explicit Brief approval also owns a real decision message.
+    # Deliver it first, then leave that turn busy for the first note-bearing action.
+    _post(server, f"/api/test/signals/{conversation_id}/deliver-decisions")
+    _post(server, f"/api/test/signals/{conversation_id}/finish")
+    def wait_for_backend_text(text: str) -> list[str]:
+        texts: list[str] = page.evaluate(
+            """async ({path,text,timeout}) => {
+              const deadline = performance.now() + timeout;
+              while (performance.now() < deadline) {
+                const receipt = await (await fetch(path)).json();
+                if (receipt.texts.some(value => value.includes(text))) return receipt.texts;
+                await new Promise(resolve => setTimeout(resolve, 50));
+              }
+              throw new Error('The complete decision note did not reach the backend');
+            }""",
+            {"path": f"/api/test/signals/{conversation_id}/delivered",
+             "text": text, "timeout": WAIT_MS},
+        )
+        return texts
+
+    wait_for_backend_text("User approved the Brief proposal.")
+    sent: list[tuple[str, str | None]] = []
+    page.on("request", lambda request: sent.append((request.url, request.post_data)))
+    card = page.locator("[data-approval-block]")
+    notes = (
+        "  Please preserve the complete first line — café.\n\n"
+        "Second line: check the approved scope.  ",
+        "  Approved with this condition: preserve Unicode 雪.\n\nDo not omit the final line.  ",
+    )
+    decisions: list[dict[str, object]] = []
+    for action, note in zip(("reject", "accept/what_changes"), notes, strict=True):
+        detail = httpx.get(
+            server.base + f"/api/tickets?detail=full&id={ticket_id}", timeout=10,
+        ).json()
+        card.locator("[data-revision-note]").fill(note)
+        def is_decision(result: Response, expected_action: str = action) -> bool:
+            return result.request.method == "POST" and result.url.endswith(
+                f"/tickets/{ticket_id}/{expected_action}"
+            )
+
+        with page.expect_response(is_decision) as decision:
+            if action == "reject":
+                card.locator("[data-send-back]").click()
+            else:
+                card.locator("[data-accept]").click()
+                picker = page.locator("[data-ceiling-picker-panel]:visible")
+                picker.locator('[data-ceiling-picker-choice="needs_implementation"]').click()
+                picker.locator('[data-scope-holder="owner"]').click()
+        assert decision.value.ok, decision.value.text()
+        payload = decision.value.request.post_data_json
+        assert isinstance(payload, dict)
+        assert payload["message"] == note
+        assert payload["expected_proposal_revision"] == detail["pending_proposal"]["revision"]
+        assert payload["decision_id"]
+        decisions.append(payload)
+        # The existing proof turn (and then the send-back prompt) keeps the Worker
+        # busy. Flush through the real service, then release that turn to deliver.
+        _post(server, f"/api/test/signals/{conversation_id}/deliver-decisions")
+        _post(server, f"/api/test/signals/{conversation_id}/finish")
+        delivered = wait_for_backend_text(note)
+        if action == "reject":
+            _propose(server, ticket_id, "The revised proposal is ready.")
+            expect(card).to_be_visible(timeout=WAIT_MS)
+    assert decisions[0]["decision_id"] != decisions[1]["decision_id"]
+    events = httpx.get(
+        server.base + f"/api/conversation/conversations/{conversation_id}/events", timeout=10,
+    ).json()["events"]
+    for action, note in zip(("sent back", "approved"), notes, strict=True):
+        matches = [text for text in delivered if note in text]
+        assert len(matches) == 1, {"note": note, "delivered": delivered}
+        assert f"User {action} the What Changes proposal" in matches[0]
+        recorded = [
+            event["payload"] for event in events
+            if event["kind"] == "prompt"
+            and note in event["payload"].get("text", "")
+        ]
+        assert len(recorded) == 1, recorded
+        assert recorded[0]["sender_label"] == "system"
+        assert recorded[0]["text"] == matches[0]
+    assert not [url for url, _body in sent if url.endswith("/conversation/send")]
+    _open_conversation_layer(page)
+    page.locator('[data-conversation-lens-choice="full"]').click()
+    for text in (
+        "User sent back the What Changes proposal", "User approved the What Changes proposal",
+    ):
+        row = page.locator('.chat-system[data-conversation-row="prompt"]').filter(has_text=text)
+        expect(row).to_have_count(1, timeout=WAIT_MS)
+    for line in ("Second line: check the approved scope.", "Do not omit the final line."):
+        expect(page.locator(".chat-system").filter(has_text=line)).to_have_count(1)
+    capture_success(page, "decision-notes-full.png")

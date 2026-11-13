@@ -1,6 +1,5 @@
 /** Exact ordered text that Panels supplies for one explicit worker step. */
 import type { Ticket } from '../../tickets/contracts.ts';
-import type { PendingRevisionFeedback } from '../../tickets/revision_feedback.ts';
 import { stage_ownership_mode, gating_field } from '../../tickets/logic/machine.ts';
 import type { WorkflowDefinition } from '../../worker_types/contracts.ts';
 import { render_workflow_guide } from '../../worker_types/guidance.ts';
@@ -30,7 +29,6 @@ export function compose_worker_step_prompt(
   ticket: Ticket,
   options: {
     worker_type_definition: WorkflowDefinition;
-    revision_feedback: PendingRevisionFeedback | null;
     memory_was_lost: boolean;
   },
 ): WorkerStepPrompt {
@@ -67,13 +65,6 @@ export function compose_worker_step_prompt(
     text: instruction,
     quoted: false,
   });
-  if (options.revision_feedback !== null) {
-    inputs.push({
-      name: 'Ticket revision feedback',
-      text: options.revision_feedback.text,
-      quoted: true,
-    });
-  }
   return new WorkerStepPrompt({ inputs });
 }
 function _render_worker_step_input(item: WorkerStepInput): string {
