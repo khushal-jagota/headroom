@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import sys
 import time
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -231,20 +232,33 @@ async def reference(root: Path, patch: pytest.MonkeyPatch) -> dict[str, Any]:
     not_directory = replace(
         failed,
         resolved_start=replace(
-            failed.resolved_start, workspace_folder=root / "not-directory" / ".." / "absolute"
+            failed.resolved_start,
+            model="hermes-model",
+            workspace_folder=root / "not-directory" / ".." / "absolute",
         ),
     )
     reference = ChildReference(
         "inc", "not-directory-workspace", not_directory.resolved_start.conversation_id
     )
-    with pytest.raises(Exception) as directory_error:
+    before_directory = len(calls)
+    directory_error = None
+    try:
         await runner._start_run(
             ChildCommand(
                 "not-directory-start", reference, ChildOperation.start, None, not_directory
             ),
             not_directory,
         )
-    errors.append(str(directory_error.value))
+    except Exception as error:
+        directory_error = str(error)
+    if reference.child_id in runner._children:
+        capability = runner._children[reference.child_id].capability
+        await runner._stop_exact_child(
+            ChildCommand("directory-stop", reference, ChildOperation.stop, None, StopRun())
+        )
+        calls[:] = normalized(calls, root, capability)
+    directory_case = dict(error=directory_error, calls=calls[before_directory:])
+    del calls[before_directory:]
     assert reference.child_id not in runner._children
 
     # The Mac wrapper passes command flags without starting advisory discovery.
@@ -298,6 +312,7 @@ async def reference(root: Path, patch: pytest.MonkeyPatch) -> dict[str, Any]:
                 errors=errors,
                 catalog_calls=catalog_calls,
                 catalogs=catalogs,
+                non_directory_workspace=directory_case,
             ),
             root,
         ),
@@ -318,6 +333,17 @@ def test_unit22_mac_adapters(
     observed = run_node("server/executor/mac/testing/adapters_parity.ts", target, homes, timeout=30)
     (target / "expected.json").write_text(json.dumps(expected, indent=2))
     (target / "observed.json").write_text(json.dumps(observed, indent=2))
+    python_directory = expected.pop("non_directory_workspace")
+    exact_error = "Mac workspace unavailable: [Errno 20] Not a directory: '<root>/not-directory'"
+    assert observed["non_directory_workspace"]["error"] == exact_error
+    assert all(call[0] == "skills" for call in observed["non_directory_workspace"]["calls"])
+    if sys.version_info < (3, 13):
+        assert python_directory["error"] is None
+        assert {"factory", "start", "stop", "record_children"} <= {
+            call[0] for call in python_directory["calls"]
+        }
+    else:
+        assert python_directory == observed["non_directory_workspace"]
     assert observed["parity"] == expected
     assert observed["lifecycle"] and all(observed["lifecycle"].values())
     report_direct(
@@ -326,4 +352,11 @@ def test_unit22_mac_adapters(
         observed,
         started,
         "Mac composition and retained-child custody; no network or provider process",
+        accepted_difference={
+            "case": "non-directory traversal in absolute Mac workspace",
+            "python_version": sys.version.split()[0],
+            "python": python_directory,
+            "typescript": observed["non_directory_workspace"],
+            "reason": "Manager selected Python 3.13 refusal; pinned Python 3.12 accepts",
+        },
     )

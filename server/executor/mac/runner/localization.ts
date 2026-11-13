@@ -21,6 +21,7 @@ import {
   NATIVE_SKILLS_DIR_ENV,
 } from '../configuration.ts';
 import type { MacNativeChildrenOptions } from './contracts.ts';
+const workspace_resolution = { strict: true, require_directory_traversal: true };
 const removed_environment = [
   'HOME',
   'USERPROFILE',
@@ -86,8 +87,8 @@ export async function localize_start(
       await create_directory(options, join(home, subfolder ?? ''));
     }
     if (subfolder !== null) {
-      home = resolve_path_sync(home, { strict: true });
-      workspace = resolve_path_sync(join(home, subfolder), { strict: true });
+      home = resolve_path_sync(home, workspace_resolution);
+      workspace = resolve_path_sync(join(home, subfolder), workspace_resolution);
       within(home, workspace);
     } else {
       const path =
@@ -96,7 +97,7 @@ export async function localize_start(
           : resolved.workspace_folder;
       if (!isAbsolute(path))
         throw new Error('workspace needs absolute native path or home mapping');
-      workspace = resolve_path_sync(path, { strict: true });
+      workspace = resolve_path_sync(path, workspace_resolution);
     }
     if (!(await stat(workspace)).isDirectory())
       throw new Error('mapped workspace is not a directory');
