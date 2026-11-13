@@ -10,6 +10,8 @@ import type { Clock } from './clock.ts';
 import type { Config } from './config.ts';
 import { ChangeSignal } from './changes/index.ts';
 import { createDatabase } from './database/index.ts';
+import { require_application_schema } from './database/admission.ts';
+import { notify_chief as notify_chief_of_integrity_faults } from '../tickets/integrity_notice.ts';
 import type { Database } from './database/index.ts';
 import { acquireRuntimeOwnership, acquireLock } from './locks/index.ts';
 
@@ -122,6 +124,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   config.db_path = assert_test_database_path(config.db_path);
   const ownership = acquireRuntimeOwnership(config.db_path);
   let environments: EnvironmentRuntime | undefined;
+  let stopped_environments: EnvironmentRuntime | undefined;
   let environmentsStarting: Promise<void> | undefined;
   const areas = createAreasRuntime(() => environments?.resourceProviders ?? []);
   const conversationWrites = new ConversationHttpWriteScope();
@@ -138,6 +141,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   let stopped_usage: RecordedUsageService | undefined;
   let video_uploads: VideoUploadService | undefined;
   let app: FastifyInstance | undefined;
+  let stopped_app: FastifyInstance | undefined;
   let ownership_current = true;
   let signalRevoked = false;
   let recovery: Promise<void> | undefined;
@@ -264,8 +268,11 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       );
       producer(
         'environment services',
-        () => environments?.close(stop),
-        () => environments?.settled() ?? Promise.resolve(),
+        () => {
+          stopped_environments = environments;
+          return environments?.close(stop);
+        },
+        () => stopped_environments?.settled() ?? Promise.resolve(),
       );
       stages.own('environment setup', () => environmentsStarting?.catch(() => {}));
       producer(
@@ -291,7 +298,10 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         () => video_uploads?.settled() ?? Promise.resolve(),
       );
       stages.own('one-shot children', () => one_shot_children.settled());
-      stages.own('HTTP server', () => app?.close());
+      stages.own('HTTP server', () => {
+        stopped_app = app;
+        return app?.close();
+      });
       stages.own('HTTP work', () => request_lifetime.settled());
       stages.own('media cleanup', () => video_cleanup_work);
       stages.own('HTTP writes', () => conversationWrites.drain());
@@ -394,7 +404,8 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         actuals.push(Promise.reject(error));
       }
     }
-    if (environments) {
+    if (environments && environments !== stopped_environments) {
+      stopped_environments = environments;
       try {
         actuals.push(
           Promise.resolve(environments.close(stop_options!)).catch((error: unknown) => {
@@ -410,7 +421,8 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         actuals.push(Promise.reject(error));
       }
     }
-    if (app) {
+    if (app && app !== stopped_app) {
+      stopped_app = app;
       try {
         actuals.push(app.close());
       } catch (error) {
@@ -444,6 +456,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     assert_startup_open();
     const changes = new ChangeSignal();
     const clock = buildClock(config);
+    require_application_schema(config.db_path);
     database = createDatabase(config.db_path, {
       commitSteps: areas.commitSteps,
       onChange: () => changes.emit(),
@@ -453,7 +466,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       require_runtime_ownership: requireOwnership,
     });
     areas.bindPublication(publication);
-    areas.prepare(database);
+    const integrity_issues = areas.prepare(database);
     if (!config.test_mode && config.dispatch_enabled) {
       dispatcher = acquireLock(config.dispatcher_lock_path);
     }
@@ -658,7 +671,10 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       recovery = Promise.resolve().then(() =>
         current.workspace_admission.operation(async (admitted) => {
           if (!admitted) return;
+          await notify_chief_of_integrity_faults(database!, current, clock, integrity_issues);
+          if (current.workspace_admission.closed) return;
           await current.tell_agents_of_background_tasks_lost_at_restart();
+          if (current.workspace_admission.closed) return;
           await run_automatic_recovery(current, database!);
         }),
       );
@@ -669,7 +685,8 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
           if (recovery === active_recovery) recovery = undefined;
         },
         (error) => {
-          console.error('Conversation startup recovery failed', error);
+          if (!is_shutdown_business_cancellation(error))
+            console.error('Conversation startup recovery failed', error);
           if (recovery === active_recovery) recovery = undefined;
         },
       );
@@ -694,11 +711,9 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       const fd = Number(inherited);
       if (!Number.isInteger(fd) || fd < 0) throw new Error('invalid PLAN_SERVER_LISTENER_FD');
       const address = await app.listen({ fd } as FastifyListenOptions & { fd: number });
-      if (isClosing()) return abort_late_setup();
       return address;
     } else {
       const address = await app.listen({ host: '127.0.0.1', port: config.port });
-      if (isClosing()) return abort_late_setup();
       return address;
     }
   };

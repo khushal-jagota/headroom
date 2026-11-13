@@ -3,6 +3,7 @@ import { startServer } from '../core/start.ts';
 import type { ConversationCompositionContext, StartedServer } from '../core/start.ts';
 import { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
+import { model_is_enabled } from '../conversation/backend_state.ts';
 import { createEnvironmentRuntime } from '../environments/runtime.ts';
 import type {
   ProductionEnvironmentFactory,
@@ -61,6 +62,9 @@ export async function start_production_server(
         wait_registry: WAITS,
         store: context.record.store,
         backend_child_factories: current.factories,
+        execution_refusal: current.execution_refusal,
+        model_is_enabled: (backend, model) =>
+          context.database.read((sql) => model_is_enabled(sql, backend, model)),
         message_files: new ConversationMessageFiles(context.config.db_path),
         unix_time_now: () => context.clock.nowUnix(),
         require_runtime_ownership: context.require_runtime_ownership,

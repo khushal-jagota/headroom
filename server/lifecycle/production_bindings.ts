@@ -1,19 +1,23 @@
 /** The only adapter-selection point. Real bindings arrive together after Manager admission. */
 import type { ConversationCompositionContext } from '../core/start.ts';
-import type { BackendChildFactory } from '../conversation/backends/contracts.ts';
+import type {
+  BackendChildFactory,
+  RetainedBackendChildFactory,
+} from '../conversation/backends/contracts.ts';
 import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
 import { create_durable_codex_login_rejection } from '../conversation/backend_state.ts';
 import type { CodexLoginRejectionMemory } from '../conversation/snapshot/provider_contracts.ts';
-import { PlannerError } from '../core/contracts.ts';
-import { read_ticket_by_conversation_id } from '../tickets/data/index.ts';
 import {
-  CURRENT_EXECUTION_LOCALE,
-  execution_unavailable_reason,
-} from '../tickets/locale_configuration.ts';
+  conversation_execution_refusal,
+  local_ticket_execution_refusal,
+} from '../tickets/execution_admission.ts';
+import { configure_conversation_start } from '../runtime/conversation_start.ts';
 import type { StallSource } from '../stalls/contracts.ts';
 import type { ProductionServerDependencies } from './production.ts';
 
 export const BACKEND_KEYS = ['claude', 'codex', 'hermes'] as const;
+export type ProductionBackendChildFactory = BackendChildFactory &
+  Partial<Pick<RetainedBackendChildFactory, 'recover' | 'retained_runs'>>;
 export interface ProductionBindingContext extends ConversationCompositionContext {
   /** Separate provider objects share this database's durable rejection row. */
   readonly codex_login_rejection: CodexLoginRejectionMemory;
@@ -57,26 +61,46 @@ export function compose_production_backends(
     throw new Error(`Missing production backend factories: ${missing.join(', ')}`);
   // This composition has no executor router. Unit 22 removes/replaces this one
   // boundary when its real locale routing is composed; presence is not a router.
-  const local_only =
-    (factory: BackendChildFactory): BackendChildFactory =>
-    (values) => {
-      context.database.read((sql) => {
-        let ticket;
-        try {
-          ticket = read_ticket_by_conversation_id(sql, values.resolved_start.conversation_id);
-        } catch (error) {
-          if (error instanceof PlannerError && error.code === 'not_found') return;
-          throw error;
-        }
-        if (ticket.locale === 'macos')
-          throw new PlannerError('validation', execution_unavailable_reason(sql, ticket.locale), {
-            ticket_id: ticket.id,
-            locale: ticket.locale,
-            machine_locale: CURRENT_EXECUTION_LOCALE,
-          });
-      });
+  const execution_refusal = (id: string) =>
+    context.database.read((sql) =>
+      conversation_execution_refusal(sql, id, local_ticket_execution_refusal),
+    );
+  configure_conversation_start(context.database, {
+    db_path: context.config.db_path,
+    workspace_root: context.config.workspace_root,
+    execution_refusal: local_ticket_execution_refusal,
+  });
+  const require_execution = (id: string) => {
+    const refusal = execution_refusal(id);
+    if (refusal !== null)
+      throw new Error(
+        `Execution admission invariant violated: blocked conversation ${id} reached a local backend binding`,
+        { cause: refusal },
+      );
+  };
+  const local_only = (factory: ProductionBackendChildFactory): ProductionBackendChildFactory => {
+    const guarded: ProductionBackendChildFactory = (values) => {
+      require_execution(values.resolved_start.conversation_id);
       return factory(values);
     };
+    const recover = factory.recover,
+      runs = factory.retained_runs;
+    if (typeof recover === 'function')
+      Object.assign(guarded, {
+        recover(
+          reference: Parameters<RetainedBackendChildFactory['recover']>[0],
+          options?: Parameters<RetainedBackendChildFactory['recover']>[1],
+        ) {
+          require_execution(reference.conversation_id);
+          return recover.call(factory, reference, options);
+        },
+      });
+    if (typeof runs === 'function')
+      Object.assign(guarded, {
+        retained_runs: () => runs.call(factory),
+      });
+    return guarded;
+  };
   const factories = {
     claude: local_only(local_factories.claude),
     codex: local_only(local_factories.codex),
@@ -85,7 +109,12 @@ export function compose_production_backends(
   const http = bindings.http(shared);
   if (http.database !== context.database)
     throw new Error('Production backend HTTP runtime belongs to another database');
-  return { factories, http, stall_sources: () => bindings.stall_sources(shared) };
+  return {
+    factories,
+    http,
+    execution_refusal,
+    stall_sources: () => bindings.stall_sources(shared),
+  };
 }
 export function default_production_dependencies(): ProductionServerDependencies {
   // 4a intentionally has no adapter substitutes. 4b replaces this table and binds

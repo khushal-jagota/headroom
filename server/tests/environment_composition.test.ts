@@ -193,6 +193,7 @@ test('shutdown during environment setup retains ownership and prevents later pro
   const entered = deferred();
   const finish = deferred();
   const closed = deferred();
+  let close_count = 0;
   const priorHandlers = process.listeners('SIGTERM');
   const background = vi.fn(() => {
     throw new Error('a producer must not start after shutdown');
@@ -232,6 +233,7 @@ test('shutdown during environment setup retains ownership and prevents later pro
       return {
         ...environment,
         close(options) {
+          close_count++;
           const flight = environment.close(options);
           closed.resolve();
           return flight;
@@ -266,5 +268,6 @@ test('shutdown during environment setup retains ownership and prevents later pro
   expect(metricsStart).not.toHaveBeenCalled();
   expect(scratchFactory).toHaveBeenCalledTimes(1);
   expect(scratchStart).not.toHaveBeenCalled();
+  expect(close_count).toBe(1);
   acquireRuntimeOwnership(path).close();
 });

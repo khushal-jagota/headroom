@@ -101,8 +101,8 @@ export function createAreasRuntime(
     bindRuntimeFacts(facts: ConversationViewRuntime['runtime_facts']): void {
       conversation.bind_runtime_facts(facts);
     },
-    prepare(database: Database): void {
-      database.write((tx) => audit_ticket_registry_integrity(tx, { startup: true }));
+    prepare(database: Database) {
+      return database.write((tx) => audit_ticket_registry_integrity(tx, { startup: true }));
     },
     initialize(
       database: Database,

@@ -166,16 +166,23 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       if (!options.backend_child_factories[key])
         throw new Error(`no backend child factory for ${key}`);
     }
+    if (typeof options.execution_refusal !== 'function')
+      throw new Error('Conversation execution admission is required');
+    if (typeof options.model_is_enabled !== 'function')
+      throw new Error('Conversation model admission is required');
     this.options = options;
     this.background_tasks_left_by_previous_process = options.store.read_live_background_task_ids();
   }
   async tell_agents_of_background_tasks_lost_at_restart(): Promise<void> {
     this.require_runtime_ownership();
     const left_behind = this.background_tasks_left_by_previous_process;
-    this.background_tasks_left_by_previous_process = new Map();
+    const remaining = new Map(left_behind);
+    this.background_tasks_left_by_previous_process = remaining;
     for (const [conversation_id, task_ids] of [...left_behind].sort(([first], [second]) =>
       first < second ? -1 : first > second ? 1 : 0,
     )) {
+      if (this.options.execution_refusal(conversation_id) !== null) continue;
+      remaining.delete(conversation_id);
       try {
         const state = this.conversation_state(conversation_id);
         if (state === null) continue;
@@ -219,6 +226,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     return this.workspace_admission.operation(async (admitted) => {
       if (!admitted) throw new Error('Workspace admission is closed for an owner update.');
       this.require_runtime_ownership();
+      const refusal = this.options.execution_refusal(request.conversation_id);
+      if (refusal !== null) throw refusal;
       // The record is the first effect, before an in-memory identity can exist.
       const record = this.options.store.create_conversation(
         resolve_conversation_start_request(request),
@@ -336,6 +345,9 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       if (!admitted) throw new Error('Workspace admission is closed for an owner update.');
       if (options.record_refusal && options.sender_message_id == null)
         throw new Error('record_refusal requires a sender_message_id');
+      this.require_runtime_ownership();
+      const refusal = this.options.execution_refusal(conversation_id);
+      if (refusal !== null) throw refusal;
       const state = this.conversation_state(conversation_id);
       if (!state) return new PromptDeliveryRefused({ refusal_reason: R.no_such_conversation });
       return own_settlement(
@@ -847,6 +859,9 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     );
   }
   async drain_held_prompts(state: ConversationState): Promise<void> {
+    if (this.shutting_down) return;
+    this.require_runtime_ownership();
+    if (this.options.execution_refusal(state.record.conversation_id) !== null) return;
     const taken = await state.lock.run(() => {
       if (
         state.child_is_quarantined ||
@@ -862,6 +877,13 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     if (!taken) return;
     while (true) {
       const next = await state.lock.run(async () => {
+        if (
+          this.shutting_down ||
+          this.options.execution_refusal(state.record.conversation_id) !== null
+        ) {
+          set_phase(state, 'idle');
+          return null;
+        }
         if (state.child_is_quarantined || state.held_prompts.length === 0) {
           set_phase(state, 'idle');
           return null;
@@ -1144,6 +1166,9 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     held_prompt_id: string,
     mode: HeldPromptPromotionMode,
   ): Promise<PromptDeliveryFate | null> {
+    this.require_runtime_ownership();
+    const refusal = this.options.execution_refusal(conversation_id);
+    if (refusal !== null) throw refusal;
     const state = this.conversation_state(conversation_id);
     return state
       ? own_settlement(state, controls.promote_held_prompt(this, state, held_prompt_id, mode))

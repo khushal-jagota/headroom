@@ -1,7 +1,9 @@
 /** Startup and shutdown own one record runtime and retain its lease through cleanup. */
 import { dirname, join, resolve } from 'node:path';
+import type { FastifyListenOptions } from 'fastify';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import * as application from '../app.ts';
+import * as database_module from '../core/database/index.ts';
 import { start_production_server } from '../lifecycle/production.ts';
 import type { ProductionServerDependencies } from '../lifecycle/production.ts';
 import { default_production_dependencies } from '../lifecycle/production_bindings.ts';
@@ -18,7 +20,7 @@ import { WAITS } from '../stalls/registry.ts';
 import { MetricsRuntime } from '../environments/vps_metrics/runtime.ts';
 import type { ApplicationSchemaSeed, ReadSql } from '../core/database/contracts.ts';
 import { afterEach, expect, test, vi } from 'vitest';
-import { fixture } from './ticket_fixture.ts';
+import { create, fixture } from './ticket_fixture.ts';
 import { startServer } from '../core/start.ts';
 import { acquireRuntimeOwnership } from '../core/locks/index.ts';
 import type { TestCompositionContext, StartedServer } from '../core/start.ts';
@@ -35,6 +37,10 @@ import { PermissionAskOption, UserInputAnswer } from '../conversation/events.ts'
 import type { CurrentViewSnapshot } from '../../web/src/lib/navigation/contracts.ts';
 import { ConversationViewRebuilder } from '../conversation/views/data/rebuild.ts';
 import { VideoUploadService } from '../conversation/video_uploads/service.ts';
+import { agent_resolve } from '../runtime/conversation_start.ts';
+import { ConversationStartRequest } from '../conversation/contracts.ts';
+import { resolve_conversation_start_request } from '../conversation/logic/conversation_start_resolution.ts';
+import { ensure_started_conversation_record } from '../conversation/record/data/store.ts';
 import { CLEANUP_INTERVAL_SECONDS } from '../conversation/video_uploads/configuration.ts';
 
 afterEach(() => {
@@ -83,9 +89,73 @@ function setup() {
 // record's sole reconciliation/epoch or leaves normal sends explicitly unavailable.
 test('normal staged server serves the reconciled record through real publication without a fabricated provider', async () => {
   const f = setup();
+  const schema = JSON.parse(
+    readFileSync(new URL('../core/database/application_schema.json', import.meta.url), 'utf8'),
+  ) as ApplicationSchemaSeed;
+  const writer = vi.spyOn(database_module, 'createDatabase');
+  const forbidden = vi.fn((): never => {
+    throw new Error('schema refusal entered startup');
+  });
+  // Refused starts never open a writer, rotate the epoch, construct a core, or start a loop.
+  for (const revisions of [
+    [],
+    ['older'],
+    ['newer'],
+    ['unknown'],
+    [schema.alembicRevision, 'extra'],
+  ]) {
+    f.database.write((tx) => {
+      tx.run('DELETE FROM alembic_version');
+      for (const revision of revisions) tx.run('INSERT INTO alembic_version VALUES(?)', [revision]);
+    });
+    const before = readFileSync(f.path);
+    await expect(
+      startServer({ createConversationCore: forbidden, notificationDelivery: forbidden }),
+    ).rejects.toThrow(
+      `actual=${JSON.stringify([...revisions].sort())}; expected=${JSON.stringify([schema.alembicRevision])}`,
+    );
+    expect(readFileSync(f.path).equals(before)).toBe(true);
+    expect(
+      f.database.read((sql) => sql.get('SELECT epoch FROM conversation_runtime_epoch')),
+    ).toEqual({ epoch: 'old-runtime' });
+  }
+  f.database.write((tx) => tx.run('DROP TABLE alembic_version'));
+  await expect(
+    startServer({ createConversationCore: forbidden, notificationDelivery: forbidden }),
+  ).rejects.toThrow(
+    `actual=<missing alembic_version>; expected=${JSON.stringify([schema.alembicRevision])}`,
+  );
+  expect(writer).not.toHaveBeenCalled();
+  expect(forbidden).not.toHaveBeenCalled();
+  writer.mockRestore();
+  f.database.write((tx) => {
+    tx.run(schema.statements.find((sql) => sql.startsWith('CREATE TABLE alembic_version ('))!);
+    tx.run('INSERT INTO alembic_version VALUES(?)', [schema.alembicRevision]);
+  });
+  const previous_handlers = process.listeners('SIGTERM');
+  let publish_address!: (address: string) => void;
+  let release_listen!: () => void;
+  const listening = new Promise<string>((resolve) => {
+    publish_address = resolve;
+  });
+  const resume = new Promise<void>((resolve) => {
+    release_listen = resolve;
+  });
+  const create_app = application.createApp;
+  vi.spyOn(application, 'createApp').mockImplementation(async (...args) => {
+    const app = await create_app(...args);
+    const listen = app.listen.bind(app);
+    app.listen = (async (options: FastifyListenOptions) => {
+      const address = await listen(options);
+      publish_address(address);
+      await resume;
+      return address;
+    }) as typeof app.listen;
+    return app;
+  });
   let context: TestCompositionContext | undefined;
   let epochBeforePublication: string | undefined;
-  const server = await startServer({
+  const starting = startServer({
     beforePublication(database) {
       epochBeforePublication = database.read((sql) =>
         sql.get<{ epoch: string }>('SELECT epoch FROM conversation_runtime_epoch'),
@@ -97,6 +167,12 @@ test('normal staged server serves the reconciled record through real publication
     },
   });
   try {
+    const address = await Promise.race([
+      listening,
+      starting.then(() => {
+        throw new Error('listen boundary was not observed');
+      }),
+    ]);
     expect(context?.conversationSystem).toBeUndefined();
     expect(epochBeforePublication).not.toBe('old-runtime');
     expect(
@@ -104,12 +180,25 @@ test('normal staged server serves the reconciled record through real publication
         sql.get<{ epoch: string }>('SELECT epoch FROM conversation_runtime_epoch'),
       )?.epoch,
     ).toBe(epochBeforePublication);
-    const response = await fetch(server.address + '/api/conversation/conversations/retained/view');
+    const response = await fetch(address + '/api/conversation/conversations/retained/view');
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ page: { conversation_id: 'retained' } });
     expect(() => acquireRuntimeOwnership(f.path)).toThrow('ConversationRuntimeAlreadyOwned');
+    expect(
+      process.listeners('SIGTERM').find((handler) => !previous_handlers.includes(handler)),
+    ).toBeDefined();
   } finally {
-    await server.close();
+    try {
+      const stop = process
+        .listeners('SIGTERM')
+        .find((handler) => !previous_handlers.includes(handler));
+      stop?.('SIGTERM');
+    } finally {
+      release_listen();
+      // Release and join even if startup rejects before the listen gate is observed.
+      const server = await starting;
+      await server.close();
+    }
   }
   const replacement = acquireRuntimeOwnership(f.path);
   replacement.close();
@@ -142,6 +231,10 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
   vi.stubEnv('PLAN_TEST_MODE', '0');
   vi.stubEnv('PLAN_DISPATCH_ENABLED', 'true');
   const registry = new ScriptedBackendRegistry();
+  const broken = create(f.database, { title: 'Broken saved Ticket' });
+  f.database.write((tx) =>
+    tx.run("UPDATE tickets SET employee_backend='invalid' WHERE id=?", [broken.id]),
+  );
   const wakePoll = vi.spyOn(ManagerWakeLoop.prototype, 'poll_once');
   const wakeStop = vi.spyOn(ManagerWakeLoop.prototype, 'stop');
   const intervals = vi.spyOn(globalThis, 'setInterval');
@@ -168,8 +261,24 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
   const schema = JSON.parse(
     readFileSync(new URL('../core/database/application_schema.json', import.meta.url), 'utf8'),
   ) as ApplicationSchemaSeed;
+  const chief_start = resolve_conversation_start_request(
+    new ConversationStartRequest({
+      conversation_id: 'startup-chief',
+      ...agent_resolve(f.database, undefined, {
+        db_path: f.path,
+        workspace_root: dirname(f.path),
+      }),
+    }),
+  );
   // Add immutable pre-start capture and upload inputs to this existing host.
   f.database.write((tx) => {
+    ensure_started_conversation_record(tx, chief_start, { created_at: 0 });
+    tx.run(
+      'INSERT INTO agents(agent_key,conversation_id) VALUES (?,?) ' +
+        'ON CONFLICT(agent_key) DO UPDATE SET conversation_id=excluded.conversation_id ' +
+        'WHERE agents.conversation_id IS NULL',
+      ['chief_of_staff', chief_start.conversation_id],
+    );
     for (const table of ['mac_executor_presence', 'stall_findings', 'stall_checker_heartbeat']) {
       const statement = schema.statements.find((sql) => sql.startsWith(`CREATE TABLE ${table} (`));
       expect(statement).toBeDefined();
@@ -188,7 +297,11 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
           'VALUES(?,?,?,?,?,?,?,?,?)',
         [
           id,
-          JSON.stringify({ kind: 'chief', id: 'chief', expected_conversation_id: null }),
+          JSON.stringify({
+            kind: 'chief',
+            id: 'chief',
+            expected_conversation_id: chief_start.conversation_id,
+          }),
           'synthetic.mp4',
           21,
           21,
@@ -441,6 +554,21 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     errors.mockRestore();
     await vi.waitFor(() => expect(wakePoll).toHaveBeenCalled());
     await expect(wakePoll.mock.results[0].value).resolves.toEqual([]);
+    const chief_id = context.database.read((sql) =>
+      sql.get<{ conversation_id: string }>(
+        "SELECT conversation_id FROM agents WHERE agent_key='chief_of_staff'",
+      ),
+    )!.conversation_id;
+    const notice =
+      "The Ticket 'Broken saved Ticket' is unusable because its saved record is invalid. " +
+      'Reason: PlannerError: unknown agent backend (employee_backend). Panels remains available. ' +
+      'Inspect this Ticket before any repair.';
+    await vi.waitFor(async () => {
+      const delivered = (await registry.inspect(chief_id)).flatMap((value) => value.delivered_text);
+      expect(delivered.filter((text) => text.includes(notice))).toHaveLength(1);
+    });
+    await registry.child(chief_id).finish();
+    await vi.waitFor(async () => expect(await context.core!.is_running(chief_id)).toBe(false));
     const sent = await post('work', [{ piece: 'video_upload', upload_id: 'startup-adoption' }]);
     expect(sent.status).toBe(200);
     const delivery = (await sent.json()) as { conversation_id: string; fate: string };

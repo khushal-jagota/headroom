@@ -83,6 +83,12 @@ async function _admitted_start_ready_worker_step(
   const system = options.conversation_system;
   return conversation_start.conversation_link_lock(`ticket:${ticket_id}`).run(async () => {
     const ticket = database.read((sql) => tickets_data.read_ticket(sql, ticket_id));
+    if (
+      database.read((sql) =>
+        conversation_start.configured_ticket_execution_refusal(database, sql, ticket),
+      ) !== null
+    )
+      return new WorkerStepStartResult({ started: false });
     let conversation_id = ticket.conversation_id;
     if (
       conversation_id !== null &&
@@ -301,7 +307,8 @@ export class WorkerStepReadinessLoop {
     this.options = options;
   }
   private ready_ticket_ids(): string[] {
-    return this.options.connect_database().read((sql) => {
+    const database = this.options.connect_database();
+    return database.read((sql) => {
       const rows = sql.all<{ id: string }>(`SELECT t.id FROM tickets t
         WHERE t.integrity_error_reason IS NULL AND t.is_backlogged=0
           AND t.worker_step_claim='none' AND t.pending_proposal IS NULL
@@ -313,6 +320,10 @@ export class WorkerStepReadinessLoop {
         .filter(({ id }) => {
           try {
             const ticket = tickets_data.read_ticket(sql, id);
+            if (
+              conversation_start.configured_ticket_execution_refusal(database, sql, ticket) !== null
+            )
+              return false;
             return worker_step_readiness.is_ready_for_worker_step(sql, ticket, {
               worker_type_definition: ticket.workflow,
             });
