@@ -1373,10 +1373,10 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     return this.shutdown_task ?? Promise.resolve();
   }
   shutdown(options: import('../lifecycle/contracts.ts').StopOptions): Promise<void> {
-    if (!this.shutdown_task) this.begin_shutdown();
+    if (!this.shutdown_task) this.begin_shutdown(options);
     return observe_shutdown(this.shutdown_task!, options, 'conversation core');
   }
-  private begin_shutdown(): void {
+  private begin_shutdown(options: import('../lifecycle/contracts.ts').StopOptions): void {
     let resolve!: () => void, reject!: (error: unknown) => void;
     this.shutdown_task = new Promise<void>((yes, no) => {
       resolve = yes;
@@ -1421,6 +1421,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     const detaching = detach_children(
       states,
       [...this.child_stop_ownership].map(([child, state]) => ({ child, state })),
+      options,
     ).then(() => {
       this.child_stop_ownership.clear();
     });

@@ -670,6 +670,10 @@ Ancestor symlink loops produce the clean `artifact path contains symlink` valida
 Python raises a raw `RuntimeError` for the same ancestor loop. The Manager accepts this clean TypeScript refusal.
 The Manager reviews these implementation differences before this slice merges.
 
+## Catalog cancellation withdraws waiting commands
+
+The Manager requires that TypeScript withdraw a waiting model-list command after an internal read cancellation, reconnection, or stop. Python cancellation leaves that row waiting. A caller that cancels its own observation does not cancel or withdraw the shared read. TypeScript uses its own short cleanup signal, capped by the original shared shutdown deadline, and joins withdrawal before catalog settlement. The invocation keeps the mailbox open until that cleanup settles.
+
 ## Mac archive inspection policies and JSON diagnostics — accepted conditionally
 
 The Manager accepted these four groups on November 13, 2026:

@@ -1,9 +1,17 @@
 import { python_string_repr } from '../../../core/python_repr.ts';
+import { JsonNumber, python_float_repr } from '../../../core/http/numeric_json.ts';
+import { ordered_json_entries } from '../../../executor/protocol_json.ts';
 const SECRET_ASSIGNMENT =
   /(["']?\b(?:authorization|password|api[ -]key|(?:[a-z0-9]+[_-])*(?:api[_-]?key|authorization|password|secret|token)(?:[_-][a-z0-9]+)*)\b["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:bearer\s+)?[^,;}]+)/gi;
 const BEARER_VALUE = /\bbearer\s+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/gi;
 
 export function python_repr(value: unknown): string {
+  if (value instanceof JsonNumber)
+    return value.kind === 'integer' ? String(value.integer) : python_float_repr(value.value);
+  if (typeof value === 'number')
+    return Number.isSafeInteger(value) && !Object.is(value, -0)
+      ? String(value)
+      : python_float_repr(value);
   if (value === null || value === undefined) return 'None';
   if (value === true) return 'True';
   if (value === false) return 'False';
@@ -12,7 +20,7 @@ export function python_repr(value: unknown): string {
   if (typeof value === 'object') {
     return (
       '{' +
-      Object.entries(value)
+      ordered_json_entries(value as Record<string, unknown>)
         .map(([key, item]) => python_repr(key) + ': ' + python_repr(item))
         .join(', ') +
       '}'
