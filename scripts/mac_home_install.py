@@ -21,6 +21,21 @@ from planner.skill_sources import (
 )
 
 
+def provider_search_path(app: Path) -> str:
+    # Preserve provider locations, not the installer's entire build environment.
+    providers = [shutil.which(name) for name in ("codex", "claude")]
+    directories = [
+        str(app / "agent_backends/node_modules/.bin"), str(app / ".venv/bin"),
+        # Provider installs can include their own Node. Keep the required host
+        # runtime ahead of those directories while retaining provider discovery.
+        "/opt/homebrew/bin",
+        *(str(Path(path).absolute().parent) for path in providers if path),
+        str(Path.home() / ".local/bin"), "/usr/local/bin",
+        "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+    ]
+    return os.pathsep.join(dict.fromkeys(directories))
+
+
 def install_home(
     root: Path, archive: Path, archive_sha256: str, revision: str, label: str, port: int,
     installer_python: Path, *, isolated_providers: bool = False,
@@ -54,9 +69,7 @@ def install_home(
         "HOME": str(Path.home()),
         # Node remains a host prerequisite at the Apple Silicon Homebrew path.
         # Never retain build ICU paths or another installation's executables.
-        "PATH": os.pathsep.join((str(app / "agent_backends/node_modules/.bin"),
-                                 str(app / ".venv/bin"), "/opt/homebrew/bin",
-                                 "/usr/bin", "/bin", "/usr/sbin", "/sbin")),
+        "PATH": provider_search_path(app),
         # The CLI also uses -B because its isolated interpreter ignores PYTHON*.
         # This value covers the supervisor's non-isolated application child.
         "PYTHONDONTWRITEBYTECODE": "1",
@@ -79,7 +92,8 @@ def install_home(
         else:
             configured = os.environ.get(variable) or str(Path.home() / folder)
         environment[variable] = str(Path(configured).expanduser().resolve())
-    for name in ("PLAN_UPDATE_REPOSITORY", "PLAN_UPDATE_TOKEN_FILE", "PLAN_HERMES_PYTHON"):
+    for name in ("PLAN_UPDATE_REPOSITORY", "PLAN_UPDATE_TOKEN_FILE", "PLAN_HERMES_PYTHON",
+                 "PLAN_CLAUDE_EXECUTABLE"):
         if os.environ.get(name):
             environment[name] = os.environ[name]
     if not isolated_providers:

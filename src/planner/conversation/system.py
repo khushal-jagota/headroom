@@ -160,6 +160,7 @@ from planner.conversation.logic.retained_turn import (
     OpenRunTurn,
     UndeliveredTurnPrompt,
     adopted_running_turn,
+    facts_after_restart,
 )
 from planner.conversation.message_content import (
     MessageContent,
@@ -176,6 +177,7 @@ from planner.conversation.storage import (
     ConversationRecord,
     ConversationRecordNamesNoModel,
     ConversationStore,
+    RetainedRunEvidence,
     StoredConversationEvent,
 )
 from planner.conversation.workspace_admission import WorkspaceAdmission
@@ -614,11 +616,14 @@ class SqliteProcessConversationSystem:
         unix_time_now: Callable[[], float] = time.time,
         backend_snapshots: BackendSnapshotService | None = None,
         runtime_ownership: IO[bytes] | None = None,
+        retained_run_evidence: Mapping[str, RetainedRunEvidence] | None = None,
+        retained_runs: tuple[RetainedBackendRun, ...] | None = None,
     ) -> None:
         missing = sorted(set(ConversationBackendKey) - set(backend_child_factories))
         if missing:
             raise ValueError(f"no backend child factory for {missing}")
         self._store = store
+        self._retained_run_evidence = retained_run_evidence
         from planner.conversation.snapshot import BackendSnapshotService
 
         self._backend_snapshots = backend_snapshots or BackendSnapshotService()
@@ -647,7 +652,7 @@ class SqliteProcessConversationSystem:
         ] | None = None
         self._idle_child_janitor: asyncio.Task[None] | None = None
         self._signal = store.signal_coordinator
-        retained_runs = tuple(
+        retained_runs = retained_runs if retained_runs is not None else tuple(
             run
             for factory in {
                 id(value): value for value in self._backend_child_factories.values()
@@ -682,6 +687,7 @@ class SqliteProcessConversationSystem:
         except BaseException:
             self._runtime_ownership.close()
             raise
+        self._retained_run_evidence = None
         if self._signal is not None:
             self._signal.bind_runtime(self._runtime_turn)
         # Read before this process can start any child, so every task here ended with the
@@ -1056,6 +1062,15 @@ class SqliteProcessConversationSystem:
             else:
                 fate = await self._queue(state=state, message=message)
             if (
+                isinstance(fate, PromptDeliveryQueued)
+                and state.phase is _ConversationPhase.idle
+                and not state.being_killed
+                and not state.child_is_quarantined
+            ):
+                # An ordinary send can resume eligible traffic after an observational
+                # cleanup recheck. The recheck itself never authorizes native work.
+                self._settle_in_background(state, self._drain_held_prompts(state))
+            if (
                 record_refusal
                 and isinstance(fate, PromptDeliveryRefused)
                 and sender_message_id is not None
@@ -1377,6 +1392,8 @@ class SqliteProcessConversationSystem:
         if state is None:
             return
         state.being_killed = True
+        self._deferred_start_conversations.pop(conversation_id, None)
+        kill_succeeded = False
         try:
             await self._kill_owned(state)
             if conversation_id in self._store.blocked_local_conversations:
@@ -1422,6 +1439,7 @@ class SqliteProcessConversationSystem:
                         ErrorCode.retry_later,
                         "The old Worker is not proven ended. Recheck Worker cleanup.",
                     )
+            kill_succeeded = True
         finally:
             try:
                 # A task the killed child reported on its way out is dropped too. Shutdown
@@ -1430,8 +1448,19 @@ class SqliteProcessConversationSystem:
                     await self._persist(
                         state, partial(self._store.take_background_tasks, conversation_id)
                     )
+            except BaseException:
+                kill_succeeded = False
+                raise
             finally:
                 state.being_killed = False
+                # A refused kill can resume traffic only after its safety fences
+                # clear. Do not leave a task that wakes after an explicit recheck.
+                if (
+                    not kill_succeeded
+                    and not state.child_is_quarantined
+                    and conversation_id not in self._store.blocked_local_conversations
+                ):
+                    self._settle_in_background(state, self._drain_held_prompts(state))
         # A new message can arrive while the old child stops. Only its proven
         # retirement permits that message to start a successor child.
         await self._drain_held_prompts(state)
@@ -3869,9 +3898,15 @@ class SqliteProcessConversationSystem:
             )
 
     def _defer_start_drain(self, state: _ConversationState) -> None:
-        if self._shutting_down:
-            return
         identity = state.record.conversation_id
+        if (
+            self._shutting_down
+            or state.being_killed
+            or state.child_is_quarantined
+            or identity in self._store.blocked_local_conversations
+        ):
+            self._deferred_start_conversations.pop(identity, None)
+            return
         due = self._monotonic_now() + self.start_admission.poll_delay(1.0)
         self._deferred_start_conversations[identity] = min(
             self._deferred_start_conversations.get(identity, due), due
@@ -5056,15 +5091,36 @@ class SqliteProcessConversationSystem:
         from planner.core.db import connect
 
         conversation_id = state.record.conversation_id
-        conn = connect(self._store._db_path)
-        try:
-            facts = read_facts(conn, conversation_id)
-        finally:
-            conn.close()
+        evidence = (
+            None if self._retained_run_evidence is None
+            else self._retained_run_evidence[conversation_id]
+        )
+        if evidence is None:
+            conn = connect(self._store._db_path)
+            try:
+                facts = read_facts(conn, conversation_id)
+            finally:
+                conn.close()
+        else:
+            # The snapshot predates claim_runtime. Apply the same canonical changes
+            # that claim_runtime committed before the previous synchronous read.
+            updates = {
+                (fact.kind, fact.identity): fact
+                for fact in facts_after_restart(
+                    evidence.facts,
+                    OpenRunTurn(retained.turn.turn_number, retained.incarnation_current),
+                )
+            }
+            facts = tuple(
+                updates.get((fact.kind, fact.identity), fact) for fact in evidence.facts
+            )
         user_input_questions = (
             {
                 event.payload.request_id: event.payload.questions
-                for event in self._store._read_events_after_sync(conversation_id, 0)
+                for event in (
+                    self._store._read_events_after_sync(conversation_id, 0)
+                    if evidence is None else evidence.events
+                )
                 if isinstance(event.payload, UserInputRequestedEventPayload)
             }
             if any(
@@ -5082,8 +5138,9 @@ class SqliteProcessConversationSystem:
             executor_process_current=retained.incarnation_current,
         )
         if running is not None:
-            running.memory_notice_only = self._store._open_turn_holds_only_memory_notices_sync(
-                conversation_id
+            running.memory_notice_only = (
+                self._store._open_turn_holds_only_memory_notices_sync(conversation_id)
+                if evidence is None else evidence.memory_notice_only
             )
         child: BackendChild | None = None
         sink = _CoreBackendEventSink(self, state)
@@ -6164,6 +6221,7 @@ class SqliteProcessConversationSystem:
 
     def _quarantine_child(self, state: _ConversationState) -> None:
         state.child_is_quarantined = True
+        self._deferred_start_conversations.pop(state.record.conversation_id, None)
         self._deprioritize_held(state)
 
     def _set_phase(self, state: _ConversationState, phase: _ConversationPhase) -> None:

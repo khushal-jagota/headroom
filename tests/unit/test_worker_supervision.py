@@ -592,9 +592,14 @@ def test_mac_signal_requires_immediate_microsecond_birth_match(
         info.start_sec, info.start_usec = birth
         return ctypes.sizeof(info)
 
-    monkeypatch.setattr(
-        ctypes, "CDLL", lambda *args, **kwargs: SimpleNamespace(proc_pidinfo=pidinfo)
-    )
+    libraries = []
+
+    def load_library(*args: object, **kwargs: object) -> SimpleNamespace:
+        library = SimpleNamespace(proc_pidinfo=pidinfo)
+        libraries.append(library)
+        return library
+
+    monkeypatch.setattr(ctypes, "CDLL", load_library)
     signals: list[tuple[int, int]] = []
     monkeypatch.setattr(
         darwin, "os", SimpleNamespace(kill=lambda pid, sig: signals.append((pid, sig)))
@@ -609,6 +614,39 @@ def test_mac_signal_requires_immediate_microsecond_birth_match(
     readable[0] = False
     assert not native.signal(target, signal.SIGKILL, time.monotonic() + 1)
     assert [sig for _, sig in signals if sig] == [signal.SIGTERM]
+    assert len(libraries) == 1
+
+
+def test_mac_identity_cache_retries_failure_and_shares_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess
+    from types import SimpleNamespace
+
+    from planner.conversation import child_custody
+    from planner.platform_runtime.darwin import worker_processes as darwin
+
+    monkeypatch.setattr(darwin, "_host_identity", None)
+    monkeypatch.setattr(child_custody, "sys", SimpleNamespace(platform="darwin"))
+    calls = []
+
+    def output(command: list[str], **kwargs: object) -> SimpleNamespace:
+        calls.append(command)
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired(command, 1)
+        value = "11111111-1111-1111-1111-111111111111"
+        return SimpleNamespace(
+            stdout=value if "sysctl" in command[0] else f'"IOPlatformUUID" = "{value}"'
+        )
+
+    monkeypatch.setattr(subprocess, "run", output)
+    deadline = time.monotonic() + 1
+    with pytest.raises(OSError, match="Mac host identity command failed"):
+        darwin.DarwinWorkerProcesses().host_boot(deadline)
+    identity = darwin.DarwinWorkerProcesses().host_boot(deadline)
+    assert child_custody.host_boot_identity() == identity
+    assert darwin.DarwinWorkerProcesses().host_boot(deadline) == identity
+    assert len(calls) == 3
 
 
 def test_mac_host_command_failures_remain_structured_cleanup_results(

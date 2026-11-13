@@ -3831,6 +3831,10 @@ def _tab_return(browser, url):
             if position == 'scrollback':
                 page.locator('[data-conversation-thread]').hover()
                 establish_scrollback(page, lambda: page.mouse.wheel(0, -750), min_clearance=2)
+            # Native scrollend does not settle deferred body presentation. Capture
+            # the held line only after the pane's full placement work also settles.
+            _settle(page, label="tab return held position")
+            assert page.evaluate('window.__settled.stable >= 5'), page.evaluate('window.__settled')
             held = page.evaluate(reading)
             assert held['key'] and held['scroll'] > 0, held
             page.evaluate(hidden)
@@ -3893,6 +3897,8 @@ def _tab_return(browser, url):
         _settle_conversation_layout(page)
         page.locator('[data-conversation-thread]').hover()
         establish_scrollback(page, lambda: page.mouse.wheel(0,-750), min_clearance=2)
+        _settle(page, label="tab return before Latest motion")
+        assert page.evaluate('window.__settled.stable >= 5'), page.evaluate('window.__settled')
         before_motion=page.evaluate(reading)
         page.evaluate("""before => {
           window.__midMotionHeld=null;
@@ -4449,20 +4455,21 @@ def _chat_charts(browser, url):
                     assert abs(tops[0] - tops[1]) <= 1, tops
                 expect(chart_hosts.nth(3).locator(".snapshot-legend")).to_have_count(0)
                 # Read real canvas dataset colors and SVG strokes, not a duplicate palette.
-                assert page.evaluate("""() => [...document.querySelectorAll('[data-chat-chart-fixture] .goal-chart-host')].every(host => {
+                page.wait_for_function("""() => [...document.querySelectorAll('[data-chat-chart-fixture] .goal-chart-host')].every(host => {
                   const items=[...host.querySelectorAll('.snapshot-legend li')];
                   const canvas=host.querySelector('canvas');
                   return items.every((item,index)=>{
                     let plotted;
                     if(canvas){
-                      plotted=window.__chatChartProbe.barColors(canvas)[index];
+                      plotted=window.__chatChartProbe.barColors(canvas)?.[index];
+                      if(plotted===undefined)return false;
                       if(Array.isArray(plotted))plotted=plotted[0];
                       const sample=document.createElement('span');sample.style.color=plotted;host.append(sample);
                       plotted=getComputedStyle(sample).color;sample.remove();
                     }else plotted=getComputedStyle(host.querySelectorAll('[data-line]')[index]).stroke;
                     return getComputedStyle(item).color===plotted;
                   });
-                })"""), "Legend colors differ from plot colors"
+                })""")
                 bars = page.evaluate("window.__chatChartProbe.bars()")
                 assert bars[0]["datasets"] == [{"label": "Panels", "data": [3, 7, None]}, {"label": "Tools", "data": [2, 4, 6]}], bars
                 assert bars[0].get("stacked") is not True and bars[1]["stacked"] is True, bars

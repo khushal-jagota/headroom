@@ -237,7 +237,8 @@ def test_retry_preserves_acknowledged_and_unknown_uncertainty_across_restart(
 ) -> None:
     async def run() -> None:
         async with ipc_service(tmp_path, monkeypatch) as (executor, child):
-            response = await executor.gateway.handle(write_request(child, "original"))
+            # This case checks journal state, not a deadline under host load.
+            response = await executor.gateway.handle(write_request(child, "original", budget=5))
             assert response.unconfirmed is not None
             publication = executor.gateway._publishing.get("original")
             if publication is not None:
@@ -404,7 +405,8 @@ def test_post_commit_cleanup_error_keeps_identity_and_retry_observes_original(
                 raise OSError("snapshot cleanup failed after commit")
 
             monkeypatch.setattr(executor.outbox, "add", committed_then_failed)
-            response = await executor.gateway.handle(write_request(child, "original"))
+            # This case checks journal state, not a deadline under host load.
+            response = await executor.gateway.handle(write_request(child, "original", budget=5))
             assert response.error is None and response.unconfirmed is not None
             assert response.unconfirmed.submission_id == "original"
             # Commit visibility does not mean the publication thread settled.
@@ -436,7 +438,7 @@ def test_failed_add_reports_unknown_and_never_proves_stop(
                 raise OSError(errno.ENOSPC, "outbox disk full")
 
             monkeypatch.setattr(executor.outbox, "add", fail_add)
-            response = await executor.gateway.handle(write_request(child, "lost-output"))
+            response = await executor.gateway.handle(write_request(child, "lost-output", budget=5))
             assert response.unconfirmed is not None
             assert response.unconfirmed.publication == "unknown"
             assert not executor.outbox.pending()

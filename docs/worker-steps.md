@@ -42,7 +42,7 @@ One more question goes to the conversation itself: is a turn already running? A 
 
 Automatic starts share the existing gate with Manager wakes and recovery notices. Each destination has its own pacing and pending capacity. The home reserves capacity for Chief and Managers. Extra destinations use their full capacity for Workers. A busy or absent destination cannot consume another destination's permits.
 
-Positive agent activity or definite refusal releases a slot. A wire write or a local queue position alone does not prove acceptance. Messages behind a turn or quarantine hold no start slot. At dequeue, a combined prompt takes one slot. Active turns have no limit from this gate. Explicit restart requests bypass automatic launch pacing.
+Positive agent activity or definite refusal releases a slot. A wire write or a local queue position alone does not prove acceptance. Messages behind a turn or quarantine hold no start slot. A Ticket that waits for restart retirement gives up its queue priority so other ready Tickets can start. At dequeue, a combined prompt takes one slot. Active turns have no limit from this gate. Explicit restart requests bypass automatic launch pacing.
 
 Preparation follows admission order, so its limit cannot hide the next eligible Worker. A deferred preparation loses its place when its Ticket no longer meets readiness or its conversation becomes busy.
 
@@ -72,7 +72,7 @@ A running turn or a running background task shows a working mark, and that mark 
 
 ## Decisions that shape it
 
-Database work runs on worker threads, so a database wait does not stop the server. Related start facts share a transaction when no file or process operation separates them. Custody, dispatch, and acceptance retain their separate recovery boundaries.
+Database work runs on worker threads, so a database wait does not stop the server. Related start facts share a transaction when no file or process operation separates them. Custody, dispatch, and acceptance retain their separate recovery boundaries. Restart preserves ownership if the old Worker cannot stop. After a proven stop, a configuration failure clears the old link and leaves an errored claim until explicit restart. Automatic work cannot resume with the old settings.
 
 - Start work, then stop watching. Nothing listens for a turn to end.
 - Readiness is computed from the record, never stored as its own state.

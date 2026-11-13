@@ -228,6 +228,67 @@ class StoredConversationEvent:
     created_at: int
 
 
+def open_turn_holds_only_memory_notices(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+) -> bool:
+    rows = conn.execute(
+        "SELECT json_extract(payload,'$.sender_message_id') FROM conversation_events "
+        "WHERE conversation_id = ? AND kind IN ('prompt','prompt_delivery_uncertain') "
+        "AND sequence > COALESCE(("
+        "SELECT MAX(sequence) FROM conversation_events "
+        "WHERE conversation_id = ? AND kind = 'turn_ended'),0)",
+        (conversation_id, conversation_id),
+    ).fetchall()
+    return bool(rows) and all(
+        worker_memory.is_memory_notice_sender_message_id(row[0]) for row in rows
+    )
+
+
+@dataclass(frozen=True)
+class RetainedRunEvidence:
+    facts: tuple[LifecycleFact, ...]
+    events: tuple[StoredConversationEvent, ...]
+    memory_notice_only: bool
+
+
+def read_retained_run_evidence(
+    db_path: str,
+    conversation_ids: tuple[str, ...],
+    busy_timeout_ms: int,
+) -> dict[str, RetainedRunEvidence]:
+    """Fetch immutable adoption evidence on a worker thread before core construction."""
+    evidence: dict[str, RetainedRunEvidence] = {}
+    if not conversation_ids:
+        return evidence
+    with runtime_connection(db_path, busy_timeout_ms) as conn:
+        for conversation_id in conversation_ids:
+            facts = read_facts(conn, conversation_id)
+            events = (
+                tuple(
+                    _stored_event(row)
+                    for row in conn.execute(
+                        "SELECT conversation_id,sequence,kind,payload,created_at "
+                        "FROM conversation_events WHERE conversation_id=? "
+                        "AND kind='user_input_requested' ORDER BY sequence",
+                        (conversation_id,),
+                    )
+                )
+                if any(
+                    fact.kind is LifecycleKind.request
+                    and fact.operation is LifecycleOperation.user_input
+                    for fact in facts
+                )
+                else ()
+            )
+            evidence[conversation_id] = RetainedRunEvidence(
+                facts,
+                events,
+                open_turn_holds_only_memory_notices(conn, conversation_id),
+            )
+    return evidence
+
+
 class ConversationStore:
     """Short-lived append transactions, with one explicit shared-transaction seam."""
 
@@ -2115,17 +2176,7 @@ class ConversationStore:
         whose admission is uncertain counts too, as it does while the turn runs here.
         """
         with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
-            rows = conn.execute(
-                "SELECT json_extract(payload,'$.sender_message_id') FROM conversation_events "
-                "WHERE conversation_id = ? AND kind IN ('prompt','prompt_delivery_uncertain') "
-                "AND sequence > COALESCE(("
-                "SELECT MAX(sequence) FROM conversation_events "
-                "WHERE conversation_id = ? AND kind = 'turn_ended'),0)",
-                (conversation_id, conversation_id),
-            ).fetchall()
-        return bool(rows) and all(
-            worker_memory.is_memory_notice_sender_message_id(row[0]) for row in rows
-        )
+            return open_turn_holds_only_memory_notices(conn, conversation_id)
 
     def _read_latest_events_sync(
         self, conversation_id: str, before_sequence: int | None, limit: int
