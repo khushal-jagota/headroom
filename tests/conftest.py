@@ -21,6 +21,11 @@ if diagnosis:
 
 from test_containment.admission import requested_containment  # noqa: E402
 from test_containment.contracts import ContainmentRefusal  # noqa: E402
+from test_runtime import (  # noqa: E402
+    RuntimeIsolation,
+    RuntimeRefusal,
+    validate_environment,
+)
 
 try:
     _BOUNDARY = requested_containment()
@@ -36,9 +41,20 @@ collect_ignore = ["opt_in"] + (["containment"] if _BOUNDARY is None else [])
 
 from tests.support.skill_tree_protection.pytest_plugin import bootstrap  # noqa: E402
 
-_SKILL_TREE_PROTECTION = bootstrap(
-    export_root=_BOUNDARY.scratch_root / "reports" if _BOUNDARY is not None else None
-)
+try:
+    # Preserve launch aliases before runtime defaults replace inherited paths.
+    _SKILL_TREE_PROTECTION = bootstrap(
+        export_root=_BOUNDARY.scratch_root / "reports" if _BOUNDARY is not None else None,
+        launch_environment=os.environ,
+    )
+    _RUNTIME = RuntimeIsolation(
+        os.environ, parent=_BOUNDARY.scratch_root / "tmp" if _BOUNDARY is not None else None
+    )
+    os.environ.clear()
+    os.environ.update(_RUNTIME.environment)
+    validate_environment(os.environ)
+except RuntimeRefusal as error:
+    raise pytest.UsageError(f"Test runtime refused: {error}") from error
 
 
 @pytest.fixture
@@ -54,6 +70,7 @@ def executor_transport_home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    config.add_cleanup(_RUNTIME.close)
     # File transport rejects symlink ancestors, including macOS's /var and /tmp.
     os.environ["TMPDIR"] = str(Path(os.environ.get("TMPDIR", "/tmp")).resolve())
     tempfile.tempdir = None

@@ -521,16 +521,19 @@ def run_retirement(browser, urls, *, control=""):
         _arm_motion(page, 'latest')
         page.get_by_role('button', name='Jump to latest message').click()
         _await_motion(page, 'SETUP_LATEST_ACCEPTANCE')
-        page.evaluate("window.__nativeRequireAcceptance=true")
+        # Keep the real Enter and its fast HTTP receipt in the browser. Python
+        # roundtrips after Enter can consume the entire Latest motion interval.
+        page.evaluate("late=>{window.__nativeRequireAcceptance=true;window.__nativeResolveOnSend=!late;}", control == 'late-acceptance')
         if control == 'broken-supersession':
             page.evaluate('window.__nativeDisableSupersession=true')
         page.locator('[data-conversation-input]').press('Enter')
-        page.wait_for_function('n=>window.__sends.length===n+1&&!!window.__resolveDelivery', arg=count)
-        superseding_send_id = page.evaluate('n=>window.__retirementSupersedingSendId=window.__sends[n].sender_message_id', count)
         if control == 'late-acceptance':
+            page.wait_for_function('n=>window.__sends.length===n+1&&!!window.__resolveDelivery', arg=count)
             page.wait_for_function("!window.__nativeMotion.capture('late').motion")
-        page.evaluate('window.__resolveDelivery()')
+            page.evaluate('n=>window.__retirementSupersedingSendId=window.__sends[n].sender_message_id', count)
+            page.evaluate('window.__resolveDelivery()')
         page.wait_for_function('window.__nativeAcceptance.length===1')
+        superseding_send_id = page.evaluate('n=>window.__retirementSupersedingSendId=window.__sends[n].sender_message_id', count)
         acceptance = page.evaluate('window.__nativeAcceptance[0]')
         native_events.append(acceptance)
         assert acceptance['valid'], ('SETUP_LATEST_ACCEPTANCE', acceptance)

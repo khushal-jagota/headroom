@@ -26,6 +26,7 @@ from planner.core import change_signal
 from planner.core.errors import PlannerError
 from planner.environments.backup import create_database_backup
 from planner.environments.logic.update_experience import resolve, settle
+from planner.environments.runtime_contracts import NodeRuntimeContract
 from planner.environments.update_attempts import (
     FileUpdateAttemptStore,
     UpdateConflict,
@@ -48,6 +49,7 @@ from planner.environments.update_contracts import (
 )
 from planner.environments.update_install import (
     installer_command,
+    require_exact_schema_frontier,
     schema_change_pending,
     write_installer,
 )
@@ -167,7 +169,9 @@ class UpdateService:
         validate_release(release)
         if release == self._ready:
             return
-        self._stage(self.provider, release, self.current_root)
+        staged = self._stage(self.provider, release, self.current_root)
+        if isinstance(release.manifest.runtime_contract, NodeRuntimeContract):
+            require_exact_schema_frontier(self.database, staged)
         self._prepare_mac_update(release)
         self._ready = release
         change_signal.emit()
@@ -448,7 +452,10 @@ class UpdateService:
         if not staged.is_dir():
             raise OSError("the staged release is missing")
         backup: str | None = None
-        if schema_change_pending(self.database, staged):
+        if isinstance(attempt.release.manifest.runtime_contract, NodeRuntimeContract):
+            # Checked again here, the last step before the installer stops Panels.
+            require_exact_schema_frontier(self.database, staged)
+        elif schema_change_pending(self.database, staged):
             backup = str(create_database_backup(
                 self.database, self.backup_directory, attempt.from_sha
             ))

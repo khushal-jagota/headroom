@@ -348,6 +348,36 @@ def run(browser, urls):
     settled(page)
     assert page.locator(INPUT).input_value() == "newer draft"
     assert names(page) == ["new.txt"]
+
+    # Answering a permission ask removes the buttons the answer was clicked on; Enter must
+    # then reach the box without a click.
+    page.goto([__file__, *urls][1])
+    page.evaluate("window.__setState('ask')")
+    page.locator('[data-conversation-ask-action="approve"]').focus()
+    page.evaluate("window.__setState('empty')")
+    page.wait_for_function("document.activeElement === document.querySelector('[data-conversation-input]')")
+
+    # Enter keeps working after an attachment, with no click: the box is disabled while the
+    # file is read, and focus must come back to it. Enter that confirms an IME choice must
+    # not send.
+    page.goto([__file__, *urls][1])
+    page.locator(INPUT).fill("with a file")
+    page.locator(INPUT).focus()
+    page.locator(INPUT).evaluate("""input => {
+      const data = new DataTransfer();
+      data.items.add(new File(['x'], 'after.txt', {type:'text/plain'}));
+      input.dispatchEvent(new ClipboardEvent('paste', {bubbles:true,cancelable:true,clipboardData:data}));
+    }""")
+    page.locator('[data-chat-file-name="after.txt"]').wait_for()
+    page.wait_for_function("document.activeElement === document.querySelector('[data-conversation-input]')")
+    sent_before = page.evaluate("window.__attempts.length")
+    page.locator(INPUT).evaluate(
+        "input => input.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', isComposing:true, bubbles:true, cancelable:true}))"
+    )
+    settled(page)
+    assert page.evaluate("window.__attempts.length") == sent_before
+    page.keyboard.press("Enter")
+    page.wait_for_function(f"window.__attempts.length === {sent_before + 1}")
     # Existing host proves component presentation, keyboard identity and advisory transitions.
     # No lifecycle endpoint, durable Ticket write or provider call runs.
     page.route("**/api/conversation/backends", lambda route: route.fulfill(json={"backends": []}))

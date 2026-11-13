@@ -17,6 +17,7 @@ from re import fullmatch
 from planner.environments.runtime_contracts import (
     RUNTIME_CONTRACT_PATH,
     RUNTIME_INVENTORY_PATH,
+    NodeRuntimeContract,
     parse_optional_runtime_contract,
     runtime_bytes_digest,
 )
@@ -105,8 +106,6 @@ def validate_app_manifest(
     if not artifact_matches:
         raise AppValidationError("app artifact digest does not match its manifest")
     _validate_app_tree(app_root)
-    if require_runtime:
-        _validate_runtime_tree(app_root)
     try:
         contract = parse_optional_runtime_contract(value.get("runtime_contract"))
         if contract is not None:
@@ -120,6 +119,8 @@ def validate_app_manifest(
                 raise ValueError("runtime inventory differs from contract")
     except (OSError, ValueError) as exc:
         raise AppValidationError(f"invalid runtime contract: {exc}") from exc
+    if require_runtime:
+        _validate_runtime_tree(app_root, contract)
     return AppManifest(app_sha, source_digest, artifact_digest, contract)
 
 
@@ -183,20 +184,37 @@ def _validate_app_tree(root: Path) -> None:
             raise AppValidationError("app contains a symlink outside its root")
 
 
-def _validate_runtime_tree(root: Path) -> None:
-    """Check structure only. Shared admission checks the host before execution."""
-    python = root / ".venv" / "bin" / "python"
-    required_files = (
-        python,
-        root / "bin" / "panels",
-        root / "bin" / "panels-launcher",
-    )
+# The version 2 payload, frozen with server/environments/release/configuration.ts.
+NODE_RUNTIME_FILES = (
+    "server/lifecycle/foreground_main.ts",
+    "server/lifecycle/managed_main.ts",
+    "server/lifecycle/application.ts",
+    "server/lifecycle/stop_main.ts",
+    "server/environments/release/launcher_main.ts",
+    "server/package.json",
+    "server/package-lock.json",
+    "server/node_modules/fastify/package.json",
+    "server/node_modules/koffi/package.json",
+    "server/node_modules/better-sqlite3/package.json",
+    "server/node_modules/@anthropic-ai/claude-agent-sdk/package.json",
+)
+
+
+def _validate_runtime_tree(root: Path, contract: RuntimeRequirements | None) -> None:
+    """Check structure only. Shared admission checks the host before execution.
+
+    A version 2 Node release has no private Python. Every other release keeps it.
+    """
+    launchers = (root / "bin" / "panels", root / "bin" / "panels-launcher")
+    node = isinstance(contract, NodeRuntimeContract)
+    required_files = launchers if node else (root / ".venv" / "bin" / "python", *launchers)
     for path in required_files:
         if not path.is_file():
             raise AppValidationError(f"runtime file is missing: {path.relative_to(root)}")
         if not os.access(path, os.X_OK):
             raise AppValidationError(f"runtime file is not executable: {path.relative_to(root)}")
     for path in (
+        *(root / name for name in (NODE_RUNTIME_FILES if node else ())),
         root / "web" / "dist" / "index.html",
         root / "agent_backends/node_modules/@anthropic-ai/claude-code/package.json",
         root / "agent_backends/node_modules/@openai/codex/package.json",

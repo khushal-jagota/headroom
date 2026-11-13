@@ -647,6 +647,8 @@
   }
 
   async function intakeChosenFiles(files: readonly File[]): Promise<void> {
+    // The box is disabled while files are read, and a disabled box drops focus to the page.
+    const focusWasInComposer = boxElement?.contains(document.activeElement) ?? false;
     attachmentIntakesInFlight += 1;
     try {
       const acceptedImages: PendingConversationImage[] = [];
@@ -705,6 +707,7 @@
         // A camera hands back the same filename every time, so an unreset input is a
         // second capture that changes nothing and never fires.
         if (cameraInput) cameraInput.value = "";
+        if (focusWasInComposer) void tick().then(() => { if (!destroyed && !inputDisabled) returnFocusToTheField(); });
       }
     }
   }
@@ -843,7 +846,8 @@
         }
       }
     }
-    if (event.key === "Enter" && !event.shiftKey) {
+    // Enter that confirms an IME choice belongs to the IME, not to send.
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       void send();
     }
@@ -998,6 +1002,18 @@
     returningFocus = true;
     try { inputElement?.focus(); } finally { returningFocus = false; }
   }
+  // Answering an ask or a question removes the buttons that held focus, and the page keeps
+  // none. Give it to the box, but never take it from something the person chose.
+  let wasTakenOver = false;
+  $effect(() => {
+    const answered = wasTakenOver && !takenOver;
+    wasTakenOver = takenOver;
+    if (!answered) return;
+    void tick().then(() => {
+      const active = document.activeElement;
+      if (!destroyed && !inputDisabled && (active === null || active === document.body)) returnFocusToTheField();
+    });
+  });
   function fieldFocused(): void {
     readWhereTheCursorIs();
     if (!returningFocus) onFieldChosen?.();
