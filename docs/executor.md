@@ -81,7 +81,7 @@ Presence cannot distinguish a sleeping machine from a stuck process that sends n
 
 ## Cost and storage
 
-The home shares a bounded set of database connections across machines for frequent runtime requests. Each operation retains its own transaction and commit participants. Shutdown closes these connections. These operations reuse the schema that each connection prepares.
+The home retains a bounded set of database connections across machines for frequent runtime requests. If all retained connections are in use, an operation opens and closes a temporary connection. It never waits for a pool slot. Each operation retains its own transaction and commit participants. Shutdown closes retained connections.
 
 Credentials, presence, catalogs, and runtime owners grow with machine count. Journals, command tombstones, incarnation records, and receipts grow with work history because duplicate protection requires them.
 
