@@ -90,6 +90,8 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         },
         "manager_title": ticket.manager_title,
         "recap": ticket.recap,
+        "recap_updated_at": ticket.recap_updated_at,
+        "recap_stage_changed": ticket.recap_stage_changed,
         "ceiling": str(ticket.ceiling),
         "ceiling_holder": {
             "kind": ticket.ceiling_holder.kind.value,
@@ -208,7 +210,10 @@ def _ticket_summary_json(row: sqlite3.Row) -> JsonDict:
             "id": (str(row["manager_id"]) if row["manager_id"] is not None else "chief"),
         },
         "manager_title": (str(row["manager_title"]) if row["manager_title"] is not None else None),
+        "recap": str(row["recap"]),
         "recap_preview": str(row["recap_preview"]),
+        "recap_updated_at": row["recap_updated_at"],
+        "recap_stage_changed": bool(row["recap_stage_changed"]),
     }
 
 
@@ -228,7 +233,10 @@ _SUMMARY_RECORD_COLUMNS = ", ".join(
         "project_id",
         "manager_id",
         "manager_kind",
+        "recap",
         "recap_preview",
+        "recap_updated_at",
+        "recap_stage_changed",
         "created_at",
     )
 )
@@ -258,7 +266,7 @@ def list_ticket_summaries(
         clauses.append("json_extract(r.value, '$.manager_id') = ?")
         params.append(manager_id)
     search_columns = (
-        ", t.recap, t.field_values, t.workflow_json, "
+        ", t.field_values, t.workflow_json, "
         "t.pending_proposal AS searchable_pending_proposal"
         if filters.search
         else ""
