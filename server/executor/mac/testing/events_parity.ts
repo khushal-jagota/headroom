@@ -191,7 +191,7 @@ try {
   await emit('delta');
   await emit('delta');
   fail_live = false;
-  assert.equal(live.length, 0);
+  assert.deepEqual(live, []);
   for (const key of input.before) await emit(key);
   await snapshot();
   const answer = as_object(await runner.run(commands.permission!, signal), 'CommandOutcome');
