@@ -15,6 +15,12 @@ The public methods return promises:
 - `close_directory(capability)` releases it. Shutdown also releases every retained capability.
 
 No caller receives a raw file descriptor. A capability from another service is refused.
+Streaming transfers use `open_transfer`, bounded `read_transfer` or `write_transfer`,
+`finish_transfer`, and `close_transfer`. The worker retains the opened inode and parent,
+computes the digest, and performs the full flush. Upload reads accept the remaining byte limit.
+An ordinary transfer/directory close failure seals admission and faults the host.
+The worker retains failed close capabilities and stays alive for a later `stop()` retry.
+Its actual join retains the first failure after successful cleanup.
 The private synchronous implementation refuses import on the main thread.
 The lightweight `safe_component`, `contained_path`, and `file_version` helpers perform validation or metadata observations only.
 They do not hash or copy bytes.
