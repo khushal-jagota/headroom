@@ -818,3 +818,34 @@ def test_stale_orphan_recovery_cannot_release_a_new_retry(harness: Harness) -> N
     assert barrier.frozen and harness.system.workspace_admission.closed
     assert harness.system.workspace_admission.starts_closed
     assert harness.store.read() == second
+
+
+def test_local_drain_timeout_retains_retry_after_controller_finishes(harness: Harness) -> None:
+    """A live home's retained drain wait is not an abandoned startup marker."""
+    barrier = UpdateBarrier(harness.root / "data/update-barrier.json")
+    harness.service._update_barrier = barrier
+
+    async def run() -> None:
+        with barrier.operation() as admitted:
+            assert admitted
+            attempt = harness.service.install(SHA_B, "now", confirm_activity=True)
+            harness.store.change(attempt.attempt_id, frozenset({"waiting"}),
+                lambda current: replace(current, deadline_at=(
+                    datetime.now(UTC) + timedelta(milliseconds=50)).isoformat()))
+            await harness.service.advance()
+            assert harness.service._advance_task is None
+            assert harness.service.owns_preparation(attempt.attempt_id)
+            assert harness.service.recover_orphaned_attempt(
+                attempt.attempt_id, barrier.generation,
+            ) is None
+            status = harness.service.status()
+            assert status.state == "waiting" and "result saves" in (status.detail or "")
+            assert "update_now" in status.allowed_actions
+            assert barrier.frozen and not harness.launched
+        harness.service.update_now(attempt.attempt_id, confirm_activity=True)
+        await harness.service.advance()
+        current = harness.store.read()
+        assert current is not None and current.state == "installing"
+        assert harness.launched
+
+    asyncio.run(run())

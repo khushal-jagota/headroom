@@ -462,6 +462,21 @@ def test_trial_boot_holds_runtime_until_installer_releases_cut(
                     running_barrier.freeze(ATTEMPT_ID)
                     assert client.post("/__update-proof-write").status_code == 503
                     assert live_lock_observed.wait(timeout=5)
+                    recover_attempt = recovered.state.updates.recover_orphaned_attempt
+                    dispatches: list[bool] = []
+
+                    def transient_dispatch(
+                        identity: str, generation: int,
+                        attempts=dispatches, recover=recover_attempt,
+                    ):
+                        attempts.append(True)
+                        if len(attempts) == 1:
+                            raise RuntimeError("injected first orphan dispatch failure")
+                        return recover(identity, generation)
+
+                    monkeypatch.setattr(
+                        recovered.state.updates, "recover_orphaned_attempt", transient_dispatch,
+                    )
                     # Neither the marker nor the attempt changes when this kernel lock
                     # disappears. The shared liveness probe must notice the dead job.
                     fcntl.flock(installer.fileno(), fcntl.LOCK_UN)
@@ -474,6 +489,7 @@ def test_trial_boot_holds_runtime_until_installer_releases_cut(
                     assert not system.workspace_admission.starts_closed
                     ended = recovered.state.updates.attempts.read()
                     assert ended is not None and ended.state == "failed"
+                    assert len(dispatches) == 2
                     assert client.post("/__update-proof-write").status_code == 200
                     assert saves == [True, True]
                     assert starts == [True]

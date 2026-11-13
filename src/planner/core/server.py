@@ -519,9 +519,10 @@ def create_app(
                     change_signal.emit()
 
                 normal_work_released = False
+                normal_work_task: asyncio.Task[None] | None = None
 
                 async def release_after_trial() -> None:
-                    nonlocal normal_work_released, work_release_task
+                    nonlocal normal_work_released, work_release_task, normal_work_task
                     try:
                         observed = update_attempts.read()
                         identity = "" if observed is None else observed.attempt_id
@@ -530,21 +531,24 @@ def create_app(
                         if app.state.update_barrier.frozen:
                             await recover_orphaned_barrier()
                         if app.state.update_barrier.frozen:
-                            # Another installer event can request a check after this wait.
-                            work_release_task = None
                             return
                         if was_frozen or (startup_frozen and not normal_work_released):
                             app.state.updates.reopen_trial_work(identity)
                         if normal_work_released:
-                            work_release_task = None
                             return
-                        await release_normal_work()
+                        # Producer startup can leave partial resources after a failure.
+                        # Keep it one-shot while earlier orphan dispatch remains retryable.
+                        if normal_work_task is not None:
+                            return
+                        normal_work_task = asyncio.create_task(release_normal_work())
+                        await normal_work_task
                         normal_work_released = True
-                        work_release_task = None
                     except Exception:
                         logging.getLogger(__name__).exception(
                             "Normal work could not resume after the update trial"
                         )
+                    finally:
+                        work_release_task = None
 
                 next_trial_probe = 0.0
                 last_trial_probe: object = None
@@ -566,15 +570,17 @@ def create_app(
                     active = False if local else barrier.installer_active(identity)
                     if active:
                         app.state.updates.installer_observed(identity)
+                    # A failed orphan dispatch changes no file or lock state. The
+                    # existing bounded probe must still give its next sample a wake.
                     last_trial_probe = (identity, None if attempt is None else attempt.state,
-                                        local, active)
+                                        local, active, now if not local and not active else None)
                     return last_trial_probe
 
                 def attempt_changed() -> None:
                     nonlocal work_release_task
                     change_signal.emit()
-                    # A failed release can leave partial producers. Log it once and
-                    # retain its task instead of starting those producers again.
+                    # One recovery runs at a time. Its finally releases this slot so
+                    # the next bounded probe can retry a failed owner dispatch.
                     if work_release_task is None:
                         work_release_task = asyncio.create_task(release_after_trial())
 
