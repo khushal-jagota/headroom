@@ -18,6 +18,7 @@ from tests.compare.direct.test_unit22_mac_journal import Oracle, _command, _dige
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
 from planner.executor import mac_mailbox
+from planner.executor.configuration import OUTBOX_RETRY_INITIAL_SECONDS
 from planner.executor.contracts import MacHttpClient
 from planner.executor.mac_catalog import MacCatalog
 from planner.executor.mac_mailbox import (
@@ -58,7 +59,7 @@ def command(command_id: str, sequence: int, child: str = "a", stop: bool = False
 
 def performance_spec(journal: CommandJournal) -> dict[str, Any]:
     """Reuse the same populated journal for canonical expansion and report boundaries."""
-    raw = json.loads(type_adapter(MailboxCommand).dump_json(command("performance", 13)))
+    raw = json.loads(type_adapter(MailboxCommand).dump_json(command("performance", 15)))
     raw.pop("model_list_request")
     raw["child_command"]["arguments"].pop("kind")
     text_bytes = (
@@ -72,7 +73,7 @@ def performance_spec(journal: CommandJournal) -> dict[str, Any]:
     canonical = type_adapter(MailboxCommand).dump_json(decoded.commands[0])
     journal.record_poll_reply(decoded, "inc")
     reports = []
-    for sequence, size in enumerate((4 * 1024 * 1024 - 4096, 4 * 1024 * 1024 + 4096), 14):
+    for sequence, size in enumerate((4 * 1024 * 1024 - 4096, 4 * 1024 * 1024 + 4096), 16):
         identifier = f"size-{sequence}"
         c = MailboxCommand(
             sequence, identifier, 1, model_list_request=ModelListRequest("codex", False)
@@ -112,6 +113,8 @@ async def reference(
             command("k", 10),
             command("r", 11),
             MailboxCommand(12, "shutdown", 1, model_list_request=ModelListRequest("codex", True)),
+            command("committed", 13),
+            command("committed-later", 14),
         ]
     }
     results = {
@@ -159,6 +162,9 @@ async def reference(
         seed=encoded(MailboxPollReply, seed).hex(),
         poll=encoded(MailboxPollReply, polled).hex(),
         shutdown=encoded(MailboxPollReply, reply(commands["shutdown"])).hex(),
+        committed=encoded(
+            MailboxPollReply, reply(commands["committed"], commands["committed-later"])
+        ).hex(),
         report_commands=encoded(
             MailboxPollReply, reply(*(commands[i] for i in ("f", "k", "r")))
         ).hex(),
@@ -182,6 +188,7 @@ async def reference(
     reports: list[Any] = []
     report_replies: list[str] = []
     poll_calls, fault_mark = 0, False
+    retry_times: dict[str, list[float]] = {"poll": [], "runner": []}
     original_mark, original_shrink = journal.mark_reported, journal.shrink_to_tombstones
     loop = asyncio.get_running_loop()
 
@@ -213,6 +220,10 @@ async def reference(
         async def run(self, child: Any) -> Any:
             i = child.command_id
             calls.append(i)
+            if i == "b":
+                retry_times["runner"].append(time.perf_counter())
+                if len(retry_times["runner"]) == 1:
+                    raise OSError("scripted runner retry")
             if i in ("a1", "stop"):
                 (first if i == "a1" else stopped).set()
                 await release.wait()
@@ -254,6 +265,10 @@ async def reference(
             nonlocal poll_calls
             poll_calls += 1
             if poll_calls == 1:
+                retry_times["poll"].append(time.perf_counter())
+                raise ConnectionError("scripted poll retry")
+            if poll_calls == 2:
+                retry_times["poll"].append(time.perf_counter())
                 return polled
             await asyncio.Event().wait()
             raise AssertionError("unreachable")
@@ -321,14 +336,32 @@ async def reference(
         stored = journal.result_of("shutdown")
         assert stored is not None
         journal.mark_reported(("shutdown",))
+        journal.record_poll_reply(reply(commands["committed"], commands["committed-later"]), "inc")
+        journal.close()
+        journal = CommandJournal(box.root, "inc", outputs_owed=oracle.policy)
+        spec["recovery_results"] = {}
+        for key in ("committed", "committed-later"):
+            recovered = journal.result_of(key)
+            assert recovered is not None and recovered.child_outcome is not None
+            assert recovered.child_outcome.disposition is CommandDisposition.uncertain
+            spec["recovery_results"][key] = _digest(encoded(CommandResult, recovered))
+            journal.mark_outputs_published(key)
+        journal.mark_reported(("committed", "committed-later"))
         spec["performance"] = performance_spec(journal)
+        spec["reference_retry_seconds"] = {
+            key: times[1] - times[0] for key, times in retry_times.items()
+        }
         oracle.save()
         spec["report_replies"] = report_replies
         return dict(
             planned_blocked=planned_blocked,
             second_not_started=second_not_started,
             fifo=fifo,
-            calls=sorted(calls),
+            calls=calls,
+            retry_delays={
+                key: times[1] - times[0] >= OUTBOX_RETRY_INITIAL_SECONDS
+                for key, times in retry_times.items()
+            },
             replays=replays,
             catalog_reads=catalog_reads,
             reports=reports,
@@ -381,7 +414,7 @@ def node(root: Path, spec: dict[str, Any], oracle: Oracle, homes: dict[str, str]
     )
     try:
         stdout, stderr = process.communicate(timeout=35)
-    except subprocess.TimeoutExpired:
+    except BaseException:
         if process.poll() is None:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
@@ -408,6 +441,7 @@ def test_unit22_mac_mailbox_scripted_flow(
     assert observed["observations"] == expected
     assert expected["planned_blocked"] and expected["fifo"] and expected["stop_waited"]
     assert expected["second_not_started"]
+    assert expected["retry_delays"] and all(expected["retry_delays"].values())
     assert expected["replays"] == ["duplicate"] and len(expected["reports"]) == 5
     assert observed["aggregate_shutdown"] and all(observed["aggregate_shutdown"].values())
     assert observed["performance"]["canonical_command"] == spec["performance"]["canonical_command"]
@@ -422,5 +456,6 @@ def test_unit22_mac_mailbox_scripted_flow(
             kind="direct",
             equal=True,
             elapsed_seconds=time.perf_counter() - started,
+            reference_retry_seconds=spec["reference_retry_seconds"],
         )
         (output / "unit-22-mac-mailbox.json").write_text(json.dumps(report, indent=2))

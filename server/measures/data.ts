@@ -12,14 +12,15 @@ import type {
   OutputMeasure,
 } from './contracts.ts';
 import { pair_key } from './contracts.ts';
+import { measure_json } from './serialization.ts';
 import { calendar_date, invalid } from './logic/dates.ts';
 import { dependencies, parse_formula } from './logic/formulas.ts';
 import { observation_coverage } from './logic/coverage.ts';
 export function hydrate_measure(row: Record<string, unknown>): Measure {
-  return {
+  return measure_json({
     ...row,
     formula: row.formula === null ? null : parse_formula(parse_numeric_json(String(row.formula))),
-  } as unknown as Measure;
+  } as unknown as Measure);
 }
 export function read_measure(sql: ReadSql, id: string): Measure {
   const row = sql.get<Record<string, unknown>>('SELECT * FROM measures WHERE id=?', [id]);

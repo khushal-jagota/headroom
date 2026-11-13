@@ -330,10 +330,13 @@ export function list_ticket_summaries(
     )
       continue;
     if (filters.search) {
+      const ticket = data.read_ticket(sql, row.id);
       const text = [
         v.title,
         row.recap,
-        ...Object.values(data.read_ticket(sql, row.id).field_values),
+        ...ticket.workflow.fields
+          .filter((field) => Object.hasOwn(ticket.field_values, field.id))
+          .map((field) => ticket.field_values[field.id]),
         row.pending_proposal ? (JSON.parse(row.pending_proposal) as { body: string }).body : '',
       ].join('\n');
       if (!casefold(text).includes(casefold(filters.search))) continue;

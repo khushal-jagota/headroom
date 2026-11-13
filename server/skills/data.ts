@@ -11,14 +11,13 @@ export const PACKAGED_SKILLS_ROOT = fileURLToPath(
 export function has_skill(sql: ReadSql, name: string): boolean {
   return !!sql.get('SELECT 1 FROM managed_skills WHERE skill_name = ?', [name]);
 }
-export function read_all_skill_sources(sql: ReadSql): Record<string, string> {
-  return Object.fromEntries(
-    sql
-      .all<{ skill_name: string; source_text: string }>(
-        'SELECT skill_name, source_text FROM managed_skills ORDER BY skill_name',
-      )
-      .map((r) => [r.skill_name, r.source_text]),
+export function read_skill_source_rows(sql: ReadSql) {
+  return sql.all<{ skill_name: string; source_text: string }>(
+    'SELECT skill_name, source_text FROM managed_skills ORDER BY skill_name',
   );
+}
+export function read_all_skill_sources(sql: ReadSql): Record<string, string> {
+  return Object.fromEntries(read_skill_source_rows(sql).map((r) => [r.skill_name, r.source_text]));
 }
 export function read_skill_source(sql: ReadSql, name: string): string {
   const row = sql.get<{ source_text: string }>(
