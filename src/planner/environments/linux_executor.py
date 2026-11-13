@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -133,7 +134,8 @@ def install(
     )
     if manifest.runtime_contract is None:
         raise ValueError("Linux executor requires its runtime contract")
-    LinuxRuntime().verify_host(manifest.runtime_contract, state=installation / "checks")
+    with tempfile.TemporaryDirectory(prefix="panels-linux-install-") as state:
+        LinuxRuntime().verify_host(manifest.runtime_contract, state=Path(state))
     data.mkdir(parents=True, exist_ok=True, mode=0o700)
     data.chmod(0o700)
     write_credential(credential_path(data), credential)

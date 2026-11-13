@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -60,3 +61,45 @@ def test_failed_archive_admission_never_writes_credentials_or_unit(
         )
     assert not config.data.exists()
     assert not (tmp_path / "units").exists()
+
+
+def test_install_checks_host_in_existing_private_state_before_service_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = configuration(tmp_path)
+    credential = tmp_path / "credential.json"
+    write_credential(credential, "a" * 43)
+    runtime = tmp_path / "admitted-runtime"
+    runtime.mkdir()
+    units = tmp_path / "units"
+    monkeypatch.setattr(
+        "planner.environments.linux_executor_runtime.extract_runtime",
+        lambda *a, **kw: runtime,
+    )
+    monkeypatch.setattr(
+        "planner.environments.app.validate_app_manifest",
+        lambda *a, **kw: SimpleNamespace(runtime_contract=object()),
+    )
+    checked: list[Path] = []
+
+    def verify_host(self: object, contract: object, *, state: Path) -> None:
+        assert state.is_dir()
+        assert not config.data.exists()
+        assert not units.exists()
+        checked.append(state)
+
+    monkeypatch.setattr(
+        "planner.platform_runtime.linux.runtime.LinuxRuntime.verify_host", verify_host
+    )
+    unit = install(
+        config,
+        archive=tmp_path / "archive.tar.gz",
+        archive_sha256="a" * 64,
+        archive_size=123,
+        credential_file=credential,
+        unit_directory=units,
+    )
+    assert len(checked) == 1 and not checked[0].exists()
+    assert unit.read_text() == render_service(config, runtime)
+    assert (config.data / "machine-credential.json").stat().st_mode & 0o777 == 0o600
