@@ -99,5 +99,5 @@ Executor socket transport binds the same command handlers when `PLAN_EXECUTOR_RO
 is set. Reads and registered mutations use the Unix client, including lookup-only
 retry and exit 3 for unconfirmed acceptance. `executor health` and `quiesce` use that
 client too. `executor permissions` previews lexical scopes and performs directory access only with `--check`.
-`executor run` still awaits the fixed runtime supervisor binding.
+`executor run` binds the fixed runtime supervisor or its versioned Mac host child from the shared runtime settings.
 This package does not switch the installed wrapper or deploy an application.

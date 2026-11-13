@@ -9,6 +9,8 @@ import { local_status, request } from './ipc_client.ts';
 
 export async function run_executor_command(inv: Invocation): Promise<CommandResult> {
   switch (inv.command.path[1]) {
+    case 'run':
+      return (await import('./run.ts')).run_executor(inv);
     case 'retry': {
       const value = await executor_request(inv, 'retry', {
         submission_id: inv.values.submission_id,
@@ -40,11 +42,6 @@ export async function run_executor_command(inv: Invocation): Promise<CommandResu
     case 'permissions':
       return (await import('./permissions.ts')).permissions(inv);
     default:
-      // The run command binds with the fixed runtime supervisor.
-      throw new CliFailure({
-        exit_code: 1,
-        stdout: '',
-        stderr: 'Executor host command remains with the host and platform slices.\n',
-      });
+      throw new Error('Unknown executor command.');
   }
 }
