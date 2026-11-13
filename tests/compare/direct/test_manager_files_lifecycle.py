@@ -179,7 +179,10 @@ def test_manager_files_quarantine_restore_purge_and_symlink_boundaries(
         conn.execute(
             "INSERT INTO managers(id,title,project_id,manager_backend,manager_model,"
             "created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
-            ("si_delete", "Delete populated files", "project_other", "codex", "gpt-6.1-sol", 100, 100),
+            (
+                "si_delete", "Delete populated files", "project_other", "codex", "gpt-6.1-sol",
+                100, 100,
+            ),
         )
         conn.execute("INSERT INTO agents VALUES ('manager_si_delete',NULL)")
         conn.execute(
