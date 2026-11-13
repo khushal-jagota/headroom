@@ -261,7 +261,7 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
             with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
                 search_response = client.get(
                     handle.base + "/api/tickets",
-                    params={"search": "unit20-left-2025\nunit20-right-2024"},
+                    params={"detail": "summary", "search": "unit20-left-2025\nunit20-right-2024"},
                 )
             assert search_response.status_code == 200
             body = search_response.json()
