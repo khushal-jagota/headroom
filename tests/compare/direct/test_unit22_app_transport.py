@@ -22,7 +22,7 @@ from unittest.mock import patch
 from urllib.parse import urlsplit
 
 import pytest
-from tests.integration.test_executor_app_transport import _reads_app, _transport_app
+from tests.integration.test_executor_app_transport import _Core, _reads_app, _transport_app
 from tests.integration.test_executor_end_to_end import ExecutorHarness, create_mac_ticket
 from tests.integration.test_executor_isolation import held_mac_writes, writer_lock_is_free
 from tests.support.executor_https import HttpsProxy, isolated_https_proxy, serve_executor_app
@@ -605,6 +605,7 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
         make_current(str(path), IDENTITY, NOW)
         endpoint = VpsExecutor(str(path), clock)
         endpoint.presence.returned = None
+        endpoint.runs.conversations = _Core()
         endpoint.presence._clock = endpoint.mailbox._clock = lambda: NOW
         endpoint.app = _reads_app()
         child = ChildReference(IDENTITY.executor_incarnation, "child", "c")

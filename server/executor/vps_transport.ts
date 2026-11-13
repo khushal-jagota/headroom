@@ -9,6 +9,7 @@ import { ConversationMessageFiles } from '../conversation/record/message_files.t
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import type { BackendEventValue } from '../conversation/backends/contracts.ts';
 import { retained_open_runs } from '../conversation/runtime/remote.ts';
+import { admit_remote_turn } from '../conversation/runtime/remote_turn.ts';
 import { observe_shutdown, is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
@@ -155,6 +156,7 @@ export class VpsExecutor {
   }
   async start(): Promise<void> {
     this.admit();
+    this.runs.require_conversations();
     this.presence.record();
     this.mailbox.high_sequence();
     await this.runs.resume_replacement_drains();
@@ -199,7 +201,10 @@ export class VpsExecutor {
   lease(
     request: WireValue<'LeaseRequest'>,
   ): Promise<WireValue<'LeaseReply'> | WireValue<'LeaseRefused'>> {
-    return this.owned_work(() => this.presence.accept_lease(request), LEASE_SERVER_LIMIT_SECONDS);
+    return this.owned_work(() => {
+      this.runs.require_conversations();
+      return this.presence.accept_lease(request);
+    }, LEASE_SERVER_LIMIT_SECONDS);
   }
   refuse_old_websocket(): Promise<void> {
     return this.owned_work(() => this.presence.refuse_old_websocket());
@@ -344,7 +349,8 @@ export class VpsExecutor {
           child.event_sink === null
         )
           continue;
-        await child.event_sink.report(event.turn as never, decode_event_arguments(event) as never);
+        const turn = event.turn === null ? null : admit_remote_turn(event.turn);
+        await child.event_sink.report(turn, decode_event_arguments(event) as never);
       }
     };
     const task = report();

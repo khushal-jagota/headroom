@@ -10,7 +10,6 @@ import { createApp } from '../../app.ts';
 import { UpdateConflict } from '../../environments/updates/attempts.ts';
 import { VpsExecutor } from '../vps_transport.ts';
 import { as_object } from '../protocol.ts';
-import type { WireTypes } from '../wire.generated.ts';
 import { continue_core } from './transport_core.ts';
 
 const spec = JSON.parse(readFileSync(process.argv[2]!, 'utf8')) as {
@@ -38,11 +37,20 @@ const endpoint = new VpsExecutor(database, new RealClock(), {
   media_signal: new AbortController().signal,
 });
 endpoint.presence.returned = null;
+const unexpected = async () => {
+  throw new Error('No core work belongs to the raw transport fixture');
+};
+endpoint.runs.conversations = {
+  emit_answer: unexpected,
+  retire_replaced_remote_child: unexpected,
+  resume_undelivered_prompt: unexpected,
+  await_late_steer: unexpected,
+  confirm_remote_child_termination: unexpected,
+  stop_interrupted_remote_child: unexpected,
+};
 const reports: unknown[] = [];
 endpoint.bind_updates({
-  prepare: async () => {
-    throw new Error('No release preparation in the transport fixture');
-  },
+  prepare: unexpected,
   status: () => null,
   phase: () => null,
   reported_at: () => null,
@@ -55,10 +63,7 @@ endpoint.bind_updates({
     if (sha256 !== spec.archive_sha) throw new UpdateConflict('unknown fixture archive');
     return spec.archive;
   },
-  report: (
-    report: WireTypes['MacUpdateReport'],
-    health: ReturnType<VpsExecutor['health']> | null,
-  ) => {
+  report: (report, health: ReturnType<VpsExecutor['health']> | null) => {
     reports.push([
       as_object(report, 'MacUpdateReport'),
       health === null ? null : as_object(health, 'ExecutorHealthRead'),
