@@ -25,7 +25,7 @@ execFileSync(
   'python3',
   [
     '-c',
-    `import ast, pathlib, sqlite3, sys
+    `import ast, json, pathlib, sqlite3, sys
 source = pathlib.Path(sys.argv[2]) / 'src/planner/core/migrations/versions/current_schema.py'
 statements = []
 for node in ast.parse(source.read_text()).body:
@@ -40,6 +40,9 @@ if not statements:
 with sqlite3.connect(sys.argv[1]) as connection:
     for statement in statements:
         connection.execute(statement)
+    schema = json.loads((pathlib.Path(sys.argv[2]) / 'server/core/database/application_schema.json').read_text())
+    connection.execute(next(statement for statement in schema['statements'] if statement.startswith('CREATE TABLE alembic_version (')))
+    connection.execute('INSERT INTO alembic_version(version_num) VALUES (?)', (schema['alembicRevision'],))
     connection.execute('INSERT INTO attention_history_metadata VALUES (1,0)')
     connection.executemany('INSERT INTO projects (id,name,created_at,updated_at) VALUES (?,?,0,0)', [('project_other','Other'),('project_vylo','Vylo')])
 `,

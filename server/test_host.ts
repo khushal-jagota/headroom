@@ -23,6 +23,11 @@ import {
 } from './conversation/snapshot/composition.ts';
 import { TicketModelSnapshots } from './conversation/snapshot/testing/ticket_models.ts';
 import { makeUsageService } from './conversation/usage/composition.ts';
+import { model_is_enabled } from './conversation/backend_state.ts';
+import {
+  canonical_ticket_execution_refusal,
+  conversation_execution_refusal,
+} from './tickets/execution_admission.ts';
 
 if (!(await import('./core/config.ts')).testModeFromEnvironment())
   throw new Error('The comparison host requires test mode');
@@ -58,6 +63,10 @@ await startServer({
         const { config, database, record, clock, changes } = context;
         return new SqliteProcessConversationSystem({
           store: record.store,
+          execution_refusal: (id) =>
+            database.read((sql) =>
+              conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
+            ),
           wait_registry: WAITS,
           backend_child_factories: registry.factories,
           message_files: new ConversationMessageFiles(config.db_path),
@@ -82,13 +91,7 @@ await startServer({
               ),
           ),
           model_is_enabled: (backend_key, model_id) =>
-            database.read((sql) => {
-              const row = sql.get<{ enabled: number }>(
-                'SELECT enabled FROM backend_model_enablement WHERE backend_key=? AND model_id=?',
-                [backend_key, model_id],
-              );
-              return row === undefined || !!row.enabled;
-            }),
+            database.read((sql) => model_is_enabled(sql, backend_key, model_id)),
         });
       },
   testAreas: (context): readonly Area[] => [

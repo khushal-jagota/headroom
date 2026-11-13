@@ -7,6 +7,15 @@ import { text_message_content } from '../message_content.ts';
 import { PromptDeliveryUncertainEventPayload } from '../events.ts';
 import { select_recoveries } from './data.ts';
 import { recovery_message_identity } from './identity.ts';
+import { conversation_execution_refusal } from '../../tickets/execution_admission.ts';
+import { configured_ticket_execution_refusal } from '../../runtime/conversation_start.ts';
+function execution_refusal(database: Database, id: string) {
+  return database.read((sql) =>
+    conversation_execution_refusal(sql, id, (current, ticket) =>
+      configured_ticket_execution_refusal(database, current, ticket),
+    ),
+  );
+}
 export const RECOVERY_PROMPT =
   'Inspect the interrupted work and continue the current authorized step.';
 export async function recover_conversations(
@@ -24,6 +33,7 @@ export async function recover_conversations(
         ([id]) => options.conversation_ids === undefined || options.conversation_ids.includes(id),
       )
       .map(async ([conversation_id, references]) => {
+        if (execution_refusal(database, conversation_id) !== null) return;
         if (await system.is_running(conversation_id)) return;
         try {
           await system.send(conversation_id, text_message_content(RECOVERY_PROMPT), {
@@ -80,6 +90,7 @@ export async function record_unknown_recovery_deliveries(
     return [...result.values()];
   });
   for (const group of groups) {
+    if (execution_refusal(database, group.conversation_id) !== null) continue;
     if (system.options.store.sender_message_outcome(group.conversation_id, group.identity) !== null)
       continue;
     await system.record_events_transaction(group.conversation_id, () => ({

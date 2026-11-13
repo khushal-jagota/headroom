@@ -86,6 +86,9 @@ export type BackgroundServiceFactory = (
 export interface RunningServer {
   close(): Promise<void>;
 }
+export interface ApplicationEntrypoint {
+  start(): Promise<RunningServer>;
+}
 /** The retained advisory lease shared by environment operators and the future supervisor. */
 export interface LifecycleLease {
   close(): void;
