@@ -44,5 +44,7 @@ export interface Invocation {
   values: Record<string, any>;
   environment: NodeJS.ProcessEnv;
   stdin: () => Promise<Buffer>;
+  /** Flush incremental stderr before the operation resumes. */
+  write_stderr?: (text: string) => Promise<void>;
 }
 export type CommandHandler = (invocation: Invocation) => Promise<CommandResult>;

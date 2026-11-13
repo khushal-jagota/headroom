@@ -39,13 +39,15 @@ def raw_process(
     *,
     check: bool = False,
     cwd: Path | None = ROOT,
+    merge_stderr: bool = False,
 ) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(
         argv,
         cwd=cwd,
         env=env,
         input=input,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE,
         timeout=timeout,
         check=check,
     )

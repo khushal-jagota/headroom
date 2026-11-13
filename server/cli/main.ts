@@ -16,14 +16,21 @@ export async function run(
     for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
     return Buffer.concat(chunks);
   },
+  write_stderr?: Invocation['write_stderr'],
 ): Promise<CommandResult> {
   let invocation: Invocation | undefined;
   try {
     const parsed = parse(argv, commands, environment);
     if (parsed.help)
       return { exit_code: 0, stdout: render_help(parsed.command, commands), stderr: '' };
-    invocation = { ...parsed, environment, stdin };
+    invocation = { ...parsed, environment, stdin, write_stderr };
     switch (parsed.command.path[0]) {
+      case 'environment':
+      case 'stalls':
+      case 'serve':
+      case 'restart':
+      case 'server-event-loop-tasks':
+        return await (await import('./operator_commands.ts')).run_operator_command(invocation);
       case 'goal':
         return await (await import('../goals/cli/index.ts')).run_goal_command(invocation);
       case 'page':
@@ -87,12 +94,23 @@ if (is_entrypoint()) {
   process.stdout.on('error', stream_error);
   process.stderr.on('error', stream_error);
   try {
-    const result = await run(process.argv.slice(2));
+    const result = await run(process.argv.slice(2), process.env, undefined, (text) =>
+      write(process.stderr, text),
+    );
     await write(process.stdout, result.stdout);
     await write(process.stderr, result.stderr);
     process.exitCode = result.exit_code;
   } catch (error) {
     process.exitCode = 1;
-    if (!broken_pipe(error)) await write(process.stderr, String(error) + '\n');
+    if (!broken_pipe(error)) {
+      const { OperatorInterrupted } = await import('../environments/command_contracts.ts');
+      if (error instanceof OperatorInterrupted && error.signal === 'SIGTERM') {
+        try {
+          await write(process.stderr, error.stderr_prefix);
+        } finally {
+          process.kill(process.pid, error.signal);
+        }
+      } else await write(process.stderr, String(error) + '\n');
+    }
   }
 }
