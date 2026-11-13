@@ -214,6 +214,11 @@ export async function environment_backup_current(
     } catch (error) {
       if (!domain_error(error, { runtime: false, plain: false })) throw error;
       warning = `Warning: ${error_message(error)}. Backup will continue.\n`;
+      if (deps.write_warning) {
+        const output = warning;
+        warning = '';
+        await deps.write_warning(output);
+      }
     }
     // Backup's domain RuntimeErrors are distinct from unexpected validator errors.
     try {

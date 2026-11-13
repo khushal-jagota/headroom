@@ -78,6 +78,8 @@ export class AppManifestValidationFailure extends Error {
 export interface CurrentAppCommandDependencies extends OperatorPathInputs {
   /** No default. Unexpected rejections propagate instead of becoming warnings. */
   validate_app_manifest(manifest_path: string): Promise<void>;
+  /** Await before backup work. Without a sink, warnings stay in the returned transcript. */
+  write_warning?: (text: string) => Promise<void>;
 }
 export type EnvironmentCommandName = keyof EnvironmentCommandArguments;
 export type EnvironmentCommandDependencies<Name extends EnvironmentCommandName> = Name extends

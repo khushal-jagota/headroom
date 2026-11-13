@@ -217,11 +217,11 @@ Thirteen leaves are available: status, cleanup, backup, backup-current,
 provision-skills, restore, prepare, inspect, reset, remove, app-identity,
 server-event-loop-tasks, and stalls watchdog. App-build, run, serve, and restart
 retain their metadata and refuse before effects until the release-side Ticket
-supplies the native admission, builder, supervisor, and unit composition. The
-factory imports none of those unmerged modules. Slice B replaces those four
+supplies the builder, supervisor, and unit composition. Existing native admission
+does not complete those prerequisites. Slice B replaces those four
 refusals after their prerequisites merge.
 
 Operational failures carry raw `failure_message` and `stderr_prefix` fields.
 Success and warning streams stay separate. The accepted hidden diagnostic retains
-its literal unsupported transcript. The public executable binding remains Unit
-20's next slice. No release, exec, or service acceptance follows from this factory.
+its literal unsupported transcript through `server/cli/main.ts`. That executable
+binds the table and factory. Release, exec, and service acceptance remain deferred.
