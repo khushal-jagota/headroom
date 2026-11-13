@@ -1392,6 +1392,7 @@ class SqliteProcessConversationSystem:
         if state is None:
             return
         state.being_killed = True
+        self._deferred_start_conversations.pop(conversation_id, None)
         kill_succeeded = False
         try:
             await self._kill_owned(state)
@@ -3890,9 +3891,15 @@ class SqliteProcessConversationSystem:
             )
 
     def _defer_start_drain(self, state: _ConversationState) -> None:
-        if self._shutting_down:
-            return
         identity = state.record.conversation_id
+        if (
+            self._shutting_down
+            or state.being_killed
+            or state.child_is_quarantined
+            or identity in self._store.blocked_local_conversations
+        ):
+            self._deferred_start_conversations.pop(identity, None)
+            return
         due = self._monotonic_now() + self.start_admission.poll_delay(1.0)
         self._deferred_start_conversations[identity] = min(
             self._deferred_start_conversations.get(identity, due), due
@@ -6207,6 +6214,7 @@ class SqliteProcessConversationSystem:
 
     def _quarantine_child(self, state: _ConversationState) -> None:
         state.child_is_quarantined = True
+        self._deferred_start_conversations.pop(state.record.conversation_id, None)
         self._deprioritize_held(state)
 
     def _set_phase(self, state: _ConversationState, phase: _ConversationPhase) -> None:
