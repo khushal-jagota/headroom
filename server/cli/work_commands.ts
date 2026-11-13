@@ -3,7 +3,7 @@ import type { CommandResult, Invocation } from './contracts.ts';
 import { send, send_text, emit, fail_validation, json } from './http.ts';
 import { read_source, read_json_object, worker_stdin_body } from './input.ts';
 import { part, parse_part_names, project_record, render_text } from './record_projection.ts';
-import type { RecordPart } from './record_projection.ts';
+import type { RecordParts } from './record_projection.ts';
 import { JsonNumber, numeric_value, parse_numeric_json } from '../core/http/numeric_json.ts';
 import { python_text as scalar } from './python_text.ts';
 import { ticket_argument } from './parser.ts';
@@ -91,7 +91,7 @@ function record_parts(inv: Invocation, names: string | null | undefined): string
 function emit_record(
   inv: Invocation,
   header: Body,
-  parts: Record<string, RecordPart>,
+  parts: RecordParts,
   names: string | null | undefined,
 ): CommandResult {
   let projection: Body;
@@ -104,13 +104,17 @@ function emit_record(
       : undefined;
     return fail_validation(inv, (error as Error).message, { no_route });
   }
-  return emit(projection, inv.values.as_json, render_text(projection));
+  return emit(
+    projection,
+    inv.values.as_json,
+    render_text(projection, requested ?? [...parts.keys()]),
+  );
 }
 async function ticket_record(
   inv: Invocation,
   data: Body,
   names: string | null | undefined,
-): Promise<[Body, Record<string, RecordPart>]> {
+): Promise<[Body, RecordParts]> {
   const keys = [
     'id',
     'title',
@@ -132,22 +136,27 @@ async function ticket_record(
   const header = Object.fromEntries(
     keys.filter((key) => key in data).map((key) => [key, data[key]]),
   );
-  const parts: Record<string, RecordPart> = {};
+  const parts: RecordParts = new Map();
   for (const field of data.workflow.fields)
-    parts[field.id] = part(data.field_values[field.id] ?? null, {
-      approval: data.field_approvals?.[field.id],
-    });
-  parts.workflow = part(data.workflow ?? null);
-  parts.proposal = part(data.pending_proposal ?? null);
-  parts.recap = part(data.recap ?? '');
+    parts.set(
+      field.id,
+      part(Object.hasOwn(data.field_values, field.id) ? data.field_values[field.id] : null, {
+        approval: Object.hasOwn(data.field_approvals ?? {}, field.id)
+          ? data.field_approvals[field.id]
+          : undefined,
+      }),
+    );
+  parts.set('workflow', part(data.workflow ?? null));
+  parts.set('proposal', part(data.pending_proposal ?? null));
+  parts.set('recap', part(data.recap ?? ''));
   for (const field of new Set(record_parts(inv, names) ?? [])) {
-    if (field in parts || field === 'rejection') continue;
+    if (parts.has(field) || field === 'rejection') continue;
     const body = await send(
       inv,
       'GET',
       `/api/tickets/${quote(String(data.id))}/workspace/fields/${quote(field)}`,
     );
-    parts[field] = part(body.value);
+    parts.set(field, part(body.value));
   }
   return [header, parts];
 }
@@ -327,23 +336,28 @@ async function manager_show(inv: Invocation): Promise<CommandResult> {
       employee_launch_reasoning_effort:
         data.manager.launch_configuration.employee_launch_reasoning_effort,
     });
-  const parts: Record<string, RecordPart> = { goal: part(data.goal), recap: part(data.recap) };
+  const parts: RecordParts = new Map([
+    ['goal', part(data.goal)],
+    ['recap', part(data.recap)],
+  ]);
   const requested = record_parts(inv, v.part_names);
   if (requested === null) {
     const projection: Body = project_record(header, parts, null);
     projection.manifest.page = { character_count: data.page_character_count ?? 0 };
     projection.header.page_edit = `panels page edit --manager ${v.item_id}`;
     projection.header.visible_page = `panels manager workspace ${v.item_id}`;
-    return emit(projection, v.as_json, render_text(projection));
+    return emit(projection, v.as_json, render_text(projection, [...parts.keys(), 'page']));
   }
   try {
-    project_record(header, { ...parts, page: part(null) }, requested);
+    const valid_parts = new Map(parts);
+    valid_parts.set('page', part(null));
+    project_record(header, valid_parts, requested);
   } catch (error) {
     fail_validation(inv, (error as Error).message);
   }
   if (requested.includes('page')) {
     const saved = await send(inv, 'GET', `/api/managers/${quote(v.item_id)}/page`);
-    parts.page = part(saved.page);
+    parts.set('page', part(saved.page));
     header.page_revision = saved.page_revision;
   }
   return emit_record(inv, header, parts, v.part_names);
@@ -529,7 +543,7 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       const header = Object.fromEntries(
         ['id', 'name', 'folder_path'].filter((key) => key in data).map((key) => [key, data[key]]),
       );
-      return emit_record(inv, header, { summary: part(data.summary) }, v.part_names);
+      return emit_record(inv, header, new Map([['summary', part(data.summary)]]), v.part_names);
     }
     case 'project create':
       data = await send(inv, 'POST', '/api/projects', {

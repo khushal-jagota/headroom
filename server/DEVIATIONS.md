@@ -458,6 +458,47 @@ One comparison per failure class retains both raw outcomes.
 The migration Manager accepted a clean validation error at exit 1 for invalid UTF-8 in a body file.
 Python's file decoder instead prints an uncaught traceback. Both commands fail before an HTTP request.
 
+## Integer-like JSON map keys
+
+The migration Manager accepted native JavaScript index-key order for cosmetic JSON maps in Unit 20.
+Keys such as `2025` and `2024` appear in ascending numeric order in TypeScript maps.
+Python dictionaries retain their insertion order. Every key, value, and numeric token remains exact.
+Declaration arrays retain their original order and supply dataset dimension and field order.
+
+The audit checked dataset validation, retained SQL writes and reads, canonical row identity,
+source runtime conversions and repository scripts, dataset chart projections, CLI output,
+web chart adapters, tables, and export paths. Canonical `dimension_key` sorts an entries array,
+so object enumeration does not change row identity or deduplication. Charts select values by name.
+Tables and chart series use explicit arrays. The dataset CLI prints the complete response.
+
+The audit found one server meaning dependency. Ticket search now reads present values in the
+declared workflow field order, with Python's title, recap, newline separators, and proposal body.
+This repair changes only `list_ticket_summaries` in `server/tickets/views.ts` in the second CLI PR.
+Other consumers of the reconstructed Ticket field map use named access, declaration arrays,
+per-value validation, storage copies, or opaque record digests. Incoming edit requests and their
+first-error order are outside this cosmetic response-map acceptance.
+
+The preexisting web `compositionTotal` derives an unbound chart sum from object keys.
+That browser code uses the same JavaScript order with either backend and remains outside this PR.
+Dataset-bound charts use the backend summary instead. No web code changes form part of this acceptance.
+
+The existing retained dataset case declares `2025` then `2024` and keeps values `7.25` and `3.0`.
+Its named comparison rule changes only the order of those two original lexical member spans in
+one `results.0.rows.0.values` object, in JSON, text, and HTTP evidence. Raw outputs remain available.
+All other bytes, numeric spellings, row arrays, dimension declarations, and field declarations stay strict.
+The same owned hosts compare a populated Ticket search across two numeric fields in descending order.
+A second pass follows intermediate maps through their final readers. Human Ticket sections keep an
+explicit declared or requested sequence. Skills keep SQL row order, and category reading values keep
+chart declaration order. Those are parity repairs, not cosmetic map-order exceptions.
+The Goal read fixture also contains chart IDs `20`, `10`, `__proto__`, `constructor`, and `toString`.
+Its named rule promotes only the two numeric map keys at `body.charts` and `stdout.charts`.
+Non-index key order, value spans, public arrays, and every outside byte remain strict.
+Both projection accumulators retain special names as ordinary own keys. The CLI's field-value and
+approval lookups also require own keys, as Python dictionary access does.
+The wider assignment and error-order inventory remains in
+[the audit](/files/tickets/t_jt78h9xr/artifacts/data-key-enumeration-audit.md).
+No shared JSON parser or object representation changes form part of this acceptance.
+
 ## CLI executor socket transport — accepted, temporary, owner: the executor unit
 
 HTTP-client commands currently refuse `PLAN_EXECUTOR_ROOT` with a validation error while Unit 22 supplies the executor socket route.
@@ -473,3 +514,17 @@ It rejects missing required fields and invalid command semantics, and it supplie
 Python's serializer can write a dataclass whose state did not pass that validation.
 The TypeScript sender must produce a message that the Python peer can read.
 Root-specific encoder inputs use the generated contracts. Nullable fields without defaults require an explicit null.
+
+## VPS mailbox shutdown admission
+
+The Manager's VPS executor Brief requires that shutdown seal new work immediately.
+The TypeScript mailbox rejects later owned work and returns an empty held poll before another SQL fetch.
+Python's mailbox can accept later work and fetches once more before its closed check.
+The direct mailbox comparison records one source fetch and zero candidate SQL calls after the seal.
+Already admitted commits retain their announcements, and actual settlement retains pending failures and cleanup.
+The stateless replacement participant and the single stall source retain Python's post-stop behavior.
+Their caller owns the SQL capability, admission and actual settlement.
+
+The Manager's mailbox review also requires timer-range admission.
+TypeScript refuses nonfinite waits and waits above Node's maximum timer delay before SQL starts.
+Python's event loop can accept longer durations. Finite negative waits retain immediate behavior.

@@ -519,6 +519,13 @@ def run_list(
                     cli_answers.append({
                         "step": index, "proof": request["proof"], "answers": evidence,
                     })
+                    from tests.compare.direct.unit20_wire import compare_wire
+                    try:
+                        compare_wire(evidence[0], evidence[1], *norms)
+                    except AssertionError as error:
+                        differences.append(
+                            {"step": index, "call": request, "wire_answers": error.args}
+                        )
                     if answers[0] != answers[1]:
                         differences.append({"step": index, "call": request, "answers": answers})
                     continue
