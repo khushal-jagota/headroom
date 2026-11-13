@@ -88,7 +88,8 @@ try {
   const manifestPath = join(temporary, "diagnostics.json");
   await writeFile(manifestPath, JSON.stringify(manifest));
   const environment = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
-    !/^(PLAN_|PANELS_REAL_|PANELS_BROWSER_|PANELS_NATIVE_CANCELLATION_CONTROL$)/.test(key) && !["HERMES_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"].includes(key)));
+    !/^(PANELS_REAL_|PANELS_BROWSER_|PANELS_NATIVE_CANCELLATION_CONTROL$)/.test(key) && !["HERMES_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"].includes(key)));
+  // The Python entry point records and replaces inherited PLAN_* values.
   await new Promise((resolve, reject) => {
     const child = spawn(process.env.PANELS_TEST_PYTHON || join(repositoryRoot, ".venv/bin/python"),
       [fileURLToPath(new URL("./diagnostic-native-cancellation.py", import.meta.url)), manifestPath, report],

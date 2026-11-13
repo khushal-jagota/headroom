@@ -517,6 +517,7 @@ def run(browser, urls):
     verify_card_background_motion(page, url, card_fixture, evidence)
     verify_empty_handoff(page, url, card_fixture, evidence)
     verify_rail_pagination(page, url, card_fixture, evidence)
+    verify_offscreen_rows_stay_drawn(page, url, card_fixture, evidence)
     fold["release_sha"] = "fixture-boot"
     verify_recap_pointer_floor(browser, page, url, card_fixture, respond, evidence)
     verify_ticket_preview_details(page, url, card_fixture, evidence)
@@ -1502,6 +1503,66 @@ def verify_rail_pagination(page, url, fixture, evidence):
         "seconds":round(time.perf_counter()-started,3),"newHosts":0,
         "continuedScrollSeconds":round(continued_scroll_seconds,3),"flows":proof,
     }, indent=2))
+
+
+def verify_offscreen_rows_stay_drawn(page, url, fixture, evidence):
+    """A card scrolled out of the rail keeps its Ticket rows mounted.
+
+    The rail used to ask for a card's Ticket rows only while the card was on screen,
+    so rows left the DOM and came back new, with an enter animation. No unit test
+    reaches this: it needs real layout, a real scroll container and the real request
+    path. This reuses the real App host and the fixture's scoped projection.
+    """
+    def ticket(identity, parent):
+        return {"id": identity, "manager_id": parent, "title": "Worker " + identity,
+                "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent",
+                "conversation_id": "conversation_" + identity,
+                "conversation_signal": {"working": False, "message_for_owner": False}}
+
+    managers = [{"id": f"drawn_manager_{i:02}", "title": f"Drawn manager {i:02}", "created_at": i + 1,
+                 "tickets": [ticket(f"drawn_{i:02}_{j}", f"drawn_manager_{i:02}") for j in range(3)]}
+                for i in range(12)]
+    fixture.update(enabled=True, board={"managers": managers, "columns": [{"cards": []}]}, chief={"label": "Chief"})
+    page.set_viewport_size({"width": 1100, "height": 650})
+    page.emulate_media(reduced_motion="no-preference")
+    # Keep the pointer off the rail: a pointer over a row defers rail structure.
+    page.mouse.move(900, 600)
+    page.reload(wait_until="domcontentloaded")
+    rows = page.locator('[data-active-work-scroll] [data-ticket-id]')
+    scroll = page.locator('[data-active-work-scroll]')
+    # Every Ticket is drawn at once, including rows of cards far below the viewport.
+    expect(rows).to_have_count(36)
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+    assert scroll.evaluate('n=>n.scrollHeight>n.clientHeight*2'), "the rail must be long enough to scroll away from rows"
+    page.evaluate("""() => {
+      const nodes = [...document.querySelectorAll('[data-active-work-scroll] [data-ticket-id]')];
+      window.__drawn = {nodes, added: 0, animated: new Set()};
+      for (const node of nodes) node.__drawnMark = true;
+      new MutationObserver(records => {
+        for (const record of records) for (const node of record.addedNodes)
+          if (node instanceof HTMLElement) window.__drawn.added += +node.matches('[data-ticket-id]') + node.querySelectorAll('[data-ticket-id]').length;
+      }).observe(document.querySelector('[data-active-work-scroll]'), {childList: true, subtree: true});
+      const watch = () => {
+        for (const animation of document.getAnimations()) {
+          const target = animation.effect?.target;
+          if (target instanceof HTMLElement && /^(row|card):/.test(target.dataset.railMotion ?? '')) window.__drawn.animated.add(target.dataset.railMotion);
+        }
+        requestAnimationFrame(watch);
+      };
+      watch();
+    }""")
+    for position in ("n.scrollHeight", "0"):
+        scroll.evaluate(f"n=>{{n.scrollTop={position};}}")
+        page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+        page.evaluate("() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))")
+    outcome = page.evaluate("""() => ({
+      added: window.__drawn.added, animated: [...window.__drawn.animated],
+      detached: window.__drawn.nodes.filter(node => !node.isConnected).length,
+      replaced: [...document.querySelectorAll('[data-active-work-scroll] [data-ticket-id]')].filter(node => !node.__drawnMark).length,
+      count: document.querySelectorAll('[data-active-work-scroll] [data-ticket-id]').length})""")
+    page.screenshot(path=str(evidence / 'rail-offscreen-rows-final.png'))
+    (evidence / 'rail-offscreen-rows.json').write_text(json.dumps(outcome, indent=2))
+    assert outcome == {"added": 0, "animated": [], "detached": 0, "replaced": 0, "count": 36}, outcome
 
 
 def verify_conversation_overlay(browser, url):
