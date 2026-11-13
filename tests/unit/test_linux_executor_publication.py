@@ -36,7 +36,7 @@ def test_linux_receipt_binds_archive_role_and_native_proof(tmp_path: Path) -> No
         marker,
         archive_sha256=hash_archive(archive),
         archive_size=archive.stat().st_size,
-        proof={"native_startup": "passed", "relocated_archive": "passed"},
+        proof={"native_startup": "passed", "relocated_archive": "passed", "executor_cli": "passed"},
     )
     path = tmp_path / "linux-executor-publication.json"
     path.write_text(json.dumps(receipt))

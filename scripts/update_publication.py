@@ -200,7 +200,15 @@ def validate_linux_executor_publication(
         or value.get("archive_sha256") != digest
         or value.get("archive_size") != size
         or value.get("schema_version") != 1
-        or value.get("proof") != {"native_startup": "passed", "relocated_archive": "passed"}
+        or not isinstance(value.get("proof"), dict)
+        or any(
+            value["proof"].get(key) != "passed"
+            for key in (
+                "native_startup",
+                "relocated_archive",
+                "executor_cli",
+            )
+        )
         or not 0 < size <= MAX_MAC_RUNTIME_ARCHIVE_BYTES
     ):
         raise ValueError("Linux executor publication differs from its source or archive")
