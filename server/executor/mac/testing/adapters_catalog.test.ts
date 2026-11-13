@@ -19,6 +19,12 @@ import { MacCommandQueues } from '../mailbox/queues.ts';
 import { MacCatalog } from '../catalog/index.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { QueueDependencies } from '../mailbox/contracts.ts';
+import * as probe_environment from '../../../conversation/snapshot/environment.ts';
+import * as codex_catalog from '../../../conversation/backends/codex_app_server/model_catalog.ts';
+import * as claude_catalog from '../../../conversation/backends/claude_model_catalog.ts';
+import { production_backend_providers } from '../../../conversation/snapshot/production.ts';
+import { create_backend_runtime } from '../../../conversation/snapshot/composition.ts';
+import type { CodexProviderContext } from '../../../conversation/backends/codex_app_server/providers.ts';
 
 const { query } = vi.hoisted(() => ({
   query: vi.fn<(typeof import('@anthropic-ai/claude-agent-sdk'))['query']>(),
@@ -31,6 +37,81 @@ await load_claude_sdk();
 afterEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
+});
+
+it('retains catalog reads before reentrant stop and refuses sources after immediate stop', async () => {
+  for (const reentrant of [true, false]) {
+    let stopping: Promise<void> | undefined;
+    const options = { deadline: performance.now() / 1000 + 2 };
+    const snapshot = vi.fn(() => {
+      stopping = catalog.stop(options);
+      throw new TypeError('optional catalog absence');
+    });
+    const failure = vi.fn();
+    const catalog = new MacCatalog({
+      snapshots: { snapshot, retained: () => null },
+      stop_sources: async () => {},
+      on_failure: failure,
+    });
+    const reading = catalog.read_result('reentry', { backend_key: 'codex', refresh: true });
+    if (reentrant) await (await reading).close();
+    else {
+      stopping = catalog.stop(options);
+      await expect(reading).rejects.toBeInstanceOf(ServerLifecycleError);
+    }
+    await stopping;
+    await catalog.settled();
+    expect(snapshot).toHaveBeenCalledTimes(reentrant ? 1 : 0);
+    expect(failure).not.toHaveBeenCalled();
+  }
+});
+
+it('retains server catalog failures when the first shutdown retries both native closes successfully', async () => {
+  vi.spyOn(probe_environment, 'backend_io_is_test').mockReturnValue(false);
+  const environment = Object.assign(new RecordingBackendProbeEnvironment(), {
+    shutdown: async () => {},
+  });
+  vi.spyOn(probe_environment, 'SubprocessBackendProbeEnvironment').mockImplementation(function () {
+    return environment as never;
+  });
+  const errors = ['Codex probe', 'Codex close', 'Claude probe', 'Claude close'].map(
+    (value) => new Error(value),
+  );
+  const retry = vi.fn(async () => {});
+  const failure = new ModelCatalogCleanupFailed(errors[0], [errors[1]], retry);
+  const claude_failure = new ModelCatalogCleanupFailed(
+    errors[2],
+    [new AggregateError([errors[3]])],
+    retry,
+  );
+  vi.spyOn(codex_catalog, 'probe_codex_model_catalog').mockRejectedValue(failure);
+  vi.spyOn(claude_catalog, 'probe_claude_model_catalog').mockRejectedValue(claude_failure);
+  const context = {
+    database: {},
+    now: () => new Date(),
+    child_processes: invocation_children(),
+    one_shot_children: { seal() {}, settled: async () => {} },
+    read_codex_snapshot: async () => ({ executable_path: '/synthetic/codex' }),
+  } as unknown as CodexProviderContext;
+  const providers = production_backend_providers(false, context);
+  const runtime = create_backend_runtime({
+    ...context,
+    config: { test_mode: true } as never,
+    providers,
+    environment,
+  });
+  await expect(providers.codex!('/synthetic/codex')).rejects.toBe(failure);
+  await expect(providers.claude!('/synthetic/claude')).rejects.toBe(claude_failure);
+  const options = { deadline: performance.now() / 1000 + 1 };
+  await expect(runtime.shutdown(options)).rejects.toBeInstanceOf(AggregateError);
+  const actual = await runtime.settled().catch((error: unknown) => error);
+  const leaves = (error: unknown): unknown[] =>
+    error instanceof AggregateError ? error.errors.flatMap(leaves) : [error];
+  expect(leaves(actual)).toEqual(expect.arrayContaining(errors));
+  expect(retry).toHaveBeenCalledTimes(2);
+  await expect(runtime.shutdown(options)).rejects.toBe(actual);
+  await expect(providers.codex!('/synthetic/codex')).rejects.toThrow('shut down');
+  await expect(providers.claude!('/synthetic/claude')).rejects.toThrow('shut down');
 });
 function invocation_children(): OwnedChildProcesses {
   return {
