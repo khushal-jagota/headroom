@@ -65,7 +65,7 @@ function classify_installed_runtime(input, admitted_null_sha) {
     regular('.venv/bin/python', true);
     return 'python-v1';
   }
-  for (const name of ['server/environments/release/launcher_main.ts', 'server/lifecycle/foreground_main.ts', 'server/lifecycle/managed_main.ts', 'server/lifecycle/application.ts', 'server/lifecycle/stop_main.ts']) regular(name);
+  for (const name of ['server/environments/release/launcher_main.ts', 'server/lifecycle/foreground_main.ts', 'server/lifecycle/managed_main.ts', 'server/lifecycle/application.ts', 'server/lifecycle/stop_main.ts', 'server/environments/updates/interruption_capture_main.ts', 'server/environments/updates/restore_main.ts']) regular(name);
   return 'node-v2';
 }
 try {
