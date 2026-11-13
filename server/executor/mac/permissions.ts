@@ -4,7 +4,6 @@ import { opendir, open, realpath, stat, unlink } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
 import { human_error } from '../../cli/errors.ts';
-import { python_os_error_message } from '../../core/os_errors.ts';
 import { expand_executor_path } from './platform.ts';
 
 function within(path: string, root: string): boolean {
@@ -84,7 +83,7 @@ export async function permissions(invocation: Invocation): Promise<CommandResult
       return {
         ...human_error(
           invocation.command,
-          `Access check failed: ${python_os_error_message(error)}. Review the selected paths and account access. ` +
+          `Access check failed: ${error.message}. Review the selected paths and account access. ` +
             'For a denied macOS grant, use System Settings > Privacy & Security > Files and Folders. No retry or permission reset occurred.',
         ),
         stdout: lines.join('\n') + '\n',
