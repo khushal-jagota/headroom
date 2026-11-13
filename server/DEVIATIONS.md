@@ -458,7 +458,7 @@ The Mac also refuses linked ancestors of its state root, including native `/tmp`
 New generation files receive strict full flushes, and their directories receive flushes before atomic generation publication.
 A damaged derived generation is preserved under a private `.invalid-*` name and rebuilt from the authoritative snapshot.
 Python instead refuses that existing generation. No source or provider user data is discarded by the rebuild.
-The successor host/storage maintenance work owns eventual removal of unreferenced generations and abandoned stages.
+The Mac host does not collect unreferenced generations or abandoned stages.
 This slice adds no generation sweeper. Native durability, Darwin directory ABI, and filesystem failure behavior remain later Mac checks.
 
 ## Mac outbox cleanup after commit
@@ -563,13 +563,6 @@ approval lookups also require own keys, as Python dictionary access does.
 The wider assignment and error-order inventory remains in
 [the audit](/files/tickets/t_jt78h9xr/artifacts/data-key-enumeration-audit.md).
 No shared JSON parser or object representation changes form part of this acceptance.
-
-## CLI executor socket transport — accepted, temporary, owner: the executor unit
-
-HTTP-client commands currently refuse `PLAN_EXECUTOR_ROOT` with a validation error while Unit 22 supplies the executor socket route.
-Python routes those calls through its executor transport. Help and offline declarations do not need that route.
-This is a temporary implementation gap owned by Unit 22, with CLI binding in Unit 20.
-The migration Manager accepted this temporary refusal. It remains until the executor unit supplies the socket route.
 
 ## Executor message and core admission
 
