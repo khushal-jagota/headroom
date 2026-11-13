@@ -354,6 +354,9 @@ async function extract_archive(
       child.stdin!.on('error', (error) => {
         failure ??= error;
       });
+      child.stdout!.on('error', (error) => {
+        failure ??= error;
+      });
       let diagnostic = '';
       child.stderr!.on('data', (bytes: Buffer) => {
         diagnostic = (diagnostic + bytes.toString('utf8')).slice(-2000);
