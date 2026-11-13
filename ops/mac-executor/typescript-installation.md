@@ -1,6 +1,6 @@
 # Separate TypeScript Mac executor
 
-This document starts the native handoff for the TypeScript executor. Packaging and the complete installation procedure remain pending.
+The package producer assembles a separate Node executor and unsigned installation assets from supplied Darwin arm64 inputs.
 No command in this document ran on the owner's Mac during this Ticket.
 The shared codec embeds its schema as `WIRE_SCHEMA` in `server/executor/wire.generated.ts`. It does not read `wire.schema.json` at runtime.
 Use a separate app, supervisor, job, and state root. Keep the Python installation idle for rollback after cutover.
@@ -11,6 +11,145 @@ An explicit state root still needs an operator review against the actual Python 
 Provider homes and credentials remain account resources. Separate roots do not solve shared skill publication.
 The owner must choose the shared-publication policy before concurrent native use.
 
+## Produce the reviewed package
+
+Use the exact approved source revision. Supply an official Darwin arm64 Node distribution and production dependencies for that Node version.
+Use Node 22.18 or later in the Node 22 series, or Node 24.
+Prepare dependencies with `npm ci --omit=dev` from the approved `server/package-lock.json` on Darwin arm64.
+The producer requires the installed lock metadata and exact direct dependency versions.
+It checks Mach-O headers for Node, better-sqlite3, and Koffi. These checks do not establish provenance or ABI compatibility.
+The Manager must arrange genuine Darwin package construction and native addon load checks before installation.
+
+Run the producer from the approved checkout with its development dependencies:
+
+```sh
+node server/executor/mac/packaging/main.ts \
+  --source "$APPROVED_SOURCE" \
+  --node-distribution "$DARWIN_ARM64_NODE" \
+  --node-modules "$DARWIN_PRODUCTION_NODE_MODULES" \
+  --output "$NEW_PACKAGE_DIRECTORY" \
+  --revision "$APPROVED_REVISION" \
+  --home "$TARGET_MAC_HOME" \
+  --executor-id "$APPROVED_EXECUTOR_ID" \
+  --server-url "$APPROVED_HTTPS_PEER" \
+  --backend-path "$REVIEWED_BACKEND_PATH"
+```
+
+All input paths must identify reviewed inputs. The output parent must exist, and the output directory must be new.
+`--home` is the target account's absolute home, even when another machine assembles the package.
+`--backend-path` contains absolute directories for the installed provider commands and ordinary system tools.
+The producer does not download, execute, sign, or install its inputs.
+
+The output contains these artifacts:
+
+| Artifact | Purpose |
+| --- | --- |
+| `panels-mac-runtime.tar.gz` | Runtime archive for initial installation and later updates. |
+| `runtime/` | Expanded archive with `node/bin/node`, `bin/panels`, production dependencies, and TypeScript source. |
+| `runtime/mac-runtime.json` | Exactly `schema_version`, `application_revision`, `platform`, and `architecture`. |
+| `assets/` | Candidate app metadata, native launcher source, manual console, LaunchAgent, and target paths. |
+| `build.json` | Source revision, Node version, Node digest, archive digest, and target paths. |
+| `INSTALLATION.md` | This handoff document. |
+
+The wire schema remains embedded in `wire.generated.ts`. The runtime excludes the Python server and Python interpreter.
+The two plain Hermes scripts remain provider assets. The installed Hermes environment supplies their interpreter.
+The package also includes static skills, Worker seed data, CLI metadata, and the shell startup asset.
+
+## Install from the owner's native session
+
+These commands are a future owner procedure. They do not authorize this Ticket to install or launch anything.
+Keep the Python installation idle. Review any nondefault Python root before the first TypeScript start.
+Resolve the shared provider skill policy before the first real provider session.
+
+Use a new private package directory on the Mac. Set `PACKAGE` to its absolute path.
+Compare `build.json` and the archive digest with the Manager's approved revision and digest through a separate trusted record.
+Check that `assets/installation.json` names this account's actual `HOME`, reviewed executor ID, HTTPS peer, and provider PATH.
+If any target differs, regenerate the package assets before installation.
+
+```sh
+shasum -a 256 "$PACKAGE/panels-mac-runtime.tar.gz"
+cat "$PACKAGE/build.json"
+cat "$PACKAGE/assets/installation.json"
+```
+
+The fixed paths are:
+
+| Item | Path or identity |
+| --- | --- |
+| Install | `~/Deployments/PanelsExecutorTypeScript` |
+| Fixed Node | `~/Deployments/PanelsExecutorTypeScript/supervisor/node/bin/node` |
+| Fixed bootstrap | `~/Deployments/PanelsExecutorTypeScript/supervisor/server/executor/mac/entrypoint.ts` |
+| Manual console | `~/Deployments/PanelsExecutorTypeScript/bin/panels` |
+| Signed app | `~/Applications/Panels TypeScript.app` |
+| App executable | `~/Applications/Panels TypeScript.app/Contents/MacOS/Panels` |
+| Bundle identity | `com.panels.executor.typescript.app` |
+| LaunchAgent | `~/Library/LaunchAgents/com.panels.executor.typescript.plist` |
+| Job label | `com.panels.executor.typescript` |
+| State | `~/Library/Application Support/Panels/executor-typescript` |
+| Unix socket | `~/Library/Application Support/Panels/executor-typescript/run/executor.sock` |
+| Launch logs | `~/Library/Application Support/Panels/executor-typescript/logs/launch-agent.{stdout,stderr}.log` |
+| Updated runtime | `<state>/updates/releases/<revision>-<archive-sha256>` |
+
+The native app executes the fixed supervisor Node and bootstrap with the original arguments.
+The supervisor launches the selected versioned runtime as a child. It retains its own Node across runtime updates.
+The versioned `bin/panels` uses its own adjacent Node and entrypoint. The supervisor prepends this directory to agent PATH.
+The manual console always enters through the signed app.
+
+Check that the install, app, and job destinations are absent before this first-install procedure.
+Do not overwrite an existing installation with these commands.
+
+```sh
+set -eu
+TS_INSTALL="$HOME/Deployments/PanelsExecutorTypeScript"
+TS_ROOT="$HOME/Library/Application Support/Panels/executor-typescript"
+TS_APP="$HOME/Applications/Panels TypeScript.app"
+TS_PLIST="$HOME/Library/LaunchAgents/com.panels.executor.typescript.plist"
+test ! -e "$TS_INSTALL" && test ! -L "$TS_INSTALL"
+test ! -e "$TS_APP" && test ! -L "$TS_APP"
+test ! -e "$TS_PLIST" && test ! -L "$TS_PLIST"
+umask 077
+mkdir -p "$HOME/Deployments" "$HOME/Applications" "$HOME/Library/LaunchAgents"
+mkdir "$TS_INSTALL"
+mkdir "$TS_INSTALL/supervisor"
+tar -xzf "$PACKAGE/panels-mac-runtime.tar.gz" -C "$TS_INSTALL/supervisor"
+mkdir "$TS_INSTALL/bin"
+install -m 755 "$PACKAGE/assets/bin/panels" "$TS_INSTALL/bin/panels"
+ditto "$PACKAGE/assets/Panels TypeScript.app" "$TS_APP"
+mkdir -p "$TS_APP/Contents/MacOS"
+clang -arch arm64 -O2 "$PACKAGE/assets/launcher.c" -o "$TS_APP/Contents/MacOS/Panels"
+```
+
+Choose the owner's Apple Development signing identity. Do not substitute ad hoc signing.
+Sign this separate app and retain its identity across later updates.
+
+```sh
+security find-identity -v -p codesigning
+codesign --force --sign "$APPLE_DEVELOPMENT_IDENTITY" "$TS_APP"
+codesign --verify --strict --verbose=2 "$TS_APP"
+codesign -dv --verbose=4 "$TS_APP"
+plutil -lint "$TS_APP/Contents/Info.plist"
+plutil -lint "$PACKAGE/assets/com.panels.executor.typescript.plist"
+```
+
+Complete the native load and consent checks below before the first service start.
+The signed app must receive any required file permissions through the normal macOS consent flow.
+Install only the separate TypeScript LaunchAgent:
+
+```sh
+mkdir -p "$TS_ROOT/logs"
+chmod 700 "$TS_ROOT" "$TS_ROOT/logs"
+install -m 600 "$PACKAGE/assets/com.panels.executor.typescript.plist" "$TS_PLIST"
+launchctl bootstrap "gui/$(id -u)" "$TS_PLIST"
+launchctl print "gui/$(id -u)/com.panels.executor.typescript"
+"$TS_INSTALL/bin/panels" executor status
+```
+
+Check the selected revision, socket path, health response, and launch logs before real work.
+Record the package digest, Node version, signing identity, bundle identity, and job label with the native handoff.
+Use `executor quiesce --exit-when-ready` before a planned stop.
+Require committed exit, zero work counts, and exit of the recorded runtime before unloading this job.
+If startup fails, retain the state and logs. Use the recovery procedure below when SQLite reports version zero.
+
 ## Preserve a failed first initialization
 
 An existing outbox with SQLite `user_version=0` is incompatible. TypeScript refuses it before a lock or storage mutation.
@@ -18,19 +157,18 @@ A failed fresh initialization can leave this file. The refusal deliberately pres
 Version zero alone does not establish that the directory contains no work.
 Do not delete the database, its WAL, its SHM, or the state root to force another start.
 
-The owner must fill these values from the reviewed TypeScript installation before any recovery command:
+Use these exact default paths for recovery. Review any explicit state-root override before use:
 
 ```sh
-TS_ROOT='/ABSOLUTE/REVIEWED/TypeScript/state-root'
-TS_PANELS='/ABSOLUTE/REVIEWED/TypeScript/bin/panels'
-TS_NODE='/ABSOLUTE/REVIEWED/TypeScript/bin/node'
-TS_PACKAGE='/ABSOLUTE/REVIEWED/TypeScript/package-with-node_modules'
+TS_ROOT="$HOME/Library/Application Support/Panels/executor-typescript"
+TS_PANELS="$HOME/Deployments/PanelsExecutorTypeScript/bin/panels"
+TS_NODE="$HOME/Deployments/PanelsExecutorTypeScript/supervisor/node/bin/node"
+TS_PACKAGE="$HOME/Deployments/PanelsExecutorTypeScript/supervisor/server"
 TS_JOB='com.panels.executor.typescript'
 PYTHON_ROOT="$HOME/Library/Application Support/Panels/executor"
-EVIDENCE='/ABSOLUTE/PRIVATE/recovery-evidence'
+EVIDENCE="$HOME/Deployments/PanelsExecutorTypeScript/recovery-evidence-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
 
-These are placeholders, not installation defaults. The final package must supply its exact executable and package paths.
 The evidence directory must be new and outside both state roots. Its parent must already exist.
 Never substitute the live Python console or its job label.
 Check both resolved roots and the console before a service action:
@@ -165,7 +303,7 @@ Synthetic Linux checks prove neither Darwin ABI nor native disk behavior.
 ## Canonical skills in the native session
 
 Run these steps with synthetic snapshots, a private TypeScript state root, and a private provider home before any real provider starts.
-The later package must supply the exact launcher for `MacSkillsPublisher` from `server/executor/mac/skills/index.ts`.
+The packaged entrypoint creates `MacSkillsPublisher` from `server/executor/mac/skills/index.ts` through the trusted host.
 
 1. Publish a snapshot with non-ASCII text and CRLF bytes. Compare its generation digest, `SKILL.md` bytes, and account links with Python.
 2. Publish the same snapshot again, then replace one source. Check generation reuse, owned retired links, stale generation links, and preserved unrelated entries.
