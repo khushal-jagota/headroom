@@ -1,5 +1,6 @@
 /** Startup catalog probes never submit a user prompt or select another executable. */
 import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { afterEach, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import { load_claude_sdk } from './claude_sdk.ts';
@@ -69,6 +70,9 @@ it('closes the exact probe on timeout and reaps only its recorded child', async 
     exitCode: null as number | null,
     signalCode: null as string | null,
     kill: vi.fn(() => true),
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
   });
   vi.mocked(spawn).mockReturnValue(child as never);
   const close = vi.fn();
@@ -99,6 +103,7 @@ it('closes the exact probe on timeout and reaps only its recorded child', async 
     children,
   });
   child.signalCode = 'SIGKILL';
+  child.emit('exit', null, 'SIGKILL');
   child.emit('close', null);
   await vi.advanceTimersByTimeAsync(0);
   expect(settled).toBe(false);
@@ -137,10 +142,16 @@ it('retains the startup failure and reaps its child if SDK close also fails', as
     exitCode: null as number | null,
     signalCode: null as string | null,
     kill: vi.fn(),
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
   });
   const signal_group = vi.spyOn(process, 'kill').mockImplementation(() => {
     child.signalCode = 'SIGKILL';
-    queueMicrotask(() => child.emit('close', null));
+    queueMicrotask(() => {
+      child.emit('exit', null, 'SIGKILL');
+      child.emit('close', null);
+    });
     return true;
   });
   vi.mocked(spawn).mockReturnValue(child as never);
