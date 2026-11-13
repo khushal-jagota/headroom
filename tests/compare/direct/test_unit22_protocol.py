@@ -643,18 +643,24 @@ def test_unit22_shared_protocol_exchange(tmp_path: Path, request: pytest.Fixture
         "unsafe_exact": "10000000000000000000",
     }
     # The timed hot-path message uses the exact configured batch byte budget.
-    large = deepcopy(fixtures["LiveEventBatch"])
+    event_count = 256
+    large = {
+        "events": [deepcopy(fixtures["LiveEventBatch"]["events"][0]) for _ in range(event_count)]
+    }
     limit = 4 * 1024 * 1024
     initial = wire.encode_bounded(
         wire.type_adapter(wire.LiveEventBatch).validate_python(large), limit=limit
     )
-    large["events"][0]["arguments"]["text_delta"] += "x" * (limit - len(initial))
+    padding, remainder = divmod(limit - len(initial), event_count)
+    for index, event in enumerate(large["events"]):
+        event["arguments"]["text_delta"] += "x" * (padding + (index < remainder))
     expected_large = wire.encode_bounded(
         wire.type_adapter(wire.LiveEventBatch).validate_python(large), limit=limit
     )
     performance = candidate["performance"]
     assert performance.pop("body") == base64.b64encode(expected_large).decode()
     assert performance["bytes"] == len(expected_large) == limit and performance["exact"] is True
+    assert performance["event_count"] == event_count
     directory = request.config.getoption("--compare-report-dir")
     if directory:
         report = Path(directory) / "unit-22-protocol.json"

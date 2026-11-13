@@ -220,15 +220,21 @@ const unsafe_case = spec.cases.find((entry) => entry.name === 'structured-unsafe
 const unsafe = decode_bounded(Buffer.from(unsafe_case.body, 'base64'), 'WaitingConversation');
 // Exactly one realistic hot-path batch, independently built from native TS values.
 const limit = 4 * 1024 * 1024;
-const initial = encode_bounded(native.LiveEventBatch, 'LiveEventBatch', { limit });
+const event_count = 256;
 const batch: WireTypes['LiveEventBatch'] = {
-  events: [
-    {
-      ...native.LiveEventBatch.events[0]!,
-      arguments: { text_delta: 'news' + 'x'.repeat(limit - initial.byteLength) },
-    },
-  ],
+  events: Array.from({ length: event_count }, () => ({
+    ...native.LiveEventBatch.events[0]!,
+    arguments: { text_delta: 'news' },
+  })),
 };
+const initial = encode_bounded(batch, 'LiveEventBatch', { limit });
+const padding = limit - initial.byteLength;
+batch.events.forEach((event, index) => {
+  const length = Math.floor(padding / event_count) + Number(index < padding % event_count);
+  event.arguments = {
+    text_delta: 'news' + 'x'.repeat(length),
+  };
+});
 const large = encode_bounded(batch, 'LiveEventBatch', { limit });
 const start = performance.now();
 const decoded = decode_bounded(large, 'LiveEventBatch', { limit });
@@ -237,6 +243,7 @@ const encoded = encode_bounded(decoded, 'LiveEventBatch', { limit });
 const encoded_at = performance.now();
 const performance_result = {
   bytes: large.byteLength,
+  event_count,
   decode_ms: decoded_at - start,
   encode_ms: encoded_at - decoded_at,
   elapsed_ms: encoded_at - start,
