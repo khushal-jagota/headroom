@@ -107,10 +107,16 @@ export class MacRetirement implements MacRetirementContract {
     await collect(() => this.dependencies.sources.finish(reference));
     const failures = [...errors];
     if (
-      errors.size === 0 && (this.dependencies.sources.failed(reference) ||
-      work.records(reference).some(
-        (record) => record.command.command_id !== command.command_id && record.outcome !== null && !record.settled,
-      ))
+      errors.size === 0 &&
+      (this.dependencies.sources.failed(reference) ||
+        work
+          .records(reference)
+          .some(
+            (record) =>
+              record.command.command_id !== command.command_id &&
+              record.outcome !== null &&
+              !record.settled,
+          ))
     )
       failures.push(
         Object.assign(new Error('required source publication failed'), {

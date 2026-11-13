@@ -28,7 +28,8 @@ export function create_mac_output_publication(outbox: OutboxStore): MacOutputPub
           : is_json_object(entry.payload.ask)
             ? entry.payload.ask.child
             : null;
-        const child_id = is_json_object(child) && typeof child.child_id === 'string' ? child.child_id : '';
+        const child_id =
+          is_json_object(child) && typeof child.child_id === 'string' ? child.child_id : '';
         const payload = Buffer.from(
           stringify_python_json(
             { payload: entry.payload, files: manifests },
