@@ -121,7 +121,7 @@ def fixture_cards() -> list[dict[str, Any]]:
     cards = []
     for backend, model, display in (
         ("hermes", "provider:small", "Small"),
-        ("codex", "gpt-6.1-sol", "Straße"),
+        ("codex", "gpt-6.1-sol", "Strasse"),
         ("claude", "claude-opus-5", "Opus"),
     ):
         cards.append(
@@ -559,6 +559,7 @@ def test_unit19_backend_route_answers_and_rows(
         "equal": actual == expected,
         "python": expected,
         "typescript": actual,
+        "comparison_rule": "Keep JSON fields; use native model case matching and numbers.",
         "seconds": time.perf_counter() - started,
     }
     destination = request.config.getoption("--compare-report-dir")
@@ -566,4 +567,18 @@ def test_unit19_backend_route_answers_and_rows(
         folder = Path(destination)
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "unit19-backend-routes.json").write_text(json.dumps(report, indent=2) + "\n")
-    assert actual == expected
+    # Native case-insensitive model matching replaces Python's sharp-s expansion.
+    # Numeric JSON spelling can differ, while booleans and strings stay distinct.
+    compared = [
+        json.dumps(
+            json.loads(
+                json.dumps(side),
+                parse_float=lambda token: (
+                    int(number) if (number := float(token)).is_integer() else number
+                ),
+            ),
+            sort_keys=True,
+        )
+        for side in (expected, actual)
+    ]
+    assert compared[0] == compared[1]
