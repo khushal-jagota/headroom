@@ -19,6 +19,7 @@ import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecyc
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import type { ChildReference, StartRun } from '../../wire.generated.ts';
 import type { BackendSnapshot } from '../../../conversation/snapshot/contracts.ts';
+import { gate, native_fixture_options } from './runner_fixture.ts';
 
 const started = performance.now(),
   root = process.argv[2]!;
@@ -249,17 +250,8 @@ try {
 }
 const parity = normalize({ launches, calls, errors }) as Record<string, unknown>;
 // A native start/stop can outlive a caller's deadline. No later factory may start.
-const gate = (() => {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-})();
-let entered!: () => void;
-const in_start = new Promise<void>((done) => {
-  entered = done;
-});
+const skill_gate = gate(),
+  skill_entered = gate();
 let actual = false,
   factory_calls = 0,
   invocations = 0;
@@ -268,8 +260,8 @@ const blocked = new MacNativeChildren({
   skills: {
     ...options.skills,
     async install_native_skill_snapshot() {
-      entered();
-      await gate.promise;
+      skill_entered.resolve();
+      await skill_gate.promise;
       return join(paths.skills, 'fixture-generation');
     },
     async stop() {},
@@ -287,7 +279,7 @@ const blocked_start = blocked.start(
   },
 );
 void blocked_start.catch(() => {});
-await in_start;
+await skill_entered.promise;
 const joined = blocked.settled().then(() => {
   actual = true;
 });
@@ -296,7 +288,7 @@ const expired = await blocked.stop({ deadline: performance.now() / 1000 - 1 }).t
   (error: unknown) => error,
 );
 const actual_waited = !actual;
-gate.resolve();
+skill_gate.resolve();
 await blocked_start.catch(() => {});
 await joined;
 if (invocations !== 0) throw new Error('Stopped skill preparation reached native invocation.');
@@ -353,46 +345,33 @@ Object.assign(lifecycle, {
     failed_actual instanceof AggregateError && failed_actual.errors.includes(publisher_failure),
   publisher_fault_once: cleanup_faults.length === 1 && cleanup_faults[0] === publisher_failure,
 });
-let native_entered!: () => void, release_native!: () => void;
-const native_entered_promise = new Promise<void>((resolve) => {
-  native_entered = resolve;
-});
-const native_wait = new Promise<void>((resolve) => {
-  release_native = resolve;
-});
+const native_entered = gate(),
+  native_wait = gate();
 let native_stops = 0;
 const native_failure = new ShutdownDeadlineExceeded(['Actual native stop failed.']);
 const native_faults: Error[] = [];
 const starting_native = new MacNativeChildren({
-  ...options,
-  files: {
-    async open_directory(path: string) {
-      mkdirSync(path, { recursive: true });
-      return { id: 0 };
-    },
-    async close_directory() {},
-  },
-  skills: {
-    ...options.skills,
-    async install_native_skill_snapshot() {
-      return join(paths.skills, 'fixture-generation');
-    },
-    async stop() {},
-  },
-  factory: () => () =>
-    ({
-      stop_outside_lock: false,
-      async start() {
-        native_entered();
-        await native_wait;
-      },
-      async stop() {
-        if (++native_stops === 1) throw native_failure;
-        release_native();
-      },
-    }) as unknown as BackendChild,
-  record_children: async () => {},
-  on_failure: (error) => native_faults.push(error),
+  ...native_fixture_options({
+    paths,
+    workspace_home: options.workspace_home,
+    native_skill_home: options.native_skill_home,
+    snapshot_directory: join(paths.skills, 'fixture-generation'),
+    on_failure: (error) => native_faults.push(error),
+    factory: () => () =>
+      ({
+        stop_outside_lock: false,
+        async start() {
+          native_entered.resolve();
+          await native_wait.promise;
+        },
+        async stop() {
+          if (++native_stops === 1) throw native_failure;
+          native_wait.resolve();
+        },
+      }) as unknown as BackendChild,
+  }),
+  message_files: options.message_files,
+  event_sink: options.event_sink,
 });
 const native_start = starting_native.start(
   {
@@ -404,7 +383,7 @@ const native_start = starting_native.start(
   () => {},
 );
 void native_start.catch(() => {});
-await native_entered_promise;
+await native_entered.promise;
 const native_stop_failure = await starting_native.stop(deadline()).catch((error: unknown) => error);
 await starting_native.stop(deadline()).catch(() => {});
 const native_actual_failure = await observe_shutdown(
