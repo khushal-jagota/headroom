@@ -1235,6 +1235,136 @@
       },
       "exit_code": 1,
       "proof": "Preserves the conversation subgroup’s missing-message validation error."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-operator",
+      "argv": [
+        "environment",
+        "--help"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Compares the environment group's exact help without selecting or executing an operator handler."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-operator",
+      "argv": [
+        "environment",
+        "--bogus"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 2,
+      "proof": "Compares the environment group's unknown-option error and exit 2 before an operator action is selected."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-operator",
+      "argv": [
+        "stalls",
+        "--help"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Compares the stalls group's exact help without selecting the watchdog or loading its provider adapters."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-operator",
+      "argv": [
+        "stalls",
+        "--bogus"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 2,
+      "proof": "Compares the stalls group's unknown-option error and exit 2 before watchdog execution."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-operator",
+      "argv": [
+        "serve",
+        "--help"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Compares the serve command's exact help without starting a server or reaching its temporary refusal."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-operator",
+      "argv": [
+        "serve",
+        "--bogus"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 2,
+      "proof": "Compares the serve command's unknown-option error and exit 2 before any lifecycle handler."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-operator",
+      "argv": [
+        "restart",
+        "--help"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Compares the restart command's exact help without opening a control socket or reaching its temporary refusal."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-operator",
+      "argv": [
+        "restart",
+        "--bogus"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 2,
+      "proof": "Compares the restart command's unknown-option error and exit 2 before any control-socket operation."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-operator",
+      "argv": [
+        "server-event-loop-tasks",
+        "--help"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Compares the hidden diagnostic's exact help without contacting a server or invoking the accepted unsupported handler."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-operator",
+      "argv": [
+        "server-event-loop-tasks",
+        "--bogus"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 2,
+      "proof": "Compares the hidden diagnostic's unknown-option error and exit 2 before its handler or any server request."
     }
   ],
   "probes": [],
