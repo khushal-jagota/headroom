@@ -26,7 +26,7 @@ Previews need trusted Tailscale ingress to be configured on the live host. Witho
 
 The Mac inspector reads libproc evidence for listener ownership, exact process birth, boot identity, and the current worktree. Before the proxy sends bytes, it checks that the same process owns the accepted connection. A PID or command string alone grants no ownership.
 
-Discovery requires one readable same-user owner. Unreadable or incomplete native evidence refuses the preview. Hidden foreign holders remain outside that observation. Linux and Mac use the same registry, limits, and retirement rules.
+Discovery requires one readable same-user owner. It skips peers whose permissions block inspection. The pinned process and its accepted connection must stay readable. Incomplete inventories and expired deadlines refuse the preview. Hidden holders remain outside that observation. Linux and Mac use the same registry, limits, and retirement rules.
 
 The lifecycle checks active previews once per second and after record changes. Mac discovery scans bounded process and descriptor inventories only at registration. Later checks read the pinned process. No extra Worker loop exists.
 
@@ -51,4 +51,4 @@ Preview traffic runs inside Headroom's process. Headroom caps concurrent request
 
 - `src/planner/previews/`: registry, proxy, process checks, and the CLI. Limits are in `config.py` and `limits.py`.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-14._

@@ -54,8 +54,9 @@ def loaded(root: Path, label: str, pid: int) -> str:
         + "arguments = {\n" + "\n".join(plistlib.loads(
             (root / "agents" / f"{label}.plist").read_bytes())["ProgramArguments"])
         + "\n}\nenvironment = {\n"
-        + f"PLAN_DB_PATH => {root / 'data/planner.db'}\n"
-        + f"PLAN_CONFIG_PATH => {root / 'data/config.yaml'}\n}}\n"
+        + "".join(f"{key} => {value}\n" for key, value in plistlib.loads(
+            (root / "agents" / f"{label}.plist").read_bytes())["EnvironmentVariables"].items())
+        + "}\n"
     )
 
 
@@ -202,6 +203,10 @@ def test_stop_waits_for_birth_identity_even_when_a_child_gets_a_new_parent(
     # child with the same birth identity must block replacement, even if its UID changes.
     identity = service(home)
     label = identity.label
+    home_plist = identity.plists[label]
+    changed = plistlib.loads(home_plist.read_bytes())
+    changed["EnvironmentVariables"]["PLAN_APNS_KEY_FILE"] = str(home / "data/push-key.p8")
+    home_plist.write_bytes(plistlib.dumps(changed))
     jobs = {label: loaded(home, label, 123),
             label + ".backup": loaded(home, label + ".backup", 125),
             label + ".maintenance": loaded(home, label + ".maintenance", 126),
@@ -256,6 +261,22 @@ def test_loaded_foreign_record_is_refused_even_when_the_plist_matches(
     monkeypatch.setattr(identity, "job", lambda name, **kwargs: text)
     with pytest.raises(ValueError, match="different PLAN_DB_PATH"):
         identity.authenticate(identity.label, required=True)
+
+    auxiliary = identity.label + ".maintenance"
+    path = identity.plists[auxiliary]
+    expected = plistlib.loads(path.read_bytes())
+    changed = {**expected, "EnvironmentVariables": {
+        **expected["EnvironmentVariables"], "PATH": "/foreign/bin",
+    }}
+    path.write_bytes(plistlib.dumps(changed))
+    with pytest.raises(ValueError, match="auxiliary plist"):
+        identity.plist(auxiliary)
+    path.write_bytes(plistlib.dumps(expected))
+    stale = loaded(home, auxiliary, 125).replace(
+        f"PATH => {expected['EnvironmentVariables']['PATH']}", "PATH => /foreign/bin")
+    monkeypatch.setattr(identity, "job", lambda *args, **kwargs: stale)
+    with pytest.raises(ValueError, match="different PATH"):
+        identity.authenticate(auxiliary, required=False)
 
 
 def prepared_attempt(home: Path) -> argparse.Namespace:

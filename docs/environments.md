@@ -53,7 +53,7 @@ Live and staging launches rebuild the process environment from a fixed allowlist
 The user units in `ops/panels-environments/` cover the live service, the deployment runner (kept for one release, only for the [update bridge](deployment.md#the-one-release-bridge)), and two daily timers:
 
 - **Backup.** Takes a verified snapshot of live data with the installed app. See [Backups](backups.md).
-- **Cleanup.** Runs `panels environment cleanup --apply`: rotates oversized logs, removes expired backup temporaries, prunes old verified backups, and runs the [Ticket file clock](#ticket-scratch). It re-proves every target when it runs and never stops a process or removes an environment or the installed app.
+- **Cleanup.** Runs `panels environment cleanup --apply`: rotates oversized Linux logs, truncates live Mac logs in place, removes expired backup temporaries, prunes old verified backups, and runs the [Ticket file clock](#ticket-scratch). It re-proves every target when it runs and never stops a process or removes an environment or the installed app.
 
 ## Ticket scratch
 

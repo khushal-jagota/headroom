@@ -41,6 +41,7 @@ class Libproc:
         self.cwd, self.birth = cwd, 123
         self.descriptors = {12: [tcp()]}
         self.error, self.truncate = 0, False
+        self.unreadable: set[int] = set()
 
     def proc_listpids(self, kind: int, uid: int, target: Any, size: int) -> int:
         for i, pid in enumerate(self.descriptors):
@@ -49,6 +50,9 @@ class Libproc:
 
     def proc_pidinfo(self, pid: int, flavor: int, arg: int, target: Any, size: int) -> int:
         if flavor == 1:
+            if pid in self.unreadable:
+                C.set_errno(errno.EPERM)
+                return 0
             for i, _ in enumerate(self.descriptors[pid]):
                 target[i].fd, target[i].kind = i + 3, 2
             return len(self.descriptors[pid]) * C.sizeof(native._FD)
@@ -120,13 +124,26 @@ def test_accepted_reverse_tuple_belongs_to_pinned_process(
     subject.connected(identity, 45678)
 
 
-def test_incomplete_unreadable_and_expired_evidence(tmp_path: Path) -> None:
+def test_incomplete_unreadable_and_expired_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     subject, library = inspector(tmp_path)
+    library.descriptors[13] = [tcp()]
+    library.unreadable.add(13)
+    identity = subject.discover(3001, tmp_path)
+    assert identity.pid == 12
     library.truncate = True
     with pytest.raises(PreviewError, match="incomplete"):
         subject.discover(3001, tmp_path)
     library.truncate, library.error = False, errno.EPERM
     with pytest.raises(PreviewError, match="unreadable"):
+        subject.check(identity)
+    with pytest.raises(PreviewError, match="unreadable"):
+        subject.connected(identity, 45678)
+    library.error = 0
+    library.descriptors[12].append(tcp())
+    monkeypatch.setattr(config, "DISCOVERY_FDS", 1)
+    with pytest.raises(PreviewError, match="bound exceeded"):
         subject.discover(3001, tmp_path)
     with pytest.raises(PreviewError, match="deadline"):
         subject._pids(time.monotonic() - 1)

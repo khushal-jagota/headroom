@@ -284,7 +284,10 @@ class DarwinProcessInspector:
         if size == 0 and C.get_errno() == errno.ESRCH:
             return []
         if size < 0 or (size == 0 and C.get_errno()):
-            raise PreviewError("Mac process descriptors are unreadable.", 410)
+            error = PreviewError("Mac process descriptors are unreadable.", 410)
+            if C.get_errno() in (errno.EACCES, errno.EPERM):
+                raise error from PermissionError(C.get_errno(), "libproc descriptors denied")
+            raise error
         if size % C.sizeof(_FD) or size >= C.sizeof(values):
             raise PreviewError("Process descriptor inspection bound exceeded.", 503)
         count = size // C.sizeof(_FD)
@@ -307,7 +310,10 @@ class DarwinProcessInspector:
             if length != C.sizeof(value):
                 if C.get_errno() in (errno.EBADF, errno.ESRCH):
                     continue
-                raise PreviewError("Mac socket ownership is unreadable.", 410)
+                error = PreviewError("Mac socket ownership is unreadable.", 410)
+                if C.get_errno() in (errno.EACCES, errno.EPERM):
+                    raise error from PermissionError(C.get_errno(), "libproc socket denied")
+                raise error
             if value.socket.kind == 2 and value.socket.protocol == socket.IPPROTO_TCP:
                 result.append(value.socket)
         return result
@@ -327,7 +333,14 @@ class DarwinProcessInspector:
         owners: dict[tuple[int, int], _Socket] = {}
         budget = [0]
         for pid in self._pids(deadline):
-            for value in self._sockets(pid, deadline, budget):
+            try:
+                sockets = self._sockets(pid, deadline, budget)
+            except PreviewError as exc:
+                if isinstance(exc.__cause__, PermissionError):
+                    # Like Linux, discovery proves one readable same-UID owner.
+                    continue
+                raise
+            for value in sockets:
                 if value.protocol_info.tcp.state == 1 and self._port(value) == port:
                     generation = int(value.protocol_info.tcp.internet.generation)
                     owners[pid, generation] = value

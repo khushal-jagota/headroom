@@ -117,6 +117,10 @@ def external_python(path: Path, root: Path) -> Path:
 
 
 MAC_SCHEDULE_SUFFIXES = (".maintenance", ".stall-watchdog")
+MAC_AUXILIARY_ENVIRONMENT_KEYS = (
+    "HOME", "PATH", "PLAN_CONFIG_PATH", "PLAN_DB_PATH", "PLAN_LOGS_DIR",
+    "PLAN_BACKUP_DIR", "PLAN_WORKSPACE_ROOT", "PLAN_PORT",
+)
 
 
 def mac_schedule_jobs(
@@ -196,7 +200,15 @@ class MacService:
                 self.root, self.label, [str(self.root / "app/bin/panels")],
                 home["EnvironmentVariables"], self.root,
             )[label]
-            if value != expected_job:
+            actual_binding = {
+                key: item for key, item in value.items() if key != "EnvironmentVariables"
+            }
+            expected_binding = {
+                key: item for key, item in expected_job.items() if key != "EnvironmentVariables"
+            }
+            if (actual_binding != expected_binding or "PLAN_APP_SHA" in environment
+                    or any(environment.get(key) != home["EnvironmentVariables"].get(key)
+                           for key in MAC_AUXILIARY_ENVIRONMENT_KEYS)):
                 raise ValueError("Mac auxiliary plist does not bind the expected installation")
             return cast(dict[str, Any], value)
         if (value.get("Label") != label or value.get("ProgramArguments") != expected
@@ -260,7 +272,9 @@ class MacService:
                                 text, re.MULTILINE | re.DOTALL)
         if environment is None:
             raise ValueError("Loaded Mac job environment is unavailable")
-        for key in ("PLAN_DB_PATH", "PLAN_CONFIG_PATH"):
+        keys = (MAC_AUXILIARY_ENVIRONMENT_KEYS if label in optional
+                else ("PLAN_DB_PATH", "PLAN_CONFIG_PATH"))
+        for key in keys:
             match = re.search(rf"^\s*{key} (?:=>|=) (.+)$", environment[1], re.MULTILINE)
             if match is None or match[1] != plist["EnvironmentVariables"][key]:
                 raise ValueError(f"Loaded Mac job has a different {key}")

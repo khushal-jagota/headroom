@@ -182,6 +182,7 @@ done
 The jobs remain registered for this login session. For automatic starts at later logins, link all four generated plists into `~/Library/LaunchAgents/`.
 Do not overwrite an existing plist. Keep the source and state paths unchanged.
 Logs live in `$PANELS_ROOT/logs/`. The backup job runs at 02:30 while your login session exists.
+Mac cleanup truncates oversized live logs in place because launchd retains their open descriptors.
 Maintenance runs at 03:15 through `environment cleanup --apply`. It uses the existing cleanup limits.
 The watchdog runs through `stalls watchdog` every 30 seconds, independently of the home process.
 It reads stall evidence and retains the existing alarm deduplication rules.
@@ -191,6 +192,8 @@ Their processor cost depends on the record and retained files.
 The login session owns all four jobs. Logout stops them. Sleep makes the home unreachable.
 Calendar jobs missed during sleep run after wake. Several missed calendar events coalesce into one run.
 The watchdog skips intervals during sleep. It resumes at a later interval and does not replay each missed check.
+After login or a missed watchdog stretch, the first interval defers only a stale-checker alarm.
+The next interval still alarms if the checker does not recover.
 An absent login session or powered-off Mac provides no execution promise or catch-up guarantee.
 See [Apple's timed-job guidance](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/ScheduledJobs.html)
 and [Apple's launchd manual](https://github.com/apple-oss-distributions/launchd/blob/main/man/launchd.plist.5).
