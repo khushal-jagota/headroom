@@ -61,11 +61,6 @@ def _unit_boundaries(
         "bin/panels",
         "bin/panels-launcher",
         ".venv/bin/python",
-        "server/environments/release/launcher_main.ts",
-        "server/lifecycle/foreground_main.ts",
-        "server/lifecycle/managed_main.ts",
-        "server/lifecycle/application.ts",
-        "server/lifecycle/stop_main.ts",
     ):
         path = layout / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,21 +68,10 @@ def _unit_boundaries(
         path.chmod(0o700)
     (layout / "runtime").mkdir()
     routes = []
-    for contract, payload, admitted, missing, expected in (
-        ({"version": 1}, {"version": 1}, "", False, "python-v1"),
-        ({"version": 2}, {"version": 2}, "", False, "node-v2"),
-        (None, None, SHA, False, "python-legacy-null"),
-        (None, None, "", False, "legacy null runtime is not admitted"),
-        ({"version": 2.0}, {"version": 2.0}, "", False, "unsupported runtime contract version"),
-        ({"version": 3}, {"version": 3}, "", False, "unsupported runtime contract version"),
-        (
-            {"version": 2},
-            {"version": 1},
-            "",
-            False,
-            "manifest runtime contract differs from payload",
-        ),
-        ({"version": 1}, {"version": 1}, "", True, ".venv/bin/python"),
+    # Other classifier routes already belong to the prerequisite Vitest case.
+    for contract, payload, missing, expected in (
+        ({"version": 3}, {"version": 3}, False, "unsupported runtime contract version"),
+        ({"version": 1}, {"version": 1}, True, ".venv/bin/python"),
     ):
         (layout / "manifest.json").write_text(
             json.dumps(
@@ -110,7 +94,7 @@ def _unit_boundaries(
                 "-e",
                 observed["classifier_source"],
                 str(layout),
-                admitted,
+                "",
             ],
             env=environment,
             capture_output=True,
@@ -118,12 +102,9 @@ def _unit_boundaries(
             timeout=5,
             check=False,
         )
-        if expected.startswith(("python-", "node-")):
-            assert (result.returncode, result.stdout, result.stderr) == (0, expected + "\n", "")
-        else:
-            assert result.returncode == 1 and result.stdout == ""
-            assert result.stderr.startswith("Panels runtime classification failed: ")
-            assert expected in result.stderr
+        assert result.returncode == 1 and result.stdout == ""
+        assert result.stderr.startswith("Panels runtime classification failed: ")
+        assert expected in result.stderr
         routes.append(dict(expected=expected, exit_code=result.returncode))
     assert all(observed["context"].values()), observed["context"]
     refusal = subprocess.run(
