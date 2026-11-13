@@ -109,6 +109,7 @@ export async function build_exported_app(
   const workspace = await mkdtemp(join(dirname(destination), `.${basename(destination)}-`));
   const payload = join(workspace, 'app'),
     archive = join(workspace, 'source.tar');
+  let succeeded = false;
   try {
     assert_release_execution(execution);
     await run_release_command(
@@ -169,6 +170,7 @@ export async function build_exported_app(
       require_runtime: options.install_dependencies,
     });
     assert_release_execution(execution);
+    succeeded = true;
     return manifest;
   } finally {
     try {
@@ -178,5 +180,6 @@ export async function build_exported_app(
         `app build cleanup failed; owned path: ${workspace}; ${String(error)}`,
       );
     }
+    if (succeeded) assert_release_execution(execution);
   }
 }
