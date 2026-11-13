@@ -18,7 +18,11 @@ import {
 } from './logic/host.ts';
 import { RUNTIME_ADMISSION_TIMEOUT_SECONDS } from './process_configuration.ts';
 import { find_release_executable } from './process.ts';
-import { RuntimeProbeUnsettled, run_runtime_json_probe, run_runtime_probe } from './admission_process.ts';
+import {
+  RuntimeProbeUnsettled,
+  run_runtime_json_probe,
+  run_runtime_probe,
+} from './admission_process.ts';
 import { NATIVE_NODE_PROBE } from './admission_probe.ts';
 import { NATIVE_PYTHON_PROBE } from './python_admission_probe.ts';
 import { resolved_path } from '../paths.ts';
@@ -32,7 +36,11 @@ function current(deadline: number): void {
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-async function candidate_tool_path(root: string, path: string, executable: boolean): Promise<string> {
+async function candidate_tool_path(
+  root: string,
+  path: string,
+  executable: boolean,
+): Promise<string> {
   const actual = await realpath(path);
   if (!inside(actual, root) || !(await is_file(actual)))
     throw new AppValidationError('runtime tool resolves outside the candidate or is not a file');
@@ -222,7 +230,14 @@ export async function admit_runtime(
     current(deadline);
     if (contract.version === 2) {
       const report = await run_runtime_json_probe(
-        [node, '--experimental-import-meta-resolve', '--input-type=module', '-e', NATIVE_NODE_PROBE, root],
+        [
+          node,
+          '--experimental-import-meta-resolve',
+          '--input-type=module',
+          '-e',
+          NATIVE_NODE_PROBE,
+          root,
+        ],
         state,
         deadline,
         child_processes,
@@ -246,11 +261,7 @@ export async function admit_runtime(
       );
     }
     current(deadline);
-    for (const command of native_tool_commands(
-      root,
-      contract,
-      node,
-    )) {
+    for (const command of native_tool_commands(root, contract, node)) {
       for (const [index, value] of command.entries()) {
         if (index === 0 && value === node) continue;
         if (isAbsolute(value)) command[index] = await candidate_tool_path(root, value, index === 0);
@@ -262,9 +273,11 @@ export async function admit_runtime(
   } catch (error) {
     if (error instanceof RuntimeProbeUnsettled) {
       deferred_cleanup = true;
-      void error.settled.finally(() => rm(state, { recursive: true, force: true })).catch((failure) => {
-        console.error(`Runtime probe deferred cleanup failed for ${state}: ${String(failure)}`);
-      });
+      void error.settled
+        .finally(() => rm(state, { recursive: true, force: true }))
+        .catch((failure) => {
+          console.error(`Runtime probe deferred cleanup failed for ${state}: ${String(failure)}`);
+        });
     }
     throw error;
   } finally {

@@ -730,12 +730,13 @@ def test_unit21_release_identity_archive_and_frontier(
     loader_input, expected_loader = _native_loader_fixture(tmp_path / "loader")
     launcher = tmp_path / "probe.mjs"
     launcher.write_text(
-        "const{release_parity,native_loader_parity,admission_rules_parity}="
+        "const{release_parity,native_loader_parity,admission_rules_parity,hostile_native_parity}="
         "await import(process.argv[2]);"
         "const result=await release_parity(process.argv[3],JSON.parse(process.argv[4]));"
         "result.native_loader=await native_loader_parity(JSON.parse(process.argv[5]));"
         "result.admission=await admission_rules_parity("
         "process.argv[3],JSON.parse(process.argv[6]));"
+        "result.hostile_native=await hostile_native_parity(process.argv[3]);"
         "console.log(JSON.stringify(result));"
     )
     env = {
@@ -805,6 +806,13 @@ def test_unit21_release_identity_archive_and_frontier(
     )
     assert actual["native_loader"] == expected_loader
     assert actual["admission"] == expected_admission
+    hostile_native = actual["hostile_native"]
+    if hostile_native["executed"]:
+        assert hostile_native["refused"] is True
+        assert hostile_native["outside_library"] == str(tmp_path / "outside-native/libm.so.6")
+        assert hostile_native["native_operation"] == "cos(0) = 1"
+    else:
+        assert hostile_native["reason"] == "Native candidate admission requires Linux x64 Node 22"
     group_proof = (
         _admission_group_proof(tmp_path / "hosted-admission-group", env, node)
         if os.environ.get("GITHUB_ACTIONS") == "true" and sys.platform == "linux"
@@ -976,6 +984,7 @@ def test_unit21_release_identity_archive_and_frontier(
                     },
                     "admission_rules": actual["admission"],
                     "admission_group": group_proof,
+                    "hostile_native": hostile_native,
                     "accepted_restrictions": [
                         "GNU sparse",
                         "PAX sparse",
