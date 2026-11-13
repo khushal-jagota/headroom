@@ -1,0 +1,25 @@
+{
+  "revisions": {
+    "canonical_manager_identities": [
+      "retire_explicit_reply_requirement"
+    ],
+    "executor_mailboxes": [
+      "canonical_manager_identities"
+    ],
+    "goal_holders": [],
+    "memory_notice_turns_are_maintenance": [
+      "retire_executor_websocket_tables"
+    ],
+    "retire_executor_websocket_tables": [
+      "stall_alarm_preference"
+    ],
+    "retire_explicit_reply_requirement": [
+      "goal_holders"
+    ],
+    "stall_alarm_preference": [
+      "executor_mailboxes"
+    ]
+  },
+  "source_digest": "3db3258036e842381d37cf83d622bba5c8e3e41381d776ee2dc56f6fa49d78d7",
+  "version": 1
+}

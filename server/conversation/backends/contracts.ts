@@ -16,6 +16,7 @@ import type {
 } from '../events.ts';
 import type { MessageContent } from '../message_content.ts';
 import type { ConversationMessageFiles } from '../message_files.ts';
+import type { StopOptions } from '../../lifecycle/contracts.ts';
 export interface TurnToken {
   readonly conversation_id: string;
   readonly turn_number: number;
@@ -308,7 +309,9 @@ export interface BackendEventSink {
 export interface BackendChild {
   readonly stop_outside_lock: boolean;
   withdraw_delivery(): Promise<boolean>;
-  detach(): Promise<void>;
+  detach(options?: StopOptions): Promise<void>;
+  /** Actual already-started stop work, without an observer deadline. */
+  settled?(): Promise<void>;
   start(
     resolved_start: ResolvedConversationStart,
     options: { vendor_session_cursor: string | null },
@@ -343,7 +346,7 @@ export interface BackendChild {
     answers: readonly UserInputAnswer[],
     options?: { answer_id?: string | null; turn_token?: TurnToken | null },
   ): Promise<AnswerFate>;
-  stop(): Promise<void>;
+  stop(options?: StopOptions): Promise<void>;
 }
 export interface BackendChildFactory {
   (options: {
