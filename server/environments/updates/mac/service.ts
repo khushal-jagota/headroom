@@ -158,6 +158,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
     this.ready_release = context.ready_release;
     this.emit = context.emit_change;
     this.applied_path = join(this.root, 'applied.json');
+    this.signal.throwIfAborted();
     this.retain_applied(this.attempts.read());
   }
   private archive_path(release: PublishedUpdate): string {
