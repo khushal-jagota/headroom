@@ -31,7 +31,7 @@ The client refuses that oversized body before HTTP. It never truncates or silent
 Main receives at most 32 IDs and one canonical body. It sends only submitted-and-settled IDs back.
 Every selection receives one accepted feedback attempt. A database failure in that attempt updates fairness and releases the selection before rejection.
 Ordinary admission retains its 32-operation cap and `code: EBUSY, unadmitted: true` refusal.
-Feedback and reference close release already-owned selections, readers, or cursors. They enter the same ordered tail without ordinary capacity refusal.
+Feedback and reader close release already-owned selections or readers. They enter the same ordered tail without ordinary capacity refusal.
 Those existing resource owners bound cleanup. No retry loop or new coordinator admits their release.
 Real `SQLITE_BUSY` after acceptance is not retried as the same feedback.
 Actual request or reply-handling failure attempts null feedback before body close and keeps failure fairness.

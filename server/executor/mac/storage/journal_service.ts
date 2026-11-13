@@ -488,9 +488,9 @@ export class CommandJournal implements AsyncCommandJournal {
     return this.enqueue(() => this.raw(action) as Promise<T>);
   }
   private call_cleanup<T>(
-    action: JournalAction & { operation: 'report_feedback' | 'reader_close' | 'cursor_close' },
+    action: JournalAction & { operation: 'report_feedback' | 'reader_close' },
   ): Promise<T> {
-    // These capabilities already belong to bounded selections/readers/cursors.
+    // These capabilities already belong to bounded selections and readers.
     // Queue their release behind ordinary work without refusing cleanup for its count.
     return this.enqueue(() => this.raw(action) as Promise<T>, true);
   }
@@ -727,9 +727,11 @@ export class CommandJournal implements AsyncCommandJournal {
   }
   async close_reference(operation: 'reader_close' | 'cursor_close', id: number): Promise<void> {
     if (this.closed) return;
-    await this.call_cleanup(
-      operation === 'reader_close' ? { operation, reader: id } : { operation, cursor: id },
-    );
+    if (operation === 'reader_close') {
+      await this.call_cleanup({ operation, reader: id });
+    } else {
+      await this.call({ operation, cursor: id });
+    }
   }
   private join_actual(): Promise<void> {
     this.joined ??= (async () => {
