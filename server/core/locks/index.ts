@@ -1,11 +1,4 @@
-import {
-  closeSync,
-  constants,
-  mkdirSync,
-  openSync,
-  lstatSync,
-  chmodSync,
-} from 'node:fs';
+import { closeSync, constants, mkdirSync, openSync, lstatSync, chmodSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { flock } from './flock.ts';
