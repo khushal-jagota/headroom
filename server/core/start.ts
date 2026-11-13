@@ -10,6 +10,8 @@ import type { Clock } from './clock.ts';
 import type { Config } from './config.ts';
 import { ChangeSignal } from './changes/index.ts';
 import { createDatabase } from './database/index.ts';
+import { require_application_schema } from './database/admission.ts';
+import { notify_chief as notify_chief_of_integrity_faults } from '../tickets/integrity_notice.ts';
 import type { Database } from './database/index.ts';
 import { acquireRuntimeOwnership, acquireLock } from './locks/index.ts';
 
@@ -122,6 +124,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   config.db_path = assert_test_database_path(config.db_path);
   const ownership = acquireRuntimeOwnership(config.db_path);
   let environments: EnvironmentRuntime | undefined;
+  let stopped_environments: EnvironmentRuntime | undefined;
   let environmentsStarting: Promise<void> | undefined;
   const areas = createAreasRuntime(() => environments?.resourceProviders ?? []);
   const conversationWrites = new ConversationHttpWriteScope();
@@ -131,13 +134,28 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   let publication: SignalPublicationCoordinator | undefined;
   let core: SqliteProcessConversationSystem | undefined;
   let backendServices: BackendHttpRuntime | undefined;
+  let stopped_core: SqliteProcessConversationSystem | undefined;
+  let stopped_backend: BackendHttpRuntime | undefined;
   let credential_requests: CredentialRequestOperations | null = null;
   let recorded_usage: RecordedUsageService | undefined;
+  let stopped_usage: RecordedUsageService | undefined;
   let video_uploads: VideoUploadService | undefined;
   let app: FastifyInstance | undefined;
+  let stopped_app: FastifyInstance | undefined;
   let ownership_current = true;
   let signalRevoked = false;
   let recovery: Promise<void> | undefined;
+  let stop_options: StopOptions | undefined;
+  let setup_cleanup_failure: unknown;
+  let setup_cleanup_failed = false;
+  let settle_setup!: () => void;
+  let fail_setup!: (error: unknown) => void;
+  // This reservation precedes every factory and asynchronous setup continuation.
+  const setup_actual = new Promise<void>((resolve, reject) => {
+    settle_setup = resolve;
+    fail_setup = reject;
+  });
+  void setup_actual.catch(() => {});
   const requireOwnership = () => {
     if (!ownership_current) throw new Error('the conversation runtime is shut down');
   };
@@ -194,6 +212,8 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       }
     },
     begin(stages, stop) {
+      stop_options = stop;
+      stages.own('startup setup', () => setup_actual);
       // Independent fences all run, even if one throws. The coordinator publishes
       // its latch/deadlines and referenced hard timer before entering this callback.
       stages.own('HTTP admission', () => request_lifetime.seal());
@@ -235,8 +255,11 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       };
       producer(
         'recorded usage',
-        () => recorded_usage?.stop?.(stop),
-        () => recorded_usage?.settled() ?? Promise.resolve(),
+        () => {
+          stopped_usage = recorded_usage;
+          return recorded_usage?.stop?.(stop);
+        },
+        () => stopped_usage?.settled() ?? Promise.resolve(),
       );
       producer(
         'background services',
@@ -245,20 +268,29 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       );
       producer(
         'environment services',
-        () => environments?.close(stop),
-        () => environments?.settled() ?? Promise.resolve(),
+        () => {
+          stopped_environments = environments;
+          return environments?.close(stop);
+        },
+        () => stopped_environments?.settled() ?? Promise.resolve(),
       );
       stages.own('environment setup', () => environmentsStarting?.catch(() => {}));
       producer(
         'backend services',
-        () => backendServices?.shutdown?.(stop),
-        () => backendServices?.settled() ?? Promise.resolve(),
+        () => {
+          stopped_backend = backendServices;
+          return backendServices?.shutdown?.(stop);
+        },
+        () => stopped_backend?.settled() ?? Promise.resolve(),
       );
       // Core cancellation/detach begins before any HTTP/raw-provider wait.
       producer(
         'conversation core',
-        () => core?.shutdown(stop),
-        () => core?.settled() ?? Promise.resolve(),
+        () => {
+          stopped_core = core;
+          return core?.shutdown(stop);
+        },
+        () => stopped_core?.settled() ?? Promise.resolve(),
       );
       producer(
         'video transfers',
@@ -266,7 +298,10 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         () => video_uploads?.settled() ?? Promise.resolve(),
       );
       stages.own('one-shot children', () => one_shot_children.settled());
-      stages.own('HTTP server', () => app?.close());
+      stages.own('HTTP server', () => {
+        stopped_app = app;
+        return app?.close();
+      });
       stages.own('HTTP work', () => request_lifetime.settled());
       stages.own('media cleanup', () => video_cleanup_work);
       stages.own('HTTP writes', () => conversationWrites.drain());
@@ -311,6 +346,101 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   });
   const close = (stop?: StopOptions): Promise<void> => shutdown.close(stop);
   const isClosing = () => shutdown.shutdown_state.kind !== 'running';
+  const assert_startup_open = () => {
+    if (isClosing()) throw new Error('Server closed during startup');
+  };
+  const abort_late_setup = async (): Promise<never> => {
+    const actuals: Promise<unknown>[] = [];
+    // Shutdown can run before either asynchronous factory assigns its result.
+    // Retain those late resources inside setup rather than restarting close().
+    if (core && core !== stopped_core) {
+      stopped_core = core;
+      try {
+        actuals.push(
+          Promise.resolve(core.shutdown(stop_options!)).catch((error: unknown) => {
+            if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+          }),
+        );
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
+      try {
+        actuals.push(core.settled());
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
+    }
+    if (backendServices && backendServices !== stopped_backend) {
+      stopped_backend = backendServices;
+      try {
+        actuals.push(
+          Promise.resolve(backendServices.shutdown?.(stop_options!)).catch((error: unknown) => {
+            if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+          }),
+        );
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
+      try {
+        actuals.push(backendServices.settled());
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
+    }
+    if (recorded_usage && recorded_usage !== stopped_usage) {
+      stopped_usage = recorded_usage;
+      try {
+        actuals.push(
+          Promise.resolve(recorded_usage.stop?.(stop_options!)).catch((error: unknown) => {
+            if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+          }),
+        );
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
+      try {
+        actuals.push(recorded_usage.settled());
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
+    }
+    if (environments && environments !== stopped_environments) {
+      stopped_environments = environments;
+      try {
+        actuals.push(
+          Promise.resolve(environments.close(stop_options!)).catch((error: unknown) => {
+            if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+          }),
+        );
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
+      try {
+        actuals.push(environments.settled());
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
+    }
+    if (app && app !== stopped_app) {
+      stopped_app = app;
+      try {
+        actuals.push(app.close());
+      } catch (error) {
+        actuals.push(Promise.reject(error));
+      }
+    }
+    const results = await Promise.allSettled(actuals);
+    const failures = results.filter((result) => result.status === 'rejected');
+    if (failures.length) {
+      setup_cleanup_failed = true;
+      setup_cleanup_failure = new AggregateError(
+        failures.map((failure) => failure.reason),
+        'Late startup cleanup failed',
+      );
+      throw setup_cleanup_failure;
+    }
+    throw new Error('Server closed during startup');
+  };
   const started = (address: string): StartedServer => ({
     address,
     close,
@@ -321,9 +451,12 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       return shutdown.shutdown_settled;
     },
   });
-  try {
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) process.on(signal, onSignal);
+  const setup = async (): Promise<string> => {
+    assert_startup_open();
     const changes = new ChangeSignal();
     const clock = buildClock(config);
+    require_application_schema(config.db_path);
     database = createDatabase(config.db_path, {
       commitSteps: areas.commitSteps,
       onChange: () => changes.emit(),
@@ -333,7 +466,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       require_runtime_ownership: requireOwnership,
     });
     areas.bindPublication(publication);
-    areas.prepare(database);
+    const integrity_issues = areas.prepare(database);
     if (!config.test_mode && config.dispatch_enabled) {
       dispatcher = acquireLock(config.dispatcher_lock_path);
     }
@@ -355,6 +488,8 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       child_processes,
     };
     core = options.createConversationCore?.(context);
+    if (isClosing()) return abort_late_setup();
+    assert_startup_open();
     if (core)
       credential_requests = new CredentialRequestOperations({
         database,
@@ -389,10 +524,14 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         }),
         one_shot_children,
       });
+    if (isClosing()) return abort_late_setup();
+    assert_startup_open();
     const conversationSystem = options.conversationSystem ?? core;
     const usage =
       options.createUsageService?.(context) ?? makeUsageService(config, { now: () => clock.now() });
     recorded_usage = usage;
+    if (isClosing()) return abort_late_setup();
+    assert_startup_open();
     if (core) {
       const current = core;
       areas.bindRuntimeFacts(async (conversation_id) => ({
@@ -403,6 +542,8 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     }
     publication.bind_runtime((conversation_id) => core?.runtime_turn(conversation_id) ?? null);
     options.beforePublication?.(database);
+    if (isClosing()) return abort_late_setup();
+    assert_startup_open();
     publication.initialize();
     areas.attachNavigation();
     const testContext: TestCompositionContext = {
@@ -412,10 +553,14 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       backendServices,
     };
     environments = await options.createEnvironments?.(testContext);
+    if (isClosing()) return abort_late_setup();
+    assert_startup_open();
     const testAreas =
       typeof options.testAreas === 'function'
         ? options.testAreas(testContext)
         : (options.testAreas ?? []);
+    if (isClosing()) return abort_late_setup();
+    assert_startup_open();
     const ownedContext: OwnedAreaContext = {
       database,
       config,
@@ -440,6 +585,9 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       stallChecker: options.stallChecker,
     });
     app = await createApp(config, {
+      own_app: (created) => {
+        app = created;
+      },
       request_lifetime,
       database,
       changes,
@@ -492,12 +640,19 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       conversationSystem,
       workspaceAdmission: conversationSystem?.workspace_admission,
     });
-    for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-      process.on(signal, onSignal);
-    }
+    if (isClosing()) return abort_late_setup();
+    await app.ready();
+    if (isClosing()) return abort_late_setup();
+    assert_startup_open();
+    areas.startRecordReplay(core?.workspace_admission);
+    assert_startup_open();
+    await areas.startRouteServices();
+    if (isClosing()) return abort_late_setup();
+    assert_startup_open();
     if (core) {
       const current = core;
       uploads.recover_and_cleanup();
+      assert_startup_open();
       video_cleanup_timer = setInterval(() => {
         if (isClosing() || video_cleanup_work !== undefined) return;
         video_cleanup_work = current.workspace_admission.operation(async (admitted) => {
@@ -505,7 +660,6 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         });
         void video_cleanup_work
           .catch((error) => {
-            clearInterval(video_cleanup_timer);
             console.error('Video upload cleanup failed', error);
           })
           .finally(() => {
@@ -517,7 +671,10 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       recovery = Promise.resolve().then(() =>
         current.workspace_admission.operation(async (admitted) => {
           if (!admitted) return;
+          await notify_chief_of_integrity_faults(database!, current, clock, integrity_issues);
+          if (current.workspace_admission.closed) return;
           await current.tell_agents_of_background_tasks_lost_at_restart();
+          if (current.workspace_admission.closed) return;
           await run_automatic_recovery(current, database!);
         }),
       );
@@ -528,7 +685,8 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
           if (recovery === active_recovery) recovery = undefined;
         },
         (error) => {
-          console.error('Conversation startup recovery failed', error);
+          if (!is_shutdown_business_cancellation(error))
+            console.error('Conversation startup recovery failed', error);
           if (recovery === active_recovery) recovery = undefined;
         },
       );
@@ -538,25 +696,35 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       if (!isClosing()) return environments?.start();
     });
     await environmentsStarting;
-    if (isClosing()) {
-      await close();
-      throw new Error('Server closed during startup');
+    if (isClosing()) return abort_late_setup();
+    assert_startup_open();
+    if (core && !config.test_mode) {
+      await core.start_idle_child_janitor();
+      if (isClosing()) return abort_late_setup();
     }
+    assert_startup_open();
     await background.start();
-    if (isClosing()) {
-      await close();
-      throw new Error('Server closed during startup');
-    }
+    if (isClosing()) return abort_late_setup();
+    assert_startup_open();
     const inherited = process.env.PLAN_SERVER_LISTENER_FD;
     if (inherited !== undefined) {
       const fd = Number(inherited);
       if (!Number.isInteger(fd) || fd < 0) throw new Error('invalid PLAN_SERVER_LISTENER_FD');
       const address = await app.listen({ fd } as FastifyListenOptions & { fd: number });
-      return started(address);
+      return address;
     } else {
       const address = await app.listen({ host: '127.0.0.1', port: config.port });
-      return started(address);
+      return address;
     }
+  };
+  // Publish setup ownership before any synchronous callback can request shutdown.
+  const setting_up = Promise.resolve().then(setup);
+  void setting_up.then(
+    () => settle_setup(),
+    () => (setup_cleanup_failed ? fail_setup(setup_cleanup_failure) : settle_setup()),
+  );
+  try {
+    return started(await setting_up);
   } catch (error) {
     try {
       await close();

@@ -64,6 +64,33 @@ The rule file contains reason maps:
 
 The `*` response path segment denotes an array item. It is not an arbitrary wildcard. Do not hide content digests as random ids. Give each wall-time field an explicit rule and reason.
 
+## Retired duplicate domain lists
+
+The following originals retire in favor of their existing real-core copies. For
+each original filename, its copy adds the prefix `unit-15.real-core-reruns.` in
+the same `lists/` directory. For example, `unit-09.json` maps to
+`unit-15.real-core-reruns.unit-09.json`.
+The copy retains the original product requests, seeds, probes, and source roots.
+Its rules add no exception keys beyond the original rules. Fixture conversions
+use canonical adoption, real inspectors, and actual completion through the core.
+They do not claim equality with the in-memory conversation protocol.
+
+| Original unit | Retired originals |
+| --- | --- |
+| 07 | `unit-07.complete.json`, `unit-07.lifecycle.json`, `unit-07.links-accepted.json`, `unit-07.links-edited.json`, `unit-07.links-pending.json`, `unit-07.links-rejected.json` |
+| 08 | `unit-08.delivery.json`, `unit-08.managers.json`, `unit-08.wakes.json` |
+| 09 | `unit-09.disabled.json`, `unit-09.json` |
+| 10 | `unit-10.notifications.json` |
+| 11 | `unit-11.credential-metadata.json`, `unit-11.credentials.json`, `unit-11.files.json`, `unit-11.foundation.json`, `unit-11.manager-lifecycle.json`, `unit-11.origin.json`, `unit-11.preview-ingress.json`, `unit-11.previews.json`, `unit-11.ranges.json` |
+| 12 | `unit-12.goals.json` |
+
+These 22 originals and matching rule files retire together. Every other list stays.
+`unit-12.measures-datasets.json` and its rule stay because the existing direct
+check in `direct/test_unit12_populated_pages.py` reads that rule file.
+In particular, `unit-08.starts.json` retains its fake-only error cases, and
+`unit-06.json` retains the in-memory conversation contract. The in-memory system
+and its test routes remain available to these and other retained lists.
+
 ## Run a list
 
 A list can set `"compare_skill_files": true` to compare the files beneath each

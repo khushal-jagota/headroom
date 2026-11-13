@@ -27,6 +27,11 @@ export interface Area {
   routes: FastifyPluginAsync<AreaServices>;
   admission?: AdmissionDependencies;
 }
+/** Routes register inertly; their existing owner starts delivery after app readiness. */
+export interface PreparedAreaRoutes {
+  readonly routes: FastifyPluginAsync<AreaServices>;
+  start(): void | Promise<void>;
+}
 /** Every ordinary area passes this door; executor transport has a separate boundary. */
 export function registerArea(
   app: FastifyInstance,

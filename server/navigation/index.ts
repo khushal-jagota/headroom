@@ -6,6 +6,7 @@ import type { SignalAttachment, SignalPublicationSource } from '../conversation/
 /** Attachment lifecycle stays separate from runtime ownership and record recovery. */
 export function createSignalNavigationRuntime(source: SignalPublicationSource) {
   const navigation = createNavigationRegistry();
+  const delivery = createRoutes();
   let attachment: SignalAttachment | null = null;
   return {
     navigationCommitStep: navigation.finalize,
@@ -24,7 +25,8 @@ export function createSignalNavigationRuntime(source: SignalPublicationSource) {
       attachment?.close();
       attachment = null;
     },
-    routes: createRoutes(),
+    routes: delivery.routes,
+    start: () => delivery.start(),
   };
 }
 export { createNavigationRegistry } from './data/registry.ts';

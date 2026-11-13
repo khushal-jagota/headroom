@@ -11,6 +11,11 @@ import { createReadAccess } from '../core/database/index.ts';
 import { acquireRuntimeOwnership } from '../core/locks/index.ts';
 import { BackgroundLoops } from '../core/loops.ts';
 import { SqliteProcessConversationSystem } from '../conversation/system.ts';
+import { model_is_enabled } from '../conversation/backend_state.ts';
+import {
+  canonical_ticket_execution_refusal,
+  conversation_execution_refusal,
+} from '../tickets/execution_admission.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import { ScriptedBackendRegistry } from '../conversation/testing/scripted_registry.ts';
 import type { ScriptedChild } from '../conversation/testing/scripted_child.ts';
@@ -173,6 +178,12 @@ async function owned_server(installer?: Partial<InstallerOperations>) {
       createConversationCore(value) {
         return new SqliteProcessConversationSystem({
           store: value.record.store,
+          model_is_enabled: (backend, model) =>
+            value.database.read((sql) => model_is_enabled(sql, backend, model)),
+          execution_refusal: (id) =>
+            value.database.read((sql) =>
+              conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
+            ),
           backend_child_factories: registry.factories,
           message_files: new ConversationMessageFiles(value.config.db_path),
           unix_time_now: () => value.clock.nowUnix(),
