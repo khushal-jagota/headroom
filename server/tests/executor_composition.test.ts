@@ -235,7 +235,7 @@ test('configured restart adopts before reconciliation and Mac locality never sel
 });
 
 // The earlier composed-host case supplied its own executor constructor and could
-// not catch missing production machine identity, revision, or inventory handoff.
+// not catch missing production revision or inventory handoff.
 test('production constructs its real executor and reconciles that executor inventory', async () => {
   const { root } = retained_fixture();
   const revision = 'a'.repeat(40);
@@ -273,7 +273,6 @@ test('production constructs its real executor and reconciles that executor inven
         },
       },
     });
-    expect(endpoint.catalog.machine_id).toBe('synthetic-executor');
     expect(endpoint.application_revision).toBe(revision);
     expect(inventory).toHaveBeenCalledTimes(1);
     expect(inventory.mock.contexts[0]).toBe(endpoint);

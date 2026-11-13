@@ -11,7 +11,7 @@ import { PromptDeliveryMode } from '../conversation/contracts.ts';
 import type { ConversationCoreOptions } from '../conversation/runtime/contracts.ts';
 import type { Database } from '../core/database/contracts.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
-import { model_is_enabled } from '../conversation/backend_state.ts';
+import { BackendStateStore } from '../conversation/backend_state.ts';
 import { createEnvironmentRuntime } from '../environments/runtime.ts';
 import type {
   ProductionEnvironmentFactory,
@@ -61,7 +61,6 @@ export async function start_production_server(
             db_path: context.config.db_path,
             changes: context.changes,
             media_signal: context.media_signal,
-            machine_id: context.config.executor_id,
             application_revision: context.config.app_sha ?? 'unknown',
           });
     },
@@ -98,8 +97,8 @@ export function create_production_conversation_core(
     store: context.record.store,
     backend_child_factories: current.factories,
     execution_refusal: current.execution_refusal,
-    model_is_enabled: (backend, model) =>
-      context.database.read((sql) => model_is_enabled(sql, backend, model)),
+    delivery_model_refusal: (backend, model, ticket_id) =>
+      new BackendStateStore(context.database).delivery_model_refusal(backend, model, ticket_id),
     message_files: new ConversationMessageFiles(context.config.db_path),
     unix_time_now: () => context.clock.nowUnix(),
     require_runtime_ownership: context.require_runtime_ownership,

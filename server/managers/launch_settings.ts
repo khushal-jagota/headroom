@@ -1,3 +1,4 @@
+import { require_usable_model } from '../conversation/backend_state.ts';
 /** Exact Manager launch choices used by the shared message dispatcher. */
 import { require_conversation_backend_key } from '../conversation/contracts.ts';
 import { validate_launch_defaults } from '../worker_settings/service.ts';
@@ -20,22 +21,7 @@ export function validate_launch_configuration(
         "in this Manager's model settings before you retry.",
     );
   }
-  const row = sql.get<{
-    enabled: number;
-  }>('SELECT enabled FROM backend_model_enablement WHERE backend_key=? AND model_id=?', [
-    value.employee_backend,
-    value.employee_launch_model,
-  ]);
-  if (row && !row.enabled) {
-    throw new PlannerError(
-      'validation',
-      `Model "${value.employee_launch_model}" is disabled. Choose an enabled model.`,
-      {
-        employee_backend: value.employee_backend,
-        employee_launch_model: value.employee_launch_model,
-      },
-    );
-  }
+  require_usable_model(sql, value.employee_backend, value.employee_launch_model, 'vps');
 }
 export function manager_reuse_overrides(
   sql: ReadSql,

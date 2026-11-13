@@ -57,7 +57,6 @@ export interface VpsExecutorOptions {
   readonly db_path: string;
   readonly changes: ChangeSignal;
   readonly media_signal: AbortSignal;
-  readonly machine_id?: string;
   readonly application_revision?: string;
 }
 /** The supplied database and every child-process owner belong to the server invocation. */
@@ -93,9 +92,7 @@ export class VpsExecutor {
     this.runs = new MacRuns(database, this.presence, this.mailbox);
     const staging = new FileStaging(options.db_path);
     this.inbox = new MacInbox(new InboxStore(database, staging), clock, this.runs);
-    this.catalog = new VpsCatalogRelay(database, this.runs, this.presence, this.mailbox, {
-      machine_id: options.machine_id,
-    });
+    this.catalog = new VpsCatalogRelay(database, this.runs, this.presence, this.mailbox);
     this.message_files = new ConversationMessageFiles(options.db_path);
     this.files = new VpsFiles(options.db_path, this.inbox, this.mailbox, this.message_files, {
       signal: options.media_signal,

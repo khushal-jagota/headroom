@@ -9,7 +9,7 @@ import { message_content_text, text_message_content } from '../../conversation/m
 import { ConversationLiveTail } from '../../conversation/live_tail.ts';
 import { Deferred } from '../../conversation/runtime/state.ts';
 import { executor_remote_recovery } from '../../lifecycle/production.ts';
-import { model_is_enabled } from '../../conversation/backend_state.ts';
+import { BackendStateStore } from '../../conversation/backend_state.ts';
 import type { VpsExecutor } from '../vps_transport.ts';
 import type { WireValue } from '../contracts.ts';
 import type { BackendEventMethod, EnvelopeKind } from '../wire.generated.ts';
@@ -30,8 +30,8 @@ export async function continue_core(database: Database, endpoint: VpsExecutor) {
     store,
     backend_child_factories: { codex: remote, claude: remote, hermes: remote },
     message_files: endpoint.message_files,
-    model_is_enabled: (backend, model) =>
-      database.read((sql) => model_is_enabled(sql, backend, model)),
+    delivery_model_refusal: (backend, model, ticket_id) =>
+      new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),
     execution_refusal: () => null,
     remote_recovery: executor_remote_recovery(database, () => core),
     unix_time_now: () => 1760000000,
