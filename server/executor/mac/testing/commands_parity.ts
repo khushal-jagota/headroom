@@ -722,9 +722,25 @@ try {
     results,
   };
   const reference = { ...commands.start!.child, child_id: 'cached-native-stop' };
+  const launch = commands.start!.arguments as Parameters<MacNativeChildren['start']>[1];
+  const materials = launch.resolved_start.role_materials!;
   await native_children.start(
     reference,
-    commands.start!.arguments as Parameters<MacNativeChildren['start']>[1],
+    {
+      ...launch,
+      resolved_start: {
+        ...launch.resolved_start,
+        role_materials: {
+          ...materials,
+          identity_environment_variables: materials.identity_environment_variables!.map(
+            ([key, value]): [string, string] => [
+              key,
+              key === 'PLAN_TICKET_ID' ? 'cached-stop-ticket' : value,
+            ],
+          ),
+        },
+      },
+    },
     () => {},
   );
   held_stop = gate();
