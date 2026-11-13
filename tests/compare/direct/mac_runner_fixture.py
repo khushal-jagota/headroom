@@ -2,30 +2,28 @@
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable, Collection, Mapping
 from contextlib import ExitStack
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
+from uuid import UUID
 
 import pytest
 from tests.compare.direct.mac_executor_fixture import (
     paired_fixture as paired_fixture,
 )
-from tests.compare.direct.mac_executor_fixture import (
-    pending_envelopes as pending_envelopes,
-)
 
 from planner.conversation.backends.contracts import BackendChildFactory
 from planner.conversation.contracts import ResolvedConversationStart
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.executor import mac_mailbox, mac_runner
+from planner.executor import mac_mailbox, mac_runner, protocol
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.contracts import MacFilesApi
 from planner.executor.mac_mailbox import CommandJournal
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.mac_runner import MacLiveEvents, MacRunner, command_owes_outputs
-from planner.executor.protocol import ChildCommand, MailboxCommand, MailboxPollReply
 
 
 def make_runner(
@@ -67,18 +65,32 @@ def make_runner(
 
 def record_commands(
     journal: CommandJournal,
-    commands: Mapping[str, ChildCommand],
+    commands: Mapping[str, protocol.ChildCommand],
     *,
     now_ms: int,
     unjournaled: Collection[str] = (),
 ) -> None:
     journal.record_poll_reply(
-        MailboxPollReply(
+        protocol.MailboxPollReply(
             tuple(
-                MailboxCommand(index, key, now_ms, child_command=command)
+                protocol.MailboxCommand(index, key, now_ms, child_command=command)
                 for index, (key, command) in enumerate(commands.items(), 1)
                 if key not in unjournaled
             )
         ),
         "inc",
     )
+
+
+def pending_envelopes(box: MacOutbox) -> list[dict[str, Any]]:
+    rows = [protocol.as_object(row) for row in box.pending()]
+    assert len({row["submission_id"] for row in rows}) == len(rows)
+    for index, row in enumerate(rows):
+        assert UUID(cast(str, row["sender_id"])).hex == row["sender_id"]
+        row["sender_id"] = "<sender>"
+        submission = row["submission_id"]
+        if row["kind"] == "backend_event" and re.fullmatch("[a-f0-9]{32}", cast(str, submission)):
+            assert UUID(cast(str, submission)).hex == submission
+            row["submission_id"] = f"event_{index}"
+        protocol.type_adapter(protocol.QueuedEnvelope).validate_python(row)
+    return rows
