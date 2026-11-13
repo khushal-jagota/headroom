@@ -3,6 +3,7 @@ import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { newId } from '../core/ids.ts';
 import { numeric_kind, numeric_value, stringify_python_json } from '../core/http/numeric_json.ts';
 import type { Measure, MeasureDate } from './contracts.ts';
+import { measure_json } from './serialization.ts';
 import {
   bump_source,
   read_definitions,
@@ -73,7 +74,7 @@ export function create_measure(
   );
   edges(sql, m);
   if (m.source_id) bump_source(sql, m.source_id, now);
-  return m;
+  return measure_json(m);
 }
 export function update_measure(
   sql: TransactionSql,
@@ -115,7 +116,7 @@ export function update_measure(
   );
   edges(sql, m);
   if (m.source_id) bump_source(sql, m.source_id, now);
-  return m;
+  return measure_json(m);
 }
 export function delete_measure(sql: TransactionSql, id: string, now: number): void {
   const m = read_measure(sql, id);

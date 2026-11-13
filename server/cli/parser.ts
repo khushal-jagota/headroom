@@ -3,7 +3,7 @@ import { close_matches } from './suggestions.ts';
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { CommandDefinition, Parameter } from './contracts.ts';
-import { command_path, command_shape, usage_error } from './errors.ts';
+import { CliFailure, human_error, command_path, command_shape, usage_error } from './errors.ts';
 
 /** Decimal Unicode digits have the same numeric value in Python int(). */
 function decimal_digit(character: string): string {
@@ -274,6 +274,11 @@ export function parse(
             : { no_route: `No replacement panels command can be inferred for "${token}".` },
       );
     }
+    // Click invokes this group callback after child resolution but before child parsing.
+    if (command.path.join(' ') === 'preview' && environment.PLAN_EXECUTOR_ROOT)
+      throw new CliFailure(
+        human_error(child, 'Application previews are unavailable for Tickets running on the Mac.'),
+      );
     command = child;
   }
   // First collect raw tokens. No conversion or eager callback runs until the
