@@ -92,20 +92,33 @@ export class GitHubUpdateProvider implements UpdateProvider {
     missing_ok: true,
   ): Promise<Response | null>;
   private request(path: string, parameters?: Record<string, string>): Promise<Response>;
+  private request(
+    path: string,
+    parameters: Record<string, string>,
+    missing_ok: false,
+    signal?: AbortSignal,
+  ): Promise<Response>;
   private async request(
     path: string,
     parameters: Record<string, string> = {},
     missing_ok = false,
+    signal?: AbortSignal,
   ): Promise<Response | null> {
+    signal?.throwIfAborted();
     const headers = this.headers();
     const url = new URL(`https://api.github.com/repos/${this.repository}/${path}`);
     for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, value);
     let response: Response;
     const controller = new AbortController();
+    const request_signal = signal
+      ? AbortSignal.any([controller.signal, signal])
+      : controller.signal;
     const network_read = async <T>(read: () => Promise<T>): Promise<T> => {
       const timer = setTimeout(() => controller.abort(), 30_000);
       try {
-        return await read();
+        const result = await read();
+        signal?.throwIfAborted();
+        return result;
       } finally {
         clearTimeout(timer);
       }
@@ -116,11 +129,12 @@ export class GitHubUpdateProvider implements UpdateProvider {
           method: 'GET',
           headers,
           redirect: 'follow',
-          signal: controller.signal,
+          signal: request_signal,
         }),
       );
     } catch {
       controller.abort();
+      signal?.throwIfAborted();
       throw new Error('The repository update service is unavailable or its result is uncertain.');
     }
     if (missing_ok && response.status === 404) {
@@ -146,6 +160,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
         chunks.push(value);
       }
     } catch {
+      signal?.throwIfAborted();
       throw new Error('The repository update service is unavailable or its result is uncertain.');
     } finally {
       controller.abort();
@@ -160,8 +175,9 @@ export class GitHubUpdateProvider implements UpdateProvider {
   private async json(
     path: string,
     parameters: Record<string, string> = {},
+    signal?: AbortSignal,
   ): Promise<Record<string, unknown>> {
-    return this.response_json(await this.request(path, parameters));
+    return this.response_json(await this.request(path, parameters, false, signal));
   }
   private async response_json(response: Response): Promise<Record<string, unknown>> {
     try {
@@ -270,19 +286,35 @@ export class GitHubUpdateProvider implements UpdateProvider {
     this.publication_cache = release;
     return release;
   }
-  async download_artifact(artifact_id: Identity, destination: string): Promise<void> {
-    const metadata = await this.json(`actions/artifacts/${canonical_json(artifact_id)}`);
+  async download_artifact(
+    artifact_id: Identity,
+    destination: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    signal?.throwIfAborted();
+    const metadata = await this.json(
+      `actions/artifacts/${canonical_json(artifact_id)}`,
+      {},
+      signal,
+    );
+    signal?.throwIfAborted();
     if (metadata.expired === true) throw new Error('The pinned update artifact expired.');
     const headers = this.headers();
     const controller = new AbortController();
+    const request_signal = signal
+      ? AbortSignal.any([controller.signal, signal])
+      : controller.signal;
     // httpx's streaming timeout bounds each network read, not the whole archive.
     // Do not time a disk write or ask the network reader for another chunk during it.
     const network_read = async <T>(read: () => Promise<T>): Promise<T> => {
       const timer = setTimeout(() => controller.abort(), 60_000);
       try {
-        return await read();
+        const result = await read();
+        signal?.throwIfAborted();
+        return result;
       } catch {
         controller.abort();
+        signal?.throwIfAborted();
         throw new Error('The repository update download did not complete.');
       } finally {
         clearTimeout(timer);
@@ -291,7 +323,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
     const response = await network_read(() =>
       this.fetch(
         `https://api.github.com/repos/${this.repository}/actions/artifacts/${canonical_json(artifact_id)}/zip`,
-        { method: 'GET', headers, redirect: 'follow', signal: controller.signal },
+        { method: 'GET', headers, redirect: 'follow', signal: request_signal },
       ),
     );
     if (!response.ok) {
@@ -312,6 +344,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
         if (done) break;
         let offset = 0;
         while (offset < value.byteLength) {
+          signal?.throwIfAborted();
           const { bytesWritten } = await output.write(value, offset, value.byteLength - offset);
           offset += bytesWritten;
         }
@@ -322,5 +355,6 @@ export class GitHubUpdateProvider implements UpdateProvider {
       reader.releaseLock();
       await output?.close();
     }
+    signal?.throwIfAborted();
   }
 }
