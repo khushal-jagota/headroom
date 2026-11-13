@@ -396,6 +396,30 @@ A FIFO therefore refuses instead of blocking the event loop before that check, a
 Large copy, hash, and strict flush operations run in an owned worker with the shared shutdown deadline.
 The file formats, hashes, and successful publication behavior retain the Python contract.
 
+## Mac canonical skill publication ownership and durability
+
+The Manager accepted these Mac-only safety differences during PR 817 source review on November 13, 2026.
+The shared server publisher keeps Python behavior, including legacy `skills` symlink conversion and replacement of existing entries.
+The Mac uses an explicit owned-link policy in that same shared module. It never recursively removes provider entries.
+Before any publication or derived-state write, the Mac requires an absolute existing provider home and an existing real `skills` directory.
+The trusted adapter host supplies that home separately from the snapshot. Its real path must equal its configured normalized path.
+The Mac refuses linked homes or skills directories, managed-name collisions with files/directories/foreign links, case-only collisions, and link loops.
+It preserves unrelated entries and dangling user links. Only links that resolve inside its own executor state root belong to it.
+The Mac retains the provider directory and uses descriptor-relative unlink, symlink, and rename operations.
+New links first use recognizable private temporary names. Replacement is atomic, after an immediate ownership recheck.
+A later publication removes only recognized temporary links that still point into that executor's own root.
+
+The held directory and rechecks prevent a swapped folder from redirecting deletion into a replacement folder.
+They do not coordinate same-user programs that write that folder at the same time. Rename is not an atomic ownership comparison.
+The root-local installation lock does not serialize another executor installation. The two-executor publication policy remains an owner decision.
+The Mac also refuses linked ancestors of its state root, including native `/tmp` and `/var` aliases. Use reviewed canonical native paths.
+
+New generation files receive strict full flushes, and their directories receive flushes before atomic generation publication.
+A damaged derived generation is preserved under a private `.invalid-*` name and rebuilt from the authoritative snapshot.
+Python instead refuses that existing generation. No source or provider user data is discarded by the rebuild.
+The successor host/storage maintenance work owns eventual removal of unreferenced generations and abandoned stages.
+This slice adds no generation sweeper. Native durability, Darwin directory ABI, and filesystem failure behavior remain later Mac checks.
+
 ## Mac outbox cleanup after commit
 
 The Manager required this correction during the Mac slice 2 review on November 12, 2026.
@@ -585,3 +609,35 @@ The bounded stop observer uses the shared absolute deadline. Actual settlement r
 Presence commits are silent at the shared write door.
 After commit succeeds, the service publishes its cache before it emits the one presence change signal.
 Synchronous signal subscribers therefore read the committed presence state, with no cache update before a possible rollback.
+
+## VPS file descriptor custody
+
+The accepted executor plan uses Linux procfs descriptors for the VPS file module.
+The module refuses unsupported systems before intake and supplies no path fallback.
+Python's install helper rewalks a target pathname during copy and cleanup.
+TypeScript retains the original source and destination parents through those operations.
+Python hashes an input descriptor, closes it, and later reopens its path for the response.
+TypeScript retains the checked descriptor through its bounded input stream instead.
+The later transport slice must consume that stream and prove its disconnect ownership.
+The input owner also anchors its byte root independently of the existing managed-file lookup.
+A root swap between that lookup's symlink check and resolution cannot redirect input bytes.
+Its standard message root follows the logical DB-path parent, even when the DB filename is a symlink.
+
+Regular-file admission adds NONBLOCK before fstat, so a substituted FIFO cannot hang its open.
+Python's open can block on that FIFO. The same source hazard appears in the Mac file evidence.
+Cleanup failures carry explicit provenance and retain the original failure with the cleanup errors.
+Python can replace the original exception when cleanup also fails.
+
+The upload timeout observer can return retry_later while a JS iterator read remains pending.
+Python's wait_for cancels and awaits that read before it returns its timeout.
+TypeScript requires a cancellable upload source and destroys it before iterator return.
+It closes and removes the incoming file before it joins the source's actual cleanup.
+The routes slice must pass its owned request Readable with that destruction capability.
+Stop seals intake and observes actual work. The supplied media signal supplies the shared grace cutoff.
+The input lookup result must remain inside an independently anchored conversation root.
+The resolved target then passes through the same NOFOLLOW directory walk and regular-file open.
+Contained same-conversation leaf links keep Python behavior. Later substitutions refuse as not found.
+NUL artifact paths retain Python's exact `lstat: embedded null character in path` refusal.
+Ancestor symlink loops produce the clean `artifact path contains symlink` validation refusal, without raw Node errors.
+Python raises a raw `RuntimeError` for the same ancestor loop. The Manager accepts this clean TypeScript refusal.
+The Manager reviews these implementation differences before this slice merges.
