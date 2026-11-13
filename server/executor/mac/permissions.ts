@@ -1,18 +1,15 @@
 /** Consent preview is lexical. Only the explicit check touches the selected paths. */
 import { randomUUID } from 'node:crypto';
 import { opendir, open, realpath, stat, unlink } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
 import { human_error } from '../../cli/errors.ts';
+import { inside } from '../../environments/ticket_scratch/logic.ts';
 import { expand_executor_path } from './platform.ts';
 
-function within(path: string, root: string): boolean {
-  const part = relative(root, path);
-  return part !== '..' && !part.startsWith('../') && !isAbsolute(part);
-}
 function description(path: string, home: string): string {
   for (const directory of ['Desktop', 'Documents', 'Downloads'])
-    if (within(path, join(home, directory)))
+    if (inside(path, join(home, directory)))
       return `${directory}: macOS can request Files and Folders consent.`;
   return 'Ordinary account access; a redirected or protected path can require separate consent.';
 }
@@ -57,7 +54,7 @@ export async function permissions(invocation: Invocation): Promise<CommandResult
     `Workspace directory read: ${workspace}`,
     description(workspace, home),
     `Output temporary write/read/remove: ${output}`,
-    within(output, workspace)
+    inside(output, workspace)
       ? 'Output reuses the workspace scope, subject to macOS protections.'
       : description(output, home),
     'No Full Disk Access or unrelated permission is requested. Python consent does not transfer automatically.',
