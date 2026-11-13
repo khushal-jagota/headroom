@@ -25,6 +25,10 @@ async function execute(
   message: Exclude<FileWorkerRequest, { operation: 'stop' }>,
 ): Promise<FileOperationResults[keyof FileOperationResults]> {
   switch (message.operation) {
+    case 'read_runtime_revision':
+      return archives.read_runtime_revision(...message.arguments);
+    case 'unlink_at':
+      return unlink_relative(descriptor(message.arguments[0]), message.arguments[1], true);
     case 'extract_runtime':
       return archives.extract_runtime(...message.arguments);
     case 'read_runtime_record':
