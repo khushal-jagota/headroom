@@ -17,12 +17,16 @@ import type { MailboxRunner, MailboxCatalog, MailboxClient } from '../contracts.
 import { MacMailbox, MacCommandQueues, MacPollLoop, MacResultReporter } from '../index.ts';
 import * as protocol from '../../../protocol.ts';
 import { read_canonical_body } from '../poll.ts';
+import { stringify_pydantic_json } from '../../../../core/http/numeric_json.ts';
+import { OUTBOX_RETRY_INITIAL_SECONDS } from '../../configuration.ts';
 interface Input {
   root: string;
   fixture: string;
   seed: string;
   poll: string;
   shutdown: string;
+  committed: string;
+  recovery_results: Record<string, [number, string]>;
   commands: Record<string, string>;
   results: Record<string, string>;
   report_commands: string;
@@ -37,24 +41,20 @@ function aborted(signal: AbortSignal): Promise<never> {
     signal.addEventListener('abort', () => reject(signal.reason), { once: true }),
   );
 }
-class Bytes implements CanonicalReader {
-  private closed = false;
-  private readonly bytes: Buffer;
-  constructor(bytes: Buffer) {
-    this.bytes = bytes;
-  }
-  get byte_count() {
-    return this.bytes.length;
-  }
-  async *[Symbol.asyncIterator]() {
-    for (let offset = 0; offset < this.bytes.length; offset += 256 * 1024) {
-      if (this.closed) throw new Error('Reader already closed');
-      yield this.bytes.subarray(offset, offset + 256 * 1024);
-    }
-  }
-  async close() {
-    this.closed = true;
-  }
+function canonical_reader(value: Buffer): CanonicalReader {
+  let closed = false;
+  return {
+    byte_count: value.length,
+    async *[Symbol.asyncIterator]() {
+      for (let offset = 0; offset < value.length; offset += 256 * 1024) {
+        if (closed) throw new Error('Reader already closed');
+        yield value.subarray(offset, offset + 256 * 1024);
+      }
+    },
+    async close() {
+      closed = true;
+    },
+  };
 }
 const bytes = async (reader: CanonicalReader) => Buffer.from(await read_canonical_body(reader));
 const digest = (raw: Buffer) => [raw.length, createHash('sha256').update(raw).digest('hex')];
@@ -69,12 +69,19 @@ async function drain(cursor: Awaited<ReturnType<AsyncCommandJournal['record_poll
 }
 export async function mailbox_parity(input: Input): Promise<unknown> {
   const options = { deadline: performance.now() / 1000 + 25 };
+  const spool = join(input.root, 'spool');
+  const clock = { monotonic: () => 1, now_ns: () => BigInt(input.now_ms) * 1_000_000n };
   let store: OutboxStore | undefined, fault: Error | undefined;
   let queues: MacCommandQueues | undefined,
     poll: MacPollLoop | undefined,
     reporter: MacResultReporter | undefined;
   let aggregate: MacMailbox | undefined;
+  let expected_failures: Error[] | undefined;
   const on_failure = (error: Error) => {
+    if (expected_failures) {
+      expected_failures.push(error);
+      return;
+    }
     fault ??= error;
     if (store) void cleanup().catch(() => {});
   };
@@ -101,16 +108,12 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
         throw new AggregateError(errors, 'Mailbox cleanup failed after settlement.');
     }));
   }
-  store = await OutboxStore.open(
-    join(input.root, 'spool'),
-    { monotonic: () => 1, now_ns: () => BigInt(input.now_ms) * 1_000_000n },
-    options,
-    on_failure,
-  );
+  store = await OutboxStore.open(spool, clock, options, on_failure);
   if (fault) on_failure(fault);
   const release_on_exit: (() => void)[] = [];
   const started = performance.now(),
     phases: Record<string, number[]> = {};
+  const retry_times: Record<string, number[]> = { poll: [], runner: [] };
   let phase = 'journal-open';
   let next = started + 10,
     rss = process.memoryUsage().rss;
@@ -120,7 +123,8 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     next = now + 10;
     rss = Math.max(rss, process.memoryUsage().rss);
   }, 10);
-  let observations: unknown, aggregate_shutdown: unknown, performance_proof: unknown;
+  let observations: unknown, performance_proof: unknown;
+  let aggregate_shutdown: Record<string, boolean> = {};
   try {
     if (fault) throw fault;
     const dependency = new URL('./fixture.ts', import.meta.url),
@@ -128,16 +132,12 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     dependency.searchParams.set('fixture', input.fixture);
     dependency.searchParams.set('feedback_fault', fault_file);
     dependency.searchParams.set('database', join(input.root, 'spool/commands.sqlite3'));
-    const journal = await open_command_journal(
-      store,
-      'inc',
-      {
-        outputs_module: dependency,
-        now_ms: () => BigInt(input.now_ms),
-        on_failure,
-      },
-      options,
-    );
+    const journal_dependencies = {
+      outputs_module: dependency,
+      now_ms: () => BigInt(input.now_ms),
+      on_failure,
+    };
+    let journal = await open_command_journal(store, 'inc', journal_dependencies, options);
     phase = 'queues';
     const command = (id: string): MailboxCommand =>
       protocol.decode_json(Buffer.from(input.commands[id]!, 'hex'), 'MailboxCommand');
@@ -168,9 +168,15 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
         planned_waiting.resolve();
         await Promise.race([planned.promise, aborted(signal)]);
       },
-      async run(child) {
+      async run(child, signal) {
+        signal.throwIfAborted();
         const id = child.command_id;
         calls.push(id);
+        if (id === 'b') {
+          retry_times.runner!.push(performance.now() / 1000);
+          if (retry_times.runner!.length === 1)
+            throw Object.assign(new Error('scripted runner retry'), { name: 'OSError' });
+        }
         if (id === 'a1' || id === 'stop') {
           (id === 'a1' ? first : stopped).resolve();
           await release.promise;
@@ -198,7 +204,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
         }
         return {
           async open() {
-            return new Bytes(Buffer.from(input.results[id]!, 'hex'));
+            return canonical_reader(Buffer.from(input.results[id]!, 'hex'));
           },
           async close() {
             owner_closes++;
@@ -211,7 +217,14 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     const capacity_tasks: Promise<bigint>[] = [];
     const client: MailboxClient = {
       async poll_commands(_after, _hold, signal) {
-        if (++poll_calls === 1) return Buffer.from(input.poll, 'hex');
+        if (++poll_calls === 1) {
+          retry_times.poll!.push(performance.now() / 1000);
+          throw Object.assign(new Error('scripted poll retry'), { name: 'ConnectionError' });
+        }
+        if (poll_calls === 2) {
+          retry_times.poll!.push(performance.now() / 1000);
+          return Buffer.from(input.poll, 'hex');
+        }
         return aborted(signal);
       },
       async report_outcomes(body) {
@@ -276,7 +289,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     for (const id of ['f', 'k', 'r'])
       await journal.finish(id, Buffer.from(input.results[id]!, 'hex'), false);
     const compacted = deferred();
-    let capacity_refusals = 0;
+    const capacity_errors: unknown[] = [];
     const observed = new Proxy(journal, {
       get(target, key) {
         if (key === 'report_feedback')
@@ -284,7 +297,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
             try {
               return await target.report_feedback(...args);
             } catch (error) {
-              if ((error as { unadmitted?: boolean }).unadmitted) capacity_refusals++;
+              if ((error as { unadmitted?: boolean }).unadmitted) capacity_errors.push(error);
               throw error;
             }
           };
@@ -326,7 +339,13 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
       planned_blocked,
       second_not_started,
       fifo,
-      calls: [...calls].sort(),
+      calls: [...calls],
+      retry_delays: Object.fromEntries(
+        Object.entries(retry_times).map(([key, times]) => [
+          key,
+          times[1]! - times[0]! >= OUTBOX_RETRY_INITIAL_SECONDS,
+        ]),
+      ),
       replays,
       catalog_reads,
       reports,
@@ -337,28 +356,33 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     phase = 'aggregate-shutdown';
     const prepared = deferred(),
       release_selection = deferred(),
-      poll_waiting = deferred();
-    release_on_exit.push(release_selection.resolve);
+      poll_waiting = deferred(),
+      release_delivery = deferred();
+    release_on_exit.push(release_selection.resolve, release_delivery.resolve);
+    let selections = 0;
     const prepared_journal = new Proxy(journal, {
       get(target, key) {
+        if (key === 'record_decoded_poll_reply')
+          return async (...args: Parameters<AsyncCommandJournal['record_decoded_poll_reply']>) => {
+            const fresh = await target.record_decoded_poll_reply(...args);
+            poll_waiting.resolve();
+            await release_delivery.promise;
+            return fresh;
+          };
         if (key === 'select_report')
           return async () => {
             const selected = await target.select_report();
             if (selected === null)
               throw new Error('Aggregate phase requires the admitted model result');
-            prepared.resolve();
-            await release_selection.promise;
+            selections++;
             return selected;
           };
         const value = Reflect.get(target, key, target);
         return typeof value === 'function' ? value.bind(target) : value;
       },
     });
-    let late_http = 0;
-    const late_request = async () => {
-      late_http++;
-      throw new Error('Late aggregate HTTP');
-    };
+    let late_http = 0,
+      aggregate_reports = 0;
     aggregate = new MacMailbox({
       journal: prepared_journal,
       catalog,
@@ -367,11 +391,24 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
       runner: {
         ...runner,
         async planned_replay_finished(signal) {
-          poll_waiting.resolve();
-          await aborted(signal);
+          signal.throwIfAborted();
         },
       },
-      client: { poll_commands: late_request, report_outcomes: late_request },
+      client: {
+        async poll_commands(_after, _hold, signal) {
+          if (signal.aborted) late_http++;
+          return Buffer.from(input.committed, 'hex');
+        },
+        async report_outcomes(body, signal) {
+          if (signal.aborted) late_http++;
+          await bytes(body);
+          if (++aggregate_reports === 1)
+            return { recorded: 1, rejected: [] } as unknown as CommandOutcomeReply;
+          prepared.resolve();
+          await release_selection.promise;
+          throw new Error('scripted request failure after stop');
+        },
+      },
     });
     const starting = aggregate.start();
     await Promise.all([prepared.promise, starting, poll_waiting.promise]);
@@ -385,8 +422,6 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
       (error) => error,
     );
     const actual_waited = !aggregate_joined;
-    await aggregate.poll.settled();
-    await yield_turn();
     let sealed = false;
     try {
       aggregate.queues.submit(command('a1'));
@@ -395,6 +430,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
       sealed = true;
     }
     release_selection.resolve();
+    release_delivery.resolve();
     await joined;
     const released = await journal.select_report();
     if (!released || released.command_ids.length !== 1 || released.command_ids[0] !== 'shutdown')
@@ -409,34 +445,125 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
       (error) => error,
     );
     aggregate_shutdown = {
-      capacity_feedback_refused_once: capacity_refusals === 1,
+      capacity_feedback_refused_once: capacity_errors.length === 1,
       typed_expired_observer:
         expired instanceof ShutdownDeadlineExceeded && expired instanceof ServerLifecycleError,
       actual_waited,
       queue_sealed_before_preparation_return: sealed,
       no_late_http: late_http === 0,
+      malformed_reply_released_selection: selections === 2 && aggregate_reports === 2,
+      committed_not_dispatched: !calls.includes('committed') && !calls.includes('committed-later'),
       selection_released: true,
       restart_refused: restarted instanceof ServerLifecycleError,
     };
-    await journal.mark_reported(['shutdown']);
+    const recovery_started = performance.now();
+    phase = 'cleanup-refusal-and-recovery';
+    const capacity_error = capacity_errors[0];
+    if (capacity_error === undefined) throw new Error('Missing real admission refusal.');
+    const expected: Error[] = [],
+      busy = deferred();
+    expected_failures = expected;
+    const busy_journal = new Proxy(journal, {
+      get(target, key) {
+        if (key === 'report_feedback')
+          return async () => {
+            busy.resolve();
+            throw capacity_error;
+          };
+        const value = Reflect.get(target, key, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    reporter = new MacResultReporter({
+      journal: busy_journal,
+      on_failure,
+      client: {
+        ...client,
+        async report_outcomes(body) {
+          await bytes(body);
+          return { recorded: ['shutdown'], rejected: [] };
+        },
+      },
+    });
+    reporter.start();
+    await busy.promise;
+    await yield_turn();
+    const reporter_errors = await Promise.allSettled([reporter.stop(options), reporter.settled()]);
+    reporter = undefined;
+    let journal_joined = false;
+    const journal_actual = journal.settled().finally(() => {
+      journal_joined = true;
+    });
+    void journal_actual.catch(() => {});
+    await yield_turn();
+    const retained = !journal_joined;
+    const journal_errors = await Promise.allSettled([journal.stop(options), journal_actual]);
+    const spool_errors = await Promise.allSettled([store.stop(options), store.settled()]);
+    store = undefined; // Every old resource actually joined; preserve any validation failure below.
+    const busy_cleanup_ms = performance.now() - recovery_started;
+    const errors = [...reporter_errors, ...journal_errors, ...spool_errors].flatMap((result) =>
+      result.status === 'rejected' ? [result.reason] : [],
+    );
+    const leaves = (error: unknown): unknown[] =>
+      error instanceof AggregateError
+        ? error.errors.length === 0
+          ? [error]
+          : error.errors.flatMap(leaves)
+        : error instanceof Error && error.cause !== undefined
+          ? leaves(error.cause)
+          : [error];
+    if (
+      !retained ||
+      expected.length !== 3 ||
+      errors.length < 3 ||
+      ![...errors, ...expected].every((error) => {
+        const causes = leaves(error);
+        return causes.length !== 0 && causes.every((leaf) => leaf === capacity_error);
+      })
+    )
+      throw new Error('Stopped EBUSY cleanup lost its failure or retained worker custody.');
+    Object.assign(aggregate_shutdown, {
+      stopped_busy_cleanup_visible: true,
+      worker_retained_until_join: retained,
+    });
+    expected_failures = undefined;
+    store = await OutboxStore.open(spool, clock, options, on_failure);
+    journal = await open_command_journal(store, 'inc', journal_dependencies, options);
+    for (const [id, expected] of Object.entries(input.recovery_results)) {
+      const recovered = await journal.result_of(id);
+      if (!recovered || JSON.stringify(digest(await bytes(recovered))) !== JSON.stringify(expected))
+        throw new Error('Undispatched committed command did not recover uncertain.');
+      await journal.mark_outputs_published(id);
+    }
+    await journal.mark_reported(['shutdown', ...Object.keys(input.recovery_results)]);
+    const recovery_ms = performance.now() - recovery_started;
     phase = 'performance-setup';
     const poll_bytes = Buffer.from(input.performance.poll);
-    phase = 'canonical-poll';
+    phase = 'decoded-poll-delivery';
     const started_poll = performance.now();
-    const canonical = await drain(await journal.record_poll_reply(poll_bytes, 'inc', 0n));
-    if (!canonical) throw new Error('Expansion command was lost');
-    const poll_ms = performance.now() - started_poll,
-      decode_started = performance.now();
-    phase = 'main-decode';
-    protocol.decode_json(canonical, 'MailboxCommand');
-    const decode_ms = performance.now() - decode_started;
+    const decoded = await journal.record_decoded_poll_reply(poll_bytes, 'inc', 0n);
+    let expanded: MailboxCommand | undefined;
+    try {
+      for await (const value of decoded) expanded = value;
+    } finally {
+      await decoded.close();
+    }
+    if (!expanded) throw new Error('Expansion command was lost');
+    const poll_ms = performance.now() - started_poll;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    phase = 'canonical-evidence-only';
+    const encoding_started = performance.now();
+    const canonical = Buffer.from(
+      stringify_pydantic_json(protocol.encode_value(expanded, 'MailboxCommand')),
+    );
+    const encoding_ms = performance.now() - encoding_started;
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     const performance_reports = [],
       selection_ms = [];
     for (const [index, size] of [4 * 1024 * 1024 - 4096, 4 * 1024 * 1024 + 4096].entries()) {
       phase = index === 0 ? 'near-limit-report' : 'oversized-report';
-      const id = `size-${index + 14}`;
-      const value = { ...command('model'), command_sequence: index + 14, command_id: id };
+      const id = `size-${index + 16}`;
+      const value = { ...command('model'), command_sequence: index + 16, command_id: id };
       await drain(
         await journal.record_poll_reply(JSON.stringify({ commands: [value] }), 'inc', 0n),
       );
@@ -456,8 +583,10 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     performance_proof = {
       raw_poll_bytes: poll_bytes.length,
       canonical_command: digest(canonical),
-      poll_ms,
-      main_decode_ms: decode_ms,
+      decoded_delivery_ms: poll_ms,
+      canonical_evidence_ms: encoding_ms,
+      recovery_ms,
+      stopped_busy_cleanup_ms: busy_cleanup_ms,
       selection_ms,
       reports: performance_reports,
     };
@@ -485,6 +614,9 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
       max_lateness_ms: delays.at(-1) ?? 0,
       p99_lateness_ms: delays[Math.ceil(delays.length * 0.99) - 1] ?? 0,
       max_rss_bytes: rss,
+      retry_seconds: Object.fromEntries(
+        Object.entries(retry_times).map(([key, times]) => [key, times[1]! - times[0]!]),
+      ),
       phases: Object.fromEntries(
         Object.entries(phases).map(([name, samples]) => [
           name,

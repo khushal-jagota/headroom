@@ -303,8 +303,8 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Atomically creates a standalone managed skill.",
-      "stdin": "{\"skills\": [{\"name\": \"unit20-cli-notes\", \"source_text\": \"---\\nname: unit20-cli-notes\\ndescription: Synthetic notes.\\n---\\n\\n# Notes\\n\\nUse `panels missing-unit20-command`.\\n\"}]}"
+      "proof": "Atomically creates standalone skills, including quoted numeric names 10 and 2 for SQL list order.",
+      "stdin": "{\"skills\": [{\"name\": \"unit20-cli-notes\", \"source_text\": \"---\\nname: unit20-cli-notes\\ndescription: Synthetic notes.\\n---\\n\\n# Notes\\n\\nUse `panels missing-unit20-command`.\\n\"}, {\"name\": \"10\", \"source_text\": \"---\\nname: '10'\\ndescription: Numeric skill 10.\\n---\\n\\n# Numeric skill 10\\n\\nPreserve SQL skill name order.\\n\"}, {\"name\": \"2\", \"source_text\": \"---\\nname: '2'\\ndescription: Numeric skill 2.\\n---\\n\\n# Numeric skill 2\\n\\nPreserve SQL skill name order.\\n\"}]}"
     },
     {
       "kind": "cli",
@@ -317,10 +317,14 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Lists populated managed skill rows.",
+      "proof": "Lists populated managed skills in SQL name order, with 10 before 2 in both JSON and human output.",
       "assert_text": [
         "unit20-cli-notes"
-      ]
+      ],
+      "assert_json": {
+        "skills.0.name": "10",
+        "skills.1.name": "2"
+      }
     },
     {
       "kind": "cli",

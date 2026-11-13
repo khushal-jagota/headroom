@@ -1,0 +1,201 @@
+import { parse_numeric_json } from '../core/http/numeric_json.ts';
+/** Offline declarations: generated from fresh Python during migration. */
+export const CREATE = parse_numeric_json(`{
+  "schema": {
+    "$defs": {
+      "SourceResponsibleBody": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "chief",
+              "manager",
+              "goal"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "title": "SourceResponsibleBody",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "description": "Flat author input, before normalization to SourceCreate.",
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string"
+      },
+      "project_id": {
+        "title": "Project Id",
+        "type": "string"
+      },
+      "account": {
+        "title": "Account",
+        "type": "string"
+      },
+      "responsible": {
+        "$ref": "#/$defs/SourceResponsibleBody"
+      }
+    },
+    "required": [
+      "name",
+      "project_id",
+      "account",
+      "responsible"
+    ],
+    "title": "SourceCreateBody",
+    "type": "object"
+  },
+  "examples": {
+    "goal_source": {
+      "name": "Daily activity source",
+      "project_id": "p_example",
+      "account": "example-account",
+      "responsible": {
+        "kind": "goal",
+        "id": "goal_example"
+      }
+    }
+  },
+  "notes": [
+    "Replace placeholder IDs with existing records. Send this flat object to panels measure-source create on stdin. account is source metadata, not a credential.",
+    "responsible uses kind and id (not goal_id). Chief uses {kind: chief, id: chief}; a manager or goal uses its existing ID. Responsibility and Project authorization are checked by the existing writer.",
+    "Creation stores configuration only. Script submission, credentials, collection scheduling and runs are separate operations. Before writing a source script, read panels measure-source runtime --json, then panels measure-source schema script --json and panels measure-source schema run --json."
+  ]
+}`) as Record<string, any>;
+
+/** Offline declarations: generated from fresh Python during migration. */
+export const SCRIPT_DATA = parse_numeric_json(`{
+  "schema": {
+    "additionalProperties": false,
+    "properties": {
+      "expected_revision": {
+        "title": "Expected Revision",
+        "type": "integer"
+      },
+      "text": {
+        "title": "Text",
+        "type": "string"
+      }
+    },
+    "required": [
+      "expected_revision",
+      "text"
+    ],
+    "title": "SourceScriptBody",
+    "type": "object"
+  },
+  "examples": {
+    "scalar_script": {
+      "expected_revision": 1,
+      "text": "response = request(\\n    \\"https://api.example.com/value\\",\\n    credential_ref=\\"example-service\\",\\n)\\nresponse.raise_for_status()\\noutput = context[\\"required_outputs\\"][0]\\nrecord(output[\\"measure_id\\"], output[\\"required_date\\"], response.json()[\\"value\\"])\\n"
+    }
+  }
+}`) as Record<string, any>;
+
+export const SCRIPT_NOTES = {
+  submission:
+    'Read the source first. Replace expected_revision with its current source_revision; send the object to panels measure-source submit-script SOURCE_ID on stdin. The text is nonempty top-level Python, saved immediately as a new active script revision.',
+  runtime:
+    "Before authoring or adapting the example, read panels measure-source runtime --json for request(url, credential_ref=None, method='GET', json_body=None, headers=None), context declarations, dated output helpers and coverage. Printing JSON is not output.",
+  requirements:
+    'The scalar example requires an existing owned taken measure, a matching named credential and a real provider URL. It intentionally asserts no complete-period coverage. Run it with a test request before collecting retained values.',
+};
+
+export const SCRIPT: Record<string, any> = { ...SCRIPT_DATA, notes: Object.values(SCRIPT_NOTES) };
+
+/** Offline declarations: generated from fresh Python during migration. */
+export const RUN_DATA = parse_numeric_json(`{
+  "schema": {
+    "$defs": {
+      "HistoryWindow": {
+        "additionalProperties": false,
+        "properties": {
+          "first_date": {
+            "title": "First Date",
+            "type": "string"
+          },
+          "last_date": {
+            "title": "Last Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "first_date",
+          "last_date"
+        ],
+        "title": "HistoryWindow",
+        "type": "object"
+      },
+      "RunMode": {
+        "enum": [
+          "collection",
+          "test"
+        ],
+        "title": "RunMode",
+        "type": "string"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "$ref": "#/$defs/RunMode"
+      },
+      "history": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/HistoryWindow"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "expected_script_revision": {
+        "title": "Expected Script Revision",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "mode",
+      "expected_script_revision"
+    ],
+    "title": "RunRequestBody",
+    "type": "object"
+  },
+  "examples": {
+    "test_run": {
+      "mode": "test",
+      "expected_script_revision": 1
+    },
+    "collection_run": {
+      "mode": "collection",
+      "expected_script_revision": 1,
+      "history": {
+        "first_date": "2026-01-01",
+        "last_date": "2026-01-02"
+      }
+    }
+  }
+}`) as Record<string, any>;
+
+export const RUN_NOTES = {
+  submission:
+    'Read the source first. Replace expected_script_revision with active_script.revision, not source_revision. Send the object to panels measure-source request-run SOURCE_ID on stdin, then inspect its run ID with panels measure-source run-show RUN_ID --json.',
+  history:
+    "history may be omitted or null; both default to None. A supplied object requires first_date and last_date as inclusive ISO calendar dates, with first_date not after last_date. The script receives context['history']; the runtime does not fetch or fill history automatically. Replace example dates with the desired date window.",
+  execution:
+    'test returns candidates without publishing observations or collection health. collection atomically publishes the accepted supplied dates. Both modes execute the stored script and may request its named credentials. Read panels measure-source runtime --json for script helpers, context, output declarations and coverage facts.',
+};
+
+export const RUN: Record<string, any> = { ...RUN_DATA, notes: Object.values(RUN_NOTES) };

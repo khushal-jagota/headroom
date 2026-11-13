@@ -1,5 +1,11 @@
 import type { CommandDefinition, CommandResult } from './contracts.ts';
 
+export class MissingResponseValue extends Error {
+  constructor() {
+    super('response is missing a required value');
+  }
+}
+
 export class CliFailure extends Error {
   readonly result: CommandResult;
   constructor(result: CommandResult) {
