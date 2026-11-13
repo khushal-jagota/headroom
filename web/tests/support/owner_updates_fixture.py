@@ -19,7 +19,6 @@ class OwnerUpdatesFixture:
         self.current_sha = "a" * 40
         self.ready_sha: str | None = "b" * 40
         self.activity = "unknown"
-        self.affected_work: list[str] = []
         self.state = "available"
         self.attempt: JsonObject | None = None
         self.detail: str | None = None
@@ -34,8 +33,7 @@ class OwnerUpdatesFixture:
         allowed = {
             "up_to_date": [],
             "available": ["update"] if self.ready_sha else [],
-            "waiting": (["wait", "cancel", "update_now"]
-                        if self.detail else ["cancel", "update_now"]),
+            "waiting": ["cancel", "update_now"],
             "updating": [],
             "failed": ["retry"] if self.can_retry else [],
             "mac_failed": ["retry_mac"],
@@ -45,7 +43,6 @@ class OwnerUpdatesFixture:
             "state": self.state,
             "allowed_actions": allowed,
             "activity": self.activity,
-            "affected_work": self.affected_work,
             "available": {"app_sha": self.ready_sha} if self.ready_sha else None,
             "attempt": self.attempt,
             "app_sha": self.current_sha,
@@ -73,9 +70,6 @@ class OwnerUpdatesFixture:
                 return 409, {"detail": "The update changed."}
             if action == "cancel" and self.state == "waiting":
                 self.attempt, self.state, self.detail = None, "available", None
-                return 200, self.status()
-            if action == "wait" and self.state == "waiting":
-                self.detail = None
                 return 200, self.status()
             if action == "now" and self.state == "waiting":
                 assert body == {"confirm_activity": True}, body

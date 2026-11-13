@@ -116,7 +116,7 @@ async def ipc_service(
         executor.outbox.close()
 
 
-def write_request(child: RunningChild, identity: str, *, budget: float = 0.04) -> IpcRequest:
+def write_request(child: RunningChild, identity: str, *, budget: float = 5) -> IpcRequest:
     return IpcRequest(
         identity,
         IpcOperation.write,

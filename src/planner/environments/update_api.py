@@ -58,7 +58,6 @@ async def status(request: Request) -> dict[str, object]:
         "state": result.state,
         "allowed_actions": list(result.allowed_actions),
         "activity": result.activity,
-        "affected_work": list(result.affected_work),
         "available": None if available is None else {
             "app_sha": available.manifest.app_sha, **asdict(available)
         },
@@ -111,9 +110,3 @@ async def retry(request: Request, attempt_id: str) -> JSONResponse:
 async def retry_mac(request: Request, attempt_id: str) -> JSONResponse:
     service = _service(request)
     return await _act(lambda: service.retry_mac(attempt_id))
-
-
-@router.post("/attempts/{attempt_id}/wait")
-async def wait(request: Request, attempt_id: str) -> JSONResponse:
-    service = _service(request)
-    return await _act(lambda: service.wait(attempt_id))

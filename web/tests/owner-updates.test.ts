@@ -109,9 +109,8 @@ describe("the update card", () => {
   });
 
   it("puts the approved offer text and activity note in the dialog", () => {
-    const body = render(UpdateActions, { props: { status: { ...status, activity: "busy", affected_work: ["Release proof", "Inbox cleanup"] }, now: 0 } }).body;
+    const body = render(UpdateActions, { props: { status: { ...status, activity: "busy", detail: "Update now stops this work: Release proof, Inbox cleanup." }, now: 0 } }).body;
     expect(body).toContain("A new version is ready for Panels and the Mac. Panels restarts, then you refresh to finish.");
-    expect(body).toContain("Work is running. Updating now interrupts it.");
     expect(body).toContain("Update now stops this work:");
     expect(body).toContain("Release proof");
     expect(body).toContain("Inbox cleanup");
@@ -130,7 +129,6 @@ describe("owner update actions", () => {
     await performUpdateAction(status, { action: "install", mode: "idle" });
     await performUpdateAction(withAttempt, { action: "cancel" });
     await performUpdateAction(withAttempt, { action: "now" });
-    await performUpdateAction(withAttempt, { action: "wait" });
     await performUpdateAction(withAttempt, { action: "retry" });
     await performUpdateAction(withAttempt, { action: "retry_mac" });
     expect(fetch.mock.calls.map(([path, init]) => [path, init?.body ? JSON.parse(String(init.body)) : null])).toEqual([
@@ -138,7 +136,6 @@ describe("owner update actions", () => {
       ["/api/updates/install", { app_sha: "2".repeat(40), mode: "idle", confirm_activity: false }],
       ["/api/updates/attempts/a1/cancel", null],
       ["/api/updates/attempts/a1/now", { confirm_activity: true }],
-      ["/api/updates/attempts/a1/wait", null],
       ["/api/updates/attempts/a1/retry", null],
       ["/api/updates/attempts/a1/retry-mac", null],
     ]);

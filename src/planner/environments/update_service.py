@@ -67,7 +67,11 @@ ACTIVITY_CHANGED_DETAIL = (
     "Work started before the update began. Confirm active work to update now."
 )
 UPDATE_DRAIN_SECONDS = 300
-WAIT_DETAIL = "Work did not reach a safe point in five minutes. Choose Wait, Cancel, or Update now."
+WAIT_DETAIL = (
+    "Work still waits for a safe point after five minutes. "
+    "Leave the update pending, cancel it, or choose Update now."
+)
+STOP_TIMEOUT_DETAIL = "Work did not stop safely in five minutes. The update remains paused."
 
 RESTARTED_DETAIL = "Panels restarted before the update began, so nothing changed."
 
@@ -244,9 +248,19 @@ class UpdateService:
         if system is None:
             return result
         activity = system.workspace_activity()
-        affected_work = (system.update_waiting_work()
-                         if result.state in {"available", "waiting"} else ())
-        return replace(result, activity=activity, affected_work=affected_work)
+        work = (system.update_waiting_work()
+                if result.state in {"available", "waiting"} else ())
+        detail = result.detail
+        if result.state == "waiting" and detail is None:
+            detail = "New work waits. Panels saves admitted work before the update."
+        if work:
+            names = ", ".join(work)
+            if result.state == "available":
+                detail = f"Update now stops this work: {names}."
+            else:
+                detail = (f"{detail or 'The update waits for a safe point.'} "
+                          f"Work before the update: {names}.")
+        return replace(result, activity=activity, detail=detail)
 
     def _status(self) -> UpdateStatus:
         if self._unavailable_reason is not None:
@@ -271,7 +285,7 @@ class UpdateService:
         )
         return UpdateStatus(
             state, actions, "unknown", available, attempt, self.current_app_sha, detail,
-            deadline_at, (),
+            deadline_at,
         )
 
     def _mac_report_time(self, attempt: UpdateAttempt | None) -> datetime | None:
@@ -393,18 +407,6 @@ class UpdateService:
                 current, mode="now", confirm_activity=True, detail=None,
                 deadline_at=self._drain_deadline()
             ),
-        )
-        self.schedule_advance()
-        return attempt
-
-    def wait(self, attempt_id: str) -> UpdateAttempt:
-        return self._on_owner(lambda: self._wait(attempt_id))
-
-    def _wait(self, attempt_id: str) -> UpdateAttempt:
-        attempt = self.attempts.change(
-            attempt_id, frozenset({"waiting"}),
-            lambda current: replace(current, mode="idle", detail=None,
-                                    deadline_at=self._drain_deadline()),
         )
         self.schedule_advance()
         return attempt
@@ -555,12 +557,16 @@ class UpdateService:
         if attempt is None or attempt.state != "waiting" or system is None:
             return
         attempt_id = attempt.attempt_id
-        if attempt.detail:
+        if attempt.detail and not (
+            attempt.mode == "idle" and attempt.deadline_at is None and attempt.detail == WAIT_DETAIL
+        ):
             return
         if (attempt.deadline_at is not None
                 and datetime.fromtimestamp(self._now(), UTC) >= instant(attempt.deadline_at)):
             self.attempts.change(attempt_id, frozenset({"waiting"}),
-                                 lambda current: replace(current, detail=WAIT_DETAIL))
+                                 lambda current: replace(
+                                     current, detail=(WAIT_DETAIL if current.mode == "idle"
+                                                      else STOP_TIMEOUT_DETAIL), deadline_at=None))
             return
         if (attempt.mode == "now" and not attempt.confirm_activity
                 and self._paused_attempt_id is None):
@@ -581,7 +587,7 @@ class UpdateService:
             )
         except TimeoutError:
             self.attempts.change(attempt_id, frozenset({"waiting"}),
-                                 lambda current: replace(current, detail=WAIT_DETAIL))
+                                 lambda current: replace(current, detail=STOP_TIMEOUT_DETAIL))
             return
         except Exception as exc:
             _LOG.warning("Update safe-point check stopped: %s", exc, exc_info=True)
@@ -646,7 +652,8 @@ class UpdateService:
             # An accepted detached save still owns custody. Do not reopen or snapshot.
             self.attempts.change(attempt_id, frozenset({"preparing"}), lambda current: replace(
                 current, state="waiting", detail=("Accepted result saves still wait. "
-                                                 "Choose Wait or Cancel after they finish."),
+                                                 "Choose Update now to retry after they finish, "
+                                                 "or cancel the update."),
             ))
         except Exception as exc:
             _LOG.exception("Update %s did not start its installer", attempt_id)

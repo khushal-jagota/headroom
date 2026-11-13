@@ -365,13 +365,10 @@ def test_idle_wait_cancel_and_update_now(harness: Harness, update_platform: None
         harness.service.cancel(second.attempt_id)
 
 
-def test_idle_wait_requires_a_decision_at_the_drain_bound(
+def test_idle_wait_reports_the_bound_without_forcing_or_latching_work(
     harness: Harness, update_platform: None
 ) -> None:
-    """Risk: an endless admission fence silently blocks all future work.
-
-    Replace the old indefinite-wait policy proof with the finite decision boundary.
-    """
+    """An overdue idle wait must inform the owner without forcing or latching work."""
     harness.system.activity = "busy"
     waiting = harness.service.install(SHA_B, "idle", confirm_activity=False)
     assert waiting.deadline_at is not None
@@ -381,13 +378,13 @@ def test_idle_wait_requires_a_decision_at_the_drain_bound(
     harness.service._now = lambda: later
     harness.advance()
     status = harness.service.status()
-    assert status.state == "waiting" and status.detail == WAIT_DETAIL
-    assert status.allowed_actions == ("wait", "cancel", "update_now")
-    assert status.affected_work == ("Example Worker",)
-    harness.system.activity = "idle"
+    assert status.state == "waiting" and (status.detail or "").startswith(WAIT_DETAIL)
+    assert status.allowed_actions == ("cancel", "update_now")
+    assert "Example Worker" in (status.detail or "")
+    assert harness.store.read().deadline_at is None
     harness.advance()
-    assert not harness.launched  # An expired barrier needs a new owner decision.
-    harness.service.wait(waiting.attempt_id)
+    assert not harness.launched  # The bound never turns an idle wait into a forced stop.
+    harness.system.activity = "idle"
     harness.advance()
     recorded = harness.store.read()
     assert recorded is not None and recorded.state == "installing" and harness.launched
@@ -504,7 +501,7 @@ def test_routes_and_status_shape(harness: Harness, monkeypatch: pytest.MonkeyPat
         body = client.get("/api/updates").json()
         assert set(body) == {
             "state", "allowed_actions", "activity", "available", "attempt", "app_sha",
-            "detail", "deadline_at", "mac_details", "affected_work",
+            "detail", "deadline_at", "mac_details",
         }
         assert (body["state"], body["allowed_actions"], body["attempt"]) == (
             "available", ["update"], None
@@ -645,14 +642,14 @@ def test_work_labels_do_not_scan_outside_an_offer_or_wait(
     monkeypatch.setattr(harness.service, "refresh_available", lambda: None)
     ready = harness.service._ready
     harness.service._ready = None
-    assert harness.service.status().affected_work == ()
+    assert harness.service.status().detail is None
     assert not scans
     harness.service._ready = ready
-    assert harness.service.status().affected_work == ("Example Worker",)
+    assert "Example Worker" in (harness.service.status().detail or "")
     harness.service.install(SHA_B, "now", confirm_activity=True)
     harness.advance()
     scans.clear()
-    assert harness.service.status().affected_work == ()
+    assert harness.service.status().detail is None
     assert not scans
 
 

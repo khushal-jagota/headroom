@@ -40,25 +40,18 @@
     {#if kind === "offer"}
       <h2 id={id}>Update Panels</h2>
       <p>A new version is ready for Panels and the Mac. Panels restarts, then you refresh to finish.</p>
-      {#if status.activity !== "idle"}
-        <div class="note"><span class="status-mark" aria-hidden="true"></span><span>{status.activity === "busy" ? "Work is running. Updating now interrupts it." : "Panels cannot tell if work is running. Updating now can interrupt it."}</span></div>
+      {#if status.activity !== "idle" || status.detail}
+        <div class="note"><span class="status-mark" aria-hidden="true"></span><span>{status.detail ?? (status.activity === "busy" ? "Work is running. Updating now interrupts it." : "Panels cannot tell if work is running. Updating now can interrupt it.")}</span></div>
       {/if}
     {:else if kind === "waiting"}
       <h2 id={id}>Update waits for work to finish</h2>
-      <p>{status.detail ?? "New work waits. Panels saves admitted work before the update."}</p>
+      <p>{status.detail ?? "Panels updates as soon as running work finishes."}</p>
     {:else if details}
       <h2 id={id}>{details.title}</h2>
       <dl class="facts">
         {#each details.facts as [label, value] (label)}<dt>{label}</dt><dd>{value}</dd>{/each}
       </dl>
     {/if}
-    {#if (kind === "offer" || kind === "waiting") && status.affected_work?.length}
-      <div class="affected-work">
-        <p>{kind === "offer" ? "Update now stops this work:" : "Work before the update:"}</p>
-        <ul>{#each status.affected_work as work}<li>{work}</li>{/each}</ul>
-      </div>
-    {/if}
-    {#if kind === "waiting"}<p>Extra machines keep their results until Panels returns. Reads and health checks stay available.</p>{/if}
     {#if error}<p role="alert">{error}</p>{/if}
     <footer>
       {#if kind === "offer"}
@@ -69,7 +62,7 @@
         {/if}
       {:else if kind === "waiting"}
         {#if allows("cancel")}<button type="button" class="pill pill--ghost" onclick={() => perform({ action: "cancel" })}>Cancel update</button>{/if}
-        {#if allows("wait")}<button type="button" class="pill pill--ghost" onclick={() => perform({ action: "wait" })}>Wait five more minutes</button>{:else}<button type="button" class="pill pill--ghost" onclick={() => dialog?.close()}>Close</button>{/if}
+        <button type="button" class="pill pill--ghost" onclick={() => dialog?.close()}>Close</button>
         {#if allows("update_now")}<button type="button" class="pill pill--primary" onclick={() => perform({ action: "now" })}>Update now</button>{/if}
       {:else}
         <button type="button" class="pill pill--ghost" onclick={() => dialog?.close()}>Close</button>
@@ -92,7 +85,6 @@
   .facts { display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-4); margin: 0; color: var(--text-muted); overflow-wrap: anywhere; }
   .facts dt { color: var(--text-faint); }
   .facts dd { margin: 0; color: var(--text-default); }
-  .affected-work ul { margin: var(--space-2) 0 0; padding-left: var(--space-4); color: var(--text-default); overflow-wrap: anywhere; }
   footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-2); }
   .pill { cursor: pointer; font: inherit; border: 0; border-radius: var(--radius-pill); padding: 6px 14px; font-weight: var(--weight-small); transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
   .pill--primary { background: var(--accent-bright); color: var(--surface-ink); }

@@ -22,7 +22,7 @@ type UpdateAttemptState = Literal["waiting", "preparing", "installing", "done", 
 type UpdateExperienceState = Literal[
     "up_to_date", "available", "waiting", "updating", "failed", "mac_failed", "mac_unreachable"
 ]
-type UpdateAction = Literal["update", "cancel", "update_now", "retry", "retry_mac", "wait"]
+type UpdateAction = Literal["update", "cancel", "update_now", "retry", "retry_mac"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +83,6 @@ class UpdateStatus:
     app_sha: str | None
     detail: str | None
     deadline_at: str | None
-    affected_work: tuple[str, ...] = ()
 
 
 class UpdateProvider(Protocol):
