@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import platform
+import subprocess
 import sys
 import tempfile
 from dataclasses import replace
@@ -18,7 +19,7 @@ from planner.environments.app import (  # noqa: E402
     validate_app_manifest,
 )
 from planner.environments.linux_executor_runtime import extract_runtime  # noqa: E402
-from planner.environments.runtime_admission import admit_runtime  # noqa: E402
+from planner.environments.runtime_admission import probe_environment  # noqa: E402
 from planner.environments.update_artifacts import create_app_archive  # noqa: E402
 from planner.executor.update_configuration import MAC_RUNTIME_MANIFEST_NAME  # noqa: E402
 from planner.platform_runtime.targets import LINUX_EXECUTOR  # noqa: E402
@@ -53,27 +54,46 @@ def build(source: Path, revision: str, output: Path) -> dict[str, object]:
     archive = output / "panels-linux-executor.tar.gz"
     digest = create_app_archive(runtime, archive, expected_target=LINUX_EXECUTOR)
     with tempfile.TemporaryDirectory(prefix="linux-executor-proof-", dir=output) as temporary:
-        proved = extract_runtime(
-            archive,
-            Path(temporary),
-            expected_sha256=digest,
-            expected_size=archive.stat().st_size,
-            expected_revision=revision,
-        )
         original = output / "inaccessible-build"
         runtime.rename(original)
         try:
-            admitted = validate_app_manifest(
+            proved = extract_runtime(
+                archive,
+                Path(temporary),
+                expected_sha256=digest,
+                expected_size=archive.stat().st_size,
+                expected_revision=revision,
+            )
+            validate_app_manifest(
                 proved / "manifest.json",
                 require_runtime=True,
                 expected_target=LINUX_EXECUTOR,
             )
-            admit_runtime(proved, admitted)
+            subprocess.run(
+                [
+                    str(proved / ".venv/bin/python"),
+                    "-I",
+                    "-B",
+                    "-m",
+                    "planner.executor.entrypoint",
+                    "executor",
+                    "--help",
+                ],
+                check=True,
+                timeout=30,
+                env=probe_environment(Path(temporary) / "cli-state"),
+                capture_output=True,
+                text=True,
+            )
         finally:
             original.rename(runtime)
     receipt: dict[str, object] = {
         "schema_version": 1,
-        "proof": {"native_startup": "passed", "relocated_archive": "passed"},
+        "proof": {
+            "native_startup": "passed",
+            "relocated_archive": "passed",
+            "executor_cli": "passed",
+        },
         "application_revision": revision,
         "archive_sha256": digest,
         "archive_size": archive.stat().st_size,
