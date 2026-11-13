@@ -1662,18 +1662,20 @@ def test_start_checks_prompt_and_delivery_keep_all_sql_off_event_loop(world: _Wo
     assert not world.pending_revision_feedback(ticket_id)
 
 
-def test_restart_releases_retired_ownership_when_configuration_fails(world: _World) -> None:
-    """Risk: rollback restores a claim for an ended child. Existing cases fail before kill.
+def test_failed_restart_stays_errored_instead_of_starting_old_settings(world: _World) -> None:
+    """Risk: failed restart auto-starts the previous settings after rollback.
 
-    Reuse the restart host to prove cleanup survives a configuration failure after kill.
+    Reuse the failure case to prove stopped ownership and blocked automatic readiness.
     """
     conversation_id = "restart-configuration-failure"
     ticket_id = world.ready_ticket(conversation_id=conversation_id)
     world.start_conversation(conversation_id)
     assert world.start_step(ticket_id).started
+    before = world.ticket(ticket_id)
     failure = RuntimeError("configuration transaction failed")
 
     def fail_configuration(conn: sqlite3.Connection, now: int) -> None:
+        conn.execute("UPDATE tickets SET employee_backend='claude' WHERE id=?", (ticket_id,))
         raise failure
 
     async def unexpected_start() -> WorkerStepStartResult:
@@ -1688,8 +1690,15 @@ def test_restart_releases_retired_ownership_when_configuration_fails(world: _Wor
         ))
     assert raised.value is failure
     assert world.ticket(ticket_id).conversation_id is None
-    assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.none
+    after = world.ticket(ticket_id)
+    assert after.worker_step_claim is WorkerStepClaim.errored
+    assert after.employee_backend == before.employee_backend
+    assert after.employee_launch_model == before.employee_launch_model
     assert not asyncio.run(world.conversations.is_running(conversation_id))
+    assert not world.start_step(ticket_id).started
+    assert world.ticket(ticket_id).conversation_id is None
+    with closing(world.connect()) as conn:
+        assert worker_restart.require_restartable(conn, OWNER_PRINCIPAL, ticket_id).id == ticket_id
 
 
 @pytest.mark.parametrize("head_admitted", [False, True])
@@ -1701,11 +1710,21 @@ def test_locked_restart_does_not_keep_the_start_queue_head(
     Existing lock coverage proves no old-context send, but not progress for another Ticket.
     Reuse the real admission queue and SQLite host, with no remote connection.
     """
-    first = world.ready_ticket(title="Restart waits")
+    first = world.ready_ticket(title="Restart waits", conversation_id="retiring-queue-head")
     second = world.ready_ticket(title="Other ready work")
     now = [0.0]
     starts = AutomaticStartAdmission(clock=lambda: now[0])
-    world.conversations = _AdmissionConversations(starts)
+    locked = threading.Event()
+    release = threading.Event()
+
+    class PausedRestartConversations(_AdmissionConversations):
+        async def kill(self, conversation_id: str) -> None:
+            locked.set()
+            await asyncio.to_thread(release.wait)
+            await super().kill(conversation_id)
+
+    world.conversations = PausedRestartConversations(starts)
+    world.start_conversation("retiring-queue-head")
     assert starts.try_start(StartRequest("pace", "supervisor", HOME_MACHINE_ID))
     for ticket_id in (first, second):
         assert not starts.try_start(StartRequest(
@@ -1721,15 +1740,18 @@ def test_locked_restart_does_not_keep_the_start_queue_head(
         now[0] = 20.0
 
     readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
-    locked = threading.Event()
-    release = threading.Event()
 
-    async def hold_restart_lock() -> None:
-        async with conversation_start.conversation_link_lock(f"ticket:{first}"):
-            locked.set()
-            await asyncio.to_thread(release.wait)
+    async def no_explicit_start() -> WorkerStepStartResult:
+        return WorkerStepStartResult(started=False)
 
-    holding = asyncio.run_coroutine_threadsafe(hold_restart_lock(), asyncio_loop)
+    async def restart() -> dict[str, object]:
+        with closing(world.connect()) as conn:
+            return await worker_restart.restart_worker(
+                world.conversations, conn, OWNER_PRINCIPAL, first,
+                start_worker_step=no_explicit_start, now=world.clock.now_unix,
+            )
+
+    holding = asyncio.run_coroutine_threadsafe(restart(), asyncio_loop)
     try:
         assert locked.wait(2)
         readiness_loop.poll_once()

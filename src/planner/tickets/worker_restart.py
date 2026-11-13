@@ -103,6 +103,11 @@ async def restart_worker(
         killed_conversation_looked_running = False
         revision_restarted_in_fresh_conversation = False
         if killed_conversation_id is not None:
+            starts = getattr(conversations, "start_admission", None)
+            if starts is not None:
+                # Only restart retirement gives up deferred preparation priority.
+                # An admitted preparation still owns its permit until settlement.
+                starts.finish_unbound(f"worker-preparation:{ticket_id}", inactive_only=True)
             revision_restarted_in_fresh_conversation = (
                 await run_on_worker_thread(revision_feedback.snapshot, conn, ticket_id) is not None
             )
@@ -154,7 +159,19 @@ def _unlink_give_back_the_claim_and_write_configuration(
         if not recover_after_failure and ticket.conversation_id != killed_conversation_id:
             conn.execute("COMMIT")
             return
-        if ticket.worker_step_claim in {
+        if not recover_after_failure:
+            tickets_data.mark_worker_step_claim_errored(
+                conn,
+                ticket_id,
+                expected_claim=ticket.worker_step_claim,
+                expected_claim_revision=ticket.worker_step_claim_revision,
+                now=now,
+                error_reason=(
+                    "Restart failed after the old Worker stopped. "
+                    "Retry restart before this Ticket can start again."
+                ),
+            )
+        elif ticket.worker_step_claim in {
             WorkerStepClaim.out,
             WorkerStepClaim.errored,
         }:
@@ -181,7 +198,8 @@ def _unlink_give_back_the_claim_and_write_configuration(
         if killed_conversation_id is not None and recover_after_failure:
             try:
                 # The configuration failed, but the old child is already gone.
-                # Do not restore its ownership as a side effect of rollback.
+                # Unlink it, but hold an errored claim so automatic readiness
+                # cannot start the old settings after this restart failed.
                 _unlink_give_back_the_claim_and_write_configuration(
                     conn,
                     ticket_id,
