@@ -214,7 +214,7 @@ test('real bindings share owners and durable memory while Hermes cleanup retains
     expect(() => acquireRuntimeOwnership(path)).toThrow('ConversationRuntimeAlreadyOwned');
     base_stop.mockClear();
     catalog_stop.mockClear();
-    base_stop.mockImplementationOnce(async (options: StopOptions) => {
+    base_stop.mockImplementationOnce(async (options: unknown) => {
       await retry_failure.retry_cleanup();
       await original_base_stop.call(base, options);
     });
