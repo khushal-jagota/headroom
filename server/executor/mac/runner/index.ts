@@ -3,7 +3,7 @@ import type {
   BackendEventSink,
   BackendEventValue,
 } from '../../../conversation/backends/contracts.ts';
-import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
+import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import type {
   ChildCommand,
@@ -12,6 +12,7 @@ import type {
   TurnToken,
 } from '../../wire.generated.ts';
 import type { CanonicalReader } from '../storage/journal_contracts.ts';
+import { MailboxRunCancelled } from '../mailbox/contracts.ts';
 import type { MacNativeChildrenContract } from './contracts.ts';
 import type { MacCommandServiceContract } from './command_contracts.ts';
 import type { MacRunnerContract, MacRunnerOptions } from './lifecycle_contracts.ts';
@@ -117,9 +118,60 @@ export class MacRunner implements MacRunnerContract {
     if (this.lifetime.permanently_stopped)
       throw new ServerLifecycleError('Mac runner is shutting down.');
   }
-  async run(command: ChildCommand): Promise<CommandOutcome> {
+  async run(command: ChildCommand, signal: AbortSignal): Promise<CommandOutcome> {
+    signal.throwIfAborted();
     this.assert_admission();
-    return this.commands.run(command);
+    let stopping: Promise<void> | undefined;
+    const abort = () => {
+      this.commands.withdraw(command.command_id);
+      stopping = this.finish_cancelled_run(signal);
+      void stopping.catch(() => {});
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    try {
+      let operation: Promise<CommandOutcome>;
+      try {
+        operation = this.commands.run(command);
+      } catch (error) {
+        operation = Promise.reject(error);
+      }
+      const [result] = await Promise.allSettled([operation]);
+      if (stopping) {
+        const [cleanup] = await Promise.allSettled([stopping]);
+        const failures: unknown[] = [];
+        if (result.status === 'rejected') failures.push(result.reason);
+        if (cleanup.status === 'rejected') failures.push(cleanup.reason);
+        if (failures.length === 1) throw failures[0];
+        if (failures.length) throw new AggregateError(failures, 'Canceled Mac command failed.');
+        throw signal.reason;
+      }
+      if (result.status === 'rejected') throw result.reason;
+      return result.value;
+    } finally {
+      signal.removeEventListener('abort', abort);
+    }
+  }
+  private async finish_cancelled_run(signal: AbortSignal): Promise<void> {
+    const reason = signal.reason;
+    const [observation, actual] = await Promise.allSettled([
+      this.lifetime.stop(
+        reason instanceof MailboxRunCancelled ? reason.stop_options : { deadline: 0 },
+      ),
+      this.lifetime.settled(),
+    ]);
+    const failures: unknown[] = actual.status === 'rejected' ? [actual.reason] : [];
+    if (
+      observation.status === 'rejected' &&
+      !(observation.reason instanceof ShutdownDeadlineExceeded) &&
+      !(
+        actual.status === 'rejected' &&
+        (observation.reason === actual.reason ||
+          (observation.reason instanceof Error && observation.reason.cause === actual.reason))
+      )
+    )
+      failures.push(observation.reason);
+    if (failures.length === 1) throw failures[0];
+    if (failures.length) throw new AggregateError(failures, 'Canceled Mac command cleanup failed.');
   }
   async publish_owed_outputs(command: CanonicalReader, result: CanonicalReader): Promise<void> {
     this.assert_admission();

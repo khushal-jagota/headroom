@@ -253,9 +253,15 @@ A deadline error on `stop()` does not mean that the work stopped.
 Native and source failures remain visible after resource cleanup, including an actual failure whose type is a deadline error.
 A failed settlement retains its retry point. A later stop retries it before actual completion.
 
-Exact command stop follows Python when a currently joined command task fails: it returns an uncertain outcome before native cleanup.
-Permanent host shutdown separately attempts native cleanup and joins the failed work.
-The owner still decides whether exact command stop must also continue cleanup across that failed join.
+Exact command stop joins every selected actual command before native cleanup.
+The Manager accepted continued native cleanup after a failed command join. The outcome remains uncertain and has no successful stop certificate.
+The exact child's command and cleanup errors remain retained across retries. A later stop retries cleanup without erasing that history.
+
+Mailbox command calls require an `AbortSignal`. Queue shutdown supplies its original absolute deadline in `MailboxRunCancelled`.
+Cancellation withdraws preparation, starts permanent runner cleanup with that same deadline, and joins the actual command and runner work.
+An already-aborted signal refuses before command effects. Each call removes its abort listener when it finishes.
+Other signals start cleanup without a fresh time budget and still wait for actual completion.
+Only the stop observer's deadline is excluded from actual failure history. Actual resource errors remain visible.
 
 ## Local event composition
 

@@ -111,6 +111,7 @@ def fixture(root: Path) -> dict[str, Any]:
         events[key] = type_adapter(BackendEvent).dump_json(event).decode()
     return dict(
         commands=commands,
+        joined_start=shared["commands"]["failed-source-start"],
         events=events,
         before=["tool", "permission", "question", "background"],
         middle=["delta", "thinking", "progress", "stale"],
