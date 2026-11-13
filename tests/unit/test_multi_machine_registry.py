@@ -102,11 +102,19 @@ def test_server_loads_both_retained_owners_before_adoption_and_dispatches_cleanu
         },
     )
     app = create_app(config, build_clock(config), lambda: connect(database))
-    with TestClient(app):
+    with TestClient(app) as client:
         assert seen and all(ids == {"conversation0", "conversation1"} for ids in seen)
         registry = app.state.executor_registry
         first = registry.get(ORIGINAL_MAC_MACHINE_ID)
         second = registry.get(EXTRA)
+        monkeypatch.setattr(
+            first, "health_payload", lambda: {"presence": "present", "identity": None},
+        )
+        monkeypatch.setattr(
+            second, "health_payload", lambda: {"presence": "asleep", "identity": None},
+        )
+        assert client.get("/api/executor/health").json()["presence"] == "present"
+        assert client.get(f"/api/executor/health?machine_id={EXTRA}").json()["presence"] == "asleep"
         first.runs.recheck_cleanup = AsyncMock(return_value=CleanupResult(True, "first"))
         second.runs.recheck_cleanup = AsyncMock(return_value=CleanupResult(True, "second"))
         callback = app.state.conversation.system._worker_cleanup_recheck

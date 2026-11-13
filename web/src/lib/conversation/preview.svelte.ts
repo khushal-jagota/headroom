@@ -13,6 +13,7 @@ export type ConversationPreviewSource = {
   target: { kind: "chief" | "manager" | "ticket"; id: string } | null;
   conversationId: string | null;
   locale?: TicketLocale;
+  machineId?: string;
 };
 
 /** A visible preview reads the same compact live view as the conversation dock.
@@ -44,7 +45,7 @@ export function conversationPreview(source: () => ConversationPreviewSource) {
       enabled: current.visible && current.target !== null
     };
   });
-  const health = createQuery(() => ({ ...queries.executorHealth(), enabled: source().visible && source().locale === "macos" }));
+  const health = createQuery(() => ({ ...queries.executorHealth(source().machineId), enabled: source().visible && source().locale === "macos" }));
 
   const activeConversationId = $derived.by(() => {
     const current = source();

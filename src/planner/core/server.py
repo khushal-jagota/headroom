@@ -686,9 +686,13 @@ def create_app(
         }
 
     @app.get("/api/executor/health")
-    async def executor_health() -> dict[str, object]:
-        endpoint = getattr(app.state, "executor_endpoint", None)
+    async def executor_health(machine_id: str | None = None) -> dict[str, object]:
+        destination = machine_id or ORIGINAL_MAC_MACHINE_ID
+        registry = getattr(app.state, "executor_registry", None)
+        endpoint = None if registry is None else registry.get(destination)
         if endpoint is None:
+            if destination not in (HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID):
+                raise PlannerError(ErrorCode.not_found, "Unknown executor destination")
             return {"mode": "local", "connection_state": "disconnected"}
         return _with_native_build_1_fields({"mode": "remote", **endpoint.health_payload()})
 

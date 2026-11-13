@@ -6,7 +6,7 @@
   import type { AgentHoldFacts } from "../../lib/workAttentionPresentation";
   import ConversationSignalMark from "../ConversationSignalMark.svelte";
   let {locale,machineId,signal,conversationId=null,completed=false,working=true,agentHold}: {locale?:TicketLocale;machineId?:string;signal?:Partial<ConversationSignal>;conversationId?:string|null;completed?:boolean;working?:boolean;agentHold?:AgentHoldFacts}=$props();
-  const health=createQuery(() => ({...queries.executorHealth(),enabled:locale === "macos",refetchInterval:false}));
+  const health=createQuery(() => ({...queries.executorHealth(machineId),enabled:locale === "macos",refetchInterval:false}));
   const machines=createQuery(() => queries.machines());
   const name=$derived(machines.data?.machines.find(item => item.machine_id === machineId)?.name ?? "the machine");
   let unknown=$derived(locale === "macos" && (health.isError || !macActivityKnown(health.data)));
