@@ -34,8 +34,6 @@ def test_service_preserves_literal_paths_and_supervisor_shutdown(tmp_path: Path)
     assert 'Environment="PLAN_DB_PATH' not in unit
     with pytest.raises(ValueError, match="control characters"):
         render_service(replace(config, data=tmp_path / "bad\npath"), config.installation)
-    with pytest.raises(ValueError, match="service name"):
-        render_service(replace(config, service_name="../home.service"), config.installation)
 
 
 def test_failed_archive_admission_never_writes_credentials_or_unit(

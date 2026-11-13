@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -24,7 +23,6 @@ class LinuxExecutorInstallation:
     executor_id: str
     server_url: str
     revision: str
-    service_name: str = "panels-executor.service"
 
 
 def _quoted(value: str) -> str:
@@ -37,8 +35,6 @@ def render_service(configuration: LinuxExecutorInstallation, runtime: Path) -> s
     validate_executor_launch(
         configuration.executor_id, configuration.revision, configuration.server_url
     )
-    if re.fullmatch(r"[A-Za-z0-9_-]+\.service", configuration.service_name) is None:
-        raise ValueError("invalid executor service name")
     for path in (configuration.installation, configuration.data, runtime):
         if not path.is_absolute():
             raise ValueError("executor installation paths must be absolute")
@@ -140,7 +136,7 @@ def install(
     data.chmod(0o700)
     write_credential(credential_path(data), credential)
     unit_directory.mkdir(parents=True, exist_ok=True)
-    unit = unit_directory / configuration.service_name
+    unit = unit_directory / "panels-executor.service"
     temporary = unit.with_suffix(".service.tmp")
     temporary.write_text(render_service(configuration, runtime))
     temporary.replace(unit)
@@ -158,7 +154,6 @@ def main() -> None:
     parser.add_argument("--archive-sha256", required=True)
     parser.add_argument("--archive-size", type=int, required=True)
     parser.add_argument("--credential-file", type=Path, required=True)
-    parser.add_argument("--service-name", default="panels-executor.service")
     args = parser.parse_args()
     configuration = LinuxExecutorInstallation(
         args.installation,
@@ -166,7 +161,6 @@ def main() -> None:
         args.executor_id,
         args.server_url,
         args.revision,
-        args.service_name,
     )
     try:
         unit = install(

@@ -69,4 +69,4 @@ PLAN_EXECUTOR_ROOT="$HOME/.local/share/panels-executor-data" \
 systemctl --user start panels-executor.service
 ```
 
-Each executor instance needs its own destination, private data folder, installation folder, and service name. Use `--service-name` for another instance in the same account. Never point a disposable check at a live data folder.
+Keep disposable checks separate from live home data and executor settings.
