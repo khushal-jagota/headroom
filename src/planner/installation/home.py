@@ -18,6 +18,7 @@ from pathlib import Path
 from planner.environments.runtime_admission import admit_runtime
 from planner.environments.update_artifacts import extract_app_archive
 from planner.installation.contracts import HomeInstall
+from planner.platform_runtime.linux.update_installer import MAC_SCHEDULE_SUFFIXES
 
 HEALTH_TIMEOUT_SECONDS = 60
 
@@ -248,7 +249,7 @@ def install_home(
             owns_root = True
             agents = Path.home() / "Library/LaunchAgents"
             agents.mkdir(parents=True, exist_ok=True)
-            for suffix in ("", ".backup"):
+            for suffix in ("", ".backup", *MAC_SCHEDULE_SUFFIXES):
                 label = options.service + suffix
                 plist = root / "agents" / (label + ".plist")
                 link = agents / (label + ".plist")
@@ -259,10 +260,11 @@ def install_home(
             attempted_jobs.append((label, plist))
             _run("/bin/launchctl", "bootstrap", domain, str(plist))
             address = _wait_health(options.port, revision)
-            label = options.service + ".backup"
-            plist = root / "agents" / (label + ".plist")
-            attempted_jobs.append((label, plist))
-            _run("/bin/launchctl", "bootstrap", domain, str(plist))
+            for suffix in (".backup", *MAC_SCHEDULE_SUFFIXES):
+                label = options.service + suffix
+                plist = root / "agents" / (label + ".plist")
+                attempted_jobs.append((label, plist))
+                _run("/bin/launchctl", "bootstrap", domain, str(plist))
             return address
         # Admit the release before persistent state exists.
         with tempfile.TemporaryDirectory(prefix="panels-home-admission-") as temporary:

@@ -15,7 +15,11 @@ from pathlib import Path
 
 from planner.environments.update_artifacts import extract_app_archive
 from planner.platform_runtime.darwin.contracts import MacHomeInstallation
-from planner.platform_runtime.linux.update_installer import external_python
+from planner.platform_runtime.linux.update_installer import (
+    MAC_SCHEDULE_SUFFIXES,
+    external_python,
+    mac_schedule_jobs,
+)
 from planner.skill_sources import (
     account_skill_homes,
     account_skill_provisioning_conflict,
@@ -45,7 +49,7 @@ def provider_search_path(app: Path) -> str:
 
 def _check_services(label: str) -> None:
     domain = f"gui/{os.getuid()}"
-    for suffix in ("", ".backup"):
+    for suffix in ("", ".backup", *MAC_SCHEDULE_SUFFIXES):
         job = label + suffix
         path = Path.home() / "Library/LaunchAgents" / f"{job}.plist"
         if path.exists() or path.is_symlink():
@@ -198,6 +202,7 @@ def install_home(
                 "StandardErrorPath": str(root / "logs/backup.stderr.log"),
             },
         }
+        jobs.update(mac_schedule_jobs(root, label, [str(app / "bin/panels")], environment, root))
         for job_label, job in jobs.items():
             path = root / "agents" / (job_label + ".plist")
             path.write_bytes(plistlib.dumps(job))

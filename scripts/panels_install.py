@@ -15,6 +15,7 @@ import os
 import platform
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -26,6 +27,7 @@ import zipfile
 from datetime import UTC, datetime
 from http.client import HTTPMessage
 from pathlib import Path
+from types import FrameType
 from typing import IO, Any
 
 REPOSITORY = "khushal-jagota/headroom"
@@ -96,7 +98,12 @@ def preflight(args: argparse.Namespace, target: str) -> None:
             raise ValueError("Update this Mac to macOS 15 or newer.")
         domain = f"gui/{os.getuid()}"
         labels = (
-            (args.service, args.service + ".backup") if args.command == "home" else (args.service,)
+            tuple(
+                args.service + suffix
+                for suffix in ("", ".backup", ".maintenance", ".stall-watchdog")
+            )
+            if args.command == "home"
+            else (args.service,)
         )
         for label in labels:
             path = Path.home() / "Library/LaunchAgents" / (label + ".plist")
@@ -393,6 +400,43 @@ def parser() -> argparse.ArgumentParser:
     return result
 
 
+def run_installer(command: list[str], payload: str, environment: dict[str, str]) -> None:
+    """Wait through installer rollback after one forwarded interrupt, including repeated Ctrl-C."""
+    process: subprocess.Popen[str] | None = None
+    interrupted = False
+    forwarded = False
+
+    def interrupt(signum: int, frame: FrameType | None) -> None:
+        nonlocal interrupted, forwarded
+        interrupted = True
+        if process is not None and not forwarded:
+            forwarded = True
+            try:
+                process.send_signal(signal.SIGINT)
+            except ProcessLookupError:
+                pass
+
+    previous = signal.signal(signal.SIGINT, interrupt)
+    try:
+        # A separate session prevents repeated terminal interrupts from reaching cleanup.
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            text=True,
+            env=environment,
+            start_new_session=True,
+        )
+        if interrupted:
+            interrupt(signal.SIGINT, None)
+        process.communicate(payload)
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    if interrupted:
+        raise SystemExit(130)
+    if process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, command)
+
+
 def main() -> None:
     args = parser().parse_args()
     try:
@@ -473,7 +517,7 @@ def main() -> None:
                     "label": args.service,
                 }
             print("Release checksum passed. Install the new service.", flush=True)
-            subprocess.run(command, input=json.dumps(value), text=True, env=environment, check=True)
+            run_installer(command, json.dumps(value), environment)
     except (
         OSError,
         ValueError,

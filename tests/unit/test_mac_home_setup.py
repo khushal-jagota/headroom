@@ -49,6 +49,11 @@ def test_service_and_backup_keep_one_record_with_space_paths(
     environment = home["EnvironmentVariables"]
     assert home["ProgramArguments"] == [str(interpreter), "-m", "planner", "serve"]
     assert backup["EnvironmentVariables"] == environment
+    for suffix in ("maintenance", "stall-watchdog"):
+        scheduled = plistlib.loads((root / f"agents/com.panels.test.{suffix}.plist").read_bytes())
+        assert scheduled["ProgramArguments"][:3] == [str(interpreter), "-m", "planner"]
+        assert scheduled["WorkingDirectory"] == str(source)
+        assert scheduled["EnvironmentVariables"] == environment
     arguments = backup["ProgramArguments"]
     assert arguments[0] == str(interpreter)
     assert arguments[arguments.index("--source-db") + 1] == environment["PLAN_DB_PATH"]

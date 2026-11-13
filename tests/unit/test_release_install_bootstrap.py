@@ -143,3 +143,69 @@ def test_unsupported_loader_host_refuses_before_candidate_exec(
     with pytest.raises(SystemExit, match="supported Linux distribution"):
         bootstrap.main()
     assert not (tmp_path / "home").exists()
+
+
+def test_interrupt_waits_for_real_installer_cleanup_through_repeated_ctrl_c(tmp_path: Path) -> None:
+    """A real child must finish rollback beyond subprocess.run's .25-second interrupt grace."""
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    child = tmp_path / "installer.py"
+    child.write_text(
+        "import os, signal, sys, time\n"
+        "from pathlib import Path\n"
+        "root = Path(sys.argv[1])\n"
+        "assert sys.stdin.read() == 'private synthetic input'\n"
+        "def cleanup(signum, frame):\n"
+        "    (root / 'cleanup-started').touch()\n"
+        "    time.sleep(.6)\n"
+        "    (root / 'cleanup-complete').touch()\n"
+        "    raise SystemExit(17)\n"
+        "signal.signal(signal.SIGINT, cleanup)\n"
+        "(root / 'ready').write_text(str(os.getpgrp()))\n"
+        "time.sleep(5)\n"
+    )
+    wrapper = (
+        "import os, runpy, sys; "
+        "run = runpy.run_path(sys.argv[1], run_name='bootstrap_test')['run_installer']; "
+        "run([sys.executable, sys.argv[2], sys.argv[3]], "
+        "'private synthetic input', dict(os.environ))"
+    )
+    wrapper_path = tmp_path / "bootstrap.py"
+    wrapper_path.write_text(wrapper)
+    process = subprocess.Popen(
+        [sys.executable, str(wrapper_path), bootstrap.__file__, str(child), str(tmp_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+
+    def wait_for(path: Path) -> None:
+        deadline = time.monotonic() + 5
+        while not path.exists():
+            assert process.poll() is None, "The bootstrap exited before the installer checkpoint"
+            assert time.monotonic() < deadline, "The installer did not reach its checkpoint"
+            time.sleep(0.01)
+
+    try:
+        wait_for(tmp_path / "ready")
+        assert int((tmp_path / "ready").read_text()) != process.pid
+        process.send_signal(signal.SIGINT)
+        wait_for(tmp_path / "cleanup-started")
+        process.send_signal(signal.SIGINT)
+        stdout, stderr = process.communicate(timeout=5)
+        assert process.returncode == 130
+        assert (tmp_path / "cleanup-complete").exists()
+        assert "private synthetic input" not in stdout + stderr
+        assert "Traceback" not in stderr
+    finally:
+        if process.poll() is None:
+            process.send_signal(signal.SIGINT)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)

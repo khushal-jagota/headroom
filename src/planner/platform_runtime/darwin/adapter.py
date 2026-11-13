@@ -1,17 +1,33 @@
-"""Darwin app custody; remaining native home capabilities follow separately."""
+"""Darwin home lifecycle, local preview evidence, and native measurements."""
 
 from __future__ import annotations
 
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from planner.platform_runtime.legacy_posix import LegacyPosixPlatformAdapter
+
+if TYPE_CHECKING:
+    from planner.environments.vps_metrics.config import MetricsConfig
+    from planner.environments.vps_metrics.contracts import Collector
+    from planner.platform_runtime.contracts import PreviewProcessInspector
 
 
 class DarwinPlatformAdapter(LegacyPosixPlatformAdapter):
     update_unavailable_reason = None
     update_requires_snapshot = True
+
+    def preview_inspector(self) -> PreviewProcessInspector:
+        from .preview import DarwinProcessInspector
+
+        return DarwinProcessInspector()
+
+    def metrics_collector(self, config: MetricsConfig) -> Collector:
+        from .metrics import DarwinCollector
+
+        return DarwinCollector(config)
 
     def own_service_unit(self, cgroup: str | None = None) -> str | None:
         from .updates import own_service_unit
