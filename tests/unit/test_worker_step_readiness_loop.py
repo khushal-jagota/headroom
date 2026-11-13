@@ -1692,7 +1692,10 @@ def test_restart_releases_retired_ownership_when_configuration_fails(world: _Wor
     assert not asyncio.run(world.conversations.is_running(conversation_id))
 
 
-def test_locked_restart_does_not_keep_the_start_queue_head(world: _World) -> None:
+@pytest.mark.parametrize("head_admitted", [False, True])
+def test_locked_restart_does_not_keep_the_start_queue_head(
+    world: _World, head_admitted: bool,
+) -> None:
     """Risk: a retirement wait blocks unrelated starts behind its deferred rank.
 
     Existing lock coverage proves no old-context send, but not progress for another Ticket.
@@ -1710,6 +1713,12 @@ def test_locked_restart_does_not_keep_the_start_queue_head(world: _World) -> Non
         ))
     starts.finish("pace")
     now[0] = 10.0
+    if head_admitted:
+        # A duplicate starter must preserve the permit of an admitted preparation.
+        assert starts.try_start(StartRequest(
+            f"worker-preparation:{first}", "worker", HOME_MACHINE_ID,
+        ))
+        now[0] = 20.0
 
     readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
     locked = threading.Event()
@@ -1724,7 +1733,8 @@ def test_locked_restart_does_not_keep_the_start_queue_head(world: _World) -> Non
     try:
         assert locked.wait(2)
         readiness_loop.poll_once()
-        assert _waited_for(lambda: not starts.has_requests((f"worker-preparation:{first}",)))
+        if not head_admitted:
+            assert _waited_for(lambda: not starts.has_requests((f"worker-preparation:{first}",)))
         # If the later task ran before the head dropped its rank, retry it now.
         def second_attempt_settled() -> bool:
             with readiness_loop._in_flight_lock:
@@ -1734,6 +1744,7 @@ def test_locked_restart_does_not_keep_the_start_queue_head(world: _World) -> Non
         readiness_loop.poll_once()
         assert _waited_for(lambda: world.ticket(second).worker_step_claim is WorkerStepClaim.out)
         assert not holding.done()
+        assert starts.has_requests((f"worker-preparation:{first}",)) is head_admitted
         assert world.ticket(first).worker_step_claim is WorkerStepClaim.none
     finally:
         release.set()
