@@ -25,6 +25,7 @@ import {
 import { FileStaging } from '../vps_files.ts';
 import { require_current_incarnation_in_transaction } from '../vps_presence_store.ts';
 import { open_child_assignment } from './child_custody.ts';
+import { is_json_object } from '../protocol_json.ts';
 import { artifact_changed, PublicationGroup } from './publication.ts';
 
 export type TransactionalWriter = (
@@ -207,13 +208,9 @@ export class InboxStore {
   }
   require_file_owner(sql: ReadSql, envelope: WireValue<'QueuedEnvelope'>): void {
     if (!envelope.file_dependencies?.length) return;
-    const dictionary = (value: unknown): Record<string, unknown> | null =>
-      value !== null && typeof value === 'object' && !Array.isArray(value)
-        ? (value as Record<string, unknown>)
-        : null;
-    const direct = dictionary(envelope.payload.child);
-    const ask = dictionary(envelope.payload.ask);
-    const child = direct ?? ask?.child ?? null;
+    const direct = envelope.payload.child;
+    const ask = envelope.payload.ask;
+    const child = is_json_object(direct) ? direct : is_json_object(ask) ? ask.child : null;
     const reference = decode_value(child, 'ChildReference');
     const assignment = open_child_assignment(sql, reference);
     if (assignment === null && ['backend_event', 'cli_write'].includes(envelope.kind))

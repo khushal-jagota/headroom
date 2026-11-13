@@ -1,7 +1,8 @@
 # Executor wire
 
 Hard-link holds defer overwritten-inode cleanup until after the publication writer.
-A same-user process can swap an unheld inode after the final check and cause rename latency, as in Python.
+A same-user destination swap after the check inside the writer and before rename is undetected. It can release large data on the event loop.
+Hard crashes can leave `.hold-*`, `.incoming-*`, and `.tmp-*` files. No startup sweeper removes them.
 
 Both executor halves import their wire types from `wire.generated.ts`. Python remains the contract author until cutover. Protocol 22 uses HTTPS JSON. The spool format is 5 and the command journal format is 1.
 

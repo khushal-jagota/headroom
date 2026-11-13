@@ -2,7 +2,6 @@
 import type { Clock } from '../core/clock.ts';
 import type { Principal } from '../core/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
-import { JsonNumber } from '../core/http/numeric_json.ts';
 import type { TransactionSql } from '../core/database/contracts.ts';
 import { admitCommand } from '../core/authority/intake.ts';
 import type { ExecutorIdentity } from '../execution_identity.ts';
@@ -41,13 +40,9 @@ import type { WireValue } from './contracts.ts';
 import { require_current_incarnation_in_transaction } from './vps_presence_store.ts';
 import { decode_value, ValueError } from './protocol.ts';
 import { now_ms } from './clock.ts';
+import { is_json_object } from './protocol_json.ts';
 
 type Json = WireValue<'JsonObject'>;
-const object = (value: unknown): value is Json =>
-  value !== null &&
-  typeof value === 'object' &&
-  !Array.isArray(value) &&
-  !(value instanceof JsonNumber);
 /** Effects use the caller's writer. Canonical domain writers own all mutation rules. */
 export function write_ticket_mutation(
   tx: TransactionSql,
@@ -58,7 +53,7 @@ export function write_ticket_mutation(
 ): Json {
   const args = write.arguments;
   const body = args.body;
-  if (!object(body)) throw new PlannerError('validation', 'ticket mutation needs a body');
+  if (!is_json_object(body)) throw new PlannerError('validation', 'ticket mutation needs a body');
   let route = '/api/tickets/{ticket_id}',
     method = 'PATCH';
   let params: Record<string, string> = { ticket_id: args.ticket_id as string };
@@ -154,7 +149,7 @@ export class AgentWrites {
       now_ms(),
       { identity, published },
     );
-    if (notices.length)
+    if (receipt.disposition !== 'refused' && notices.length)
       await notify_review_transfers(this.conversations, this.store.database, notices, {
         now: this.clock.nowUnix(),
       });
@@ -224,7 +219,8 @@ export class AgentWrites {
       const previous = this.store.prior_receipt(tx, envelope, identity);
       if (previous !== null) return { previous, recipient: principal, message: '', mode: 'queue' };
       const body = write.arguments.body;
-      if (!object(body)) throw new PlannerError('validation', 'message body must be an object');
+      if (!is_json_object(body))
+        throw new PlannerError('validation', 'message body must be an object');
       const message = message_text(body.message);
       if (
         write.operation === 'ticket.request_help' &&

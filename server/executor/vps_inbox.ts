@@ -6,7 +6,6 @@ import type { TransactionSql } from '../core/database/contracts.ts';
 import { is_sqlite_error } from '../core/database/index.ts';
 import { is_os_error } from '../core/system_errors.ts';
 import { python_os_error_message } from '../core/os_errors.ts';
-import { JsonNumber } from '../core/http/numeric_json.ts';
 import type { ExecutorIdentity } from '../execution_identity.ts';
 import type {
   AcceptedRecordEvent,
@@ -34,6 +33,7 @@ import type { PublishedFiles } from './data/inbox.ts';
 import { open_child_assignment } from './data/child_custody.ts';
 import { AgentWrites } from './vps_agent_writes.ts';
 import { now_ms } from './clock.ts';
+import { is_json_object } from './protocol_json.ts';
 import { MAC_ITEM_RETRY_LATER_SECONDS, MAX_ITEM_BATCH_ITEMS } from './configuration.ts';
 
 export { InboxStore, MissingFiles, PublishedFiles } from './data/inbox.ts';
@@ -101,8 +101,16 @@ async function answer_by<T>(
     clearTimeout(timer);
   }
 }
-async function lock_by(lock: FifoLock, deadline: number, message: string): Promise<() => void> {
-  const acquired = lock.acquire();
+async function lock_by(
+  lock: FifoLock,
+  deadline: number,
+  message: string,
+  after_release?: () => void,
+): Promise<() => void> {
+  const acquired = lock.acquire().then((release) => () => {
+    release();
+    after_release?.();
+  });
   const answer = await answer_by(acquired, deadline);
   if (answer.done) return answer.value;
   // A timed-out FIFO waiter still owns its eventual slot and must release it.
@@ -325,14 +333,7 @@ export class MacInbox {
     const raw = payload.child;
     const ask = payload.ask;
     const child = decode_value(
-      raw !== null && typeof raw === 'object' && !Array.isArray(raw) && !(raw instanceof JsonNumber)
-        ? raw
-        : ask !== null &&
-            typeof ask === 'object' &&
-            !Array.isArray(ask) &&
-            !(ask instanceof JsonNumber)
-          ? ask.child
-          : null,
+      is_json_object(raw) ? raw : is_json_object(ask) ? ask.child : null,
       'ChildReference',
     );
     let refusal = new PlannerError('validation', message);
@@ -364,13 +365,14 @@ export class MacInbox {
       for (const owner of [
         ...new Set((envelope.file_dependencies ?? []).map((manifest) => manifest.owner_id)),
       ].sort()) {
-        let guard = this.publication_guards.get(owner);
-        if (!guard) {
-          guard = new FifoLock();
-          this.publication_guards.set(owner, guard);
-        }
+        const guard = this.publication_guards.get(owner) ?? new FifoLock();
+        this.publication_guards.set(owner, guard);
         releases.push(
-          await lock_by(guard, deadline, "Another item is still saving this Ticket's files"),
+          await lock_by(guard, deadline, "Another item is still saving this Ticket's files", () => {
+            // FifoLock stays locked while it hands ownership to a queued waiter.
+            if (!guard.locked && this.publication_guards.get(owner) === guard)
+              this.publication_guards.delete(owner);
+          }),
         );
       }
       return () => {

@@ -229,4 +229,16 @@ test('executor refusal after take commits only its receipt and replays without a
       ),
     )?.disposition,
   ).toBe('refused');
+  // A participant without actual savepoint rollback retains the original refusal guard.
+  expect(() =>
+    store.commit_backend_event(
+      (tx) => ({ result: {}, written: store.append_in_transaction(tx, id, [prompt]) }),
+      (_tx, take) => {
+        take();
+        return { result: {}, taken: false, written: [] };
+      },
+    ),
+  ).toThrow('commit participant refused after taking the conversation event');
+  expect(store.read_events_after(id, 0)).toEqual([]);
+  expect(store.read_conversation(id)?.latest_sequence).toBe(0);
 });

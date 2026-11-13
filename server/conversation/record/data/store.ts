@@ -1,5 +1,6 @@
 /** Durable record primitives. Event append is completed with its projection in PR2. */
 import { randomUUID } from 'node:crypto';
+import { capture_savepoint_rollback } from '../../../core/database/index.ts';
 import type {
   Database,
   ReadSql,
@@ -1111,7 +1112,9 @@ export class ConversationStore
   ): AcceptedRecordEvent<T> {
     return this.#write((tx) => {
       let written: readonly StoredConversationEvent[] = [];
+      const rollback_proofs: (() => boolean)[] = [];
       const take = (): T => {
+        rollback_proofs.push(capture_savepoint_rollback(tx));
         const accepted = synchronously(() => writer(tx));
         written = accepted.written;
         return accepted.result;
@@ -1122,6 +1125,8 @@ export class ConversationStore
           : synchronously(() => in_commit(tx, take));
       // The executor participant rolls back its domain savepoint before it records
       // a refusal receipt. A take can therefore run without a committed event.
+      if (!outcome.taken && rollback_proofs.some((rolled_back) => !rolled_back()))
+        throw new Error('commit participant refused after taking the conversation event');
       const result = { ...outcome, written: outcome.taken ? written : [] };
       return {
         value: result,
