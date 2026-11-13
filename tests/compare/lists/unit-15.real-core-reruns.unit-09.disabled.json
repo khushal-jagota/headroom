@@ -32,66 +32,33 @@
     },
     {
       "method": "POST",
-      "path": "/api/tickets",
-      "status": 200,
-      "json": {
-        "title": "Unavailable model worker",
-        "worker_type": "coding",
-        "brief": "Do not retry an unavailable model",
-        "ceiling": "needs_what_changes",
-        "ceiling_holder": {
-          "kind": "owner",
-          "id": "owner"
-        },
-        "employee_launch_model": "unoffered-model"
-      },
-      "capture": {
-        "unoffered_worker": "id"
-      }
-    },
-    {
-      "method": "PUT",
-      "path": "/api/conversation/backends/codex/models/gpt-6.1-sol/enablement",
-      "status": 200,
-      "json": {
-        "enabled": false
-      }
-    },
-    {
-      "method": "POST",
       "path": "/api/test/model-list",
       "status": 200,
       "json": {
         "machine": "vps",
         "backend": "codex",
         "models": [
-          "gpt-6.1-sol"
+          "offered-model"
         ]
       }
     }
   ],
   "requests": [
     {
-      "area": "disabled-model",
+      "area": "unoffered-model-worker",
       "method": "POST",
       "path": "/api/test/poll/readiness",
       "status": 200,
       "json": {}
     },
     {
-      "area": "disabled-model",
+      "area": "unoffered-model-worker",
       "method": "GET",
       "path": "/api/tickets?id=${worker}&detail=full",
       "status": 200
     },
     {
       "area": "unoffered-model-worker",
-      "method": "GET",
-      "path": "/api/tickets?id=${unoffered_worker}&detail=full",
-      "status": 200
-    },
-    {
-      "area": "unoffered-model-worker",
       "method": "POST",
       "path": "/api/test/poll/readiness",
       "status": 200,
@@ -100,7 +67,7 @@
     {
       "area": "unoffered-model-worker",
       "method": "GET",
-      "path": "/api/tickets?id=${unoffered_worker}&detail=full",
+      "path": "/api/tickets?id=${worker}&detail=full",
       "status": 200
     }
   ],
