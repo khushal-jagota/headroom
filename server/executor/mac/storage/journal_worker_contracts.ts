@@ -8,7 +8,8 @@ export interface JournalWorkerData {
   health_fence: SharedArrayBuffer;
 }
 export type JournalAction =
-  | { operation: 'open' | 'poll_cursor' | 'unpublished' | 'shrink_to_tombstones' }
+  | { operation: 'open' | 'poll_cursor' | 'unpublished' | 'shrink_to_tombstones' | 'select_report' }
+  | { operation: 'report_feedback'; selection: number; settled_ids: readonly string[] | null }
   | { operation: 'lower_poll_cursor'; high: bigint; cursor_at_lease: bigint }
   | { operation: 'record_poll_reply'; input: number; incarnation: string; after: bigint }
   | { operation: 'result_of' | 'mark_outputs_published'; command_id: string }
