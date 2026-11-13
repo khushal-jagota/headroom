@@ -3,11 +3,8 @@ import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import { LEASE_INTERVAL_SECONDS, OUTBOX_RETRY_INITIAL_SECONDS } from '../configuration.ts';
 import { mailbox_failure as failure_name } from './diagnostics.ts';
 import type { ReporterDependencies } from './contracts.ts';
+import type { JournalReportFeedback } from '../storage/journal_contracts.ts';
 import { MailboxLifetime, MailboxWake, MailboxCleanupFailure } from './lifetime.ts';
-function unadmitted(error: unknown): boolean {
-  const refusal = error as { code?: unknown; unadmitted?: unknown } | null;
-  return refusal?.code === 'EBUSY' && refusal.unadmitted === true;
-}
 export class MacResultReporter {
   private readonly dependencies: ReporterDependencies;
   private readonly lifetime: MailboxLifetime;
@@ -26,52 +23,38 @@ export class MacResultReporter {
   wake(): void {
     if (this.lifetime.alive) this.wake_signal.wake();
   }
-  private async complete<T>(work: () => Promise<T>): Promise<T> {
-    while (true) {
-      try {
-        return await work();
-      } catch (error) {
-        if (!unadmitted(error)) throw error;
-        if (!this.lifetime.alive)
-          throw this.dependencies.journal.delivery_failure(
-            'Report cleanup remained unadmitted at shutdown. The journal retains its worker resources.',
-            error,
-          );
-        this.dependencies.journal.assert_healthy();
-        // This is already-admitted selection cleanup, not another HTTP attempt.
-        await this.lifetime.pause(OUTBOX_RETRY_INITIAL_SECONDS);
-      }
-    }
-  }
   private async report_once(): Promise<boolean> {
     const { journal, client } = this.dependencies;
     const selected = await journal.select_report();
     if (selected === null) return false;
     let feedback_finished = false,
+      withdrawn = false,
       primary: unknown,
       failed = false;
-    const feedback = (ids: readonly string[] | null) =>
-      this.complete(async () => {
-        try {
-          const progressed = await journal.report_feedback(selected.selection, ids);
-          feedback_finished = true;
-          return progressed;
-        } catch (error) {
-          // An admitted feedback failure already releases its selection in the worker.
-          if (!unadmitted(error)) feedback_finished = true;
-          throw error;
-        }
-      });
+    const feedback = async (ids: JournalReportFeedback) => {
+      try {
+        return await journal.report_feedback(selected.selection, ids);
+      } finally {
+        // Owned cleanup is admitted behind the ordinary chain. An admitted worker
+        // failure releases its selection too; a broken worker retains shutdown custody.
+        feedback_finished = true;
+      }
+    };
     try {
-      if (!this.lifetime.alive) return false;
+      if (!this.lifetime.alive) {
+        withdrawn = true;
+        return false;
+      }
       let reply;
       try {
         reply = await client.report_outcomes(selected.body, this.lifetime.signal);
       } catch (error) {
-        if (!this.lifetime.alive) return false;
+        if (!this.lifetime.alive) {
+          withdrawn = true;
+          return false;
+        }
         throw error;
       }
-      if (!this.lifetime.alive) return false;
       const settled = new Set(reply.recorded);
       for (const rejected of reply.rejected ?? []) {
         let reason = '',
@@ -94,13 +77,13 @@ export class MacResultReporter {
       const errors: unknown[] = [];
       if (!feedback_finished) {
         try {
-          await feedback(null);
+          await feedback(withdrawn ? 'cancelled' : null);
         } catch (error) {
           errors.push(error);
         }
       }
       try {
-        await this.complete(() => selected.body.close());
+        await selected.body.close();
       } catch (error) {
         errors.push(error);
       }

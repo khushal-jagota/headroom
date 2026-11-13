@@ -15,7 +15,7 @@ import { stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
 import { integer_value } from '../../integers.ts';
 import type { WireInput } from '../../protocol.ts';
 import type { WireRootName, MailboxCommand, CommandResult } from '../../wire.generated.ts';
-import type { JournalOutputPolicy } from './journal_contracts.ts';
+import type { JournalOutputPolicy, JournalReportFeedback } from './journal_contracts.ts';
 import type { JournalProtocol } from './journal_internal_contracts.ts';
 import {
   MAX_COMMAND_OUTCOMES_PER_REPORT,
@@ -303,7 +303,7 @@ export class JournalEngine {
     };
     return { ...this.report, body };
   }
-  report_feedback(selection: number, settled_ids: readonly string[] | null): boolean {
+  report_feedback(selection: number, settled_ids: JournalReportFeedback): boolean {
     const report = this.report;
     if (!report || report.selection !== selection)
       throw new Error('journal report selection is closed');
@@ -316,6 +316,7 @@ export class JournalEngine {
       }
     };
     try {
+      if (settled_ids === 'cancelled') return false;
       if (settled_ids === null) {
         failed();
         return false;
