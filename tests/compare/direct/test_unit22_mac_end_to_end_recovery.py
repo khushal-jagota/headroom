@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
@@ -150,7 +151,9 @@ def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
                         await harness.peer.call("emit", kind="completed", text="Full reply")
                         pending = (await harness.state())["pending"]
                         assert len(pending) == 1
-                        item = type_adapter(QueuedEnvelope).validate_python(pending[0], strict=True)
+                        item = type_adapter(QueuedEnvelope).validate_json(
+                            json.dumps(pending[0]), strict=True
+                        )
                     await harness.wait_settled()
                     with pytest.raises(TimeoutError):
                         await asyncio.wait_for(watcher.next_item(), 0.3)
@@ -181,8 +184,8 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
     async def run() -> None:
         async with boot(tmp_path) as harness:
             state = await harness.state()
-            child = type_adapter(ChildReference).validate_python(
-                state["children"][0]["reference"], strict=True
+            child = type_adapter(ChildReference).validate_json(
+                json.dumps(state["children"][0]["reference"]), strict=True
             )
             artifact = (
                 harness.mac_root
@@ -195,11 +198,11 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
             _, receipts = receipt_log(harness, monkeypatch)
             sequence = await harness.peer.call("publish_refusal_sequence")
             malformed, unassigned, assigned = [
-                type_adapter(QueuedEnvelope).validate_python(value, strict=True)
+                type_adapter(QueuedEnvelope).validate_json(json.dumps(value), strict=True)
                 for value in sequence["published"]
             ]
-            following = type_adapter(QueuedEnvelope).validate_python(
-                sequence["following"], strict=True
+            following = type_adapter(QueuedEnvelope).validate_json(
+                json.dumps(sequence["following"]), strict=True
             )
             assert unassigned.file_dependencies and assigned.file_dependencies
             assert following.sequence == assigned.sequence + 1
@@ -211,8 +214,8 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
             assert "validation" in str(receipts[assigned.submission_id].result)
             target = harness.endpoint.inbox.store.file_target(assigned.file_dependencies[0])
             assert target.read_bytes() == artifact.read_bytes()
-            identity = type_adapter(ExecutorIdentity).validate_python(
-                (await harness.state())["identity"], strict=True
+            identity = type_adapter(ExecutorIdentity).validate_json(
+                json.dumps((await harness.state())["identity"]), strict=True
             )
             for envelope in (malformed, unassigned, assigned):
                 stale = await harness.endpoint.inbox.accept(envelope, identity)
@@ -331,8 +334,8 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
                 first.default_model_id == "scripted" and first.default_reasoning_effort == "medium"
             )
             before = await harness.state()
-            child = type_adapter(ChildReference).validate_python(
-                before["children"][0]["reference"], strict=True
+            child = type_adapter(ChildReference).validate_json(
+                json.dumps(before["children"][0]["reference"]), strict=True
             )
             await harness.peer.call("configure", catalog_blocked=True)
             with monkeypatch.context() as patch:
