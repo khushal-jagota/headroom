@@ -6,7 +6,6 @@ import * as application from '../app.ts';
 import * as database_module from '../core/database/index.ts';
 import { start_production_server } from '../lifecycle/production.ts';
 import type { ProductionServerDependencies } from '../lifecycle/production.ts';
-import { default_production_dependencies } from '../lifecycle/production_bindings.ts';
 import type { ProductionBindingContext } from '../lifecycle/production_bindings.ts';
 import { run_application_process } from '../lifecycle/application.ts';
 import * as backend_composition from '../conversation/snapshot/production.ts';
@@ -474,7 +473,7 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
   const exit = vi.fn<(code: 0 | 1) => void>();
   await run_application_process(
     {
-      start: () => start_production_server(default_production_dependencies()),
+      start: () => start_production_server({ ...dependencies, backends: {} }),
     },
     exit,
   );
