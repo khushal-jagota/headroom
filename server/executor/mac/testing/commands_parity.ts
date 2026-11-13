@@ -40,6 +40,7 @@ import {
   open_fixture_stores,
   close_fixture_stores,
   record_commands,
+  pending_envelopes,
 } from './runner_fixture.ts';
 
 const started = performance.now(),
@@ -537,13 +538,7 @@ try {
     await remaining.close();
   }
   facts.replay_without_native = calls.length === call_count && count === 0;
-  const pending_rows = store!.pending().map((row) => ({
-    submission_id: row.submission_id,
-    sequence: String(row.sequence),
-    conversation_id: row.conversation_id,
-    kind: row.kind,
-    payload: decode_json(row.payload_json, 'JsonObject').payload,
-  }));
+  const pending_rows = pending_envelopes(store!);
   const results: unknown[] = [];
   for (const key of Object.keys(commands)) {
     const reader = await journal!.result_of(key);

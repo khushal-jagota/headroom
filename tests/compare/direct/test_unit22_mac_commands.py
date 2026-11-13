@@ -13,8 +13,13 @@ from typing import Any, cast
 from uuid import UUID
 
 import pytest
-from tests.compare.direct.mac_executor_fixture import report_direct, run_node, start_inputs
-from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
+from tests.compare.direct.mac_executor_fixture import report_direct, start_inputs
+from tests.compare.direct.mac_runner_fixture import (
+    make_runner,
+    paired_fixture,
+    pending_envelopes,
+    record_commands,
+)
 
 from planner.conversation.backends.contracts import (
     BackendPromptAccepted,
@@ -32,7 +37,7 @@ from planner.conversation.contracts import (
 from planner.conversation.events import UserInputAnswer
 from planner.conversation.message_content import MessageFile, MessageText
 from planner.execution_identity import AskKind, AskReference, ChildReference, TurnToken
-from planner.executor import mac_mailbox, mac_runner
+from planner.executor import mac_runner
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.mac_mailbox import CommandJournal
 from planner.executor.mac_outbox import MacOutbox
@@ -48,8 +53,6 @@ from planner.executor.protocol import (
     CommandOutcome,
     CommandResult,
     DurableAnswer,
-    MailboxCommand,
-    MailboxPollReply,
     QueuedEnvelope,
     StartRun,
     Steer,
@@ -207,13 +210,7 @@ async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch)
         key: type_adapter(ChildCommand).validate_json(value)
         for key, value in data["commands"].items()
     }
-    patch.setattr(mac_runner, "now_ms", lambda: NOW)
     patch.setattr(mac_runner, "uuid4", lambda: UUID(UPDATE_ID))
-    patch.setattr(mac_mailbox, "now_ms", lambda: NOW)
-    patch.setattr(time, "time_ns", lambda: NOW * 1_000_000)
-    patch.setattr(
-        mac_runner, "install_native_skill_snapshot", lambda *args, **kwargs: root / "skills"
-    )
     calls: list[Any] = []
     trace: list[Any] = []
     outcomes: list[Any] = []
@@ -225,8 +222,6 @@ async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch)
     finishing, finish_release = threading.Event(), threading.Event()
     loop = asyncio.get_running_loop()
     zero_entered = asyncio.Event()
-    box = MacOutbox(root / "spool")
-    journal = CommandJournal(root / "spool", "inc", outputs_owed=command_owes_outputs)
     native: Any = None
     runner: MacRunner
 
@@ -298,24 +293,17 @@ async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch)
             input_entered.set()
             await asyncio.Future()
 
-    runner = MacRunner(
-        incarnation="inc",
-        outbox=box,
-        journal=journal,
+    runner, box, journal = make_runner(
+        patch,
+        root=root,
+        now_ms=NOW,
         files=cast(Any, Inputs()),
         factory=lambda resolved: lambda **options: native,
-        message_files=cast(Any, None),
         paths=ExecutorPaths(root / "state"),
         workspace_home=root,
+        live=None,
     )
-    reply = MailboxPollReply(
-        tuple(
-            MailboxCommand(i, key, NOW, child_command=command)
-            for i, (key, command) in enumerate(commands.items(), 1)
-            if key != "synthetic-stop"
-        )
-    )
-    journal.record_poll_reply(reply, "inc")
+    record_commands(journal, commands, now_ms=NOW, unjournaled={"synthetic-stop"})
     original_finish, original_add, original_mark = (
         journal.finish,
         box.add,
@@ -573,16 +561,7 @@ async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch)
             await resumed.publish_owed_outputs(command, result)
             await resumed.publish_owed_outputs(command, result)
         facts["replay_without_native"] = len(calls) == call_count and not journal.unpublished()
-        pending_rows = [
-            dict(
-                submission_id=row.submission_id,
-                sequence=str(row.sequence),
-                conversation_id=row.conversation_id,
-                kind=row.kind.value,
-                payload=row.payload,
-            )
-            for row in box.pending()
-        ]
+        pending_rows = pending_envelopes(box)
         results = [
             [key, as_object(stored_result)]
             for key in commands
@@ -612,32 +591,24 @@ def test_unit22_mac_commands(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> None:
     started = time.perf_counter()
-    homes = create_synthetic_homes(tmp_path)
-    with synthetic_home_environment(homes), monkeypatch.context() as patch:
-        expected = asyncio.run(
-            asyncio.wait_for(reference(tmp_path / "py", fixture(tmp_path / "py"), patch), 25)
-        )
+    expected, observed, target = paired_fixture(
+        tmp_path,
+        monkeypatch,
+        reference=lambda root, patch: reference(root, fixture(root), patch),
+        inputs=fixture,
+        entry="server/executor/mac/testing/commands_parity.ts",
+        python_timeout=25,
+        node_timeout=35,
+    )
     python_attempts = expected.pop("retry_attempts")
-    target = tmp_path / "ts"
-    target.mkdir()
-    (target / "input.json").write_text(json.dumps(fixture(target)))
-    observed = run_node("server/executor/mac/testing/commands_parity.ts", target, homes, timeout=35)
     (target / "expected.json").write_text(json.dumps(expected, indent=2))
-    (target / "observed.json").write_text(json.dumps(observed, indent=2))
     for _, result in observed["parity"]["results"]:
         type_adapter(CommandResult).validate_python(result)
     for _, outcome in observed["parity"]["outcomes"]:
         if isinstance(outcome, dict):
             type_adapter(CommandOutcome).validate_python(outcome)
     for row in observed["parity"]["pending"]:
-        type_adapter(QueuedEnvelope).validate_python(
-            {
-                **row,
-                "sequence": int(row["sequence"]),
-                "sender_id": "synthetic",
-                "file_dependencies": [],
-            }
-        )
+        type_adapter(QueuedEnvelope).validate_python(row)
     assert observed["parity"] == expected
     assert expected["facts"] and all(expected["facts"].values())
     assert observed["actual_work_joined"]
