@@ -155,7 +155,6 @@
       "path": "/api/tickets/${ticket}/reject",
       "status": 200,
       "json": {
-        "message": "Preserve the evidence in the revision.",
         "expected_proposal_revision": "${rev}",
         "decision_id": "lifecycle-send-back"
       }

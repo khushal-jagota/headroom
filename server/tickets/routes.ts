@@ -638,9 +638,17 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     );
     return response;
   });
-  app.get<{ Params: { ticket_id: string } }>('/tickets/:ticket_id/workspace', async (request) =>
-    services.database.read((sql) => workspace_ticket(sql, request.params.ticket_id)),
-  );
+  app.get<{ Params: { ticket_id: string } }>('/tickets/:ticket_id/workspace', async (request) => {
+    const response = services.database.read((sql) =>
+      workspace_ticket(sql, request.params.ticket_id),
+    ) as unknown as Json;
+    // Python's valid HTTP response contract filters these fields. Resource bodies retain them.
+    if (!('integrity_error' in response)) {
+      delete response.recap_updated_at;
+      delete response.recap_stage_changed;
+    }
+    return response;
+  });
   app.get<{ Params: { ticket_id: string; field: string } }>(
     '/tickets/:ticket_id/workspace/fields/:field',
     async (request) =>

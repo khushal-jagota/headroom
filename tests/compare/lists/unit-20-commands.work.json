@@ -952,6 +952,15 @@
       "proof": "Asks the populated Ticket for a fresh recap through its canonical CLI command."
     },
     {
+      "area": "cli-fixture-clock",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:04"
+      }
+    },
+    {
       "kind": "cli",
       "area": "cli-ticket",
       "argv": [
