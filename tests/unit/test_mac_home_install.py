@@ -14,9 +14,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from scripts.mac_home_install import install_home
 
 from planner.environments.app import _write_app_entrypoints
+from planner.installation.mac_home import install_home
 from planner.platform_runtime.darwin.adapter import DarwinPlatformAdapter
 from planner.platform_runtime.linux import update_installer as installer
 
@@ -32,8 +32,9 @@ def home(
         return SimpleNamespace(runtime_contract=SimpleNamespace(
             system="darwin", architecture="arm64", role="home"))
 
+    monkeypatch.setattr("planner.installation.mac_home._check_services", lambda label: None)
     monkeypatch.setenv("PATH", "/build/icu/bin:/production/executor/bin:/usr/bin:/bin")
-    monkeypatch.setattr("scripts.mac_home_install.extract_app_archive", extract)
+    monkeypatch.setattr("planner.installation.mac_home.extract_app_archive", extract)
     monkeypatch.setattr("planner.environments.runtime_admission.admit_runtime", lambda *args: None)
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "account")
     root = tmp_path / "release home"
@@ -108,7 +109,9 @@ def test_release_jobs_read_the_current_app_and_keep_provider_guard(
         guards.append(authority)
         return "occupied account skills"
 
-    monkeypatch.setattr("scripts.mac_home_install.account_skill_provisioning_conflict", occupied)
+    monkeypatch.setattr(
+        "planner.installation.mac_home.account_skill_provisioning_conflict", occupied
+    )
     codex = tmp_path / "canonical codex"
     monkeypatch.setenv("CODEX_HOME", str(codex))
     provider_bin = tmp_path / "provider/bin"
@@ -189,14 +192,22 @@ def test_release_cli_and_application_leave_no_bytecode_in_sealed_app(
     assert not list(package.rglob("*.pyc"))
 
 
-def test_setup_refuses_an_interpreter_inside_the_installation_before_writes(
-    tmp_path: Path,
+def test_setup_refusals_leave_no_installation_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A host interpreter alias into the future app defeats independent custody.
     root = tmp_path / "home"
     with pytest.raises(ValueError, match="external Python 3.11 or newer"):
         install_home(root, tmp_path / "archive", "a" * 64, "a" * 40,
                      "com.panels.proof", 9876, root / "app/.venv/bin/python")
+    assert not root.exists()
+    # A release refusal after exclusive root creation must remove its partial state.
+    monkeypatch.setattr("planner.installation.mac_home._check_services", lambda label: None)
+    archive = tmp_path / "invalid-release"
+    archive.write_bytes(b"not the published bytes")
+    with pytest.raises(ValueError, match="hash differs"):
+        install_home(root, archive, "a" * 64, "a" * 40, "com.panels.proof",
+                     9876, Path(sys.executable), isolated_providers=True)
     assert not root.exists()
 
 

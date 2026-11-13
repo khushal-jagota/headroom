@@ -34,8 +34,9 @@ def verify_app(
     validate_identity(bundle_id)
     if python is not None and (not python.is_absolute() or "\0" in str(python)):
         raise ValueError("Python path must be absolute")
-    if re.fullmatch(r"[0-9A-Fa-f]{40}", identity) is None:
-        raise ValueError("an explicit certificate SHA-1 fingerprint is required")
+    ad_hoc = identity == "-"
+    if not ad_hoc and re.fullmatch(r"[0-9A-Fa-f]{40}", identity) is None:
+        raise ValueError("use - for ad-hoc signing or an explicit certificate SHA-1 fingerprint")
     metadata = plistlib.loads((app / "Contents/Info.plist").read_bytes())
     if (
         metadata.get("CFBundleIdentifier") != bundle_id
@@ -53,13 +54,20 @@ def verify_app(
         capture_output=True,
     )
     _codesign("--verify", "--strict", "--verbose=2", str(app))
-    _codesign("--verify", "--strict", "-R", '=certificate leaf = H"' + identity + '"', str(app))
+    if not ad_hoc:
+        _codesign("--verify", "--strict", "-R", '=certificate leaf = H"' + identity + '"', str(app))
     details = _codesign("--display", "--verbose=4", str(app))
-    if not any(line.startswith("Authority=Apple Development:") for line in details.splitlines()):
+    if ad_hoc:
+        if "Signature=adhoc" not in details.splitlines():
+            raise ValueError("candidate requires a valid ad-hoc signature")
+    elif not any(line.startswith("Authority=Apple Development:") for line in details.splitlines()):
         raise ValueError("candidate requires the reviewed Apple Development signing route")
     requirement = _codesign("--display", "-r-", str(app))
     if previous is not None:
         verify_app(previous, identity, bundle_id=bundle_id)
+    # Ad-hoc requirements bind launcher bytes. Both signatures remain strict, but
+    # different requirements cannot establish privacy permission continuity.
+    if previous is not None and not ad_hoc:
         old_requirement = _codesign("--display", "-r-", str(previous))
         for target, text in ((app, old_requirement), (previous, requirement)):
             expressions = [
