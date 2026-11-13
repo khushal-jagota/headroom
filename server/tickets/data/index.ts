@@ -1,3 +1,4 @@
+import { require_usable_model } from '../../conversation/backend_state.ts';
 /** Ticket transitions receive the caller's transaction and never open a second writer. */
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -5,7 +6,6 @@ import type { ReadSql, TransactionSql, SqlValue } from '../../core/database/cont
 import { PlannerError, OWNER, CHIEF, legacyActor } from '../../core/contracts.ts';
 import type { Principal } from '../../core/contracts.ts';
 import { newId } from '../../core/ids.ts';
-import { strip } from '../../core/whitespace.ts';
 import { require_conversation_backend_key } from '../../conversation/contracts.ts';
 import { configured_worker_type_registry } from '../../worker_types/configuration.ts';
 import { validate_workflow } from '../../worker_types/registry.ts';
@@ -263,20 +263,6 @@ function placement(
         { blocking_ticket_id: b },
       );
 }
-function enabled(sql: ReadSql, backend: string, model: string) {
-  require_conversation_backend_key(backend);
-  const row = sql.get<{
-    enabled: number;
-  }>('SELECT enabled FROM backend_model_enablement WHERE backend_key=? AND model_id=?', [
-    backend,
-    model,
-  ]);
-  if (row && !row.enabled)
-    throw new PlannerError('validation', `Model "${model}" is disabled. Choose an enabled model.`, {
-      employee_backend: backend,
-      employee_launch_model: model,
-    });
-}
 export interface CreationOptions {
   title: string;
   principal: Principal;
@@ -340,7 +326,13 @@ export function resolve_ticket_draft_context(
     configured_worker_type_registry().require(o.worker_type);
   }
   const launch_configuration = requested_ticket_launch_configuration(o.worker_type, o);
-  enabled(sql, launch_configuration.employee_backend, launch_configuration.employee_launch_model!);
+  const locale = resolve_ticket_locale(o.locale ?? null);
+  require_usable_model(
+    sql,
+    require_conversation_backend_key(launch_configuration.employee_backend),
+    launch_configuration.employee_launch_model!,
+    locale,
+  );
   let p = o.project_id ?? null;
   const m = o.manager_id ?? null;
   if (m !== null && p === null)
@@ -349,7 +341,6 @@ export function resolve_ticket_draft_context(
         project_id: string;
       }>('SELECT project_id FROM managers WHERE id=?', [m])?.project_id ?? null;
   placement(sql, p, m, o.blocked_by_ticket_ids ?? []);
-  const locale = resolve_ticket_locale(o.locale ?? null);
   return { locale, launch_configuration, project_id: p };
 }
 export function resolve_ticket_creation_context(
@@ -489,7 +480,7 @@ export function _apply_decision(
       d.ceiling,
       principal_to_json(d.ceiling_holder),
       now,
-      Number(t.recap_stage_changed || (d.stage !== t.stage && !!strip(t.recap))),
+      Number(t.recap_stage_changed || (d.stage !== t.stage && !!t.recap.trim())),
       t.id,
     ],
   );
@@ -879,7 +870,7 @@ export function edit_ticket(
     if (before !== after) changes[key] = after;
   if ('recap' in e) {
     changes.recap = e.recap!;
-    changes.recap_updated_at = strip(e.recap!) ? o.now : null;
+    changes.recap_updated_at = e.recap!.trim() ? o.now : null;
     changes.recap_stage_changed = 0;
   }
   if (e.field_values && Object.keys(e.field_values).length) {
@@ -1002,9 +993,10 @@ export function write_employee_configuration(
     now: number;
   },
 ): Ticket {
-  enabled(tx, o.employee_backend, o.employee_launch_model!);
-  const t = load_ticket_for_write(tx, id),
-    current = employee_launch_configuration(t),
+  const backend = require_conversation_backend_key(o.employee_backend);
+  const t = load_ticket_for_write(tx, id);
+  require_usable_model(tx, backend, o.employee_launch_model!, t.locale);
+  const current = employee_launch_configuration(t),
     d = employee.normalize_employee_launch_configuration(current, o);
   if (equal(current, d)) return t;
   if (!employee_configuration_editable(t))

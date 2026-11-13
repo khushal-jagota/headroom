@@ -62,6 +62,8 @@ import {
 import { compose_production_backends } from '../lifecycle/production_bindings.ts';
 import { ChildProcesses } from '../lifecycle/owned_processes.ts';
 import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
+import { LocaleBackendChildFactory } from '../executor/routing.ts';
+import { BackendSpawnFailed } from '../conversation/backends/contracts.ts';
 import type { ConversationCompositionContext } from '../core/start.ts';
 
 test('local composition refuses a retained Mac Ticket before constructing its selected child', async () => {
@@ -495,6 +497,17 @@ test('local composition refuses a retained Mac Ticket before constructing its se
       event_sink: f.core.make_sink(f.core.conversation_state('core')!),
       message_files: f.core.options.message_files,
     };
+    const remote_constructor = vi.fn<BackendChildFactory>(() => {
+      throw new Error('Synthetic remote constructor boundary');
+    });
+    const router = new LocaleBackendChildFactory(
+      f.database,
+      local_constructor,
+      Object.assign(remote_constructor, { recover: () => null, retained_runs: () => [] }),
+    );
+    expect(() => router.create(values)).toThrow(BackendSpawnFailed);
+    expect(remote_constructor).not.toHaveBeenCalled();
+    expect(local_constructor).not.toHaveBeenCalled();
     const standalone = f.store
       .create_conversation(
         new ResolvedConversationStart({ ...retained, conversation_id: 'non-ticket' }),

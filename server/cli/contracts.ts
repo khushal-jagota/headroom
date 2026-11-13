@@ -35,6 +35,7 @@ export interface CommandDefinition {
   parameters: Parameter[];
 }
 export interface CommandResult {
+  launch?: import('../environments/command_contracts.ts').PreparedOperatorLaunch;
   exit_code: number;
   stdout: string;
   stderr: string;

@@ -1,11 +1,24 @@
 /** Hermes inherits ACP's allowlist, explicit launch values, then conversation identity. */
 import { fileURLToPath } from 'node:url';
+import { posix } from 'node:path';
 import { ConversationAccess } from '../../contracts.ts';
 import type { ResolvedConversationStart } from '../../contracts.ts';
 
 export interface AcpChildLaunch {
   readonly argv: readonly string[];
   readonly environment_overrides: readonly (readonly [string, string])[];
+}
+/** Python Path.parents[2], or Path.parent for a shallow lexical POSIX interpreter path. */
+export function hermes_source_root(path: string): string {
+  const parents: string[] = [];
+  let current = path;
+  while (parents.length < 3) {
+    const parent = current === '//' ? '//' : posix.dirname(current);
+    if (parent === current) break;
+    parents.push(parent);
+    current = parent;
+  }
+  return parents[2] ?? parents[0] ?? path;
 }
 export function hermes_acp_child_launch(options: {
   hermes_python: string;

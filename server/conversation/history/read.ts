@@ -1,7 +1,6 @@
 /** Bounded prior-conversation metadata in one read-only database snapshot. */
 import type { ReadSql } from '../../core/database/contracts.ts';
 import { PlannerError } from '../../core/contracts.ts';
-import { casefold } from '../../core/casefold.ts';
 import { stringify_python_json } from '../../core/http/numeric_json.ts';
 import { PAGE_MAX_BYTES, PAGE_SIZE } from '../../files/catalog/config.ts';
 import type {
@@ -65,7 +64,7 @@ export function read_history_page(sql: ReadSql, input: HistoryPageInput): Conver
     }
     if (prefix) {
       active = null;
-      const wanted = casefold(prefix);
+      const wanted = prefix.toLowerCase();
       const start = Math.min(Math.max(after + 1, 0), total);
       seek: for (const [first, end] of [
         [start, total],
@@ -92,7 +91,7 @@ export function read_history_page(sql: ReadSql, input: HistoryPageInput): Conver
                 );
           if (rows.length === 0) break;
           for (let index = 0; index < rows.length; index++) {
-            if (casefold(entry(rows[index]).label).startsWith(wanted)) {
+            if (entry(rows[index]).label.toLowerCase().startsWith(wanted)) {
               active = begin + index;
               break seek;
             }

@@ -1,5 +1,40 @@
 # Mac executor file foundation
 
+`host/service.ts` composes the standalone Mac invocation, including its shared child owners,
+runner, mailbox, gateway, HTTP, lease, live sender, durable sender, skills, catalog, and storage.
+It reads a planned handoff before the journal and HTTP identity, then fences commands until replay completes.
+Each producer receives the original absolute stop deadline. Actual joins precede file workers, journal, and the spool lock.
+`inputs.ts` downloads verified prompt files and removes temporary entries through a retained directory capability.
+`host/entry.ts` supplies the production update, provider, catalog, and Darwin process bindings plus signal ownership.
+The packaged `entrypoint.ts` reuses the ordinary CLI. Its runtime supervisor routing remains the next step.
+
+`AgentProcesses` records descendant identities in `run/agent-processes.json` and retains reparented tools.
+The Darwin host supplies its existing files and one-shot child owners. Native `ps`, priority and individual-PID signals stay in `platform.ts`.
+Startup checks start times before orphan signals and preserves discovered identities across cancellation.
+Linux checks use scripted snapshots only. Real Darwin process identity, priority and signal behavior remain a later Mac check.
+
+## Unix CLI client
+
+`ipc/gateway.ts` owns the private Unix listener and admitted CLI publications.
+`ipc/outbox.ts` captures files through the real spool and retains receipt waiters.
+The sender calls `notify_confirmed` after its durable acknowledgement callback.
+`storage/envelopes.ts` supplies the shared row-to-envelope and receipt projections.
+The host supplies runner admission, catalog settlement, presence, reads, and exit.
+It joins gateway and runner cleanup before storage. A response timeout never cancels publication.
+The runner facade seals admission before reversible catalog settlement and quiescence.
+
+`ipc_client.ts` connects only to the configured root's Unix socket. It validates
+and frames each request through the shared wire codec before emission. It sends
+the OS monotonic deadline, so a service in another process can compare that clock.
+One absolute timeout covers connect, write, and response, including the transport reserve.
+The client joins socket closure before it returns. It never retries a write.
+After possible emission, a transport or response-validation failure means unknown
+acceptance for write/retry. A valid reply retains its original submission identity.
+The existing CLI owns output and exit codes. `run` remains an open supervisor binding.
+`permissions` previews lexical workspace/output scopes and touches them only with `--check`.
+Its explicit check reads one directory entry and writes, reads, closes, and removes one temporary output file.
+The fresh Python comparison checks bytes, exits, and cleanup. Actual macOS consent remains a later Mac check.
+
 The Mac executor uses `FilesService` for byte copies, hashes, directory creation, and durable flushes.
 Each caller owns its service instance and must pass the shared absolute shutdown deadline to `stop()`.
 The later host can retain separate instances for independent conversation transfers. This slice adds no worker pool.

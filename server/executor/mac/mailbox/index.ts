@@ -45,7 +45,7 @@ export class MacMailbox {
     this.startup_window?.abort();
     this.dependencies.on_failure(error);
   }
-  start(): Promise<void> {
+  start(on_replayed?: () => void): Promise<void> {
     if (this.closed) return Promise.reject(new ServerLifecycleError('Mailbox is stopped.'));
     this.startup ??= (async () => {
       const window = new AbortController();
@@ -61,6 +61,8 @@ export class MacMailbox {
             },
           ),
         ]);
+        if (this.closed) return;
+        on_replayed?.();
         if (this.closed) return;
         this.reporter.start();
         this.poll.start();

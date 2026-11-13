@@ -3,7 +3,6 @@ import { TextDecoder } from 'node:util';
 import { JsonNumber, parse_numeric_json } from '../core/http/numeric_json.ts';
 import type { Invocation } from './contracts.ts';
 import { fail_validation } from './http.ts';
-import { json_diagnostic } from './json_diagnostics.ts';
 
 export async function read_source(
   inv: Invocation,
@@ -40,14 +39,15 @@ export async function read_json_object(
   label: string,
 ): Promise<Record<string, any>> {
   const text = await read_source(inv, spec);
-  const diagnostic = json_diagnostic(text);
-  if (diagnostic) fail_validation(inv, `invalid ${label} JSON: ${diagnostic.msg}`);
   if (!/^[ \t\r\n]*\{/.test(text)) fail_validation(inv, `${label} must be one JSON object`);
   let value: unknown;
   try {
     value = parse_numeric_json(text);
-  } catch {
-    fail_validation(inv, 'non-finite JSON values are not allowed');
+  } catch (error) {
+    fail_validation(
+      inv,
+      `invalid ${label} JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   if (
     value === null ||

@@ -1,12 +1,12 @@
 /** Application preview commands only use the caller's canonical HTTP identity. */
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
 import { send, emit } from '../../cli/http.ts';
-import { python_text } from '../../cli/python_text.ts';
+import { scalar_text } from '../../cli/text.ts';
 function human(data: Record<string, any>): string {
   if (data.preview === null) return 'No application preview is prepared.';
   return Object.entries(data)
     .filter(([, value]) => value !== null)
-    .map(([key, value]) => `${key}: ${python_text(value)}`)
+    .map(([key, value]) => `${key}: ${scalar_text(value)}`)
     .join('\n');
 }
 export async function run_preview_command(inv: Invocation): Promise<CommandResult> {

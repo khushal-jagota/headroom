@@ -85,6 +85,7 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
       const reading_at = this.now();
       const codex_login = backend_key === 'codex' ? this.options.read_codex_login_standing() : null;
       let probed = await this.options.probe(backend_key, environment, {
+        signal: options.signal,
         refresh,
         discover_update_advisory: refresh && (options.discover_update_advisory ?? true),
         codex_login,
@@ -125,6 +126,13 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
       }
       this.kept.set(backend_key, probed);
       this.probed_at.set(backend_key, reading_at);
+      if (probed.models_complete && this.options.keep_complete_model_list) {
+        try {
+          await this.options.keep_complete_model_list(probed);
+        } catch (error) {
+          console.error(`the ${backend_key} model list was not saved`, error);
+        }
+      }
       if (backend_key === 'codex' && codex_login !== null)
         this.codex_card_was_probed_against = JSON.stringify(
           codex_login.everything_a_card_reads({ now: reading_at }),

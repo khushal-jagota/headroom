@@ -25,6 +25,8 @@ export async function run(
       return { exit_code: 0, stdout: render_help(parsed.command, commands), stderr: '' };
     invocation = { ...parsed, environment, stdin, write_stderr };
     switch (parsed.command.path[0]) {
+      case 'executor':
+        return await (await import('../executor/mac/cli.ts')).run_executor_command(invocation);
       case 'environment':
       case 'stalls':
       case 'serve':
@@ -85,7 +87,7 @@ async function write(stream: Writable, text: string): Promise<void> {
     stream.write(text, (error) => (error ? reject(error) : resolve())),
   );
 }
-if (is_entrypoint()) {
+export async function main(): Promise<void> {
   // Node emits stream errors asynchronously as well as invoking the write callback.
   const stream_error = (error: Error) => {
     if (broken_pipe(error)) process.exitCode = 1;
@@ -97,9 +99,19 @@ if (is_entrypoint()) {
     const result = await run(process.argv.slice(2), process.env, undefined, (text) =>
       write(process.stderr, text),
     );
-    await write(process.stdout, result.stdout);
-    await write(process.stderr, result.stderr);
-    process.exitCode = result.exit_code;
+    try {
+      const output = (async () => {
+        await write(process.stdout, result.stdout);
+        await write(process.stderr, result.stderr);
+        result.launch?.output_flushed?.();
+      })();
+      if (result.launch?.interrupted) await Promise.race([output, result.launch.interrupted]);
+      else await output;
+      process.exitCode = result.exit_code;
+      result.launch?.execute();
+    } finally {
+      await result.launch?.close();
+    }
   } catch (error) {
     process.exitCode = 1;
     if (!broken_pipe(error)) {
@@ -110,7 +122,10 @@ if (is_entrypoint()) {
         } finally {
           process.kill(process.pid, error.signal);
         }
+      } else if (error instanceof OperatorInterrupted) {
+        await write(process.stderr, error.stderr_prefix + error.message + '\n');
       } else await write(process.stderr, String(error) + '\n');
     }
   }
 }
+if (is_entrypoint()) await main();

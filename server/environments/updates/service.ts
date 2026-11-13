@@ -496,13 +496,20 @@ export class UpdateService {
     let backup: string | null = null;
     if (attempt.release.manifest.runtime_contract?.version === 2)
       await this.options.installer.require_exact_schema_frontier(this.options.database, staged);
-    else if (this.options.installer.schema_change_pending(this.options.database, staged)) {
-      backup = await this.options.installer.create_backup(
+    else {
+      const pending = await this.options.installer.schema_change_pending(
         this.options.database,
-        this.options.backup_directory,
-        attempt.from_sha,
+        staged,
       );
       if (!this.active(incarnation)) return;
+      if (pending) {
+        backup = await this.options.installer.create_backup(
+          this.options.database,
+          this.options.backup_directory,
+          attempt.from_sha,
+        );
+        if (!this.active(incarnation)) return;
+      }
     }
     if (!this.active(incarnation)) return;
     this.options.runtime.assert_database_owned();

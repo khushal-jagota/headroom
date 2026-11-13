@@ -16,7 +16,7 @@ the parser, and the formatter; it does not initialize a server, database, or pro
 Measure-source schemas and runtime guidance come from the shared domain guidance
 exports. The CLI holds no second JavaScript example or helper signature.
 Transport forwards the environment identity without inventing a principal. The
-shared numeric JSON codec preserves Python integer and float representation.
+JSON output preserves fields, types, and exact integers. Human text, help layout, and errors use native TypeScript formatting.
 
 `ticket request-recap ID` and `manager request-recap ID` ask a subordinate for a
 fresh recap through the ordinary system-message route. Ticket summaries, Manager
@@ -29,15 +29,15 @@ The import-only exporter `tests/compare/direct/unit20_metadata.py` regenerates
 command declarations from current Click objects, including UUID parameter types. Run it with synthetic homes and
 no inherited `PLAN_*` variables, then format the generated TypeScript. The ordinary
 proof instead invokes both CLIs through the guarded synthetic-host driver. It
-compares fresh Python output, not frozen help snapshots. An offline drift check compares
+compares JSON fields and exit codes against fresh Python. An offline drift check compares
 the complete fresh Python declarations with `commands.ts` without writing repository
 files or starting another server. The exporter rejects unsupported parameter types.
 The same exporter refreshes the goal, holder-page and measure offline declarations.
 Their readable TypeScript data is checked against fresh Python exports during migration.
 Pure canonical chart, page and measure validators also accept a printed example from
 each area; this checks the contract without another application host.
-Command help uses `inspect.cleandoc`, as Click does before formatting. This preserves
-the printed contract across Python compiler versions without ignoring help changes.
+Help lists the declared commands and options without reproducing Click layout.
+
 
 The TypeScript declaration file is the runtime authority. While Python remains in the
 migration, regenerate it from Python and check for drift. After Python removal, edit
@@ -68,8 +68,7 @@ process and test-mode metadata before a CLI subprocess starts.
 It also verifies that the listener belongs to the fixture's exact process ID.
 
 The test driver captures content-decoded HTTP document bytes before CLI formatting.
-It keeps the original compressed response bytes too. The comparisons retain JSON key
-order and number spelling, with named ID and bounded opaque-value rules only.
+It keeps the original compressed response bytes too. The comparisons use parsed JSON fields and numeric values, with named ID and bounded opaque-value rules.
 The accepted attention digest and goal catalog aliases appear explicitly in the rule file.
 
 The client keeps Node's default TLS roots and honors `SSL_CERT_FILE`,
@@ -77,14 +76,12 @@ The client keeps Node's default TLS roots and honors `SSL_CERT_FILE`,
 lookup requires `openssl`. Connection, header progress, and body-read gaps each
 use 30 seconds in production. Direct checks inject short phase limits.
 Accepted trust-store and diagnostic differences are recorded in `../DEVIATIONS.md`.
-Malformed JSON diagnostics target CPython 3.12, the hosted reference version.
-The fresh Python oracle compares error messages and positions. Later local Python
-versions skip that oracle because their decoder messages differ.
+Malformed JSON reports the native parser error through the existing validation envelope.
 
-UUID options normalize the forms that Click accepts through Python's `uuid.UUID`:
-compact, hyphenated, braced, and lower-case URN wrappers, plus the underlying hexadecimal
-integer grammar. Invalid values retain Click's usage error and the stripped value's
-shared Python string representation. Identity remains an independent environment fact.
+UUID options accept compact, hyphenated, braced, and URN text. Numeric options use
+ordinary decimal input and preserve exact integers. Python-only Unicode digit,
+underscore, and hexadecimal UUID quirks are not supported. Invalid values return
+a usage error. Identity remains an independent environment fact.
 
 `operator_commands.ts` binds the lifecycle table after parsing. It passes the
 selected name and invocation environment to the production dependency factory.
@@ -98,5 +95,9 @@ operator returns only after its factory joins actual cleanup. SIGINT uses Python
 caller-stopped transcript. SIGTERM writes any retained prefix and then retains
 native signal termination. App-build, run, serve, and restart retain their accepted
 temporary refusals until the release-side prerequisites merge in a later Ticket.
-Executor transport and its second command table remain with the executor unit.
+Executor socket transport binds the same command handlers when `PLAN_EXECUTOR_ROOT`
+is set. Reads and registered mutations use the Unix client, including lookup-only
+retry and exit 3 for unconfirmed acceptance. `executor health` and `quiesce` use that
+client too. `executor permissions` previews lexical scopes and performs directory access only with `--check`.
+`executor run` still awaits the fixed runtime supervisor binding.
 This package does not switch the installed wrapper or deploy an application.

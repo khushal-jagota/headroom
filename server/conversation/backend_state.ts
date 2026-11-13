@@ -1,7 +1,10 @@
-import { casefold } from '../core/casefold.ts';
 /** Durable decorations of backend cards share the existing database write door. */
 import type { Database, ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
+import { stringify_python_json } from '../core/http/numeric_json.ts';
+import type { TicketLocale } from '../tickets/contracts.ts';
+import { as_object } from '../executor/protocol.ts';
+import { recognize_variant } from './model_resolution/logic/variants.ts';
 import type { ConversationBackendKey } from './contracts.ts';
 import type { BackendSnapshot } from './snapshot/contracts.ts';
 import type {
@@ -48,6 +51,22 @@ export class BackendStateStore {
   }
   model_is_enabled(backend_key: ConversationBackendKey, model_id: string): boolean {
     return this.database.read((sql) => model_is_enabled(sql, backend_key, model_id));
+  }
+  delivery_model_refusal(
+    backend_key: ConversationBackendKey,
+    model_id: string,
+    ticket_id: string | null,
+  ): string | null {
+    return this.database.read((sql) => {
+      const row =
+        ticket_id === null
+          ? undefined
+          : sql.get<{ locale: TicketLocale }>('SELECT locale FROM tickets WHERE id=?', [ticket_id]);
+      return model_refusal(sql, backend_key, model_id, row?.locale ?? 'vps');
+    });
+  }
+  keep_vps_model_list(snapshot: BackendSnapshot): void {
+    this.database.write((tx) => save_machine_model_list(tx, 'vps', snapshot));
   }
   write_model_enablement(
     backend_key: ConversationBackendKey,
@@ -110,17 +129,91 @@ export function disabled_models(
       .map((row) => row.model_id),
   );
 }
-export function require_enabled_model(
+/** Persist one machine's list and retire switch-offs only with complete lists everywhere. */
+export function save_machine_model_list(
+  tx: TransactionSql,
+  machine: TicketLocale,
+  snapshot: BackendSnapshot,
+): void {
+  tx.run(
+    'INSERT INTO machine_backend_snapshots VALUES (?,?,?) ' +
+      'ON CONFLICT(machine_id,backend_key) DO UPDATE SET snapshot_json=excluded.snapshot_json ' +
+      'WHERE snapshot_json != excluded.snapshot_json',
+    [machine, snapshot.backend_key, stringify_python_json(as_object(snapshot, 'BackendSnapshot'))],
+  );
+  if (!snapshot.models_complete) return;
+  const offered = new Set<string>();
+  for (const each_machine of ['vps', 'macos'] as const) {
+    const listed = offered_model_ids(tx, each_machine, snapshot.backend_key);
+    if (listed === null) return;
+    for (const model of listed) offered.add(model);
+  }
+  for (const row of tx.all<{ model_id: string }>(
+    'SELECT model_id FROM backend_model_enablement WHERE backend_key=?',
+    [snapshot.backend_key],
+  )) {
+    if (!offered.has(row.model_id))
+      tx.run('DELETE FROM backend_model_enablement WHERE backend_key=? AND model_id=?', [
+        snapshot.backend_key,
+        row.model_id,
+      ]);
+  }
+}
+export function offered_model_ids(
+  sql: ReadSql,
+  machine: TicketLocale,
+  backend_key: ConversationBackendKey,
+): readonly string[] | null {
+  const row = sql.get<{ snapshot_json: string }>(
+    'SELECT snapshot_json FROM machine_backend_snapshots WHERE machine_id=? AND backend_key=?',
+    [machine, backend_key],
+  );
+  if (!row) return null;
+  const snapshot = JSON.parse(row.snapshot_json) as BackendSnapshot;
+  if (!snapshot.models_complete || !snapshot.available_models?.length) return null;
+  return snapshot.available_models.map((model) => String(model.model_id));
+}
+function is_offered(
+  backend_key: ConversationBackendKey,
+  model_id: string,
+  offered: readonly string[],
+): boolean {
+  if (offered.includes(model_id)) return true;
+  if (backend_key !== 'claude') return false;
+  const base_of = (model: string) => (model.endsWith('[1m]') ? model.slice(0, -4) : model);
+  const base = base_of(model_id);
+  const listed_bases = new Set(offered.map(base_of));
+  if (listed_bases.has(base)) return true;
+  if (!['opus', 'sonnet', 'haiku', 'fable'].includes(base)) return false;
+  return [...listed_bases].some((listed) => recognize_variant(backend_key, listed)?.name === base);
+}
+export function model_refusal(
   sql: ReadSql,
   backend_key: ConversationBackendKey,
   model_id: string,
-): void {
+  machine: TicketLocale,
+): string | null {
   if (!model_is_enabled(sql, backend_key, model_id))
-    throw new PlannerError(
-      'validation',
-      `Model "${model_id}" is disabled. Choose an enabled model.`,
-      { employee_backend: backend_key, employee_launch_model: model_id },
-    );
+    return `Model "${model_id}" is disabled. Choose an enabled model.`;
+  if (backend_key === 'hermes') return null;
+  const offered = offered_model_ids(sql, machine, backend_key);
+  if (offered === null || is_offered(backend_key, model_id, offered)) return null;
+  const disabled = disabled_models(sql, backend_key);
+  const choices = offered.filter((model) => !disabled.has(model)).join(', ');
+  return `Model "${model_id}" is not offered by ${backend_key} on ${machine === 'vps' ? 'the VPS' : 'the Mac'}. Choose one of: ${choices}.`;
+}
+export function require_usable_model(
+  sql: ReadSql,
+  backend_key: ConversationBackendKey,
+  model_id: string,
+  machine: TicketLocale,
+): void {
+  const refusal = model_refusal(sql, backend_key, model_id, machine);
+  if (refusal !== null)
+    throw new PlannerError('validation', refusal, {
+      employee_backend: backend_key,
+      employee_launch_model: model_id,
+    });
 }
 export function write_model_enablement(
   tx: TransactionSql,
@@ -150,16 +243,15 @@ export function resolve_usage_model_scopes(
   return { ...result, windows };
 }
 function catalogue_model_id(snapshot: BackendSnapshot, scope: string): string | null {
-  const wanted = casefold(scope).trim();
+  const wanted = scope.toLowerCase().trim();
   const exact = snapshot.available_models.filter((model) =>
-    [casefold(model.model_id), casefold(model.display_name ?? '')].includes(wanted),
+    [model.model_id.toLowerCase(), (model.display_name ?? '').toLowerCase()].includes(wanted),
   );
   if (exact.length === 1) return exact[0].model_id;
   const family = snapshot.available_models.filter(
     (model) =>
-      casefold(model.display_name ?? '')
-        .trimStart()
-        .split(/\s+/, 1)[0] === wanted || casefold(model.model_id).split('[', 1)[0] === wanted,
+      (model.display_name ?? '').toLowerCase().trimStart().split(/\s+/, 1)[0] === wanted ||
+      model.model_id.toLowerCase().split('[', 1)[0] === wanted,
   );
   return family.length === 1 ? family[0].model_id : null;
 }

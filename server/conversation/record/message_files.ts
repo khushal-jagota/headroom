@@ -111,13 +111,7 @@ export class ConversationMessageFiles implements MessageFilesContract {
       if (!(error instanceof Error) || !('code' in error)) throw error;
       return null;
     }
-    // Match Python's strict UTF-8 read and str.strip(), including ASCII separators.
-    const stated = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
-      .decode(bytes)
-      .replace(
-        /^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/gu,
-        '',
-      );
+    const stated = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes).trim();
     return stated || null;
   }
 

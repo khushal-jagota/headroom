@@ -1,7 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { delimiter, join } from 'node:path';
-import { constants } from 'node:os';
 import { checkServerIdentity } from 'node:tls';
 import { isIP, type Socket } from 'node:net';
 import { request as http_request, type ClientRequest } from 'node:http';
@@ -9,9 +8,12 @@ import { request as https_request, type RequestOptions } from 'node:https';
 import { gunzipSync, inflateSync, brotliDecompressSync } from 'node:zlib';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { rates_proxy_for } from '../conversation/usage/proxy.ts';
-import { parse_numeric_json, stringify_python_json } from '../core/http/numeric_json.ts';
+import { parse_numeric_json } from '../core/http/numeric_json.ts';
 import type { CommandResult, Invocation } from './contracts.ts';
 import { CliFailure, human_error } from './errors.ts';
+import { is_value_error } from '../core/value_error.ts';
+import { executor_client_settings } from '../core/config.ts';
+import type { IpcResponse } from '../executor/wire.generated.ts';
 
 export interface TransportLimits {
   connect_ms: number;
@@ -26,8 +28,16 @@ export const CLI_TRANSPORT_LIMITS: Readonly<TransportLimits> = Object.freeze({
 
 export const json = (
   value: unknown,
-  options: Parameters<typeof stringify_python_json>[1] = {},
-): string => stringify_python_json(value, { ensure_ascii: true, ...options });
+  options: { ensure_ascii?: boolean; compact?: boolean; indent?: 2 } = {},
+): string =>
+  JSON.stringify(
+    value,
+    (_key, item) =>
+      typeof item === 'bigint'
+        ? (JSON as unknown as { rawJSON(text: string): unknown }).rawJSON(String(item))
+        : item,
+    options.indent,
+  );
 export function emit(data: unknown, as_json: boolean, human: string): CommandResult {
   return { exit_code: 0, stdout: (as_json ? json(data) : human) + '\n', stderr: '' };
 }
@@ -65,29 +75,10 @@ function fail_response(inv: Invocation, status: number, data: any, text: string)
         : undefined;
   throw new CliFailure(human_error(inv.command, String(error.message), 1, { no_route }));
 }
-/** System errors use the complete platform errno map, not a fixed error shortlist. */
+/** Keep the native cause so a connection failure describes the actual runtime. */
 export async function connection_message(error: unknown): Promise<string> {
-  const native =
-    error instanceof Error && 'cause' in error && error.cause instanceof Error
-      ? error.cause
-      : error;
-  const detail = native as NodeJS.ErrnoException;
-  if (detail?.code === 'ENOTFOUND') return '[Errno -2] Name or service not known';
-  if (detail?.code === 'EAI_AGAIN') return '[Errno -3] Temporary failure in name resolution';
-  if (detail?.code === 'ETIMEDOUT' || detail?.name === 'TimeoutError') return 'timed out';
-  if (detail?.message === 'socket hang up')
-    return 'Server disconnected without sending a response.';
-  const number =
-    detail?.code === undefined
-      ? undefined
-      : constants.errno[detail.code as keyof typeof constants.errno];
-  if (number !== undefined) {
-    const { python_os_error_message } = await import('../core/os_errors.ts');
-    return python_os_error_message(detail as Error, { include_paths: false });
-  }
-  // TLS/protocol diagnostics retain the native cause. They must not claim a guessed
-  // CPython/OpenSSL source filename or version-dependent line number.
-  return detail?.message ?? String(native);
+  const cause = error instanceof Error && error.cause instanceof Error ? error.cause : error;
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function no_proxy(url: URL, env: NodeJS.ProcessEnv): boolean {
@@ -329,8 +320,6 @@ async function request(
   },
 ): Promise<{ response: { status: number; ok: boolean }; text: string }> {
   const env = inv.environment;
-  if (env.PLAN_EXECUTOR_ROOT)
-    fail_validation(inv, 'Executor transport remains with the executor unit.');
   try {
     const base = env.PLAN_SERVER_URL?.trim() || 'http://127.0.0.1:8767';
     if (!base.includes('://'))
@@ -380,21 +369,83 @@ async function request(
     );
   } catch (error) {
     if (error instanceof ClientConfigurationError) fail_validation(inv, error.message);
-    if (inv.values.as_json)
-      throw new CliFailure({
-        exit_code: 2,
-        stdout: '',
-        stderr:
-          json({
-            error: { code: 'connection', message: await connection_message(error), detail: {} },
-          }) + '\n',
-      });
-    throw new CliFailure(
-      human_error(inv.command, 'The Panels server is unavailable.', 2, {
-        no_route: 'No panels call can work until the server is available.',
-      }),
-    );
+    return fail_connection(inv, error);
   }
+}
+export async function fail_connection(inv: Invocation, error: unknown): Promise<never> {
+  if (inv.values.as_json)
+    throw new CliFailure({
+      exit_code: 2,
+      stdout: '',
+      stderr:
+        json({
+          error: { code: 'connection', message: await connection_message(error), detail: {} },
+        }) + '\n',
+    });
+  throw new CliFailure(
+    human_error(inv.command, 'The Panels server is unavailable.', 2, {
+      no_route: 'No panels call can work until the server is available.',
+    }),
+  );
+}
+export function executor_response(inv: Invocation, response: IpcResponse): any {
+  if (response.unconfirmed != null) {
+    const outcome = response.unconfirmed;
+    // Defaults are included by Python's dataclass output, including locally minted uncertainty.
+    const value = {
+      request_id: outcome.request_id,
+      submission_id: outcome.submission_id,
+      publication: outcome.publication,
+      acceptance: outcome.acceptance ?? 'unconfirmed',
+    };
+    throw new CliFailure({
+      exit_code: 3,
+      stderr: '',
+      stdout:
+        (inv.values.as_json
+          ? json(value)
+          : `Submission ${outcome.submission_id}: ${outcome.publication}; VPS acceptance is unconfirmed. ` +
+            `Inspect with panels executor retry ${outcome.submission_id}. Do not repeat the original write.`) +
+        '\n',
+    });
+  }
+  if (response.error !== null) fail_response(inv, 400, { error: response.error }, '');
+  if (response.result !== null && 'error' in response.result)
+    fail_response(inv, 400, response.result, '');
+  return response.result;
+}
+export async function executor_request(
+  inv: Invocation,
+  operation: 'read' | 'write' | 'retry',
+  payload: Record<string, any>,
+): Promise<any> {
+  const { request } = await import('../executor/mac/ipc_client.ts');
+  let response: IpcResponse;
+  try {
+    response = await request(operation, payload, inv.environment);
+  } catch (error) {
+    if (is_value_error(error)) fail_validation(inv, error.message);
+    return fail_connection(inv, error);
+  }
+  return executor_response(inv, response);
+}
+async function executor_send(
+  inv: Invocation,
+  method: string,
+  path: string,
+  options: { json_body?: unknown; params?: Record<string, any> },
+): Promise<any> {
+  if (method.toUpperCase() === 'GET')
+    return executor_request(inv, 'read', { path, params: options.params ?? {} });
+  const { cli_mutation } = await import('../executor/mac/ipc_client.ts');
+  let translated: ReturnType<typeof cli_mutation>;
+  try {
+    translated = cli_mutation(method.toUpperCase(), path, options.json_body ?? null);
+  } catch (error) {
+    if (is_value_error(error)) fail_validation(inv, error.message);
+    throw error;
+  }
+  return executor_request(inv, 'write', { operation: translated[0], arguments: translated[1] });
 }
 export async function send(
   inv: Invocation,
@@ -406,12 +457,14 @@ export async function send(
     transport_limits?: Readonly<TransportLimits>;
   } = {},
 ): Promise<any> {
+  if (executor_client_settings(inv.environment).root)
+    return executor_send(inv, method, path, options);
   const { response, text } = await request(inv, method, path, options);
   let data: any = null;
   try {
     data = parse_numeric_json(text.startsWith('\uFEFF') ? text.slice(1) : text);
   } catch {
-    /* Python retains null for non-JSON responses. */
+    /* A non-JSON response has no decoded data. */
   }
   if (response.ok && !(data && typeof data === 'object' && 'error' in data)) return data;
   return fail_response(inv, response.status, data, text);
@@ -422,6 +475,11 @@ export async function send_text(
   path: string,
   options: { params?: Record<string, any>; transport_limits?: Readonly<TransportLimits> } = {},
 ): Promise<string> {
+  if (executor_client_settings(inv.environment).root) {
+    const result = await executor_send(inv, method, path, options);
+    if (result && typeof result === 'object' && typeof result.text === 'string') return result.text;
+    fail_validation(inv, 'executor read did not return text');
+  }
   const { response, text } = await request(inv, method, path, options);
   if (response.ok) return text;
   let data: any = null;

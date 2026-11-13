@@ -1,3 +1,4 @@
+import { require_usable_model } from '../conversation/backend_state.ts';
 import { assert_test_database_path } from '../core/test_paths.ts';
 /** Route-owned start/send/reset phases. No SQL capability survives an await. */
 import { observe_conversation_operation, ConversationStartAborted } from './abort.ts';
@@ -8,7 +9,6 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import type { Database, ReadSql } from '../core/database/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
-import { pythonRepr } from '../core/config.ts';
 import { PlannerError } from '../core/contracts.ts';
 import {
   ConversationRoleMaterials,
@@ -168,19 +168,6 @@ async function message_content_for(
 ): Promise<MessageContent> {
   return typeof content === 'function' ? await content(id) : content;
 }
-function require_enabled_model(sql: ReadSql, backend: string, model: string): void {
-  const row = sql.get<{
-    enabled: number;
-  }>('SELECT enabled FROM backend_model_enablement WHERE backend_key=? AND model_id=?', [
-    backend,
-    model,
-  ]);
-  if (row && !row.enabled)
-    throw new PlannerError('validation', `Model "${model}" is disabled. Choose an enabled model.`, {
-      employee_backend: backend,
-      employee_launch_model: model,
-    });
-}
 export function mac_project_workspace_folder(project_id: string): string {
   return join('/', 'projects', project_id);
 }
@@ -273,7 +260,9 @@ export function worker_resolve(
       '\n[/Ticket workflow guidance]',
   });
   if (ticket.employee_launch_model === null || overrides.model != null)
-    database.read((sql) => require_enabled_model(sql, values.backend_key, values.model));
+    database.read((sql) =>
+      require_usable_model(sql, values.backend_key, values.model, ticket.locale),
+    );
   return values;
 }
 export function agent_resolve_from_sql(
@@ -293,7 +282,7 @@ export function agent_resolve_from_sql(
     workspace_folder: join(dirname(resolve(db_path)), 'files', 'chief'),
     shared_workspace_folder: options.workspace_root ?? default_host_workspace(),
   });
-  require_enabled_model(sql, values.backend_key, values.model);
+  require_usable_model(sql, values.backend_key, values.model, 'vps');
   return values;
 }
 export function agent_resolve(
@@ -413,7 +402,7 @@ interface MessageOptions {
 }
 export interface TicketMessageOptions extends MessageOptions {
   worker_type_registry?: WorkerTypeRegistry;
-  retain_backend_start_failure?: boolean;
+  retain_definite_start_refusal?: boolean;
   now: number;
 }
 function send_options(
@@ -553,7 +542,11 @@ export async function send_to_ticket_conversation(
       throw error;
     }
     if (fate instanceof PromptDeliveryRefused) {
-      if (options.retain_backend_start_failure && fate.refusal_reason === 'backend_did_not_start')
+      if (
+        options.retain_definite_start_refusal &&
+        (fate.refusal_reason === 'backend_did_not_start' ||
+          fate.refusal_reason === 'model_resolution_failed')
+      )
         return { conversation_id: making, fate };
       await let_go_ticket(system, database, ticket_id, making, options.now);
       return { conversation_id: null, fate };
@@ -637,8 +630,8 @@ export function read_manager_conversation_history(
           .map(
             ([key, value]) =>
               [
-                typeof key === 'string' ? key : pythonRepr(key),
-                typeof value === 'string' ? value : pythonRepr(value),
+                typeof key === 'string' ? key : JSON.stringify(key),
+                typeof value === 'string' ? value : JSON.stringify(value),
               ] as const,
           ),
       );

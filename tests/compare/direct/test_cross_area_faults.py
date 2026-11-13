@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -53,40 +52,6 @@ def _node(tmp_path: Path, mode: str, argument: str = "", payload: Any = None) ->
     )
     assert completed.returncode == 0, completed.stderr
     return json.loads(completed.stdout)
-
-
-def test_cross_area_repr_matches_fresh_python(tmp_path: Path) -> None:
-    # Existing caller checks do not cover Python's quote choice and Unicode printability.
-    values = [
-        "",
-        "it's",
-        "both'\"quotes",
-        "back\\slash",
-        "line\nreturn\rtab\t",
-        *map(chr, range(256)),
-        "é中😀",
-        "\u2028\u2029\u200b\u00a0",
-        "\ud800",
-        "\udfff",
-        "\U000e0001",
-        "\ufffe",
-        "\u0378",
-    ]
-    assert unicodedata.unidata_version in {"15.0.0", "15.1.0"}, (
-        "This proof requires the Unicode 15.0 Python reference "
-        "or the documented local 15.1 exception"
-    )
-    expected = [repr(value) for value in values]
-    # CI Python 3.12 uses Unicode 15.0. Local Python 3.13 uses 15.1, which
-    # assigns U+2EBF0. Its local repr intentionally differs from the 15.0 contract.
-    new_assignments = ["\U0002ebf0", "\U0001cc00"]
-    pinned = ["'\\U0002ebf0'", "'\\U0001cc00'"]
-    if unicodedata.unidata_version == "15.0.0":
-        assert [repr(value) for value in new_assignments] == pinned
-    else:
-        assert repr(new_assignments[0]) == "'" + new_assignments[0] + "'"
-        assert repr(new_assignments[1]) == pinned[1]
-    assert _node(tmp_path, "repr", payload=values + new_assignments) == expected + pinned
 
 
 def test_cross_area_actual_serializer_payloads_match_python(tmp_path: Path) -> None:

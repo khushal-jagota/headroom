@@ -2,7 +2,9 @@ import { gzipSync, createGzip } from 'node:zlib';
 import { Transform, Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Config } from '../config.ts';
+import { PlannerError } from '../contracts.ts';
 import { MAX_CONVERSATION_SEND_REQUEST_BYTES } from '../config.ts';
+import { MINIMUM_SUPPORTED_BUILD } from '../../ios_compatibility/policy.ts';
 import { admit_unidentified_call, http_refusal } from '../unidentified_agent_calls/admission.ts';
 import type { Endpoint, PeerLookup } from '../unidentified_agent_calls/contracts.ts';
 import { resolve_loopback_peer } from '../unidentified_agent_calls/peer.ts';
@@ -32,6 +34,30 @@ function rawHeaders(request: FastifyRequest): Map<string, string[]> {
 }
 function reject(reply: FastifyReply, message: string): void {
   reply.code(403).send({ error: { code: 'agent_forbidden', message, detail: {} } });
+}
+/** HTTP and raw WebSocket upgrades share the same hosted ingress authority. */
+export function trusted_ingress_login(
+  config: Config,
+  raw: ReadonlyMap<string, readonly string[]>,
+  method: string,
+): string | null {
+  if (!config.trusted_ingress_provider) return null;
+  const refuse = (message: string): never => {
+    throw new PlannerError('agent_forbidden', message);
+  };
+  if ([...securityHeaders].some((name) => (raw.get(name)?.length ?? 0) > 1))
+    refuse('duplicate security header is not allowed');
+  const origin = raw.get('origin')?.[0]?.trim();
+  if (
+    origin !== undefined &&
+    !safe.has(method) &&
+    origin !== config.trusted_ingress_canonical_origin
+  )
+    refuse('request origin is not allowed');
+  const login = raw.get('tailscale-user-login')?.[0]?.trim();
+  if (login !== undefined && login !== config.trusted_ingress_allowed_login)
+    refuse('Tailscale user is not allowed');
+  return login ?? null;
 }
 export function installMiddleware(
   app: FastifyInstance,
@@ -86,7 +112,7 @@ export function installMiddleware(
         (builds.length !== 1 ||
           builds[0]!.length > 10 ||
           !/^\d+$/.test(builds[0]!) ||
-          Number(builds[0]) < 1)
+          Number(builds[0]) < MINIMUM_SUPPORTED_BUILD)
       ) {
         reply
           .code(426)
@@ -95,41 +121,29 @@ export function installMiddleware(
             error: {
               code: 'ios_update_required',
               message: 'Update Panels from TestFlight',
-              details: { minimum_build: 1 },
+              details: { minimum_build: MINIMUM_SUPPORTED_BUILD },
             },
           });
         return;
       }
-      if (config.trusted_ingress_provider) {
-        if ([...securityHeaders].some((name) => (raw.get(name)?.length ?? 0) > 1)) {
-          reject(reply, 'duplicate security header is not allowed');
-          return;
-        }
-        const origin = raw.get('origin')?.[0];
-        if (
-          origin !== undefined &&
-          !safe.has(request.method) &&
-          origin !== config.trusted_ingress_canonical_origin
-        ) {
-          reject(reply, 'request origin is not allowed');
-          return;
-        }
-        const login = raw.get('tailscale-user-login')?.[0];
-        if (login !== undefined) {
-          if (login !== config.trusted_ingress_allowed_login) {
-            reject(reply, 'Tailscale user is not allowed');
-            return;
-          }
-          Object.assign(request, { authenticatedOwner: true, trustedLogin: login });
-          if (!path.startsWith('/api/updates')) {
-            for (const name of [
-              'x-plan-conversation-id',
-              'x-plan-actor',
-              'x-plan-ticket-id',
-              'x-plan-manager-id',
-            ])
-              delete request.headers[name];
-          }
+      let login: string | null;
+      try {
+        login = trusted_ingress_login(config, raw, request.method);
+      } catch (error) {
+        if (!(error instanceof PlannerError)) throw error;
+        reject(reply, error.message);
+        return;
+      }
+      if (login !== null) {
+        Object.assign(request, { authenticatedOwner: true, trustedLogin: login });
+        if (!path.startsWith('/api/updates')) {
+          for (const name of [
+            'x-plan-conversation-id',
+            'x-plan-actor',
+            'x-plan-ticket-id',
+            'x-plan-manager-id',
+          ])
+            delete request.headers[name];
         }
       }
       const socket = request.raw.socket;

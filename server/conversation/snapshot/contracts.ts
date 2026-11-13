@@ -114,6 +114,7 @@ export interface CodexLoginStanding {
   everything_a_card_reads(options: { now: Date }): readonly unknown[];
 }
 export interface SnapshotProbeOptions {
+  readonly signal?: AbortSignal;
   readonly refresh: boolean;
   readonly discover_update_advisory: boolean;
   readonly codex_login: CodexLoginStanding | null;
@@ -125,6 +126,7 @@ export type BackendProbe = (
   options: SnapshotProbeOptions,
 ) => Promise<BackendSnapshot>;
 export interface BackendSnapshotServiceOptions {
+  readonly keep_complete_model_list?: (snapshot: BackendSnapshot) => void | Promise<void>;
   readonly environment: BackendProbeEnvironment;
   readonly probe: BackendProbe;
   readonly read_codex_login_standing: () => CodexLoginStanding | null;
