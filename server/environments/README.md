@@ -148,6 +148,7 @@ Its navigation starts at the prepared schema version. Normal server publication 
 Alembic owns application schema changes until cutover. TS bootstrap creates only new isolated fixture/test databases and never upgrades an existing application database.
 
 The schema drift check runs in this branch's workflow. A merge that changes the Python schema fails until the generated file matches.
+Every TS start now requires this exact frontier, so a staging merge with a new migration makes every TS list fail until regeneration.
 From the independent worktree, with the private environment described above, regenerate and check it with:
 
 ```sh

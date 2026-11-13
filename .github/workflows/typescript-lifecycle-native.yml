@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   darwin-locks:
-    name: Darwin arm64 non-acquiring lock observation (Node 22)
+    name: Darwin arm64 lifecycle and archive metadata ABI (Node 22)
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -26,7 +26,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
-      - name: Prove the existing registry sequence on the Darwin ABI
+      - name: Prove existing registry and archive sequences on the Darwin ABI
         shell: bash
         run: |
           set -euo pipefail
@@ -71,8 +71,8 @@ jobs:
             fs.writeFileSync(process.env.NATIVE_EVIDENCE + "/platform.json", JSON.stringify({
               platform: process.platform, architecture: process.arch, node: process.version,
               executable: process.execPath, os_release: os.release(),
-              boundary: "Existing registry sequence: Darwin variadic fcntl F_GETLK on read-only descriptors, real flock contention, and reset/remove ownership. No browser, provider, executor or service.",
-              hosted_cost: "OPEN until this job completes; registry body seconds and job elapsed time are preserved separately."
+              boundary: "Existing registry and archive sequences: Darwin fcntl/flock and descriptor-based futimens with exact Python nanoseconds. No browser, provider, executor or service.",
+              hosted_cost: "OPEN until this job completes; each existing case and job elapsed time are preserved separately."
             }, null, 2) + "\n");
             if (process.platform !== "darwin" || process.arch !== "arm64")
               throw new Error("The native proof requires a real Darwin arm64 Node runtime");
@@ -86,6 +86,7 @@ jobs:
           # No web build: this registry fixture uses synthetic app roots and no UI assets.
           python -I -S -B scripts/development_safety/bootstrap.py pytest \
             tests/compare/direct/test_unit21_registry.py::test_unit21_registry_fixture_and_lifecycle_parity \
+            tests/compare/direct/test_unit21_release.py::test_unit21_release_identity_archive_and_frontier \
             --compare-report-dir "$NATIVE_EVIDENCE/comparison" \
             --basetemp "$TMPDIR/pytest" --junitxml "$NATIVE_EVIDENCE/results.xml"
           NATIVE
