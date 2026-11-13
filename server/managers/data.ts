@@ -19,6 +19,7 @@ interface ManagerRow {
   title: string;
   goal: string;
   recap: string;
+  recap_updated_at: number | null;
   project_id: string;
   project_name: string;
   manager_backend: string;
@@ -46,6 +47,7 @@ export function read_manager(sql: ReadSql, id: string): ManagerRead {
     title: row.title,
     goal: row.goal,
     recap: row.recap,
+    recap_updated_at: row.recap_updated_at,
     project_id: row.project_id,
     project_name: row.project_name,
     settled: Boolean(row.settled),
@@ -182,10 +184,15 @@ export function update_manager(
   }
   const fields = Object.keys(options.edits);
   const now = options.clock.nowUnix();
+  const values: (string | number | null)[] = fields.map((field) => options.edits[field]!);
+  if ('recap' in options.edits) {
+    fields.push('recap_updated_at');
+    values.push(options.edits.recap?.trim() ? now : null);
+  }
   if (fields.length) {
     tx.run(
       `UPDATE managers SET ${fields.map((field) => `${field}=?`).join(', ')}, updated_at=? WHERE id=?`,
-      [...fields.map((field) => options.edits[field]!), now, id],
+      [...values, now, id],
     );
     if ('project_id' in options.edits)
       tx.run('UPDATE tickets SET updated_at=? WHERE manager_id=?', [now, id]);

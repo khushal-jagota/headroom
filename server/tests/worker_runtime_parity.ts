@@ -2,6 +2,8 @@
 import { createDatabase } from '../core/database/index.ts';
 import { load_worker_runtime_definitions } from '../worker_types/configuration.ts';
 import * as tickets from '../tickets/data/index.ts';
+import * as decisions from '../tickets/decision_messages.ts';
+import { OWNER } from '../core/contracts.ts';
 import * as readiness from '../runtime/worker_step_readiness.ts';
 import { InMemoryConversationSystem } from '../conversation/in_memory_conversation_system.ts';
 import { ConversationStartRequest, ConversationRoleMaterials } from '../conversation/contracts.ts';
@@ -12,7 +14,7 @@ import type { Ticket } from '../tickets/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 
 export interface WorkerRuntimeParityInput {
-  mode: 'readiness' | 'abort';
+  mode: 'readiness' | 'abort' | 'decisions';
   db_path: string;
   workspace: string;
   now: number;
@@ -51,7 +53,30 @@ export async function run_worker_runtime_parity(
       );
     }
     let answer: Record<string, unknown>;
-    if (input.mode === 'readiness') {
+    if (input.mode === 'decisions') {
+      const ticket = database.read((sql) => tickets.read_ticket(sql, input.ticket_id));
+      const options = {
+        message: 'Keep the attributed note.',
+        principal: OWNER,
+        now: input.now,
+        expected_proposal_revision: ticket.pending_proposal_revision,
+        decision_id: 'parity-decision',
+      };
+      database.write((sql) => tickets.reject_proposal(sql, ticket.id, options));
+      database.write((sql) => tickets.reject_proposal(sql, ticket.id, options));
+      database.write((sql) => {
+        sql.run(
+          "UPDATE ticket_decision_messages SET delivery_status='uncertain' WHERE ticket_id=?",
+          [ticket.id],
+        );
+        decisions.rearm_after_restart(sql, ticket.id);
+      });
+      answer = database.read((sql) => ({
+        rows: sql.all('SELECT * FROM ticket_decision_messages ORDER BY decision_id'),
+        pending: decisions.pending_ticket_ids(sql),
+        undelivered: decisions.has_undelivered(sql, ticket.id),
+      }));
+    } else if (input.mode === 'readiness') {
       const ticket =
         input.fieldless_snapshot ??
         database.read((sql) => tickets.read_ticket(sql, input.ticket_id));

@@ -18,6 +18,10 @@ def test_payload_differences_survive_normalization(tmp_path: Path) -> None:
     # Equivalent aliases map identically, but a changed reference must still differ.
     assert left.normalize("t_12345678") == right.normalize("t_abcdefgh")
     assert left.normalize("t_12345678") != right.normalize("t_87654321")
+    assert left.normalize("ticket_decision_" + "a" * 64) == right.normalize(
+        "ticket_decision_" + "b" * 64
+    )
+    assert left.normalize("a" * 64) != right.normalize("b" * 64)
 
 
 def test_opaque_tokens_preserve_change_history(tmp_path: Path) -> None:

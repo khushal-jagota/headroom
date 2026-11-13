@@ -7,7 +7,7 @@ import type { WorkerStepStartResult } from '../runtime/worker_step_readiness_loo
 import * as conversation_start from '../runtime/conversation_start.ts';
 import * as worker_step_readiness from '../runtime/worker_step_readiness.ts';
 import * as tickets_data from './data/index.ts';
-import * as revision_feedback from './revision_feedback.ts';
+import * as decision_messages from './decision_messages.ts';
 import * as locale_configuration from './locale_configuration.ts';
 import { stage_ownership_mode } from './logic/machine.ts';
 import type { Ticket } from './contracts.ts';
@@ -62,8 +62,8 @@ export async function restart_worker(
     });
     killed_conversation_id = ticket.conversation_id;
     if (killed_conversation_id !== null) {
-      revision_restarted_in_fresh_conversation = database.read(
-        (sql) => revision_feedback.snapshot(sql, ticket_id) !== null,
+      revision_restarted_in_fresh_conversation = database.read((sql) =>
+        decision_messages.has_undelivered(sql, ticket_id),
       );
       killed_conversation_looked_running = await conversations.is_running(killed_conversation_id);
       await conversations.kill(killed_conversation_id);
@@ -113,6 +113,7 @@ export function _unlink_give_back_the_claim_and_write_configuration(
       now: options.now,
     });
   }
+  decision_messages.rearm_after_restart(sql, ticket_id);
   options.write_employee_configuration?.(sql, options.now);
 }
 export function _restart_result(

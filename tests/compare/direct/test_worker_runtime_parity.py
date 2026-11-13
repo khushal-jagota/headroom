@@ -150,6 +150,68 @@ def compare(
     return expected
 
 
+def check_decisions(conn: sqlite3.Connection, root: Path) -> dict[str, Any]:
+    from planner.core.contracts import Principal, PrincipalKind
+    from planner.tickets import decision_messages
+
+    ticket = new_ticket(conn)
+    # Canonical decision writes require an existing session for attributed guidance.
+    ticket = tickets.write_ticket_conversation_start(
+        conn,
+        ticket.id,
+        conversation_id="decision-parity-conversation",
+        backend="codex",
+        model=ticket.employee_launch_model,
+        reasoning_effort=ticket.employee_launch_reasoning_effort,
+        now=NOW,
+    )
+    ticket = tickets.file_current_proposal(
+        conn,
+        ticket.id,
+        body="Decision parity scope",
+        principal=Principal(PrincipalKind.ticket, ticket.id),
+        now=NOW,
+    )
+
+    def python() -> dict[str, Any]:
+        tickets.reject_proposal(
+            conn,
+            ticket.id,
+            message="Keep the attributed note.",
+            principal=OWNER_PRINCIPAL,
+            now=NOW,
+            expected_proposal_revision=ticket.pending_proposal_revision,
+            decision_id="parity-decision",
+        )
+        tickets.reject_proposal(
+            conn,
+            ticket.id,
+            message="Keep the attributed note.",
+            principal=OWNER_PRINCIPAL,
+            now=NOW,
+            expected_proposal_revision=ticket.pending_proposal_revision,
+            decision_id="parity-decision",
+        )
+        conn.execute(
+            "UPDATE ticket_decision_messages SET delivery_status='uncertain' WHERE ticket_id=?",
+            (ticket.id,),
+        )
+        decision_messages.rearm_after_restart(conn, ticket.id)
+        conn.commit()
+        return {
+            "rows": [
+                dict(row)
+                for row in conn.execute(
+                    "SELECT * FROM ticket_decision_messages ORDER BY decision_id"
+                )
+            ],
+            "pending": decision_messages.pending_ticket_ids(conn),
+            "undelivered": decision_messages.has_undelivered(conn, ticket.id),
+        }
+
+    return compare(conn, root, {"mode": "decisions", "ticket_id": ticket.id}, python)
+
+
 def presence(conn: sqlite3.Connection, state: str) -> None:
     identity = dict(
         protocol_version=PROTOCOL_VERSION,
@@ -433,3 +495,13 @@ def test_worker_runtime_parity(tmp_path: Path, request: pytest.FixtureRequest) -
             {"match": report["match"], "seconds": report["seconds"], "cases": len(report["cases"])}
         )
     )
+
+
+def test_worker_decisions_parity(tmp_path: Path) -> None:
+    with synthetic_home_environment(create_synthetic_homes(tmp_path)):
+        conn = connect(str(tmp_path / "python.sqlite"))
+        try:
+            create_schema(conn)
+            check_decisions(conn, tmp_path)
+        finally:
+            conn.close()

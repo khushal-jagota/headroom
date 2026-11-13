@@ -17,7 +17,7 @@ import type { TicketWorkflowDefinition } from '../../worker_types/contracts.ts';
 import { capture_ticket_attention } from '../../notifications/attention.ts';
 import { capture_gate, record_approval } from '../../attention/history.ts';
 import { create_proposal_wake, create_worker_error_wake } from '../../manager_wakes/data.ts';
-import * as revision_feedback from '../revision_feedback.ts';
+import * as decision_messages from '../decision_messages.ts';
 import * as blocks from '../../core/ticket_blocks.ts';
 import * as admission from '../logic/admission.ts';
 import * as machine from '../logic/machine.ts';
@@ -112,6 +112,8 @@ export const TICKET_STORED_COLUMNS = [
   'project_id',
   'manager_id',
   'recap',
+  'recap_updated_at',
+  'recap_stage_changed',
   'ceiling',
   'conversation_id',
   'field_values',
@@ -183,6 +185,8 @@ export function read_ticket(sql: ReadSql, id: string): Ticket {
     manager_kind: String(r.manager_kind),
     manager_title: r.manager_title as string | null,
     recap: String(r.recap),
+    recap_updated_at: r.recap_updated_at == null ? null : Number(r.recap_updated_at),
+    recap_stage_changed: Boolean(r.recap_stage_changed),
     ceiling: r.ceiling,
     ceiling_holder: principal_from_json(r.ceiling_holder),
     ticket_status: status,
@@ -474,7 +478,7 @@ export function _apply_decision(
         );
   const stored = _ticket_row(tx, t.id);
   tx.run(
-    'UPDATE tickets SET field_values=?,field_approvals=?,pending_proposal=?,pending_proposal_revision=pending_proposal_revision+?,stage=?,ceiling=?,ceiling_holder=?,updated_at=? WHERE id=?',
+    'UPDATE tickets SET field_values=?,field_approvals=?,pending_proposal=?,pending_proposal_revision=pending_proposal_revision+?,stage=?,ceiling=?,ceiling_holder=?,updated_at=?,recap_stage_changed=? WHERE id=?',
     [
       codec.replace_declared_values(stored.field_values, d.field_values, field_ids(t)),
       codec.replace_declared_approvals(stored.field_approvals, d.field_approvals, field_ids(t)),
@@ -484,12 +488,12 @@ export function _apply_decision(
       d.ceiling,
       principal_to_json(d.ceiling_holder),
       now,
+      Number(t.recap_stage_changed || (d.stage !== t.stage && !!t.recap.trim())),
       t.id,
     ],
   );
   if (d.stage !== t.stage) {
     tx.run('DELETE FROM ticket_paired_stage_openers WHERE ticket_id=?', [t.id]);
-    revision_feedback.discard(tx, t.id);
   }
   if ((t.stage !== 'done') !== (d.stage !== 'done'))
     for (const b of blocked) {
@@ -596,6 +600,8 @@ export interface AcceptOptions {
   next_ceiling?: string | null;
   next_holder: Principal;
   expected_proposal_revision?: number | null;
+  message?: string | null;
+  decision_id?: string | null;
 }
 export function accept_proposal(
   tx: TransactionSql,
@@ -606,6 +612,13 @@ export function accept_proposal(
   const o = typeof fieldOrOptions === 'string' ? options! : fieldOrOptions,
     field = typeof fieldOrOptions === 'string' ? fieldOrOptions : o.field!;
   const t = load_ticket_for_write(tx, id);
+  decision_messages.validate_request(o.message ?? null, o.expected_proposal_revision ?? null, o.decision_id ?? null);
+  const request = decision_messages.request_json(o.principal, {
+    ticket_id: id, action: 'approved', field, message: o.message ?? null,
+    expected_proposal_revision: o.expected_proposal_revision ?? null,
+    edited_body: o.edited_body ?? null, next_ceiling: o.next_ceiling ?? null, next_holder: o.next_holder,
+  });
+  if (decision_messages.is_replay(tx, o.decision_id ?? null, request)) return t;
   if (
     o.expected_proposal_revision != null &&
     t.pending_proposal_revision !== o.expected_proposal_revision
@@ -624,6 +637,8 @@ export function accept_proposal(
     approval: explicit_approval(tx, o.principal),
   });
   review_holder(tx, o.next_holder, id, t.manager_kind, t.manager_id);
+  decision_messages.save(tx, t, { action: 'approved', field, principal: o.principal,
+    message: o.message ?? null, decision_id: o.decision_id ?? null, request, now: o.now });
   const u = _apply_decision(tx, t, d, o.now);
   record_approval(tx, {
     ticket_id: id,
@@ -680,10 +695,19 @@ export function reject_proposal(
     principal: Principal;
     now: number;
     expected_proposal?: PendingTicketProposal | null;
+    expected_proposal_revision?: number | null;
+    decision_id?: string | null;
   },
 ): Ticket {
   if (o.message !== null) admission.validate_revision_guidance(o.message);
   const t = load_ticket_for_write(tx, id);
+  const field = t.workflow.stages[index(t.workflow, t.stage)]!.gating_field;
+  decision_messages.validate_request(o.message, o.expected_proposal_revision ?? null, o.decision_id ?? null);
+  const request = decision_messages.request_json(o.principal, { ticket_id: id, action: 'sent back', message: o.message,
+    expected_proposal_revision: o.expected_proposal_revision ?? null });
+  if (decision_messages.is_replay(tx, o.decision_id ?? null, request)) return t;
+  if (o.expected_proposal_revision != null && t.pending_proposal_revision !== o.expected_proposal_revision)
+    throw new PlannerError('validation', 'the visible proposal changed; read it again before sending back');
   if (o.expected_proposal && !equal(t.pending_proposal, o.expected_proposal))
     throw new PlannerError('validation', 'proposal changed before revision guidance was applied', {
       ticket_id: id,
@@ -694,14 +718,8 @@ export function reject_proposal(
     has_guidance: o.message !== null,
     worker_type_definition: t.workflow,
   });
-  if (o.message !== null) {
-    revision_feedback.set_feedback(tx, id, {
-      stage: t.stage,
-      sender: o.principal,
-      message: o.message,
-      now: o.now,
-    });
-  }
+  decision_messages.save(tx, t, { action: 'sent back', field: field!, principal: o.principal,
+    message: o.message, decision_id: o.decision_id ?? null, request, now: o.now });
   const u = _apply_decision(tx, t, d, o.now);
   tx.run('DELETE FROM ticket_paired_stage_openers WHERE ticket_id=? AND stage=?', [id, t.stage]);
   give_back(tx, u, o.now);
@@ -821,7 +839,11 @@ export function edit_ticket(
     ['manager_kind', t.manager_kind, manager_kind],
   ] as const)
     if (before !== after) changes[key] = after;
-  if ('recap' in e) changes.recap = e.recap!;
+  if ('recap' in e) {
+    changes.recap = e.recap!;
+    changes.recap_updated_at = e.recap!.trim() ? o.now : null;
+    changes.recap_stage_changed = 0;
+  }
   if (e.field_values && Object.keys(e.field_values).length) {
     let d = t;
     for (const [field, body] of Object.entries(e.field_values)) {
