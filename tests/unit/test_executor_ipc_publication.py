@@ -185,7 +185,9 @@ def test_actual_caller_timeout_keeps_owner_and_original_snapshot_for_retry(
                     CliRunner().invoke, main, ["worker", "recap", "--json"], input="original"
                 )
                 monkeypatch.setattr(ipc_client, "socket", socket)
-                assert entered.is_set()
+                # Socket timeout can precede the background thread's first turn.
+                # Wait for the original snapshot before changing its source file.
+                assert await asyncio.to_thread(entered.wait, 5)
                 assert result.exit_code == 3, result.output
                 outcome = json.loads(result.stdout)
                 identity = outcome["submission_id"]
@@ -241,7 +243,8 @@ def test_retry_preserves_acknowledged_and_unknown_uncertainty_across_restart(
             if publication is not None:
                 async with asyncio.timeout(5):
                     await publication[1]
-            response = await executor.gateway.handle(retry_request(child, "original"))
+            if response.unconfirmed.publication == "preparing":
+                response = await executor.gateway.handle(retry_request(child, "original"))
             assert response.unconfirmed is not None
             assert response.unconfirmed.publication == "queued"
             envelope = executor.outbox.pending()[0]

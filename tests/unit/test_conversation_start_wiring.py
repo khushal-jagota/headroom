@@ -521,7 +521,7 @@ def test_first_spawn_refusal_retention_preserves_a_replacement_link(
             sender_message_id="initial-attempt",
             sender=OWNER_PRINCIPAL,
             recipient=Principal(PrincipalKind.ticket, ticket.id),
-            retain_backend_start_failure=retain,
+            retain_definite_start_refusal=retain,
             now=1,
         )
         assert isinstance(result.fate, PromptDeliveryRefused)

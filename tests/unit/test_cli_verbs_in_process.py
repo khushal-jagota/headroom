@@ -403,3 +403,61 @@ def test_cleanup_recheck_inspects_one_ticket_without_starting_even_after_it_ends
     assert ended == {"complete": True, "reason": "Recorded tool ended", "scope": scope}
     assert checks == [ticket_id, ticket_id]
     starts.assert_not_awaited()
+
+
+def test_work_overviews_keep_recaps_and_freshness_without_individual_reads(
+    server: ServerHandle, cli: Callable[..., JsonObject], tmp_path: Path,
+) -> None:
+    from planner.navigation.data import snapshot
+    from planner.navigation.views.logic import project as project_record
+
+    project = cli(server, "project", "create", "--name", "Recap overview")
+    manager = cli(
+        server, "manager", "create", "--title", "Own result", "--project-id", project["id"]
+    )
+    ticket = cli(server, "ticket", "create", "--input-json", "-", stdin=json.dumps({
+        "title": "Child result", "worker_type": "coding",
+        "manager": {"kind": "manager", "id": manager["id"]},
+    }))
+    # Longer than the summary preview, so a preview cannot masquerade as the full recap.
+    ticket_recap = "A full recap with the next decision. " * 20
+    manager_recap = "Own result awaits a decision."
+    cli(server, "manager", "set", manager["id"], "recap", "--value", manager_recap)
+    cli(
+        server, "ticket", "edit", ticket["id"], "--input-json", "-",
+        stdin=json.dumps({"recap": ticket_recap}),
+    )
+    manager_row = cli(server, "manager", "list", "--active")["managers"][0]
+    ticket_row = cli(server, "ticket", "list", "--manager", manager["id"])["tickets"][0]
+    workspace = cli(server, "manager", "workspace", manager["id"])
+    workspace_text = CliRunner().invoke(
+        cli_main, ["manager", "workspace", manager["id"]],
+        env={"PLAN_SERVER_URL": server.base},
+    )
+    assert workspace_text.exit_code == 0, workspace_text.output
+    assert ticket_row["recap_preview"] in workspace_text.output
+    assert "recap " in workspace_text.output and " old" in workspace_text.output
+    (tmp_path / "overview-example.txt").write_text(
+        workspace_text.output + "\nTicket list JSON:\n" + json.dumps(ticket_row, indent=2)
+    )
+    assert manager_row["recap"] == workspace["recap"] == manager_recap
+    assert manager_row["recap_updated_at"] == workspace["recap_updated_at"]
+    assert isinstance(manager_row["recap_updated_at"], int)
+    for row in (ticket_row, workspace["tickets"][0]):
+        assert row["recap"] == ticket_recap
+        assert len(row["recap_preview"]) < len(row["recap"])
+        assert isinstance(row["recap_updated_at"], int)
+        assert row["recap_stage_changed"] is False
+    with closing(connect(str(server.db_path))) as conn:
+        records = snapshot(conn)["records"]
+    for kind, identity, recap in (
+        ("manager", manager["id"], manager_recap), ("ticket", ticket["id"], ticket_recap),
+    ):
+        record = next(r for r in records if r["kind"] == kind and r["id"] == identity)
+        assert record["kind"] == "manager" or record["kind"] == "ticket"
+        assert record["value"]["recap"] == recap
+        assert isinstance(record["value"]["recap_updated_at"], int)
+        assert (
+            project_record(record)["value"].get("recap_updated_at")
+            == record["value"]["recap_updated_at"]
+        )
