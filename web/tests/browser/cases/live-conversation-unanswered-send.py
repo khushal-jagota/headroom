@@ -1024,12 +1024,12 @@ def run(browser, urls):
         case.evaluate("""() => {
           window.__deliveryFrames=[];window.__deliveryStop=false;window.__sentBubble=null;
           const start=performance.now();
-          const sample=()=>{
+          const sample=frameTime=>{
             const thread=document.querySelector('[data-conversation-thread]');
             const nodes=[...document.querySelectorAll('[data-conversation-outgoing]')];
             const bubble=nodes.find(n=>n.closest('[data-conversation-thread]'));
             if(bubble&&!window.__sentBubble)window.__sentBubble=bubble;
-            window.__deliveryFrames.push({ms:performance.now()-start,count:nodes.length,
+            window.__deliveryFrames.push({ms:performance.now()-start,frameMs:frameTime-start,count:nodes.length,
               queue:!!document.querySelector('[data-conversation-held-stack]'),
               top:bubble?bubble.getBoundingClientRect().top-thread.getBoundingClientRect().top:null,
               scrollTop:thread?.scrollTop??null,same:!bubble||bubble===window.__sentBubble});
@@ -1081,7 +1081,10 @@ def run(browser, urls):
             visible=[row for row in frames if row['top'] is not None]
             moving=[row for a,row in zip(visible,visible[1:],strict=False) if abs(row['scrollTop']-a['scrollTop'])>.5]
             assert len(moving)>3, (outcome, visible)
-            duration=moving[-1]['ms']-visible[0]['ms']
+            # Bubble visibility precedes placement readiness. Measure actual
+            # movement on the same RAF timeline that drives the production move,
+            # rather than include the wait before the first moving frame.
+            duration=moving[-1]['frameMs']-moving[0]['frameMs']
             assert 150 <= duration <= 340, (outcome, duration, moving)
             assert all(b['scrollTop'] >= a['scrollTop']-1 for a,b in zip(visible,visible[1:],strict=False)), (outcome, visible)
             # Late browser-owned layout cannot start another animated chase.

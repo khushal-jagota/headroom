@@ -3831,6 +3831,10 @@ def _tab_return(browser, url):
             if position == 'scrollback':
                 page.locator('[data-conversation-thread]').hover()
                 establish_scrollback(page, lambda: page.mouse.wheel(0, -750), min_clearance=2)
+            # Native scrollend does not settle deferred body presentation. Capture
+            # the held line only after the pane's full placement work also settles.
+            _settle(page, label="tab return held position")
+            assert page.evaluate('window.__settled.stable >= 5'), page.evaluate('window.__settled')
             held = page.evaluate(reading)
             assert held['key'] and held['scroll'] > 0, held
             page.evaluate(hidden)
@@ -3893,6 +3897,8 @@ def _tab_return(browser, url):
         _settle_conversation_layout(page)
         page.locator('[data-conversation-thread]').hover()
         establish_scrollback(page, lambda: page.mouse.wheel(0,-750), min_clearance=2)
+        _settle(page, label="tab return before Latest motion")
+        assert page.evaluate('window.__settled.stable >= 5'), page.evaluate('window.__settled')
         before_motion=page.evaluate(reading)
         page.evaluate("""before => {
           window.__midMotionHeld=null;
