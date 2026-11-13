@@ -18,6 +18,7 @@ import {
   readFileSync,
   unlinkSync,
   writeFileSync,
+  existsSync,
 } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,9 +32,18 @@ import {
   ARCHIVE_SPACE_RESERVE_BYTES,
   ARCHIVE_SPOOL_BATCH_BYTES,
 } from '../configuration.ts';
-import { create_app_archive, extract_app_archive, hash_archive } from '../archive.ts';
+import {
+  create_app_archive,
+  extract_app_archive,
+  extract_git_export,
+  hash_archive,
+} from '../archive.ts';
 import { digest_app_artifact, digest_app_source, validate_app_manifest } from '../identity.ts';
-import { require_node_database_frontier, schema_change_pending } from '../migrations.ts';
+import {
+  read_migration_graph,
+  require_node_database_frontier,
+  schema_change_pending,
+} from '../migrations.ts';
 import { AppValidationError } from '../contracts.ts';
 
 import { parse_dynamic } from '../native/elf.ts';
@@ -45,6 +55,229 @@ import type { RuntimeHostFacts } from '../logic/host.ts';
 import { validate_node_probe_report } from '../admission.ts';
 import { run_runtime_probe } from '../admission_process.ts';
 import { NATIVE_NODE_PROBE } from '../admission_probe.ts';
+import { build_exported_app } from '../build.ts';
+import { build_app_launch_env } from '../entrypoints.ts';
+import { run_release_command } from '../process.ts';
+import type { ReleaseExecution } from '../contracts.ts';
+
+/** Source-only Git/build work. No dependencies, native tools, public CLI or provider runs. */
+export async function builder_parity(
+  root: string,
+  spec: { sha: string; cli: string; source_paths: string[] },
+): Promise<unknown> {
+  const began = performance.now();
+  const owner = new ChildProcesses(),
+    native_spawn = owner.spawn.bind(owner);
+  const controller = new AbortController(),
+    source_abort = new AbortController();
+  const execution: ReleaseExecution = {
+    child_processes: owner,
+    signal: controller.signal,
+    deadline: null,
+  };
+  const stopped = () => {
+    controller.abort(new Error('Fixture terminated'));
+    source_abort.abort(controller.signal.reason);
+    owner.force_kill(performance.now() / 1000 + 5);
+  };
+  process.on('SIGTERM', stopped);
+  const archive_entry = fileURLToPath(new URL('../archive_unpack_main.ts', import.meta.url));
+  const idle_script = 'setInterval(()=>{},1000)',
+    reason = new Error('Recorded source export abort');
+  let spawned = 0,
+    closed = 0,
+    abort_export = false,
+    validated = false,
+    aborted_closed = false;
+  owner.spawn = ((command: string, args: readonly string[], options: SpawnOptions) => {
+    if (
+      command !== 'git' &&
+      !(
+        command === process.execPath &&
+        (args[0] === archive_entry || (args[0] === '-e' && args[1] === idle_script))
+      )
+    )
+      throw new Error('Source-only fixture refused an unexpected native/tool command');
+    const child = native_spawn(command, args, options);
+    spawned++;
+    child.once('close', () => {
+      closed++;
+    });
+    if (abort_export && args[0] === archive_entry) {
+      const decoder = new StringDecoder('utf8');
+      let lines = '';
+      child.stdout!.prependListener('data', (chunk: Buffer) => {
+        lines += decoder.write(chunk);
+        for (;;) {
+          const end = lines.indexOf('\n');
+          if (end < 0) break;
+          let message: unknown;
+          try {
+            message = JSON.parse(lines.slice(0, end));
+          } catch (error) {
+            source_abort.abort(error);
+            return;
+          }
+          lines = lines.slice(end + 1);
+          if (
+            message &&
+            typeof message === 'object' &&
+            'type' in message &&
+            message.type === 'validated'
+          ) {
+            validated = true;
+            source_abort.abort(reason);
+          }
+        }
+      });
+      child.once('close', () => {
+        aborted_closed = true;
+      });
+    }
+    return child;
+  }) as typeof owner.spawn;
+  const result: Record<string, unknown> = {};
+  const caller_umask = process.umask(0o027);
+  try {
+    const candidate = join(root, 'built-node');
+    const options = {
+      requested_sha: spec.sha,
+      candidate_app: candidate,
+      install_dependencies: false,
+    };
+    const dependencies = { public_cli_entrypoint: spec.cli };
+    const manifest = await build_exported_app(
+      join(root, 'source'),
+      options,
+      dependencies,
+      execution,
+    );
+    const inode = (await stat(candidate)).ino,
+      bytes = await readFile(join(candidate, 'manifest.json'), 'utf8');
+    await build_exported_app(join(root, 'source'), options, dependencies, execution);
+    result.reused =
+      inode === (await stat(candidate)).ino &&
+      bytes === (await readFile(join(candidate, 'manifest.json'), 'utf8'));
+    let mismatch: string | null = null;
+    try {
+      await build_exported_app(
+        join(root, 'source'),
+        { ...options, requested_sha: '0'.repeat(40), candidate_app: join(root, 'bad-sha') },
+        dependencies,
+        execution,
+      );
+    } catch (error) {
+      if (!(error instanceof AppValidationError)) throw error;
+      mismatch = error.message;
+    }
+    result.failed = await refused(() =>
+      build_exported_app(
+        join(root, 'source'),
+        { ...options, candidate_app: join(root, 'failed-build') },
+        { public_cli_entrypoint: '' },
+        execution,
+      ),
+    );
+    const graph_root = join(root, 'graph-app');
+    result.graph = await read_migration_graph(graph_root);
+    const migration = join(graph_root, 'src/planner/core/migrations/versions/initial.py');
+    const original = await readFile(migration);
+    try {
+      writeFileSync(migration, Buffer.concat([original, Buffer.from('# raw source changed\n')]));
+      result.graph_drift_refused = await refused(() => read_migration_graph(graph_root));
+    } finally {
+      writeFileSync(migration, original);
+    }
+    Object.assign(result, {
+      manifest,
+      mismatch,
+      readme: await readFile(join(candidate, 'README.md'), 'utf8'),
+      cli_bytes: (await readFile(join(candidate, spec.cli))).toString('hex'),
+      cli_executable: ((await stat(join(candidate, spec.cli))).mode & 0o111) !== 0,
+      source_metadata: (await tree(candidate))
+        .filter((row) => spec.source_paths.includes(String(row.path)))
+        .map((row) =>
+          Object.fromEntries(
+            ['path', 'kind', 'mode', 'target']
+              .filter((key) => key in row)
+              .map((key) => [key, row[key]]),
+          ),
+        ),
+      ignored_absent: !existsSync(join(candidate, 'ignored.txt')),
+      wrappers: await Promise.all(
+        ['panels', 'panels-launcher'].map((name) => readFile(join(candidate, 'bin', name), 'utf8')),
+      ),
+      launch_environment: await build_app_launch_env(join(root, 'v2'), {
+        HTTP_PROXY: 'http://synthetic.invalid',
+        http_proxy: '',
+        REQUEST_METHOD: 'GET',
+        NODE_OPTIONS: 'must-not-pass',
+        UNRELATED_SECRET: 'must-not-pass',
+      }),
+    });
+    await run_release_command(
+      [
+        'git',
+        '-C',
+        join(root, 'source'),
+        'archive',
+        '--format=tar',
+        '--output=' + join(root, 'source.tar'),
+        spec.sha,
+      ],
+      { timeout_seconds: null },
+      execution,
+    );
+    const unrelated = owner.spawn(process.execPath, ['-e', idle_script], { stdio: 'ignore' });
+    await new Promise<void>((yes, no) => {
+      unrelated.once('spawn', yes);
+      unrelated.once('error', no);
+    });
+    abort_export = true;
+    let cancelled = false;
+    try {
+      await extract_git_export(join(root, 'source.tar'), join(root, 'cancelled-source'), {
+        child_processes: owner,
+        signal: source_abort.signal,
+        deadline: performance.now() / 1000 + 15,
+      });
+    } catch (error) {
+      if (
+        !(error instanceof AppValidationError) ||
+        error.message !== 'app archive unpack failed: Recorded source export abort'
+      )
+        throw error;
+      cancelled = true;
+    }
+    if (!cancelled || !validated || !aborted_closed || unrelated.exitCode !== null)
+      throw new Error('Source export did not retain its exact cancellation/close boundary');
+    result.source_abort = {
+      validated,
+      actual_child_closed: aborted_closed,
+      destination_absent: !existsSync(join(root, 'cancelled-source')),
+      unrelated_live: true,
+    };
+    const entries = await readdir(root);
+    result.cleanup = !entries.some(
+      (name) =>
+        name.startsWith('.built-node-') ||
+        name.startsWith('.failed-build-') ||
+        name.startsWith('.app-unpack-'),
+    );
+    result.failed_absent = !entries.includes('failed-build') && !entries.includes('bad-sha');
+    return result;
+  } finally {
+    try {
+      owner.force_kill(performance.now() / 1000 + 5);
+      await owner.settled();
+    } finally {
+      process.umask(caller_umask);
+      process.off('SIGTERM', stopped);
+      result.children = { spawned, closed };
+      result.milliseconds = performance.now() - began;
+    }
+  }
+}
 
 /** One real addon loads an allowed glibc basename from a forbidden private directory. */
 export async function hostile_native_parity(root: string): Promise<unknown> {
@@ -695,6 +928,9 @@ async function compare_release(
     )
       throw error;
     native_tree_admission = error.message;
+  } finally {
+    native_owner.force_kill(performance.now() / 1000 + 5);
+    await native_owner.settled();
   }
   return {
     native_tree_admission,

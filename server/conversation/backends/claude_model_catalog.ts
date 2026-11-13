@@ -9,6 +9,7 @@ import { ModelCatalogCleanupFailed } from './catalog_cleanup.ts';
 import { OwnedCodexProcess } from './codex_app_server/process.ts';
 import { CHILD_KILL_WAIT_SECONDS } from './codex_app_server/configuration.ts';
 import { observe_shutdown } from '../shutdown.ts';
+import { python_truth } from '../../core/python_truth.ts';
 
 export const MODEL_CATALOG_TIMEOUT_SECONDS = 30;
 export class ClaudeModelCatalogUnavailable extends Error {}
@@ -41,14 +42,8 @@ function object(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function truthy(value: unknown): boolean {
-  if (Array.isArray(value)) return value.length !== 0;
-  if (object(value)) return Object.keys(value).length !== 0;
-  return Boolean(value);
-}
-
 function listed_efforts(value: unknown): string[] {
-  if (!truthy(value)) return [];
+  if (!python_truth(value)) return [];
   if (typeof value === 'string') return [...value];
   if (Array.isArray(value))
     return value.filter((effort): effort is string => typeof effort === 'string');
@@ -90,7 +85,7 @@ export function claude_model_catalog_from_init(info: unknown): ClaudeModelCatalo
     models.push({
       model_id: resolved,
       // Python preserves a truthy displayName unchanged, even when malformed.
-      display_name: (truthy(entry.displayName)
+      display_name: (python_truth(entry.displayName)
         ? entry.displayName
         : versioned_display_name(resolved)) as string,
       resolved_model_id: resolved,
