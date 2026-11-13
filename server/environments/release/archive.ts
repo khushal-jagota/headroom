@@ -1,36 +1,41 @@
-/** Immutable file-backed archives. The checksum is checked before any extraction. */
+/** Receipt-bound input stays open through the actual owned unpack lifetime. */
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
-import { chmod, lstat, mkdir, open, readlink, stat } from 'node:fs/promises';
-import { isAbsolute, join, posix, relative } from 'node:path';
+import { constants, createReadStream, createWriteStream } from 'node:fs';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readlink,
+  rm,
+  stat,
+  statfs,
+} from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
+import type { ChildProcess } from 'node:child_process';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
-import { Pack, Parser, extract } from 'tar';
-import type { ReadEntry } from 'tar';
+import { Pack } from 'tar';
+import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
+import { stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
 import type { AppManifest } from './contracts.ts';
 import { AppValidationError } from './contracts.ts';
-import { ARCHIVE_GZIP_LEVEL, FILE_CHUNK_BYTES } from './configuration.ts';
+import {
+  ARCHIVE_GZIP_LEVEL,
+  FILE_CHUNK_BYTES,
+  ARCHIVE_MAX_COMPRESSED_BYTES,
+  ARCHIVE_MAX_EXPANDED_BYTES,
+  ARCHIVE_SPOOL_BATCH_BYTES,
+  ARCHIVE_SPACE_RESERVE_BYTES,
+} from './configuration.ts';
 import { app_tree_paths, validate_app_manifest } from './identity.ts';
+import { read_archive_messages, write_archive_message } from './archive_unpack.ts';
 import { resolved_path } from '../paths.ts';
 export { APP_ARCHIVE_NAME, PUBLICATION_RECEIPT_NAME } from './configuration.ts';
 
-type Member = Pick<ReadEntry, 'path' | 'type' | 'mode' | 'linkpath'>;
-function refuse(message: string): never {
-  throw new AppValidationError(message);
-}
-async function exists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      'code' in error &&
-      (error.code === 'ENOENT' || error.code === 'ENOTDIR')
-    )
-      return false;
-    throw error;
-  }
-}
 export async function hash_archive(path: string): Promise<string> {
   const digest = createHash('sha256');
   for await (const chunk of createReadStream(path, { highWaterMark: FILE_CHUNK_BYTES }))
@@ -40,16 +45,17 @@ export async function hash_archive(path: string): Promise<string> {
 export async function create_app_archive(app: string, archive: string): Promise<string> {
   await validate_app_manifest(join(app, 'manifest.json'), { require_runtime: true });
   const root = await resolved_path(app),
-    target = await resolved_path(archive);
-  const suffix = relative(root, target);
+    target = await resolved_path(archive),
+    suffix = relative(root, target);
   if (suffix === '' || (suffix !== '..' && !suffix.startsWith('../') && !isAbsolute(suffix)))
-    refuse('archive must be outside the candidate app');
+    throw new AppValidationError('archive must be outside the candidate app');
   const paths = await app_tree_paths(root);
   for (const path of paths) {
     const info = await lstat(path);
     if (info.isSymbolicLink() && isAbsolute(await readlink(path)))
-      refuse('app archive requires relative symlinks');
-    if (info.mode & 0o7777 & ~0o777) refuse('app archive contains special permission bits');
+      throw new AppValidationError('app archive requires relative symlinks');
+    if (info.mode & 0o7777 & ~0o777)
+      throw new AppValidationError('app archive contains special permission bits');
   }
   const pack = new Pack({
     cwd: root,
@@ -57,164 +63,211 @@ export async function create_app_archive(app: string, archive: string): Promise<
     strict: true,
     noDirRecurse: true,
   });
-  // Pack.add does not treat an ordinary filename beginning with '@' as another archive.
   const writing = pipeline(pack, createWriteStream(archive, { flags: 'wx' }));
+  // Pack.add treats a filename beginning with '@' as an ordinary path.
   for (const path of paths) pack.add(relative(root, path));
   pack.end();
   await writing;
   return hash_archive(archive);
 }
-async function archive_members(archive: string): Promise<Member[]> {
-  const handle = await open(archive, 'r');
-  try {
-    const magic = Buffer.alloc(2);
-    await handle.read(magic, 0, magic.length, 0);
-    if (!magic.equals(Buffer.from([0x1f, 0x8b]))) refuse('app archive is not gzip data');
-  } finally {
-    await handle.close();
-  }
-  const members: Member[] = [];
-  const capture = (entry: ReadEntry): void => {
-    if (entry.meta) return;
-    members.push({
-      path: entry.path,
-      type: entry.type,
-      // ReadEntry masks the header bits. Admission checks the original mode first.
-      mode: entry.extended?.mode ?? entry.globalExtended?.mode ?? entry.header.mode,
-      linkpath: entry.linkpath,
-    });
-  };
-  const parser = new Parser({
-    strict: true,
-    maxMetaEntrySize: Infinity,
-    maxDecompressionRatio: Infinity,
-  });
-  parser.on('entry', (entry: ReadEntry) => {
-    capture(entry);
-    entry.resume();
-  });
-  // The library intentionally ignores unsupported types. Our admission must refuse them.
-  parser.on('ignoredEntry', capture);
-  await new Promise<void>((resolve, reject) => {
-    const input = createReadStream(archive, { highWaterMark: FILE_CHUNK_BYTES });
-    parser.once('error', (error: Error) => {
-      input.destroy();
-      reject(error);
-    });
-    parser.once('end', resolve);
-    input.once('error', (error: Error) => parser.abort(error));
-    input.pipe(parser);
-  });
-  return members;
+async function filesystem_free_bytes(path: string): Promise<bigint> {
+  const info = await statfs(path, { bigint: true });
+  return info.bavail * info.bsize;
 }
-function validate_members(members: readonly Member[]): void {
-  const names = new Set<string>(),
-    links = new Map<string, string>();
-  for (const member of members) {
-    if (
-      posix.isAbsolute(member.path) ||
-      member.path.split('/').includes('..') ||
-      names.has(member.path)
-    )
-      refuse('app archive contains unsafe or duplicate paths');
-    names.add(member.path);
-    if (
-      !['Directory', 'File', 'OldFile', 'ContiguousFile', 'SymbolicLink', 'Link'].includes(
-        member.type,
-      )
-    )
-      refuse('app archive contains unsupported entries');
-    if (
-      member.mode === undefined ||
-      !Number.isSafeInteger(member.mode) ||
-      member.mode < 0 ||
-      member.mode > 0o777
-    )
-      refuse('app archive contains special permission bits');
-    if (member.type === 'SymbolicLink')
-      links.set(posix.normalize(member.path), member.linkpath ?? '');
-  }
-  // Resolve link chains as paths, before there is a destination directory to mutate.
-  function checked(
-    parts: readonly string[],
-    base: string[] = [],
-    active = new Set<string>(),
-  ): string[] {
-    const current = [...base];
-    for (const part of parts) {
-      if (!part || part === '.') continue;
-      if (part === '..') {
-        if (!current.length) refuse('app archive contains an outside link');
-        current.pop();
-        continue;
-      }
-      current.push(part);
-      const name = current.join('/'),
-        target = links.get(name);
-      if (target === undefined) continue;
-      if (posix.isAbsolute(target) || active.has(name))
-        refuse('app archive contains an outside link');
-      active.add(name);
-      const resolved = checked(target.split('/'), current.slice(0, -1), active);
-      active.delete(name);
-      current.splice(0, current.length, ...resolved);
-    }
-    return current;
-  }
-  for (const member of members) {
-    checked(member.path.split('/'));
-    if (member.type === 'SymbolicLink' || member.type === 'Link') {
-      if (!member.linkpath || posix.isAbsolute(member.linkpath))
-        refuse('app archive contains an outside link');
-      checked(
-        member.linkpath.split('/'),
-        member.type === 'SymbolicLink'
-          ? posix
-              .dirname(member.path)
-              .split('/')
-              .filter((part) => part !== '.')
-          : [],
-      );
+async function existing_parent(path: string): Promise<string> {
+  let current = path;
+  while (true) {
+    try {
+      if (!(await stat(current)).isDirectory())
+        throw new AppValidationError('archive destination parent is not a directory');
+      return current;
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      const next = dirname(current);
+      if (next === current) throw error;
+      current = next;
     }
   }
+}
+async function remove_owned_tree(path: string): Promise<void> {
+  // Archived modes can remove owner access. Restore it without following links.
+  async function accessible(directory: string): Promise<void> {
+    await chmod(directory, 0o700);
+    for (const entry of await readdir(directory, { withFileTypes: true }))
+      if (entry.isDirectory()) await accessible(join(directory, entry.name));
+  }
+  await accessible(path);
+  await rm(path, { recursive: true, force: true });
 }
 export async function extract_app_archive(
   archive: string,
   destination: string,
   archive_sha256: string,
   expected_sha: string,
+  child_processes: OwnedChildProcesses,
+  read_free_space: (path: string) => Promise<bigint> = filesystem_free_bytes,
 ): Promise<AppManifest> {
-  if ((await hash_archive(archive)) !== archive_sha256)
-    refuse('app archive hash differs from publication receipt');
-  if (await exists(destination)) refuse('archive destination must not exist');
-  const members = await archive_members(archive);
-  validate_members(members);
-  await mkdir(destination, { recursive: true });
-  await extract({
-    file: archive,
-    cwd: destination,
-    strict: true,
-    preservePaths: false,
-    preserveOwner: false,
-    chmod: true,
-    processUmask: 0,
-    umask: 0,
-    maxDepth: Infinity,
-    maxMetaEntrySize: Infinity,
-    maxDecompressionRatio: Infinity,
-  });
-  // node-tar adds owner access to directory entries. Restore ordinary archive modes last.
-  const ordinary = members.filter((member) => member.type !== 'SymbolicLink');
-  for (const member of [...ordinary].sort(
-    (a, b) => b.path.split('/').length - a.path.split('/').length,
-  ))
-    await chmod(join(destination, member.path), member.mode!);
-  for (const member of ordinary)
-    if (((await stat(join(destination, member.path))).mode & 0o7777) !== member.mode)
-      refuse('app archive did not preserve permissions');
-  return validate_app_manifest(join(destination, 'manifest.json'), {
-    expected_sha,
-    require_runtime: true,
-    verify_artifact_digest: false,
-  });
+  let input: FileHandle | undefined, work: string | undefined, child: ChildProcess | undefined;
+  let closed: Promise<void> | undefined,
+    ended = false,
+    code: number | null = null;
+  let ownOutput = false,
+    success = false,
+    result: AppManifest | undefined,
+    failure: unknown;
+  const errors: unknown[] = [];
+  let target = resolve(destination);
+  const require_live = (): void => {
+    if (
+      ended ||
+      (child?.exitCode !== null && child?.exitCode !== undefined) ||
+      (child?.signalCode !== null && child?.signalCode !== undefined)
+    )
+      throw new AppValidationError('app archive child stopped before completion');
+  };
+  const capacity = async (path: string, bytes: bigint, message: string): Promise<void> => {
+    const free = await read_free_space(path);
+    if (typeof free !== 'bigint' || free < bytes) throw new AppValidationError(message);
+  };
+  try {
+    input = await open(archive, constants.O_RDONLY | constants.O_NONBLOCK);
+    const info = await input.stat();
+    if (!info.isFile()) throw new AppValidationError('app archive must be a regular file');
+    if (info.size > ARCHIVE_MAX_COMPRESSED_BYTES)
+      throw new AppValidationError('app archive exceeds compressed size limit');
+    const parent = await resolved_path(dirname(target));
+    target = join(parent, basename(target));
+    const ancestor = await existing_parent(parent);
+    await capacity(
+      ancestor,
+      BigInt(info.size) * 2n + BigInt(ARCHIVE_SPACE_RESERVE_BYTES),
+      'app archive has insufficient free space before spooling',
+    );
+    work = await mkdtemp(join(ancestor, '.app-unpack-'));
+    await chmod(work, 0o700);
+    child = child_processes.spawn(
+      process.execPath,
+      [
+        fileURLToPath(new URL('./archive_unpack_main.ts', import.meta.url)),
+        JSON.stringify({ spool_root: work, destination: target, archive_sha256, expected_sha }),
+      ],
+      {
+        cwd: work,
+        env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: work, TMPDIR: work, LANG: 'C.UTF-8' },
+        stdio: ['pipe', 'pipe', 'pipe', input.fd],
+      },
+    );
+    closed = new Promise((resolve) =>
+      child!.once('close', (status) => {
+        ended = true;
+        code = status;
+        resolve();
+      }),
+    );
+    child.once('exit', () => {
+      ended = true;
+    });
+    child.on('error', (error) => {
+      failure ??= error;
+    });
+    child.stdin!.on('error', (error) => {
+      failure ??= error;
+    });
+    let diagnostic = '';
+    child.stderr!.on('data', (bytes: Buffer) => {
+      diagnostic = (diagnostic + bytes.toString('utf8')).slice(-2000);
+    });
+    let validated = false;
+    for await (const message of read_archive_messages(child.stdout!)) {
+      if (message.type === 'error') throw new AppValidationError(String(message.message));
+      if (
+        message.type === 'space' &&
+        !validated &&
+        Number.isSafeInteger(message.bytes) &&
+        Number(message.bytes) > 0 &&
+        Number(message.bytes) <= ARCHIVE_SPOOL_BATCH_BYTES
+      ) {
+        await capacity(
+          work,
+          BigInt(ARCHIVE_SPACE_RESERVE_BYTES) + BigInt(Number(message.bytes)),
+          'app archive exhausted free-space reserve while spooling',
+        );
+      } else if (
+        message.type === 'validated' &&
+        !validated &&
+        Number.isSafeInteger(message.expanded_bytes) &&
+        Number(message.expanded_bytes) >= 0 &&
+        Number(message.expanded_bytes) <= ARCHIVE_MAX_EXPANDED_BYTES
+      ) {
+        await capacity(
+          work,
+          BigInt(ARCHIVE_SPACE_RESERVE_BYTES) + BigInt(Number(message.expanded_bytes)),
+          'app archive has insufficient free space for output',
+        );
+        require_live();
+        await mkdir(parent, { recursive: true, mode: 0o700 });
+        require_live();
+        try {
+          await mkdir(target, { mode: 0o700 });
+          ownOutput = true;
+        } catch (error) {
+          if (error instanceof Error && 'code' in error && error.code === 'EEXIST')
+            throw new AppValidationError('archive destination must not exist');
+          throw error;
+        }
+        await chmod(target, 0o700);
+        validated = true;
+      } else if (
+        message.type === 'result' &&
+        validated &&
+        result === undefined &&
+        message.manifest &&
+        typeof message.manifest === 'object'
+      ) {
+        result = message.manifest as AppManifest;
+        continue;
+      } else throw new AppValidationError('app archive child protocol is invalid');
+      require_live();
+      await write_archive_message(child.stdin!, { ok: true });
+    }
+    await closed;
+    if (failure !== undefined) throw failure;
+    if (code !== 0 || !result)
+      throw new AppValidationError(
+        `app archive child failed${diagnostic ? ': ' + diagnostic : ''}`,
+      );
+    success = true;
+  } catch (error) {
+    failure = error;
+    if (child && !ended)
+      try {
+        stop_one_shot_child(child);
+      } catch (error) {
+        errors.push(error);
+      }
+  } finally {
+    const clean = async (operation: () => Promise<unknown>): Promise<void> => {
+      try {
+        await operation();
+      } catch (error) {
+        errors.push(error);
+      }
+    };
+    if (closed) await clean(() => closed!);
+    if (input) await clean(() => input!.close());
+    if (!success && ownOutput) await clean(() => remove_owned_tree(target));
+    if (work) await clean(() => remove_owned_tree(work!));
+    if (success && ownOutput && errors.length) await clean(() => remove_owned_tree(target));
+  }
+  if (errors.length)
+    throw new AppValidationError(
+      `app archive cleanup failed; owned paths: ${work ?? ''} ${ownOutput ? target : ''}; ${errors.map(String).join('; ')}`,
+    );
+  if (failure !== undefined)
+    throw failure instanceof AppValidationError
+      ? failure
+      : new AppValidationError(
+          `app archive unpack failed: ${failure instanceof Error ? failure.message : String(failure)}`,
+        );
+  return result!;
 }

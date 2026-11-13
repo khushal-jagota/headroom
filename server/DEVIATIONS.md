@@ -450,3 +450,18 @@ It rejects missing required fields and invalid command semantics, and it supplie
 Python's serializer can write a dataclass whose state did not pass that validation.
 The TypeScript sender must produce a message that the Python peer can read.
 Root-specific encoder inputs use the generated contracts. Nullable fields without defaults require an explicit null.
+
+## Release archive sparse members — accepted
+
+The Manager accepted explicit refusal of old GNU type `S` and every `GNU.sparse.*` PAX record.
+Python supports these sparse formats. Neither actual release producer emits them.
+The TypeScript reader returns `AppValidationError` before the destination exists.
+The existing release comparison records this accepted difference instead of Python equality.
+
+## Release archive members behind links — accepted
+
+The Manager accepted refusal of any member whose parent is another archive link member.
+This includes symbolic links and hard links, even when the link appears later.
+Python can extract through safe internal links. Neither actual release producer requires that behavior.
+TypeScript validates the complete member graph before it creates the output directory.
+The existing release comparison records this accepted difference instead of Python equality.

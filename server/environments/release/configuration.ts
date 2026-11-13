@@ -16,6 +16,7 @@ export const NODE_RUNTIME_FILES = [
   'src/planner/conversation/backends/hermes_acp_extension.py',
   'src/planner/conversation/backends/hermes_model_catalog.py',
   'server/environments/release/launcher_main.ts',
+  'server/environments/release/archive_unpack_main.ts',
   'server/package.json',
   'server/package-lock.json',
   'server/node_modules/fastify/package.json',
@@ -28,3 +29,17 @@ export const SHARED_RUNTIME_FILES = [
   'agent_backends/node_modules/@anthropic-ai/claude-code/package.json',
   'agent_backends/node_modules/@openai/codex/package.json',
 ] as const;
+
+/** Finite archive budgets. Disk reserve is checked before each spool batch. */
+export const ARCHIVE_MAX_COMPRESSED_BYTES = 4 * 1024 ** 3;
+export const ARCHIVE_MAX_EXPANDED_BYTES = 8 * 1024 ** 3;
+export const ARCHIVE_MAX_MEMBER_BYTES = 4 * 1024 ** 3;
+export const ARCHIVE_MAX_HEADERS = 250_000;
+export const ARCHIVE_MAX_METADATA_ENTRY_BYTES = 1024 ** 2;
+export const ARCHIVE_MAX_METADATA_BYTES = 64 * 1024 ** 2;
+export const ARCHIVE_MAX_DEPTH = 64;
+export const ARCHIVE_MAX_END_PADDING_BYTES = 20 * 1024;
+export const ARCHIVE_SPACE_RESERVE_BYTES = 1024 ** 3;
+export const ARCHIVE_SPOOL_BATCH_BYTES = 1024 ** 2;
+export const ARCHIVE_STREAM_CHUNK_BYTES = 64 * 1024;
+export const ARCHIVE_MAX_MESSAGE_BYTES = 64 * 1024;

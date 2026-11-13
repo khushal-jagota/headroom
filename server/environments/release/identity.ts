@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { constants, createReadStream } from 'node:fs';
 import { access, lstat, readdir, readFile, readlink, stat } from 'node:fs/promises';
 import { dirname, extname, isAbsolute, join, relative, sep } from 'node:path';
-import type { AppManifest, AppValidationOptions } from './contracts.ts';
+import type { AppManifest, AppValidationOptions, RuntimeContract } from './contracts.ts';
 import { AppValidationError } from './contracts.ts';
 import {
   FILE_CHUNK_BYTES,
@@ -14,8 +14,7 @@ import {
   SHARED_RUNTIME_FILES,
 } from './configuration.ts';
 import { expand_path, resolved_path } from '../paths.ts';
-import { is_object, parse_attempt_json } from '../updates/codec.ts';
-import { numeric_value } from '../../core/http/numeric_json.ts';
+import { parse_attempt_json } from '../updates/codec.ts';
 import { parse_optional_runtime_contract } from '../updates/logic/runtime_contract.ts';
 import { manifest_identity, python_json_equal } from './logic/manifest.ts';
 export { validate_app_sha } from './logic/manifest.ts';
@@ -179,13 +178,9 @@ export async function validate_app_manifest(
   if (!artifact_matches)
     throw new AppValidationError('app artifact digest does not match its manifest');
   await validate_app_tree(root);
-  if (options.require_runtime)
-    await validate_runtime_tree(
-      root,
-      is_object(value.runtime_contract) && numeric_value(value.runtime_contract.version) === 2,
-    );
+  let contract: RuntimeContract | null;
   try {
-    const contract = parse_optional_runtime_contract(value.runtime_contract);
+    contract = parse_optional_runtime_contract(value.runtime_contract);
     if (contract !== null) {
       if (!python_json_equal(decode(await readFile(join(root, RUNTIME_CONTRACT_PATH))), contract))
         throw new Error('manifest runtime contract differs from payload');
@@ -193,10 +188,11 @@ export async function validate_app_manifest(
       if (createHash('sha256').update(inventory).digest('hex') !== contract.inventory_sha256)
         throw new Error('runtime inventory differs from contract');
     }
-    return { ...identity, runtime_contract: contract };
   } catch (error) {
     if (error instanceof Error)
       throw new AppValidationError(`invalid runtime contract: ${error.message}`);
     throw error;
   }
+  if (options.require_runtime) await validate_runtime_tree(root, contract?.version === 2);
+  return { ...identity, runtime_contract: contract };
 }
