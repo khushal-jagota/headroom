@@ -8,6 +8,7 @@ import {
   require_message_content,
 } from '../../conversation/message_content.ts';
 import {
+  JsonNumber,
   numeric_value,
   stringify_pydantic_json,
   stringify_python_json,
@@ -127,6 +128,11 @@ for (const entry of spec.cases) {
       value = { ...native.CanonicalSkillSource, source_text: '\ud800' };
     else if (entry.operation === 'native-int-overflow')
       value = { conversation_id: 'conversation', oldest_sequence: 1e19 };
+    else if (entry.operation === 'native-exact-int-overflow')
+      value = {
+        conversation_id: 'conversation',
+        oldest_sequence: new JsonNumber('1' + '0'.repeat(4300)),
+      };
     else if (entry.operation === 'native-deep-output') {
       let nested: JsonValue = null;
       for (let depth = 0; depth < 201; depth++) nested = [nested];

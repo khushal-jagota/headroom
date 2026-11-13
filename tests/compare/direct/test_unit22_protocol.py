@@ -339,6 +339,12 @@ def _cases(fixtures: dict[str, Any]) -> list[dict[str, Any]]:
         ),
         case("native-deep-output", "JsonObject", {}, operation="native-deep-output"),
         case(
+            "native-exact-int-overflow",
+            "WaitingConversation",
+            {},
+            operation="native-exact-int-overflow",
+        ),
+        case(
             "encode-frame-peer-refusal",
             "ChildCommand",
             fixtures["ChildCommand"],
@@ -373,6 +379,10 @@ def _reference_case(case: dict[str, Any]) -> dict[str, Any]:
     try:
         if operation == "frame":
             value = asyncio.run(wire.read_typed_frame(_Reader(body), cls))
+        elif operation == "native-exact-int-overflow":
+            # The oversized marker never crosses the control parser or Python int serializer.
+            raw = b'{"conversation_id":"conversation","oldest_sequence":1' + b"0" * 4300 + b"}"
+            value = wire.decode_bounded(raw, cls)
         elif operation == "value" or operation == "encode" or operation.startswith("native-"):
             dto = case["dto"]
             if operation == "native-surrogate":
@@ -597,6 +607,7 @@ def test_unit22_shared_protocol_exchange(tmp_path: Path, request: pytest.Fixture
     assert candidate["object_bytes"].encode() == reference["JsonObject"]
     assert len(candidate["cases"]) == len(expected_cases)
     sender_depth = None
+    sender_integer = None
     for actual, expected in zip(candidate["cases"], expected_cases, strict=True):
         elapsed = actual.pop("elapsed_ms", None)
         if actual["name"] == "long-space-number":
@@ -606,6 +617,13 @@ def test_unit22_shared_protocol_exchange(tmp_path: Path, request: pytest.Fixture
         if actual["name"] == "native-deep-output":
             assert not actual["ok"] and actual["value_error"] is expected["value_error"] is True
             sender_depth = {"source_peer": expected, "sender": actual}
+            continue
+        if actual["name"] == "native-exact-int-overflow":
+            assert expected["type"] == "ValidationError"
+            assert "Invalid JSON: number out of range" in expected["message"]
+            assert not actual["ok"] and actual["value_error"] is expected["value_error"] is True
+            assert "body" not in actual
+            sender_integer = {"source_peer": expected, "sender": actual}
             continue
         if expected["ok"]:
             assert base64.b64decode(actual["body"]) == base64.b64decode(expected["body"]), actual[
@@ -673,6 +691,7 @@ def test_unit22_shared_protocol_exchange(tmp_path: Path, request: pytest.Fixture
                     "cases": expected_cases,
                     "identity_cases": expected_identities,
                     "sender_depth": sender_depth,
+                    "sender_integer": sender_integer,
                     "hot_path": performance,
                     "fixture_export_seconds": fixture_export_seconds,
                     "field_kinds": {

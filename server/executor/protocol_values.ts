@@ -5,7 +5,7 @@ import { strip_unicode_space } from '../core/whitespace.ts';
 import { WIRE_SCHEMA } from './wire.generated.ts';
 import type { JsonValue, WireRootName, WireTypes } from './wire.generated.ts';
 import { normalize_integer, normalize_json_number } from './integers.ts';
-import { EXECUTOR_JSON_MAX_DEPTH } from './configuration.ts';
+import { EXECUTOR_JSON_MAX_DEPTH, EXECUTOR_JSON_MAX_INTEGER_LENGTH } from './configuration.ts';
 import { ordered_json_entries, ordered_json_object } from './protocol_json.ts';
 import {
   class_name,
@@ -634,6 +634,8 @@ function encode_node(value: unknown, schema?: Schema): unknown {
     );
   }
   if (value instanceof JsonNumber) {
+    if (value.kind === 'integer' && String(value.integer).length > EXECUTOR_JSON_MAX_INTEGER_LENGTH)
+      throw new ValueError('integer exceeds JSON number limit');
     return !Number.isFinite(value.value) && value.kind === 'float' ? null : value;
   }
   if (typeof value === 'number') {
