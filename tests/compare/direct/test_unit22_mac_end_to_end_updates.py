@@ -127,8 +127,8 @@ def test_planned_runtime_swap_and_reversion_replay_original_results_after_vps_re
             async with held_items(harness, retiring=True):
                 await harness.start_mac(
                     revision="b" * 40,
-                    ready_path=str(harness.mac_root / "ready.json"),
-                    handoff_path=str(handoff),
+                    ready_path=harness.mac_root / "ready.json",
+                    handoff_path=handoff,
                 )
                 trial = await harness.state()
                 assert trial["identity"]["executor_incarnation"] == identity.executor_incarnation
@@ -138,7 +138,7 @@ def test_planned_runtime_swap_and_reversion_replay_original_results_after_vps_re
                 assert harness.endpoint.runs.store.child_assignment(child) is not None
                 await harness.stop_mac()
             assert accepted == {} and (read_record(handoff) or {}).get("replay_pending") is True
-            await harness.start_mac(revision="a" * 40, handoff_path=str(handoff))
+            await harness.start_mac(revision="a" * 40, handoff_path=handoff)
 
             async def replayed() -> bool:
                 state = await harness.state()
@@ -245,12 +245,15 @@ def test_update_stop_settles_live_vps_before_a_failed_attempt_resumes_work(tmp_p
                 harness.endpoint.inbox.store.file_target(saved.file_dependencies[0]).read_bytes()
                 == artifact.read_bytes()
             )
-            fate = await system.send(
-                "c_scripted",
-                text_message_content("Continue after the failed update"),
-                sender_label="Test",
-                sender=CHIEF_PRINCIPAL,
-                recipient=Principal(PrincipalKind.ticket, harness.ticket_id),
+            fate = await asyncio.wait_for(
+                system.send(
+                    "c_scripted",
+                    text_message_content("Continue after the failed update"),
+                    sender_label="Test",
+                    sender=CHIEF_PRINCIPAL,
+                    recipient=Principal(PrincipalKind.ticket, harness.ticket_id),
+                ),
+                5,
             )
             assert isinstance(fate, PromptDeliveryStarted)
             await harness.wait_calls(starts=2, prompts=2)
