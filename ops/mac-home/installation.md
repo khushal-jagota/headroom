@@ -11,7 +11,9 @@ Use a separate OS account for another instance, including an executor with a dif
 
 Use the darwin arm64 **home** publication, not the Mac executor runtime.
 Obtain its `panels-app.tar.gz`, expected app SHA, and archive SHA256 from the approved publication receipt.
-Use macOS 15 or newer, Node 22, and an external Python 3.11 or newer.
+Use macOS 15 or newer, Node 22 at `/opt/homebrew/bin/node`, and an external Python 3.11 or newer.
+The release jobs use bundled tools, `/opt/homebrew/bin`, and standard system directories. They do not inherit the installation shell PATH.
+The sealed launchers and jobs suppress Python bytecode writes. The app digest still covers every sealed file.
 The external interpreter remains a host prerequisite for this slice.
 Release publication builds private ICU libraries for macOS 15. It does not reuse the host Homebrew ICU bottle.
 Do not select an interpreter inside the installation or temporary bootstrap folder.

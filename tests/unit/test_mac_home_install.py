@@ -15,6 +15,8 @@ from types import SimpleNamespace
 import pytest
 from scripts.mac_home_install import install_home
 
+from planner.environments.app import _write_app_entrypoints
+from planner.platform_runtime.darwin.adapter import DarwinPlatformAdapter
 from planner.platform_runtime.linux import update_installer as installer
 
 
@@ -27,6 +29,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         return SimpleNamespace(runtime_contract=SimpleNamespace(
             system="darwin", architecture="arm64", role="home"))
 
+    monkeypatch.setenv("PATH", "/build/icu/bin:/production/executor/bin:/usr/bin:/bin")
     monkeypatch.setattr("scripts.mac_home_install.extract_app_archive", extract)
     monkeypatch.setattr("planner.environments.runtime_admission.admit_runtime", lambda *args: None)
     root = tmp_path / "release home"
@@ -63,6 +66,11 @@ def test_release_jobs_read_the_current_app_and_keep_provider_guard(
     assert main["ProgramArguments"] == [str(home / "app/bin/panels"), "serve"]
     assert backup["ProgramArguments"][-2:] == ["--current-app", str(home / "app")]
     assert "PLAN_APP_SHA" not in main["EnvironmentVariables"]
+    assert main["EnvironmentVariables"]["PATH"].split(os.pathsep) == [
+        str(home / "app/agent_backends/node_modules/.bin"), str(home / "app/.venv/bin"),
+        "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+    ]
+    assert backup["EnvironmentVariables"] == main["EnvironmentVariables"]
     assert "--deployed-revision" not in backup["ProgramArguments"]
     config = json.loads((home / "data/config.yaml").read_text())
     assert config["provision_account_skills"] is False
@@ -86,6 +94,46 @@ def test_release_jobs_read_the_current_app_and_keep_provider_guard(
     assert normal_job["EnvironmentVariables"]["CODEX_HOME"] == str(codex)
     assert guards == [normal / "data"]
     assert "Warning: occupied account skills" in capsys.readouterr().out
+
+
+def test_release_cli_and_application_leave_no_bytecode_in_sealed_app(
+    home: Path, capfd: pytest.CaptureFixture[str],
+) -> None:
+    # A plist assertion misses -I ignoring PYTHON* and a supervisor child losing
+    # its parent's -B flag. Exercise both real interpreter launches, not launchd.
+    app = home / "app"
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(app / ".venv")],
+                   check=True, capture_output=True)
+    _write_app_entrypoints(app, app_sha="a" * 40)
+    site = next((app / ".venv/lib").glob("python*/site-packages"))
+    package = site / "planner"
+    (package / "server_lifecycle").mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "cache_probe.py").write_text("value = 23\n")
+    probe = "import sys; from planner import cache_probe; print(sys.dont_write_bytecode)\n"
+    (package / "__main__.py").write_text(probe)
+    (package / "server_lifecycle/__init__.py").write_text("")
+    (package / "server_lifecycle/application.py").write_text(probe)
+    (package / "environments").mkdir()
+    (package / "environments/__init__.py").write_text("")
+    (package / "environments/app_launcher.py").write_text(probe)
+    environment = service(home).plist("com.panels.proof")["EnvironmentVariables"]
+    before = {path.relative_to(app) for path in app.rglob("*")}
+    cli = subprocess.run([str(app / "bin/panels"), "serve"], cwd=home,
+                         env=environment, capture_output=True, text=True, check=True)
+    assert cli.stdout == "True\n"
+    smoke = subprocess.run([str(app / "bin/panels-launcher"), "serve"], cwd=home,
+                           env={key: value for key, value in environment.items()
+                                if key != "PYTHONDONTWRITEBYTECODE"},
+                           capture_output=True, text=True, check=True)
+    assert smoke.stdout == "True\n"
+    child = DarwinPlatformAdapter().spawn_application_child(
+        str(app / ".venv/bin/python"), home, environment, [],
+    )
+    assert child.wait(timeout=10) == 0
+    assert capfd.readouterr().out == "True\n"
+    assert {path.relative_to(app) for path in app.rglob("*")} == before
+    assert not list(package.rglob("*.pyc"))
 
 
 def test_setup_refuses_an_interpreter_inside_the_installation_before_writes(

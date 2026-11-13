@@ -52,8 +52,14 @@ def install_home(
     config.chmod(0o600)
     environment = {
         "HOME": str(Path.home()),
+        # Node remains a host prerequisite at the Apple Silicon Homebrew path.
+        # Never retain build ICU paths or another installation's executables.
         "PATH": os.pathsep.join((str(app / "agent_backends/node_modules/.bin"),
-                                 os.environ.get("PATH", os.defpath))),
+                                 str(app / ".venv/bin"), "/opt/homebrew/bin",
+                                 "/usr/bin", "/bin", "/usr/sbin", "/sbin")),
+        # The CLI also uses -B because its isolated interpreter ignores PYTHON*.
+        # This value covers the supervisor's non-isolated application child.
+        "PYTHONDONTWRITEBYTECODE": "1",
         "PLAN_CONFIG_PATH": str(config),
         "PLAN_WORKSPACE_ROOT": str(root / "workspaces"),
         "PLAN_DB_PATH": str(root / "data/planner.db"),

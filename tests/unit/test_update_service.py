@@ -322,7 +322,21 @@ def test_unexpected_background_admission_error_reaches_the_home_log(
     assert not harness.launched
 
 
-def test_idle_wait_cancel_and_update_now(harness: Harness) -> None:
+@pytest.fixture(params=["linux", "darwin"])
+def update_platform(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Select the OS policy, while the existing harness captures installer launch."""
+    from planner.platform_runtime.darwin.adapter import DarwinPlatformAdapter
+    from planner.platform_runtime.linux.adapter import LinuxPlatformAdapter
+
+    adapter = DarwinPlatformAdapter() if request.param == "darwin" else LinuxPlatformAdapter()
+    # Host authentication is a native proof. These cases prove the common owner
+    # policy through the selected adapter, without asking launchd about a Linux test.
+    monkeypatch.setattr(adapter, "installer_python", lambda root: Path("/usr/bin/python3"))
+    monkeypatch.setattr("planner.environments.update_service.get_platform_adapter", lambda: adapter)
+    monkeypatch.setattr("planner.environments.update_install.get_platform_adapter", lambda: adapter)
+
+
+def test_idle_wait_cancel_and_update_now(harness: Harness, update_platform: None) -> None:
     """Waiting holds until idle; cancel removes it; Update now needs confirmation."""
     harness.system.activity = "busy"
     waiting = harness.service.install(SHA_B, "idle", confirm_activity=False)
@@ -341,7 +355,9 @@ def test_idle_wait_cancel_and_update_now(harness: Harness) -> None:
         harness.service.cancel(second.attempt_id)
 
 
-def test_idle_wait_outlives_the_install_deadline_then_installs(harness: Harness) -> None:
+def test_idle_wait_outlives_the_install_deadline_then_installs(
+    harness: Harness, update_platform: None
+) -> None:
     """A wait for idle has no deadline: hours of busy work leave it waiting, not failed.
 
     On 7 November a refused start sent a wait back with its 15-minute deadline still set,
