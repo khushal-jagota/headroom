@@ -2,53 +2,26 @@
 import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import type { MacUpdateOperations } from '../contracts.ts';
 import type { UpdateMacReads } from '../routes.ts';
-import type { ExecutorIdentity } from '../../../execution_identity.ts';
 import type { PresenceJudgement, PresenceRecord } from '../../../executor/contracts.ts';
-import type { NumericJSON } from '../../../core/http/numeric_json.ts';
 import type { FileUpdateAttemptStore } from '../attempts.ts';
-import type { PublishedUpdate, UpdateMode, UpdateProvider } from '../contracts.ts';
+import type { PublishedUpdate, UpdateProvider } from '../contracts.ts';
 
-export type MacUpdatePhase =
-  'waiting' | 'downloading' | 'ready_to_restart' | 'current' | 'failed' | 'reverted';
-export interface MacUpdateTarget {
-  readonly request_id: string;
-  readonly application_revision: string;
-  readonly mode: UpdateMode;
-  readonly activate: boolean;
-  readonly archive_sha256: string;
-  readonly archive_size: NumericJSON<number>;
-  readonly archive_path: string;
-}
-export interface MacUpdatePrefetch {
-  readonly application_revision: string;
-  readonly archive_sha256: string;
-  readonly archive_size: NumericJSON<number>;
-  readonly archive_path: string;
-}
-export interface MacUpdateCheck {
-  readonly schema_version: number;
-  readonly target: MacUpdateTarget | null;
-  readonly prefetch: MacUpdatePrefetch | null;
-}
-export interface MacUpdateReport {
-  readonly request_id: string;
-  readonly application_revision: string;
-  readonly phase: MacUpdatePhase;
-  readonly detail: string | null;
-  readonly identity: ExecutorIdentity | null;
-}
-export interface MacUpdateStatus {
-  readonly request_id: string;
-  readonly target_revision: string;
-  readonly phase: MacUpdatePhase | 'unavailable';
-  readonly detail: string | null;
-}
-export interface MacRuntimeManifest {
-  readonly schema_version: 1;
-  readonly application_revision: string;
-  readonly platform: 'darwin';
-  readonly architecture: 'arm64';
-}
+import type {
+  MacUpdateCheck,
+  MacUpdatePhase,
+  MacUpdateReport,
+  MacUpdateStatus,
+} from '../../../executor/wire.generated.ts';
+export type {
+  MacRuntimeManifest,
+  MacUpdateCheck,
+  MacUpdatePhase,
+  MacUpdatePrefetch,
+  MacUpdateReport,
+  MacUpdateStatus,
+  MacUpdateTarget,
+} from '../../../executor/wire.generated.ts';
+
 export interface MacUpdateHealthRead {
   readonly presence: PresenceJudgement['presence'];
   readonly identity: PresenceRecord['identity'];

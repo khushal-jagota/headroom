@@ -20,9 +20,14 @@ import { ConversationMessageFiles } from '../conversation/record/message_files.t
 import { ScriptedBackendRegistry } from '../conversation/testing/scripted_registry.ts';
 import type { ScriptedChild } from '../conversation/testing/scripted_child.ts';
 import { createEnvironmentRuntime } from '../environments/runtime.ts';
-import type { EnvironmentRuntime } from '../environments/contracts.ts';
+import type { ComposedEnvironmentRuntime } from '../environments/runtime.ts';
 import { MetricsRuntime } from '../environments/vps_metrics/runtime.ts';
 import { UpdateService } from '../environments/updates/service.ts';
+import { create_mac_update_composition } from '../environments/updates/mac/composition.ts';
+import type {
+  MacUpdateCompositionContext,
+  MacUpdateComposition,
+} from '../environments/updates/mac/contracts.ts';
 import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import type { InstallerOperations, PublishedUpdate } from '../environments/updates/contracts.ts';
 import {
@@ -128,7 +133,10 @@ async function owned_server(installer?: Partial<InstallerOperations>) {
   const path = join(root, 'data/planner.db');
   const registry = new ScriptedBackendRegistry();
   let context!: TestCompositionContext;
-  let environment!: EnvironmentRuntime;
+  let environment!: ComposedEnvironmentRuntime;
+  const mac_contexts: MacUpdateCompositionContext[] = [];
+  let mac_composition!: MacUpdateComposition;
+  let mac_inert = false;
   const source = fixture();
   source.write((tx) => {
     tx.run("INSERT INTO navigation_meta VALUES(1,'update-core',10,'proof-epoch',0)");
@@ -172,6 +180,12 @@ async function owned_server(installer?: Partial<InstallerOperations>) {
   vi.stubEnv('PLAN_TICKET_SCRATCH_DATABASE', undefined);
   expect(process.env.VITEST).toBe('true');
   const published = release();
+  const provider = {
+    available: async () => published,
+    download_artifact: async () => {
+      throw new Error('no external download');
+    },
+  };
   try {
     const server = await startServer({
       enableWorkerReadiness: true,
@@ -202,12 +216,7 @@ async function owned_server(installer?: Partial<InstallerOperations>) {
         environment = await createEnvironmentRuntime(value, {
           app_root: join(root, 'app'),
           service_unit: 'scripted-unit.service',
-          provider: () => ({
-            available: async () => published,
-            download_artifact: async () => {
-              throw new Error('no external download');
-            },
-          }),
+          provider: () => provider,
           collector: null,
           staging: {
             stage: async () => {
@@ -230,13 +239,16 @@ async function owned_server(installer?: Partial<InstallerOperations>) {
             },
             ...installer,
           },
-          mac: {
-            prepare: async () => {},
-            phase: () => null,
-            reported_at: () => null,
-            configured: () => false,
+          create_mac(mac_context) {
+            mac_contexts.push(mac_context);
+            const ready_release = vi.fn(mac_context.ready_release);
+            mac_composition = create_mac_update_composition(
+              { ...mac_context, ready_release },
+              null,
+            );
+            mac_inert = ready_release.mock.calls.length === 0;
+            return mac_composition;
           },
-          mac_reads: { health_payload: () => null, status: async () => null },
           // The status collector is real and is never requested by these proofs.
           collect_status: collect_vps_status,
         });
@@ -266,6 +278,10 @@ async function owned_server(installer?: Partial<InstallerOperations>) {
       registry,
       context,
       environment,
+      mac_contexts,
+      mac_composition,
+      mac_inert,
+      provider,
       server,
       post,
       send,
@@ -289,6 +305,12 @@ async function owned_server(installer?: Partial<InstallerOperations>) {
 }
 
 test('real core completion admits an idle update, refuses HTTP writes without mutation, and reopens after launch failure', async () => {
+  let update_instance: UpdateService | undefined;
+  const start_updates = UpdateService.prototype.start;
+  vi.spyOn(UpdateService.prototype, 'start').mockImplementation(function (this: UpdateService) {
+    update_instance = this;
+    return start_updates.call(this);
+  });
   const backup = deferred<string>(),
     backup_entered = deferred<void>();
   const launch = deferred<void>(),
@@ -312,6 +334,31 @@ test('real core completion admits an idle update, refuses HTTP writes without mu
     const child = owned.registry.child(delivery.conversation_id);
     expect(owned.context.core!.workspace_activity()).toBe('busy');
     await vi.waitFor(async () => expect((await owned.status()).state).toBe('available'));
+    if (!update_instance) throw new Error('Actual update service did not start');
+    const mac_context = owned.mac_contexts[0]!;
+    expect({
+      calls: owned.mac_contexts.length,
+      store: mac_context.attempts === update_instance.attempts,
+      owner: mac_context.child_processes === owned.context.child_processes,
+      provider: mac_context.provider === owned.provider,
+      inert: owned.mac_inert,
+      route_handle: owned.environment.mac_updates === owned.mac_composition.service,
+      live: mac_context.ready_release() === update_instance.ready_release(),
+      configured: owned.mac_composition.operations.configured(),
+      health: owned.mac_composition.reads.health_payload(),
+      status: await owned.mac_composition.reads.status(),
+    }).toEqual({
+      calls: 1,
+      store: true,
+      owner: true,
+      provider: true,
+      inert: true,
+      route_handle: true,
+      live: true,
+      configured: false,
+      health: null,
+      status: null,
+    });
     const install = await owned.post('/api/updates/install', {
       app_sha: 'b'.repeat(40),
       mode: 'idle',

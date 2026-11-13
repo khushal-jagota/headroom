@@ -1,5 +1,5 @@
 /** Per-server composition. External release and executor operations remain explicit. */
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { Config } from '../core/config.ts';
 import { HOST } from '../core/config.ts';
 import { observe_shutdown } from '../lifecycle/deadline.ts';
@@ -7,16 +7,15 @@ import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import type { TestCompositionContext } from '../core/start.ts';
 import type { EnvironmentRuntime } from './contracts.ts';
 import { expand_path, resolved_path } from './paths.ts';
-import type {
-  InstallerOperations,
-  MacUpdateOperations,
-  ReleaseStaging,
-  UpdateProvider,
-} from './updates/contracts.ts';
+import type { InstallerOperations, ReleaseStaging, UpdateProvider } from './updates/contracts.ts';
 import { FileUpdateAttemptStore, attempt_path } from './updates/attempts.ts';
 import { UpdateService, installed_update_root } from './updates/service.ts';
 import { create_update_routes } from './updates/routes.ts';
-import type { UpdateMacReads } from './updates/routes.ts';
+import type {
+  MacUpdateComposition,
+  MacUpdateCompositionContext,
+  MacUpdateServiceContract,
+} from './updates/mac/contracts.ts';
 import { DeploymentResources } from './updates/resource_versions.ts';
 import { deployment_status } from './updates/logic/experience.ts';
 import { DEPLOYMENT_SUCCESS_DISPLAY_SECONDS } from './updates/configuration.ts';
@@ -39,15 +38,18 @@ export interface EnvironmentOperations {
   provider(): UpdateProvider | null;
   staging: ReleaseStaging;
   installer: InstallerOperations;
-  mac: MacUpdateOperations;
-  mac_reads: UpdateMacReads;
+  create_mac(context: MacUpdateCompositionContext): MacUpdateComposition;
   collector: CollectorFactory | null;
   collect_status(config: Config, options: StatusOptions): Promise<VpsStatusSnapshot>;
+}
+/** The concrete composition exposes its existing Mac service for executor routes. */
+export interface ComposedEnvironmentRuntime extends EnvironmentRuntime {
+  readonly mac_updates: MacUpdateServiceContract;
 }
 export async function createEnvironmentRuntime(
   context: TestCompositionContext,
   operations: EnvironmentOperations,
-): Promise<EnvironmentRuntime> {
+): Promise<ComposedEnvironmentRuntime> {
   const { config, changes } = context;
   const database = await resolved_path(config.db_path);
   const data_directory = dirname(database);
@@ -78,8 +80,19 @@ export async function createEnvironmentRuntime(
     collector: config.test_mode ? null : operations.collector,
   });
   const attempts = new FileUpdateAttemptStore(attempt_path(data_directory), () => changes.emit());
-  const updates = new UpdateService({
-    provider: installed === null ? null : operations.provider(),
+  const provider = installed === null ? null : operations.provider();
+  let updates: UpdateService;
+  const mac = operations.create_mac({
+    root: join(data_directory, 'mac-updates'),
+    attempts,
+    provider,
+    current_app_sha: config.app_sha,
+    child_processes: context.child_processes,
+    ready_release: () => updates.ready_release(),
+    emit_change: () => changes.emit(),
+  });
+  updates = new UpdateService({
+    provider,
     attempts,
     runtime: {
       database: context.database,
@@ -95,7 +108,7 @@ export async function createEnvironmentRuntime(
     service_unit: operations.service_unit ?? '',
     staging: operations.staging,
     installer: operations.installer,
-    mac: operations.mac,
+    mac: mac.operations,
   });
   const deployment = () =>
     deployment_status(attempts.read(), config.app_sha, {
@@ -106,8 +119,9 @@ export async function createEnvironmentRuntime(
   let closing: Promise<void> | undefined;
   let actual_stop: Promise<void> | undefined;
   return {
+    mac_updates: mac.service,
     areas: [
-      { prefix: '/api', routes: create_update_routes(updates, operations.mac_reads) },
+      { prefix: '/api', routes: create_update_routes(updates, mac.reads) },
       { prefix: '/api', routes: create_metrics_routes(metrics) },
       {
         prefix: '/api',

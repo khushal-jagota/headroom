@@ -641,3 +641,26 @@ NUL artifact paths retain Python's exact `lstat: embedded null character in path
 Ancestor symlink loops produce the clean `artifact path contains symlink` validation refusal, without raw Node errors.
 Python raises a raw `RuntimeError` for the same ancestor loop. The Manager accepts this clean TypeScript refusal.
 The Manager reviews these implementation differences before this slice merges.
+
+## Mac archive inspection policies and JSON diagnostics — accepted conditionally
+
+The Manager accepted these four inspection policies on November 13, 2026:
+
+- Refuse global PAX size overrides. Python accepts the recorded global-size archive.
+- Refuse NUL text in names or PAX values. Python accepts the recorded NUL PAX comment.
+- Refuse UTF16/32 and non-scalar manifest encodings. Python accepts the recorded UTF16 manifest.
+- Refuse an extension metadata body above 1 MiB before allocation. The recorded tiny over-limit archive is also truncated, so Python refuses it too.
+
+Each recorded refusal returns `UpdateConflict` with `The Mac runtime archive is invalid.`
+The metadata observation does not establish a different Python answer for a complete oversized extension.
+Other unmeasured Mac inspection restrictions remain outside this acceptance.
+
+The Manager also accepted the diagnostic difference for malformed manifest JSON.
+Both implementations refuse that manifest. Node reports `SyntaxError`; Python reports `JSONDecodeError`, with different parser text.
+This diagnostic difference adds no accepted malformed input and no false claim of equal error bytes.
+
+The direct proof is `tests/compare/direct/test_unit21_mac_updates.py::test_unit21_mac_updates_retained_archive_and_leased_report_sequence`.
+Its `unit21-mac-updates.json` report retains both outcomes and marks the accepted observations explicitly.
+Acceptance requires that the unchanged real Mac producer passes the hosted gate in `.github/workflows/typescript-lifecycle-native.yml`.
+The hosted result is **pending**. Its evidence will appear under `mac-producer-compatibility` in the existing native ABI artifact.
+If that producer fails any accepted policy, stop and ask the Manager before further work.
