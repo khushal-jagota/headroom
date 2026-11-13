@@ -4,9 +4,10 @@ import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import type { BackendCommandOptions } from './commands.ts';
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve, delimiter, normalize } from 'node:path';
+import { dirname, isAbsolute, join, resolve, delimiter } from 'node:path';
+import { pure_posix_path } from '../../core/python_path.ts';
 import type { BackendProbeEnvironment, CommandOutcome } from './contracts.ts';
-import { testModeFromEnvironment } from '../../core/config.ts';
+import { testModeFromEnvironment, provider_launch_settings } from '../../core/config.ts';
 export function backend_io_is_test(): boolean {
   return (
     testModeFromEnvironment() ||
@@ -19,8 +20,29 @@ function require_production_io(): void {
     throw new Error('Production backend I/O is unavailable in tests. Inject recording adapters.');
   }
 }
-const expand = (value: string) =>
-  value === '~' ? homedir() : value.startsWith('~/') ? join(homedir(), value.slice(2)) : value;
+const expand = (value: string, environment: Readonly<NodeJS.ProcessEnv> = process.env) => {
+  const home = environment.HOME ?? homedir();
+  return value === '~' ? home : value.startsWith('~/') ? join(home, value.slice(2)) : value;
+};
+/** Ignore the retired bundled Claude path in both native starts and machine discovery. */
+export function claude_executable_override(
+  environment: Readonly<NodeJS.ProcessEnv>,
+  expand_path: (path: string) => string,
+): string | undefined {
+  const settings = provider_launch_settings(environment);
+  const override = settings.claude_executable;
+  if (override === undefined) return undefined;
+  const legacy =
+    settings.app_root === undefined
+      ? null
+      : pure_posix_path(
+          (settings.app_root === '' ? '' : settings.app_root.replace(/\/$/, '') + '/') +
+            'agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe',
+        );
+  return legacy !== null && pure_posix_path(expand_path(override)) === legacy
+    ? undefined
+    : expand_path(override);
+}
 function file(path: string): boolean {
   try {
     return statSync(path).isFile();
@@ -28,10 +50,10 @@ function file(path: string): boolean {
     return false;
   }
 }
-function which(name: string): string | null {
+function which(name: string, environment: Readonly<NodeJS.ProcessEnv>): string | null {
   const choices = name.includes('/')
-    ? [expand(name)]
-    : (process.env.PATH ?? '').split(delimiter).map((directory) => join(directory || '.', name));
+    ? [expand(name, environment)]
+    : (environment.PATH ?? '').split(delimiter).map((directory) => join(directory || '.', name));
   for (const path of choices) {
     try {
       if (!file(path)) continue;
@@ -45,32 +67,36 @@ function which(name: string): string | null {
 }
 export class SubprocessBackendProbeEnvironment implements BackendProbeEnvironment {
   private readonly commands: BackendCommands;
+  private readonly environment: Readonly<NodeJS.ProcessEnv>;
+  private readonly on_path: (name: string) => string | null;
   async shutdown(): Promise<void> {
     await this.commands.shutdown();
   }
-  constructor(children: OwnedOneShotChildren) {
+  constructor(
+    children: OwnedOneShotChildren,
+    environment: Readonly<NodeJS.ProcessEnv> = process.env,
+    executable_path?: (name: string) => string | null,
+  ) {
     require_production_io();
     this.commands = new BackendCommands(children);
+    this.environment = { ...environment };
+    this.on_path = executable_path ?? ((name) => which(name, this.environment));
   }
   executable_path(name: string): string | null {
     require_production_io();
-    if (name === 'claude' && process.env.PLAN_CLAUDE_EXECUTABLE !== undefined) {
-      const selected = expand(process.env.PLAN_CLAUDE_EXECUTABLE);
-      const app_root = process.env.PLAN_APP_ROOT;
-      const legacy =
-        app_root === undefined
-          ? null
-          : join(app_root, 'agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe');
-      if (legacy === null || normalize(selected) !== normalize(legacy))
-        return file(selected) ? selected : null;
-    }
-    return which(name);
+    const override =
+      name === 'claude'
+        ? claude_executable_override(this.environment, (value) => expand(value, this.environment))
+        : undefined;
+    if (override !== undefined) return file(override) ? override : null;
+    return this.on_path(name);
   }
   configured_executable_path(name: string): string | null {
     require_production_io();
     if (name !== 'hermes') return null;
     const python = expand(
-      process.env.PLAN_HERMES_PYTHON || '~/.hermes/hermes-agent/venv/bin/python',
+      provider_launch_settings(this.environment).hermes_python,
+      this.environment,
     );
     const executable = join(dirname(python), 'hermes');
     return file(executable) ? executable : null;
@@ -84,7 +110,7 @@ export class SubprocessBackendProbeEnvironment implements BackendProbeEnvironmen
     }
   }
   user_local_npm_prefix(): string {
-    return join(homedir(), '.local');
+    return join(this.environment.HOME ?? homedir(), '.local');
   }
   prefix_is_owned_and_writable(prefix: string): boolean {
     require_production_io();
@@ -103,7 +129,17 @@ export class SubprocessBackendProbeEnvironment implements BackendProbeEnvironmen
   }
   async run(argv: readonly string[], options: BackendCommandOptions): Promise<CommandOutcome> {
     require_production_io();
-    return this.commands.run(argv, options);
+    return this.commands.run(argv, {
+      ...options,
+      environment_overrides: {
+        ...Object.fromEntries(
+          Object.entries(this.environment).filter(
+            (entry): entry is [string, string] => entry[1] !== undefined,
+          ),
+        ),
+        ...options.environment_overrides,
+      },
+    });
   }
   async latest_released_version(
     package_name: string,
