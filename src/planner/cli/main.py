@@ -40,6 +40,7 @@ from planner.datasets.cli import dataset as dataset_group
 from planner.environments.cli import environment as environment_group
 from planner.executor.cli import executor_group
 from planner.goals.cli import goal as goal_group
+from planner.installation.join_cli import machine_join_command
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.managers.page_cli import page as page_group
 from planner.measure_sources.cli import measure_source as measure_source_group
@@ -954,6 +955,9 @@ def project_set(
 @main.group("machine")
 def machine() -> None:
     """Read named execution destinations."""
+
+
+machine.add_command(machine_join_command)
 
 
 @machine.command("register")

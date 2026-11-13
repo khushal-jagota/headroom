@@ -1,106 +1,74 @@
-# A home on an Apple Silicon Mac
+# A home on Mac or Linux
 
-This path runs one Panels home in your graphical login session. The Mac holds its record.
-Logout stops the home. Sleep makes it unreachable. Tailscale supplies remote HTTPS access.
+One command installs a home on an Apple Silicon Mac or a Linux x86_64 server.
+The host holds the record. The Mac home runs in your graphical login session.
+Logout stops the Mac home. Sleep makes it unreachable. Linux uses a systemd user service.
+Linux setup requires user lingering so that the home and its backup stay available after logout.
+Tailscale supplies remote HTTPS access.
 The source path below remains available. A release home also supports updates and rollback.
-Previews, native metrics, maintenance schedules, and watchdog schedules remain separate work.
+The home supplies native previews, metrics, maintenance, and stall alarms.
 One Panels instance can own the account skills in one OS account.
 Use a separate OS account for another instance, including an executor with a different record.
 
-## Install a sealed release
+## Install with one command
 
-Use the darwin arm64 **home** publication, not the Mac executor runtime.
-Obtain its `panels-app.tar.gz`, expected app SHA, and archive SHA256 from the approved publication receipt.
-Use macOS 15 or newer, Node 22 at `/opt/homebrew/bin/node`, and an external Python 3.11 or newer.
-The release jobs use bundled tools, `/opt/homebrew/bin`, and standard system directories. They do not inherit the installation shell PATH.
-The sealed launchers and jobs suppress Python bytecode writes. The app digest still covers every sealed file.
-The external interpreter remains a host prerequisite for this slice.
-Release publication builds private ICU libraries for macOS 15. It does not reuse the host Homebrew ICU bottle.
-Do not select an interpreter inside the installation or temporary bootstrap folder.
+Install Python 3.11.8 or newer and Node.js 22 first. The Mac requires macOS 15 or newer.
+Use `/opt/homebrew/bin/node` on the Mac. Linux requires x86_64, an active systemd user manager, and user lingering.
+If lingering is absent, setup refuses before installation. Run `loginctl enable-linger "$USER"`, then repeat the command.
+The sealed release also checks its native runtime requirements before the service starts.
 
-Extract the checked archive into a fresh bootstrap folder. Its private Python runs setup without a source checkout.
-Replace the placeholders with the approved release values and the external interpreter path.
-Choose an unused label, port, and installation root.
+Mac release jobs use bundled tools, resolved provider CLI directories, common user bins, and standard system directories.
+The Homebrew directory precedes provider directories so that provider installs do not replace the required Node runtime.
+Jobs do not inherit the entire installation shell PATH. Direct use of the packaged installer preserves an explicit `PLAN_CLAUDE_EXECUTABLE`.
+
+Authenticate the GitHub CLI for the release repository, then run this command:
 
 ```sh
-export PANELS_ARCHIVE="<absolute-path-to-panels-app.tar.gz>"
-export PANELS_SHA="<approved-full-app-sha>"
-export PANELS_ARCHIVE_SHA256="<approved-archive-sha256>"
-export PANELS_INSTALLER_PYTHON="<absolute-path-to-external-python3>"
-export PANELS_BOOTSTRAP="$HOME/panels-release-bootstrap"
-export PANELS_ROOT="$HOME/Library/Application Support/PanelsHome"
-export PANELS_LABEL=com.panels.home
-export PANELS_PORT=8767
-shasum -a 256 "$PANELS_ARCHIVE"
+panels_setup=$(mktemp) && gh api repos/khushal-jagota/headroom/contents/scripts/panels_install.py --header 'Accept: application/vnd.github.raw+json' > "$panels_setup" && python3 "$panels_setup" home
 ```
 
-Before extraction, compare the printed checksum with the approved archive checksum.
+The command selects a successful publication from the trusted release workflow on `main`.
+It checks the publication identity, target, and archive checksum before it executes the sealed installer.
+It refuses an existing installation root, service name, or occupied port.
+It starts only the new home and checks the exact release health before it reports its address.
+A private repository requires GitHub access to its contents and Actions artifacts.
+The command uses the GitHub CLI login for release access. It does not persist a new token or authentication setting.
+
+The Mac default root is `~/Library/Application Support/PanelsHome`. The service name is `com.panels.home`.
+Linux uses `~/.local/share/panels-home` and the user service `com.panels.home.service`.
+Both hosts schedule the existing backup command at 02:30 each day.
+Linux uses the separate `com.panels.home.backup.service` and `com.panels.home.backup.timer` user units.
+The Mac also registers its maintenance and stall-watchdog jobs for this installation and future logins.
+Maintenance runs at 03:15 each day. The watchdog checks stalls every 30 seconds.
+The home binds to loopback port 8767. Select another port with `--port`.
+Use `--root` and `--service` for a separate installation.
+On the Mac, run the bootstrap with a stable external Python interpreter.
+The command records that interpreter for updates. It must stay outside the home and remain available.
+
+Provider login remains a separate step. Authenticate Codex, Claude, or Hermes before the first Worker starts.
+For another device, configure Tailscale Serve HTTPS and the owner login through the existing trusted ingress.
+The local address does not grant remote access. See [deployment](../../docs/deployment.md) and [authority](../../docs/authority.md).
+
+For an already downloaded, trusted publication, use the same command with local files:
 
 ```sh
-mkdir -m 700 "$PANELS_BOOTSTRAP"
-tar -xzf "$PANELS_ARCHIVE" -C "$PANELS_BOOTSTRAP"
-"$PANELS_BOOTSTRAP/.venv/bin/python" -I "$PANELS_BOOTSTRAP/scripts/mac_home_install.py" \
-  --root "$PANELS_ROOT" --archive "$PANELS_ARCHIVE" \
-  --archive-sha256 "$PANELS_ARCHIVE_SHA256" --expected-sha "$PANELS_SHA" \
-  --label "$PANELS_LABEL" --port "$PANELS_PORT" \
-  --installer-python "$PANELS_INSTALLER_PYTHON"
+python3 "$panels_setup" home --archive /private/panels-app.tar.gz --receipt /private/publication.json
 ```
 
-Setup checks the archive again, admits the native home runtime, and refuses an existing installation root or loaded label.
-It creates the jobs but does not start them. It preserves existing provider logins and uses the same account skill guard as source setup.
-The installation keeps `app`, `data`, `logs`, and `agents` separate.
-The jobs read the SHA from the current app, so updates do not need new plists.
+Use the Mac home publication on Mac and the Linux home publication on Linux.
+The receipt must match the exact archive. Do not use an executor archive for a home.
+Use `--isolated-providers` for disposable checks. It prevents account skill links and uses private provider folders.
+If setup fails, it stops only its new jobs and removes only its created root, links, and unit files.
+Existing roots and services remain untouched. If cleanup cannot confirm a stopped job, setup retains its files and reports that job.
+No existing home is restarted or replaced. Updates still use the owner Update action.
+Mac updates stop this installation's home and auxiliary jobs before replacement.
+They restore the previously loaded auxiliary jobs after exact release health passes.
+An update also supplies maintenance and watchdog jobs to older two-job homes, with the same login persistence choice.
+Foreign login links cause an error and remain unchanged.
+An auxiliary restart failure after accepted health does not restore the previous database.
 
-Start the exact generated jobs:
 
-```sh
-launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.plist"
-curl --fail --connect-timeout 1 --max-time 2 \
-  "http://127.0.0.1:$PANELS_PORT/api/health?expected_sha=$PANELS_SHA"
-launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.backup.plist"
-```
-
-For automatic starts at later logins, link the generated plists into `~/Library/LaunchAgents/`.
-Use symlinks to the original files. A separate copied plist has a different installation identity.
-Do not overwrite existing entries.
-
-```sh
-mkdir -p "$HOME/Library/LaunchAgents"
-ln -s "$PANELS_ROOT/agents/$PANELS_LABEL.plist" \
-  "$HOME/Library/LaunchAgents/$PANELS_LABEL.plist"
-ln -s "$PANELS_ROOT/agents/$PANELS_LABEL.backup.plist" \
-  "$HOME/Library/LaunchAgents/$PANELS_LABEL.backup.plist"
-```
-
-For repository discovery, export `PLAN_UPDATE_REPOSITORY` and `PLAN_UPDATE_TOKEN_FILE` before setup.
-Setup preserves those paths in the home environment. Keep the token file outside app.
-The owner Update action uses the existing release card.
-One independent LaunchAgent runs the copied installer through the external interpreter.
-It stops only this installation's home and backup jobs before replacement.
-It starts the backup job again after exact-SHA health passes.
-
-Every Mac trial takes a verified snapshot, even without a schema change.
-A failed trial restores the previous app and snapshot record, then checks the previous SHA.
-Rollback can discard later record writes. It does not prove preservation of active work.
-Ticket files and provider homes stay outside app replacement and snapshot restore.
-A failure after app health does not rewind the database.
-Read `data/update-attempt.json` and `logs/update.stderr.log` for the exact outcome.
-
-For a Python thread dump, use the recorded application child PID:
-
-```sh
-kill -USR1 "$PANELS_APPLICATION_PID"
-```
-
-Read `logs/home.stderr.log` for raw stacks and named Python threads.
-Raw stacks do not wait for Python's signal callback. Thread names appear when the main thread can run.
-Do not send `SIGUSR1` to the LaunchAgent supervisor. That signal can stop the home.
-
-Use the existing source procedure below for provider prerequisites, Tailscale access, and stopped restore.
-For a disposable native proof only, add `--isolated-providers` to release setup.
-That option disables account skill writes and creates empty provider folders. It creates no login.
-
-## Prepare the source
+## Prepare the Mac source
 
 Install Xcode Command Line Tools, Homebrew, and Tailscale. Sign in to your tailnet.
 Use a separate checkout and state folder. Keep this checkout at the chosen commit after setup.
@@ -167,13 +135,33 @@ launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.plist"
 curl --fail --connect-timeout 1 --max-time 2 --retry-max-time 30 \
   --retry 20 --retry-connrefused --retry-delay 1 \
   "http://127.0.0.1:$PANELS_PORT/api/health?expected_sha=$(git rev-parse HEAD)"
-launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.backup.plist"
+for suffix in backup maintenance stall-watchdog; do
+  launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.$suffix.plist"
+done
 ```
 
-The jobs remain registered for this login session. For automatic starts at later logins, copy these two plists into `~/Library/LaunchAgents/`.
+The jobs remain registered for this login session. For automatic starts at later logins, link all four generated plists into `~/Library/LaunchAgents/`.
 Do not overwrite an existing plist. Keep the source and state paths unchanged.
 Logs live in `$PANELS_ROOT/logs/`. The backup job runs at 02:30 while your login session exists.
-No job promises a backup while logged out or asleep. A missed time can run after wake; check the backup log.
+Mac cleanup truncates oversized live logs in place because launchd retains their open descriptors.
+Maintenance runs at 03:15 through `environment cleanup --apply`. It uses the existing cleanup limits.
+The watchdog runs through `stalls watchdog` every 30 seconds, independently of the home process.
+It reads stall evidence and retains the existing alarm deduplication rules.
+Neither job has a loop per Worker. Maintenance starts once per day. The watchdog starts at most once per 30-second interval.
+Their processor cost depends on the record and retained files.
+
+The login session owns all four jobs. Logout stops them. Sleep makes the home unreachable.
+Calendar jobs missed during sleep run after wake. Several missed calendar events coalesce into one run.
+The watchdog skips intervals during sleep. It resumes at a later interval and does not replay each missed check.
+After login or a missed watchdog stretch, the first interval defers only a stale-checker alarm.
+The next interval still alarms if the checker does not recover.
+An absent login session or powered-off Mac provides no execution promise or catch-up guarantee.
+See [Apple's timed-job guidance](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/ScheduledJobs.html)
+and [Apple's launchd manual](https://github.com/apple-oss-distributions/launchd/blob/main/man/launchd.plist.5).
+
+Check `logs/maintenance.stdout.log`, `logs/maintenance.stderr.log`, and the corresponding `stall-watchdog` logs after a failure.
+Use `launchctl print "gui/$(id -u)/$PANELS_LABEL.maintenance"` or the `.stall-watchdog` label to inspect the last exit status.
+A job failure does not broaden cleanup permissions. Preserve the logs and repair the reported cause before another manual run.
 
 For phone access, run `tailscale serve --bg "http://127.0.0.1:$PANELS_PORT"` on a clean Tailscale Serve configuration.
 Set these entries in `config.yaml` with your actual login and the HTTPS origin that Serve reports:
@@ -190,13 +178,25 @@ For an existing Serve configuration, preserve its routes and choose an unused HT
 ## Stop, restart, and backup
 
 Before stop, record the supervisor and app identities for this home.
-Stop the exact jobs with `launchctl bootout "gui/$(id -u)/$PANELS_LABEL.backup"` and `launchctl bootout "gui/$(id -u)/$PANELS_LABEL"`.
+Stop the exact jobs, with the auxiliary jobs first:
+
+```sh
+for suffix in maintenance stall-watchdog backup; do
+  launchctl bootout "gui/$(id -u)/$PANELS_LABEL.$suffix"
+done
+launchctl bootout "gui/$(id -u)/$PANELS_LABEL"
+```
 Wait until `launchctl print "gui/$(id -u)/$PANELS_LABEL"` reports that the job is absent.
 Check that the recorded supervisor and app ended and that the port has no listener.
 If the stop exceeds 30 seconds, record the output and stop. Do not bootstrap a replacement until these checks pass.
-Apply the same job-absence wait before reload of the backup label.
+Apply the same job-absence and recorded-process checks to every auxiliary label before reload.
 Start them again with the bootstrap commands above. This is also the ordinary service restart route.
 The supervisor remains in launchd custody. Its hard death also removes the app and permits a fresh start.
+
+To remove the installation, first complete those stop checks for all four labels.
+Remove only login symlinks whose targets equal this installation's generated plists.
+Do not remove foreign entries, provider folders, or data during job removal.
+Keep the installation folder until all recorded jobs and processes retire.
 
 Run a backup now with `launchctl kickstart "gui/$(id -u)/$PANELS_LABEL.backup"`.
 Check `logs/backup.stderr.log` and `logs/backup.stdout.log`, then inspect the snapshot under `data/backups/`.

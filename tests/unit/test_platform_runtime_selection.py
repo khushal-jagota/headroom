@@ -147,6 +147,14 @@ def test_darwin_app_stays_in_launchd_group_without_changing_linux(
     monkeypatch.setattr("subprocess.Popen", launch)
     for system, separate_session in (("darwin", False), ("linux", True)):
         adapter = get_platform_adapter(system)
+        if system == "darwin":
+            from planner.platform_runtime.darwin.metrics import DarwinCollector
+            from planner.platform_runtime.darwin.preview import DarwinProcessInspector
+
+            # Direct collector/inspector tests do not prove the platform factory
+            # replaces the unavailable fallback. Selection must also stay lazy.
+            assert isinstance(adapter.preview_inspector(), DarwinProcessInspector)
+            assert isinstance(adapter.metrics_collector(MetricsConfig()), DarwinCollector)
         adapter.spawn_application_child("python", tmp_path, {"PLAN_SERVER_LISTENER_FD": "7"}, [2])
         assert launch.call_args.kwargs["start_new_session"] is separate_session
         assert launch.call_args.kwargs["pass_fds"] == (7,)

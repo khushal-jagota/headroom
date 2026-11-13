@@ -2,7 +2,9 @@
 
 The executor uses a native Panels app, one Python environment, one source checkout, and one GUI LaunchAgent.
 The app is meant to be the owner-local identity that macOS attributes permission requests to. Python remains internal to the existing installation.
-Apple Development signing does not establish a distributable or notarized release.
+New joins use an ad-hoc signature. No user certificate is required.
+The optional Apple Development route remains available for existing local installations.
+Neither route establishes a notarized release.
 Native requester attribution and consent persistence require the separate native checks below.
 The operator installs and updates it with ordinary package and service commands.
 This procedure preserves the existing persistent executor root.
@@ -13,6 +15,43 @@ Run host commands only under separate authorization for the target Mac.
 Code review and this runbook grant no live authority.
 Linux tests establish software behavior, not installed credentials, login behavior, reboot, or pre-unlock operation.
 
+
+## Join a new machine with one command
+
+This path installs a published runtime into a new private root. It never replaces an existing executor.
+Use macOS 15 or newer on Apple Silicon, Node 22, Xcode command-line tools, and a graphical login session.
+The installer signs the fixed native launcher ad hoc and checks its strict signature.
+No signing certificate or keychain identity is required.
+Developer ID distribution and notarization remain separate work.
+The GitHub CLI must be installed and authenticated for access to the release repository.
+Provider login remains a separate step. Tailscale must reach the same home's trusted HTTPS origin.
+
+On that home, use the owner login and run:
+
+```sh
+panels machine join-command "Studio Mac" --home https://HOME-ORIGIN
+```
+
+Use the same owner command for a Linux x86_64 machine. The executor reports its host platform after credential authentication.
+On Linux, the bootstrap selects the Linux executor archive and its systemd user service.
+Linux needs Node 22 and an active systemd user manager. No native Mac tools are required.
+Enable user lingering if that service must start after reboot without a login.
+
+Use the trusted HTTPS origin of this same home. Check the address before you share the credential.
+The command prints one command for the new Mac and a private credential.
+Run that command on the Mac. Paste the credential at its private prompt.
+The credential never enters command arguments or shell history.
+Keep the credential private. The home stores its verifier and can revoke it through credential replacement.
+The installer checks the archive identity, installs the fixed launcher, writes private data, and starts its own LaunchAgent.
+Success requires a fresh accepted lease through the new installation's private socket, with the expected release revision.
+A failed connection remains a failed join even if the service starts.
+For the combined check, the owner must also compare the home health identity with the local identity for this machine.
+A failed join removes its new service and installation so that you can retry. If shutdown remains unknown, cleanup retains them and reports the service.
+Ad-hoc designated requirements bind launcher bytes. A replacement launcher can have a different requirement.
+Strict checks of both signatures do not prove privacy permission continuity.
+The final combined Mac check must replace the launcher through an update and check the retained privacy permissions.
+A runtime update that keeps the launcher does not prove that boundary.
+Native permission continuity, login, sleep, and reboot remain not tested here.
 
 ## Register another destination or replace a credential
 
@@ -114,7 +153,7 @@ Set operator-reviewed values for these inputs:
 - `EVIDENCE`: an absolute private directory outside the source, environment, and persistent executor root.
 - `PANELS_SERVER_URL`: the HTTPS app origin of the intended VPS app.
 - `EXECUTOR_ID`: the logical executor ID that the VPS is configured to admit.
-- `LOCAL_IDENTITY`: the SHA-1 hash of the owner's Apple Development signing identity, as listed by `security find-identity -v -p codesigning`.
+- `LOCAL_IDENTITY`: `-` for the default ad-hoc route. An explicit legacy Apple Development route uses its certificate SHA-1 fingerprint.
 
 Use the existing Tailscale Serve route only when it targets the intended endpoint and durable state.
 The owner's normal app URL targets production. It does not select an isolated verification database.
@@ -355,19 +394,19 @@ There is no reader or converter for other journal formats.
 
 Run these commands only in an authorized window on the Mac. Source approval alone does not authorize compilation, signing, installation, prompts, or service changes.
 
-Use the normal owner account. Do not copy or export signing keys.
-Sign with the owner's Apple Development identity, not a Developer ID Application identity.
-Use it only for the owner-local route. Do not claim outside-App-Store distribution.
-A later distribution channel or certificate change needs a separate decision.
+Use the normal owner account. The default route signs the launcher ad hoc and needs no user certificate.
+An explicit legacy Apple Development route can retain its existing identity. Do not copy or export its signing keys.
+Neither route establishes Developer ID distribution or notarization. Those remain separate work.
 
 After source and environment preparation, choose an absent candidate path outside the installed app:
 
 ```sh
 CANDIDATE_APP="$EVIDENCE/Panels.app"
+LOCAL_IDENTITY="${LOCAL_IDENTITY:--}"
 "$VENV/bin/python" -I -B -m planner.environments.mac_app build \
   --home "$HOME" --output "$CANDIDATE_APP" --revision "$CANDIDATE_SHA" \
   --python "$VENV/bin/python" --installed-app "$APP" --bundle-id "$BUNDLE_ID"
-/usr/bin/codesign --force --sign "$LOCAL_IDENTITY" "$CANDIDATE_APP"
+/usr/bin/codesign --force --sign "$LOCAL_IDENTITY" --timestamp=none "$CANDIDATE_APP"
 "$VENV/bin/python" -I -B -m planner.environments.mac_app verify \
   --app "$CANDIDATE_APP" --identity "$LOCAL_IDENTITY" \
   --bundle-id "$BUNDLE_ID" --python "$VENV/bin/python" > "$EVIDENCE/candidate-signature.txt"
@@ -376,9 +415,10 @@ CANDIDATE_APP="$EVIDENCE/Panels.app"
 The build needs native arm64 macOS, Xcode Command Line Tools, and the selected Python environment at its final path.
 It creates a new candidate and refuses replacement of the selected installed app or the default installed app.
 A failed build leaves its partial candidate for inspection.
-The compiler can apply an ad hoc signature. That signature is not accepted for installation.
-The explicit development signature replaces it. There is no ad hoc fallback.
-If signing requests keychain interaction, stop and return the decision to the owner. Do not change keychain policy.
+The explicit command applies the selected signature and the verifier checks it strictly.
+The default ad-hoc route needs no keychain identity.
+If an explicit certificate route requests keychain interaction, stop and return the decision to the owner.
+Do not change keychain policy.
 
 The default bundle identifier is `com.panels.executor.app`. The explicit `--bundle-id` selects another identity.
 The native executable and display name remain `Panels`.
@@ -387,7 +427,7 @@ It forwards arguments without a shell and preserves the process identity and exi
 The app contains no copied Python runtime or provider dependencies.
 Do not re-sign those external dependencies or infer attribution from their ancestry alone.
 
-For an update, preserve the old signed app before replacement. Verify both signatures and mutual designated requirements:
+For an update, preserve the old signed app before replacement. Verify both strict signatures and the same bundle identity:
 
 ```sh
 "$VENV/bin/python" -I -B -m planner.environments.mac_app verify \
@@ -396,7 +436,11 @@ For an update, preserve the old signed app before replacement. Verify both signa
   > "$EVIDENCE/update-signature-compatibility.txt"
 ```
 
-A missing or invalid previous signature stops an update. A first installation has no previous signed app, so it omits `--previous`.
+A missing or invalid previous signature stops an update. A first installation omits `--previous`.
+The certificate route also checks mutual designated requirements.
+Ad-hoc requirements bind launcher bytes, so a replacement can have a different requirement.
+Strict checks of both ad-hoc signatures do not prove privacy permission continuity.
+The native trial below must check that continuity after the update replaces the launcher.
 Consent granted to an executor that ran without the app does not carry over to it.
 Never invent a compatible requirement or weaken the signature check to continue.
 Use `--previous` only for an update of the same installation, not for a new installation identity.
@@ -539,7 +583,7 @@ The native verification window must include these exact boundaries:
 3. Start through the reviewed LaunchAgent. Observe the actual responsible requester during the first authorized access.
 4. Run an ordinary selected-provider task whose real tool child accesses that resource. Retain process-chain and requester evidence.
 5. Repeat the same access in the same run, after provider restart, and after an authorized executor restart.
-6. Repeat after one ordinary locally signed app update. Require the new app to satisfy the old designated requirement and vice versa.
+6. Repeat after an update that replaces the native launcher. Check actual privacy permission continuity for the ad-hoc route. A runtime-only update does not prove this. For the explicit certificate route, also require mutual designated requirements.
 7. Repeat after one compatible native Python update in the retained environment. Do not assume a path alone preserves consent.
 8. Check separately authorized denial and another resource. Use owner-controlled consent or a disposable test account, without resetting existing grants.
 

@@ -10,13 +10,20 @@ import ctypes
 import errno
 import os
 import subprocess
+import threading
 import time
+from functools import cached_property
 from typing import Any, ClassVar
 from uuid import UUID
 
 from planner.conversation.local_child_contracts import LocalHostBootIdentity
 from planner.worker_supervision.config import NICE
 from planner.worker_supervision.contracts import WorkerProcess
+
+# Neither machine nor boot changes during this process's lifetime. Failed probes
+# leave the cache empty so that a later inspection can recover.
+_host_identity: LocalHostBootIdentity | None = None
+_host_identity_lock = threading.Lock()
 
 
 class _BSDInfo(ctypes.Structure):
@@ -54,6 +61,19 @@ class DarwinWorkerProcesses:
     owns_isolated_session_members = False
 
     def host_boot(self, deadline: float) -> LocalHostBootIdentity:
+        global _host_identity
+        if _host_identity is not None:
+            return _host_identity
+        if not _host_identity_lock.acquire(timeout=max(0, deadline - time.monotonic())):
+            raise TimeoutError("Worker inspection deadline expired")
+        try:
+            if _host_identity is None:
+                _host_identity = self._read_host_boot(deadline)
+            return _host_identity
+        finally:
+            _host_identity_lock.release()
+
+    def _read_host_boot(self, deadline: float) -> LocalHostBootIdentity:
         def output(command: list[str]) -> str:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -78,8 +98,14 @@ class DarwinWorkerProcesses:
             raise OSError("Mac machine identity is unavailable")
         return LocalHostBootIdentity("darwin:" + str(UUID(match[1])), "darwin:" + boot)
 
+    @cached_property
+    def _library(self) -> Any:
+        # A stop checks many PIDs repeatedly. Reuse the loaded native functions,
+        # while every probe still reads fresh kernel process metadata.
+        return ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+
     def snapshot(self, deadline: float) -> dict[int, WorkerProcess]:
-        library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        library = self._library
         count = library.proc_listpids(4, os.getuid(), None, 0)
         if count <= 0:
             raise OSError("Mac process inventory is unavailable")
@@ -125,7 +151,7 @@ class DarwinWorkerProcesses:
             return True
         except PermissionError:
             return False
-        library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        library = self._library
         info = _BSDInfo()
         ctypes.set_errno(0)
         length = library.proc_pidinfo(process.pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info))
@@ -145,7 +171,7 @@ class DarwinWorkerProcesses:
         if time.monotonic() >= deadline:
             return False
         try:
-            library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+            library = self._library
             info = _BSDInfo()
             ctypes.set_errno(0)
             length = library.proc_pidinfo(

@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import time
 from dataclasses import replace
 from sqlite3 import Connection
+from typing import Any
 
 import pytest
 
@@ -412,14 +414,38 @@ def test_implicit_creator_holder_is_validated_against_assignment(
     assert created.ceiling_holder == manager
 
 
+@pytest.mark.parametrize("during_backoff", ["finish", "update", "cancel"])
 def test_proposal_waits_only_before_effects_and_saves_once(
-    tmp_db: Connection, monkeypatch: pytest.MonkeyPatch
+    tmp_db: Connection, monkeypatch: pytest.MonkeyPatch, during_backoff: str,
 ) -> None:
     import threading
 
+    from planner.conversation.workspace_admission import (
+        RequestAdmissionLease,
+        WorkspaceAdmission,
+        current_write_admission,
+    )
     from planner.core.db import connect
-    from planner.tickets import config
+    from planner.tickets import config, proposal_contention
 
+    admission = WorkspaceAdmission()
+    lease = RequestAdmissionLease(admission)
+    assert lease.resume()
+    token = current_write_admission.set(lease)
+    sleep = proposal_contention.time.sleep
+    backoffs = 0
+
+    def observe_backoff(seconds: float) -> None:
+        nonlocal backoffs
+        backoffs += 1
+        assert not admission.active
+        if during_backoff == "update":
+            assert admission.claim(lambda: None, idle=lambda: True, require_idle=True)
+        elif during_backoff == "cancel":
+            lease.close()
+        sleep(seconds)
+
+    monkeypatch.setattr(proposal_contention.time, "sleep", observe_backoff)
     ticket = data.create_ticket(
         tmp_db,
         title="Contended proposal",
@@ -439,6 +465,18 @@ def test_proposal_waits_only_before_effects_and_saves_once(
     released = threading.Timer(0.05, holder.rollback)
     released.start()
     try:
+        if during_backoff != "finish":
+            with pytest.raises(PlannerError) as error:
+                data.file_current_proposal(
+                    tmp_db, ticket.id, body="One answer", now=2,
+                    principal=Principal(PrincipalKind.ticket, ticket.id),
+                )
+            assert error.value.code == ErrorCode.retry_later
+            assert statements.count("BEGIN IMMEDIATE") == 1
+            assert data.read_ticket(tmp_db, ticket.id).pending_proposal is None
+            assert not tmp_db.in_transaction
+            assert not admission.active
+            return
         result = data.file_current_proposal(
             tmp_db,
             ticket.id,
@@ -446,10 +484,14 @@ def test_proposal_waits_only_before_effects_and_saves_once(
             now=2,
             principal=Principal(PrincipalKind.ticket, ticket.id),
         )
+        assert admission.active
     finally:
         released.join()
         holder.close()
         tmp_db.set_trace_callback(None)
+        lease.close()
+        current_write_admission.reset(token)
+    assert backoffs > 0
     assert statements.count("BEGIN IMMEDIATE") > 1
     assert result.pending_proposal is not None
     assert result.pending_proposal.body == "One answer"
@@ -512,3 +554,33 @@ def test_proposal_busy_deadline_returns_retryable_503_without_partial_effects(
         ).fetchone()[0]
         == 0
     )
+
+
+def test_proposal_retries_extended_busy_before_any_effects(
+    tmp_db: Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sqlite3
+
+    from planner.tickets import proposal_contention
+
+    attempts = []
+
+    class BusyOnce(sqlite3.Connection):
+        def execute(self, sql: str, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+            if sql == "BEGIN IMMEDIATE":
+                attempts.append(sql)
+                if len(attempts) == 1:
+                    error = sqlite3.OperationalError("database is locked")
+                    error.sqlite_errorcode = sqlite3.SQLITE_BUSY_RECOVERY
+                    raise error
+            return super().execute(sql, *args, **kwargs)
+
+    conn = sqlite3.connect(":memory:", factory=BusyOnce)
+    monkeypatch.setattr(time, "sleep", lambda seconds: None)
+    try:
+        proposal_contention.begin_proposal(conn)
+        assert len(attempts) == 2
+        assert conn.in_transaction
+    finally:
+        conn.close()

@@ -425,3 +425,26 @@ def test_connected_header_timeout_still_logs_and_returns_500_at_uvicorn_boundary
     asyncio.run(run())
 
 
+
+
+def test_idle_wait_admits_worker_result_http_write_before_final_fence(harness: Harness) -> None:
+    """A running Worker's HTTP result save must finish while new starts wait."""
+    async def run() -> None:
+        assert harness.admission.close_starts()
+        saved = []
+
+        async def worker_save(scope: Scope, receive: Receive, send: Send) -> None:
+            assert harness.admission.active
+            saved.append("result")
+            await answer(scope, receive, send)
+
+        scope = harness.scope("POST", "/api/tickets/example/propose")
+        scope["headers"] = [(b"x-plan-actor", b"worker")]
+        response = await invoke(harness.wrap(worker_save), scope)
+        assert response[0]["status"] == 200
+        assert saved == ["result"]
+        assert harness.admission.claim(lambda: None, idle=lambda: True, require_idle=True)
+        assert (await invoke(harness.wrap(worker_save), scope))[0]["status"] == 503
+        assert saved == ["result"]
+
+    asyncio.run(run())

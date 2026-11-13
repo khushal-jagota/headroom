@@ -31,7 +31,7 @@ Settings → Machines shows availability, current Worker activity, and Tickets t
 
 ## Credentials and the original Mac
 
-The owner registers an extra destination and gives it its credential through the operator commands. A credential permits executor requests for one destination. Replacing it invalidates the old credential. The home normally stores only a verifier. During the original Mac handover, it also keeps the pending credential until the first authenticated request.
+The owner registers an extra destination and obtains one join command and its private credential. The command installs a new executor and checks an accepted lease. The owner supplies the trusted HTTPS origin of the same home that issues the credential. A credential permits executor requests for one destination. Replacing it invalidates the old credential. The home normally stores only a verifier. During the original Mac handover, it also keeps the pending credential until the first authenticated request.
 
 The original Mac has a one-time transition from its existing authority. The first upgraded runtime requests its credential automatically and saves it privately before its work loops start. Until the first request authenticates with that credential, the original Mac can fetch the same pending credential again. Its old authority permits that fetch. The first authenticated request permanently closes the old authority and removes the pending secret. That closure survives home restarts and migration replay.
 
@@ -47,6 +47,8 @@ Each machine has its own automatic-start capacity and pacing. These limits cover
 
 Presence comes from leases, judged by the home clock. A silent machine becomes away. Its running Tickets pause in the home's view, while the machine retains output for later delivery. Work never moves to another destination because a lease expires.
 
+A lease reads pending work and the current cleanup evidence. The slower workspace maintenance pass refreshes retained history. Startup and explicit Worker actions still refresh their cleanup evidence directly.
+
 Each machine has one current process incarnation. A restart replaces only that machine's old incarnation. The home refuses stale process requests. The new process can replay its own machine's retained output under the existing assignments. It cannot replay another machine's output.
 
 ## Commands and output
@@ -54,6 +56,8 @@ Each machine has one current process incarnation. A restart replaces only that m
 Commands wait in the home's durable mailbox until their destination fetches them. The executor journals a command before it runs it. A duplicate returns its saved result instead of another execution. Journal tombstones prevent repetition after a home database restore. Commands for one conversation retain their order. Different conversations can progress independently.
 
 The outbox saves each durable event before delivery. Each conversation sends its numbered items in order. The home commits each item and its receipt together. A duplicate receives the stored receipt. Machine ownership is checked before receipt access, including duplicates.
+
+During a home update trial, the home defers new result receipts. Extra machines retain output until the healthy home or restored previous home accepts it. A rollback never removes an accepted result from that boundary.
 
 Live text and tool progress remain lossy. Finished messages and durable events wait in the outbox through an outage. A slow or failed conversation does not block the others.
 
@@ -71,7 +75,10 @@ Each executor uses the shared Worker supervisor. It records exact process owners
 
 ## Updates and health
 
+A machine update closes its admission, confirms exact child retirement, and saves pending output before replacement. Its replacement retains journal and outbox custody until the home accepts replay.
+
 The signed Mac launcher and the Linux systemd user service start a fixed supervisor that selects a versioned runtime. The data folder retains journals, outboxes, credentials, files, and logs across updates. Update offers and progress belong to the requesting destination. Each executor reports its platform with authenticated requests. Update offers select an archive for that platform and the executor role. Content-addressed archives can share storage without sharing update authority. Linux archive downloads start only for registered Linux machines. Their failures do not block home or Mac updates. The home retains two Linux archives.
+
 
 The home and executor use protocol 26. An incompatible executor receives refusal. Before the original credential handover, its existing authority still permits its recovery update. After handover, updates require its credential too. See the [Mac installation runbook](../ops/mac-executor/installation.md) or [Linux installation runbook](../ops/linux-executor/installation.md).
 

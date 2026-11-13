@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import stat
 import subprocess
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -267,6 +268,12 @@ def apply_cleanup_inventory(inventory: CleanupInventory) -> CleanupResult:
         if not _safe_regular_under(candidate.root, candidate.path):
             review_needed.append(str(candidate.path))
             continue
+        if inventory.dependencies.platform_name() == "Darwin":
+            if _truncate_native_log(candidate, inventory.policy):
+                rotated.append(str(candidate.path))
+            else:
+                review_needed.append(str(candidate.path))
+            continue
         rotated_path = candidate.path.with_name(candidate.path.name + ".1")
         if (
             rotated_path.exists()
@@ -290,6 +297,43 @@ def apply_cleanup_inventory(inventory: CleanupInventory) -> CleanupResult:
             else:
                 removed.extend(str(path) for path in planned)
     return CleanupResult(removed=removed, rotated=rotated, review_needed=review_needed)
+
+
+
+def _truncate_native_log(candidate: CleanupCandidate, policy: VpsStatusPolicy) -> bool:
+    """Clear the observed log inode that launchd retains, without following links."""
+    if candidate.path.parent != candidate.root:
+        return False
+    directory = descriptor = None
+    try:
+        root_before = candidate.root.lstat()
+        before = candidate.path.lstat()
+        directory = os.open(candidate.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        opened_root = os.fstat(directory)
+        if (opened_root.st_dev, opened_root.st_ino) != (root_before.st_dev, root_before.st_ino):
+            return False
+        descriptor = os.open(
+            candidate.path.name, os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory,
+        )
+        opened = os.fstat(descriptor)
+        current = os.stat(candidate.path.name, dir_fd=directory, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_size < policy.log_warning_bytes
+            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+            or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino)
+        ):
+            return False
+        os.ftruncate(descriptor, 0)
+        return True
+    except OSError:
+        return False
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if directory is not None:
+            os.close(directory)
 
 
 def _environment_section(runtime_root: Path) -> dict[str, object]:

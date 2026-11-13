@@ -228,6 +228,67 @@ class StoredConversationEvent:
     created_at: int
 
 
+def open_turn_holds_only_memory_notices(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+) -> bool:
+    rows = conn.execute(
+        "SELECT json_extract(payload,'$.sender_message_id') FROM conversation_events "
+        "WHERE conversation_id = ? AND kind IN ('prompt','prompt_delivery_uncertain') "
+        "AND sequence > COALESCE(("
+        "SELECT MAX(sequence) FROM conversation_events "
+        "WHERE conversation_id = ? AND kind = 'turn_ended'),0)",
+        (conversation_id, conversation_id),
+    ).fetchall()
+    return bool(rows) and all(
+        worker_memory.is_memory_notice_sender_message_id(row[0]) for row in rows
+    )
+
+
+@dataclass(frozen=True)
+class RetainedRunEvidence:
+    facts: tuple[LifecycleFact, ...]
+    events: tuple[StoredConversationEvent, ...]
+    memory_notice_only: bool
+
+
+def read_retained_run_evidence(
+    db_path: str,
+    conversation_ids: tuple[str, ...],
+    busy_timeout_ms: int,
+) -> dict[str, RetainedRunEvidence]:
+    """Fetch immutable adoption evidence on a worker thread before core construction."""
+    evidence: dict[str, RetainedRunEvidence] = {}
+    if not conversation_ids:
+        return evidence
+    with runtime_connection(db_path, busy_timeout_ms) as conn:
+        for conversation_id in conversation_ids:
+            facts = read_facts(conn, conversation_id)
+            events = (
+                tuple(
+                    _stored_event(row)
+                    for row in conn.execute(
+                        "SELECT conversation_id,sequence,kind,payload,created_at "
+                        "FROM conversation_events WHERE conversation_id=? "
+                        "AND kind='user_input_requested' ORDER BY sequence",
+                        (conversation_id,),
+                    )
+                )
+                if any(
+                    fact.kind is LifecycleKind.request
+                    and fact.operation is LifecycleOperation.user_input
+                    for fact in facts
+                )
+                else ()
+            )
+            evidence[conversation_id] = RetainedRunEvidence(
+                facts,
+                events,
+                open_turn_holds_only_memory_notices(conn, conversation_id),
+            )
+    return evidence
+
+
 class ConversationStore:
     """Short-lived append transactions, with one explicit shared-transaction seam."""
 
@@ -471,6 +532,39 @@ class ConversationStore:
             for conversation_id, payloads in recovered_events.items():
                 self._insert_rows(conn, conversation_id, payloads)
         commit_without_change_signal(conn)
+
+    def update_work_metadata(
+        self, conversation_ids: tuple[str, ...] | None = None
+    ) -> dict[str, tuple[str, str]]:
+        """Read active-work labels, or the destination snapshot at barrier entry."""
+        from planner.machines.contracts import HOME_MACHINE_ID
+
+        if conversation_ids == ():
+            return {}
+        parameters = conversation_ids or ()
+        filter_sql = (
+            " AND conversation_id IN (" + ",".join("?" for _ in parameters) + ")"
+            if conversation_ids is not None else ""
+        )
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+            result = {
+                str(row[0]): (str(row[1]), str(row[2]))
+                for row in conn.execute(
+                    "SELECT conversation_id,title,machine_id FROM tickets "
+                    "WHERE conversation_id IS NOT NULL" + filter_sql,
+                    parameters,
+                )
+            }
+            for row in conn.execute(
+                "SELECT a.conversation_id,m.title FROM agents a "
+                "JOIN managers m ON a.agent_key='manager_' || m.id "
+                "WHERE a.conversation_id IS NOT NULL" + filter_sql.replace(
+                    "conversation_id IN", "a.conversation_id IN"
+                ),
+                parameters,
+            ):
+                result[str(row[0])] = (str(row[1]), HOME_MACHINE_ID)
+            return result
 
     async def workspace_conversation_ids(
         self,
@@ -2115,17 +2209,7 @@ class ConversationStore:
         whose admission is uncertain counts too, as it does while the turn runs here.
         """
         with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
-            rows = conn.execute(
-                "SELECT json_extract(payload,'$.sender_message_id') FROM conversation_events "
-                "WHERE conversation_id = ? AND kind IN ('prompt','prompt_delivery_uncertain') "
-                "AND sequence > COALESCE(("
-                "SELECT MAX(sequence) FROM conversation_events "
-                "WHERE conversation_id = ? AND kind = 'turn_ended'),0)",
-                (conversation_id, conversation_id),
-            ).fetchall()
-        return bool(rows) and all(
-            worker_memory.is_memory_notice_sender_message_id(row[0]) for row in rows
-        )
+            return open_turn_holds_only_memory_notices(conn, conversation_id)
 
     def _read_latest_events_sync(
         self, conversation_id: str, before_sequence: int | None, limit: int

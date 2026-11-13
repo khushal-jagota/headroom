@@ -407,7 +407,7 @@ class MacUpdateService:
         return MacUpdateTarget(
             request_id,
             attempt.to_sha,
-            attempt.mode,
+            attempt.mode if attempt.confirm_activity else "idle",
             attempt.state == "done" and attempt.to_sha == self.current_app_sha,
             mac.archive_sha256,
             mac.archive_size,

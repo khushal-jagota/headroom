@@ -20,7 +20,15 @@ The Worker prepares a preview, which reserves the address and names the one work
 
 A generation ends when the Worker stops it, when the process exits or the port is reused, when the Ticket is done or deleted, or when Headroom restarts. An old address shows an ended preview. A restarted app needs a new generation.
 
-Previews need trusted Tailscale ingress to be configured on the live host. Without it there are none. Tickets that run on the Mac cannot have previews, and an existing preview ends if its Ticket moves to the Mac. Nothing forwards to the Mac.
+Previews need trusted Tailscale ingress to be configured on the live host. Without it there are none. A preview runs on the named Home machine. That home can use Linux or macOS. Tickets on remote Mac executors cannot have previews. Nothing forwards to a remote executor.
+
+## Native Mac evidence
+
+The Mac inspector reads libproc evidence for listener ownership, exact process birth, boot identity, and the current worktree. Before the proxy sends bytes, it checks that the same process owns the accepted connection. A PID or command string alone grants no ownership.
+
+Discovery requires one readable same-user owner. It skips peers whose permissions block inspection. The pinned process and its accepted connection must stay readable. Incomplete inventories and expired deadlines refuse the preview. Hidden holders remain outside that observation. Linux and Mac use the same registry, limits, and retirement rules.
+
+The lifecycle checks active previews once per second and after record changes. Mac discovery scans bounded process and descriptor inventories only at registration. Later checks read the pinned process. No extra Worker loop exists.
 
 ## Why the content has to be trusted
 
@@ -43,4 +51,4 @@ Preview traffic runs inside Headroom's process. Headroom caps concurrent request
 
 - `src/planner/previews/`: registry, proxy, process checks, and the CLI. Limits are in `config.py` and `limits.py`.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-14._

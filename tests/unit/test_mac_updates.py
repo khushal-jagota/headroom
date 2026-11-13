@@ -187,6 +187,10 @@ def test_target_follows_attempt_state_and_activates_only_once_the_vps_runs_it(
             "mac_one", TARGET_SHA, "idle"
         )
         assert target.archive_path == "/api/executor/update/mac_one/archive"
+    # A turn can arrive after the owner saw idle work. It still needs consent to stop.
+    write(before, replace(attempt(published, "preparing"), confirm_activity=False))
+    target = before.check().target
+    assert target is not None and target.mode == "idle"
     write(before, attempt(published, "done"))
     # A done release the VPS does not run must not hold the Mac stopped.
     assert before.check().target is None
