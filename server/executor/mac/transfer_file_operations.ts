@@ -3,7 +3,12 @@ import { closeSync, constants, fstatSync, readSync, writeSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, dirname } from 'node:path';
 import { isMainThread } from 'node:worker_threads';
-import { open_directory_descriptor, open_relative, sync_file_descriptor } from './platform.ts';
+import {
+  open_directory_descriptor,
+  open_relative,
+  sync_file_descriptor,
+  unlink_relative,
+} from './platform.ts';
 import { TRANSFER_CHUNK_BYTES } from './configuration.ts';
 import { file_error } from './file_metadata.ts';
 import { close_retained } from './retained_cleanup.ts';
@@ -11,6 +16,9 @@ if (isMainThread) throw new Error('Executor transfers require the owned FilesSer
 interface Transfer {
   descriptor: number | null;
   parent: number | null;
+  readonly name: string;
+  created: boolean;
+  discard: boolean;
   readonly mode: 'read' | 'write';
   readonly digest: ReturnType<typeof createHash>;
   count: bigint;
@@ -32,6 +40,9 @@ export function open_transfer(path: string, mode: Transfer['mode']): number {
   const value: Transfer = {
     descriptor: null,
     parent: null,
+    name: basename(path),
+    created: false,
+    discard: false,
     mode,
     digest: createHash('sha256'),
     count: 0n,
@@ -49,6 +60,7 @@ export function open_transfer(path: string, mode: Transfer['mode']): number {
         : constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
       0o600,
     );
+    value.created = mode === 'write';
     if (!fstatSync(value.descriptor).isFile()) throw file_error('artifact is not regular file');
     return handle;
   } catch (error) {
@@ -93,17 +105,33 @@ export function finish_transfer(handle: number, sha256: string, byte_count: bigi
   if (value.mode === 'write') sync_file_descriptor(descriptor(value));
 }
 function close(value: Transfer): void {
-  if (value.descriptor !== null) {
-    closeSync(value.descriptor);
-    value.descriptor = null;
-  }
-  if (value.parent !== null) {
-    closeSync(value.parent);
-    value.parent = null;
+  try {
+    if (value.discard && value.parent !== null) {
+      unlink_relative(value.parent, value.name, true);
+      value.discard = false;
+      value.created = false;
+    }
+    if (value.descriptor !== null) {
+      closeSync(value.descriptor);
+      value.descriptor = null;
+    }
+    if (value.parent !== null) {
+      closeSync(value.parent);
+      value.parent = null;
+    }
+  } catch (error) {
+    // A failed download close remains a failed download. Its retained owner
+    // retries removal and native close together, without a path-based unlink.
+    if (value.created) value.discard = true;
+    throw error;
   }
 }
-export function close_transfer(handle: number): void {
+export function close_transfer(handle: number, discard = false): void {
   const value = transfer(handle);
+  if (discard) {
+    if (value.mode !== 'write') throw new Error('Cannot discard an upload source.');
+    value.discard = true;
+  }
   close(value);
   transfers.delete(handle);
 }

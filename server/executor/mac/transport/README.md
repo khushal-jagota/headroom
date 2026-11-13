@@ -7,8 +7,10 @@ Poll replies remain bounded raw bytes. Outcome reports stream a borrowed canonic
 The reporter retains the reader's close capability.
 
 `MacFileTransport` uses an invocation-owned `FilesService` for bounded transfer bytes,
-digest checks, retained descriptors and full flush. Download failure preserves the partial file,
-as Python does. Transfer close failure faults the files owner and retains both primary and cleanup errors.
+digest checks, retained descriptors and full flush. This binding discards a failed download through
+its retained parent. Python's low-level HTTP client leaves the partial file, but its `MacFiles`
+binding removes the temporary in `finally`. This binding supplies that cleanup before host composition.
+Transfer close failure faults the files owner and retains both primary and cleanup errors.
 The host must retain and stop the supplied files owner separately.
 
 A request timeout ends the caller's waiter. Its producer, response consumer, request and socket
