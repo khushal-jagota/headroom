@@ -1,4 +1,4 @@
-/** Real native/callback custody and stores with scripted skills, files, backend and retirement. */
+/** Real command/source/retirement custody and stores with scripted skills, files and backend. */
 import { readFileSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -26,6 +26,11 @@ import { create_mac_output_publication } from '../runner/publication.ts';
 import type { MacCommandDependencies, MacOutputPublication } from '../runner/command_contracts.ts';
 import { MacNativeChildren } from '../runner/start_stop.ts';
 import { MacChildState } from '../runner/state.ts';
+import { MacSourceWork } from '../runner/source_work.ts';
+import { MacRetirement } from '../runner/retirement.ts';
+import { MacMaintenance } from '../runner/maintenance.ts';
+import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
+import { ConversationStartAborted } from '../../../runtime/abort.ts';
 import { ExecutorPaths } from '../configuration.ts';
 import { OutboxStore } from '../storage/outbox.ts';
 import { open_command_journal } from '../storage/journal.ts';
@@ -54,6 +59,7 @@ const on_failure = (error: Error) => {
   failures.push(error);
 };
 const now = 1_700_000_010_123;
+const update_id = '0123456789abcdef0123456789abcdef';
 function gate() {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => {
@@ -66,6 +72,14 @@ const entered = gate(),
   input_entered = gate(),
   zero_entered = gate(),
   finish_release = gate();
+const source_release = gate(),
+  replay_entered = gate(),
+  replay_release = gate();
+const maintenance_entered = gate(),
+  maintenance_release = gate(),
+  cleanup_release = gate();
+let maintenance_blocked = false,
+  cleanup_native_failure: Error | null = null;
 let store: OutboxStore, journal: AsyncCommandJournal;
 async function open() {
   store = await OutboxStore.open(
@@ -118,6 +132,11 @@ const native = {
       entered.resolve();
       await release.promise;
     }
+    if (text.endsWith('maintenance')) {
+      maintenance_blocked = true;
+      maintenance_entered.resolve();
+      await maintenance_release.promise;
+    }
     if (text.endsWith('reject')) throw new BackendPromptRejected('not admitted 🦉'.repeat(6000));
     if (text.endsWith('replay')) throw new PromptWriteFailed('delivery fate unknown 🦉');
     return new BackendPromptAccepted({ composed_content_delivered: false });
@@ -150,6 +169,15 @@ const native = {
   },
   async stop() {
     calls.push(['stop']);
+    if (maintenance_blocked) {
+      maintenance_blocked = false;
+      maintenance_release.resolve();
+    }
+    if (cleanup_native_failure !== null) {
+      const failure = cleanup_native_failure;
+      cleanup_native_failure = null;
+      throw failure;
+    }
   },
 } as unknown as BackendChild;
 mkdirSync(join(root, 'workspace'), { recursive: true });
@@ -181,6 +209,8 @@ const native_children = new MacNativeChildren({
   record_children: async () => {},
   on_failure,
 });
+const sources = new MacSourceWork(child_state, () => native_children.admission_stopped);
+const retirement = new MacRetirement({ native_children, state: child_state, sources });
 const state = () => {
   const child = native_children.get('child')!;
   states.push({
@@ -252,20 +282,7 @@ const dependencies = (
       });
     },
   },
-  // This scripted exact-stop port proves invocation/output composition only. PR5 owns source joins.
-  async stop_exact(command, _work, invoking) {
-    child_state.begin_retirement(command.child.child_id);
-    native_children.begin_retirement(command.child);
-    await native_children.stop_child(command.child, invoking);
-    native_children.retire(command.child);
-    child_state.mark_retired(command.child);
-    return {
-      command_id: command.command_id,
-      child: command.child,
-      disposition: 'succeeded',
-      result: {},
-    };
-  },
+  stop_exact: (command, work, invoking) => retirement.stop_exact(command, work, invoking),
   now_ms: () => now,
 });
 await open();
@@ -273,6 +290,15 @@ let service = new MacCommandService(
   dependencies(wrap_journal(journal!), wrap_publication(create_mac_output_publication(store!))),
 );
 const original_service = service;
+const maintenance = new MacMaintenance({
+  native_children,
+  state: child_state,
+  sources,
+  commands: () => service,
+  outbox: { pending_count: () => store!.pending_count() },
+  new_update_id: () => update_id,
+  on_failure,
+});
 async function run(key: string, fail = false) {
   try {
     const value = await service.run(commands[key]!);
@@ -286,15 +312,19 @@ async function run(key: string, fail = false) {
   }
 }
 let actual_work_joined = false;
+let source_failure_seconds = 0;
+let cleanup_completed = false;
 try {
   const reply = {
-    commands: Object.values(commands).map((command, index) => ({
-      command_sequence: index + 1,
-      command_id: command.command_id,
-      created_at_vps_ms: now,
-      child_command: command,
-      model_list_request: null,
-    })),
+    commands: Object.values(commands)
+      .map((command, index) => ({
+        command_sequence: index + 1,
+        command_id: command.command_id,
+        created_at_vps_ms: now,
+        child_command: command,
+        model_list_request: null,
+      }))
+      .filter((command) => command.command_id !== 'synthetic-stop'),
   };
   const cursor = await journal!.record_poll_reply(
     stringify_pydantic_json(encode_value(reply, 'MailboxPollReply')),
@@ -373,7 +403,124 @@ try {
   facts.prewithdrawn = service.withdraw('prewithdraw');
   await run('prewithdraw');
   await run('missing');
-  await run('stop');
+  const source = sources.source_work(commands.stop!.child, () => source_release.promise);
+  const stop_calls = calls.filter((call) => JSON.stringify(call) === '["stop"]').length;
+  const stopping = run('stop');
+  while (!child_state.is_retiring('child')) await yield_turn();
+  const refused_source = await sources
+    .source_work(commands.stop!.child, () => source_release.promise)
+    .then(
+      () => null,
+      (error: unknown) => error,
+    );
+  const stop_result = await journal!.result_of('stop');
+  facts.source_join_before_stop =
+    refused_source instanceof Error &&
+    refused_source.name === 'PermissionError' &&
+    sources.count(commands.stop!.child) === 1 &&
+    calls.filter((call) => JSON.stringify(call) === '["stop"]').length === stop_calls &&
+    stop_result === null;
+  await stop_result?.close();
+  source_release.resolve();
+  await source;
+  await stopping;
+  const synthetic = commands['synthetic-stop']!;
+  const known = {
+    command_id: synthetic.command_id,
+    child: synthetic.child,
+    disposition: 'succeeded' as const,
+    result: {},
+  };
+  const native_calls = calls.length;
+  await service.adopt_unjournaled_outcome(synthetic, known);
+  await service.adopt_unjournaled_outcome(synthetic, known);
+  outcomes.push([synthetic.command_id, as_object(known, 'CommandOutcome')]);
+  const synthetic_result = await journal!.result_of(synthetic.command_id);
+  facts.unjournaled_proof_only =
+    synthetic_result === null &&
+    calls.length === native_calls &&
+    !trace.some((value) => {
+      const row = value as unknown[];
+      return ['finish', 'mark'].includes(row[0] as string) && row[1] === synthetic.command_id;
+    }) &&
+    store!
+      .pending()
+      .filter((row) => row.submission_id === 'stopped_' + digest(synthetic.command_id)).length ===
+      1;
+  await synthetic_result?.close();
+  maintenance.begin_planned_replay();
+  const cancelled = new AbortController();
+  const abandoned_gate = maintenance.planned_replay_finished(cancelled.signal);
+  let gate_released = false;
+  const waiting_gate = maintenance
+    .planned_replay_finished(new AbortController().signal)
+    .then(() => {
+      gate_released = true;
+    });
+  const disconnected = new Error('synthetic replay waiter disconnected');
+  cancelled.abort(disconnected);
+  const cancellation = await abandoned_gate.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  const gate_held =
+    cancellation instanceof ConversationStartAborted &&
+    !gate_released &&
+    child_state.admission_stopped;
+  maintenance.finish_planned_replay();
+  await waiting_gate;
+  facts.shared_replay_gate =
+    gate_held && child_state.admission_stopped && !maintenance.planned_update_replay;
+  maintenance.resume_after_cancelled_update();
+  const quiescence = await maintenance.quiesce();
+  states.push(as_object(quiescence, 'Quiescence'));
+  facts.receipts_block_exit = !quiescence.idle_children_stopped && store!.pending_count() > 0n;
+  maintenance.resume_after_cancelled_update();
+  await run('maintenance-start');
+  const maintenance_child = native_children.get('maintenance-child')!;
+  maintenance_child.background_task_ids.add('background');
+  facts.background_blocks_idle_update =
+    !(await maintenance.prepare_update('idle')) && !child_state.admission_stopped;
+  maintenance_child.background_task_ids.clear();
+  const updating_prompt = run('maintenance-prompt');
+  void updating_prompt.catch(() => {});
+  await maintenance_entered.promise;
+  const stops = calls.filter((call) => JSON.stringify(call) === '["stop"]').length;
+  const updated = await maintenance.prepare_update('now');
+  await updating_prompt;
+  facts.update_stops_before_join =
+    updated &&
+    native_children.get('maintenance-child') === null &&
+    calls.filter((call) => JSON.stringify(call) === '["stop"]').length === stops + 1;
+  const update_result = await journal!.result_of('update_stop_' + update_id);
+  if (update_result !== null) {
+    await update_result.close();
+    throw new Error('Update proof entered the command journal.');
+  }
+  maintenance.resume_after_cancelled_update();
+  const source_failure_started = performance.now();
+  await run('failed-source-start');
+  const failed_reference = commands['failed-source-stop']!.child;
+  const source_failure = new Error('scripted source publication failed');
+  await sources
+    .source_work(failed_reference, async () => {
+      throw source_failure;
+    })
+    .catch((error: unknown) => {
+      if (error !== source_failure) throw error;
+    });
+  const previous_stops = calls.filter((call) => JSON.stringify(call) === '["stop"]').length;
+  await run('failed-source-stop');
+  const failed_outcome = service
+    .records(failed_reference)
+    .find((record) => record.command.command_id === 'failed-source-stop')!.outcome;
+  facts.failed_source_withholds_proof =
+    sources.failed(failed_reference) &&
+    sources.errors().includes(source_failure) &&
+    failed_outcome?.disposition === 'uncertain' &&
+    calls.filter((call) => JSON.stringify(call) === '["stop"]').length === previous_stops + 1 &&
+    store!.lookup('stopped_' + digest('failed-source-stop')) === null;
+  source_failure_seconds = (performance.now() - source_failure_started) / 1000;
   await run('replay-start');
   await run('replay', true);
   facts.all_faults_observed = faults.size === 0;
@@ -389,13 +536,34 @@ try {
   }
   await close();
   await open();
-  service = new MacCommandService(dependencies(journal!, create_mac_output_publication(store!)));
+  const replay_publication = create_mac_output_publication(store!);
+  service = new MacCommandService(
+    dependencies(journal!, {
+      async add(entry) {
+        replay_entered.resolve();
+        await replay_release.promise;
+        await replay_publication.add(entry);
+      },
+    }),
+  );
+  let replay_joined = false,
+    replay_was_pending = false;
   const call_count = calls.length,
     replay = await journal!.unpublished();
   try {
     for await (const row of replay) {
       try {
-        await service.publish_owed_outputs(row.command, row.result);
+        const publishing = service.publish_owed_outputs(row.command, row.result);
+        void publishing.catch(() => {});
+        await replay_entered.promise;
+        const joining = service.settled_replays().then(() => {
+          replay_joined = true;
+        });
+        await yield_turn();
+        replay_was_pending = !replay_joined;
+        replay_release.resolve();
+        await publishing;
+        await joining;
       } finally {
         await Promise.all([row.command.close(), row.result.close()]);
       }
@@ -432,36 +600,105 @@ try {
   }
   await yield_turn();
   actual_work_joined =
-    original_service.records().every((value) => value.task === null) && failures.length === 0;
+    original_service.records().every((value) => value.task === null) &&
+    failures.length === 0 &&
+    replay_was_pending &&
+    replay_joined &&
+    sources.count() === 0;
   const unique_trace = trace.filter(
     (row, index) =>
       trace.findIndex((candidate) => JSON.stringify(candidate) === JSON.stringify(row)) === index,
   );
-  const parity = {
-    calls,
-    trace: unique_trace,
-    outcomes,
-    states,
-    facts,
-    unpublished_before_reopen: before,
-    pending: pending_rows,
-    results,
+  const parity = decode_json(
+    stringify_pydantic_json({
+      calls,
+      trace: unique_trace,
+      outcomes,
+      states,
+      facts,
+      unpublished_before_reopen: before,
+      pending: pending_rows,
+      results,
+    }),
+    'JsonObject',
+  );
+  // The semantic snapshot excludes fixture teardown. This raw join is terminal.
+  const raw_source = new ShutdownDeadlineExceeded(['scripted source capability']);
+  const raw_native = new ShutdownDeadlineExceeded(['scripted native capability']);
+  const cleanup_stops = calls.filter((call) => JSON.stringify(call) === '["stop"]').length;
+  cleanup_native_failure = raw_native;
+  const held_source = sources.source_work(commands.replay!.child, async () => {
+    await cleanup_release.promise;
+    throw raw_source;
+  });
+  void held_source.catch(() => {});
+  let actual_settled = false;
+  const actual = maintenance.settled().then(
+    () => {
+      actual_settled = true;
+      return null;
+    },
+    (error: unknown) => {
+      actual_settled = true;
+      return error;
+    },
+  );
+  const expired = await maintenance.stop({ deadline: performance.now() / 1000 - 1 }).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  const actual_waited = !actual_settled;
+  cleanup_release.resolve();
+  await held_source.catch((error: unknown) => {
+    if (error !== raw_source) throw error;
+  });
+  const outward = await maintenance.stop(options).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  const actual_failure = await actual;
+  const retains = (error: unknown, expected: unknown): boolean =>
+    error === expected ||
+    (error instanceof AggregateError &&
+      error.errors.some((cause: unknown) => retains(cause, expected))) ||
+    (error instanceof Error && error.cause !== undefined && retains(error.cause, expected));
+  const cleanup = {
+    deadline_typed:
+      expired instanceof ShutdownDeadlineExceeded && expired instanceof ServerLifecycleError,
+    actual_waited,
+    raw_source_retained: retains(actual_failure, raw_source),
+    raw_native_retained_after_retry:
+      retains(actual_failure, raw_native) &&
+      calls.filter((call) => JSON.stringify(call) === '["stop"]').length === cleanup_stops + 2,
+    outward_typed: outward instanceof ServerLifecycleError && retains(outward, raw_native),
   };
+  cleanup_completed = true;
   process.stdout.write(
     stringify_pydantic_json({
       parity,
       retry_attempts: trace,
       actual_work_joined,
+      source_failure_seconds,
+      cleanup,
       elapsed_seconds: (performance.now() - started) / 1000,
     }),
   );
 } finally {
   release.resolve();
   finish_release.resolve();
+  source_release.resolve();
+  replay_release.resolve();
+  maintenance_release.resolve();
+  cleanup_release.resolve();
   // Teardown occurs after the semantic snapshot; it is not a command stop proof.
   try {
-    await native_children.stop(options);
-    await native_children.settled();
+    if (!cleanup_completed)
+      await Promise.allSettled([maintenance.stop(options), maintenance.settled()]);
+    await sources.finish();
+    await service.settled_replays();
+    await Promise.allSettled(
+      original_service.records().flatMap((record) => (record.task === null ? [] : [record.task])),
+    );
   } finally {
     await close();
   }

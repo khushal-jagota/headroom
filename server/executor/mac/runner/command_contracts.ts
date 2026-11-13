@@ -62,6 +62,13 @@ export interface MacCommandDependencies {
 }
 export interface MacCommandServiceContract extends MacCommandWork {
   run(command: ChildCommand): Promise<CommandOutcome>;
+  /** Maintenance supplies a known fate after actual joins, through this same settlement record. */
+  adopt_unjournaled_outcome(
+    command: ChildCommand,
+    outcome: CommandOutcome,
+  ): Promise<CommandOutcome>;
+  /** Actual replay I/O is owned separately from newly invoked child commands. */
+  settled_replays(): Promise<void>;
   /** Readers remain owned by the mailbox caller. */
   publish_owed_outputs(command: CanonicalReader, result: CanonicalReader): Promise<void>;
 }

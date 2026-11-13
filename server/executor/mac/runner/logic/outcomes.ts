@@ -62,7 +62,13 @@ export function same_turn(left: TurnToken, right: TurnToken): boolean {
   return same_wire(left, right, 'TurnToken');
 }
 export function bounded_detail(value: string): string {
-  return Array.from(value).slice(0, MAX_TOOL_DETAIL_CHARACTERS).join('');
+  let end = 0;
+  let count = 0;
+  for (const point of value) {
+    if (count++ === MAX_TOOL_DETAIL_CHARACTERS) break;
+    end += point.length;
+  }
+  return value.slice(0, end);
 }
 export function error_message(error: unknown): string {
   return error instanceof Error

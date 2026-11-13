@@ -10,6 +10,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
+from uuid import UUID
 
 import pytest
 from tests.compare.direct.mac_executor_fixture import report_direct, run_node, start_inputs
@@ -43,6 +44,7 @@ from planner.executor.protocol import (
     ChildCommand,
     ChildCommandArguments,
     ChildOperation,
+    CommandDisposition,
     CommandOutcome,
     CommandResult,
     DurableAnswer,
@@ -60,6 +62,7 @@ from planner.executor.protocol import (
 
 NOW = 1_700_000_010_123
 HIGH = 9_007_199_254_741_003
+UPDATE_ID = "0123456789abcdef0123456789abcdef"
 
 
 def fixture(root: Path) -> dict[str, Any]:
@@ -140,6 +143,35 @@ def fixture(root: Path) -> dict[str, Any]:
     add("prewithdraw", prompt)
     add("missing", prompt, replace(child, child_id="missing"))
     add("stop", StopRun())
+    add("synthetic-stop", StopRun())
+    role = resolved.role_materials
+    assert role is not None
+
+    def retained_start(name: str) -> ChildReference:
+        reference = replace(child, child_id=name + "-child", conversation_id=name + "-conversation")
+        localized = replace(
+            resolved,
+            conversation_id=reference.conversation_id,
+            role_materials=replace(
+                role,
+                identity_environment_variables=tuple(
+                    (key, name + "-ticket" if key == "PLAN_TICKET_ID" else value)
+                    for key, value in role.identity_environment_variables
+                ),
+            ),
+        )
+        add(name + "-start", replace(start, resolved_start=localized), reference)
+        return reference
+
+    maintenance_child = retained_start("maintenance")
+    add(
+        "maintenance-prompt",
+        replace(prompt, content=(MessageText("maintenance"),)),
+        maintenance_child,
+        replace(turn, conversation_id=maintenance_child.conversation_id),
+    )
+    failed_child = retained_start("failed-source")
+    add("failed-source-stop", StopRun(), failed_child)
     replay_child = replace(child, child_id="replay-child", conversation_id="replay-conversation")
     add(
         "replay-start",
@@ -176,6 +208,7 @@ async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch)
         for key, value in data["commands"].items()
     }
     patch.setattr(mac_runner, "now_ms", lambda: NOW)
+    patch.setattr(mac_runner, "uuid4", lambda: UUID(UPDATE_ID))
     patch.setattr(mac_mailbox, "now_ms", lambda: NOW)
     patch.setattr(time, "time_ns", lambda: NOW * 1_000_000)
     patch.setattr(
@@ -187,6 +220,8 @@ async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch)
     states: list[Any] = []
     facts: dict[str, bool] = {}
     entered, release, input_entered = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    source_release = asyncio.Event()
+    maintenance_entered, maintenance_release = asyncio.Event(), asyncio.Event()
     finishing, finish_release = threading.Event(), threading.Event()
     loop = asyncio.get_running_loop()
     zero_entered = asyncio.Event()
@@ -196,6 +231,8 @@ async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch)
     runner: MacRunner
 
     class Native:
+        blocked_update = False
+
         async def start(self, resolved: Any, **options: Any) -> None:
             calls.append(["start", resolved.model, options])
 
@@ -207,6 +244,10 @@ async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch)
             if text.endswith("accepted"):
                 entered.set()
                 await release.wait()
+            if text.endswith("maintenance"):
+                self.blocked_update = True
+                maintenance_entered.set()
+                await maintenance_release.wait()
             if text.endswith("reject"):
                 raise BackendPromptRejected("not admitted 🦉" * 6000)
             if text.endswith("replay"):
@@ -245,6 +286,9 @@ async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch)
 
         async def stop(self) -> None:
             calls.append(["stop"])
+            if self.blocked_update:
+                self.blocked_update = False
+                maintenance_release.set()
 
     native = Native()
 
@@ -268,6 +312,7 @@ async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch)
         tuple(
             MailboxCommand(i, key, NOW, child_command=command)
             for i, (key, command) in enumerate(commands.items(), 1)
+            if key != "synthetic-stop"
         )
     )
     journal.record_poll_reply(reply, "inc")
@@ -398,7 +443,112 @@ async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch)
         facts["prewithdrawn"] = runner.withdraw("prewithdraw")
         await run("prewithdraw")
         await run("missing")
-        await run("stop")
+        source = runner.source_work(commands["stop"].child, source_release.wait)
+        stop_calls = calls.count(["stop"])
+        stopping = asyncio.create_task(run("stop"))
+        while "child" not in runner._retiring_children:
+            await asyncio.sleep(0)
+        with pytest.raises(PermissionError):
+            runner.source_work(commands["stop"].child, source_release.wait)
+        facts["source_join_before_stop"] = (
+            not source.done()
+            and not stopping.done()
+            and calls.count(["stop"]) == stop_calls
+            and journal.result_of("stop") is None
+        )
+        source_release.set()
+        await source
+        await stopping
+        synthetic = commands["synthetic-stop"]
+        known = CommandOutcome(
+            synthetic.command_id, synthetic.child, CommandDisposition.succeeded, {}
+        )
+        record = mac_runner._CommandRecord(
+            synthetic,
+            outcome=known,
+            journaled=False,
+            outputs=mac_runner.owed_outputs(synthetic, known),
+        )
+        runner._commands[synthetic.command_id] = record
+        call_count = len(calls)
+        await runner._settle(record)
+        await runner._settle(record)
+        outcomes.append([synthetic.command_id, as_object(known)])
+        facts["unjournaled_proof_only"] = (
+            journal.result_of(synthetic.command_id) is None
+            and len(calls) == call_count
+            and not any(
+                row[0] in ("finish", "mark") and row[1] == synthetic.command_id for row in trace
+            )
+            and sum(
+                row.submission_id
+                == "stopped_" + hashlib.sha256(synthetic.command_id.encode()).hexdigest()
+                for row in box.pending()
+            )
+            == 1
+        )
+        runner.begin_planned_replay()
+        abandoned = asyncio.create_task(runner.planned_replay_finished())
+        waiting = asyncio.create_task(runner.planned_replay_finished())
+        await asyncio.sleep(0)
+        abandoned.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await abandoned
+        gate_held = not waiting.done() and runner.admission_stopped
+        runner.finish_planned_replay()
+        await waiting
+        facts["shared_replay_gate"] = (
+            gate_held and runner.admission_stopped and not runner.planned_update_replay
+        )
+        runner.resume_after_cancelled_update()
+        quiescence = await runner.quiesce()
+        states.append(as_object(quiescence))
+        facts["receipts_block_exit"] = (
+            not quiescence.idle_children_stopped and quiescence.unsent_entry_count > 0
+        )
+        runner.resume_after_cancelled_update()
+        await run("maintenance-start")
+        maintenance_child = runner._children["maintenance-child"]
+        maintenance_child.background_task_ids.add("background")
+        facts["background_blocks_idle_update"] = (
+            not await runner.prepare_update("idle") and not runner.admission_stopped
+        )
+        maintenance_child.background_task_ids.clear()
+        prompt = asyncio.create_task(run("maintenance-prompt"))
+        await maintenance_entered.wait()
+        stops = calls.count(["stop"])
+        updated = await runner.prepare_update("now")
+        await prompt
+        facts["update_stops_before_join"] = (
+            updated
+            and calls.count(["stop"]) == stops + 1
+            and "maintenance-child" not in runner._children
+        )
+        assert journal.result_of("update_stop_" + UPDATE_ID) is None
+        runner.resume_after_cancelled_update()
+        await run("failed-source-start")
+
+        async def failed_scope() -> None:
+            raise RuntimeError("scripted source publication failed")
+
+        failed_reference = commands["failed-source-stop"].child
+        failed = runner.source_work(failed_reference, failed_scope)
+        with pytest.raises(RuntimeError, match="scripted source publication failed"):
+            await failed
+        await asyncio.sleep(0)
+        stop_count = calls.count(["stop"])
+        await run("failed-source-stop")
+        failed_outcome = runner._commands["failed-source-stop"].outcome
+        facts["failed_source_withholds_proof"] = (
+            failed_reference in runner._failed_source_work
+            and failed_outcome is not None
+            and failed_outcome.disposition is CommandDisposition.uncertain
+            and calls.count(["stop"]) == stop_count + 1
+            and not any(
+                row.submission_id == "stopped_" + hashlib.sha256(b"failed-source-stop").hexdigest()
+                for row in box.pending()
+            )
+        )
         await run("replay-start")
         await run("replay", True)
         facts["all_faults_observed"] = not faults
@@ -450,6 +600,8 @@ async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch)
             results=results,
         )
     finally:
+        source_release.set()
+        maintenance_release.set()
         finish_release.set()
         release.set()
         journal.close()
@@ -489,13 +641,14 @@ def test_unit22_mac_commands(
     assert observed["parity"] == expected
     assert expected["facts"] and all(expected["facts"].values())
     assert observed["actual_work_joined"]
+    assert observed["cleanup"] and all(observed["cleanup"].values())
     report_direct(
         request,
         "unit-22-mac-commands.json",
         observed,
         started,
         "Command effects and retry/reopen settlement through real journal/spool; "
-        "real native/callback custody with scripted skills/files/backend/exact-stop ports; "
+        "real command/source/retirement custody with scripted skills/files/backend; "
         "no provider or network",
         python_retry_attempts=python_attempts,
     )

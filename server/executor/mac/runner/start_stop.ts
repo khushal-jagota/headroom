@@ -53,6 +53,11 @@ export class MacNativeChildren implements MacNativeChildrenContract {
   get(child_id: string): MacRunningChild | null {
     return this.entries.get(child_id)?.child ?? null;
   }
+  retained_children(): readonly MacRunningChild[] {
+    return [...this.entries.values()].flatMap((entry) =>
+      entry.child === null ? [] : [entry.child],
+    );
+  }
   is_retiring(child_id: string): boolean {
     return this.entries.get(child_id)?.retiring ?? false;
   }
@@ -148,6 +153,8 @@ export class MacNativeChildren implements MacNativeChildrenContract {
         localized_start,
         lock: new FifoLock(),
         active_turn: null,
+        open_tool_calls: new Set(),
+        background_task_ids: new Set(),
         model: localized_start.model,
         reasoning_effort: localized_start.reasoning_effort,
       };
@@ -163,7 +170,7 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     } catch (error) {
       if (entry.child !== null) {
         try {
-          await this.stop_native(entry);
+          await this.stop_locked(entry);
         } catch (cleanup) {
           this.record_failure(cleanup);
           throw new AggregateError([error, cleanup], 'Native start and cleanup failed.');
@@ -200,7 +207,7 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     if (!entry.stop) {
       const task = Promise.resolve().then(async () => {
         await entry.start?.catch(() => {});
-        await this.stop_native(entry, invoking);
+        await this.stop_locked(entry, invoking);
       });
       entry.stop = task;
       void task.catch((error) => {
@@ -210,10 +217,19 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     }
     return entry.stop;
   }
-  private async stop_native(entry: Entry, invoking?: () => void): Promise<void> {
+  private async stop_locked(entry: Entry, invoking?: () => void): Promise<void> {
     if (entry.stopped) return;
     if (entry.child) await entry.child.lock.run(() => this.stop_process(entry, invoking));
     else entry.stopped = true;
+  }
+  stop_native(reference: ChildReference): Promise<void> {
+    const entry = this.entries.get(reference.child_id);
+    if (!entry || !same_reference(entry.reference, reference)) return Promise.resolve();
+    return this.stop_process(entry).catch((error: unknown) => {
+      this.record_failure(error);
+      if (error instanceof ServerLifecycleError) throw error;
+      throw Object.assign(new ServerLifecycleError('Mac native cleanup failed.'), { cause: error });
+    });
   }
   /** Host shutdown closes the process before a provider call can release its lock. */
   private stop_process(entry: Entry, invoking?: () => void): Promise<void> {
@@ -261,22 +277,26 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     for (const entry of entries) entry.retiring = true;
     // Every call retries retained native/publisher close capabilities, even while
     // the original actual chain still joins a provider start that needs that stop.
-    const observe = (operation: () => Promise<void>) =>
+    const observe = (operation: () => Promise<void>, bounded: boolean) =>
       Promise.resolve()
         .then(operation)
         .catch((error) => {
-          if (!(error instanceof ShutdownDeadlineExceeded)) this.record_failure(error);
+          if (!bounded || !(error instanceof ShutdownDeadlineExceeded)) this.record_failure(error);
           throw error;
         });
     const observations = [
-      observe(() => this.options.skills.stop(options)),
-      ...entries.map((entry) => observe(() => this.stop_process(entry))),
+      observe(() => this.options.skills.stop(options), true),
+      ...entries.map((entry) => observe(() => this.stop_process(entry), false)),
     ];
     if (!this.cleanup) {
       const task = Promise.resolve().then(async () => {
         // Reentrant factory construction can publish a child after stop was called,
         // but before this chain starts. Fence and stop that actual handle too.
-        await Promise.allSettled(entries.map((entry) => this.stop_process(entry)));
+        const first_stops = await Promise.allSettled(
+          entries.map((entry) => this.stop_process(entry)),
+        );
+        for (const result of first_stops)
+          if (result.status === 'rejected') this.record_failure(result.reason);
         const skills_actual = this.options.skills.settled();
         void skills_actual.catch(() => {});
         await Promise.allSettled(entries.map((entry) => entry.start));

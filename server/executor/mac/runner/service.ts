@@ -28,6 +28,7 @@ import {
 
 class Record implements MacCommandRecordView {
   readonly command: ChildCommand;
+  readonly journaled: boolean;
   task: Promise<CommandOutcome> | null = null;
   outcome: CommandOutcome | null = null;
   invoking = false;
@@ -37,8 +38,9 @@ class Record implements MacCommandRecordView {
   next_output = 0;
   outputs_published = false;
   settlement: Promise<void> | undefined;
-  constructor(command: ChildCommand) {
+  constructor(command: ChildCommand, journaled: boolean) {
     this.command = command;
+    this.journaled = journaled;
   }
   get phase(): 'preparing' | 'invoking' | 'finished' {
     return this.outcome !== null ? 'finished' : this.invoking ? 'invoking' : 'preparing';
@@ -48,7 +50,7 @@ class Record implements MacCommandRecordView {
   }
   get settled(): boolean {
     return (
-      this.journal_finished &&
+      (!this.journaled || this.journal_finished) &&
       this.outputs !== null &&
       (this.outputs.length === 0 || this.outputs_published)
     );
@@ -69,6 +71,7 @@ export class MacCommandService implements MacCommandServiceContract {
   private readonly commands = new Map<string, Record>();
   private readonly withdrawn = new Set<string>();
   private readonly start_failed = new Map<string, string>();
+  private readonly replays = new Set<Promise<void>>();
   constructor(dependencies: MacCommandDependencies) {
     this.dependencies = dependencies;
   }
@@ -88,10 +91,10 @@ export class MacCommandService implements MacCommandServiceContract {
   run(input: ChildCommand): Promise<CommandOutcome> {
     const command = decode_value(input, 'ChildCommand');
     let record = this.commands.get(command.command_id);
-    if (record && !same_wire(record.command, command, 'ChildCommand'))
+    if (record && (!record.journaled || !same_wire(record.command, command, 'ChildCommand')))
       return Promise.reject(new ValueError('command id reused with different content'));
     if (!record) {
-      record = new Record(command);
+      record = new Record(command, true);
       this.commands.set(command.command_id, record);
     }
     if (record.task !== null) return record.task;
@@ -99,6 +102,29 @@ export class MacCommandService implements MacCommandServiceContract {
     return this.own(record, () =>
       record!.outcome !== null ? this.finish_known(record!) : this.execute(record!),
     );
+  }
+  adopt_unjournaled_outcome(input: ChildCommand, value: CommandOutcome): Promise<CommandOutcome> {
+    const command = decode_value(input, 'ChildCommand');
+    const result = decode_value(value, 'CommandOutcome');
+    if (command.command_id !== result.command_id || !same_reference(command.child, result.child))
+      return Promise.reject(new ValueError('outcome conflicts with command'));
+    let record = this.commands.get(command.command_id);
+    if (
+      record &&
+      (record.journaled ||
+        !same_wire(record.command, command, 'ChildCommand') ||
+        record.outcome === null ||
+        !same_wire(record.outcome, result, 'CommandOutcome'))
+    )
+      return Promise.reject(new ValueError('command id reused with different content'));
+    if (!record) {
+      record = new Record(command, false);
+      record.outcome = result;
+      this.commands.set(command.command_id, record);
+    }
+    if (record.task !== null) return record.task;
+    if (record.settled) return Promise.resolve(record.outcome!);
+    return this.own(record, () => this.finish_known(record!));
   }
   /** Publish the actual promise before any preparation, native call, or durable write can reenter. */
   private own(record: Record, operation: () => Promise<CommandOutcome>): Promise<CommandOutcome> {
@@ -180,7 +206,7 @@ export class MacCommandService implements MacCommandServiceContract {
       const task = Promise.resolve().then(async () => {
         const result = record.outcome!;
         record.outputs ??= owed_outputs(record.command, result);
-        if (!record.journal_finished) {
+        if (record.journaled && !record.journal_finished) {
           await this.dependencies.journal.finish(
             record.command.command_id,
             stringify_pydantic_json(
@@ -201,7 +227,8 @@ export class MacCommandService implements MacCommandServiceContract {
           await this.dependencies.publication.add(record.outputs[record.next_output]!);
           record.next_output++;
         }
-        await this.dependencies.journal.mark_outputs_published(record.command.command_id);
+        if (record.journaled)
+          await this.dependencies.journal.mark_outputs_published(record.command.command_id);
         record.outputs_published = true;
       });
       record.settlement = task;
@@ -222,7 +249,22 @@ export class MacCommandService implements MacCommandServiceContract {
       records.map((record) => record.task ?? this.own(record, () => this.finish_known(record))),
     );
   }
-  async publish_owed_outputs(
+  publish_owed_outputs(
+    command_reader: CanonicalReader,
+    result_reader: CanonicalReader,
+  ): Promise<void> {
+    const task = Promise.resolve().then(() => this.replay_outputs(command_reader, result_reader));
+    this.replays.add(task);
+    void task.then(
+      () => this.replays.delete(task),
+      () => this.replays.delete(task),
+    );
+    return task;
+  }
+  async settled_replays(): Promise<void> {
+    while (this.replays.size) await Promise.allSettled([...this.replays]);
+  }
+  private async replay_outputs(
     command_reader: CanonicalReader,
     result_reader: CanonicalReader,
   ): Promise<void> {
