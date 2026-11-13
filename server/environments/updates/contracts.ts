@@ -125,6 +125,7 @@ export interface InstallerOperations {
   ): Promise<string>;
   prepare(options: {
     current_root: string;
+    database: string;
     data_directory: string;
     attempt_id: string;
     service_unit: string;
