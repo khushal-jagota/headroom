@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { constants } from 'node:fs';
-import { chmod, link, mkdir, open, symlink } from 'node:fs/promises';
+import { chmod, lchmod, link, mkdir, open, symlink } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
@@ -113,7 +113,14 @@ async function extract_members(
     await directory(dirname(path));
     fence();
     if (member.type === '1') await link(join(destination, member.linkpath), path);
-    else await symlink(member.linkpath, path);
+    else {
+      await symlink(member.linkpath, path);
+      if (source_umask !== null && process.platform === 'darwin') {
+        // Python source extraction keeps the caller's symlink creation mode on Darwin.
+        fence();
+        await lchmod(path, 0o777 & ~source_umask);
+      }
+    }
   }
   const ordinary = reader.members.filter((member) => member.path && member.type !== '2');
   for (const member of ordinary.filter((member) => member.type !== '5')) {
