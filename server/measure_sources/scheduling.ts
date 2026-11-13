@@ -6,6 +6,7 @@ import { PlannerError } from '../core/contracts.ts';
 import { GoalCompletionParticipant } from '../goals/scheduling.ts';
 import type { SourceRuntime } from './contracts.ts';
 import type { SlotParticipant } from './participants.ts';
+import type { StopOptions } from '../lifecycle/contracts.ts';
 import { SourceDispatcher } from './dispatcher.ts';
 import { admit_scheduled_run } from './run_actions.ts';
 export function current_source_slot(clock: Clock): [string, string] {
@@ -51,7 +52,7 @@ export class SourceScheduleParticipant implements SlotParticipant {
       }
     }
   }
-  stop(options: { deadline?: number } = {}): Promise<void> {
+  stop(options: StopOptions): Promise<void> {
     this.stopped = true;
     return this.dispatcher.stop(options);
   }

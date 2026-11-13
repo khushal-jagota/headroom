@@ -1,5 +1,6 @@
 /** Goal completion participant for the shared background clock; owns no timer or writer. */
 import type { Database, ReadSql } from '../core/database/contracts.ts';
+import type { StopOptions } from '../lifecycle/contracts.ts';
 import { server_date } from './calendar.ts';
 import { reconcile_completions } from './outcomes.ts';
 export class GoalCompletionParticipant {
@@ -28,7 +29,7 @@ export class GoalCompletionParticipant {
       return revision(sql);
     });
   }
-  stop(_options: { deadline?: number } = {}): void {
+  stop(_options: StopOptions): void {
     this.stopped = true;
   }
 }

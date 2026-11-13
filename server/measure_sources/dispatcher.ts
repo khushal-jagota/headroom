@@ -7,7 +7,7 @@ import { DEFAULT_LIMITS, MAX_CONCURRENT_RUNS } from './configuration.ts';
 import { prepare_admission } from './admission.ts';
 import { claim_run, complete_run, interrupt_abandoned_runs } from './run_actions.ts';
 import { observe_shutdown } from '../lifecycle/deadline.ts';
-import { SHUTDOWN_GRACE_SECONDS } from '../core/config.ts';
+import type { StopOptions } from '../lifecycle/contracts.ts';
 export interface SourceDispatcherOptions {
   context: OwnedAreaContext;
   runtime: SourceRuntime;
@@ -165,7 +165,7 @@ export class SourceDispatcher {
   settled(): Promise<void> {
     return this.shutdown_settlement ?? this.drain();
   }
-  stop(options: { deadline?: number } = {}): Promise<void> {
+  stop(options: StopOptions): Promise<void> {
     if (this.closing) return this.closing;
     this.stopped = true;
     if (this.timer !== undefined) clearTimeout(this.timer);
@@ -178,13 +178,7 @@ export class SourceDispatcher {
       }
       if (failures.length) throw new AggregateError(failures, 'Source shutdown failed');
     });
-    this.closing = observe_shutdown(
-      this.shutdown_settlement,
-      {
-        deadline: options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS,
-      },
-      'source runtimes',
-    );
+    this.closing = observe_shutdown(this.shutdown_settlement, options, 'source runtimes');
     try {
       this.unsubscribe?.();
     } catch (error) {

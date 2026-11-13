@@ -12,6 +12,9 @@ import * as scratchRuntime from '../environments/ticket_scratch/runtime.ts';
 import { MetricsRuntime } from '../environments/vps_metrics/runtime.ts';
 import { UpdateService } from '../environments/updates/service.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
+import * as preview_routes from '../previews/routes.ts';
+import { PreviewService } from '../previews/service.ts';
+import { PreviewError, type PreviewRecord } from '../previews/contracts.ts';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -86,7 +89,65 @@ test('environment providers and poll hooks share the server, and both producer g
   const layout = vi.spyOn(scratchLayout, 'layout_for');
   const metricsStop = vi.spyOn(MetricsRuntime.prototype, 'stop');
   const updatesStop = vi.spyOn(UpdateService.prototype, 'stop');
+  const completed = vi.fn();
+  const http_entered = deferred(),
+    before_verified = deferred();
+  const release_before = deferred(),
+    release_after = deferred();
+  let prepared!: preview_routes.PreparedPreviewRoutes, preview!: PreviewService;
+  const create_preview = preview_routes.createPreviewRoutes;
+  vi.spyOn(preview_routes, 'createPreviewRoutes').mockImplementation(() => {
+    prepared = create_preview();
+    return prepared;
+  });
+  const record: PreviewRecord = {
+    ticket_id: 'synthetic-preview',
+    generation: 'synthetic-generation',
+    worktree: dirname(path),
+    public_origin: 'https://comparison.invalid',
+    server_epoch: 'synthetic-epoch',
+    created_at: 0,
+    state: 'active',
+    ended_reason: null,
+    process: {
+      boot_id: 'synthetic',
+      pid: 1,
+      start_ticks: 1,
+      listener_inode: 1,
+      port: 1,
+      worktree: dirname(path),
+    },
+  };
+  const start_preview = PreviewService.prototype.start;
+  vi.spyOn(PreviewService.prototype, 'start').mockImplementation(async function (
+    this: PreviewService,
+  ) {
+    preview = this;
+    // Replace only inspection. Public check/before/after retain real run/admission.
+    vi.spyOn(this as unknown as { inspect(): Promise<PreviewRecord> }, 'inspect').mockResolvedValue(
+      record,
+    );
+    vi.spyOn(this.inspector, 'connected').mockResolvedValue(undefined);
+    await start_preview.call(this);
+  });
   const server = await startServer({
+    onShutdownComplete: completed,
+    testAreas: (context) => [
+      {
+        prefix: '/preview-grace-proof',
+        routes: async (app) => {
+          app.get('/held', async () => {
+            http_entered.resolve();
+            await release_before.promise;
+            await preview.before_connection(record);
+            before_verified.resolve();
+            await release_after.promise;
+            await preview.after_connection(record, 1);
+            return context.database.read((sql) => sql.get('SELECT 1 AS alive'));
+          });
+        },
+      },
+    ],
     conversationSystem: new InMemoryConversationSystem(),
     enableWorkerReadiness: true,
     beforeWorkerReadinessPoll: explicitPoll,
@@ -133,6 +194,8 @@ test('environment providers and poll hooks share the server, and both producer g
       };
     },
   });
+  let stop: StopOptions | undefined;
+  let verification: Promise<{ status: number; body: unknown }> | undefined;
   try {
     expect(environmentPoll).toHaveBeenCalled();
     expect(explicitPoll).toHaveBeenCalled();
@@ -162,7 +225,21 @@ test('environment providers and poll hooks share the server, and both producer g
     const captured = await deployment.json();
     expect(captured.body.state).toBe('idle');
     expect(JSON.parse(captured.revision)).toEqual(captured.body);
-    const closing = server.close();
+    verification = fetch(server.address + '/preview-grace-proof/held').then(async (response) => ({
+      status: response.status,
+      body: await response.json(),
+    }));
+    await Promise.race([
+      http_entered.promise,
+      verification.then(() => {
+        throw new Error('Preview proof request returned before its owned handler entered');
+      }),
+    ]);
+    const closing = server.close((stop = { deadline: performance.now() / 1000 + 1 }));
+    let previews_settled = false;
+    const preview_actual = prepared.settled().then(() => {
+      previews_settled = true;
+    });
     expect(trace).toEqual([
       'environment started',
       'background fenced',
@@ -173,17 +250,39 @@ test('environment providers and poll hooks share the server, and both producer g
     expect(metricsStop.mock.calls[0]![0]).toBe(environmentStop);
     expect(updatesStop.mock.calls[0]![0]).toBe(environmentStop);
     expect(scratchClose.mock.calls[0]![0]).toBe(environmentStop);
+    expect(completed).not.toHaveBeenCalled();
     environmentDrain.resolve();
     backgroundDrain.resolve();
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(() => acquireRuntimeOwnership(path)).toThrow('ConversationRuntimeAlreadyOwned');
+    expect(completed).not.toHaveBeenCalled();
     scratchDrain.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(previews_settled).toBe(false);
+    release_before.resolve();
+    await Promise.race([
+      before_verified.promise,
+      verification.then(() => {
+        throw new Error('Admitted preview verification returned before its after-connection gate');
+      }),
+    ]);
+    expect(previews_settled).toBe(false);
+    release_after.resolve();
+    expect(await verification).toEqual({ status: 200, body: { alive: 1 } });
+    await preview_actual;
     await closing;
+    await expect(preview.check(record.ticket_id, record.generation)).rejects.toBeInstanceOf(
+      PreviewError,
+    );
+    expect(completed).toHaveBeenCalledExactlyOnceWith(0);
   } finally {
     backgroundDrain.resolve();
     environmentDrain.resolve();
     scratchDrain.resolve();
-    await server.close();
+    release_before.resolve();
+    release_after.resolve();
+    await verification?.catch(() => {});
+    await server.close((stop ??= { deadline: performance.now() / 1000 + 1 }));
   }
   acquireRuntimeOwnership(path).close();
 });
@@ -260,7 +359,7 @@ test('shutdown during environment setup retains ownership and prevents later pro
     finish.resolve();
     const result = await outcome;
     await closed.promise;
-    if ('server' in result) await result.server.close();
+    if ('server' in result) await result.server.close({ deadline: performance.now() / 1000 + 1 });
     expect(result).toMatchObject({ error: { message: 'Server closed during startup' } });
   }
   expect(background).not.toHaveBeenCalled();

@@ -272,7 +272,7 @@ async function owned_server(installer?: Partial<InstallerOperations>) {
       status,
       async close() {
         try {
-          await server.close();
+          await server.close({ deadline: performance.now() / 1000 + 1 });
         } catch (error) {
           throw shutdown_failure(error);
         } finally {

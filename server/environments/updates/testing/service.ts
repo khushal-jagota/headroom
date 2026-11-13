@@ -197,7 +197,7 @@ function harness(request: ServiceProbeRequest, hooks: Hooks = {}) {
     },
     close: async () => {
       if (!owned) return;
-      await service.stop().catch((error: unknown) => {
+      await service.stop({ deadline: performance.now() / 1000 + 1 }).catch((error: unknown) => {
         if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
       });
       await service.settled();

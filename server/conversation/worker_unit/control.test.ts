@@ -11,7 +11,7 @@ const fake = vi.hoisted(() => ({
   }),
 }));
 vi.mock('node:child_process', () => ({ spawn: fake.spawn, spawnSync: vi.fn() }));
-import { control } from './control.ts';
+import { control, control_retained } from './control.ts';
 
 function owned_child() {
   return Object.assign(new EventEmitter(), {
@@ -59,12 +59,21 @@ it('kills only its timed-out child and waits for exact exit evidence', async () 
   vi.useFakeTimers();
   const child = owned_child();
   fake.spawn.mockImplementation(() => child);
-  const pending = control(
-    new ChildProcesses(),
-    'show',
-    'synthetic-owned.service',
-    '--property=LoadState',
-  );
+  const owner = new ChildProcesses();
+  let finish!: () => void;
+  const unit = {
+    name: 'panels-worker-' + 'a'.repeat(32) + '.service',
+    finished: new Promise<void>((resolve) => {
+      finish = resolve;
+    }),
+  };
+  const cleanup = owner.retain_worker_unit(unit);
+  owner.seal();
+  expect(() => owner.spawn('forbidden', [], {})).toThrow('admission is closed');
+  expect(() =>
+    owner.retain_worker_unit({ ...unit, name: 'panels-worker-' + 'b'.repeat(32) + '.service' }),
+  ).toThrow('admission is closed');
+  const pending = control_retained(cleanup, 'show', '--property=LoadState');
   let settled = false;
   void pending.then(
     () => {
@@ -82,4 +91,22 @@ it('kills only its timed-out child and waits for exact exit evidence', async () 
   await checked;
   expect(settled).toBe(true);
   expect(fake.spawn).toHaveBeenCalledTimes(1);
+  expect(fake.spawn.mock.calls[0]?.[1]).toEqual([
+    '--user',
+    'show',
+    unit.name,
+    '--property=LoadState',
+  ]);
+  // Successful exact-unit cleanup still uses this owner after ordinary seal.
+  for (const action of ['stop', 'reset-failed'] as const) {
+    const next = owned_child();
+    fake.spawn.mockImplementation(() => next);
+    const result = control_retained(cleanup, action);
+    next.emit('close', 0, null);
+    await expect(result).resolves.toEqual([0, '']);
+    expect(fake.spawn.mock.calls.at(-1)?.[1]).toEqual(['--user', action, unit.name]);
+  }
+  finish();
+  await owner.settled();
+  expect(() => cleanup.spawn('stop', [])).toThrow();
 });

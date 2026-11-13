@@ -1,5 +1,5 @@
 /** Worker polling composition. Other loop owners attach through the lifecycle unit. */
-import { SHUTDOWN_GRACE_SECONDS } from './config.ts';
+import type { StopOptions } from '../lifecycle/contracts.ts';
 import type { ChangeSignal } from './changes/index.ts';
 import {
   WorkerStepReadinessLoop,
@@ -17,12 +17,10 @@ export class BackgroundLoops {
     this.worker_step_readiness_loop.start(tick_seconds);
     this.unsubscribe = changes.subscribe(() => this.worker_step_readiness_loop!.wake());
   }
-  async stop(options: { deadline?: number } = {}): Promise<void> {
+  async stop(options: StopOptions): Promise<void> {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
-    await this.worker_step_readiness_loop?.stop({
-      deadline: options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS,
-    });
+    await this.worker_step_readiness_loop?.stop(options);
   }
   settled(): Promise<void> {
     return this.worker_step_readiness_loop?.settled() ?? Promise.resolve();

@@ -7,6 +7,7 @@ import type { TestCompositionContext } from '../../core/start.ts';
 import { Deferred } from '../../conversation/runtime/state.ts';
 import { VideoUploadService } from '../../conversation/video_uploads/service.ts';
 import { observe_shutdown } from '../../conversation/shutdown.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../configuration.ts';
 import {
   create_backend_runtime,
   unavailable_backend_providers,
@@ -46,7 +47,7 @@ export async function stop_host_proof(spec: {
   let closing: Promise<void> | undefined;
   let closed = false;
   const begin = () => {
-    closing = server.close();
+    closing = server.close({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     void closing.then(
       () => {
         closed = true;
@@ -62,6 +63,14 @@ export async function stop_host_proof(spec: {
     );
     put('stopping', { state: server.shutdown_state, closed, reentry: reentered === closing });
   };
+  const exit = (code: 0 | 1): never => {
+    put('completion', {
+      code,
+      state: server.shutdown_state,
+      resources: process.getActiveResourcesInfo(),
+    });
+    process.exit(code);
+  };
   const original_drain = VideoUploadService.prototype.drain;
   if (spec.mode === 'failure')
     VideoUploadService.prototype.drain = () => {
@@ -69,6 +78,7 @@ export async function stop_host_proof(spec: {
     };
   try {
     server = await startServer({
+      onShutdownComplete: spec.mode === 'http' ? undefined : exit,
       createBackendServices(value) {
         const runtime = create_backend_runtime({
           database: value.database,
@@ -94,7 +104,7 @@ export async function stop_host_proof(spec: {
             put('backend-fenced', true);
             return observe_shutdown(
               actual,
-              options ?? {},
+              options,
               'Backend resources remain unfinished at the shutdown deadline.',
             );
           },
@@ -187,13 +197,18 @@ export async function stop_host_proof(spec: {
       put('exit', { code, database, state: server.shutdown_state });
     });
     process.prependOnceListener('SIGTERM', () => put('first-term', true));
+    if (spec.mode === 'failure') setInterval(() => {}, 2_147_483_647);
     await finished.promise;
     if (spec.mode !== 'http') return;
     // The first lifetime demonstrates complete ordinary responses and combined
     // disconnected handler/iterator ownership. The second FIRST stops by SIGTERM.
     delete process.env.PLAN_SERVER_LISTENER_FD;
     process.env.PLAN_PORT = '0';
+    // A leaked referenced timer cannot keep the actual entry alive after all
+    // application finalizers complete. The first lifetime stays embedded.
+    setInterval(() => {}, 2_147_483_647);
     server = await startServer({
+      onShutdownComplete: exit,
       testAreas(value) {
         context = value;
         return [];

@@ -4,7 +4,6 @@ import type { Clock } from '../core/clock.ts';
 import type { WorkspaceAdmission } from '../conversation/workspace_admission.ts';
 import type { APNsAdapter, WebPushAdapter } from './contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
-import { SHUTDOWN_GRACE_SECONDS } from '../core/config.ts';
 import { observe_shutdown } from '../lifecycle/deadline.ts';
 import { canonical_server_origin } from './apns.ts';
 import * as data from './data.ts';
@@ -120,13 +119,13 @@ export class NotificationLoop {
       Promise.allSettled([...this.pending, ...(this.active ? [this.active] : [])]).then(() => {})
     );
   }
-  stop(options: Partial<StopOptions> = {}): Promise<void> {
+  stop(options: StopOptions): Promise<void> {
     if (this.closing) return this.closing;
     this.stop_requested = true;
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
-    const deadline = options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
+    const deadline = options.deadline;
     const sends = Promise.allSettled([...this.pending, ...(this.active ? [this.active] : [])]);
     this.shutdown_settlement = Promise.resolve().then(async () => {
       await sends;

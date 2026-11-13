@@ -1,7 +1,8 @@
 # Environment port, Part 2
 
 This package ports update state, retained VPS metrics, and VPS status behind an explicit per-server runtime.
-[main.ts](../main.ts) does not enable that runtime. Part 4 must supply the real staging, installer, and Mac adapters first.
+[main.ts](../main.ts) requires the real production composition in normal mode and fails before startup until it exists.
+Its existing test-mode path remains bare. Part 4 must supply the real staging, installer, and Mac adapters first.
 
 Implementation differences that the Manager accepted as implementation details:
 

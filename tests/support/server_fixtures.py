@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import socket
@@ -31,19 +32,34 @@ def _bind_loopback_listener(port: int = 0) -> socket.socket:
 
     The server is handed this socket through ``PLAN_SERVER_LISTENER_FD`` and never binds
     the port itself, so nothing else can take the port between choosing it and the server
-    starting. A connection made before the server is ready waits in the kernel's queue
+    starting. A shard range also keeps a released restart port outside other shards.
+    A connection made before the server is ready waits in the kernel's queue
     instead of being refused.
     """
-    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        # A stopped server on this exact port can leave its connections in TIME_WAIT.
-        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listener.bind(("127.0.0.1", port))
-        listener.listen()
-    except BaseException:
-        listener.close()
-        raise
-    return listener
+    port_range = os.environ.get("PANELS_TEST_PORT_RANGE") if port == 0 else None
+    ports = range(port, port + 1)
+    if port_range:
+        start, end = map(int, port_range.split(":"))
+        if not 0 < start < end <= 65536:
+            raise ValueError(f"Invalid PANELS_TEST_PORT_RANGE: {port_range}")
+        ports = range(start, end)
+    for candidate in ports:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            # A stopped server on this exact port can leave its connections in TIME_WAIT.
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(("127.0.0.1", candidate))
+            listener.listen()
+        except OSError as error:
+            listener.close()
+            if port_range and error.errno == errno.EADDRINUSE:
+                continue
+            raise
+        except BaseException:
+            listener.close()
+            raise
+        return listener
+    raise OSError(errno.EADDRINUSE, f"No loopback ports available in {port_range}")
 
 
 def _first_meta_answer(base: str, log_path: Path, describe_server: Callable[[], str]) -> None:

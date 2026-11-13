@@ -1,5 +1,6 @@
 /** The real TS adapter and core, with one local scripted ACP peer. */
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../../../lifecycle/configuration.ts';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createDatabase } from '../../../core/database/index.ts';
@@ -289,7 +290,7 @@ export async function run_part2_parity(spec: Spec): Promise<unknown> {
       await core.kill(id);
     }
   } finally {
-    await core.shutdown();
+    await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     database.close();
   }
   return {
