@@ -1,5 +1,6 @@
 /** Transaction-owned finalization. Existing SQLite triggers supply every dirty source. */
 import { randomUUID } from 'node:crypto';
+import { SCHEMA_VERSION, SUPPORTED_SEMANTICS } from '../contracts.ts';
 import type { TransactionSql, ReadSql } from '../../core/database/contracts.ts';
 import type {
   NavigationKey,
@@ -90,8 +91,8 @@ function rawCoverage(sql: ReadSql) {
   return {
     ...row,
     semantics:
-      row.schema_version === 10
-        ? ('attention-knowledge-v10-ticket-workflows' as const)
+      row.schema_version === SCHEMA_VERSION
+        ? SUPPORTED_SEMANTICS
         : row.schema_version === 4
           ? 'attention-knowledge-v4'
           : `generic-source-facts-v${row.schema_version}`,
@@ -100,9 +101,9 @@ function rawCoverage(sql: ReadSql) {
 }
 export function coverage(sql: ReadSql) {
   const value = rawCoverage(sql);
-  if (value.schema_version !== 10)
+  if (value.schema_version !== SCHEMA_VERSION)
     throw new Error('navigation public reads require the current schema');
-  return { ...value, semantics: 'attention-knowledge-v10-ticket-workflows' as const };
+  return { ...value, semantics: SUPPORTED_SEMANTICS };
 }
 function prioritySourceShape(sql: ReadSql): boolean {
   const shapes = ['projects', 'managers', 'tickets'].map((table) => {

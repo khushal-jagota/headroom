@@ -1,6 +1,7 @@
 /** Read-only derivation of every navigation root from canonical source rows. */
 import type { ReadSql } from '../../core/database/contracts.ts';
 import type { NavigationKey, NavigationRecord } from '../contracts.ts';
+import { SCHEMA_VERSION } from '../contracts.ts';
 import { PlannerError } from '../../core/contracts.ts';
 import { compact } from '../logic/json.ts';
 import {
@@ -123,7 +124,8 @@ export function derive(
       (snapshots ? 't.workflow_json,' : '') +
       (integrity ? 't.integrity_error_reason,' : '') +
       (version < 7 ? 't.priority,' : '') +
-      't.title,t.worker_type,t.stage,t.deadline,t.manager_kind,t.manager_id,t.conversation_id,t.ceiling,t.locale,t.worker_step_claim,t.pending_proposal,t.is_backlogged,t.ceiling_holder,t.pending_proposal_revision,t.updated_at,t.created_at,t.recap';
+      't.title,t.worker_type,t.stage,t.deadline,t.manager_kind,t.manager_id,t.conversation_id,t.ceiling,t.locale,t.worker_step_claim,t.pending_proposal,t.is_backlogged,t.ceiling_holder,t.pending_proposal_revision,t.updated_at,t.created_at,t.recap' +
+      (version >= 11 ? ',t.recap_updated_at,t.recap_stage_changed' : '');
     const t = sql.get<Row>(
       'SELECT ' +
         columns +
@@ -165,6 +167,12 @@ export function derive(
         project_id: t.diagnostic_project,
         is_backlogged: Boolean(t.is_backlogged),
         recap_preview: recapPreview(String(t.recap)),
+        ...(version >= 11
+          ? {
+              recap_updated_at: t.recap_updated_at,
+              recap_stage_changed: Boolean(t.recap_stage_changed),
+            }
+          : {}),
       });
       records.push(record(kind, id, value));
       return result();
@@ -239,6 +247,11 @@ export function derive(
         recap_preview: recapPreview(String(t.recap)),
         ...(version >= 7 ? { recap: String(t.recap) } : {}),
       });
+    if (version >= 11)
+      Object.assign(value, {
+        recap_updated_at: t.recap_updated_at,
+        recap_stage_changed: Boolean(t.recap_stage_changed),
+      });
     records.push(record(kind, id, value));
   } else if (kind === 'chief' || kind === 'manager') {
     let key: string, value: Row;
@@ -258,6 +271,7 @@ export function derive(
         value.recap_preview = recapPreview(recap);
         if (version >= 7) value.recap = recap;
       }
+      if (version >= 11) value.recap_updated_at = t.recap_updated_at;
     } else {
       key = 'chief_of_staff';
       dep('chief_settings', key);
@@ -332,7 +346,7 @@ export function derive(
         [id],
       )?.through_sequence ?? 0;
     value.lifecycle_summary = lifecycleSummary(sql, id);
-    if (version === 4 || version === 10) {
+    if (version === 4 || version === SCHEMA_VERSION) {
       dep('navigation_signal_publications', id);
       value.attention = currentAttention(sql, id);
     }

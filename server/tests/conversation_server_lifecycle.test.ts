@@ -289,11 +289,6 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
         'WHERE agents.conversation_id IS NULL',
       ['chief_of_staff', chief_start.conversation_id],
     );
-    for (const table of ['mac_executor_presence', 'stall_findings', 'stall_checker_heartbeat']) {
-      const statement = schema.statements.find((sql) => sql.startsWith(`CREATE TABLE ${table} (`));
-      expect(statement).toBeDefined();
-      tx.run(statement!);
-    }
     tx.run(
       "INSERT INTO conversation_lifecycle_facts VALUES('retained','turn','1',1,'turn','running',NULL)",
     );

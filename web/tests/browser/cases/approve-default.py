@@ -630,6 +630,7 @@ def run(browser, urls):
     choose("needs_what_changes")
     wait_count(approvals, 1)
     assert approvals[-1]["body"] == {
+        "decision_id": '["t_coding",4]:approve', "message": None,
         "next_ceiling": "needs_what_changes",
         "next_holder": {"kind": "owner", "id": "owner"},
         "expected_proposal_revision": expected_revision,
@@ -699,6 +700,7 @@ def run(browser, urls):
             "ticket_id": ticket_id,
             "field": "consequences",
             "body": {
+                "decision_id": f'["{ticket_id}",{expected_revision}]:approve', "message": None,
                 "next_ceiling": "none",
                 "next_holder": expected_holder,
                 "expected_proposal_revision": expected_revision,
@@ -792,6 +794,7 @@ def run(browser, urls):
         choose("needs_implementation", principal["id"])
         wait_count(approvals, count + 1)
         assert approvals[-1]["body"] == {
+            "decision_id": f'["{identity}",1]:approve', "message": None,
             "next_ceiling": "needs_implementation",
             "next_holder": principal,
             "expected_proposal_revision": 1,
@@ -833,6 +836,7 @@ def run(browser, urls):
     choose("needs_implementation", "owner")
     wait_count(approvals, count + 1)
     assert approvals[-1]["body"] == {
+        "decision_id": '["t_lifecycle",7]:approve', "message": None,
         "next_ceiling": "needs_implementation",
         "next_holder": {"kind": "owner", "id": "owner"},
         "expected_proposal_revision": 7,

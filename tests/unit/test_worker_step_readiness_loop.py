@@ -49,7 +49,7 @@ from planner.runtime.worker_step_readiness_loop import (
     tell_a_worker_it_lost_its_memory,
 )
 from planner.tickets import data as tickets_data
-from planner.tickets import revision_feedback, worker_restart
+from planner.tickets import decision_messages, worker_restart
 from planner.tickets.contracts import Ticket, TicketStatus, WorkerStepClaim
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import TicketWorkflowDefinition
@@ -126,6 +126,11 @@ class _World:
                 next_ceiling=next_ceiling,
                 next_holder=OWNER_PRINCIPAL,
             )
+            # This fixture starts after kickoff delivery; these tests own the next step.
+            conn.execute(
+                "UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?",
+                (ticket.id,),
+            )
             if conversation_id is not None:
                 conn.execute(
                     "UPDATE tickets SET conversation_id = ? WHERE id = ?",
@@ -179,18 +184,21 @@ class _World:
     def add_revision_feedback(self, ticket_id: str, message: str) -> None:
         with self.connect() as conn:
             ticket = tickets_data.read_ticket(conn, ticket_id)
-            revision_feedback.set_feedback(
+            decision_messages.save(
                 conn,
-                ticket_id,
-                stage=ticket.stage,
-                sender=OWNER_PRINCIPAL,
+                ticket,
+                action="sent back",
+                field="what_changes",
+                principal=OWNER_PRINCIPAL,
                 message=message,
+                decision_id="test-revision-" + ticket_id,
+                request="{}",
                 now=1,
             )
 
     def pending_revision_feedback(self, ticket_id: str) -> bool:
         with self.connect() as conn:
-            return revision_feedback.snapshot(conn, ticket_id) is not None
+            return decision_messages.has_undelivered(conn, ticket_id)
 
     def ticket(self, ticket_id: str) -> Ticket:
         with self.connect() as conn:
@@ -696,11 +704,31 @@ def test_revision_feedback_is_consumed_only_after_an_actual_worker_send(world: _
     world.conversations._conversations[  # noqa: SLF001 - focused failure recovery proof
         "conv-revision-feedback"
     ].armed_backend_write_failure = False
-    assert world.start_step(ticket_id).started is True
-
-    writes = world.conversations.backend_prompt_writes("conv-revision-feedback")
+    # A refusal needs the existing explicit Restart, not another polling attempt.
+    assert world.start_step(ticket_id).started is False
+    with closing(world.connect()) as conn:
+        result = asyncio.run(
+            worker_restart.restart_worker(
+                cast(ConversationSystem, world.conversations),
+                conn,
+                OWNER_PRINCIPAL,
+                ticket_id,
+                start_worker_step=lambda: start_ready_worker_step(
+                    ticket_id,
+                    connect_database=world.connect,
+                    conversation_system=cast(ConversationSystem, world.conversations),
+                    worker_type_registry=configured_worker_type_registry(),
+                    now=world.clock.now_unix,
+                ),
+                now=world.clock.now_unix,
+            )
+        )
+    assert result["started"] is True
+    fresh = world.ticket(ticket_id).conversation_id
+    assert fresh is not None
+    writes = world.conversations.backend_prompt_writes(fresh)
     assert len(writes) == 1
-    assert "Revision feedback from owner owner for stage needs_what_changes" in writes[0].text
+    assert "User sent back the What Changes proposal with this note:" in writes[0].text
     assert "  Preserve this exact feedback.  " in writes[0].text
     # A rejection delivers its own feedback, independently of retired historical data.
     assert "Historical guidance remains stored." not in writes[0].text
@@ -777,7 +805,6 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
     # and a held message is delivered work, not a failure.
     ticket_id = world.ready_ticket(conversation_id="conv-queue")
     world.start_conversation("conv-queue")
-    world.add_revision_feedback(ticket_id, "Queueing still delivers this feedback.")
 
     conn = world.connect()
     try:
@@ -1356,3 +1383,83 @@ def test_custom_guidance_reaches_first_payload_but_not_later_stage(
         "CUSTOM KICKOFF GUIDE"
         not in world.conversations.backend_prompt_writes(conversation_id)[1].text
     )
+
+
+def test_busy_decision_stays_queued_and_one_restart_recovers_it(world: _World) -> None:
+    """Queue admission is not receipt; explicit Restart owns recovery after its kill."""
+    ticket_id = world.ready_ticket(conversation_id="conv-note-busy")
+    world.start_conversation("conv-note-busy")
+    asyncio.run(
+        world.conversations.send(
+            "conv-note-busy", text_message_content("busy"), sender_label="owner"
+        )
+    )
+    world.add_revision_feedback(ticket_id, "Exact queued\nnote")
+    assert world.start_step(ticket_id).delivery_fate == "queued"
+    assert world.pending_revision_feedback(ticket_id)
+    assert len(world.conversations.backend_prompt_writes("conv-note-busy")) == 1
+    # A second poll sees queue ownership and cannot duplicate this decision.
+    world.start_step(ticket_id)
+    assert len(world.held_prompts("conv-note-busy")) == 1
+    with closing(world.connect()) as conn:
+        result = asyncio.run(
+            worker_restart.restart_worker(
+                cast(ConversationSystem, world.conversations),
+                conn,
+                OWNER_PRINCIPAL,
+                ticket_id,
+                start_worker_step=lambda: start_ready_worker_step(
+                    ticket_id,
+                    connect_database=world.connect,
+                    conversation_system=cast(ConversationSystem, world.conversations),
+                    worker_type_registry=configured_worker_type_registry(),
+                    now=world.clock.now_unix,
+                ),
+                now=world.clock.now_unix,
+            )
+        )
+    assert result["started"] is True
+    fresh = world.ticket(ticket_id).conversation_id
+    assert fresh is not None and fresh != "conv-note-busy"
+    assert "Exact queued\nnote" in world.conversations.backend_prompt_writes(fresh)[0].text
+    assert not world.pending_revision_feedback(ticket_id)
+
+
+def test_ambiguous_decision_survives_restart_without_automatic_replay(world: _World) -> None:
+    """Crash after the send marker has no safe automatic replay; Restart is explicit."""
+    ticket_id = world.ready_ticket(conversation_id="conv-note-ambiguous")
+    world.start_conversation("conv-note-ambiguous")
+    world.add_revision_feedback(ticket_id, "Retain ambiguous\nnote")
+    with closing(world.connect()) as conn:
+        conn.execute(
+            "UPDATE ticket_decision_messages SET delivery_status='sending',conversation_id=? "
+            "WHERE ticket_id=? AND delivery_status='pending'",
+            ("conv-note-ambiguous", ticket_id),
+        )
+        conn.commit()
+    assert not world.start_step(ticket_id).started
+    assert world.ticket(ticket_id).ticket_status is TicketStatus.errored
+    assert world.pending_revision_feedback(ticket_id)
+    assert world.conversations.backend_prompt_writes("conv-note-ambiguous") == ()
+    assert not world.start_step(ticket_id).started
+    with closing(world.connect()) as conn:
+        result = asyncio.run(
+            worker_restart.restart_worker(
+                cast(ConversationSystem, world.conversations),
+                conn,
+                OWNER_PRINCIPAL,
+                ticket_id,
+                start_worker_step=lambda: start_ready_worker_step(
+                    ticket_id,
+                    connect_database=world.connect,
+                    conversation_system=cast(ConversationSystem, world.conversations),
+                    worker_type_registry=configured_worker_type_registry(),
+                    now=world.clock.now_unix,
+                ),
+                now=world.clock.now_unix,
+            )
+        )
+    assert result["started"] is True
+    fresh = world.ticket(ticket_id).conversation_id
+    assert fresh is not None
+    assert "Retain ambiguous\nnote" in world.conversations.backend_prompt_writes(fresh)[0].text

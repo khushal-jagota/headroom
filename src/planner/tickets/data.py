@@ -31,7 +31,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import capture_ticket_attention
-from planner.tickets import derivation, revision_feedback
+from planner.tickets import decision_messages, derivation
 from planner.tickets.contracts import (
     EmployeeLaunchConfiguration,
     NextCeiling,
@@ -372,6 +372,8 @@ def _row_to_ticket(
         manager_kind=str(row["manager_kind"]),
         manager_title=row["manager_title"],
         recap=row["recap"],
+        recap_updated_at=row["recap_updated_at"],
+        recap_stage_changed=bool(row["recap_stage_changed"]),
         ceiling=str(row["ceiling"]),
         ceiling_holder=_principal_from_json(str(row["ceiling_holder"])),
         ticket_status=derivation.derive_ticket_status(
@@ -415,6 +417,8 @@ _TICKET_STORED_COLUMNS = (
     "project_id",
     "manager_id",
     "recap",
+    "recap_updated_at",
+    "recap_stage_changed",
     "ceiling",
     "conversation_id",
     "field_values",
@@ -632,7 +636,8 @@ def _apply_decision(
     conn.execute(
         "UPDATE tickets SET field_values = ?, field_approvals = ?, pending_proposal = ?, "
         "pending_proposal_revision = pending_proposal_revision + ?, "
-        "stage = ?, ceiling = ?, ceiling_holder = ?, updated_at = ? WHERE id = ?",
+        "stage = ?, ceiling = ?, ceiling_holder = ?, updated_at = ?, "
+        "recap_stage_changed = ? WHERE id = ?",
         (
             _field_values_for_storage(
                 conn,
@@ -652,6 +657,10 @@ def _apply_decision(
             str(new_ceiling),
             _principal_to_json(decision.ceiling_holder),
             now,
+            int(
+                ticket.recap_stage_changed
+                or (str(new_stage) != ticket.stage and bool(ticket.recap.strip()))
+            ),
             ticket.id,
         ),
     )
@@ -660,7 +669,6 @@ def _apply_decision(
             "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ?",
             (ticket.id,),
         )
-        revision_feedback.discard(conn, ticket.id)
     if active_before != active_after:
         if active_after:
             # The Ticket is doing the blocking again, which is activity on what it holds.
@@ -1498,6 +1506,8 @@ def accept_proposal(
     next_ceiling: NextCeiling | None = None,
     next_holder: Principal,
     expected_proposal_revision: int | None = None,
+    message: str | None = None,
+    decision_id: str | None = None,
 ) -> Ticket:
     """Settle a parked proposal, for a caller standing above the Ticket.
 
@@ -1509,6 +1519,20 @@ def accept_proposal(
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
+        decision_messages.validate_request(message, expected_proposal_revision, decision_id)
+        request = decision_messages.request_json(
+            principal,
+            ticket_id=ticket_id,
+            action="approved",
+            field=field,
+            message=message,
+            expected_proposal_revision=expected_proposal_revision,
+            edited_body=edited_body,
+            next_ceiling=next_ceiling,
+            next_holder={"kind": next_holder.kind.value, "id": next_holder.id},
+        )
+        if decision_messages.is_replay(conn, decision_id, request):
+            return ticket
         if (
             expected_proposal_revision is not None
             and ticket.pending_proposal_revision != expected_proposal_revision
@@ -1533,6 +1557,17 @@ def accept_proposal(
             ticket_id=ticket.id,
             manager_kind=ticket.manager_kind,
             manager_id=ticket.manager_id,
+        )
+        decision_messages.save(
+            conn,
+            ticket,
+            action="approved",
+            field=field,
+            principal=principal,
+            message=message,
+            decision_id=decision_id,
+            request=request,
+            now=now,
         )
         updated = _apply_decision(conn, ticket, decision, now)
         from planner.attention.history import record_approval
@@ -1604,6 +1639,8 @@ def reject_proposal(
     principal: Principal,
     now: int,
     expected_proposal: PendingTicketProposal | None = None,
+    expected_proposal_revision: int | None = None,
+    decision_id: str | None = None,
 ) -> Ticket:
     if message is not None:
         admission.validate_revision_guidance(message)
@@ -1612,6 +1649,24 @@ def reject_proposal(
             conn, ticket_id
         )
         field = worker_type_definition.gating_field(ticket.stage)
+        decision_messages.validate_request(message, expected_proposal_revision, decision_id)
+        request = decision_messages.request_json(
+            principal,
+            ticket_id=ticket_id,
+            action="sent back",
+            message=message,
+            expected_proposal_revision=expected_proposal_revision,
+        )
+        if decision_messages.is_replay(conn, decision_id, request):
+            return ticket
+        if (
+            expected_proposal_revision is not None
+            and ticket.pending_proposal_revision != expected_proposal_revision
+        ):
+            raise PlannerError(
+                ErrorCode.validation,
+                "the visible proposal changed; read it again before sending back",
+            )
         current_proposal = ticket.pending_proposal
         if expected_proposal is not None and current_proposal != expected_proposal:
             raise PlannerError(
@@ -1625,15 +1680,18 @@ def reject_proposal(
             has_guidance=message is not None,
             worker_type_definition=worker_type_definition,
         )
-        if message is not None:
-            revision_feedback.set_feedback(
-                conn,
-                ticket_id,
-                stage=ticket.stage,
-                sender=principal,
-                message=message,
-                now=now,
-            )
+        assert field is not None
+        decision_messages.save(
+            conn,
+            ticket,
+            action="sent back",
+            field=field,
+            principal=principal,
+            message=message,
+            decision_id=decision_id,
+            request=request,
+            now=now,
+        )
         updated = _apply_decision(conn, ticket, decision, now)
         conn.execute(
             "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
@@ -1903,6 +1961,22 @@ def edit_ticket(
         # Ticket edit door as scalar fields.
         if "recap" in edit:
             changes.append(("recap", "recap", ticket.recap, edit["recap"]))
+            changes.append(
+                (
+                    "recap_updated_at",
+                    "recap_updated_at",
+                    ticket.recap_updated_at,
+                    now if edit["recap"].strip() else None,
+                )
+            )
+            changes.append(
+                (
+                    "recap_stage_changed",
+                    "recap_stage_changed",
+                    ticket.recap_stage_changed,
+                    0,
+                )
+            )
 
         settled_values = edit.get("field_values")
         edited_values = dict(ticket.field_values)

@@ -46,6 +46,7 @@
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
   import ArtifactsBand from "../components/ArtifactsBand.svelte";
   import WorkerProposalCard from "../components/WorkerProposalCard.svelte";
+  import type { ReviewDecisionBody } from "../lib/review/decision";
   import { workerPageHistory } from "../lib/workerPageHistory";
   import { createArtifactOnThePage } from "../lib/artifactOnThePage.svelte";
   import { type ManagedFileTarget } from "../lib/filePreview";
@@ -267,8 +268,8 @@
       section.detail.pending_proposal?.field === "brief" &&
       Boolean(section.detail.employee_configuration_editable)
   );
-  function returnProposal(message:string):Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/reject`,{method:"POST",body:{message}});
+  function returnProposal(body:ReviewDecisionBody):Promise<unknown> {
+    return mutateJson(`/api/tickets/${stableId}/reject`,{method:"POST",body});
   }
 
   async function removeBlocker(blockerTicketId: string): Promise<void> {
@@ -425,15 +426,7 @@
               <section class:worker-live-card={detail.pending_proposal?.field !== currentField} class="worker-current" data-worker-live-card data-proposal-created-at={detail.pending_proposal?.created_at} data-proposal-revision={detail.pending_proposal?.revision}>
                 {#if detail.pending_proposal?.field === currentField}
                   {#key `${detail.pending_proposal.field}:${detail.pending_proposal.created_at}:${detail.pending_proposal.revision}`}
-                    <WorkerProposalCard ticketId={stableId} conversationId={detail.conversation_id}
-                      onSendNote={(delivery) => sendToTicketWorker({
-                        conversation_id: delivery.conversationId,
-                        content: delivery.message.content,
-                        sender_label: delivery.message.senderLabel,
-                        mode: delivery.message.mode,
-                        sender_message_id: delivery.message.messageId,
-                        sent_at_unix_milliseconds: delivery.message.sentAtUnixMilliseconds
-                      })} proposal={detail.pending_proposal} lifecycle={lc} stage={detail.stage}
+                    <WorkerProposalCard ticketId={stableId} proposal={detail.pending_proposal} lifecycle={lc} stage={detail.stage}
                       ceiling={detail.ceiling} holder={detail.ceiling_holder} manager={ticketManager} canReturn={Boolean(detail.conversation_id)}
                       onAccept={(payload) => acceptField(currentField, payload)}
                       onScope={updateScope}

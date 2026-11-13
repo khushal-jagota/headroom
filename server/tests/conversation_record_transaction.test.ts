@@ -10,7 +10,6 @@ import { InboxStore } from '../executor/data/inbox.ts';
 import { FileStaging } from '../executor/vps_files.ts';
 import { as_object } from '../executor/protocol.ts';
 import type { WireValue } from '../executor/contracts.ts';
-import { add_inbox_presence_table } from '../executor/testing/inbox_fixture.ts';
 
 // The output fixture cannot prove that a failed participant rolls back source rows,
 // sequence allocation, lifecycle, receipts, and projection before a safe retry.
@@ -125,7 +124,6 @@ test('executor refusal after take commits only its receipt and replays without a
       ),
   });
   const store = new ConversationStore(database, { integer_now: () => 100 });
-  add_inbox_presence_table(database);
   const id = 'executor-atomic';
   store.create_conversation(
     new ResolvedConversationStart({

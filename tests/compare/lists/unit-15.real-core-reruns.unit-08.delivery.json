@@ -404,13 +404,14 @@
       "headers": {
         "X-Plan-Actor": "worker",
         "X-Plan-Ticket-ID": "${ticket}"
-      }
+      },
+      "note": "Self recap requests fail before the canonical recap writer or conversation delivery."
     },
     {
       "area": "message-delivery",
       "method": "POST",
       "path": "/api/recap-requests",
-      "status": 400,
+      "status": 200,
       "json": {
         "target": {
           "kind": "ticket",
@@ -420,13 +421,14 @@
       "headers": {
         "X-Plan-Actor": "manager",
         "X-Plan-Manager-ID": "${manager}"
-      }
+      },
+      "note": "A superior requests a recap through the ordinary system prompt, with requester attribution."
     },
     {
       "area": "message-delivery",
       "method": "POST",
       "path": "/api/recap-requests",
-      "status": 400,
+      "status": 200,
       "json": {
         "target": {
           "kind": "ticket",
@@ -435,7 +437,8 @@
       },
       "headers": {
         "X-Plan-Actor": "chief"
-      }
+      },
+      "note": "A superior requests a recap through the ordinary system prompt, with requester attribution."
     },
     {
       "area": "message-delivery",

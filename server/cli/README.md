@@ -3,8 +3,8 @@
 `node server/cli/main.ts` is the source executable for the migration. The installed
 `panels` command remains Python until cutover.
 
-The first two migration PRs implement all 98 HTTP commands and five offline commands.
-`work_commands.ts` owns the 52 work commands: `send-message`, `project`, `ticket`,
+The CLI implements 100 HTTP commands and five offline commands.
+`work_commands.ts` owns the 54 work commands: `send-message`, `project`, `ticket`,
 `manager` (including artifacts and conversation), `worker`, `worker-type`, and `skill`.
 The remaining groups use handlers under their domains: `goal`, `page`, `credential`,
 `measure`, `attention`, `measure-source`, `preview`, and `dataset`.
@@ -17,6 +17,13 @@ Measure-source schemas and runtime guidance come from the shared domain guidance
 exports. The CLI holds no second JavaScript example or helper signature.
 Transport forwards the environment identity without inventing a principal. The
 shared numeric JSON codec preserves Python integer and float representation.
+
+`ticket request-recap ID` and `manager request-recap ID` ask a subordinate for a
+fresh recap through the ordinary system-message route. Ticket summaries, Manager
+summaries, and Manager workspaces show the recap age, unknown age, or absence.
+Ticket displays also identify a stage change since the last recap.
+Proposal accept and revise commands read the current proposal revision and pass
+that revision with a stable decision ID to the canonical decision route.
 
 The import-only exporter `tests/compare/direct/unit20_metadata.py` regenerates
 command declarations from current Click objects, including UUID parameter types. Run it with synthetic homes and
