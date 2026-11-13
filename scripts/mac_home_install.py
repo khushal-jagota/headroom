@@ -108,6 +108,9 @@ def install_home(
             "StandardOutPath": str(root / "logs/backup.stdout.log"),
             "StandardErrorPath": str(root / "logs/backup.stderr.log")},
     }
+    from planner.platform_runtime.linux.update_installer import mac_schedule_jobs
+
+    jobs.update(mac_schedule_jobs(root, label, [str(app / "bin/panels")], environment, root))
     for job_label, job in jobs.items():
         path = root / "agents" / (job_label + ".plist")
         path.write_bytes(plistlib.dumps(job))
@@ -142,7 +145,7 @@ def main() -> None:
     domain = f"gui/{os.getuid()}"
     import subprocess
 
-    for suffix in ("", ".backup"):
+    for suffix in ("", ".backup", ".maintenance", ".stall-watchdog"):
         label = args.label + suffix
         login_plist = Path.home() / "Library/LaunchAgents" / f"{label}.plist"
         if login_plist.exists() or login_plist.is_symlink():

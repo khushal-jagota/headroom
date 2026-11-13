@@ -3,7 +3,7 @@
 This path runs one Panels home in your graphical login session. The Mac holds its record.
 Logout stops the home. Sleep makes it unreachable. Tailscale supplies remote HTTPS access.
 The source path below remains available. A release home also supports updates and rollback.
-Previews, native metrics, maintenance schedules, and watchdog schedules remain separate work.
+The home supplies native previews, metrics, maintenance, and stall alarms.
 One Panels instance can own the account skills in one OS account.
 Use a separate OS account for another instance, including an executor with a different record.
 
@@ -57,7 +57,9 @@ Start the exact generated jobs:
 launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.plist"
 curl --fail --connect-timeout 1 --max-time 2 \
   "http://127.0.0.1:$PANELS_PORT/api/health?expected_sha=$PANELS_SHA"
-launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.backup.plist"
+for suffix in backup maintenance stall-watchdog; do
+  launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.$suffix.plist"
+done
 ```
 
 For automatic starts at later logins, link the generated plists into `~/Library/LaunchAgents/`.
@@ -68,16 +70,21 @@ Do not overwrite existing entries.
 mkdir -p "$HOME/Library/LaunchAgents"
 ln -s "$PANELS_ROOT/agents/$PANELS_LABEL.plist" \
   "$HOME/Library/LaunchAgents/$PANELS_LABEL.plist"
-ln -s "$PANELS_ROOT/agents/$PANELS_LABEL.backup.plist" \
-  "$HOME/Library/LaunchAgents/$PANELS_LABEL.backup.plist"
+for suffix in backup maintenance stall-watchdog; do
+  ln -s "$PANELS_ROOT/agents/$PANELS_LABEL.$suffix.plist" \
+    "$HOME/Library/LaunchAgents/$PANELS_LABEL.$suffix.plist"
+done
 ```
 
 For repository discovery, export `PLAN_UPDATE_REPOSITORY` and `PLAN_UPDATE_TOKEN_FILE` before setup.
 Setup preserves those paths in the home environment. Keep the token file outside app.
 The owner Update action uses the existing release card.
 One independent LaunchAgent runs the copied installer through the external interpreter.
-It stops only this installation's home and backup jobs before replacement.
-It starts the backup job again after exact-SHA health passes.
+It stops only this installation's home and auxiliary jobs before replacement.
+It starts the previously loaded auxiliary jobs after exact-SHA health passes.
+A successful update also gives older two-job installations the maintenance and watchdog jobs.
+The new jobs retain the home's existing login persistence choice. Foreign login links cause a reported error, without replacement.
+An auxiliary restart failure after accepted health does not restore the previous database.
 
 Every Mac trial takes a verified snapshot, even without a schema change.
 A failed trial restores the previous app and snapshot record, then checks the previous SHA.
@@ -167,13 +174,30 @@ launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.plist"
 curl --fail --connect-timeout 1 --max-time 2 --retry-max-time 30 \
   --retry 20 --retry-connrefused --retry-delay 1 \
   "http://127.0.0.1:$PANELS_PORT/api/health?expected_sha=$(git rev-parse HEAD)"
-launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.backup.plist"
+for suffix in backup maintenance stall-watchdog; do
+  launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.$suffix.plist"
+done
 ```
 
-The jobs remain registered for this login session. For automatic starts at later logins, copy these two plists into `~/Library/LaunchAgents/`.
+The jobs remain registered for this login session. For automatic starts at later logins, link all four generated plists into `~/Library/LaunchAgents/`.
 Do not overwrite an existing plist. Keep the source and state paths unchanged.
 Logs live in `$PANELS_ROOT/logs/`. The backup job runs at 02:30 while your login session exists.
-No job promises a backup while logged out or asleep. A missed time can run after wake; check the backup log.
+Maintenance runs at 03:15 through `environment cleanup --apply`. It uses the existing cleanup limits.
+The watchdog runs through `stalls watchdog` every 30 seconds, independently of the home process.
+It reads stall evidence and retains the existing alarm deduplication rules.
+Neither job has a loop per Worker. Maintenance starts once per day. The watchdog starts at most once per 30-second interval.
+Their processor cost depends on the record and retained files.
+
+The login session owns all four jobs. Logout stops them. Sleep makes the home unreachable.
+Calendar jobs missed during sleep run after wake. Several missed calendar events coalesce into one run.
+The watchdog skips intervals during sleep. It resumes at a later interval and does not replay each missed check.
+An absent login session or powered-off Mac provides no execution promise or catch-up guarantee.
+See [Apple's timed-job guidance](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/ScheduledJobs.html)
+and [Apple's launchd manual](https://github.com/apple-oss-distributions/launchd/blob/main/man/launchd.plist.5).
+
+Check `logs/maintenance.stdout.log`, `logs/maintenance.stderr.log`, and the corresponding `stall-watchdog` logs after a failure.
+Use `launchctl print "gui/$(id -u)/$PANELS_LABEL.maintenance"` or the `.stall-watchdog` label to inspect the last exit status.
+A job failure does not broaden cleanup permissions. Preserve the logs and repair the reported cause before another manual run.
 
 For phone access, run `tailscale serve --bg "http://127.0.0.1:$PANELS_PORT"` on a clean Tailscale Serve configuration.
 Set these entries in `config.yaml` with your actual login and the HTTPS origin that Serve reports:
@@ -190,13 +214,25 @@ For an existing Serve configuration, preserve its routes and choose an unused HT
 ## Stop, restart, and backup
 
 Before stop, record the supervisor and app identities for this home.
-Stop the exact jobs with `launchctl bootout "gui/$(id -u)/$PANELS_LABEL.backup"` and `launchctl bootout "gui/$(id -u)/$PANELS_LABEL"`.
+Stop the exact jobs, with the auxiliary jobs first:
+
+```sh
+for suffix in maintenance stall-watchdog backup; do
+  launchctl bootout "gui/$(id -u)/$PANELS_LABEL.$suffix"
+done
+launchctl bootout "gui/$(id -u)/$PANELS_LABEL"
+```
 Wait until `launchctl print "gui/$(id -u)/$PANELS_LABEL"` reports that the job is absent.
 Check that the recorded supervisor and app ended and that the port has no listener.
 If the stop exceeds 30 seconds, record the output and stop. Do not bootstrap a replacement until these checks pass.
-Apply the same job-absence wait before reload of the backup label.
+Apply the same job-absence and recorded-process checks to every auxiliary label before reload.
 Start them again with the bootstrap commands above. This is also the ordinary service restart route.
 The supervisor remains in launchd custody. Its hard death also removes the app and permits a fresh start.
+
+To remove the installation, first complete those stop checks for all four labels.
+Remove only login symlinks whose targets equal this installation's generated plists.
+Do not remove foreign entries, provider folders, or data during job removal.
+Keep the installation folder until all recorded jobs and processes retire.
 
 Run a backup now with `launchctl kickstart "gui/$(id -u)/$PANELS_LABEL.backup"`.
 Check `logs/backup.stderr.log` and `logs/backup.stdout.log`, then inspect the snapshot under `data/backups/`.

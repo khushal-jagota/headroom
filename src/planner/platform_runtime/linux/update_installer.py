@@ -116,8 +116,35 @@ def external_python(path: Path, root: Path) -> Path:
     return resolved
 
 
+MAC_SCHEDULE_SUFFIXES = (".maintenance", ".stall-watchdog")
+
+
+def mac_schedule_jobs(
+    root: Path, label: str, command: list[str], environment: dict[str, str],
+    working_directory: Path,
+) -> dict[str, dict[str, Any]]:
+    """One job family for source setup, release setup, and installed upgrades."""
+    jobs = {}
+    for suffix, arguments, schedule in (
+        (".maintenance", ["environment", "cleanup", "--apply"],
+         {"StartCalendarInterval": {"Hour": 3, "Minute": 15}}),
+        (".stall-watchdog", ["stalls", "watchdog", "--db", str(root / "data/planner.db"),
+                             "--state-dir", str(root / "data/stall-watchdog")],
+         {"StartInterval": 30}),
+    ):
+        name = suffix.removeprefix(".")
+        jobs[label + suffix] = {
+            "Label": label + suffix, "ProgramArguments": command + arguments,
+            "WorkingDirectory": str(working_directory), "EnvironmentVariables": environment,
+            "LimitLoadToSessionType": "Aqua", "AbandonProcessGroup": False, **schedule,
+            "StandardOutPath": str(root / "logs" / f"{name}.stdout.log"),
+            "StandardErrorPath": str(root / "logs" / f"{name}.stderr.log"),
+        }
+    return jobs
+
+
 class MacService:
-    """Control only the setup-bound home and backup in this graphical domain."""
+    """Control only the setup-bound home and its auxiliary jobs in this graphical domain."""
 
     def __init__(self, root: Path, service: str) -> None:
         self.root = root.resolve(strict=True)
@@ -145,13 +172,15 @@ class MacService:
             if value[key] != str(expected) or expected.is_symlink():
                 raise ValueError("Mac service plist differs from this installation")
             self.plists[label + suffix] = expected
+        for suffix in MAC_SCHEDULE_SUFFIXES:
+            self.plists[label + suffix] = self.root / "agents" / f"{label}{suffix}.plist"
+        self.resume_labels: set[str] = set()
         self.python = external_python(Path(value["installer_python"]), self.root)
         self.stopped = False
-        self.backup_was_loaded = False
 
     def plist(self, label: str) -> dict[str, Any]:
         path = self.plists[label]
-        if path.stat().st_uid != os.getuid():
+        if path.is_symlink() or path.stat().st_uid != os.getuid():
             raise ValueError("Mac service plist has a foreign owner")
         value = plistlib.loads(path.read_bytes())
         expected = [str(self.root / "app/bin/panels")]
@@ -161,6 +190,15 @@ class MacService:
             "--current-app", str(self.root / "app"),
         ]
         environment = value.get("EnvironmentVariables", {})
+        if label in {self.label + suffix for suffix in MAC_SCHEDULE_SUFFIXES}:
+            home = self.plist(self.label)
+            expected_job = mac_schedule_jobs(
+                self.root, self.label, [str(self.root / "app/bin/panels")],
+                home["EnvironmentVariables"], self.root,
+            )[label]
+            if value != expected_job:
+                raise ValueError("Mac auxiliary plist does not bind the expected installation")
+            return cast(dict[str, Any], value)
         if (value.get("Label") != label or value.get("ProgramArguments") != expected
                 or value.get("WorkingDirectory") != str(self.root)
                 or environment.get("PLAN_DB_PATH") != str(self.root / "data/planner.db")
@@ -189,6 +227,12 @@ class MacService:
     def authenticate(
         self, label: str, *, required: bool, deadline: float | None = None,
     ) -> tuple[int | None, str | None]:
+        path = self.plists[label]
+        optional = {self.label + suffix for suffix in MAC_SCHEDULE_SUFFIXES}
+        if label in optional and not path.exists() and not path.is_symlink():
+            if self.job(label, deadline=deadline) is not None:
+                raise ValueError("Loaded Mac auxiliary job has no installation plist")
+            return None, None
         plist = self.plist(label)
         text = self.job(label, deadline=deadline)
         if text is None:
@@ -237,15 +281,16 @@ class MacService:
         captured: dict[int, tuple[int, int, int, int]] = {}
         loaded = []
         inventory = mac_processes(deadline)
-        for label in (self.label + ".backup", self.label):
+        for label in (*(self.label + suffix for suffix in MAC_SCHEDULE_SUFFIXES),
+                      self.label + ".backup", self.label):
             pid, text = self.authenticate(
                 label, required=(label == self.label and not self.stopped), deadline=deadline,
             )
             if text is None:
                 continue
             loaded.append(label)
-            if label.endswith(".backup"):
-                self.backup_was_loaded = True
+            if label != self.label:
+                self.resume_labels.add(label)
             if pid is not None:
                 if pid not in inventory or inventory[pid][1] != os.getuid():
                     raise ValueError("Loaded Mac job process identity is unavailable")
@@ -297,14 +342,47 @@ class MacService:
             check=True, capture_output=True, timeout=SERVICE_COMMAND_TIMEOUT_SECONDS,
         )
 
-    def resume_backup(self) -> None:
-        label = self.label + ".backup"
-        self.plist(label)
-        if self.backup_was_loaded and self.job(label) is None:
-            subprocess.run(
-                ["/bin/launchctl", "bootstrap", self.domain, str(self.plists[label])],
-                check=True, capture_output=True, timeout=SERVICE_COMMAND_TIMEOUT_SECONDS,
-            )
+    def provision_schedules(self) -> None:
+        """After accepted health, give older two-job installs the same native jobs."""
+        home = self.plist(self.label)
+        jobs = mac_schedule_jobs(self.root, self.label, [str(self.root / "app/bin/panels")],
+                                 home["EnvironmentVariables"], self.root)
+        login = Path.home() / "Library/LaunchAgents"
+        home_link = login / f"{self.label}.plist"
+        persistent = home_link.is_symlink() and home_link.resolve() == self.plists[self.label]
+        for label in jobs:
+            self.authenticate(label, required=False)
+            link = login / f"{label}.plist"
+            if persistent and (link.exists() or link.is_symlink()) and (
+                not link.is_symlink() or link.resolve() != self.plists[label]
+            ):
+                raise ValueError("Mac auxiliary login link belongs to another installation")
+        for label, job in jobs.items():
+            path = self.plists[label]
+            if not path.exists():
+                with path.open("xb") as stream:
+                    stream.write(plistlib.dumps(job))
+                path.chmod(0o600)
+                self.resume_labels.add(label)
+            if persistent:
+                link = login / f"{label}.plist"
+                if not link.is_symlink():
+                    link.symlink_to(path)
+
+    def resume_auxiliaries(self) -> None:
+        failures = []
+        for label in sorted(self.resume_labels):
+            try:
+                _, loaded = self.authenticate(label, required=False)
+                if loaded is None:
+                    subprocess.run(
+                        ["/bin/launchctl", "bootstrap", self.domain, str(self.plists[label])],
+                        check=True, capture_output=True, timeout=SERVICE_COMMAND_TIMEOUT_SECONDS,
+                    )
+            except Exception as error:
+                failures.append(f"{label}: {error}")
+        if failures:
+            raise RuntimeError("; ".join(failures))
 
 
 class Installation:
@@ -490,13 +568,22 @@ def install(arguments: argparse.Namespace) -> int:
     installation.record("healthy")
     completion_detail = None
     if installation.mac is not None:
+        auxiliary_errors = []
         try:
-            installation.mac.resume_backup()
+            installation.mac.provision_schedules()
         except Exception as error:
+            auxiliary_errors.append(f"schedule setup: {error}")
+        # A new schedule or foreign login link cannot keep previously loaded jobs stopped.
+        try:
+            installation.mac.resume_auxiliaries()
+        except Exception as error:
+            auxiliary_errors.append(str(error))
+        if auxiliary_errors:
             completion_detail = (
-                f"The release passed health, but its backup job did not restart: {error}"
+                "The release passed health, but its auxiliary jobs did not restart: "
+                + "; ".join(auxiliary_errors)
             )
-            installation.record("backup_restart_failed", detail=completion_detail)
+            installation.record("auxiliary_restart_failed", detail=completion_detail)
     installation.record("done", state="done", detail=completion_detail)
     for folder in root.glob(f"{PREVIOUS_APP_PREFIX}*"):
         if folder != previous:
@@ -532,9 +619,9 @@ def roll_back(
             installation.mac.validate_running_home()
             if not healthy(arguments.health_url, from_sha, arguments.health_timeout_seconds):
                 raise InstallFailed("the unchanged home did not pass health after its stop failed")
-            installation.mac.resume_backup()
+            installation.mac.resume_auxiliaries()
             installation.record("failed", state="failed", detail=(
-                f"{reason}. The previous app kept running. Its backup job was restored."
+                f"{reason}. The previous app kept running. Its auxiliary jobs were restored."
             ))
             return 1
         if previous_moved or new_app_moved:
@@ -573,10 +660,10 @@ def roll_back(
     backup_detail = ""
     if installation.mac is not None:
         try:
-            installation.mac.resume_backup()
+            installation.mac.resume_auxiliaries()
         except Exception as error:
-            backup_detail = f" Its backup job did not restart: {error}."
-            installation.record("backup_restart_failed", detail=backup_detail)
+            backup_detail = f" Its auxiliary jobs did not restart: {error}."
+            installation.record("auxiliary_restart_failed", detail=backup_detail)
     went_back = "the previous version and its data" if restore_data else "the previous version"
     installation.record(
         "failed", state="failed",
