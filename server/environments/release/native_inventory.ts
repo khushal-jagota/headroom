@@ -1,7 +1,9 @@
 /** Build the selected Node payload's native closure, then seal its final bytes. */
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, realpath, stat, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, relative } from 'node:path';
+import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises';
+import { join, relative } from 'node:path';
+import { inside } from '../ticket_scratch/logic.ts';
+import { is_directory, is_file } from '../backup/evidence.ts';
 import { isDeepStrictEqual } from 'node:util';
 import type {
   CopiedNativeComponent,
@@ -51,24 +53,6 @@ import {
 
 type Pending = readonly [string, ElfObject, readonly ElfObject[]];
 const external = new Set<string>(GLIBC_LIBRARIES);
-function inside(root: string, path: string): boolean {
-  const suffix = relative(root, path);
-  return suffix !== '..' && !suffix.startsWith('../') && !isAbsolute(suffix);
-}
-async function exists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      'code' in error &&
-      (error.code === 'ENOENT' || error.code === 'ENOTDIR')
-    )
-      return false;
-    throw error;
-  }
-}
 export async function complete_node_runtime(
   app_root: string,
   execution: ReleaseExecution,
@@ -91,7 +75,7 @@ export async function complete_node_runtime(
   const library_root = join(app_root, PRIVATE_LIBRARY_DIRECTORY);
   // Candidate links must not redirect the builder's copies outside its app tree.
   const { resolved_path } = await import('../paths.ts');
-  if (!inside(app_root, await resolved_path(library_root)))
+  if (!inside(await resolved_path(library_root), app_root))
     throw new RuntimeContractError('native library directory escapes archive');
   assert_release_execution(execution);
   await mkdir(library_root, { recursive: true });
@@ -164,9 +148,9 @@ export async function complete_node_runtime(
         const provider_source = await resolve_provider(needed, object, ancestors, cache);
         const provider_object = await source_object(provider_source);
         let provider = provider_source;
-        if (!inside(app_root, provider)) {
+        if (!inside(provider, app_root)) {
           const destination = join(library_root, needed);
-          if (await exists(destination)) {
+          if ((await is_file(destination)) || (await is_directory(destination))) {
             const original = origins.get(relative(app_root, destination)) ?? destination;
             if ((await hash_native_file(original)) !== (await hash_native_file(provider)))
               throw new RuntimeContractError(`conflicting bundled library: ${needed}`);
@@ -249,7 +233,7 @@ export async function complete_node_runtime(
       for (const needed of dynamic.needed) {
         if (external.has(needed)) continue;
         const provider = await resolve_provider(needed, { path, dynamic }, [], new Map());
-        if (!inside(app_root, provider))
+        if (!inside(provider, app_root))
           throw new RuntimeContractError(`native dependency escapes archive: ${path}: ${needed}`);
         if (provider !== (await realpath(join(app_root, draft.providers[needed]))))
           throw new RuntimeContractError(`final native provider changed: ${path}: ${needed}`);

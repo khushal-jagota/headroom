@@ -23,18 +23,14 @@ import { extract_git_export, remove_owned_tree } from './archive.ts';
 import { read_migration_graph, migration_frontier } from './migrations.ts';
 import { resolved_path, expand_path } from '../paths.ts';
 import { stringify_python_json } from '../../core/http/numeric_json.ts';
+import { missing } from '../backup/evidence.ts';
 
 async function exists(path: string): Promise<boolean> {
   try {
     await stat(path);
     return true;
   } catch (error) {
-    if (
-      error instanceof Error &&
-      'code' in error &&
-      ['ENOENT', 'ENOTDIR'].includes(String(error.code))
-    )
-      return false;
+    if (missing(error)) return false;
     throw error;
   }
 }

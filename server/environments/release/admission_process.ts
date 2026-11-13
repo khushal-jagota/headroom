@@ -5,6 +5,8 @@ import type { FileHandle } from 'node:fs/promises';
 import type { ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
+import { stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
+import { observe_shutdown } from '../../conversation/shutdown.ts';
 import { python_os_error_message } from '../../core/os_errors.ts';
 import { AppValidationError } from './contracts.ts';
 import {
@@ -12,6 +14,17 @@ import {
   RUNTIME_PROBE_REPORT_CHARACTERS,
   RUNTIME_PROBE_DIAGNOSTIC_BYTES,
 } from './process_configuration.ts';
+
+/** The bounded observer failed. This promise still owns actual close and capture cleanup. */
+export class RuntimeProbeUnsettled extends AppValidationError {
+  readonly settled: Promise<void>;
+  readonly cause: unknown;
+  constructor(settled: Promise<void>, cause: unknown) {
+    super('runtime probe force failed; actual child cleanup is still pending');
+    this.settled = settled;
+    this.cause = cause;
+  }
+}
 
 export function probe_environment(state: string): NodeJS.ProcessEnv {
   return {
@@ -88,6 +101,17 @@ async function run_owned(
   const output = await open(path, 'wx+', 0o600);
   let errors: FileHandle | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let actually_closed = false,
+    deferred_cleanup: Promise<void> | undefined;
+  const cleanup = async (): Promise<void> => {
+    try {
+      if (errors !== undefined && errors !== output) await errors.close();
+    } finally {
+      await output.close();
+      await unlink(path);
+      if (errors !== undefined && errors !== output) await unlink(error_path);
+    }
+  };
   try {
     errors = json_output ? await open(error_path, 'wx+', 0o600) : output;
     const now = performance.now() / 1000,
@@ -101,17 +125,20 @@ async function run_owned(
     );
     let exited = false,
       failure: unknown;
+    let force_failed!: () => void;
+    const force_failure = new Promise<null>((resolve) => {
+      force_failed = () => resolve(null);
+    });
     let child: ChildProcess;
     const fail = (cause: unknown) => {
       failure ??= cause;
       if (exited || child.pid === undefined || child.exitCode !== null || child.signalCode !== null)
         return;
       try {
-        if (process.platform === 'win32') child.kill('SIGKILL');
-        else process.kill(-child.pid, 'SIGKILL');
+        stop_one_shot_child(child);
       } catch (error) {
-        if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH'))
-          failure = new AggregateError([failure, error], 'runtime probe force failed');
+        failure = new AggregateError([failure, error], 'runtime probe force failed');
+        force_failed();
       }
     };
     // Owner reserves actual close before spawn and publishes this exact handle before any await.
@@ -129,13 +156,35 @@ async function run_owned(
     });
     child.once('close', (code, signal) => {
       exited = true;
+      actually_closed = true;
       close({ code, signal });
     });
     timer = setTimeout(
       () => fail(new AppValidationError('runtime probe failed: command timed out')),
       Math.max(0, until - performance.now() / 1000) * 1000,
     );
-    const result = await closed;
+    let result = await Promise.race([closed, force_failure]);
+    if (result === null) {
+      try {
+        await observe_shutdown(
+          closed,
+          { deadline },
+          'Runtime probe did not close before its original admission deadline',
+        );
+      } catch (observation) {
+        if (!actually_closed) {
+          deferred_cleanup = closed.then(cleanup);
+          // The caller receives this actual continuation even after its bounded observer fails.
+          void deferred_cleanup.catch(() => {});
+          throw new RuntimeProbeUnsettled(
+            deferred_cleanup,
+            new AggregateError([failure, observation], 'runtime probe force and close failed'),
+          );
+        }
+        throw failure;
+      }
+      result = await closed;
+    }
     if (performance.now() / 1000 >= until)
       fail(new AppValidationError('runtime probe failed: command timed out'));
     clearTimeout(timer);
@@ -151,13 +200,7 @@ async function run_owned(
     }
   } finally {
     clearTimeout(timer);
-    try {
-      if (errors !== undefined && errors !== output) await errors.close();
-    } finally {
-      await output.close();
-      await unlink(path);
-      if (errors !== undefined && errors !== output) await unlink(error_path);
-    }
+    if (deferred_cleanup === undefined) await cleanup();
   }
 }
 export async function run_runtime_probe(

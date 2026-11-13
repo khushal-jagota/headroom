@@ -1,5 +1,15 @@
 /** Export-only identity/archive proof. Inputs are the driver's private files. */
-import { lstat, readlink, stat, readdir, readFile, mkdir, copyFile } from 'node:fs/promises';
+import {
+  lstat,
+  readlink,
+  stat,
+  readdir,
+  readFile,
+  mkdir,
+  copyFile,
+  cp,
+  writeFile,
+} from 'node:fs/promises';
 import {
   fstatSync,
   lstatSync,
@@ -10,7 +20,7 @@ import {
   writeFileSync,
   existsSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { SpawnOptions } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
@@ -44,6 +54,7 @@ import { require_host_node, verify_runtime_host_facts } from '../logic/host.ts';
 import type { RuntimeHostFacts } from '../logic/host.ts';
 import { validate_node_probe_report } from '../admission.ts';
 import { run_runtime_probe } from '../admission_process.ts';
+import { NATIVE_NODE_PROBE } from '../admission_probe.ts';
 import { build_exported_app } from '../build.ts';
 import { build_app_launch_env } from '../entrypoints.ts';
 import { run_release_command } from '../process.ts';
@@ -266,6 +277,130 @@ export async function builder_parity(
       result.milliseconds = performance.now() - began;
     }
   }
+}
+
+/** One real addon loads an allowed glibc basename from a forbidden private directory. */
+export async function hostile_native_parity(root: string): Promise<unknown> {
+  if (
+    process.platform !== 'linux' ||
+    process.arch !== 'x64' ||
+    !process.versions.node.startsWith('22.')
+  )
+    return { executed: false, reason: 'Native candidate admission requires Linux x64 Node 22' };
+  const started = performance.now(),
+    source = fileURLToPath(new URL('../../../', import.meta.url));
+  const candidate = join(root, 'hostile-native'),
+    server = join(candidate, 'server');
+  await cp(source, server, {
+    recursive: true,
+    filter: (path) =>
+      !relative(source, path)
+        .split(sep)
+        .some(
+          (part) =>
+            ['node_modules', 'tests', 'testing'].includes(part) || part.endsWith('.test.ts'),
+        ),
+  });
+  const packages = [
+    '@anthropic-ai/claude-agent-sdk',
+    'better-sqlite3',
+    'koffi',
+    '@koromix/koffi-linux-x64',
+    'yaml',
+    'https-proxy-agent',
+    'agent-base',
+    'proxy-agent-negotiate',
+    'debug',
+    'ms',
+    'ajv',
+    'ajv-formats',
+    'fast-uri',
+    'fast-deep-equal',
+    'json-schema-traverse',
+    'require-from-string',
+    'zod',
+  ];
+  for (const name of packages) {
+    const destination = join(server, 'node_modules', name);
+    await mkdir(dirname(destination), { recursive: true });
+    await cp(join(source, 'node_modules', name), destination, { recursive: true });
+  }
+  const outside = join(root, 'outside-native', 'libm.so.6');
+  await mkdir(dirname(outside));
+  await copyFile('/lib/x86_64-linux-gnu/libm.so.6', outside);
+  const loader = join(server, 'node_modules/outside-loader');
+  await mkdir(loader);
+  await writeFile(
+    join(loader, 'package.json'),
+    JSON.stringify({ type: 'module', exports: './index.mjs' }),
+  );
+  await writeFile(
+    join(loader, 'index.mjs'),
+    `import koffi from 'koffi'; export const held = koffi.load(${JSON.stringify(outside)});\n` +
+      `if (held.func('double cos(double)')(0) !== 1) throw Error('Native fixture did not execute');\n`,
+  );
+  const dependencies = Object.fromEntries(
+    [
+      '@anthropic-ai/claude-agent-sdk',
+      'better-sqlite3',
+      'koffi',
+      'yaml',
+      'https-proxy-agent',
+      'outside-loader',
+    ].map((name) => [name, 'private-fixture']),
+  );
+  await writeFile(join(server, 'package.json'), JSON.stringify({ type: 'module', dependencies }));
+  const state = join(root, 'native-probe-state');
+  for (const name of [
+    '',
+    'config',
+    'cache',
+    'codex',
+    'claude',
+    'hermes',
+    'data',
+    'logs',
+    'backups',
+    'app',
+    'workspace',
+    'scratch',
+  ])
+    await mkdir(join(state, name), { recursive: true });
+  await writeFile(join(state, 'config.yaml'), '{}\n');
+  const owner = new ChildProcesses();
+  let message: string | undefined;
+  try {
+    await run_runtime_probe(
+      [
+        process.execPath,
+        '--experimental-import-meta-resolve',
+        '--input-type=module',
+        '-e',
+        NATIVE_NODE_PROBE,
+        candidate,
+      ],
+      state,
+      performance.now() / 1000 + 15,
+      owner,
+    );
+  } catch (error) {
+    if (!(error instanceof AppValidationError)) throw error;
+    message = error.message;
+  } finally {
+    owner.force_kill(performance.now() / 1000 + 5);
+    await owner.settled();
+  }
+  if (!message?.includes('new library loaded outside candidate: ' + outside))
+    throw new Error('Real addon outside-library refusal did not occur: ' + message);
+  return {
+    executed: true,
+    refused: true,
+    outside_library: outside,
+    copied_packages: packages,
+    actual_addon: 'koffi',
+    native_operation: 'cos(0) = 1',
+    seconds: (performance.now() - started) / 1000,
+  };
 }
 
 /** Hosted-only caller pins both recorded handles before it releases this timeout callback. */

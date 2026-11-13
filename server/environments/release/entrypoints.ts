@@ -1,7 +1,9 @@
 /** Relocated entry wrappers and the installed application's explicit environment boundary. */
-import { access, chmod, mkdir, realpath, stat, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, realpath, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { isAbsolute, join } from 'node:path';
+import { inside } from '../ticket_scratch/logic.ts';
+import { is_file } from '../backup/evidence.ts';
 import { shell_quote } from '../../conversation/worker_unit/logic.ts';
 import { AppValidationError } from './contracts.ts';
 import type {
@@ -56,17 +58,13 @@ const EXTERNAL_RUNTIME_ENVIRONMENT_KEYS = new Set([
   'PLAN_SERVER_LIFECYCLE_LEASE_PATH',
   'PLAN_SERVER_LISTENER_FD',
 ]);
-function inside(root: string, path: string): boolean {
-  const suffix = relative(root, path);
-  return suffix !== '..' && !suffix.startsWith('..' + sep) && !isAbsolute(suffix);
-}
 export async function validate_public_cli_entrypoint(root: string, input: string): Promise<void> {
   if (!input || isAbsolute(input) || input.split('/').includes('..'))
     throw new AppValidationError(
       'public CLI entrypoint must be an explicit app-relative executable',
     );
   const public_cli = await realpath(join(root, input));
-  if (!inside(root, public_cli) || !(await stat(public_cli)).isFile())
+  if (!inside(public_cli, root) || !(await is_file(public_cli)))
     throw new AppValidationError('public CLI entrypoint must remain inside the application');
   try {
     await access(public_cli, constants.X_OK);
