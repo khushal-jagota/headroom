@@ -246,12 +246,15 @@ export async function metrics_runtime_probe(input: string): Promise<string> {
         if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
       },
     );
-    emit({
+    const pending = {
       type: 'stopped_pending',
       owner: runtime.owns_collection,
       stop_ms: performance.now() - began,
-    });
-    if (spec.mode === 'short_hung') return encode({ retained_worker: true });
+    };
+    // One launcher write deterministically exercises two coalesced state records.
+    if (spec.mode === 'short_hung')
+      return encode(pending) + '\n' + encode({ retained_worker: true });
+    emit(pending);
     while (!existsSync(spec.root + '/release')) await delay(5);
     writeFileSync(spec.root + '/gate', 'release');
     await runtime.settled();
