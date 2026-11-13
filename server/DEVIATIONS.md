@@ -515,6 +515,34 @@ Python's serializer can write a dataclass whose state did not pass that validati
 The TypeScript sender must produce a message that the Python peer can read.
 Root-specific encoder inputs use the generated contracts. Nullable fields without defaults require an explicit null.
 
+## Release archive sparse members — accepted
+
+The Manager accepted explicit refusal of old GNU type `S` and every `GNU.sparse.*` PAX record.
+Python supports these sparse formats. Neither actual release producer emits them.
+The TypeScript reader returns `AppValidationError` before the destination exists.
+The existing release comparison records this accepted difference instead of Python equality.
+
+## Release archive metadata, names and writer timestamps — accepted
+
+The Manager accepted these five differences on November 13, 2026:
+
+- Unknown inert PAX keys are refused under the closed metadata-key policy.
+- An empty effective PAX file path is a typed refusal. This Python fault is not reproduced.
+- Bodies on directory or link members are refused under the closed member policy.
+- Release names must be valid UTF-8. A non-UTF-8 name is a typed refusal.
+- The TS release writer can lose the fractional part of an mtime because node-tar writes whole seconds in an ordinary header. A fractional time that it writes in a PAX header stays intact. The reader keeps Python's nanoseconds exactly for either archive. This applies to release application archives only.
+
+The four reader refusals use `AppValidationError` before output creation. Python accepts three forms and fails after destination creation for an empty path.
+The existing release comparison pins these intentional differences and retains Python's observations without claiming equality.
+
+## Release archive members behind links — accepted
+
+The Manager accepted refusal of any member whose parent is another archive link member.
+This includes symbolic links and hard links, even when the link appears later.
+Python can extract through safe internal links. Neither actual release producer requires that behavior.
+TypeScript validates the complete member graph before it creates the output directory.
+The existing release comparison records this accepted difference instead of Python equality.
+
 ## VPS mailbox shutdown admission
 
 The Manager's VPS executor Brief requires that shutdown seal new work immediately.
