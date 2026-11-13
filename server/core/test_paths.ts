@@ -22,7 +22,12 @@ export function register_test_root(root: string): () => void {
 
 /** Return the exact permitted path to open, without following outside symlinks. */
 export function assert_test_database_path(path: string): string {
-  if (process.env.VITEST !== 'true' && !testModeFromEnvironment()) return path;
+  if (
+    process.env.VITEST !== 'true' &&
+    process.env.PYTEST_CURRENT_TEST === undefined &&
+    !testModeFromEnvironment()
+  )
+    return path;
   return assert_temporary_path(path);
 }
 

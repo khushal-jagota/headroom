@@ -17,6 +17,8 @@ export const NODE_RUNTIME_FILES = [
   'src/planner/conversation/backends/hermes_model_catalog.py',
   'server/environments/release/launcher_main.ts',
   'server/environments/release/archive_unpack_main.ts',
+  'server/environments/updates/interruption_capture_main.ts',
+  'server/environments/updates/restore_main.ts',
   'server/package.json',
   'server/package-lock.json',
   'server/node_modules/fastify/package.json',

@@ -17,13 +17,13 @@ import { dirname, join } from 'node:path';
 import { resolve_path_sync } from '../../core/path_resolution.ts';
 import { expand_path } from '../../environments/paths.ts';
 import { randomUUID } from 'node:crypto';
-import { CAPTURE_VERSION } from './contracts.ts';
+import { CAPTURE_VERSION, CaptureValidationError } from './contracts.ts';
 import type { CaptureManifest, CapturedTurn } from './contracts.ts';
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const MAX_BYTES = 16 * 1024 * 1024;
 function identity(value: unknown): string {
   if (typeof value !== 'string' || !SAFE_ID.test(value) || value === '.' || value === '..') {
-    throw new Error('invalid capture identity');
+    throw new CaptureValidationError('invalid capture identity');
   }
   return value;
 }
@@ -32,13 +32,13 @@ function string(value: unknown, optional?: false): string;
 function string(value: unknown, optional = false): string | null {
   if ((value === null || value === undefined) && optional) return null;
   if (typeof value !== 'string' || !value || [...value].length > 8192) {
-    throw new Error('invalid capture string');
+    throw new CaptureValidationError('invalid capture string');
   }
   return value;
 }
 function integer(value: unknown, minimum = 0): number {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < minimum) {
-    throw new Error('invalid capture integer');
+    throw new CaptureValidationError('invalid capture integer');
   }
   return value;
 }
@@ -49,17 +49,19 @@ function object(value: unknown): Record<string, unknown> | null {
 }
 export function manifest_from_dict(value: unknown): CaptureManifest {
   const raw = object(value);
-  if (!raw || raw.version !== CAPTURE_VERSION) throw new Error('unsupported capture manifest');
+  if (!raw || raw.version !== CAPTURE_VERSION)
+    throw new CaptureValidationError('unsupported capture manifest');
   const deployment_id = identity(raw.deployment_id);
   const capture_id = identity(raw.capture_id);
   const state = raw.state;
-  if (state !== 'captured' && state !== 'unavailable') throw new Error('invalid capture state');
+  if (state !== 'captured' && state !== 'unavailable')
+    throw new CaptureValidationError('invalid capture state');
   if (!Array.isArray(raw.turns) || (state === 'unavailable' && raw.turns.length > 0)) {
-    throw new Error('invalid captured turns');
+    throw new CaptureValidationError('invalid captured turns');
   }
   const turns = raw.turns.map((value): CapturedTurn => {
     const turn = object(value);
-    if (!turn) throw new Error('invalid captured turn');
+    if (!turn) throw new CaptureValidationError('invalid captured turn');
     const owner_kind = turn.owner_kind;
     if (
       owner_kind !== 'ticket' &&
@@ -67,19 +69,20 @@ export function manifest_from_dict(value: unknown): CaptureManifest {
       owner_kind !== 'chief' &&
       owner_kind !== 'unknown'
     ) {
-      throw new Error('invalid captured owner');
+      throw new CaptureValidationError('invalid captured owner');
     }
     const status = turn.original_status;
-    if (status !== 'running' && status !== 'intent') throw new Error('invalid unresolved status');
+    if (status !== 'running' && status !== 'intent')
+      throw new CaptureValidationError('invalid unresolved status');
     const conversation_id = string(turn.conversation_id);
     const display_name = string(turn.display_name);
     const occurrence_id = string(turn.occurrence_id, true);
     const runtime_epoch = string(turn.runtime_epoch, true);
     if (occurrence_id === null && runtime_epoch === null)
-      throw new Error('captured turn lacks exact identity');
+      throw new CaptureValidationError('captured turn lacks exact identity');
     const claim = turn.claim ?? null;
     if (claim !== null && claim !== 'none' && claim !== 'out' && claim !== 'errored') {
-      throw new Error('invalid captured claim');
+      throw new CaptureValidationError('invalid captured claim');
     }
     return {
       conversation_id,
@@ -110,11 +113,12 @@ export function manifest_root(db_path: string): string {
 export function write_manifest(db_path: string, manifest: CaptureManifest): string {
   const payload = Buffer.from(JSON.stringify(manifest));
   manifest_from_dict(manifest);
-  if (payload.length > MAX_BYTES) throw new Error('capture manifest exceeds size limit');
+  if (payload.length > MAX_BYTES)
+    throw new CaptureValidationError('capture manifest exceeds size limit');
   const directory = join(manifest_root(db_path), identity(manifest.deployment_id));
   mkdirSync(directory, { recursive: true });
   if (lstatSync(directory).isSymbolicLink() || lstatSync(dirname(directory)).isSymbolicLink()) {
-    throw new Error('capture directory must not be a symlink');
+    throw new CaptureValidationError('capture directory must not be a symlink');
   }
   const target = join(directory, identity(manifest.capture_id) + '.json');
   const temporary = join(directory, '.capture-' + randomUUID());
