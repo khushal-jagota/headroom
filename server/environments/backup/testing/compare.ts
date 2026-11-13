@@ -24,6 +24,7 @@ import type { Ticket } from '../../../tickets/contracts.ts';
 import { ticket_json } from '../../../tickets/views.ts';
 import { backup_with_interleaved_commits } from '../../../core/database/testing/backup_interleaving.ts';
 import { environment_restore } from '../../cli.ts';
+import { create_production_operator_dependencies } from '../../operator_dependencies.ts';
 
 interface Request {
   action:
@@ -57,11 +58,14 @@ export async function backup_probe(request: Request): Promise<unknown> {
     if (request.action === 'concurrent')
       return await backup_with_interleaved_commits(request.source!, request.destination!);
     if (request.action === 'restore-command')
-      return await environment_restore({
-        snapshot: request.snapshot!,
-        destination_db: request.destination!,
-        live_stopped: true,
-      });
+      return await environment_restore(
+        {
+          snapshot: request.snapshot!,
+          destination_db: request.destination!,
+          live_stopped: true,
+        },
+        await create_production_operator_dependencies('restore', undefined, { ...process.env }),
+      );
     if (request.action === 'backup')
       return {
         snapshot: await create_database_backup(
