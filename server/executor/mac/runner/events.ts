@@ -18,7 +18,7 @@ import type {
 import { as_object, encode_backend_event, ValueError } from '../../protocol.ts';
 import type { ChildReference, TurnToken } from '../../wire.generated.ts';
 import type { MacEventsDependencies, MacRunnerEventsContract } from './lifecycle_contracts.ts';
-import { bounded_detail, same_reference, same_turn } from './logic/outcomes.ts';
+import { bounded_detail, same_reference, same_wire } from './logic/outcomes.ts';
 
 function bounded_event(event: BackendEventValue): BackendEventValue {
   if (
@@ -92,7 +92,7 @@ export class MacRunnerEvents implements MacRunnerEventsContract {
       if (
         child.active_turn === null
           ? turn === null
-          : turn !== null && same_turn(child.active_turn, turn)
+          : turn !== null && same_wire(child.active_turn, turn, 'TurnToken')
       ) {
         child.active_turn = null;
         state.clear(reference);
