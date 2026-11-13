@@ -23,41 +23,13 @@ test('workspace renders each top-level artifact opens value and retains the JSON
       ],
     },
   ];
-  const flags = {
-    awaiting_reply: false,
-    awaiting_answer: false,
-    awaiting_approval: false,
-    awaiting_agent_approval: false,
-    assigned: false,
-    agent_state: 'idle',
-  };
   const workspace = {
-    id: 'si_artifacts',
     title: 'Artifact Manager',
-    settled: false,
     goal: 'Review the artifact tree.',
     recap: 'Files are ready.',
     page_revision: 0,
-    page_character_count: 0,
-    project_id: 'project_other',
-    project: 'Other',
-    manager: {
-      agent_key: 'manager_si_artifacts',
-      launch_configuration: {
-        employee_backend: 'codex',
-        employee_launch_model: 'gpt-6.1-sol',
-        employee_launch_reasoning_effort: 'medium',
-      },
-      conversation_id: null,
-    },
-    created_at: 1000,
-    updated_at: 1000,
     goals: [],
     tickets: [],
-    conversation_history: [],
-    conversation_signal: { working: false, message_for_owner: false },
-    ...flags,
-    ticket_rollup: { ...flags },
     artifacts,
   };
   const request = vi.spyOn(http, 'send').mockResolvedValue(workspace);

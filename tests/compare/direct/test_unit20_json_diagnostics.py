@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import time
 from pathlib import Path
 
 import pytest
+from tests.compare.direct import unit20_cli as driver
 from tests.support.synthetic_homes import create_synthetic_homes
 
 
@@ -71,14 +71,13 @@ def test_unit20_json_diagnostics_match_fresh_python312(
     )
     environment = {"PATH": os.environ["PATH"], **create_synthetic_homes(tmp_path)}
     started = time.perf_counter()
-    result = subprocess.run(
+    result = driver.raw_process(
         ["node", "--input-type=module", "-e", script],
-        input=json.dumps(cases),
-        capture_output=True,
-        text=True,
-        env=environment,
-        check=True,
+        environment,
+        json.dumps(cases).encode(),
         timeout=10,
+        check=True,
+        cwd=None,
     )
     actual = json.loads(result.stdout)
     evidence = {
@@ -88,11 +87,7 @@ def test_unit20_json_diagnostics_match_fresh_python312(
         "actual": actual,
         "seconds": time.perf_counter() - started,
     }
-    destination = request.config.getoption("--compare-report-dir")
-    if destination:
-        output = Path(destination)
-        output.mkdir(parents=True, exist_ok=True)
-        (output / "unit20-json-diagnostics.json").write_text(json.dumps(evidence, indent=2) + "\n")
+    driver.write_report(request, "unit20-json-diagnostics", evidence)
     assert actual == expected, evidence
 
 
@@ -144,14 +139,13 @@ def test_unit20_nonfinite_file_input_refuses_before_httpx_transport(
         "process.stdout.write(JSON.stringify(results));"
     )
     (tmp_path / "homes").mkdir()
-    result = subprocess.run(
+    result = driver.raw_process(
         ["node", "--input-type=module", "-e", script],
-        input=json.dumps(paths),
-        capture_output=True,
-        text=True,
-        env={"PATH": os.environ["PATH"], **create_synthetic_homes(tmp_path / "homes")},
-        check=True,
+        {"PATH": os.environ["PATH"], **create_synthetic_homes(tmp_path / "homes")},
+        json.dumps(paths).encode(),
         timeout=10,
+        check=True,
+        cwd=None,
     )
     answers = json.loads(result.stdout)
     for answer in answers[: len(refused)]:

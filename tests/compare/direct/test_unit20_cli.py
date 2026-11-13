@@ -27,14 +27,6 @@ from tests.support.server_fixtures import _start_server, _stop_server
 LIST = driver.ROOT / "tests/compare/lists/unit-20-commands.work.json"
 
 
-def _report(request: pytest.FixtureRequest, name: str, evidence: Any) -> None:
-    destination = request.config.getoption("--compare-report-dir")
-    if destination:
-        root = Path(destination)
-        root.mkdir(parents=True, exist_ok=True)
-        (root / (name + ".json")).write_text(json.dumps(evidence, indent=2) + "\n")
-
-
 def _step(argv: list[str], code: int = 0) -> dict[str, Any]:
     return {
         "kind": "cli",
@@ -103,36 +95,9 @@ def test_unit20_parser_smoke_and_startup(tmp_path: Path, request: pytest.Fixture
     """One existing host proves real subprocess output and startup without browser cost."""
     started = time.perf_counter()
     handle = _start_server(tmp_path / "host", server_module="tests.compare.host")
-    evidence: dict[str, Any] = {"parser": [], "timings": {}}
+    evidence: dict[str, Any] = {"timings": {}, "reference_crosschecks": []}
     try:
         host = driver.CliHost(handle, tmp_path)
-        for argv, code in (
-            (["--help"], 0),
-            (["--", "project", "--help"], 0),
-            (["manager", "set", "--help"], 0),
-            (["stalls", "--help=no"], 2),
-            (["project", "list", "--help=no"], 2),
-            (["project", "list", "--limit"], 2),
-            (["project", "list", "--json=no"], 2),
-            (["project", "create"], 2),
-            (["goal", "schema"], 2),
-            (["project", "list", "--limit", "bad"], 2),
-            (["project", "list", "--limit", "a'b"], 2),
-            (["project", "list", "-xy"], 2),
-        ):
-            answers = [
-                driver.run_cli(
-                    host,
-                    _step(argv, code),
-                    bool(side),
-                    tmp_path / f"input-{side}",
-                    "text",
-                )
-                for side in (0, 1)
-            ]
-            evidence["parser"].append({"argv": argv, "answers": answers})
-            assert driver.comparable(answers[0]) == driver.comparable(answers[1]), evidence
-        physical_python: dict[str, dict[str, Any]] = {}
         for argv in (["--help"], ["project", "list", "--limit", "1"]):
             label = " ".join(argv)
             evidence["timings"][label] = {}
@@ -152,28 +117,20 @@ def test_unit20_parser_smoke_and_startup(tmp_path: Path, request: pytest.Fixture
                     "median_seconds": median(answer["seconds"] for answer in answers),
                 }
                 if side == 0:
-                    physical_python[label] = answers[0]
-        evidence["reference_crosschecks"] = []
-        for argv in (["--help"], ["project", "list", "--limit", "1"]):
-            library = driver.run_cli(
-                host,
-                _step(argv),
-                False,
-                tmp_path / "library-input",
-                "text",
-                python_in_process=True,
-            )
-            physical = physical_python[" ".join(argv)]
-            evidence["reference_crosschecks"].append(
-                {
-                    "argv": argv,
-                    "subprocess": physical,
-                    "library": library,
-                }
-            )
-            assert driver.comparable(library) == driver.comparable(physical)
+                    library = driver.run_cli(
+                        host,
+                        _step(argv),
+                        False,
+                        tmp_path / "library-input",
+                        "text",
+                        python_in_process=True,
+                    )
+                    evidence["reference_crosschecks"].append(
+                        {"argv": argv, "subprocess": answers[0], "library": library}
+                    )
+                    assert driver.comparable(library) == driver.comparable(answers[0])
         evidence["seconds"] = time.perf_counter() - started
-        _report(request, "unit20-startup", evidence)
+        driver.write_report(request, "unit20-startup", evidence)
     finally:
         _stop_server(handle)
 
@@ -284,7 +241,9 @@ def compare_cli_sequence(
         "seed_capture_names": sorted(captures),
         "comparisons": {},
     }
-    for mode in ("json", "text"):
+    # The ordinary list already compares JSON CLI text and HTTP bytes on both backends.
+    modes = ("text",) if backend == "tests.compare.ts_launcher" else ("json", "text")
+    for mode in modes:
         answers: list[dict[str, Any]] = []
         for candidate in (False, True):
             # Never replace a database beneath a running server. The exact owned
@@ -319,7 +278,7 @@ def compare_cli_sequence(
                 answers.append(result)
                 proof["comparisons"][mode] = answers
                 proof["seconds"] = time.perf_counter() - started
-                _report(request, report_name, proof)
+                driver.write_report(request, report_name, proof)
         assert answers[0]["normalized"] == answers[1]["normalized"], proof
 
 
@@ -351,6 +310,13 @@ def test_unit20_every_help_and_group_usage(tmp_path: Path, request: pytest.Fixtu
     cases = [(path + ["--help"], 0) for path, _ in declarations]
     cases.extend(
         (
+            (["--", "project", "--help"], 0),
+            (["project", "list", "--help=no"], 2),
+            (["project", "list", "--limit"], 2),
+            (["project", "list", "--json=no"], 2),
+            (["project", "list", "--limit", "bad"], 2),
+            (["project", "list", "--limit", "a'b"], 2),
+            (["project", "list", "-xy"], 2),
             (["project", "list", "--limit", "bad", "--bogus"], 2),
             (["project", "list", "--limit", "bad", "--help"], 0),
             (["ticket", "show", "--help", "--bogus"], 2),
@@ -409,7 +375,7 @@ def test_unit20_every_help_and_group_usage(tmp_path: Path, request: pytest.Fixtu
             evidence.append({"argv": argv, "answers": answers})
             if driver.comparable(left) != driver.comparable(right):
                 differences.append(evidence[-1])
-        _report(
+        driver.write_report(
             request,
             "unit20-help-and-usage",
             {
@@ -442,22 +408,17 @@ def test_unit20_declarations_match_fresh_python(
         name: value for name, value in environment.items() if not name.startswith("PLAN_")
     }
     environment["PYTHONPATH"] = str(driver.ROOT / "src")
-    python = subprocess.run(
+    python = driver.raw_process(
         [
             sys.executable,
             "-c",
             "import json; from tests.compare.direct.unit20_metadata import declarations; "
             "print(json.dumps(declarations(), ensure_ascii=False))",
         ],
-        cwd=driver.ROOT,
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=40,
-        check=False,
+        environment,
     )
     assert python.returncode == 0, python.stderr
-    typescript = subprocess.run(
+    typescript = driver.raw_process(
         [
             "node",
             "--input-type=module",
@@ -465,16 +426,11 @@ def test_unit20_declarations_match_fresh_python(
             "import {commands} from './server/cli/commands.ts'; "
             "process.stdout.write(JSON.stringify(commands));",
         ],
-        cwd=driver.ROOT,
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=40,
-        check=False,
+        environment,
     )
     assert typescript.returncode == 0, typescript.stderr
     left, right = json.loads(python.stdout), json.loads(typescript.stdout)
-    _report(
+    driver.write_report(
         request,
         "unit20-declaration-drift",
         {

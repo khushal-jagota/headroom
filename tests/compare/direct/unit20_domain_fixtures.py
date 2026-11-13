@@ -6,7 +6,6 @@ import hashlib
 import json
 import re
 import sqlite3
-import subprocess
 from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
@@ -35,14 +34,8 @@ def node_export(host: cli.CliHost, root: Path, code: str, payload: Any = None) -
     # Code is a fixed test constant, never list data. Only factory arguments use stdin.
     cli._admit(host, root)
     env = cli.environment(host, {"actor": "owner"}, root)
-    result = subprocess.run(
-        ["node", "--input-type=module", "-e", code],
-        cwd=ROOT,
-        env=env,
-        input=json.dumps(payload).encode(),
-        capture_output=True,
-        timeout=40,
-        check=False,
+    result = cli.raw_process(
+        ["node", "--input-type=module", "-e", code], env, json.dumps(payload).encode()
     )
     assert result.returncode == 0, result.stderr.decode()
     return json.loads(result.stdout)

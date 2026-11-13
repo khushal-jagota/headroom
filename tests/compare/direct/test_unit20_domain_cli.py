@@ -236,20 +236,10 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
         evidence["wire_transparency"] = []
         for command, observed in ((PYTHON, python_cli), (TYPESCRIPT, ts_cli_reference)):
             CliHost(reference, tmp_path).check()
-            plain = subprocess.run(
-                [*command, *step["argv"]],
-                cwd=ROOT,
-                env=env,
-                input=step.get("stdin", "").encode(),
-                capture_output=True,
-                timeout=40,
-                check=False,
+            plain = driver.raw_process(
+                [*command, *step["argv"]], env, input=step.get("stdin", "").encode()
             )
-            actual = {
-                "exit_code": plain.returncode,
-                "stdout": plain.stdout.decode(),
-                "stderr": plain.stderr.decode(),
-            }
+            actual = driver.process_answer(plain)
             assert actual == comparable(observed)
             assert len(observed["wire"]) == 1
             assert base64.b64decode(observed["wire"][0]["body_base64"]) == oracle.content
@@ -281,13 +271,7 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
         for handle in reversed(handles):
             _stop_server(handle)
         evidence["seconds"] = time.perf_counter() - started
-        destination = request.config.getoption("--compare-report-dir")
-        if destination:
-            root = Path(destination)
-            root.mkdir(parents=True, exist_ok=True)
-            (root / "unit20-retained-dataset-cli.json").write_text(
-                json.dumps(evidence, indent=2) + "\n"
-            )
+        driver.write_report(request, "unit20-retained-dataset-cli", evidence)
 
 
 def _runtime_proof(reference: ServerHandle, candidate: ServerHandle, root: Path) -> dict[str, Any]:
@@ -311,13 +295,13 @@ import {runtime_guide,SCRIPT,RUN} from './server/measure_sources/guidance.ts';
 import {goal_guidance} from './server/goals/cli/guidance.ts';
 import {page_guidance} from './server/managers/page_cli/guidance.ts';
 import {CREATE as MEASURE} from './server/measures/cli/schema.ts';
-import {validate_chart} from './server/goals/logic/documents.ts';
+import {prepare_document} from './server/goals/logic/documents.ts';
 import {prepare_plain_document} from './server/managers/logic/documents.ts';
 import {validate_text} from './server/measures/actions.ts';
 import {validate_definition} from './server/measures/logic/formulas.ts';
 import {stringify_python_json as json} from './server/core/http/numeric_json.ts';
 const declarations={runtime:runtime_guide(),'schema-script':SCRIPT,'schema-run':RUN};
-validate_chart(goal_guidance['primary-chart'].examples.primary_line_chart);
+prepare_document(goal_guidance.create.examples.checklist_goal.page,()=> 'block_example');
 prepare_plain_document(page_guidance.examples.checklist_and_workers.page,()=> 'block_example');
 const measure={...MEASURE.examples.taken_daily_count,id:'measure_example',formula:null,
   definition_revision:1,created_at:0,updated_at:0,write_revision:0};
@@ -327,7 +311,7 @@ process.stdout.write(JSON.stringify({...Object.fromEntries(Object.entries(declar
     text:json(data,{ensure_ascii:false,indent:2})+'\\n'}])),
   schemas:Object.fromEntries(Object.entries({goal:goal_guidance,page:page_guidance,measure:MEASURE})
     .map(([name,data])=>[name,json(data)+'\\n'])),
-  validated_examples:['goal.primary_line_chart','page.checklist_and_workers','measure.taken_daily_count']}));
+  validated_examples:['goal.checklist_goal.page','page.checklist_and_workers','measure.taken_daily_count']}));
 """,
     )
     steps = fixtures.direct_steps("measure-source")
@@ -342,7 +326,7 @@ process.stdout.write(JSON.stringify({...Object.fromEntries(Object.entries(declar
             "typescript_json": exported["schemas"],
             "canonical_validated_examples": exported["validated_examples"],
             "boundary": (
-                "Pure canonical document/chart/measure validators. "
+                "Pure canonical goal-page, holder-page and measure-definition validators. "
                 "Referenced record existence remains the API writer's responsibility."
             ),
         },
@@ -530,15 +514,7 @@ process.stdout.write(JSON.stringify(collection_script(value.path,value.datasets,
         for handle in reversed(handles):
             _stop_server(handle)
         evidence["seconds"] = time.perf_counter() - started
-        _domain_report(request, "unit20-attention-setup-cli", evidence)
-
-
-def _domain_report(request: pytest.FixtureRequest, name: str, evidence: Any) -> None:
-    destination = request.config.getoption("--compare-report-dir")
-    if destination:
-        root = Path(destination)
-        root.mkdir(parents=True, exist_ok=True)
-        (root / (name + ".json")).write_text(json.dumps(evidence, indent=2) + "\n")
+        driver.write_report(request, "unit20-attention-setup-cli", evidence)
 
 
 def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest) -> None:
@@ -713,7 +689,7 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
         for handle in reversed(handles):
             _stop_server(handle)
         evidence["seconds"] = time.perf_counter() - started
-        _domain_report(request, "unit20-real-preview-cli", evidence)
+        driver.write_report(request, "unit20-real-preview-cli", evidence)
 
 
 @pytest.mark.parametrize(

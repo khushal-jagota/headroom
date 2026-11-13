@@ -30,6 +30,42 @@ LIVE_URL = os.environ.get("PLAN_SERVER_URL", "http://127.0.0.1:8767")
 ACTORS = {"owner", "chief", "worker", "manager", "unidentified"}
 
 
+def raw_process(
+    argv: list[str],
+    env: dict[str, str],
+    input: bytes = b"",
+    timeout: int = 40,
+    *,
+    check: bool = False,
+    cwd: Path | None = ROOT,
+) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        argv,
+        cwd=cwd,
+        env=env,
+        input=input,
+        capture_output=True,
+        timeout=timeout,
+        check=check,
+    )
+
+
+def process_answer(result: subprocess.CompletedProcess[bytes]) -> dict[str, Any]:
+    return {
+        "exit_code": result.returncode,
+        "stdout": result.stdout.decode(),
+        "stderr": result.stderr.decode(),
+    }
+
+
+def write_report(request: Any, name: str, evidence: Any) -> None:
+    destination = request.config.getoption("--compare-report-dir")
+    if destination:
+        root = Path(destination)
+        root.mkdir(parents=True, exist_ok=True)
+        (root / (name + ".json")).write_text(json.dumps(evidence, indent=2) + "\n")
+
+
 @dataclass(frozen=True)
 class CliHost:
     handle: ServerHandle
@@ -211,14 +247,11 @@ def help_batch(host: CliHost, cases: list[tuple[list[str], int]], root: Path) ->
     _admit(host, root)
     env = environment(host, {"actor": "owner"}, root)
     python = [_python_library(argv, b"", env) for argv, _ in cases]
-    completed = subprocess.run(
+    completed = raw_process(
         ["node", str(ROOT / "server/cli/testing/help_batch.ts")],
-        cwd=ROOT,
-        env=env,
-        input=json.dumps([argv for argv, _ in cases]).encode("utf-8"),
-        capture_output=True,
+        env,
+        json.dumps([argv for argv, _ in cases]).encode("utf-8"),
         timeout=60,
-        check=False,
     )
     if completed.returncode != 0:
         raise AssertionError(completed.stderr.decode("utf-8"))
@@ -302,20 +335,9 @@ def run_cli(
             if candidate
             else [sys.executable, str(ROOT / "tests/compare/direct/unit20_wire.py"), str(wire_file)]
         )
-        completed = subprocess.run(
-            [*command, *argv],
-            cwd=ROOT,
-            env=env,
-            input=step.get("stdin", "").encode("utf-8"),
-            capture_output=True,
-            timeout=40,
-            check=False,
+        answer = process_answer(
+            raw_process([*command, *argv], env, step.get("stdin", "").encode("utf-8"))
         )
-        answer = {
-            "exit_code": completed.returncode,
-            "stdout": completed.stdout.decode("utf-8"),
-            "stderr": completed.stderr.decode("utf-8"),
-        }
     elapsed = time.perf_counter() - started
     wire = read_capture(wire_file)
     # Fix the actual fixture file's input time before a later workspace read.
