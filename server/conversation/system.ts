@@ -1232,6 +1232,17 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       return true;
     });
   }
+  async emit_answer(turn: TurnToken, emit: () => Promise<unknown>): Promise<void> {
+    const state = this.conversation_state(turn.conversation_id);
+    if (state !== null)
+      await state.lock.run(async () => {
+        if (
+          same_turn(state.running_turn?.token ?? null, turn) &&
+          !state.running_turn!.callbacks_revoked
+        )
+          await emit();
+      });
+  }
   async record_events_transaction<T>(
     conversation_id: string,
     operation: (

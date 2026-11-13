@@ -13,6 +13,49 @@ export const SSE_HEARTBEAT_MS = 15000;
 export const DB_BUSY_TIMEOUT_MS = 5000;
 export { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 export const MAX_CONVERSATION_SEND_REQUEST_BYTES = 20 * 1024 * 1024;
+/** Only these explicit host inputs cross the installed application launcher boundary. */
+export const EXTERNAL_RUNTIME_ENVIRONMENT_KEYS: ReadonlySet<string> = new Set([
+  'HOME',
+  'LOGNAME',
+  'PATH',
+  'SHELL',
+  'LANG',
+  'TERM',
+  'TMPDIR',
+  'USER',
+  'XDG_RUNTIME_DIR',
+  'DBUS_SESSION_BUS_ADDRESS',
+  'PLAN_CONFIG_PATH',
+  'PLAN_DB_PATH',
+  'PLAN_PORT',
+  'PLAN_BOUNDARY_HOUR',
+  'PLAN_TICK_SECONDS',
+  'PLAN_DISPATCH_ENABLED',
+  'PLAN_DISPATCHER_LOCK_PATH',
+  'PLAN_LOGS_DIR',
+  'PLAN_BACKUP_DIR',
+  'PLAN_TRUSTED_INGRESS_PROVIDER',
+  'PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN',
+  'PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN',
+  'PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS',
+  'PLAN_GROQ_API_KEY',
+  'PLAN_APNS_KEY_PATH',
+  'PLAN_APNS_KEY_ID',
+  'PLAN_APNS_TEAM_ID',
+  'PLAN_APNS_BUNDLE_IDS',
+  'PLAN_HERMES_HOME',
+  'PLAN_HERMES_PYTHON',
+  'PLAN_CLAUDE_EXECUTABLE',
+  'PLAN_SERVER_CONTROL_SOCKET',
+  'PLAN_UPDATE_REPOSITORY',
+  'PLAN_UPDATE_TOKEN_FILE',
+  'ANTHROPIC_API_KEY',
+  'OPENAI_API_KEY',
+  'GOOGLE_API_KEY',
+  // TS's explicit lifecycle address must survive the first launcher boundary.
+  'PLAN_SERVER_LIFECYCLE_LEASE_PATH',
+  'PLAN_SERVER_LISTENER_FD',
+]);
 export interface Config {
   apns?: APNsConfig | null;
   db_path: string;
