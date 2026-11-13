@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from typing import Final
 
 from planner.conversation.backend_usage import (
     BackendUsageOutcome,
@@ -17,6 +19,7 @@ from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.snapshot import BackendSnapshot
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
+from planner.execution_identity import TicketLocale
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,10 +160,37 @@ class BackendStateStore:
         finally:
             conn.close()
 
-    def model_is_enabled(self, backend_key: ConversationBackendKey, model_id: str) -> bool:
+    def delivery_model_refusal(
+        self, backend_key: ConversationBackendKey, model_id: str, ticket_id: str | None
+    ) -> str | None:
+        """Why a delivery on this model must not go out, or None.
+
+        The machine is the Ticket's own for a Worker conversation, the VPS otherwise.
+        """
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
-            return model_is_enabled(conn, backend_key, model_id)
+            row = (
+                None
+                if ticket_id is None
+                else conn.execute(
+                    "SELECT locale FROM tickets WHERE id = ?", (ticket_id,)
+                ).fetchone()
+            )
+            machine = TicketLocale.vps if row is None else TicketLocale(str(row["locale"]))
+            return model_refusal(conn, backend_key, model_id, machine)
+        finally:
+            conn.close()
+
+    def keep_vps_model_list(self, snapshot: BackendSnapshot) -> None:
+        conn = connect(self._db_path, self._busy_timeout_ms)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            save_machine_model_list(conn, TicketLocale.vps, snapshot)
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
         finally:
             conn.close()
 
@@ -234,17 +264,146 @@ def disabled_models(
     )
 
 
-def require_enabled_model(
+# The Claude CLI takes these short names for the newest model of a family, and a
+# ``[1m]`` suffix for the one-million-token context form of a model. Neither appears in
+# its model list, and saved Tickets use both.
+_CLAUDE_SHORT_NAMES: Final = frozenset({"opus", "sonnet", "haiku", "fable"})
+_CLAUDE_LONG_CONTEXT_SUFFIX: Final = "[1m]"
+
+
+def save_machine_model_list(
+    conn: sqlite3.Connection, machine: TicketLocale, snapshot: BackendSnapshot
+) -> None:
+    """Keep the model list one machine reported, so a model check can read it later.
+
+    Once every machine holds a complete list for this backend, a switch-off for a model
+    none of them offers is deleted. Such a model is refused for not being offered, so
+    its row says nothing. While a machine has no list, its models are not checked, so
+    every switch-off still matters there. The caller commits.
+    """
+    from planner.executor.protocol import as_object
+
+    conn.execute(
+        "INSERT INTO machine_backend_snapshots VALUES (?,?,?) "
+        "ON CONFLICT(machine_id,backend_key) DO UPDATE "
+        "SET snapshot_json=excluded.snapshot_json "
+        "WHERE snapshot_json != excluded.snapshot_json",
+        (machine.value, snapshot.backend_key.value, json.dumps(as_object(snapshot))),
+    )
+    if not snapshot.models_complete:
+        return
+    offered: set[str] = set()
+    for each_machine in TicketLocale:
+        listed = offered_model_ids(conn, each_machine, snapshot.backend_key)
+        if listed is None:
+            return
+        offered.update(listed)
+    stale = [
+        str(row["model_id"])
+        for row in conn.execute(
+            "SELECT model_id FROM backend_model_enablement WHERE backend_key = ?",
+            (snapshot.backend_key.value,),
+        )
+        if str(row["model_id"]) not in offered
+    ]
+    conn.executemany(
+        "DELETE FROM backend_model_enablement WHERE backend_key = ? AND model_id = ?",
+        [(snapshot.backend_key.value, model_id) for model_id in stale],
+    )
+
+
+def offered_model_ids(
+    conn: sqlite3.Connection, machine: TicketLocale, backend_key: ConversationBackendKey
+) -> tuple[str, ...] | None:
+    """The models this machine's backend last listed in full, in its own order.
+
+    None means Panels holds no complete list for it, and then nothing can be refused
+    for being absent from one.
+    """
+    row = conn.execute(
+        "SELECT snapshot_json FROM machine_backend_snapshots "
+        "WHERE machine_id = ? AND backend_key = ?",
+        (machine.value, backend_key.value),
+    ).fetchone()
+    return None if row is None else _complete_model_list(str(row["snapshot_json"]))
+
+
+def _complete_model_list(snapshot_json: str) -> tuple[str, ...] | None:
+    snapshot = json.loads(snapshot_json)
+    if not snapshot.get("models_complete") or not snapshot.get("available_models"):
+        return None
+    return tuple(str(model["model_id"]) for model in snapshot["available_models"])
+
+
+def _is_offered(
+    backend_key: ConversationBackendKey, model_id: str, offered: tuple[str, ...]
+) -> bool:
+    if model_id in offered:
+        return True
+    if backend_key is not ConversationBackendKey.claude:
+        return False
+    from planner.conversation.model_resolution.logic.variants import recognize_variant
+
+    base = model_id.removesuffix(_CLAUDE_LONG_CONTEXT_SUFFIX)
+    listed_bases = {listed.removesuffix(_CLAUDE_LONG_CONTEXT_SUFFIX) for listed in offered}
+    if base in listed_bases:
+        return True
+    if base not in _CLAUDE_SHORT_NAMES:
+        return False
+    for listed in listed_bases:
+        variant = recognize_variant(backend_key, listed)
+        if variant is not None and variant.name == base:
+            return True
+    return False
+
+
+def model_refusal(
     conn: sqlite3.Connection,
     backend_key: ConversationBackendKey,
     model_id: str,
+    machine: TicketLocale,
+) -> str | None:
+    """Why this model cannot be chosen here, or None when it can.
+
+    A model the owner switched off is refused everywhere. A Codex or Claude model is also
+    refused when that machine's complete model list does not offer it. Hermes keeps its
+    own acceptance. Without a complete list the backend stays the judge.
+    """
+    backend_key = ConversationBackendKey(backend_key)
+    if not model_is_enabled(conn, backend_key, model_id):
+        return _disabled_refusal(model_id)
+    if backend_key is ConversationBackendKey.hermes:
+        return None
+    offered = offered_model_ids(conn, machine, backend_key)
+    if offered is None or _is_offered(backend_key, model_id, offered):
+        return None
+    disabled = disabled_models(conn, backend_key)
+    choices = ", ".join(model for model in offered if model not in disabled)
+    return (
+        f'Model "{model_id}" is not offered by {backend_key.value} on {_MACHINE_NAMES[machine]}. '
+        f"Choose one of: {choices}."
+    )
+
+
+def _disabled_refusal(model_id: str) -> str:
+    return f'Model "{model_id}" is disabled. Choose an enabled model.'
+
+
+_MACHINE_NAMES: Final = {TicketLocale.vps: "the VPS", TicketLocale.macos: "the Mac"}
+
+
+def require_usable_model(
+    conn: sqlite3.Connection,
+    backend_key: ConversationBackendKey,
+    model_id: str,
+    machine: TicketLocale,
 ) -> None:
-    """Refuse a new choice without changing historical selections."""
-    disabled = model_id if not model_is_enabled(conn, backend_key, model_id) else None
-    if disabled is not None:
+    """Refuse a new choice the machine would not run, without changing saved selections."""
+    refusal = model_refusal(conn, backend_key, model_id, machine)
+    if refusal is not None:
         raise PlannerError(
             ErrorCode.validation,
-            f'Model "{disabled}" is disabled. Choose an enabled model.',
+            refusal,
             {"employee_backend": str(backend_key), "employee_launch_model": model_id},
         )
 
