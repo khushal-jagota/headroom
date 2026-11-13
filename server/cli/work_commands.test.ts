@@ -48,6 +48,52 @@ test('workspace renders each top-level artifact opens value and retains the JSON
   }
 });
 
+// Existing populated comparisons use an old fixed server clock. Freeze the CLI clock
+// here to prove the age boundary and same-second stage marker without another host.
+test('ticket summaries show recap freshness independently of record activity', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-07-04T12:00:02Z'));
+  const base = {
+    id: 't_recap',
+    stage: 'needs_implementation',
+    ticket_status: 'agent',
+    title: 'Recap',
+  };
+  const request = vi.spyOn(http, 'send').mockResolvedValue({
+    tickets: [
+      {
+        ...base,
+        recap: 'Current\nrecap',
+        recap_updated_at: Math.trunc(Date.now() / 1000),
+        recap_stage_changed: true,
+      },
+      { ...base, recap: 'Older recap', recap_updated_at: null, recap_stage_changed: false },
+      { ...base, recap: ' ', recap_updated_at: null, recap_stage_changed: false },
+    ],
+    page: {
+      return_count: 3,
+      match_count: 3,
+      omitted_before: 0,
+      omitted_after: 0,
+      complete: true,
+      next_offset: null,
+    },
+  });
+  try {
+    const output = await run(['ticket', 'list'], {
+      PLAN_SERVER_URL: 'http://127.0.0.1:19020',
+      PLAN_ACTOR: '',
+    });
+    expect(output).toMatchObject({ exit_code: 0, stderr: '' });
+    expect(output.stdout).toContain('Current recap (recap 0s old, stage changed since)');
+    expect(output.stdout).toContain('Older recap (recap age unknown)');
+    expect(output.stdout).toContain('\n  no recap');
+  } finally {
+    request.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
 // Scalar-only checks miss facade exception conversion and Python.get pagination behavior.
 test('CLI validates missing native values and skips an absent optional page continuation', async () => {
   const request = vi.spyOn(http, 'send').mockResolvedValue({});

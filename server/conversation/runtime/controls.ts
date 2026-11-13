@@ -29,6 +29,7 @@ import type { Message, ReservedTurn } from './contracts.ts';
 import { discarded_row, prompt_row, refused_row, uncertain_row } from './messages.ts';
 import { ConversationState, Deferred, same_turn, set_phase } from './state.ts';
 import type { LockLease } from './synchronization.ts';
+import { kill_initial_delivery, retained_factory } from './remote.ts';
 
 function settle_phase(state: ConversationState): void {
   set_phase(state, state.running_turn === null ? 'idle' : 'running');
@@ -149,11 +150,18 @@ export async function kill(
   state.being_killed = true;
   try {
     state.last_touched_monotonic = host.monotonic_now();
-    // Local initial writes settle under their owner. Remote withdrawal belongs to Unit22.
+    if (await kill_initial_delivery(host, state, () => discard_all(host, state))) {
+      return;
+    }
     const lease = await host.acquire_settled(state);
     try {
       await discard_all(host, state);
       try {
+        if (state.child === null && state.retained_child_reference !== null)
+          state.child =
+            retained_factory(
+              host.options.backend_child_factories[state.record.backend_key],
+            )?.recover(state.retained_child_reference) ?? null;
         if (state.running_turn)
           await cancel_and_end_running_turn(host, state, state.running_turn, lease);
         if (state.child) await host.discard_child(state, state.child);
@@ -163,6 +171,7 @@ export async function kill(
     } finally {
       lease.release();
     }
+    await state.retirement_task;
     await host.drain_held_prompts(state);
   } finally {
     try {
@@ -286,7 +295,7 @@ async function attempt_steer(
     adapter_error,
   };
 }
-function watch_late_steer(
+export function watch_late_steer(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
   not_delivered: Promise<boolean>,

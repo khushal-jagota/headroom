@@ -288,12 +288,14 @@ def _derive(
             column[1] == "workflow_json" for column in conn.execute("PRAGMA table_info(tickets)")
         )
         snapshot_column = "t.workflow_json," if snapshots_present else ""
+        recap_columns = "t.recap_updated_at,t.recap_stage_changed," if version >= 11 else ""
         found = rows(
             conn,
             "SELECT " + snapshot_column + "t.title,t.worker_type,t.stage,t.deadline,t.manager_kind,"
             "t.manager_id,t.conversation_id,t.ceiling,t.locale,t.worker_step_claim,"
             "t.pending_proposal,t.is_backlogged,t.ceiling_holder,t.pending_proposal_revision,"
             "t.updated_at,t.created_at,t.recap,"
+            + recap_columns
             + priority_column
             + "COALESCE(i.project_id,t.project_id) effective_project "
             "FROM tickets t LEFT JOIN managers i ON i.id=t.manager_id WHERE t.id=?",
@@ -326,6 +328,13 @@ def _derive(
                     locale=t["locale"],
                     recap_preview=recap_preview(str(t["recap"])),
                     integrity_error={"reason": issue.reason},
+                    **(
+                        {
+                            "recap_updated_at": t["recap_updated_at"],
+                            "recap_stage_changed": bool(t["recap_stage_changed"]),
+                        }
+                        if version >= 11 else {}
+                    ),
                 )
                 for extra in ("id", "manager_title", "project"):
                     diagnostic.pop(extra, None)
@@ -418,6 +427,11 @@ def _derive(
             if version >= PREPARED_SCHEMA_VERSION:
                 value["recap"] = str(t["recap"])
             value["recap_preview"] = recap_preview(str(t["recap"]))
+        if version >= 11:
+            value.update(
+                recap_updated_at=t["recap_updated_at"],
+                recap_stage_changed=bool(t["recap_stage_changed"]),
+            )
         records.append(_record(kind, identity, value))
     elif kind in ("manager", "chief"):
         if kind == "manager":
@@ -449,6 +463,8 @@ def _derive(
                 if version >= PREPARED_SCHEMA_VERSION:
                     value["recap"] = recap
                 value["recap_preview"] = recap_preview(recap)
+            if version >= 11:
+                value["recap_updated_at"] = t["recap_updated_at"]
         else:
             key = "chief_of_staff"
             deps.add(("chief_settings", key))

@@ -44,6 +44,8 @@ export interface Ticket extends EmployeeLaunchConfiguration {
   manager_kind: string;
   manager_title: string | null;
   recap: string;
+  recap_updated_at: number | null;
+  recap_stage_changed: boolean;
   ceiling: string;
   ceiling_holder: Principal;
   ticket_status: TicketStatus;

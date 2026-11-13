@@ -5,7 +5,8 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { Socket } from 'node:net';
 import type { ServerResponse } from 'node:http';
-import { create, fixture, fixture_path, now, read } from './ticket_fixture.ts';
+import { create as create_ticket, fixture, fixture_path, now, read } from './ticket_fixture.ts';
+import { SCHEMA_VERSION } from '../navigation/contracts.ts';
 import { createDatabase } from '../core/database/index.ts';
 import { record_attention } from '../notifications/attention.ts';
 import { StandardsWebPushAdapter } from '../notifications/web_push.ts';
@@ -131,6 +132,16 @@ test('HTTP lifetime independently retains a handler and a pending iterator retur
   console.info(`HTTP lifetime unit proof: ${(performance.now() - began).toFixed(3)} ms`);
 });
 afterEach(() => vi.restoreAllMocks());
+// These lifecycle cases start after the setup approval reached the Worker.
+function create(...args: Parameters<typeof create_ticket>): ReturnType<typeof create_ticket> {
+  const ticket = create_ticket(...args);
+  args[0].write((sql) =>
+    sql.run("UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?", [
+      ticket.id,
+    ]),
+  );
+  return ticket;
+}
 function setup() {
   const database = fixture();
   const path = fixture_path(database);
@@ -423,7 +434,7 @@ test('notification deadline fences late web and native results and bounds adapte
 test('startServer reconciles before core construction and a route collision starts no producers', async () => {
   const { database, path } = setup();
   database.write((sql) =>
-    sql.run("INSERT INTO navigation_meta VALUES(1,'unit21',10,'unit21-epoch',0)"),
+    sql.run("INSERT INTO navigation_meta VALUES(1,'unit21',?,'unit21-epoch',0)", [SCHEMA_VERSION]),
   );
   // The actual lifecycle must own the database, not the borrowed fixture handle.
   database.close();
@@ -521,7 +532,7 @@ test('startServer reconciles before core construction and a route collision star
 test('startServer closes both services after a background start failure while retaining its owners', async () => {
   const { database, path } = setup();
   database.write((tx) =>
-    tx.run("INSERT INTO navigation_meta VALUES(1,'unit21',10,'failed-start',0)"),
+    tx.run("INSERT INTO navigation_meta VALUES(1,'unit21',?,'failed-start',0)", [SCHEMA_VERSION]),
   );
   database.close();
   const dispatcher_path = path + '.failed-start-dispatcher';

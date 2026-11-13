@@ -121,6 +121,8 @@ def reject_ticket_proposal(
     ticket_id: str,
     *,
     message: str | None,
+    expected_proposal_revision: int | None = None,
+    decision_id: str | None = None,
     ctx: RequestContext,
     clock: Clock,
 ) -> Ticket:
@@ -129,17 +131,12 @@ def reject_ticket_proposal(
         admission.validate_revision_guidance(message)
     principal = ctx.principal
     now = clock.now_unix()
-    ticket = tickets_data.require_reject(
-        conn,
-        ticket_id,
-        principal=principal,
-        has_guidance=message is not None,
-    )
     return tickets_data.reject_proposal(
         conn,
         ticket_id,
         message=message,
         principal=principal,
         now=now,
-        expected_proposal=ticket.pending_proposal,
+        expected_proposal_revision=expected_proposal_revision,
+        decision_id=decision_id,
     )

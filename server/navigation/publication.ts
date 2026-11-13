@@ -12,6 +12,7 @@ import type { CurrentAuthority } from '../../web/src/lib/navigation/contracts.ts
 import type { NavigationRegistry } from './contracts.ts';
 import { compact } from './logic/json.ts';
 import { NavigationUnavailable } from './logic/errors.ts';
+import { SCHEMA_VERSION } from './contracts.ts';
 
 export class SignalInstallationError extends Error {}
 
@@ -66,7 +67,7 @@ export function installSignal(
   const version = tx.get<{ schema_version: number }>(
     'SELECT schema_version FROM navigation_meta',
   )?.schema_version;
-  if (version !== 7 && version !== 10)
+  if (version !== 7 && version !== SCHEMA_VERSION)
     throw new SignalInstallationError(
       'Signal installation requires prepared or current navigation',
     );
@@ -101,7 +102,7 @@ export function installSignal(
       String(snapshot.cursor.sequence),
     ],
   );
-  tx.run('UPDATE navigation_meta SET schema_version=10 WHERE singleton=1');
+  tx.run('UPDATE navigation_meta SET schema_version=? WHERE singleton=1', [SCHEMA_VERSION]);
   navigation.rebuild(tx);
 }
 

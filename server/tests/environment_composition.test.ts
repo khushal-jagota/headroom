@@ -31,7 +31,7 @@ function setup() {
   const database = fixture();
   const path = fixture_path(database);
   const root = dirname(path);
-  database.write((tx) => tx.run("INSERT INTO navigation_meta VALUES(1,'env',10,'env-epoch',0)"));
+  database.write((tx) => tx.run("INSERT INTO navigation_meta VALUES(1,'env',11,'env-epoch',0)"));
   database.close();
   mkdirSync(path + '.scratch');
   for (const [key, suffix] of Object.entries({

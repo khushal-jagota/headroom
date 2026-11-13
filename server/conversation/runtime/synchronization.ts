@@ -2,6 +2,7 @@
 import { setTimeout as pause } from 'node:timers/promises';
 import { WRITE_LOCK_RETRY_MILLISECONDS } from './configuration.ts';
 import type { ConversationState } from './state.ts';
+import { wait_for_item } from '../../executor/item_budget.ts';
 
 export class LockLease {
   private release_lock: (() => void) | null;
@@ -29,11 +30,15 @@ export class LockLease {
     }
   }
 }
-export async function acquire_after_steers(state: ConversationState): Promise<LockLease> {
+export async function acquire_after_steers(
+  state: ConversationState,
+  deadline?: number,
+): Promise<LockLease> {
   while (true) {
     if (state.closing) throw new DOMException('The operation was aborted', 'AbortError');
-    for (const barrier of [...state.steer_settlements]) await barrier.promise;
-    const release = await state.lock.acquire();
+    for (const barrier of [...state.steer_settlements])
+      await wait_for_item(barrier.promise, deadline);
+    const release = await state.lock.acquire(deadline);
     if (state.closing) {
       release();
       throw new DOMException('The operation was aborted', 'AbortError');

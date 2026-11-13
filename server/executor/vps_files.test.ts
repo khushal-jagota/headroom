@@ -100,16 +100,7 @@ const worlds: ReturnType<typeof file_fixture>[] = [];
 function world() {
   const database = fixture(),
     path = fixture_path(database);
-  const schema = JSON.parse(
-    readFileSync(new URL('../core/database/application_schema.json', import.meta.url), 'utf8'),
-  ) as { statements: string[] };
   database.write((tx) => {
-    // The shared Ticket fixture predates the mailbox migration. Reuse its canonical DDL.
-    for (const name of ['mac_executor_presence', 'executor_incarnations', 'executor_commands']) {
-      const ddl = schema.statements.find((value) => value.startsWith(`CREATE TABLE ${name} (`));
-      if (!ddl) throw new Error(`Missing executor fixture table ${name}`);
-      tx.run(ddl);
-    }
     tx.run(
       "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,access,created_at) VALUES ('c','codex','fixture','/tmp','full',1760000000)",
     );

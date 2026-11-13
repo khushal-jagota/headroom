@@ -49,6 +49,8 @@ export interface ReservedTurn {
   prompt_accepted: boolean;
   messages: readonly Message[];
   mode: PromptDeliveryMode;
+  shutdown_owned: boolean;
+  shutdown_fate: import('../contracts.ts').PromptDeliveryFate | null;
 }
 export interface DeliveryAttempt {
   readonly refusal_reason: PromptDeliveryRefusalReason | null;
@@ -62,6 +64,8 @@ export interface DeliveryAttempt {
 }
 /** Applying a field returns its rollback operation for this synchronous attempt. */
 export interface RuntimeMutation {
+  /** A refused remote take cancels its predictions before commit publication. */
+  readonly active?: boolean;
   apply(): () => void;
 }
 export type SaveAttempt = <T>(
@@ -107,6 +111,19 @@ export interface ConversationCoreOptions {
     model: string,
     reasoning_effort: string | null,
   ) => void | Promise<void>;
+  readonly remote_recovery?: {
+    retire_replaced(
+      reference: import('../backends/contracts.ts').ChildReference,
+      replaced_by: string,
+      undelivered_message?: string,
+    ): void | Promise<void>;
+    close_rewritten(
+      conversation_id: string,
+      turn_number: number,
+      note: string,
+    ): void | Promise<void>;
+    recover(conversation_id: string): Promise<void>;
+  };
 }
 
 /** Only synchronous persistence effects enter a retry. Provider calls never do. */
@@ -122,7 +139,16 @@ export interface DeliveryServices {
     mutations?: readonly RuntimeMutation[],
   ): Promise<T>;
   native_operation<T>(operation: () => Promise<T>): Promise<T>;
+  retained_run(
+    state: import('./state.ts').ConversationState,
+  ):
+    | (Omit<import('../backends/contracts.ts').RetainedBackendRun, 'turn'> & { turn: TurnToken })
+    | null;
   discard_child(
+    state: import('./state.ts').ConversationState,
+    child: import('../backends/contracts.ts').BackendChild,
+  ): Promise<boolean>;
+  retire_child_for_rebind(
     state: import('./state.ts').ConversationState,
     child: import('../backends/contracts.ts').BackendChild,
   ): Promise<boolean>;

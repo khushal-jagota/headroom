@@ -36,9 +36,12 @@ def request_body(call: dict[str, Any]) -> dict[str, Any]:
     return {"json": call.get("json")}
 
 # Unit-01's reached bare 32-hex values trace to UUID4, not content digests.
+# ticket_decision_ hashes identify senders derived from each host's Ticket ID.
+# Only that exact identity prefix is normalized. Bare SHA256 content stays exact.
 ID = re.compile(
     r"(?<![a-zA-Z0-9])(?:(?:si|t|schedule|idea|run|credential|measure|dataset|source|source_run|"
     r"goal|block|chart)_[a-z0-9]{8}|claim_[a-z0-9]{12}|"
+    r"ticket_decision_[0-9a-f]{64}|"
     r"(?:vu_|f_|held_|manager_delivery_wake_|conv_|conversation_|worker_step_message_|worker_step_|stored_file_)"
     r"[0-9a-f]{32}|[0-9a-f]{32}|"
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![\w])"

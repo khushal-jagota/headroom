@@ -21,7 +21,8 @@ import {
 import { text_message_content } from '../conversation/message_content.ts';
 import type { WorkerTypeRegistry } from '../worker_types/registry.ts';
 import * as tickets_data from '../tickets/data/index.ts';
-import * as revision_feedback from '../tickets/revision_feedback.ts';
+import * as decision_messages from '../tickets/decision_messages.ts';
+import { deliver_ticket_decision_messages } from './decision_message_delivery.ts';
 import * as conversation_start from './conversation_start.ts';
 import * as worker_memory from './worker_memory.ts';
 import * as worker_step_readiness from './worker_step_readiness.ts';
@@ -71,6 +72,8 @@ export async function start_ready_worker_step(
 ): Promise<WorkerStepStartResult> {
   return options.conversation_system.workspace_admission.operation(async (admitted) => {
     if (!admitted) return new WorkerStepStartResult({ started: false });
+    const decision_fate = await deliver_ticket_decision_messages(ticket_id, options);
+    if (decision_fate !== null) return WorkerStepStartResult.from_delivery_fate(decision_fate);
     return _admitted_start_ready_worker_step(ticket_id, options);
   });
 }
@@ -136,15 +139,12 @@ async function _admitted_start_ready_worker_step(
         }
       });
     }
-    let pending_revision_feedback: revision_feedback.PendingRevisionFeedback | null = null;
     let fate: PromptDeliveryFate;
     try {
       const prompt = database.read((sql) => {
         const current_ticket = tickets_data.read_ticket(sql, ticket_id);
-        pending_revision_feedback = revision_feedback.snapshot(sql, ticket_id);
         return compose_worker_step_prompt(current_ticket, {
           worker_type_definition: claimed.workflow,
-          revision_feedback: pending_revision_feedback,
           memory_was_lost: worker_memory.conversation_holds_an_unanswered_memory_loss(
             sql,
             claimed.conversation_id,
@@ -215,18 +215,6 @@ async function _admitted_start_ready_worker_step(
       return WorkerStepStartResult.from_delivery_fate(fate);
     }
     if (paired_opener) give_the_claim_back(true);
-    // TypeScript does not track assignment from the synchronous read callback.
-    const feedback = pending_revision_feedback as revision_feedback.PendingRevisionFeedback | null;
-    if (feedback !== null) {
-      try {
-        database.write((sql) => revision_feedback.acknowledge(sql, ticket_id, feedback.revision));
-      } catch (error) {
-        console.error(
-          `delivered revision feedback could not be acknowledged (ticket=${ticket_id})`,
-          error,
-        );
-      }
-    }
     return WorkerStepStartResult.from_delivery_fate(fate);
   }, options.signal);
 }
@@ -316,7 +304,7 @@ export class WorkerStepReadinessLoop {
             WHERE json_extract(stage.value, '$.id')=t.stage
               AND json_extract(stage.value, '$.is_terminal'))
         ORDER BY t.updated_at, t.id`);
-      return rows
+      const ready = rows
         .filter(({ id }) => {
           try {
             const ticket = tickets_data.read_ticket(sql, id);
@@ -333,6 +321,7 @@ export class WorkerStepReadinessLoop {
           }
         })
         .map(({ id }) => id);
+      return [...new Set([...ready, ...decision_messages.pending_ticket_ids(sql)])];
     });
   }
   private schedule(ticket_id: string, notice = false): boolean {
