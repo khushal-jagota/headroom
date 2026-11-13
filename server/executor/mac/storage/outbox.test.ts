@@ -19,6 +19,7 @@ import { createReadAccess } from '../../../core/database/index.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { FilesService } from '../files.ts';
+import { ProtocolRefused, ValueError } from '../../protocol.ts';
 import { MAX_ENVELOPE_BYTES } from '../configuration.ts';
 import { acquire_process_lock } from '../platform.ts';
 import { DATABASE_NAME } from './schema.ts';
@@ -189,9 +190,15 @@ test('the full-item limit rolls back row and index allocation even with a no-op 
     JSON.stringify({ payload: { text: 'x'.repeat(MAX_ENVELOPE_BYTES - 100) }, files: [] }),
   );
   expect(large.byteLength).toBeLessThan(MAX_ENVELOPE_BYTES);
-  expect(() => store.append(columns('oversize'), large, [index], [index], () => {})).toThrow(
-    'value exceeds its encoded size limit',
-  );
+  let refusal: unknown;
+  try {
+    store.append(columns('oversize'), large, [index], [index], () => {});
+  } catch (error) {
+    refusal = error;
+  }
+  expect(refusal).toBeInstanceOf(ProtocolRefused);
+  expect(refusal).toBeInstanceOf(ValueError);
+  expect(refusal).toMatchObject({ message: 'value exceeds its encoded size limit' });
   expect(store.lookup('oversize')).toBeNull();
   const read = createReadAccess(join(spool, DATABASE_NAME));
   try {
