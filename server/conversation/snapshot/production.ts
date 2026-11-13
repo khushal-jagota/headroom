@@ -13,6 +13,7 @@ import { ClaudeUsageAdapter } from '../backend_usage/claude.ts';
 import { http_get_usage } from '../backend_usage/http.ts';
 import { create_codex_providers } from '../backends/codex_app_server/providers.ts';
 import type { CodexProviderContext } from '../backends/codex_app_server/providers.ts';
+import type { StopOptions } from '../../lifecycle/contracts.ts';
 import {
   ModelCatalogCleanupFailed,
   retry_model_catalog_cleanup,
@@ -37,6 +38,7 @@ export function production_backend_providers(
   const cleanup_history = new Set<unknown>();
   const probes = new Set<Promise<unknown>>();
   let closed = false;
+  let stop_options: StopOptions | undefined;
   return {
     ...providers,
     ...codex,
@@ -47,9 +49,12 @@ export function production_backend_providers(
             read: () => codex.codex_sign_in!.read(),
             start: () => codex.codex_sign_in!.start(),
             cancel: (id) => codex.codex_sign_in!.cancel(id),
-            async shutdown() {
+            async shutdown(options) {
+              stop_options ??= options;
               closed = true;
-              const codex_stop = Promise.allSettled([codex.codex_sign_in!.shutdown()]);
+              const codex_stop = Promise.allSettled([
+                Promise.resolve().then(() => codex.codex_sign_in!.shutdown(options)),
+              ]);
               const results = await Promise.allSettled([...probes]);
               for (const result of results)
                 if (
@@ -59,13 +64,7 @@ export function production_backend_providers(
                   failed_cleanup.add(result.reason);
               // Codex shutdown joins the common one-shot owner. A Claude native close
               // retry must precede that join when it owns one of those children.
-              await retry_model_catalog_cleanup(failed_cleanup, cleanup_history);
-              const failed = (await codex_stop).filter((result) => result.status === 'rejected');
-              if (failed.length || cleanup_history.size)
-                throw new AggregateError(
-                  [...cleanup_history, ...failed.map((result) => result.reason)],
-                  'Production catalog shutdown failed.',
-                );
+              await retry_model_catalog_cleanup(failed_cleanup, cleanup_history, codex_stop);
             },
           },
     usage: {
@@ -85,7 +84,10 @@ export function production_backend_providers(
         throw new ClaudeModelCatalogUnavailable(
           'Production catalog reads are unavailable in tests.',
         );
-      const operation = probe_claude_model_catalog(executable, children);
+      const operation = probe_claude_model_catalog(executable, children, {
+        signal: children.signal,
+        stop_options: () => stop_options,
+      });
       probes.add(operation);
       try {
         return await operation;

@@ -162,6 +162,7 @@ export class MacNativeChildren implements MacNativeChildrenContract {
       return child;
     } catch (error) {
       if (entry.child !== null) {
+        entry.retiring = true;
         try {
           await this.stop_native(entry);
         } catch (cleanup) {

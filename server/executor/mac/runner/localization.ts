@@ -1,6 +1,7 @@
 /** Resolve existing native workspaces and replace only the VPS transport identity. */
 import { stat } from 'node:fs/promises';
-import { isAbsolute, join, relative } from 'node:path';
+import { isAbsolute, join } from 'node:path';
+import { inside } from '../../../files/logic/paths.ts';
 import { resolve_path_sync } from '../../../core/path_resolution.ts';
 import { python_string_repr } from '../../../core/python_repr.ts';
 import { python_os_error_message } from '../../../core/os_errors.ts';
@@ -42,11 +43,13 @@ function safe_relative(value: string): string {
   return value;
 }
 function within(root: string, path: string): void {
-  const rel = relative(root, path);
-  if (rel === '..' || rel.startsWith('../') || isAbsolute(rel))
+  try {
+    inside(root, path);
+  } catch {
     throw new Error(
       `${python_string_repr(path)} is not in the subpath of ${python_string_repr(root)}`,
     );
+  }
 }
 async function create_directory(options: MacNativeChildrenOptions, path: string): Promise<void> {
   const handle = await options.files.open_directory(path, { create: true });
