@@ -171,6 +171,8 @@ The scripted test host can open and continue conversations through these routes.
 
 The SDK public spawn hook owns the exact child and its required WorkerUnit. An input queue offer proves neither a completed write nor native acceptance. Ordinary delivery needs UUID admission receipts; native commands retain Python's write-completion contract. Stop requires a valid cancellation receipt with an empty `still_queued` set and settlement of the active command.
 
+The Claude spawn hook uses `codex_app_server/process.ts` for process custody, signals, and bounded termination. SDK exit callbacks still follow stream closure. Cleanup observes direct-child exit first, then a separate bounded output drain. Each Claude shutdown phase retains its five-second limit.
+
 `tests/compare/direct/test_unit18_adapter.py` drives the TS scripted CLI through both real adapters and conversation cores. It compares events, lifecycle facts, view rows, and delivery fates. This scripted proof does not establish real-provider coverage of all 19 backend events.
 
 On Linux, `BASH_ENV` points to the absolute source path of `server/conversation/tool_shell_startup.bash` for TS and `src/planner/conversation/tool_shell_startup.bash` for Python. The direct proof permits only this exact source-location pair and requires identical file bytes. A byte difference fails the proof. Other environment differences require explicit acceptance in `DEVIATIONS.md`.

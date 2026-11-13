@@ -25,6 +25,7 @@ test('cleanup never signals an already reaped leader or its retired process grou
   const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
   const owned = new OwnedCodexProcess(child as unknown as ChildProcessWithoutNullStreams);
   await owned.stop();
+  expect(owned.signal('SIGTERM')).toBe(false);
   expect(kill).not.toHaveBeenCalled();
   expect(child.stdout.destroyed).toBe(true);
 });
@@ -40,6 +41,7 @@ test('a graceful exit during shutdown prevents a later SIGKILL', async () => {
     return true;
   });
   await owned.stop();
+  expect(owned.killed).toBe(true);
   expect(kill.mock.calls.map((call) => call[1])).toEqual(['SIGTERM']);
 });
 
