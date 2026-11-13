@@ -1,0 +1,9 @@
+[Unit]
+Description=Panels TypeScript stall watchdog
+
+[Service]
+Type=oneshot
+{{ENVIRONMENT}}
+ExecStart={{EXEC_START}}
+TimeoutStartSec=300
+NoNewPrivileges=yes

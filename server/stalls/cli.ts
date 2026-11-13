@@ -7,6 +7,10 @@ import { load_apns_config } from '../notifications/config.ts';
 import { message_chief } from './alarms.ts';
 import { run_watchdog, watchdog_summary } from './watchdog.ts';
 
+export interface WatchdogArguments {
+  readonly db: string;
+  readonly state_dir: string;
+}
 export async function watchdog_command(
   args: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
@@ -23,6 +27,13 @@ export async function watchdog_command(
   const state_dir = values['state-dir'];
   if (!db_path) throw new Error('Missing option --db');
   if (!state_dir) throw new Error('Missing option --state-dir');
+  return watchdog_handler({ db: db_path, state_dir }, env);
+}
+export async function watchdog_handler(
+  args: WatchdogArguments,
+  env: NodeJS.ProcessEnv,
+): Promise<string> {
+  const { db: db_path, state_dir } = args;
   if (!statSync(db_path).isFile()) throw new Error('--db must name an existing database file');
   const config = loadConfig(env.PLAN_CONFIG_PATH, env);
   // A test-mode command must never instantiate a provider transport.
