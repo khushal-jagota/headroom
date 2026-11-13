@@ -17,7 +17,8 @@ import {
   UserInputRequestedEventPayload,
 } from '../events.ts';
 import { MessageText, message_content_text } from '../message_content.ts';
-import { adopted_running_turn } from '../logic/retained_turn.ts';
+import { adopted_running_turn, same_reference } from '../logic/retained_turn.ts';
+export { same_reference } from '../logic/retained_turn.ts';
 import { read_facts } from '../record/data/lifecycle.ts';
 import type {
   AcceptedRecordEvent,
@@ -75,14 +76,6 @@ export function retained_run(
     admitted_runs(host.options.backend_child_factories[state.record.backend_key]).find(
       (run) => run.reference.conversation_id === state.record.conversation_id,
     ) ?? null
-  );
-}
-export function same_reference(left: ChildReference | null, right: ChildReference): boolean {
-  return (
-    left !== null &&
-    left.executor_incarnation === right.executor_incarnation &&
-    left.child_id === right.child_id &&
-    left.conversation_id === right.conversation_id
   );
 }
 export function restore_retained_run(

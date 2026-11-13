@@ -21,7 +21,6 @@ import {
 import type { BackendEventSink, BackendEventValue, TurnToken } from './backends/contracts.ts';
 import type { BackendChild, ChildReference } from './backends/contracts.ts';
 import type { WireValue } from '../executor/contracts.ts';
-import { integer_value } from '../executor/integers.ts';
 import { ValueError } from '../core/value_error.ts';
 import {
   ConversationBackendKey,
@@ -1111,13 +1110,11 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   }
   async await_late_steer(
     conversation_id: string,
-    uncertain_sequence: WireValue<'TurnToken'>['turn_number'],
+    sequence: number,
     not_delivered: Promise<boolean>,
   ): Promise<void> {
     const state = this.conversation_state(conversation_id);
     if (state === null) return;
-    // Bind the exact SQLite integer without native-number arithmetic or rounding.
-    const sequence = integer_value(uncertain_sequence) as unknown as number;
     const row = this.options.store.read_event(conversation_id, sequence);
     if (
       !(row?.payload instanceof PromptDeliveryUncertainEventPayload) ||

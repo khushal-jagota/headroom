@@ -14,6 +14,7 @@ import sqlite3
 import subprocess
 import time
 from contextlib import closing
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -22,6 +23,7 @@ from unittest.mock import patch
 import pytest
 from tests.support.executor_presence import lease_request, mac_identity, make_current
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
+from tests.unit.test_conversation_system import _Harness, _start
 
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.contracts import (
@@ -49,7 +51,8 @@ from planner.conversation.lifecycle import (
     LifecycleOperation,
     LifecycleStatus,
 )
-from planner.conversation.lifecycle_storage import apply_facts
+from planner.conversation.lifecycle_storage import apply_facts, read_facts
+from planner.conversation.logic.retained_turn import adopted_running_turn
 from planner.conversation.message_content import text_message_content
 from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as FixedClock
@@ -233,10 +236,25 @@ def test_retained_runs_rebuild_drain_and_rewrite(
         runs = MacRuns(str(path), presence, mailbox)
         trace: list[Any] = []
         output: dict[str, Any] = {}
+        gate_path = tmp_path / "answer-gate.sqlite"
+        with closing(connect(str(gate_path))) as conn:
+            create_schema(conn)
+        gate = _Harness(gate_path)
+        await _start(gate, "drain", backend_key=ConversationBackendKey.codex)
+        state = await gate.system._conversation_state("drain")
+        assert state is not None
+        with closing(connect(str(path))) as conn:
+            state.running_turn = adopted_running_turn(
+                TurnToken("drain", 3),
+                read_facts(conn, "drain"),
+                {},
+                executor_process_current=True,
+            )
+        assert state.running_turn is not None
 
         class Core:
             async def emit_answer(self, turn: Any, emit: Any) -> None:
-                await emit()
+                await gate.system.emit_answer(turn, emit)
 
             async def retire_replaced_remote_child(self, child: Any, **options: Any) -> None:
                 from dataclasses import asdict
@@ -331,11 +349,46 @@ def test_retained_runs_rebuild_drain_and_rewrite(
         try:
             for child in children:
                 runs.store.register_child(child, "ticket", remote_ticket, NOW)
+            runs.conversations = cast(Any, Core())
             await mailbox.put_child_command(steer)
             # A finished answer lacks its application receipt, so recovery must not
             # claim definite non-delivery as it does for the other, withdrawn answer.
-            await mailbox.put_child_command(answer)
-            await mailbox.poll(old, 0, 0)
+            output["answer_gate"] = [
+                await runs.save_answer(
+                    replace(
+                        answer,
+                        command_id="wrong-turn",
+                        turn=TurnToken("drain", 4),
+                    )
+                )
+            ]
+            state.running_turn.callbacks_revoked = True
+            output["answer_gate"].append(
+                await runs.save_answer(
+                    replace(
+                        answer,
+                        command_id="revoked-answer",
+                    )
+                )
+            )
+            state.running_turn.callbacks_revoked = False
+            await runs.save_answer(
+                replace(
+                    answer,
+                    command_id="wrong-ask",
+                    arguments=wire.AnswerPermission(ask_id="closed-ask", option_id="allow"),
+                )
+            )
+            output["answer_gate"].append(await runs.save_answer(answer))
+            delivered = await mailbox.poll(old, 0, 0)
+            assert all(row.command_id != "wrong-ask" for row in delivered.commands)
+            wrong_ask = mailbox.command_row("wrong-ask")
+            assert wrong_ask is not None and wrong_ask.result is not None
+            assert wrong_ask.result.child_outcome is not None
+            output["closed_ask"] = [
+                wrong_ask.state.value,
+                wrong_ask.result.child_outcome.result["reason"],
+            ]
             recorded = await mailbox.record_results(
                 old,
                 wire.CommandOutcomeReport(
@@ -444,6 +497,8 @@ def test_retained_runs_rebuild_drain_and_rewrite(
             await runs.close()
             await presence.close()
             await mailbox.close()
+            await gate.system.shutdown()
+            assert not gate.spawned_conversation_ids
 
     with (
         synthetic_home_environment(homes),
@@ -479,6 +534,8 @@ def test_retained_runs_rebuild_drain_and_rewrite(
     for side in (actual, expected):
         side["trace"].sort(key=lambda value: json.dumps(value, sort_keys=True))
     assert actual == expected
+    assert actual["answer_gate"] == [False, False, True]
+    assert actual["closed_ask"] == ["expired", "answered_request_not_open"]
     assert actual["interruptions"][0]["recovery_state"] == "closed"
     detail = actual["interruptions"][0]["detail"]
     assert (
