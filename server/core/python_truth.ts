@@ -7,5 +7,5 @@ export function python_truth(value: unknown): boolean {
   if (number !== undefined) return number !== 0;
   if (Array.isArray(value)) return value.length !== 0;
   if (typeof value === 'object') return Object.keys(value).length !== 0;
-  return true;
+  return Boolean(value);
 }

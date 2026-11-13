@@ -1,6 +1,11 @@
 /** One bounded interpretation of TAR headers, extensions, and extraction ranges. */
 import { posix } from 'node:path';
-import { AppValidationError } from '../contracts.ts';
+import { AppValidationError, MacArchiveInspectionError } from '../contracts.ts';
+import { decode_mac_manifest } from '../../updates/mac/manifest.ts';
+import {
+  MAX_MAC_RUNTIME_EXPANDED_BYTES,
+  MAX_MAC_RUNTIME_MANIFEST_BYTES,
+} from '../../updates/mac/configuration.ts';
 import {
   ARCHIVE_MAX_HEADERS,
   ARCHIVE_MAX_METADATA_BYTES,
@@ -138,16 +143,28 @@ function pax_mtime(raw: string): number {
   if (/^[+-]?inf(?:inity)?$/i.test(value)) return value.startsWith('-') ? -Infinity : Infinity;
   return Number(value.replaceAll('_', ''));
 }
-function normalized(path: string): string {
+function normalized(path: string, inspection = false): string {
   const parts = path.split('/');
+  if (inspection && (posix.isAbsolute(path) || parts.includes('..')))
+    throw new MacArchiveInspectionError('refusal', 'The Mac runtime contains an invalid path.');
   if (posix.isAbsolute(path) || path.includes('\0') || parts.includes('..'))
     refuse('app archive contains unsafe or duplicate paths');
   const clean = parts.filter((part) => part && part !== '.');
-  if (clean.length > ARCHIVE_MAX_DEPTH) refuse('app archive path exceeds depth limit');
+  if (!inspection && clean.length > ARCHIVE_MAX_DEPTH)
+    refuse('app archive path exceeds depth limit');
   return clean.join('/');
 }
 export class ArchiveMembers {
   readonly members: ArchiveMember[] = [];
+  manifest_bytes: Buffer | null = null;
+  python = false;
+  #manifest: unknown = null;
+  #capture: { bytes: Buffer; used: number } | undefined;
+  #logicalSize = 0;
+  readonly purpose: 'extraction' | 'mac-inspection';
+  constructor(purpose: 'extraction' | 'mac-inspection' = 'extraction') {
+    this.purpose = purpose;
+  }
   #position = 0;
   #headers = 0;
   #metadataBytes = 0;
@@ -165,8 +182,13 @@ export class ArchiveMembers {
       refuse('app archive exceeds metadata limit');
   }
   #extension(entry: ArchiveMember, bytes: Buffer): void {
-    if (entry.type === 'g') Object.assign(this.#global, pax(bytes));
-    else
+    if (entry.type === 'g') {
+      const values = pax(bytes);
+      // Proposed Mac-only subset. Application/source export policy is unchanged.
+      if (this.purpose === 'mac-inspection' && Object.hasOwn(values, 'size'))
+        refuse('Mac inspection does not support global PAX size');
+      Object.assign(this.#global, values);
+    } else
       this.#frames.push(
         entry.type === 'L'
           ? { path: string(bytes) }
@@ -189,6 +211,16 @@ export class ArchiveMembers {
       }
       if (this.#left) {
         const count = Math.min(this.#left, chunk.length - cursor);
+        if (this.#capture) {
+          const copy = Math.min(count, this.#capture.bytes.length - this.#capture.used);
+          chunk.copy(this.#capture.bytes, this.#capture.used, cursor, cursor + copy);
+          this.#capture.used += copy;
+          if (this.#capture.used === this.#capture.bytes.length) {
+            this.#manifest = decode_mac_manifest(this.#capture.bytes);
+            this.manifest_bytes = this.#capture.bytes;
+            this.#capture = undefined;
+          }
+        }
         if (this.#meta) {
           const copy = Math.min(count, this.#meta.bytes.length - this.#meta.used);
           chunk.copy(this.#meta.bytes, this.#meta.used, cursor, cursor + copy);
@@ -218,9 +250,10 @@ export class ArchiveMembers {
       if (++this.#headers > ARCHIVE_MAX_HEADERS) refuse('app archive exceeds member count limit');
       const entry = header(this.#block, this.#position);
       if (entry.type === 'S') refuse('app archive contains GNU sparse entries');
-      if (!ordinary.has(entry.type) && !metadata.has(entry.type))
+      const inspection = this.purpose === 'mac-inspection';
+      if (!inspection && !ordinary.has(entry.type) && !metadata.has(entry.type))
         refuse('app archive contains unsupported entries');
-      if (entry.mode < 0 || entry.mode > 0o777)
+      if (!inspection && (entry.mode < 0 || entry.mode > 0o777))
         refuse('app archive contains special permission bits');
       if (entry.size < 0 || entry.size > ARCHIVE_MAX_MEMBER_BYTES)
         refuse('app archive exceeds member size limit');
@@ -245,7 +278,38 @@ export class ArchiveMembers {
           entry.size = Number(digits);
         }
         if (overrides.mtime !== undefined) entry.mtime = pax_mtime(overrides.mtime);
-        if (!Number.isFinite(entry.mtime)) refuse('app archive contains invalid modification time');
+        if (!inspection && !Number.isFinite(entry.mtime))
+          refuse('app archive contains invalid modification time');
+        if (inspection) {
+          entry.path = normalized(entry.path, true);
+          this.#account(Buffer.byteLength(entry.path) + Buffer.byteLength(entry.linkpath));
+          this.#logicalSize += entry.size;
+          if (this.#logicalSize > MAX_MAC_RUNTIME_EXPANDED_BYTES)
+            throw new MacArchiveInspectionError(
+              'refusal',
+              'The expanded Mac runtime exceeds its size limit.',
+            );
+          if (entry.path === 'mac-runtime.json') {
+            if (
+              this.#manifest !== null ||
+              !['0', '\0', '7'].includes(entry.type) ||
+              entry.size > MAX_MAC_RUNTIME_MANIFEST_BYTES
+            )
+              throw new MacArchiveInspectionError(
+                'refusal',
+                'The Mac runtime manifest is invalid.',
+              );
+            this.#capture = { bytes: Buffer.alloc(entry.size), used: 0 };
+            if (!entry.size) decode_mac_manifest(this.#capture.bytes);
+          }
+          if (entry.path === 'python/bin/python3')
+            this.python = ['0', '\0', '7', '2'].includes(entry.type);
+          // tarfile._proc_builtin skips known nonregular bodies, even with a declared size.
+          this.#left = ['1', '2', '3', '4', '5', '6'].includes(entry.type)
+            ? 0
+            : Math.ceil(entry.size / 512) * 512;
+          continue;
+        }
         if (
           ['5', '1', '2'].includes(entry.type) &&
           (entry.size || numeric(this.#block.subarray(124, 136)))
@@ -264,6 +328,7 @@ export class ArchiveMembers {
   finish(): void {
     if (this.#left || this.#used || this.#frames.length || this.#end < 1024 || this.#end % 512)
       refuse('app archive contains truncated TAR data');
+    if (this.purpose === 'mac-inspection') return;
     const entries = new Map(this.members.map((member) => [member.path, member]));
     const resolve = (path: string, base: string[] = [], active = new Set<string>()): string => {
       if (posix.isAbsolute(path)) refuse('app archive contains an outside link');

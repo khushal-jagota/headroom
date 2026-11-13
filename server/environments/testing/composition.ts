@@ -2,6 +2,7 @@
 import { dirname } from 'node:path';
 import type { TestCompositionContext } from '../../core/start.ts';
 import { createEnvironmentRuntime } from '../runtime.ts';
+import { create_mac_update_composition } from '../updates/mac/composition.ts';
 import { collect_vps_status } from '../vps_status/collect.ts';
 
 const unavailable = (): never => {
@@ -21,16 +22,31 @@ export function create_test_environment_runtime(context: TestCompositionContext)
       prepare: unavailable,
       launch: async () => unavailable(),
     },
-    mac: {
-      prepare: async () => unavailable(),
-      phase: () => null,
-      reported_at: () => null,
-      configured: () => false,
-    },
-    mac_reads: {
-      health_payload: () => null,
-      status: async () => null,
-    },
+    create_mac: (mac_context) => ({
+      // Late setup still returns an inert test runtime after its invocation stops.
+      service: mac_context.signal.aborted
+        ? {
+            prepare: async () => unavailable(),
+            check: unavailable,
+            status: () => null,
+            phase: () => null,
+            reported_at: () => null,
+            report: unavailable,
+            archive: unavailable,
+            prefetch_archive: unavailable,
+          }
+        : create_mac_update_composition(mac_context, null).service,
+      operations: {
+        prepare: async () => unavailable(),
+        phase: () => null,
+        reported_at: () => null,
+        configured: () => false,
+      },
+      reads: {
+        health_payload: () => null,
+        status: async () => null,
+      },
+    }),
     collect_status: (config) =>
       collect_vps_status(config, {
         application_root: dirname(config.db_path),
