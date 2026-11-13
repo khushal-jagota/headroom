@@ -35,9 +35,15 @@ export class ModelCatalogCleanupFailed extends AggregateError {
 /** Keep each failed native close capability until a later attempt actually succeeds. */
 export async function retry_model_catalog_cleanup(
   failures: Set<ModelCatalogCleanupFailed>,
+  history?: Set<unknown>,
 ): Promise<void> {
+  const remember = (error: unknown): void => {
+    if (error instanceof AggregateError) error.errors.forEach(remember);
+    else history?.add(error);
+  };
   const results = await Promise.allSettled(
     [...failures].map(async (failure) => {
+      remember(failure);
       await failure.retry_cleanup();
       failures.delete(failure);
     }),

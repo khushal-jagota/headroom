@@ -34,6 +34,7 @@ export function production_backend_providers(
   if (!children) throw new Error('Production catalogs require a server-owned child lifetime');
   const codex = create_codex_providers(context);
   const failed_cleanup = new Set<ModelCatalogCleanupFailed>();
+  const cleanup_history = new Set<unknown>();
   const probes = new Set<Promise<unknown>>();
   let closed = false;
   return {
@@ -58,11 +59,11 @@ export function production_backend_providers(
                   failed_cleanup.add(result.reason);
               // Codex shutdown joins the common one-shot owner. A Claude native close
               // retry must precede that join when it owns one of those children.
-              await retry_model_catalog_cleanup(failed_cleanup);
+              await retry_model_catalog_cleanup(failed_cleanup, cleanup_history);
               const failed = (await codex_stop).filter((result) => result.status === 'rejected');
-              if (failed.length)
+              if (failed.length || cleanup_history.size)
                 throw new AggregateError(
-                  failed.map((result) => result.reason),
+                  [...cleanup_history, ...failed.map((result) => result.reason)],
                   'Production catalog shutdown failed.',
                 );
             },
