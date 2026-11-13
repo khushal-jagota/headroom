@@ -10,6 +10,7 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
 import { AppValidationError } from './contracts.ts';
+import type { ArchiveUnpackRequest, ArchiveUnpackResult } from './contracts.ts';
 import { validate_app_manifest } from './identity.ts';
 import { ArchiveMembers } from './logic/archive_members.ts';
 import { set_archive_times } from './archive_times.ts';
@@ -21,12 +22,7 @@ import {
   ARCHIVE_MAX_MESSAGE_BYTES,
 } from './configuration.ts';
 
-export interface UnpackRequest {
-  spool_root: string;
-  destination: string;
-  archive_sha256: string;
-  expected_sha: string;
-}
+export type UnpackRequest = ArchiveUnpackRequest;
 export async function* read_archive_messages(
   stream: Readable,
 ): AsyncGenerator<Record<string, unknown>> {
@@ -72,6 +68,7 @@ async function extract_members(
   destination: string,
   reader: ArchiveMembers,
   fence: () => void,
+  source_umask: number | null,
 ): Promise<void> {
   const buffer = Buffer.alloc(ARCHIVE_STREAM_CHUNK_BYTES);
   const directories = new Set<string>([destination]);
@@ -121,15 +118,22 @@ async function extract_members(
   const ordinary = reader.members.filter((member) => member.path && member.type !== '2');
   for (const member of ordinary.filter((member) => member.type !== '5')) {
     fence();
+    let mode = member.mode;
+    if (source_umask !== null) {
+      // Python tarfile's data_filter: owner RW, no go-w, owner-X gates all X.
+      mode &= 0o755;
+      if (!(mode & 0o100)) mode &= ~0o111;
+      mode |= 0o600;
+    }
     // A preceding hard-link member can already have removed read access on this inode.
-    await chmod(join(destination, member.path), member.mode | 0o400);
+    await chmod(join(destination, member.path), mode | 0o400);
     const file = await open(
       join(destination, member.path),
       constants.O_RDONLY | constants.O_NOFOLLOW,
     );
     try {
       set_archive_times(file.fd, member.mtime, fence);
-      await file.chmod(member.mode);
+      await file.chmod(mode);
       await file.sync();
     } finally {
       await file.close();
@@ -146,7 +150,13 @@ async function extract_members(
     try {
       const member = declared.get(path);
       if (member) set_archive_times(file.fd, member.mtime, fence);
-      await file.chmod(path === destination ? 0o700 : (member?.mode ?? 0o700));
+      await file.chmod(
+        path === destination
+          ? 0o700
+          : source_umask === null
+            ? (member?.mode ?? 0o700)
+            : 0o777 & ~source_umask,
+      );
       await file.sync();
     } finally {
       await file.close();
@@ -157,6 +167,7 @@ export async function unpack_archive_child(
   request: UnpackRequest,
   input: Readable,
   output: Writable,
+  inherited_umask: number,
 ): Promise<void> {
   const controller = new AbortController();
   const lost = (): void =>
@@ -193,7 +204,11 @@ export async function unpack_archive_child(
             throw new AppValidationError('app archive exceeds compressed size limit');
           if (magic.length < 2) {
             magic = Buffer.concat([magic, chunk.subarray(0, 2 - magic.length)]);
-            if (magic.length === 2 && (magic[0] !== 0x1f || magic[1] !== 0x8b))
+            if (
+              request.purpose === 'application' &&
+              magic.length === 2 &&
+              (magic[0] !== 0x1f || magic[1] !== 0x8b)
+            )
               throw new AppValidationError('app archive is not gzip data');
           }
           digest.update(chunk);
@@ -203,11 +218,18 @@ export async function unpack_archive_child(
         }
       },
     });
-    const gunzip = createGunzip({ chunkSize: ARCHIVE_STREAM_CHUNK_BYTES });
+    const decoding =
+      request.purpose === 'application'
+        ? createGunzip({ chunkSize: ARCHIVE_STREAM_CHUNK_BYTES })
+        : new Transform({
+            transform(chunk, _encoding, callback) {
+              callback(null, chunk);
+            },
+          });
     await pipeline(
       createReadStream('', { fd: 3, autoClose: false, highWaterMark: ARCHIVE_STREAM_CHUNK_BYTES }),
       hashing,
-      gunzip,
+      decoding,
       async (source) => {
         for await (const value of source) {
           const bytes = Buffer.from(value);
@@ -231,21 +253,34 @@ export async function unpack_archive_child(
       { signal: controller.signal },
     );
     reader.finish();
-    if (digest.digest('hex') !== request.archive_sha256)
+    const source_sha256 = digest.digest('hex');
+    if (request.purpose === 'application' && source_sha256 !== request.archive_sha256)
       throw new AppValidationError('app archive hash differs from publication receipt');
     await spool.sync();
     await acknowledge({ type: 'validated', expanded_bytes: expanded });
     // Keep the same reader consuming after its last ACK, so EOF cannot sit buffered.
     watching = replies.next().then(lost, lost);
-    await extract_members(spool, request.destination, reader, fence);
+    await extract_members(
+      spool,
+      request.destination,
+      reader,
+      fence,
+      request.purpose === 'source-export' ? inherited_umask : null,
+    );
     fence();
-    const manifest = await validate_app_manifest(join(request.destination, 'manifest.json'), {
-      expected_sha: request.expected_sha,
-      require_runtime: true,
-      verify_artifact_digest: false,
-    });
-    fence();
-    await write_archive_message(output, { type: 'result', manifest });
+    let result: ArchiveUnpackResult;
+    if (request.purpose === 'application') {
+      const manifest = await validate_app_manifest(join(request.destination, 'manifest.json'), {
+        expected_sha: request.expected_sha,
+        require_runtime: true,
+        verify_artifact_digest: false,
+      });
+      fence();
+      result = { type: 'result', manifest };
+    } else {
+      result = { type: 'source-export-result', source_sha256 };
+    }
+    await write_archive_message(output, result);
     fence();
   } finally {
     if (watching) {

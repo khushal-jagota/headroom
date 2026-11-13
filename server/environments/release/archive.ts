@@ -21,7 +21,8 @@ import { pipeline } from 'node:stream/promises';
 import { Pack } from 'tar';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import { stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
-import type { AppManifest } from './contracts.ts';
+import type { AppManifest, ArchiveUnpackRequest, ReleaseExecution } from './contracts.ts';
+import { assert_release_execution } from './process.ts';
 import { AppValidationError } from './contracts.ts';
 import {
   ARCHIVE_GZIP_LEVEL,
@@ -89,7 +90,7 @@ async function existing_parent(path: string): Promise<string> {
     }
   }
 }
-async function remove_owned_tree(path: string): Promise<void> {
+export async function remove_owned_tree(path: string): Promise<void> {
   // Archived modes can remove owner access. Restore it without following links.
   async function accessible(directory: string): Promise<void> {
     await chmod(directory, 0o700);
@@ -107,17 +108,64 @@ export async function extract_app_archive(
   child_processes: OwnedChildProcesses,
   read_free_space: (path: string) => Promise<bigint> = filesystem_free_bytes,
 ): Promise<AppManifest> {
+  return (await extract_archive(
+    archive,
+    destination,
+    { purpose: 'application', archive_sha256, expected_sha },
+    child_processes,
+    read_free_space,
+  )) as AppManifest;
+}
+export async function extract_git_export(
+  archive: string,
+  destination: string,
+  execution: ReleaseExecution,
+): Promise<void> {
+  await extract_archive(
+    archive,
+    destination,
+    { purpose: 'source-export' },
+    execution.child_processes,
+    filesystem_free_bytes,
+    execution,
+  );
+}
+async function extract_archive(
+  archive: string,
+  destination: string,
+  purpose:
+    | Omit<Extract<ArchiveUnpackRequest, { purpose: 'application' }>, 'spool_root' | 'destination'>
+    | { purpose: 'source-export' },
+  child_processes: OwnedChildProcesses,
+  read_free_space: (path: string) => Promise<bigint>,
+  execution?: ReleaseExecution,
+): Promise<AppManifest | string> {
   let input: FileHandle | undefined, work: string | undefined, child: ChildProcess | undefined;
   let closed: Promise<void> | undefined,
     ended = false,
     code: number | null = null;
   let ownOutput = false,
     success = false,
-    result: AppManifest | undefined,
+    result: AppManifest | string | undefined,
     failure: unknown;
   const errors: unknown[] = [];
+  const cancel = (reason: unknown): void => {
+    failure ??= reason;
+    if (child && !ended) {
+      child.stdin?.destroy();
+      try {
+        stop_one_shot_child(child);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+  };
+  const abort = () => cancel(execution!.signal.reason);
+  let timer: ReturnType<typeof setTimeout> | undefined;
   let target = resolve(destination);
   const require_live = (): void => {
+    if (failure !== undefined) throw failure;
+    if (execution) assert_release_execution(execution);
     if (
       ended ||
       (child?.exitCode !== null && child?.exitCode !== undefined) ||
@@ -127,15 +175,28 @@ export async function extract_app_archive(
   };
   const capacity = async (path: string, bytes: bigint, message: string): Promise<void> => {
     const free = await read_free_space(path);
+    require_live();
     if (typeof free !== 'bigint' || free < bytes) throw new AppValidationError(message);
   };
   try {
+    if (execution) {
+      execution.signal.addEventListener('abort', abort);
+      if (execution.deadline !== null)
+        timer = setTimeout(
+          () => cancel(new AppValidationError('release operation exceeded its time budget')),
+          Math.max(0, execution.deadline - performance.now() / 1000) * 1000,
+        );
+    }
+    require_live();
     input = await open(archive, constants.O_RDONLY | constants.O_NONBLOCK);
+    require_live();
     const info = await input.stat();
+    require_live();
     if (!info.isFile()) throw new AppValidationError('app archive must be a regular file');
     if (info.size > ARCHIVE_MAX_COMPRESSED_BYTES)
       throw new AppValidationError('app archive exceeds compressed size limit');
     const parent = await resolved_path(dirname(target));
+    require_live();
     target = join(parent, basename(target));
     const ancestor = await existing_parent(parent);
     await capacity(
@@ -144,26 +205,35 @@ export async function extract_app_archive(
       'app archive has insufficient free space before spooling',
     );
     work = await mkdtemp(join(ancestor, '.app-unpack-'));
+    require_live();
     await chmod(work, 0o700);
-    child = child_processes.spawn(
-      process.execPath,
-      [
-        fileURLToPath(new URL('./archive_unpack_main.ts', import.meta.url)),
-        JSON.stringify({ spool_root: work, destination: target, archive_sha256, expected_sha }),
-      ],
-      {
-        cwd: work,
-        env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: work, TMPDIR: work, LANG: 'C.UTF-8' },
-        stdio: ['pipe', 'pipe', 'pipe', input.fd],
-      },
-    );
-    closed = new Promise((resolve) =>
-      child!.once('close', (status) => {
-        ended = true;
-        code = status;
-        resolve();
-      }),
-    );
+    require_live();
+    let release!: () => void;
+    closed = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      child = child_processes.spawn(
+        process.execPath,
+        [
+          fileURLToPath(new URL('./archive_unpack_main.ts', import.meta.url)),
+          JSON.stringify({ spool_root: work, destination: target, ...purpose }),
+        ],
+        {
+          cwd: work,
+          env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: work, TMPDIR: work, LANG: 'C.UTF-8' },
+          stdio: ['pipe', 'pipe', 'pipe', input.fd],
+        },
+      );
+    } catch (error) {
+      release();
+      throw error;
+    }
+    child.once('close', (status) => {
+      ended = true;
+      code = status;
+      release();
+    });
     child.once('exit', () => {
       ended = true;
     });
@@ -177,8 +247,11 @@ export async function extract_app_archive(
     child.stderr!.on('data', (bytes: Buffer) => {
       diagnostic = (diagnostic + bytes.toString('utf8')).slice(-2000);
     });
+    require_live();
     let validated = false;
     for await (const message of read_archive_messages(child.stdout!)) {
+      if (failure !== undefined) throw failure;
+      if (execution) assert_release_execution(execution);
       if (message.type === 'error') throw new AppValidationError(String(message.message));
       if (
         message.type === 'space' &&
@@ -215,9 +288,11 @@ export async function extract_app_archive(
             throw new AppValidationError('archive destination must not exist');
           throw error;
         }
+        require_live();
         await chmod(target, 0o700);
         validated = true;
       } else if (
+        purpose.purpose === 'application' &&
         message.type === 'result' &&
         validated &&
         result === undefined &&
@@ -226,11 +301,22 @@ export async function extract_app_archive(
       ) {
         result = message.manifest as AppManifest;
         continue;
+      } else if (
+        purpose.purpose === 'source-export' &&
+        message.type === 'source-export-result' &&
+        validated &&
+        result === undefined &&
+        typeof message.source_sha256 === 'string' &&
+        /^[0-9a-f]{64}$/.test(message.source_sha256)
+      ) {
+        result = message.source_sha256;
+        continue;
       } else throw new AppValidationError('app archive child protocol is invalid');
       require_live();
       await write_archive_message(child.stdin!, { ok: true });
     }
     await closed;
+    if (execution) assert_release_execution(execution);
     if (failure !== undefined) throw failure;
     if (code !== 0 || !result)
       throw new AppValidationError(
@@ -257,7 +343,10 @@ export async function extract_app_archive(
     if (input) await clean(() => input!.close());
     if (!success && ownOutput) await clean(() => remove_owned_tree(target));
     if (work) await clean(() => remove_owned_tree(work!));
-    if (success && ownOutput && errors.length) await clean(() => remove_owned_tree(target));
+    if (success && ownOutput && (errors.length || failure !== undefined))
+      await clean(() => remove_owned_tree(target));
+    clearTimeout(timer);
+    execution?.signal.removeEventListener('abort', abort);
   }
   if (errors.length)
     throw new AppValidationError(

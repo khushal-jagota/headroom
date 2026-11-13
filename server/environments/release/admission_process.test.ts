@@ -7,12 +7,14 @@ import type { ChildProcess } from 'node:child_process';
 import { expect, test, vi } from 'vitest';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import { run_runtime_json_probe, run_runtime_probe } from './admission_process.ts';
+import { run_release_command } from './process.ts';
 
 test.skipIf(process.platform !== 'linux')(
   'admission joins only its actual probe and kills its live owned group at the fixed deadline',
   async () => {
     const state = mkdtempSync(join(tmpdir(), 'panels-admission-'));
     const owner = new ChildProcesses(),
+      native_spawn = owner.spawn.bind(owner),
       spawned = vi.spyOn(owner, 'spawn');
     const native_signal = process.kill.bind(process);
     const signal = vi.spyOn(process, 'kill').mockImplementation((pid, name) => {
@@ -63,6 +65,53 @@ test.skipIf(process.platform !== 'linux')(
       );
       expect(await bounded(pending)).toEqual({ report, home: state, secret: null, proxy: null });
       expect(unrelated.exitCode).toBeNull(); // A per-probe join cannot wait for the shared owner's cohort.
+      pending = (async () => {
+        const deadline = performance.now() / 1000 + 10;
+        const execution = {
+          child_processes: owner,
+          signal: new AbortController().signal,
+          deadline,
+        };
+        expect(
+          await run_release_command(
+            [process.execPath, '-e', 'process.stdout.write("source-only")'],
+            { timeout_seconds: null },
+            execution,
+          ),
+        ).toEqual({ code: 0, stdout: 'source-only', stderr: '' });
+        const controller = new AbortController(),
+          reason = new Error('Recorded build abort');
+        spawned.mockImplementationOnce((command, args, options) => {
+          const child = native_spawn(command, args, options);
+          // Abort before the caller receives the exact handle; its post-publish fence must reap it.
+          controller.abort(reason);
+          return child;
+        });
+        await expect(
+          run_release_command(
+            [process.execPath, '-e', 'setInterval(()=>{},1000)'],
+            { timeout_seconds: null },
+            { ...execution, signal: controller.signal },
+          ),
+        ).rejects.toBe(reason);
+        expect((spawned.mock.results.at(-1)!.value as ChildProcess).signalCode).toBe('SIGKILL');
+        expect(unrelated.exitCode).toBeNull();
+        const before_deadline = spawned.mock.calls.length;
+        const clock = vi.spyOn(performance, 'now').mockReturnValue((deadline + 1) * 1000);
+        try {
+          await expect(
+            run_release_command(
+              [process.execPath, '-e', 'throw Error("must not launch")'],
+              { timeout_seconds: null },
+              execution,
+            ),
+          ).rejects.toThrow('release operation exceeded its time budget');
+          expect(spawned).toHaveBeenCalledTimes(before_deadline);
+        } finally {
+          clock.mockRestore();
+        }
+      })();
+      await bounded(pending);
       const before = signal.mock.calls.length;
       pending = run_runtime_json_probe(
         [process.execPath, '-e', 'console.log("not JSON")'],
@@ -95,4 +144,4 @@ test.skipIf(process.platform !== 'linux')(
     }
   },
   45_000,
-); // Four independent 8s observations plus cleanup. No production deadline changes.
+); // Five independent 8s observations plus cleanup. No production deadline changes.

@@ -1,0 +1,182 @@
+/** Exact-SHA source export and transactional Node application construction. */
+import { chmod, mkdir, mkdtemp, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
+import type {
+  AppBuildOptions,
+  AppManifest,
+  ReleaseBuildDependencies,
+  ReleaseExecution,
+} from './contracts.ts';
+import { AppValidationError } from './contracts.ts';
+import { APP_FORMAT } from './configuration.ts';
+import {
+  digest_app_artifact,
+  digest_app_source,
+  validate_app_manifest,
+  validate_app_sha,
+  validate_app_tree,
+} from './identity.ts';
+import { complete_node_runtime } from './native_inventory.ts';
+import { validate_public_cli_entrypoint, write_app_entrypoints } from './entrypoints.ts';
+import { assert_release_execution, run_release_command } from './process.ts';
+import { extract_git_export, remove_owned_tree } from './archive.ts';
+import { read_migration_graph, migration_frontier } from './migrations.ts';
+import { resolved_path, expand_path } from '../paths.ts';
+import { stringify_python_json } from '../../core/http/numeric_json.ts';
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      ['ENOENT', 'ENOTDIR'].includes(String(error.code))
+    )
+      return false;
+    throw error;
+  }
+}
+async function git_output(
+  source: string,
+  execution: ReleaseExecution,
+  ...args: string[]
+): Promise<string> {
+  try {
+    return (
+      await run_release_command(
+        ['git', '-C', source, ...args],
+        { timeout_seconds: null },
+        execution,
+      )
+    ).stdout.trim();
+  } catch (error) {
+    assert_release_execution(execution);
+    if (error instanceof AppValidationError || (error instanceof Error && 'code' in error))
+      throw new AppValidationError('source checkout is not a usable Git checkout');
+    throw error;
+  }
+}
+async function install_app_dependencies(root: string, execution: ReleaseExecution): Promise<void> {
+  const run = (argv: readonly string[]) =>
+    run_release_command(argv, { timeout_seconds: null }, execution);
+  await run(['npm', 'ci', '--omit=dev', '--prefix', join(root, 'server')]);
+  if (await exists(join(root, 'web/package-lock.json')))
+    await run(['npm', 'ci', '--prefix', join(root, 'web')]);
+  if (await exists(join(root, 'agent_backends/package.json')))
+    await run([
+      'npm',
+      'install',
+      '--prefix',
+      join(root, 'agent_backends'),
+      '--package-lock=false',
+      '--save=false',
+      '@anthropic-ai/claude-code@latest',
+      '@openai/codex@latest',
+    ]);
+  if (await exists(join(root, 'web/package.json')))
+    await run(['npm', 'run', 'build', '--prefix', join(root, 'web')]);
+}
+export async function build_exported_app(
+  source_root: string,
+  options: AppBuildOptions,
+  dependencies: ReleaseBuildDependencies,
+  execution: ReleaseExecution,
+): Promise<AppManifest> {
+  assert_release_execution(execution);
+  const source = await resolved_path(expand_path(source_root));
+  const requested = validate_app_sha(options.requested_sha, 'requested SHA');
+  const actual = validate_app_sha(
+    await git_output(source, execution, 'rev-parse', 'HEAD'),
+    'checkout HEAD',
+  );
+  if (actual !== requested)
+    throw new AppValidationError('checkout HEAD does not match requested SHA');
+  const destination = await resolved_path(expand_path(options.candidate_app));
+  if (await exists(destination)) {
+    const manifest = await validate_app_manifest(join(destination, 'manifest.json'), {
+      expected_sha: requested,
+      require_runtime: options.install_dependencies,
+    });
+    await validate_public_cli_entrypoint(destination, dependencies.public_cli_entrypoint);
+    assert_release_execution(execution);
+    return manifest;
+  }
+  assert_release_execution(execution);
+  await mkdir(dirname(destination), { recursive: true });
+  assert_release_execution(execution);
+  const workspace = await mkdtemp(join(dirname(destination), `.${basename(destination)}-`));
+  const payload = join(workspace, 'app'),
+    archive = join(workspace, 'source.tar');
+  try {
+    assert_release_execution(execution);
+    await run_release_command(
+      ['git', '-C', source, 'archive', '--format=tar', `--output=${archive}`, requested],
+      { timeout_seconds: null },
+      execution,
+    );
+    await extract_git_export(archive, payload, execution);
+    await validate_app_tree(payload);
+    const source_digest = await digest_app_source(payload);
+    let runtime_contract: AppManifest['runtime_contract'] = null;
+    if (options.install_dependencies) {
+      const graph = await read_migration_graph(payload);
+      const seed: unknown = JSON.parse(
+        new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+          await readFile(join(payload, 'server/core/database/application_schema.json')),
+        ),
+      );
+      const heads = migration_frontier(graph);
+      if (
+        seed === null ||
+        typeof seed !== 'object' ||
+        !('alembicRevision' in seed) ||
+        heads.size !== 1 ||
+        !heads.has(String(seed.alembicRevision))
+      )
+        throw new AppValidationError('migration graph differs from the generated schema frontier');
+      await install_app_dependencies(payload, execution);
+      runtime_contract = await complete_node_runtime(payload, execution);
+    }
+    assert_release_execution(execution);
+    await write_app_entrypoints(payload, requested, dependencies, execution);
+    const manifest: AppManifest = {
+      app_sha: requested,
+      source_digest,
+      artifact_digest: await digest_app_artifact(payload),
+      runtime_contract,
+    };
+    assert_release_execution(execution);
+    await writeFile(
+      join(payload, 'manifest.json'),
+      stringify_python_json(
+        { format: APP_FORMAT, ...manifest },
+        { sort_keys: true, indent: 2, ensure_ascii: true },
+      ) + '\n',
+    );
+    assert_release_execution(execution);
+    await chmod(payload, 0o755);
+    // Validate before publication. The final path is never a partially built application.
+    await validate_app_manifest(join(payload, 'manifest.json'), {
+      expected_sha: requested,
+      require_runtime: options.install_dependencies,
+    });
+    assert_release_execution(execution);
+    await rename(payload, destination);
+    await validate_app_manifest(join(destination, 'manifest.json'), {
+      expected_sha: requested,
+      require_runtime: options.install_dependencies,
+    });
+    assert_release_execution(execution);
+    return manifest;
+  } finally {
+    try {
+      await remove_owned_tree(workspace);
+    } catch (error) {
+      throw new AppValidationError(
+        `app build cleanup failed; owned path: ${workspace}; ${String(error)}`,
+      );
+    }
+  }
+}

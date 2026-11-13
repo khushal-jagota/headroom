@@ -1,9 +1,13 @@
 /** Source loader lookup and distribution attribution for copied native libraries. */
 import { chmod, copyFile, mkdir, realpath, stat, utimes } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative } from 'node:path';
-import type { CopiedNativeComponent, ElfObject } from '../contracts.ts';
+import type { CopiedNativeComponent, ElfObject, ReleaseExecution } from '../contracts.ts';
 import { RuntimeContractError } from '../../updates/logic/runtime_contract.ts';
-import { find_release_executable, run_release_command } from '../process.ts';
+import {
+  assert_release_execution,
+  find_release_executable,
+  run_release_command,
+} from '../process.ts';
 import { resolved_path } from '../../paths.ts';
 import {
   LICENSE_DIRECTORY,
@@ -71,11 +75,17 @@ export function relative_loader_paths(
   const shared = '$ORIGIN/' + (relative(dirname(path), library_root) || '.');
   return result.includes(shared) ? result : [...result, shared];
 }
-export async function host_library_cache(): Promise<Map<string, string>> {
+export async function host_library_cache(
+  execution: ReleaseExecution,
+): Promise<Map<string, string>> {
   const command = (await find_release_executable('ldconfig')) ?? '/sbin/ldconfig';
-  const { stdout } = await run_release_command([command, '-p'], {
-    timeout_seconds: NATIVE_TOOL_SECONDS,
-  });
+  const { stdout } = await run_release_command(
+    [command, '-p'],
+    {
+      timeout_seconds: NATIVE_TOOL_SECONDS,
+    },
+    execution,
+  );
   const cache = new Map<string, string>();
   for (const line of stdout.split('\n')) {
     const match = /^\s*(\S+)\s+\(.*x86-64.*\) => (\S+)/.exec(line);
@@ -83,25 +93,37 @@ export async function host_library_cache(): Promise<Map<string, string>> {
   }
   return cache;
 }
-export async function copy_with_metadata(source: string, destination: string): Promise<void> {
+export async function copy_with_metadata(
+  source: string,
+  destination: string,
+  execution: ReleaseExecution,
+): Promise<void> {
   const info = await stat(source);
+  assert_release_execution(execution);
   await copyFile(source, destination);
+  assert_release_execution(execution);
   await chmod(destination, info.mode & 0o7777);
+  assert_release_execution(execution);
   await utimes(destination, info.atime, info.mtime);
 }
 export async function copied_component(
   source: string,
   app_root: string,
+  execution: ReleaseExecution,
 ): Promise<CopiedNativeComponent> {
   source = await realpath(source);
   const query = await find_release_executable('dpkg-query');
   let package_name = '';
   if (query !== null)
     for (const candidate of [source, source.replace('/usr/lib/', '/lib/')]) {
-      const result = await run_release_command([query, '-S', candidate], {
-        timeout_seconds: PROVENANCE_TOOL_SECONDS,
-        allow_nonzero: true,
-      });
+      const result = await run_release_command(
+        [query, '-S', candidate],
+        {
+          timeout_seconds: PROVENANCE_TOOL_SECONDS,
+          allow_nonzero: true,
+        },
+        execution,
+      );
       if (result.code === 0) {
         package_name = result.stdout.split(': ', 1)[0].split('\n', 1)[0];
         break;
@@ -114,6 +136,7 @@ export async function copied_component(
     {
       timeout_seconds: PROVENANCE_TOOL_SECONDS,
     },
+    execution,
   );
   const license_source = join('/usr/share/doc', package_name.split(':', 1)[0], 'copyright');
   if (!(await is_file(license_source)))
@@ -123,8 +146,9 @@ export async function copied_component(
   const suffix = relative(app_root, await resolved_path(destination));
   if (suffix === '..' || suffix.startsWith('../') || isAbsolute(suffix))
     throw new RuntimeContractError('native license path escapes archive');
+  assert_release_execution(execution);
   await mkdir(dirname(destination), { recursive: true });
-  await copy_with_metadata(license_source, destination);
+  await copy_with_metadata(license_source, destination, execution);
   return {
     package: package_name,
     version,
