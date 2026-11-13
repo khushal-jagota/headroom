@@ -135,3 +135,36 @@ test('read scopes cannot write or retain SQL access; transaction control stays i
   expect(() => retainedWrite?.run('INSERT INTO source VALUES (3)')).toThrow(/no longer active/);
   expect(rowsFromPython(path, 'source')).toEqual([2]);
 });
+
+// Existing whole-write rollback coverage does not prove that a refusal receipt can
+// commit after a nested domain rollback, or that nested capabilities expire.
+test('savepoints isolate nested failures and reject asynchronous or expired scopes', () => {
+  const database = own(createDatabase(fixture()));
+  let retained: TransactionSql | undefined;
+  database.write((outer) => {
+    outer.run('INSERT INTO source VALUES (1)');
+    outer.savepoint((middle) => {
+      retained = middle;
+      middle.run('INSERT INTO source VALUES (2)');
+      expect(() =>
+        middle.savepoint((inner) => {
+          inner.run('INSERT INTO source VALUES (3)');
+          throw new Error('domain refused');
+        }),
+      ).toThrow('domain refused');
+      expect(() =>
+        middle.savepoint((inner) => {
+          inner.run('INSERT INTO source VALUES (4)');
+          return Promise.resolve();
+        }),
+      ).toThrow('must be synchronous');
+      middle.run('INSERT INTO derived VALUES (9)');
+    });
+    expect(() => retained!.savepoint(() => {})).toThrow('scope is no longer active');
+  });
+  expect(database.read((sql) => sql.all('SELECT value FROM source ORDER BY value'))).toEqual([
+    { value: 1 },
+    { value: 2 },
+  ]);
+  expect(database.read((sql) => sql.all('SELECT value FROM derived'))).toEqual([{ value: 9 }]);
+});

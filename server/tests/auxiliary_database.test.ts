@@ -11,7 +11,12 @@ import {
   createDatabase,
   createReadAccess,
   registerReadFunction,
+  is_sqlite_error,
 } from '../core/database/index.ts';
+import { MacInbox } from '../executor/vps_inbox.ts';
+import { InboxStore } from '../executor/data/inbox.ts';
+import { FileStaging } from '../executor/vps_files.ts';
+import type { WireValue } from '../executor/contracts.ts';
 import type {
   AuxiliaryDatabase,
   AuxiliaryTransactionSql,
@@ -246,4 +251,84 @@ test('numeric configuration and maintenance values refuse invalid PRAGMA interpo
   expect(() => database.checkpoint('PASSIVE', { busyTimeoutMs: -1 })).toThrow('busyTimeoutMs');
   expect(() => database.write((tx) => tx.incrementalVacuum(-1))).toThrow('pages');
   expect(database.storageStats().userVersion).toBe(2);
+});
+
+// SQLite FULL can abort the whole transaction and destroy every savepoint. The
+// cleanup errors must not hide its class and turn a retryable item into a refusal.
+test('a whole-transaction storage failure inside savepoints remains retryable at inbox admission', async () => {
+  const filename = path(),
+    database = open(filename);
+  let original: unknown;
+  class FullInbox extends MacInbox {
+    override async accept(): Promise<WireValue<'AcceptanceReceipt'>> {
+      return database.write((tx) =>
+        tx.savepoint((outer) =>
+          outer.savepoint((inner) => {
+            try {
+              inner.run('INSERT INTO samples VALUES (zeroblob(?))', [8 * 1024 * 1024]);
+            } catch (error) {
+              original = error;
+              throw error;
+            }
+            throw new Error('the synthetic storage budget did not fail');
+          }),
+        ),
+      );
+    }
+  }
+  const inbox = new FullInbox(
+    new InboxStore(database, new FileStaging(filename)),
+    {
+      now: () => new Date(0),
+      nowUnix: () => 0,
+      isoformat: () => '1970-01-01T00:00:00+00:00',
+    },
+    {
+      authority: () => {
+        throw new Error('not used');
+      },
+      validate_stop: () => {},
+      accept_stop_receipt: async () => {},
+    },
+  );
+  try {
+    const reply = await inbox.accept_batch(
+      'conversation',
+      {
+        sender_id: 'sender',
+        items: [
+          {
+            sender_refusal: null,
+            envelope: {
+              conversation_id: 'conversation',
+              sender_id: 'sender',
+              sequence: 1,
+              submission_id: 'submission',
+              kind: 'backend_event',
+              payload: {},
+              file_dependencies: [],
+            },
+          },
+        ],
+      },
+      {
+        executor_incarnation: 'fixture',
+        protocol_version: 22,
+        spool_format_version: 5,
+        application_revision: 'fixture',
+        connection_generation: 0,
+      },
+    );
+    expect(reply.receipts).toEqual([]);
+    expect(reply.stop?.reason).toBe('retry_later');
+    expect(is_sqlite_error(original)).toBe(true);
+    expect(original).toMatchObject({ code: 'SQLITE_FULL' });
+    expect(
+      (original as Error & { savepoint_cleanup_errors: unknown[] }).savepoint_cleanup_errors,
+    ).toHaveLength(4);
+    expect(database.read((sql) => sql.all('SELECT * FROM samples'))).toEqual([]);
+    database.write((tx) => tx.run('INSERT INTO samples VALUES (?)', [Buffer.from('later retry')]));
+  } finally {
+    await inbox.stop({ deadline: performance.now() / 1000 + 5 });
+  }
 });
