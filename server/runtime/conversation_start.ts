@@ -31,7 +31,8 @@ import { resolve_conversation_start_request } from '../conversation/logic/conver
 import { ensure_started_conversation_record } from '../conversation/record/data/store.ts';
 import type { Ticket, TicketLocale } from '../tickets/contracts.ts';
 import * as tickets from '../tickets/data/index.ts';
-import * as locale from '../tickets/locale_configuration.ts';
+import { canonical_ticket_execution_refusal } from '../tickets/execution_admission.ts';
+import type { TicketExecutionRefusal } from '../tickets/execution_admission.ts';
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import type { WorkerTypeRegistry } from '../worker_types/registry.ts';
 import { render_workflow_guide } from '../worker_types/guidance.ts';
@@ -90,10 +91,20 @@ export function conversation_link_lock(link_key: string): ConversationLinkLock {
 interface WorkspaceContext {
   db_path: string;
   workspace_root: string | null;
+  execution_refusal?: TicketExecutionRefusal;
 }
 const contexts = new WeakMap<Database, WorkspaceContext>();
 export function configure_conversation_start(database: Database, context: WorkspaceContext): void {
   contexts.set(database, context);
+}
+/** An absent composition adds no restriction to the canonical domain guards. */
+export function configured_ticket_execution_refusal(
+  database: Database,
+  sql: ReadSql,
+  ticket: Ticket,
+): PlannerError | null {
+  const policy = contexts.get(database)?.execution_refusal;
+  return policy === undefined ? null : policy(sql, ticket);
 }
 /** Record an accepted held delivery's choice on its still-active Ticket. */
 export function write_held_ticket_configuration(
@@ -337,6 +348,11 @@ export async function start_ticket_conversation(
     now: number;
   },
 ): Promise<LinkedConversation> {
+  database.read((sql) => {
+    const current = tickets.read_ticket(sql, ticket.id);
+    const refusal = configured_ticket_execution_refusal(database, sql, current);
+    if (refusal !== null) throw refusal;
+  });
   const request = start_request(options.conversation_id, values);
   await observe_conversation_operation(() => system.start_conversation(request), options.signal);
   let linked: Ticket;
@@ -478,16 +494,10 @@ export async function send_to_ticket_conversation(
 ): Promise<DeliveredMessage> {
   const ticket = database.read((sql) => tickets.read_ticket(sql, ticket_id));
   database.read((sql) => {
-    if (!locale.can_execute_locale(sql, ticket.locale))
-      throw new PlannerError(
-        'validation',
-        locale.execution_unavailable_reason(sql, ticket.locale),
-        {
-          ticket_id,
-          locale: ticket.locale,
-          machine_locale: locale.CURRENT_EXECUTION_LOCALE,
-        },
-      );
+    const refusal =
+      canonical_ticket_execution_refusal(sql, ticket) ??
+      configured_ticket_execution_refusal(database, sql, ticket);
+    if (refusal !== null) throw refusal;
   });
   if (options.conversation_id === null && ticket.conversation_id === null) {
     const making = options.created_conversation_id ?? new_conversation_id();

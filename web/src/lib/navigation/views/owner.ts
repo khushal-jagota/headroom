@@ -185,7 +185,7 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
     // Parent pages define the visible child surfaces. Shrinking these in response
     // to child demand would repeatedly mount/unmount that same demand. Keep them
     // stable, and preserve Chief's existing pages; allocate other bodies fairly.
-    const stable=(window:ViewWindowRequest)=>window.section==='rail_parents'||window.section==='settled'||(window.section==='children'&&window.owner?.kind==='chief');
+    const stable=(window:ViewWindowRequest)=>window.section==='rail_parents'||window.section==='settled'||((window.section==='children'||window.section==='rail_tickets')&&window.owner?.kind==='chief');
     const stableWindows=base.windows.filter(stable);
     let fixed=stableWindows.reduce((sum,window)=>sum+window.limit,0);
     if(fixed+reviewConversationIds.size>256) {
