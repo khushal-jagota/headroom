@@ -1,6 +1,7 @@
 /** Manager readers and launch writer used by Ticket message delivery. */
 import { parse_numeric_json } from '../core/http/numeric_json.ts';
 import { newId } from '../core/ids.ts';
+import { strip } from '../core/whitespace.ts';
 import { validate_launch_configuration } from './launch_settings.ts';
 import { isDeepStrictEqual } from 'node:util';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
@@ -187,7 +188,7 @@ export function update_manager(
   const values: (string | number | null)[] = fields.map((field) => options.edits[field]!);
   if ('recap' in options.edits) {
     fields.push('recap_updated_at');
-    values.push(options.edits.recap?.trim() ? now : null);
+    values.push(options.edits.recap != null && strip(options.edits.recap) ? now : null);
   }
   if (fields.length) {
     tx.run(

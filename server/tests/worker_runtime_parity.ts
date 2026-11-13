@@ -64,6 +64,24 @@ export async function run_worker_runtime_parity(
       };
       database.write((sql) => tickets.reject_proposal(sql, ticket.id, options));
       database.write((sql) => tickets.reject_proposal(sql, ticket.id, options));
+      const revised = database.write((sql) =>
+        tickets.file_current_proposal(sql, ticket.id, {
+          body: 'Reviewed scope',
+          principal: { kind: 'ticket', id: ticket.id },
+          now: input.now,
+        }),
+      );
+      database.write((sql) =>
+        tickets.accept_proposal(sql, ticket.id, 'what_changes', {
+          principal: OWNER,
+          now: input.now,
+          next_ceiling: 'needs_implementation',
+          next_holder: OWNER,
+          expected_proposal_revision: revised.pending_proposal_revision,
+          message: 'Approuvé — café et 日本語.',
+          decision_id: 'parity-approval',
+        }),
+      );
       database.write((sql) => {
         sql.run(
           "UPDATE ticket_decision_messages SET delivery_status='uncertain' WHERE ticket_id=?",

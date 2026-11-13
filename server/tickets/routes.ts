@@ -543,6 +543,8 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     async (request, reply) => {
       if (!dictionaryBody(request.body, reply)) return;
       const raw = request.body;
+      const message = body_opt_str(raw, 'message'),
+        decision_id = body_opt_str(raw, 'decision_id');
       const revision = raw.expected_proposal_revision ?? null;
       if (
         revision !== null &&
@@ -554,9 +556,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
         );
       if (raw.message != null && revision === null)
         throw new PlannerError('validation', 'a decision note requires expected_proposal_revision');
-      const decision_id = body_opt_str(raw, 'decision_id');
-      const message = body_opt_str(raw, 'message'),
-        now = services.clock.nowUnix();
+      const now = services.clock.nowUnix();
       return services.database.write((tx) =>
         ticket_json(
           data.reject_proposal(tx, request.params.ticket_id, {

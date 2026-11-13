@@ -207,6 +207,25 @@ def check_decisions(conn: sqlite3.Connection, root: Path) -> dict[str, Any]:
             expected_proposal_revision=ticket.pending_proposal_revision,
             decision_id="parity-decision",
         )
+        revised = tickets.file_current_proposal(
+            conn,
+            ticket.id,
+            body="Reviewed scope",
+            principal=Principal(PrincipalKind.ticket, ticket.id),
+            now=NOW,
+        )
+        tickets.accept_proposal(
+            conn,
+            ticket.id,
+            field="what_changes",
+            principal=OWNER_PRINCIPAL,
+            now=NOW,
+            next_ceiling="needs_implementation",
+            next_holder=OWNER_PRINCIPAL,
+            expected_proposal_revision=revised.pending_proposal_revision,
+            message="Approuvé — café et 日本語.",
+            decision_id="parity-approval",
+        )
         conn.execute(
             "UPDATE ticket_decision_messages SET delivery_status='uncertain' WHERE ticket_id=?",
             (ticket.id,),
