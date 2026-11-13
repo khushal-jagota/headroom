@@ -8,6 +8,7 @@ refuses a restart while the Mac is away because the kill cannot reach it.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
@@ -140,15 +141,19 @@ def _unlink_give_back_the_claim_and_write_configuration(
     killed_conversation_id: str | None,
     write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None,
     now: int,
+    recover_after_failure: bool = True,
 ) -> None:
     """Unlink the killed conversation, give back any claim, and write the configuration.
 
     One transaction. The Ticket is read again inside it, because a Worker can file its
     proposal while the kill is awaited, and that gives the claim back by itself.
     """
-    conn.execute("BEGIN IMMEDIATE")
     try:
+        conn.execute("BEGIN IMMEDIATE")
         ticket = tickets_data.read_ticket(conn, ticket_id)
+        if not recover_after_failure and ticket.conversation_id != killed_conversation_id:
+            conn.execute("COMMIT")
+            return
         if ticket.worker_step_claim in {
             WorkerStepClaim.out,
             WorkerStepClaim.errored,
@@ -173,6 +178,23 @@ def _unlink_give_back_the_claim_and_write_configuration(
     except BaseException:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
+        if killed_conversation_id is not None and recover_after_failure:
+            try:
+                # The configuration failed, but the old child is already gone.
+                # Do not restore its ownership as a side effect of rollback.
+                _unlink_give_back_the_claim_and_write_configuration(
+                    conn,
+                    ticket_id,
+                    killed_conversation_id=killed_conversation_id,
+                    write_employee_configuration=None,
+                    now=now,
+                    recover_after_failure=False,
+                )
+            except BaseException:
+                logging.getLogger(__name__).exception(
+                    "Could not release retired Worker ownership after restart failure: %s",
+                    ticket_id,
+                )
         raise
 
 

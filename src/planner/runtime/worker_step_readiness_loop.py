@@ -172,6 +172,10 @@ async def _admitted_start_ready_worker_step(
     automatic_identity: str | None = None
     automatic_sent = False
     try:
+        if link_lock.locked() and starts is not None:
+            # Restart can await remote retirement under this lock. Work that
+            # cannot progress must not retain priority over another ready Ticket.
+            starts.finish_unbound(f"worker-preparation:{ticket_id}")
         await link_lock.acquire()
         link_acquired = True
         ticket = await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
