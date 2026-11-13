@@ -32,7 +32,7 @@ from planner.conversation.api import (
     delivery_fate_json,
     video_send_admission,
 )
-from planner.conversation.backend_state import require_enabled_model
+from planner.conversation.backend_state import require_usable_model
 from planner.conversation.contracts import (
     ConversationSystem,
     WorkspacePathPolicy,
@@ -739,9 +739,14 @@ def resolve_employee_configuration(
     employee_launch_model: str,
     employee_launch_reasoning_effort: str | None,
 ) -> ResolvedEmployeeConfiguration:
-    """Keep exact submitted values and refuse disabled models."""
+    """Keep exact submitted values and refuse models the Ticket's machine cannot run."""
     registered_backend = require_conversation_backend_key(employee_backend)
-    require_enabled_model(conn, registered_backend, employee_launch_model)
+    require_usable_model(
+        conn,
+        registered_backend,
+        employee_launch_model,
+        tickets_data.read_ticket(conn, ticket_id).locale,
+    )
     return ResolvedEmployeeConfiguration(
         employee_backend=registered_backend.value,
         employee_launch_model=employee_launch_model,
