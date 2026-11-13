@@ -22,7 +22,7 @@ export function new_stored_file_id(): string {
   return STORED_FILE_ID_PREFIX + randomUUID().replaceAll('-', '');
 }
 
-function sha256(bytes: Uint8Array | string): string {
+export function sha256(bytes: Uint8Array | string): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
