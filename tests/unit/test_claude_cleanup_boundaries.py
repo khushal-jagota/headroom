@@ -15,6 +15,7 @@ from typing import cast
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions, ResultMessage
 from tests.support.conversation_claude_agent_sdk_bench import _ScriptedClaudeSdkClient
+from tests.support.executor_catalog import SingleMachineCatalog
 from tests.support.executor_presence import mac_identity
 from tests.support.executor_turns import MacRemoteChildFactory
 from tests.unit.test_executor_native_runtime import (
@@ -153,7 +154,7 @@ def test_claude_stop_result_controls_canonical_retirement(
             backend_child_factories=dict.fromkeys(ConversationBackendKey, children),
             message_files=ConversationMessageFiles(remote.db_path),
         )
-        system.configure_machine_catalog(remote.catalog)
+        system.configure_machine_catalog(SingleMachineCatalog(remote.catalog))
         remote.bind_conversations(system)
         native: ClaudeAgentSdkBackendChild | None = None
         original_disconnect = None

@@ -482,7 +482,7 @@ def _only_current_mac_process_runs(conn: sqlite3.Connection, conversation_id: st
     return (
         conn.execute(
             "SELECT 1 FROM mac_runs AS r LEFT JOIN mac_executor_presence AS p "
-            "ON p.singleton=1 WHERE r.conversation_id=? AND r.stop_state!='closed' "
+            "ON p.machine_id=r.machine_id WHERE r.conversation_id=? AND r.stop_state!='closed' "
             "AND r.executor_incarnation IS NOT p.executor_incarnation",
             (conversation_id,),
         ).fetchone()

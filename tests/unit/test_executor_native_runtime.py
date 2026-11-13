@@ -912,9 +912,12 @@ def test_real_daemon_controlled_quiesce_exits_zero(executor_transport_home: Path
     import subprocess
     import sys
 
+    from planner.executor.credential_file import credential_path, write_credential
     from planner.executor.protocol import IpcResponse, encode_frame
 
     root = executor_transport_home / "daemon"
+    # This daemon qualifies offline IPC retirement after enrollment, not handover.
+    write_credential(credential_path(root), "a" * 43)
     script = (
         "import asyncio; from pathlib import Path; "
         "from planner.executor.mac_service import MacService; "

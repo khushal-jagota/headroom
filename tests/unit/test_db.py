@@ -64,6 +64,7 @@ def test_fresh_database_starts_at_the_single_shipped_head(tmp_path: Path) -> Non
         assert _revision(conn) == shipped_migration_head()
         assert conn.execute("SELECT count(*) FROM projects").fetchone()[0] > 0
         assert conn.execute("SELECT 1 FROM worker_types WHERE worker_type='coding'").fetchone()
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createQuery } from "@tanstack/svelte-query";
+  import { createQuery, createQueries } from "@tanstack/svelte-query";
   import { queries } from "../../lib/queryCatalogue";
   import { mutateJson } from "../../lib/mutate";
   import { MACHINE_ICONS, MACHINE_COLORS, type Machine, type MachineIcon, type MachineColor } from "../../lib/machines/contracts";
@@ -8,7 +8,9 @@
   import Button from "../Button.svelte";
   import ErrorLine from "../ErrorLine.svelte";
   const machines = createQuery(() => queries.machines());
-  const executorHealth = createQuery(() => ({...queries.executorHealth(), enabled: Boolean(machines.data?.machines.some(machine => !machine.is_home))}));
+  const remoteMachines = $derived(machines.data?.machines.filter(machine => !machine.is_home) ?? []);
+  const healthQueries = createQueries(() => ({queries: remoteMachines.map(machine => queries.executorHealth(machine.machine_id))}));
+  const executorHealth = $derived(new Map(remoteMachines.map((machine, index) => [machine.machine_id, healthQueries[index]?.data])));
   let editing = $state<string | null>(null);
   let name = $state("");
   let icon = $state<MachineIcon>("server");
@@ -41,7 +43,7 @@
           </div>
           {#if editing !== machine.machine_id}<Button variant="ghost" onclick={() => edit(machine)}>Edit</Button>{/if}
         </div>
-        {#if !machine.is_home}<MacStatus machineId={machine.machine_id} health={executorHealth.data} />{/if}
+        {#if !machine.is_home}<MacStatus machineId={machine.machine_id} health={executorHealth.get(machine.machine_id)} />{/if}
         {#if editing === machine.machine_id}
           <form onsubmit={(event) => {event.preventDefault(); void save();}}>
             <label>Name<input bind:value={name} required maxlength="80" disabled={saving} /></label>

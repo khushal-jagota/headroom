@@ -38,7 +38,7 @@ def worker_step_blocker(
     # A start never waits in the mailbox for a Mac that may not come back: the claim is
     # not taken until the Mac is here, and nothing errors meanwhile.
     if ticket.machine_id != HOME_MACHINE_ID and not locale_configuration.mac_is_present(
-        conn, now_ms()
+        conn, now_ms(), ticket.machine_id
     ):
         return locale_configuration.machine_unavailable_reason(conn, ticket.machine_id)
     if worker_type_definition.is_terminal(ticket.stage):

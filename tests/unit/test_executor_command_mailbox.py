@@ -1056,7 +1056,7 @@ def _saturated_start_admission() -> AutomaticStartAdmission:
     now = [0.0]
     gate = AutomaticStartAdmission(clock=lambda: now[0])
     gate.configure_destinations(lambda _destination: True)
-    for number in range(gate.limit - 1):
+    for number in range(gate.limit):
         assert gate.try_start(StartRequest(f"occupied-{number}", "worker", ORIGINAL_MAC_MACHINE_ID))
         now[0] += 1.0
     return gate

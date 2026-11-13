@@ -106,7 +106,8 @@ class MacRuns:
         self, db_path: str, presence: MacPresenceService, mailbox: SqliteCommandMailbox
     ) -> None:
         self.db_path = db_path
-        self.store = ExecutorStore(db_path)
+        self.machine_id = presence.machine_id
+        self.store = ExecutorStore(db_path, machine_id=self.machine_id)
         self.presence = presence
         self.mailbox = mailbox
         self.conversations: MacRunConversations
@@ -449,10 +450,15 @@ class MacRuns:
         return Principal(PrincipalKind(binding[0]), binding[1])
 
     def owns_conversation(self, conversation_id: str) -> bool:
-        return any(
-            run.reference.conversation_id == conversation_id and not run.retirement_confirmed
-            for run in self.store.retained_runs()
-        )
+        connection = db.connect(self.db_path)
+        try:
+            return connection.execute(
+                "SELECT 1 FROM mac_runs r WHERE r.conversation_id=? "
+                "AND r.stop_state<>'closed' AND r.machine_id=?",
+                (conversation_id, self.machine_id),
+            ).fetchone() is not None
+        finally:
+            connection.close()
 
     def validate_stop(self, outcome: CommandOutcome) -> None:
         """A child_stopped item proves its own stop row, even once the assignment closed.
@@ -686,7 +692,7 @@ class MacRuns:
         return task
 
     def stall_source(self) -> ReplacementStallSource:
-        return ReplacementStallSource()
+        return ReplacementStallSource(self.machine_id)
 
     async def close(self) -> None:
         for task in tuple(self._tasks):
@@ -713,6 +719,9 @@ class ReplacementStallSource:
     """Unresolved runs of a replaced process, read from the rows: mac_replacement_pending
     survives a VPS restart, and counts from the replacement."""
 
+    def __init__(self, machine_id: str) -> None:
+        self.machine_id = machine_id
+
     def tracked_waits(self, conn: sqlite3.Connection, now_ms: int) -> tuple[TrackedWait, ...]:
         return tuple(
             TrackedWait(
@@ -726,9 +735,9 @@ class ReplacementStallSource:
                 "SELECT r.conversation_id,COALESCE(i.replaced_at_ms,i.first_leased_at_ms,?) "
                 "FROM mac_runs AS r LEFT JOIN executor_incarnations AS i "
                 "ON i.executor_incarnation=r.executor_incarnation "
-                "LEFT JOIN mac_executor_presence AS p ON p.singleton=1 "
-                "WHERE r.stop_state<>'closed' "
+                "LEFT JOIN mac_executor_presence AS p ON p.machine_id=i.machine_id "
+                "WHERE r.machine_id=? AND r.stop_state<>'closed' "
                 "AND r.executor_incarnation IS NOT p.executor_incarnation",
-                (now_ms,),
+                (now_ms, self.machine_id),
             )
         )

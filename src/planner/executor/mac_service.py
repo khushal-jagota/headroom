@@ -25,6 +25,7 @@ from planner.executor.configuration import (
     ExecutorPaths,
     validate_server_url,
 )
+from planner.executor.credential_file import credential_path
 from planner.executor.legacy_worker_cleanup import migrate_once
 from planner.executor.mac_agent_gateway import AgentGateway
 from planner.executor.mac_catalog import MacCatalog
@@ -134,6 +135,7 @@ class MacService:
             executor_id=executor_id,
             session_factory=partial(create_update_session, ssl_context),
             request_exit=partial(self._exit, MAC_RUNTIME_UPDATE_EXIT_CODE),
+            authentication_headers=self.client.authentication_headers,
         )
         self.lease = MacLeaseLoop(
             client=self.client,
@@ -172,6 +174,7 @@ class MacService:
     async def run(self) -> None:
         loops: list[asyncio.Task[None]] = []
         try:
+            await self.client.ensure_credential(credential_path(self.paths.root))
             await self._reconcile_worker_processes()
             # What an earlier process owed goes into the outbox before the first lease
             # reports the backlog and before any command can add behind it. A spool that

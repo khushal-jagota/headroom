@@ -33,11 +33,11 @@
   let currentWorker = $derived(worker);
   const preview = conversationPreview(() => ({ visible, target: recapTarget,
     conversationId: currentWorker?.conversation_id ?? conversationId,
-    locale: currentWorker?.locale }));
+    locale: currentWorker?.locale, machineId: currentWorker?.machine_id }));
   const elapsed = elapsedTurnTime(() => preview.startedAtUnixMilliseconds);
   let activity = $derived(preview.activity === "Working" && elapsed.seconds !== null
     ? `Working · ${formatDuration(elapsed.seconds)}` : preview.activity);
-  const health=createQuery(() => ({...queries.executorHealth(),enabled:worker?.locale === "macos"}));
+  const health=createQuery(() => ({...queries.executorHealth(worker?.machine_id),enabled:worker?.locale === "macos"}));
   let unknownMac = $derived(worker?.locale === "macos" && (health.isError || !macActivityKnown(health.data)));
   let macHealth = $derived(health.isError ? undefined : health.data);
   let stageSentence = $derived(unknownMac ? (worker ? macTicketActivityLabel(macHealth, worker) : null) ?? macPresenceLabel(macHealth) ?? MACHINE_ACTIVITY_UNKNOWN

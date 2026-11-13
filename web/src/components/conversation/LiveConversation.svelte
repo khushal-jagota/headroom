@@ -172,7 +172,7 @@
   const machines = createQuery(() => ({...queries.machines(), enabled: !!machineId}), () => queryClient);
   const destinationName = $derived(machines.data?.machines.find(item => item.machine_id === machineId)?.name ?? "the machine");
   let remote = $derived(locale === "macos");
-  const healthQuery = createQuery(() => ({...queries.executorHealth(), enabled:remote}), () => queryClient);
+  const healthQuery = createQuery(() => ({...queries.executorHealth(machineId), enabled:remote}), () => queryClient);
   let activityUncertain = $derived(remote && (healthQuery.isError || !macActivityKnown(healthQuery.data)));
   $effect(() => {
     healthQuery.dataUpdatedAt;

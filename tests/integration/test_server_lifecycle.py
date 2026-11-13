@@ -140,7 +140,7 @@ def test_operator_shutdown_removes_child_socket_and_listener(server: ServerHandl
     application_pid = _wait_for_one_child(server.proc.pid)
     assert server.control_socket_path.exists()
     event_loop_tasks_socket = resolve_event_loop_tasks_socket_path(server.control_socket_path)
-    assert event_loop_tasks_socket.exists()
+    _wait_until(event_loop_tasks_socket.exists, "application task socket did not appear")
 
     server.proc.terminate()
     server.proc.wait(timeout=10.0)

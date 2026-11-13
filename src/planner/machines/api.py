@@ -10,7 +10,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.task_settlement import run_on_worker_thread
 from planner.executor.clock import now_ms
 from planner.machines import data
-from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
+from planner.machines.contracts import HOME_MACHINE_ID
 from planner.tickets.api import ConversationRecord, Conversations, Ctx, connection_off_the_loop
 from planner.tickets.locale_configuration import mac_is_present
 from planner.work_attention import add_work_attention
@@ -24,7 +24,10 @@ async def machines(
 ) -> JsonDict:
     async with connection_off_the_loop(request) as conn:
         records = await run_on_worker_thread(data.list_machines, conn)
-        present = await run_on_worker_thread(mac_is_present, conn, now_ms())
+        def present_destinations() -> set[str]:
+            return {machine.machine_id for machine in records
+                    if machine.is_home or mac_is_present(conn, now_ms(), machine.machine_id)}
+        present = await run_on_worker_thread(present_destinations)
 
         def ticket_rows() -> list[JsonDict]:
             return [
@@ -38,12 +41,15 @@ async def machines(
 
         tickets = await run_on_worker_thread(ticket_rows)
         await add_work_attention(conn, conversations, conversation_record, tickets=tickets)
+        by_destination: dict[str, list[JsonDict]] = {}
+        for row in tickets:
+            by_destination.setdefault(str(row["machine_id"]), []).append(row)
         result = []
         for machine in records:
             available = machine.machine_id == HOME_MACHINE_ID or (
-                machine.machine_id == ORIGINAL_MAC_MACHINE_ID and present
+                machine.machine_id in present
             )
-            rows = [row for row in tickets if row["machine_id"] == machine.machine_id]
+            rows = by_destination.get(machine.machine_id, [])
             running = sum(bool(row.get("conversation_signal", {}).get("working")) for row in rows)
             waiting = (
                 sum(

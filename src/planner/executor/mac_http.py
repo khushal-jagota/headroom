@@ -28,6 +28,8 @@ from planner.executor.configuration import (
     EXECUTOR_COMMAND_FILE_PATH,
     EXECUTOR_COMMAND_OUTCOMES_PATH,
     EXECUTOR_COMMANDS_PATH,
+    EXECUTOR_CREDENTIAL_HEADER,
+    EXECUTOR_CREDENTIAL_PATH,
     EXECUTOR_FILE_SHA256_HEADER,
     EXECUTOR_FILE_UPLOAD_HEADER,
     EXECUTOR_ID_HEADER,
@@ -201,6 +203,8 @@ class MacHttpClient:
     ) -> None:
         self.server_url = server_url.rstrip("/")
         self.ssl_context = ssl_context
+        self._application_revision = identity.application_revision
+        self._spool_format_version = identity.spool_format_version
         self._headers = {
             EXECUTOR_ID_HEADER: executor_id,
             EXECUTOR_INCARNATION_HEADER: identity.executor_incarnation,
@@ -210,6 +214,38 @@ class MacHttpClient:
             "Accept-Encoding": "identity",
         }
         self._sessions: dict[MacLoop, aiohttp.ClientSession] = {}
+
+    def authentication_headers(self) -> dict[str, str]:
+        return {
+            key: value for key, value in self._headers.items()
+            if key in (EXECUTOR_ID_HEADER, EXECUTOR_CREDENTIAL_HEADER)
+        }
+
+    async def ensure_credential(self, path: Path) -> None:
+        from planner.executor.credential_file import read_credential, write_credential
+
+        credential = await asyncio.to_thread(read_credential, path)
+        if credential is None:
+            status, body = await self._json(
+                "lease", "POST", EXECUTOR_CREDENTIAL_PATH,
+                timeout=LEASE_TIMEOUT_SECONDS,
+                body=json.dumps({
+                    "protocol_version": int(self._headers[EXECUTOR_PROTOCOL_HEADER]),
+                    "application_revision": self._application_revision,
+                    "spool_format_version": self._spool_format_version,
+                    "executor_incarnation": self._headers[EXECUTOR_INCARNATION_HEADER],
+                }).encode(),
+            )
+            if status != 200:
+                raise _error(status, body)
+            value = json.loads(body)
+            credential = value.get("credential") if isinstance(value, dict) else None
+            if not isinstance(credential, str):
+                raise ValueError("The home returned an invalid machine credential")
+            # Save before authenticating: the home repeats this pending credential
+            # after a lost reply or failed save, until its first authenticated request.
+            await asyncio.to_thread(write_credential, path, credential)
+        self._headers[EXECUTOR_CREDENTIAL_HEADER] = credential
 
     def _session(self, loop: MacLoop) -> aiohttp.ClientSession:
         session = self._sessions.get(loop)

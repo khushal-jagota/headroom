@@ -366,6 +366,20 @@ def test_every_executor_route_over_real_https(tmp_path: Path) -> None:
                             ("t_01234567", ended_at),
                         )
                     local_workspace = WorkspaceIdentity("test-mac", "workspace-one")
+                    # This deleted folder retains its original machine assignment.
+                    retired_child = ChildReference(
+                        identity.executor_incarnation, "retired-child", "retired-c"
+                    )
+                    endpoint.runs.store.register_child(retired_child, "ticket", "t_01234567", 1)
+                    from planner.ticket_workspaces.data import register_workspace
+                    with connect(db_path) as connection:
+                        connection.execute(
+                            "INSERT INTO conversations(conversation_id,backend_key,model,"
+                            "workspace_folder,access,created_at) VALUES "
+                            "('retired-c','codex','scripted','/tmp','full',1)"
+                        )
+                        register_workspace(connection, "t_01234567", "retired-c", local_workspace)
+                    endpoint.runs.store.close_child(retired_child, 2)
                     retirement = encode_bounded(
                         WorkspaceRetirementRequest(
                             WorkspaceState("t_01234567", ended_at, True), local_workspace

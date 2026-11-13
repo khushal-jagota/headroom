@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from planner.conversation.contracts import ConversationBackendKey
+from planner.conversation.model_resolution.contracts import RemoteCatalogSource
 from planner.conversation.snapshot import BackendModel, BackendSnapshot, BackendSnapshotService
 from planner.execution_identity import ExecutorIdentity
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 
 
 class ScriptedBackendSnapshots(BackendSnapshotService):
@@ -56,3 +59,14 @@ class ScriptedBackendSnapshots(BackendSnapshotService):
             (),
             models_complete=self.complete,
         )
+
+
+@dataclass(frozen=True)
+class SingleMachineCatalog:
+    """Keep existing one-executor fixtures explicit about their catalog destination."""
+
+    source: RemoteCatalogSource
+    machine_id: str = ORIGINAL_MAC_MACHINE_ID
+
+    def catalog_for(self, machine_id: str) -> RemoteCatalogSource | None:
+        return self.source if machine_id == self.machine_id else None

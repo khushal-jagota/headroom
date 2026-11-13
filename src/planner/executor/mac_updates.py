@@ -88,11 +88,15 @@ class MacUpdateController:
         executor_id: str,
         session_factory: Callable[[], aiohttp.ClientSession],
         request_exit: Callable[[], None],
+        authentication_headers: Callable[[], dict[str, str]] | None = None,
     ) -> None:
         self.root = paths.root / "updates"
         self.runner, self.presence = runner, presence
         self.server_url, self.executor_id = server_url, executor_id
         self.session_factory, self.request_exit = session_factory, request_exit
+        self.authentication_headers = authentication_headers or (
+            lambda: {EXECUTOR_ID_HEADER: self.executor_id}
+        )
         self.prepared_request: str | None = None
         self.confirmed_request: str | None = None
         self._runtime_gate_pending = (
@@ -120,7 +124,7 @@ class MacUpdateController:
         async with session.request(
             method,
             self.server_url + path,
-            headers={EXECUTOR_ID_HEADER: self.executor_id},
+            headers=self.authentication_headers(),
             json=payload,
             allow_redirects=False,
         ) as response:
@@ -180,7 +184,7 @@ class MacUpdateController:
         try:
             async with session.get(
                 self.server_url + archive_path,
-                headers={EXECUTOR_ID_HEADER: self.executor_id, "Accept-Encoding": "identity"},
+                headers={**self.authentication_headers(), "Accept-Encoding": "identity"},
                 allow_redirects=False,
             ) as response:
                 if response.status != 200:
