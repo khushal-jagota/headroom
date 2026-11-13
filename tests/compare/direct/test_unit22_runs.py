@@ -43,6 +43,13 @@ from planner.conversation.events import (
     UserInputRequestedEventPayload,
     conversation_event_payload_to_canonical_json,
 )
+from planner.conversation.lifecycle import (
+    LifecycleFact,
+    LifecycleKind,
+    LifecycleOperation,
+    LifecycleStatus,
+)
+from planner.conversation.lifecycle_storage import apply_facts
 from planner.conversation.message_content import text_message_content
 from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as FixedClock
@@ -129,6 +136,20 @@ def test_retained_runs_rebuild_drain_and_rewrite(
                     NOW // 1000,
                 ),
             )
+        apply_facts(
+            conn,
+            "drain",
+            (
+                LifecycleFact(
+                    LifecycleKind.request,
+                    "3:permission:ask",
+                    3,
+                    LifecycleOperation.permission,
+                    LifecycleStatus.answering,
+                    "ask",
+                ),
+            ),
+        )
         payload = PromptDeliveryUncertainEventPayload(
             text_message_content("steer"),
             "owner",
@@ -311,9 +332,28 @@ def test_retained_runs_rebuild_drain_and_rewrite(
             for child in children:
                 runs.store.register_child(child, "ticket", remote_ticket, NOW)
             await mailbox.put_child_command(steer)
-            await mailbox.poll(old, 0, 0)
-            await mailbox.put_child_command(prompt)
+            # A finished answer lacks its application receipt, so recovery must not
+            # claim definite non-delivery as it does for the other, withdrawn answer.
             await mailbox.put_child_command(answer)
+            await mailbox.poll(old, 0, 0)
+            recorded = await mailbox.record_results(
+                old,
+                wire.CommandOutcomeReport(
+                    (
+                        wire.CommandResult(
+                            answer.command_id,
+                            wire.CommandOutcome(
+                                answer.command_id,
+                                answer.child,
+                                wire.CommandDisposition.succeeded,
+                                {},
+                            ),
+                        ),
+                    )
+                ),
+            )
+            assert recorded.recorded == (answer.command_id,)
+            await mailbox.put_child_command(prompt)
             await mailbox.put_child_command(input_answer)
             output["before"] = snapshot()
             await presence.accept_lease(
@@ -440,6 +480,12 @@ def test_retained_runs_rebuild_drain_and_rewrite(
         side["trace"].sort(key=lambda value: json.dumps(value, sort_keys=True))
     assert actual == expected
     assert actual["interruptions"][0]["recovery_state"] == "closed"
+    detail = actual["interruptions"][0]["detail"]
+    assert (
+        "The answer was: Allow once. That answer may already have reached you before the restart."
+        in detail
+    )
+    assert "The answer was: fast. That answer never reached you." in detail
     report = request.config.getoption("--compare-report-dir", default=None)
     if report:
         target = Path(report)

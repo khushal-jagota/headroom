@@ -122,9 +122,25 @@ Date.now = () => now;
 try {
   for (const child of children) runs.store.register_child(child, 'ticket', spec.ticket, now);
   await mailbox.put_child_command(typed_command(spec.steer));
-  await mailbox.poll({ ...old, connection_generation: old.connection_generation ?? 0 }, 0, 0);
-  await mailbox.put_child_command(typed_command(spec.prompt));
   await mailbox.put_child_command(typed_command(spec.answer));
+  await mailbox.poll({ ...old, connection_generation: old.connection_generation ?? 0 }, 0, 0);
+  const recorded = await mailbox.record_results(old, {
+    outcomes: [
+      {
+        command_id: spec.answer.command_id,
+        child_outcome: {
+          command_id: spec.answer.command_id,
+          child: spec.answer.child,
+          disposition: 'succeeded',
+          result: {},
+        },
+        model_list: null,
+      },
+    ],
+  });
+  if (JSON.stringify(recorded.recorded) !== JSON.stringify([spec.answer.command_id]))
+    throw new Error('the permission answer did not finish before replacement');
+  await mailbox.put_child_command(typed_command(spec.prompt));
   await mailbox.put_child_command(typed_command(spec.input_answer));
   output.before = snapshot();
   await presence.accept_lease(decode_value(lease(['drain', 'late']), 'LeaseRequest'));
