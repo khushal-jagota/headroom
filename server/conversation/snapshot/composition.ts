@@ -67,7 +67,7 @@ export function create_backend_runtime(options: {
         // Publish before either cleanup can reenter shutdown. A failed catalog
         // close keeps the actual join pending and permits a later cleanup attempt.
         shutdown_result = attempt;
-        void Promise.resolve().then(async () => {
+        void (async () => {
           const environment_stop = Promise.allSettled([
             Promise.resolve().then(() => environment.shutdown?.()),
           ]);
@@ -99,7 +99,7 @@ export function create_backend_runtime(options: {
             reject_resource_join(new AggregateError(cleanup_history, 'Backend shutdown failed'));
           else resolve_resource_join();
           void resource_join.then(resolve_attempt, reject_attempt);
-        });
+        })();
       }
       return observe_shutdown(
         shutdown_result,
