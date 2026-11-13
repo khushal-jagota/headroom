@@ -20,7 +20,11 @@ The producer requires the installed lock metadata and exact direct dependency ve
 It checks Mach-O headers for Node, better-sqlite3, and Koffi. These checks do not establish provenance or ABI compatibility.
 The Manager must arrange genuine Darwin package construction and native addon load checks before installation.
 
-Run the producer from the approved checkout with its development dependencies:
+The Manager can dispatch `.github/workflows/package-typescript-mac-executor.yml` with the four reviewed target inputs.
+It uses standard `macos-15` arm64 and official Node 22, then uploads the archive, assets, build metadata, and this document.
+The workflow does not install, sign, launch, or contact the configured peer.
+
+Run the producer with production dependencies under its own `server/node_modules` directory. Node strips TypeScript without a compiler.
 
 ```sh
 node server/executor/mac/packaging/main.ts \
