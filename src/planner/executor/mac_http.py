@@ -242,8 +242,8 @@ class MacHttpClient:
             credential = value.get("credential") if isinstance(value, dict) else None
             if not isinstance(credential, str):
                 raise ValueError("The home returned an invalid machine credential")
-            # Issuance already closed the old authority. A lost response or failed
-            # durable write requires the explicit operator replacement command.
+            # Save before authenticating: the home repeats this pending credential
+            # after a lost reply or failed save, until its first authenticated request.
             await asyncio.to_thread(write_credential, path, credential)
         self._headers[EXECUTOR_CREDENTIAL_HEADER] = credential
 

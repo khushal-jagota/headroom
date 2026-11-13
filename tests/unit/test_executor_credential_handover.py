@@ -66,14 +66,24 @@ def test_automatic_handover_persists_secret_and_refuses_old_authority(tmp_path: 
 
             client._json = request  # type: ignore[method-assign]
             path = tmp_path / "executor" / "machine-credential.json"
+            # The first reply was lost before local persistence; bootstrap repeats it.
+            lost = await http.post(
+                "/api/executor/credential", headers=headers,
+                json={"protocol_version": PROTOCOL_VERSION, "application_revision": "test",
+                      "spool_format_version": SPOOL_FORMAT_VERSION,
+                      "executor_incarnation": str(uuid4())},
+            )
+            assert lost.status_code == 200
             await client.ensure_credential(path)
             secret = read_credential(path)
+            assert secret == lost.json()["credential"]
             assert secret
             assert client.authentication_headers()["X-Panels-Executor-Credential"] == secret
-            assert (await http.get("/api/executor/update", headers=headers)).status_code == 403
+            assert (await http.get("/api/executor/update", headers=headers)).status_code == 200
             assert (await http.get(
                 "/api/executor/update", headers={**headers, **client.authentication_headers()}
             )).status_code == 200
+            assert (await http.get("/api/executor/update", headers=headers)).status_code == 403
             # Retry loads its durable copy and never asks the one-time endpoint again.
             await client.ensure_credential(path)
             assert (await http.post(

@@ -1,4 +1,4 @@
-"""Machine-bound credential authority. Raw secrets never enter the home database."""
+"""Machine authority; only unconfirmed original handover keeps a recoverable secret."""
 
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ def authenticate_executor(
     claimed_id: str,
     credential: str | None,
     configured_original_id: str | None,
+    authenticated_incarnation: str | None = None,
 ) -> str:
     machine_id = (
         ORIGINAL_MAC_MACHINE_ID if configured_original_id and claimed_id == configured_original_id
@@ -47,9 +48,11 @@ def authenticate_executor(
     if credential is not None:
         if row[0] is None or not hmac.compare_digest(str(row[0]), _digest(credential)):
             raise _forbidden()
+        if row[1] is None:
+            _confirm_original_credential(conn, machine_id, credential, authenticated_incarnation)
         return machine_id
     # This is exactly the pre-existing original-device authority, not a fallback for
-    # a wrong secret. Issuance closes it durably, including update and refusal routes.
+    # a wrong secret. First credential authentication closes it durably.
     if (
         machine_id == ORIGINAL_MAC_MACHINE_ID
         and configured_original_id is not None
@@ -60,6 +63,44 @@ def authenticate_executor(
     raise _forbidden()
 
 
+def _confirm_original_credential(
+    conn: sqlite3.Connection, machine_id: str, credential: str,
+    authenticated_incarnation: str | None,
+) -> None:
+    # Serialize acknowledgment against bootstrap retry and operator replacement.
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT credential_sha256,legacy_closed_at_ms,issued_at_ms,issued_incarnation "
+            "FROM machine_executor_credentials WHERE machine_id=?", (machine_id,),
+        ).fetchone()
+        if row is None or not hmac.compare_digest(str(row[0]), _digest(credential)):
+            raise _forbidden()
+        closed_at_ms = time.time_ns() // 1_000_000
+        first_confirmation = row[1] is None
+        if first_confirmation:
+            conn.execute(
+                "UPDATE machine_executor_credentials SET legacy_closed_at_ms=?,"
+                "pending_credential=NULL WHERE machine_id=?", (closed_at_ms, machine_id),
+            )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    if first_confirmation:
+        # The header supplies audit context only; it never grants authority.
+        try:
+            audit_incarnation = str(UUID(authenticated_incarnation or ""))
+        except ValueError:
+            audit_incarnation = None
+        _LOG.warning(
+            "Original executor credential confirmed at_ms=%s issued_at_ms=%s "
+            "executor_incarnation=%s authenticated_incarnation=%s machine_id=%s; "
+            "legacy authority permanently closed",
+            closed_at_ms, row[2], row[3], audit_incarnation, machine_id,
+        )
+
+
 def _issue(
     conn: sqlite3.Connection, machine_id: str, incarnation: str | None
 ) -> MachineCredentialGrant:
@@ -67,7 +108,8 @@ def _issue(
     credential = secrets.token_urlsafe(32)
     conn.execute(
         "UPDATE machine_executor_credentials SET credential_sha256=?,issued_at_ms=?,"
-        "issued_incarnation=?,legacy_closed_at_ms=COALESCE(legacy_closed_at_ms,?) "
+        "issued_incarnation=?,legacy_closed_at_ms=COALESCE(legacy_closed_at_ms,?),"
+        "pending_credential=NULL "
         "WHERE machine_id=?",
         (_digest(credential), now_ms, incarnation, now_ms, machine_id),
     )
@@ -78,24 +120,38 @@ def issue_original_credential(
     conn: sqlite3.Connection, incarnation: str
 ) -> MachineCredentialGrant:
     UUID(incarnation)
+    issued = False
     try:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
-            "SELECT legacy_closed_at_ms FROM machine_executor_credentials WHERE machine_id=?",
+            "SELECT legacy_closed_at_ms,pending_credential,issued_at_ms "
+            "FROM machine_executor_credentials WHERE machine_id=?",
             (ORIGINAL_MAC_MACHINE_ID,),
         ).fetchone()
         if row is None or row[0] is not None:
             raise _forbidden()
-        grant = _issue(conn, ORIGINAL_MAC_MACHINE_ID, incarnation)
+        if row[1] is not None:
+            grant = MachineCredentialGrant(ORIGINAL_MAC_MACHINE_ID, str(row[1]), int(row[2]))
+        else:
+            now_ms = time.time_ns() // 1_000_000
+            credential = secrets.token_urlsafe(32)
+            conn.execute(
+                "UPDATE machine_executor_credentials SET credential_sha256=?,issued_at_ms=?,"
+                "issued_incarnation=?,pending_credential=? WHERE machine_id=?",
+                (_digest(credential), now_ms, incarnation, credential, ORIGINAL_MAC_MACHINE_ID),
+            )
+            grant = MachineCredentialGrant(ORIGINAL_MAC_MACHINE_ID, credential, now_ms)
+            issued = True
         conn.commit()
     except BaseException:
         conn.rollback()
         raise
-    _LOG.warning(
-        "Original executor credential issued at_ms=%s executor_incarnation=%s machine_id=%s; "
-        "legacy authority permanently closed",
-        grant.issued_at_ms, incarnation, grant.machine_id,
-    )
+    if issued:
+        _LOG.warning(
+            "Original executor credential issued at_ms=%s executor_incarnation=%s machine_id=%s; "
+            "awaiting first credential authentication",
+            grant.issued_at_ms, incarnation, grant.machine_id,
+        )
     return grant
 
 

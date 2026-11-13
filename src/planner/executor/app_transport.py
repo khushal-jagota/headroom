@@ -1,7 +1,8 @@
 """Machine-authenticated executor routes, with protocol 26 work admission.
 
 Each request binds its credential to a named destination before it selects an owner.
-The original configured executor keeps its prior authority only before first issuance.
+The original configured executor keeps its prior authority until its first credential
+authentication.
 Work requests also require that machine's current incarnation. Update requests retain
 protocol-independent recovery, but never bypass permanent credential handover.
 """
@@ -182,11 +183,15 @@ def build_executor_router() -> APIRouter:
         raise PlannerError(ErrorCode.retry_later, "executor endpoint unavailable")
 
     def authenticate(connection: HTTPConnection, claimed_id: str) -> str:
-        with database_connect(database_path(connection)) as conn:
+        conn = database_connect(database_path(connection))
+        try:
             return executor_credentials.authenticate_executor(
                 conn, claimed_id, connection.headers.get(EXECUTOR_CREDENTIAL_HEADER),
                 connection.app.state.executor_id,
+                connection.headers.get(EXECUTOR_INCARNATION_HEADER),
             )
+        finally:
+            conn.close()
 
     async def authenticated_machine(connection: HTTPConnection) -> str:
         try:
