@@ -160,7 +160,8 @@ export class MacCatalog {
     } catch (error) {
       return Promise.reject(this.resource_failure(error));
     }
-    const task = this.read(command_id, request);
+    // Publish custody before a source can synchronously reenter stop().
+    const task = Promise.resolve().then(() => this.read(command_id, request));
     this.reads.add(task);
     void task.then(
       () => this.release_read(task),
@@ -232,6 +233,7 @@ export class MacCatalog {
     command_id: string,
     request: ModelListRequest,
   ): Promise<CanonicalCatalogResult> {
+    if (this.closed) throw this.failure ?? new ServerLifecycleError('Mac catalog is stopped.');
     let snapshot: BackendSnapshot | null = null;
     try {
       if (

@@ -1,9 +1,9 @@
 /** Resolve existing native workspaces and replace only the VPS transport identity. */
 import { stat } from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'node:path';
-import { getSystemErrorMessage } from 'node:util';
 import { resolve_path_sync } from '../../../core/path_resolution.ts';
 import { python_string_repr } from '../../../core/python_repr.ts';
+import { python_os_error_message } from '../../../core/os_errors.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import { BackendSpawnFailed } from '../../../conversation/backends/contracts.ts';
 import {
@@ -63,11 +63,7 @@ async function create_directory(options: MacNativeChildrenOptions, path: string)
 }
 function workspace_failure(error: unknown): string {
   if (!(error instanceof Error)) return String(error);
-  const native = error as NodeJS.ErrnoException;
-  if (typeof native.errno !== 'number') return error.message;
-  const description = getSystemErrorMessage(-Math.abs(native.errno));
-  const filename = typeof native.path === 'string' ? `: ${python_string_repr(native.path)}` : '';
-  return `[Errno ${Math.abs(native.errno)}] ${description.charAt(0).toUpperCase() + description.slice(1)}${filename}`;
+  return python_os_error_message(error);
 }
 export async function localize_start(
   input: StartRun,
