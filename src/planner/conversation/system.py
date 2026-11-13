@@ -160,6 +160,7 @@ from planner.conversation.logic.retained_turn import (
     OpenRunTurn,
     UndeliveredTurnPrompt,
     adopted_running_turn,
+    facts_after_restart,
 )
 from planner.conversation.message_content import (
     MessageContent,
@@ -5076,7 +5077,18 @@ class SqliteProcessConversationSystem:
             finally:
                 conn.close()
         else:
-            facts = evidence.facts
+            # The snapshot predates claim_runtime. Apply the same canonical changes
+            # that claim_runtime committed before the previous synchronous read.
+            updates = {
+                (fact.kind, fact.identity): fact
+                for fact in facts_after_restart(
+                    evidence.facts,
+                    OpenRunTurn(retained.turn.turn_number, retained.incarnation_current),
+                )
+            }
+            facts = tuple(
+                updates.get((fact.kind, fact.identity), fact) for fact in evidence.facts
+            )
         user_input_questions = (
             {
                 event.payload.request_id: event.payload.questions
