@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -195,14 +196,19 @@ class ExecutorPaths:
         return self.run / EXECUTOR_IPC_NAME
 
 
+def default_executor_root() -> Path:
+    if sys.platform == "linux":
+        return (
+            Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share")))
+            / "panels/executor"
+        )
+    return Path.home() / "Library/Application Support/Panels/executor"
+
+
 def executor_paths() -> ExecutorPaths:
     """Resolve paths without creating, reading, or migrating the spool."""
     configured = os.environ.get(EXECUTOR_ROOT_ENV, "").strip()
-    root = (
-        Path(configured).expanduser()
-        if configured
-        else (Path.home() / "Library" / "Application Support" / "Panels" / "executor")
-    )
+    root = Path(configured).expanduser() if configured else default_executor_root()
     return ExecutorPaths(root=root.resolve())
 
 

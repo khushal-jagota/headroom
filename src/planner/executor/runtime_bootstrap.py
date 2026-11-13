@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from planner.executor.configuration import default_executor_root
 from planner.executor.update_configuration import (
     MAC_RUNTIME_CHILD_ENV,
     MAC_RUNTIME_HANDOFF_ENV,
@@ -60,10 +61,12 @@ def read_record(path: Path) -> dict[str, Any] | None:
 
 def update_root() -> Path:
     executor = os.environ.get("PLAN_EXECUTOR_ROOT")
-    root = Path(executor).expanduser() if executor else (
-        Path.home() / "Library/Application Support/Panels/executor"
-    )
+    root = Path(executor).expanduser() if executor else (default_executor_root())
     return root.resolve() / "updates"
+
+
+def _linux_runtime() -> bool:
+    return sys.platform == "linux"
 
 
 def _runtime_revision(runtime: Path, expected: str) -> None:
@@ -71,8 +74,9 @@ def _runtime_revision(runtime: Path, expected: str) -> None:
     if value is None or (
         value.get("schema_version") != 1
         or value.get("application_revision") != expected
-        or value.get("platform") != "darwin"
-        or value.get("architecture") != "arm64"
+        or value.get("platform") != ("linux" if _linux_runtime() else "darwin")
+        or value.get("architecture") != ("x86_64" if _linux_runtime() else "arm64")
+        or (_linux_runtime() and value.get("role") != "executor")
         or re.fullmatch(r"[0-9a-f]{40}", expected) is None
     ):
         raise ValueError("selected runtime differs from the approved release")
@@ -108,9 +112,13 @@ def _launch(
     if runtime is not None:
         root = Path(runtime)
         _runtime_revision(root, revision)
-        python = str(root / "python/bin/python3")
-        environment["PATH"] = str(root / "python/bin") + os.pathsep + environment.get("PATH", "")
+        python = str(root / (".venv/bin/python" if _linux_runtime() else "python/bin/python3"))
+        bins = [str(Path(python).parent)]
+        if _linux_runtime():
+            bins.append(str(root / "agent_backends/node_modules/.bin"))
+        environment["PATH"] = os.pathsep.join([*bins, environment.get("PATH", "")])
         environment["PLAN_APP_ROOT"] = str(root)
+        environment["PLAN_APP_SHA"] = revision
     if ready is not None:
         environment[MAC_RUNTIME_READY_ENV] = str(ready)
     if handoff is not None:
@@ -157,10 +165,14 @@ def supervise(arguments: list[str]) -> int:
     if pending is not None:
         # The permanent supervisor did not confirm this attempt before it ended.
         if selected is None or selected.get("request_id") != pending["request_id"]:
-            atomic_record(root / "failure.json", {
-                "request_id": pending["request_id"], "phase": "reverted",
-                "detail": "The runtime supervisor restarted before confirmation.",
-            })
+            atomic_record(
+                root / "failure.json",
+                {
+                    "request_id": pending["request_id"],
+                    "phase": "reverted",
+                    "detail": "The runtime supervisor restarted before confirmation.",
+                },
+            )
             handoff = root / "handoff.json"
         (root / "pending.json").unlink()
     runtime = str(selected["runtime_path"]) if selected else None
@@ -219,10 +231,16 @@ def supervise(arguments: list[str]) -> int:
                 (root / "pending.json").unlink()
                 continue
             _stop_child(process)
-            atomic_record(root / "failure.json", {
-                "request_id": pending["request_id"], "phase": "reverted",
-                "detail": "The new runtime did not confirm its VPS connection before the deadline.",
-            })
+            atomic_record(
+                root / "failure.json",
+                {
+                    "request_id": pending["request_id"],
+                    "phase": "reverted",
+                    "detail": (
+                        "The new runtime did not confirm its VPS connection before the deadline."
+                    ),
+                },
+            )
             (root / "pending.json").unlink()
             if stopping:
                 return 128 + signal.SIGTERM

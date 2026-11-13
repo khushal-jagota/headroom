@@ -12,7 +12,9 @@ import asyncio
 import contextlib
 import logging
 import os
+import signal
 import ssl
+import sys
 from functools import partial
 from pathlib import Path
 from uuid import uuid4
@@ -48,6 +50,7 @@ from planner.executor.update_configuration import (
     MAC_RUNTIME_UPDATE_EXIT_CODE,
 )
 from planner.worker_supervision import reconcile
+from planner.worker_supervision.config import STOP_SECONDS
 
 # A replaced incarnation exits with this code, so launchd starts a fresh process.
 REPLACED_INCARNATION_EXIT_CODE = 1
@@ -167,12 +170,25 @@ class MacService:
             if not owned.result.complete:
                 logging.getLogger(__name__).warning(
                     "Worker cleanup remains unproven ticket=%s conversation=%s record=%s: %s",
-                    owned.ticket_id, owned.conversation_id, owned.record_path, owned.result.reason,
+                    owned.ticket_id,
+                    owned.conversation_id,
+                    owned.record_path,
+                    owned.result.reason,
                 )
         await self.runner.refresh_worker_cleanup(revoke_pending=True)
 
     async def run(self) -> None:
         loops: list[asyncio.Task[None]] = []
+        event_loop = asyncio.get_running_loop()
+        task = asyncio.current_task()
+
+        def terminate() -> None:
+            self._stop.set()
+            if task is not None:
+                task.cancel()
+
+        if sys.platform == "linux":
+            event_loop.add_signal_handler(signal.SIGTERM, terminate)
         try:
             await self.client.ensure_credential(credential_path(self.paths.root))
             await self._reconcile_worker_processes()
@@ -200,10 +216,22 @@ class MacService:
                         # Only the lease ends by itself, after a replacement; anything
                         # else is a failure that must restart the process.
                         loop.result()
+        except asyncio.CancelledError:
+            if not self._stop.is_set():
+                raise
         finally:
+            if sys.platform == "linux":
+                event_loop.remove_signal_handler(signal.SIGTERM)
             for loop in loops:
                 loop.cancel()
             await asyncio.gather(*loops, return_exceptions=True)
+            if sys.platform == "linux":
+                try:
+                    await asyncio.wait_for(self.runner.prepare_update("now"), STOP_SECONDS + 5)
+                except Exception as error:
+                    logging.getLogger(__name__).warning(
+                        "Executor shutdown retains cleanup evidence: %s", error
+                    )
             await self.queues.close()
             await self.live.close()
             with contextlib.suppress(Exception):

@@ -3,6 +3,7 @@
 GitHub's outer artifact ZIP does not preserve Unix modes. The inner tar does.
 No extraction is admitted until the complete archive hash matches its receipt.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -12,6 +13,7 @@ import tarfile
 from pathlib import Path
 
 from planner.environments.app import AppManifest, validate_app_manifest
+from planner.platform_runtime.targets import RuntimeTarget
 
 APP_ARCHIVE_NAME = "panels-app.tar.gz"
 PUBLICATION_RECEIPT_NAME = "publication.json"
@@ -25,16 +27,21 @@ def hash_archive(path: Path) -> str:
     return digest.hexdigest()
 
 
-def create_app_archive(app: Path, archive: Path) -> str:
+def create_app_archive(
+    app: Path, archive: Path, *, expected_target: RuntimeTarget | None = None
+) -> str:
     """Seal the built tree before any smoke execution can change it."""
-    validate_app_manifest(app / "manifest.json", require_runtime=True)
+    validate_app_manifest(
+        app / "manifest.json", require_runtime=True, expected_target=expected_target
+    )
     if archive.resolve().is_relative_to(app.resolve()):
         raise ValueError("archive must be outside the candidate app")
     # Exclusive creation prevents accidentally replacing an already proved archive.
     # Level 1 seals the 2.8 GB tree in under a minute; level 9 took six for 10% less.
-    with archive.open("xb") as stream, tarfile.open(
-        fileobj=stream, mode="w:gz", compresslevel=1
-    ) as bundle:
+    with (
+        archive.open("xb") as stream,
+        tarfile.open(fileobj=stream, mode="w:gz", compresslevel=1) as bundle,
+    ):
         for path in sorted(app.rglob("*")):
             if path.is_symlink() and os.path.isabs(os.readlink(path)):
                 raise ValueError("app archive requires relative symlinks")
@@ -45,7 +52,12 @@ def create_app_archive(app: Path, archive: Path) -> str:
 
 
 def extract_app_archive(
-    archive: Path, destination: Path, archive_sha256: str, expected_sha: str
+    archive: Path,
+    destination: Path,
+    archive_sha256: str,
+    expected_sha: str,
+    *,
+    expected_target: RuntimeTarget | None = None,
 ) -> AppManifest:
     """Validate safe paths, exact bytes, runtime identity, and preserved modes.
 
@@ -82,6 +94,9 @@ def extract_app_archive(
             if not member.issym() and stat.S_IMODE(path.stat().st_mode) != member.mode:
                 raise ValueError("app archive did not preserve permissions")
     return validate_app_manifest(
-        destination / "manifest.json", expected_sha=expected_sha, require_runtime=True,
+        destination / "manifest.json",
+        expected_sha=expected_sha,
+        require_runtime=True,
         verify_artifact_digest=False,
+        expected_target=expected_target,
     )
