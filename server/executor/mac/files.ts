@@ -106,6 +106,15 @@ export class FilesService {
       }
     });
   }
+  extract_runtime(
+    archive: string,
+    releases: string,
+    sha256: string,
+    bytes: number,
+    revision: string,
+  ): Promise<string> {
+    return this.request('extract_runtime', [archive, releases, sha256, bytes, revision]);
+  }
   read_runtime_record(path: string): Promise<string | null> {
     return this.request('read_runtime_record', [path]);
   }

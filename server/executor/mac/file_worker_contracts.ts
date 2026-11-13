@@ -13,6 +13,13 @@ export interface CapturedBlob {
   modified_ns: bigint;
 }
 export interface FileOperationArguments {
+  extract_runtime: [
+    archive: string,
+    releases: string,
+    sha256: string,
+    bytes: number,
+    revision: string,
+  ];
   read_runtime_record: [path: string];
   atomic_runtime_record: [path: string, text: string];
   remove_runtime_record: [path: string];
@@ -46,6 +53,7 @@ export interface FileOperationArguments {
   ];
 }
 export interface FileOperationResults {
+  extract_runtime: string;
   read_runtime_record: string | null;
   atomic_runtime_record: void;
   remove_runtime_record: void;
