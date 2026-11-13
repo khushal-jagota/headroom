@@ -26,7 +26,7 @@ export async function admit_capability_placement(
     info.uid !== process.getuid!() ||
     (info.mode & 0o777) !== 0o700
   )
-    throw new ManagedStopError('Managed runtime directory must be an owned private0700directory');
+    throw new ManagedStopError('Managed runtime directory must be an owned private 0700 directory');
   const runtime = await resolved_path(runtime_directory);
   for (const root of [
     roots.application_root,

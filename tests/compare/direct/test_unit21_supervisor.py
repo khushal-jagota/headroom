@@ -152,6 +152,7 @@ def _supervisor(
     lease: Path | None = None,
     app_exit_code: int = 0,
 ) -> Iterator[tuple[subprocess.Popen[bytes], Any]]:
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
     for name in ("app", "data", "backups", "run", "runtime"):
         (root / name).mkdir(parents=True, exist_ok=True)
     (root / "runtime").chmod(0o700)
@@ -228,6 +229,8 @@ def _supervisor(
                 descriptor = _owned_pidfd(row["pid"], process.pid)
                 if descriptor is not None:
                     owned[row["pid"]] = descriptor
+            assert (root / "control.sock").stat().st_mode & 0o777 == 0o600
+            assert root.stat().st_mode & 0o777 == 0o700
             return row
 
         try:
@@ -407,6 +410,7 @@ def test_unit21_owned_supervisor_control_and_stop_protocol(
                 assert not peer.is_alive()
         if os.uname().sysname == "Linux":
             alias = base / "alias-refusal"
+            alias.mkdir(mode=0o700)
             (alias / "data").mkdir(parents=True)
             (alias / "runtime").mkdir()
             (alias / "data/skills").symlink_to(alias / "runtime", target_is_directory=True)
@@ -415,6 +419,7 @@ def test_unit21_owned_supervisor_control_and_stop_protocol(
                 assert not (alias / "runtime/stop-capability.json").exists()
                 assert not _events(alias)
             root = base / "managed"
+            root.mkdir(mode=0o700)
             (root / "data").mkdir(parents=True)
             external_skills = base / "external-skills"
             external_skills.mkdir()

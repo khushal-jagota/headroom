@@ -15,7 +15,8 @@ import {
   SUPERVISOR_APP_STOP_SECONDS,
   monotonic_seconds,
 } from './configuration.ts';
-import { consume_stop_intent } from './logic/shutdown.ts';
+import { stop_intent_is_current } from './logic/shutdown.ts';
+import { observe_shutdown } from './deadline.ts';
 import { ServerLifecycleError } from './contracts.ts';
 import type { StopIntent, SupervisorOptions } from './contracts.ts';
 
@@ -65,15 +66,14 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
     if (!owned) return Promise.resolve(0);
     const deadline = monotonic_seconds() + SUPERVISOR_APP_STOP_SECONDS;
     let signal_failed = false;
-    // Reserve the shared flight and its first-stop timer before signal delivery.
+    // Reserve the actual close flight and its first-stop observer before signal delivery.
     const flight = owned.closed.then((code): 0 | 1 => {
-      clearTimeout(timer);
       if (child === owned) child = undefined;
       if (stopping_child === flight) stopping_child = undefined;
       return signal_failed ? 1 : code;
     });
     stopping_child = flight;
-    const timer = setTimeout(
+    void observe_shutdown(owned.closed, { deadline }, 'supervisor application').catch(
       () => {
         try {
           writeSync(
@@ -105,7 +105,6 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
           process.exit(1);
         }
       },
-      Math.max(0, deadline - monotonic_seconds()) * 1000,
     );
     if (!owned.exited && owned.process.exitCode === null && owned.process.signalCode === null) {
       try {
@@ -115,7 +114,7 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
         try {
           console.error(`Panels application stop signal failed: ${String(error)}`);
         } catch {
-          /* The original timer and actual close still own this child. */
+          /* The original observer and actual close still own this child. */
         }
       }
     }
@@ -141,7 +140,7 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
     if (
       mode.kind === 'foreground' ||
       (capability &&
-        consume_stop_intent(intent, capability.record.incarnation, monotonic_seconds()))
+        stop_intent_is_current(intent, capability.record.incarnation, monotonic_seconds()))
     )
       stop();
     else

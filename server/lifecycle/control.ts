@@ -1,5 +1,5 @@
 import net from 'node:net';
-import { mkdir, unlink } from 'node:fs/promises';
+import { lstat, mkdir, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { python_os_error_message } from '../core/os_errors.ts';
 import {
@@ -7,7 +7,11 @@ import {
   MAX_CONTROL_MESSAGE_BYTES,
   monotonic_seconds,
 } from './configuration.ts';
-import { ServerRestartConnectionError, ServerRestartProtocolError } from './contracts.ts';
+import {
+  ServerLifecycleError,
+  ServerRestartConnectionError,
+  ServerRestartProtocolError,
+} from './contracts.ts';
 import type { ControlRequest, ControlResponse } from './contracts.ts';
 import { decode_request, decode_response, encode_message } from './logic/control.ts';
 
@@ -82,7 +86,16 @@ export async function open_control_server(
   request: (value: ControlRequest) => ControlResponse | null,
   restart: () => void,
 ): Promise<{ cancel_pending(): void; close(): Promise<void> }> {
-  await mkdir(dirname(path), { recursive: true });
+  const parent = dirname(path);
+  await mkdir(parent, { recursive: true, mode: 0o700 });
+  const directory = await lstat(parent);
+  if (
+    !directory.isDirectory() ||
+    directory.isSymbolicLink() ||
+    directory.uid !== process.getuid!() ||
+    (directory.mode & 0o7777) !== 0o700
+  )
+    throw new ServerLifecycleError('Control socket parent must be an owned private 0700 directory');
   await unlink(path).catch((error) => {
     if (error.code !== 'ENOENT') throw error;
   });
@@ -147,7 +160,12 @@ export async function open_control_server(
   try {
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
-      server.listen(path, resolve);
+      const previous_umask = process.umask(0o177);
+      try {
+        server.listen(path, resolve);
+      } finally {
+        process.umask(previous_umask);
+      }
     });
   } catch (error) {
     server.close();

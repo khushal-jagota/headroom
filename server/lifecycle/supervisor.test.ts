@@ -14,10 +14,7 @@ vi.mock('./control.ts', () => ({ open_control_server: vi.fn() }));
 
 test('one first-stop bound survives restart and never signals an exited APP group', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
-  const terminal = new Error('synthetic terminal exit');
-  const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
-    throw terminal;
-  });
+  const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
   const group = vi.spyOn(process, 'kill').mockReturnValue(true);
   vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
@@ -75,7 +72,7 @@ test('one first-stop bound survives restart and never signals an exited APP grou
         const previous_exits = exit.mock.calls.length;
         await vi.advanceTimersByTimeAsync(SUPERVISOR_APP_STOP_SECONDS * 1000 - 20_001);
         expect(exit.mock.calls).toHaveLength(previous_exits);
-        await expect(vi.advanceTimersByTimeAsync(1)).rejects.toBe(terminal);
+        await vi.advanceTimersByTimeAsync(1);
         expect(exit.mock.calls).toHaveLength(previous_exits + 1);
         expect(exit).toHaveBeenLastCalledWith(1);
         if (process.platform !== 'win32') {
