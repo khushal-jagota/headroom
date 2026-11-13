@@ -7,7 +7,8 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import Any
+
+from fastapi import FastAPI
 
 from planner.conversation.backends.contracts import BackendEventSink, RetainedBackendRun
 from planner.conversation.contracts import ResolvedConversationStart
@@ -18,6 +19,8 @@ from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.core.task_settlement import run_on_worker_thread
 from planner.execution_identity import ChildReference
+from planner.executor.update_contracts import MacUpdateCheck
+from planner.executor.vps_remote_child import MacRemoteChild
 from planner.executor.vps_transport import VpsExecutor
 from planner.executor.worker_identity import ticket_id_of
 from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
@@ -52,7 +55,7 @@ class VpsExecutorRegistry:
         self._owners: dict[str, VpsExecutor] = {}
         self._lock = asyncio.Lock()
         self._configuration: (
-            tuple[SqliteProcessConversationSystem, Any, Callable[..., Any]] | None
+            tuple[SqliteProcessConversationSystem, FastAPI, Callable[[str], MacUpdateCheck]] | None
         ) = None
         self._started = False
 
@@ -114,7 +117,7 @@ class VpsExecutorRegistry:
             return owner
 
     def configure(
-        self, system: SqliteProcessConversationSystem, app: Any, *, update_check: Callable[..., Any]
+        self, system: SqliteProcessConversationSystem, app: FastAPI, *, update_check: Callable[[str], MacUpdateCheck]
     ) -> None:
         self._configuration = system, app, update_check
         for machine_id, owner in self._owners.items():
@@ -173,7 +176,7 @@ class VpsExecutorRegistry:
 
     def recover(
         self, reference: ChildReference, *, event_sink: BackendEventSink | None = None
-    ) -> Any:
+    ) -> MacRemoteChild | None:
         owner = self._owner_of(reference)
         return None if owner is None else owner.runs.recover(reference, event_sink=event_sink)
 
@@ -183,7 +186,7 @@ class VpsExecutorRegistry:
         resolved_start: ResolvedConversationStart,
         event_sink: BackendEventSink,
         message_files: ConversationMessageFiles,
-    ) -> Any:
+    ) -> MacRemoteChild:
         conn = connect(self.db_path)
         try:
             row = conn.execute(
