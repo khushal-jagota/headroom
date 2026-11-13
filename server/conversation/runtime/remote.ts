@@ -18,7 +18,6 @@ import {
 } from '../events.ts';
 import { MessageText, message_content_text } from '../message_content.ts';
 import { adopted_running_turn, same_reference } from '../logic/retained_turn.ts';
-export { same_reference } from '../logic/retained_turn.ts';
 import { read_facts } from '../record/data/lifecycle.ts';
 import type {
   AcceptedRecordEvent,
@@ -34,7 +33,6 @@ import {
 } from '../record/lifecycle.ts';
 import type { JsonObject } from '../../executor/wire.generated.ts';
 import { admit_remote_turn } from './remote_turn.ts';
-export { admit_remote_turn } from './remote_turn.ts';
 import { ValueError } from '../../core/value_error.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 import { ConversationState, own_settlement, same_turn, set_phase } from './state.ts';
@@ -50,10 +48,18 @@ export function retained_factory(factory: BackendChildFactory): RetainedBackendC
 }
 type AdoptedRun = Omit<RetainedBackendRun, 'turn'> & { readonly turn: TurnToken };
 function admitted_runs(factory: BackendChildFactory): readonly AdoptedRun[] {
-  return (retained_factory(factory)?.retained_runs() ?? []).map((run) => ({
-    ...run,
-    turn: admit_remote_turn(run.turn),
-  }));
+  return (retained_factory(factory)?.retained_runs() ?? []).flatMap((run) => {
+    try {
+      return [{ ...run, turn: admit_remote_turn(run.turn) }];
+    } catch (error) {
+      if (!(error instanceof ValueError)) throw error;
+      console.error(
+        `Refusing retained run: conversation=${run.reference.conversation_id} child=${run.reference.child_id}`,
+        error,
+      );
+      return [];
+    }
+  });
 }
 export function retained_open_runs(
   factories: Readonly<Record<string, BackendChildFactory>>,
@@ -82,12 +88,14 @@ export function restore_retained_run(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
 ): void {
-  const retained = retained_run(host, state);
-  if (retained === null) return;
+  const retained = retained_factory(host.options.backend_child_factories[state.record.backend_key])
+    ?.retained_runs()
+    .find((run) => run.reference.conversation_id === state.record.conversation_id);
+  if (retained === undefined) return;
   state.delivery_uncertain = retained.delivery_uncertain;
   state.retained_child_reference = retained.retirement_confirmed ? null : retained.reference;
   state.has_delivered_prompt = true;
-  state.last_ended_turn_token = retained.turn;
+  state.last_ended_turn_token = retained_run(host, state)?.turn ?? null;
   state.child_is_quarantined = !retained.retirement_confirmed;
 }
 export function initialize_retained_runs(
@@ -110,14 +118,25 @@ export function initialize_retained_runs(
     restore_retained_run(host, state);
     if (run !== undefined) {
       const facts = host.options.store.lifecycle_facts(record.conversation_id);
+      const has_user_input = facts.some(
+        (fact) =>
+          fact.kind === K.request &&
+          fact.operation === O.user_input &&
+          fact.turn_number === run.turn.turn_number,
+      );
+      const turn_start = has_user_input
+        ? host.options.store.current_turn_start_sequence(record.conversation_id)
+        : null;
       const questions = new Map(
-        host.options.store
-          .read_events_after(record.conversation_id, 0)
-          .flatMap((row) =>
-            row.payload instanceof UserInputRequestedEventPayload
-              ? [[row.payload.request_id, row.payload.questions] as const]
-              : [],
-          ),
+        turn_start !== null
+          ? host.options.store
+              .read_events_after(record.conversation_id, turn_start)
+              .flatMap((row) =>
+                row.payload instanceof UserInputRequestedEventPayload
+                  ? [[row.payload.request_id, row.payload.questions] as const]
+                  : [],
+              )
+          : [],
       );
       const running = adopted_running_turn(run.turn, facts, questions, {
         executor_process_current: run.incarnation_current,
@@ -387,11 +406,21 @@ async function interrupt_rewritten(
   state: ConversationState,
   running: RunningTurn,
 ): Promise<void> {
-  await state.lock.run(async () => {
-    if (state.running_turn === running && !running.ended)
-      await host.end_turn(state, running, 'interrupted', null);
+  const interrupted = await state.lock.run(async () => {
+    if (host.shutting_down || state.running_turn !== running || running.ended) return false;
+    await host.end_turn(state, running, 'interrupted', null);
     set_phase(state, state.running_turn === null ? 'idle' : 'running');
+    return true;
   });
+  if (!interrupted) {
+    if (!host.shutting_down)
+      await recovery(host).close_rewritten(
+        state.record.conversation_id,
+        running.token.turn_number,
+        'The turn ended before its message was written again.',
+      );
+    return;
+  }
   await recovery(host).recover(state.record.conversation_id);
   await host.drain_held_prompts(state);
 }
@@ -593,6 +622,8 @@ export async function kill_initial_delivery(
     }
     if (reservation.shutdown_owned && reservation.shutdown_fate != null) {
       await discard();
+      if (state.running_turn !== null)
+        await host.end_turn(state, state.running_turn, 'interrupted', null);
       return true;
     }
     if (child !== null && !child.stop_outside_lock) return false;
@@ -600,7 +631,6 @@ export async function kill_initial_delivery(
       if (factory === null) return false;
       if (state.retained_child_reference !== null) {
         child = factory.recover(state.retained_child_reference);
-        if (child === null) return true;
         state.child = child;
       }
     }
@@ -638,27 +668,32 @@ export async function kill_initial_delivery(
       state,
       await host.persist(state, () =>
         host.options.store.append_events(state.record.conversation_id, payloads, {
-          lifecycle: [
-            {
-              kind: K.turn,
-              identity: String(reservation.token.turn_number),
-              turn_number: reservation.token.turn_number,
-              operation: O.turn,
-              status: S.unavailable,
-              provider_identity: null,
-            },
-            {
-              kind: K.attempt,
-              identity: `prompt:${reservation.token.turn_number}`,
-              turn_number: reservation.token.turn_number,
-              operation: O.prompt,
-              status: suppressed ? S.suppressed : S.unknown,
-              provider_identity: null,
-            },
-          ],
+          lifecycle:
+            state.running_turn === null
+              ? [
+                  {
+                    kind: K.turn,
+                    identity: String(reservation.token.turn_number),
+                    turn_number: reservation.token.turn_number,
+                    operation: O.turn,
+                    status: S.unavailable,
+                    provider_identity: null,
+                  },
+                  {
+                    kind: K.attempt,
+                    identity: `prompt:${reservation.token.turn_number}`,
+                    turn_number: reservation.token.turn_number,
+                    operation: O.prompt,
+                    status: suppressed ? S.suppressed : S.unknown,
+                    provider_identity: null,
+                  },
+                ]
+              : [],
         }),
       ),
     );
+    if (state.running_turn !== null)
+      await host.end_turn(state, state.running_turn, 'interrupted', null);
     const { PromptDeliverySuppressed, PromptDeliveryUncertain } = await import('../contracts.ts');
     reservation.shutdown_fate = suppressed
       ? new PromptDeliverySuppressed({ reason: 'conversation_killed' })

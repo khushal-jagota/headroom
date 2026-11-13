@@ -5,7 +5,7 @@ import type {
   TurnToken,
   ChildReference,
 } from '../backends/contracts.ts';
-import { PlannerError } from '../../core/contracts.ts';
+import { wait_for_item } from '../../executor/item_budget.ts';
 import type { ConversationRecord, RunningTurn } from '../record/contracts.ts';
 import type { ConversationPhase, Message, ReservedTurn, SenderAdmission } from './contracts.ts';
 
@@ -32,29 +32,23 @@ export class FifoLock {
   }
   async acquire(deadline?: number): Promise<() => void> {
     if (this.#locked) {
-      await new Promise<void>((resolve, reject) => {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const resume = () => {
-          clearTimeout(timer);
+      let resumed = false;
+      let resume!: () => void;
+      const waiting = new Promise<void>((resolve) => {
+        resume = () => {
+          resumed = true;
           resolve();
         };
         this.#waiters.push(resume);
-        if (deadline !== undefined)
-          timer = setTimeout(
-            () => {
-              const position = this.#waiters.indexOf(resume);
-              if (position < 0) return;
-              this.#waiters.splice(position, 1);
-              reject(
-                new PlannerError(
-                  'retry_later',
-                  'The conversation is still busy with earlier work; send this item again',
-                ),
-              );
-            },
-            Math.max(0, deadline * 1000 - performance.now()),
-          );
       });
+      try {
+        await wait_for_item(waiting, deadline);
+      } catch (error) {
+        const position = this.#waiters.indexOf(resume);
+        if (position >= 0) this.#waiters.splice(position, 1);
+        else if (resumed) this.release_next();
+        throw error;
+      }
     } else {
       this.#locked = true;
     }
@@ -62,10 +56,13 @@ export class FifoLock {
     return () => {
       if (released) throw new Error('conversation lock released twice');
       released = true;
-      const next = this.#waiters.shift();
-      if (next) next();
-      else this.#locked = false;
+      this.release_next();
     };
+  }
+  private release_next(): void {
+    const next = this.#waiters.shift();
+    if (next) next();
+    else this.#locked = false;
   }
   async run<T>(work: () => T | Promise<T>): Promise<T> {
     const release = await this.acquire();

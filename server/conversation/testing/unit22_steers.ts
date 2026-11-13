@@ -45,11 +45,11 @@ async function start(conversation_id: string) {
     }),
   );
 }
-async function send(id: string, text: string, steer = false) {
+async function send(id: string, text: string, steer = false, anonymous = false) {
   return delivery_fate_json(
     await core.send(id, text_message_content(text), {
       sender_label: 'owner',
-      sender_message_id: `${id}-${text}`,
+      sender_message_id: anonymous ? null : `${id}-${text}`,
       mode: steer ? PromptDeliveryMode.steer : PromptDeliveryMode.queue,
     }),
   );
@@ -93,6 +93,43 @@ async function capture(name: string, id: string, fates: unknown[] = []) {
 async function close() {
   await core.shutdown({ deadline: performance.now() / 1000 + 5 });
   await registry.close();
+}
+async function restart_case(id: string, anonymous = false, held = false) {
+  await start(id);
+  await send(id, 'incumbent');
+  registry.child(id).steer = async () =>
+    new BackendSteerUncertain({
+      composed_content_delivered: null,
+      not_delivered: new Promise<boolean>(() => {}),
+    });
+  await send(id, 'late steer', true, anonymous);
+  await finish(id);
+  const sequence = store
+    .read_events_after(id, 0)
+    .find((row) => row.payload instanceof PromptDeliveryUncertainEventPayload)!.sequence;
+  await capture(`${id}-before-restart`, id);
+  await close();
+  cycle();
+  if (held) await send(id, 'fresh incumbent');
+  await core.await_late_steer(id, sequence, Promise.resolve(true));
+  await Promise.all([...core.conversations.get(id)!.late_steers]);
+  await core.wait_until_quiescent();
+  if (held) {
+    await core.await_late_steer(id, sequence, Promise.resolve(true));
+    await Promise.all([...core.conversations.get(id)!.late_steers]);
+    await capture(`${id}-held`, id);
+    await close();
+    cycle();
+    await core.await_late_steer(id, sequence, Promise.resolve(true));
+    await Promise.all([...core.conversations.get(id)!.late_steers]);
+    await core.wait_until_quiescent();
+  }
+  await capture(`${id}-once`, id);
+  await close();
+  cycle();
+  await core.await_late_steer(id, sequence, Promise.resolve(true));
+  await core.wait_until_quiescent();
+  await capture(`${id}-no-repeat`, id);
 }
 cycle();
 try {
@@ -152,30 +189,9 @@ try {
   await core.wait_until_quiescent();
   await capture('arrived-no-repeat', 'arrived');
   await finish('arrived');
-  await start('restart');
-  await send('restart', 'incumbent');
-  registry.child('restart').steer = async () =>
-    new BackendSteerUncertain({
-      composed_content_delivered: null,
-      not_delivered: new Promise<boolean>(() => {}),
-    });
-  await send('restart', 'late steer', true);
-  await finish('restart');
-  const sequence = store
-    .read_events_after('restart', 0)
-    .find((row) => row.payload instanceof PromptDeliveryUncertainEventPayload)!.sequence;
-  await capture('before-restart', 'restart');
-  await close();
-  cycle();
-  await core.await_late_steer('restart', sequence, Promise.resolve(true));
-  await Promise.all([...core.conversations.get('restart')!.late_steers]);
-  await core.wait_until_quiescent();
-  await capture('restart-once', 'restart');
-  await close();
-  cycle();
-  await core.await_late_steer('restart', sequence, Promise.resolve(true));
-  await core.wait_until_quiescent();
-  await capture('restart-no-repeat', 'restart');
+  await restart_case('restart');
+  await restart_case('restart-null', true);
+  await restart_case('restart-held', false, true);
   process.stdout.write(JSON.stringify(trace));
 } finally {
   await close();
