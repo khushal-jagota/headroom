@@ -2496,6 +2496,8 @@ def test_exact_model_and_effort_cross_authenticated_native_dispatch(
             )
             observer = harness.mac.catalog.snapshots
             assert isinstance(observer, ScriptedBackendSnapshots)
+            # Dispatch refuses a model the Mac's saved list does not offer.
+            observer.models = ("scripted", "gpt-6.1-terra")
             snapshots = await harness.endpoint.catalog.snapshot(
                 ConversationBackendKey.codex, refresh=True
             )

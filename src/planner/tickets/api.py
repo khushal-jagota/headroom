@@ -32,7 +32,7 @@ from planner.conversation.api import (
     delivery_fate_json,
     video_send_admission,
 )
-from planner.conversation.backend_state import require_enabled_model
+from planner.conversation.backend_state import require_usable_model
 from planner.conversation.contracts import (
     ConversationSystem,
     WorkspacePathPolicy,
@@ -412,7 +412,13 @@ def _marshal_accept(raw: JsonDict) -> AcceptBody:
         raise PlannerError(
             ErrorCode.validation, "expected_proposal_revision must be a positive integer", {}
         )
+    if raw.get("message") is not None and revision is None:
+        raise PlannerError(
+            ErrorCode.validation, "a decision note requires expected_proposal_revision"
+        )
     return AcceptBody(
+        message=body_opt_str(raw, "message"),
+        decision_id=body_opt_str(raw, "decision_id"),
         expected_proposal_revision=revision,
         edited_body=body_opt_str(raw, "edited_body"),
         next_ceiling=body_opt_str(raw, "next_ceiling"),
@@ -737,9 +743,14 @@ def resolve_employee_configuration(
     employee_launch_model: str,
     employee_launch_reasoning_effort: str | None,
 ) -> ResolvedEmployeeConfiguration:
-    """Keep exact submitted values and refuse disabled models."""
+    """Keep exact submitted values and refuse models the Ticket's machine cannot run."""
     registered_backend = require_conversation_backend_key(employee_backend)
-    require_enabled_model(conn, registered_backend, employee_launch_model)
+    require_usable_model(
+        conn,
+        registered_backend,
+        employee_launch_model,
+        tickets_data.read_ticket(conn, ticket_id).machine_id,
+    )
     return ResolvedEmployeeConfiguration(
         employee_backend=registered_backend.value,
         employee_launch_model=employee_launch_model,
@@ -1090,6 +1101,8 @@ def accept_field(
         edited_body=body["edited_body"],
         next_ceiling=next_ceiling,
         expected_proposal_revision=body["expected_proposal_revision"],
+        message=body["message"],
+        decision_id=body["decision_id"],
         next_holder=_parse_required_principal(body["next_holder"], "next_holder"),
     )
     return tickets_views.ticket_json(ticket, now)
@@ -1105,12 +1118,18 @@ def reject_ticket_proposal(
     clk: Clk,
 ) -> JsonDict:
     """Send a parked proposal back, with guidance for the executing agent or without."""
-    body = RejectionBody(message=body_opt_str(raw, "message"))
+    body = RejectionBody(
+        message=body_opt_str(raw, "message"),
+        decision_id=body_opt_str(raw, "decision_id"),
+        expected_proposal_revision=_marshal_accept(raw)["expected_proposal_revision"],
+    )
     now = clk.now_unix()
     ticket = tickets_actions.reject_ticket_proposal(
         conn,
         ticket_id,
         message=body["message"],
+        decision_id=body["decision_id"],
+        expected_proposal_revision=body["expected_proposal_revision"],
         ctx=ctx,
         clock=clk,
     )

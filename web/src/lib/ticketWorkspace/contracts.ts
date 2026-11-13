@@ -101,6 +101,9 @@ export interface WorkspaceFieldBody {
 }
 
 export interface BrokenTicketProjection {
+  recap: string;
+  recap_updated_at: number | null;
+  recap_stage_changed: boolean;
   id: string;
   title: string;
   worker_type: string;

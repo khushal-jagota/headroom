@@ -22,7 +22,7 @@ from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
 from planner.machines.data import read_machine
 from planner.runtime import conversation_start, worker_step_readiness
 from planner.tickets import data as tickets_data
-from planner.tickets import locale_configuration, revision_feedback
+from planner.tickets import decision_messages, locale_configuration
 from planner.tickets.contracts import (
     StageOwnershipMode,
     Ticket,
@@ -88,7 +88,7 @@ async def restart_worker(
     nothing started.
 
     The configuration is already validated when it arrives: the caller checked
-    the backend name and disabled-model policy before anything was killed, so a
+    the backend name and the model check before anything was killed, so a
     bad argument costs the Ticket nothing. It runs in the same transaction as the claim,
     after it, because the launch values unfreeze only once the claim is back.
 
@@ -102,8 +102,8 @@ async def restart_worker(
         killed_conversation_looked_running = False
         revision_restarted_in_fresh_conversation = False
         if killed_conversation_id is not None:
-            revision_restarted_in_fresh_conversation = (
-                await run_on_worker_thread(revision_feedback.snapshot, conn, ticket_id) is not None
+            revision_restarted_in_fresh_conversation = bool(
+                await run_on_worker_thread(decision_messages.has_undelivered, conn, ticket_id)
             )
             killed_conversation_looked_running = await conversations.is_running(
                 killed_conversation_id
@@ -167,6 +167,7 @@ def _unlink_give_back_the_claim_and_write_configuration(
                 expected_conversation_id=killed_conversation_id,
                 now=now,
             )
+        decision_messages.rearm_after_restart(conn, ticket_id)
         if write_employee_configuration is not None:
             write_employee_configuration(conn, now)
         conn.execute("COMMIT")
