@@ -29,7 +29,7 @@ function cycle() {
     store,
     backend_child_factories: registry.factories,
     message_files: new ConversationMessageFiles(spec.path),
-    model_is_enabled: () => true,
+    delivery_model_refusal: () => null,
     execution_refusal: () => null,
     unix_time_now: () => 1000,
     monotonic_now: () => 1000,
