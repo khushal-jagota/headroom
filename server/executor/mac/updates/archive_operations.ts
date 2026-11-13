@@ -147,6 +147,11 @@ function revision(root: number, expected: string): void {
     }),
   );
 }
+export function read_runtime_revision(runtime: string, expected: string): string {
+  const root = retain(open_directory_descriptor(runtime));
+  owned(root, () => revision(root, expected));
+  return expected;
+}
 /** Destroy waits for pending reads but never closes the descriptor borrowed from this operation. */
 function source_stream(fd: number, bytes: number) {
   return createReadStream('', {
