@@ -260,7 +260,7 @@ it('distinguishes an unavailable handshake from failed query cleanup and retains
   await expect(catalog.stop({ deadline: performance.now() / 1000 + 1 })).rejects.toBeInstanceOf(
     AggregateError,
   );
-  await expect(catalog.settled()).rejects.toBeInstanceOf(AggregateError);
+  await expect(catalog.settled()).rejects.toMatchObject({ errors: [primary, cleanup] });
   expect(close).toHaveBeenCalledTimes(2);
   expect(notify).toHaveBeenCalledExactlyOnceWith(failed);
   expect(child_processes.spawn).not.toHaveBeenCalled();
