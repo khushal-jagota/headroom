@@ -422,6 +422,31 @@ def main(root: Path, report: Path, sha: str) -> None:
             )
             return cast(dict[str, Any], json.loads(output.read_text()))
 
+        admission_report = root / "v1-admission.json"
+        phase(
+            "candidate-v1-runtime-admission",
+            command,
+            [
+                shutil.which("node") or "node",
+                str(launcher),
+                (
+                    SOURCE / "server/environments/release/testing/hosted_archive.ts"
+                ).as_uri(),
+                json.dumps(
+                    dict(
+                        operation="admit_runtime",
+                        app=str(app),
+                        sha=sha,
+                        report=str(admission_report),
+                    )
+                ),
+            ],
+            root / "v1-admission.log",
+            timeout_seconds=150,
+            graceful=True,
+        )
+        receipt["candidate_v1_admission"] = json.loads(admission_report.read_text())
+
         # This factory boundary previously had recorded argv and syntax proof only.
         # Reuse the genuine built candidate, not host Python or the structural fixture.
         from planner.environments.update_install import migration_graph
