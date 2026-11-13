@@ -1,13 +1,14 @@
 /** Function-only environment commands. No argv parser, installed wrapper or process IO. */
 import { readFile } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
-import { getSystemErrorMap } from 'node:util';
+import { isAbsolute } from 'node:path';
+import { posix_child_path } from '../core/python_path.ts';
 import { python_os_error_message as error_message } from '../core/os_errors.ts';
 import { jsonFailure } from '../core/http/json.ts';
 import { JsonNumber, stringify_python_json } from '../core/http/numeric_json.ts';
 import { create_database_backup } from './backup/capture.ts';
 import { restore_database_snapshot } from './backup/restore.ts';
 import { AppManifestValidationFailure } from './command_contracts.ts';
+import { domain_error } from './operator_errors.ts';
 import { is_object, parse_attempt_json } from './updates/codec.ts';
 import type {
   CurrentAppCommandDependencies,
@@ -53,18 +54,6 @@ const failed = (error: Error, stderr = ''): Result => ({
 });
 const json = (value: unknown) =>
   stringify_python_json(value, { sort_keys: true, ensure_ascii: true });
-const os_error_codes = new Set([...getSystemErrorMap().values()].map(([name]) => name));
-const os_error = (error: unknown): boolean =>
-  error instanceof Error &&
-  (('code' in error && typeof error.code === 'string' && os_error_codes.has(error.code)) ||
-    error.name === 'OSError' ||
-    error.name === 'FileNotFoundError');
-// These domain helpers use plain Error for Python RuntimeError/ValueError refusals.
-const domain_error = (error: unknown): error is Error =>
-  error instanceof Error &&
-  (os_error(error) ||
-    error.constructor === Error ||
-    ['RuntimeError', 'ValueError'].includes(error.name));
 
 export async function environment_status(
   args: Args['status'],
@@ -72,7 +61,7 @@ export async function environment_status(
 ): Promise<Result> {
   return deps.with_resources(async (resources) => {
     const config = deps.load_config();
-    deps.admit_path(config.db_path);
+    config.db_path = deps.admit_path(config.db_path);
     const payload = await collect_vps_status(config, resources.status_options);
     resources.require_active();
     // Python round(float, 2) retains its float kind even at an integral percentage.
@@ -98,16 +87,24 @@ export async function environment_cleanup(
 ): Promise<Result> {
   return deps.with_resources(async (resources) => {
     const config = deps.load_config();
-    deps.admit_path(config.db_path);
+    config.db_path = deps.admit_path(config.db_path);
     const inventory = await collect_cleanup_inventory(config, resources.status_options);
     resources.require_active();
     const payload: Record<string, unknown> = { dry_run: !args.apply, ...inventory_body(inventory) };
-    const layout = await layout_for(
+    const selected_layout = await layout_for(
       config.ticket_scratch_root,
       config.ticket_scratch_database,
       config.db_path,
       deps.home,
+      deps.admit_path,
     );
+    const layout =
+      selected_layout === null
+        ? null
+        : {
+            repository: deps.admit_path(selected_layout.repository),
+            folders: selected_layout.folders.map((path) => deps.admit_path(path)),
+          };
     resources.require_active();
     let scratches: TicketScratch[] = [],
       scratch_result: ScratchResult | undefined;
@@ -119,7 +116,11 @@ export async function environment_cleanup(
       payload.ticket_scratch = scratches;
       if (args.apply) {
         resources.require_active();
-        payload.result = await apply_cleanup_inventory(inventory, resources.signal);
+        payload.result = await apply_cleanup_inventory(
+          inventory,
+          resources.signal,
+          deps.admit_path,
+        );
         resources.require_active();
         scratch_result = await remove_ticket_scratch(
           layout,
@@ -131,7 +132,7 @@ export async function environment_cleanup(
         payload.ticket_scratch_result = scratch_result;
       }
     } else if (args.apply)
-      payload.result = await apply_cleanup_inventory(inventory, resources.signal);
+      payload.result = await apply_cleanup_inventory(inventory, resources.signal, deps.admit_path);
     resources.require_active();
     if (args.json) return success(json(payload));
     const lines = [args.apply ? 'applied cleanup' : 'cleanup dry run'];
@@ -149,10 +150,8 @@ export async function environment_backup(
   deps: OperatorPathInputs,
 ): Promise<Result> {
   try {
-    const source = deps.expand_path(args.source_db),
-      backup = deps.expand_path(args.backup_dir);
-    deps.admit_path(source);
-    deps.admit_path(backup);
+    const source = deps.admit_path(deps.expand_path(args.source_db)),
+      backup = deps.admit_path(deps.expand_path(args.backup_dir));
     return success(await create_database_backup(source, backup, args.deployed_revision));
   } catch (error) {
     if (!domain_error(error)) throw error;
@@ -183,12 +182,22 @@ export async function environment_backup_current(
 ): Promise<Result> {
   let warning = '';
   try {
-    const manifest_path = join(args.current_app, 'manifest.json');
-    deps.admit_path(manifest_path);
+    const manifest_input = posix_child_path(args.current_app, 'manifest.json');
+    let manifest_path: string;
+    let source: Buffer;
+    try {
+      const literal = isAbsolute(manifest_input)
+        ? manifest_input
+        : process.cwd() + '/' + manifest_input;
+      manifest_path = deps.admit_path(literal);
+      source = await readFile(manifest_path);
+    } catch (error) {
+      // Checked paths own I/O. Python reports the original Click path on read failure.
+      if (error instanceof Error && 'path' in error) Object.assign(error, { path: manifest_input });
+      throw error;
+    }
     const value = manifest_json(
-      new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
-        await readFile(manifest_path),
-      ),
+      new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(source),
     );
     if (!is_object(value)) throw new TypeError('app manifest must be a mapping');
     if (!Object.hasOwn(value, 'app_sha'))
@@ -203,39 +212,29 @@ export async function environment_backup_current(
     try {
       await deps.validate_app_manifest(manifest_path);
     } catch (error) {
-      if (!(
-        error instanceof Error &&
-        (os_error(error) ||
-          (error instanceof AppManifestValidationFailure && error.category === 'value'))
-      ))
-        throw error;
+      if (!domain_error(error, { runtime: false, plain: false })) throw error;
       warning = `Warning: ${error_message(error)}. Backup will continue.\n`;
     }
     // Backup's domain RuntimeErrors are distinct from unexpected validator errors.
     try {
-      const source = deps.expand_path(args.source_db),
-        backup = deps.expand_path(args.backup_dir);
-      deps.admit_path(source);
-      deps.admit_path(backup);
+      const source = deps.admit_path(deps.expand_path(args.source_db)),
+        backup = deps.admit_path(deps.expand_path(args.backup_dir));
       return success(await create_database_backup(source, backup, revision), warning);
     } catch (error) {
       if (!domain_error(error)) throw error;
       return failed(error, warning);
     }
   } catch (error) {
-    if (!(
-      error instanceof Error &&
-      (os_error(error) || error instanceof AppManifestValidationFailure)
-    ))
-      throw error;
+    if (!domain_error(error, { plain: false })) throw error;
     return failed(error, warning);
   }
 }
 export async function environment_provision_skills(
   args: Args['provision-skills'],
+  deps: OperatorPathInputs,
 ): Promise<Result> {
   try {
-    provision_environment_skills(args);
+    provision_environment_skills(args, deps);
     return success('provisioned Panels skills for Hermes, Codex, and Claude');
   } catch (error) {
     if (!domain_error(error)) throw error;
@@ -247,14 +246,12 @@ export async function environment_restore(
   deps: OperatorPathInputs,
 ): Promise<Result> {
   try {
-    const snapshot = args.live_stopped ? deps.expand_path(args.snapshot) : args.snapshot;
+    const snapshot = args.live_stopped
+      ? deps.admit_path(deps.expand_path(args.snapshot))
+      : args.snapshot;
     const destination = args.live_stopped
-      ? deps.expand_path(args.destination_db)
+      ? deps.admit_path(deps.expand_path(args.destination_db))
       : args.destination_db;
-    if (args.live_stopped) {
-      deps.admit_path(snapshot);
-      deps.admit_path(destination);
-    }
     await restore_database_snapshot(snapshot, destination, {
       live_stopped: args.live_stopped,
     });
@@ -287,27 +284,21 @@ async function registry_result(
     return failed(error);
   }
 }
-function registry_paths(args: Args['prepare'] | Args['reset'], deps: OperatorPathInputs): void {
-  if (!isAbsolute(args.environment_root)) return; // Preserve the registry's literal-root refusal.
-  deps.admit_path(args.environment_root);
-  deps.admit_path(
-    args.environment_root + (args.kind === 'live' ? '/current' : '/staging') + '/data/planner.db',
-  );
-}
 export const environment_prepare = (
   args: Args['prepare'],
   deps: OperatorPathInputs,
 ): Promise<Result> =>
-  registry_result(() => {
-    registry_paths(args, deps);
-    return prepare_environment_instance(args);
-  }, args.json);
+  registry_result(() => prepare_environment_instance(args, undefined, deps.admit_path), args.json);
 export const environment_inspect = (args: Args['inspect']): Promise<Result> =>
   registry_result(() => inspect_environment_instance(args), args.json);
 export const environment_reset = (args: Args['reset'], deps: OperatorPathInputs): Promise<Result> =>
-  registry_result(() => {
-    registry_paths(args, deps);
-    return reset_environment_instance(args);
-  }, args.json);
-export const environment_remove = (args: Args['remove']): Promise<Result> =>
-  registry_result(() => remove_environment_instance(args), args.json, false);
+  registry_result(() => reset_environment_instance(args, undefined, deps.admit_path), args.json);
+export const environment_remove = (
+  args: Args['remove'],
+  deps: OperatorPathInputs,
+): Promise<Result> =>
+  registry_result(
+    () => remove_environment_instance(args, undefined, deps.admit_path),
+    args.json,
+    false,
+  );

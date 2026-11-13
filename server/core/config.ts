@@ -4,6 +4,7 @@ import { load_apns_config } from '../notifications/config.ts';
 import { readFileSync, existsSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { PlannerError } from './contracts.ts';
 import { strip } from './whitespace.ts';
@@ -59,10 +60,14 @@ export function parseConfigBoolean(
 export function testModeFromEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
   return parseConfigBoolean(env.PLAN_TEST_MODE ?? '0', 'test_mode');
 }
+/** Application evidence has the same environment-only selector as Python. */
+export function applicationRootFromEnvironment(env: NodeJS.ProcessEnv = process.env): string {
+  return env.PLAN_APP_ROOT ?? fileURLToPath(new URL('../../', import.meta.url));
+}
 export function loadConfig(
   path: string | undefined = undefined,
   env: NodeJS.ProcessEnv = process.env,
-  paths: { readonly home?: string } = {},
+  paths: { readonly home?: string; readonly admit_path?: (path: string) => string } = {},
 ): Config {
   const refusalFlag = env.PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS ?? '0';
   const refuse_unidentified_agent_calls = parseConfigBoolean(
@@ -72,6 +77,7 @@ export function loadConfig(
   );
   if (env === process.env) delete process.env.PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS;
   path ??= env.PLAN_CONFIG_PATH ?? 'config.yaml';
+  path = paths.admit_path?.(path) ?? path;
   const file: unknown = existsSync(path) ? parse(readFileSync(path, 'utf8')) : {};
   if (file !== null && (typeof file !== 'object' || Array.isArray(file)))
     throw new PlannerError('validation', `config root must be a mapping: ${path}`);
@@ -109,7 +115,7 @@ export function loadConfig(
           : v;
     try {
       if (!isAbsolute(expanded)) throw new Error('the path must be absolute');
-      const result = realpathSync(expanded);
+      const result = realpathSync(paths.admit_path?.(expanded) ?? expanded);
       if (!statSync(result).isDirectory())
         throw new Error('the path must be an existing directory');
       return result;

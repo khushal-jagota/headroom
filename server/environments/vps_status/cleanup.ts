@@ -121,19 +121,21 @@ async function apply_retention(
   root: string,
   paths: readonly string[],
   signal?: AbortSignal,
+  admit_path?: (path: string) => string,
 ): Promise<void> {
   signal?.throwIfAborted();
-  if ((await is_symlink(root)) || !(await is_directory(root)))
+  const admitted_root = admit_path?.(root) ?? root;
+  if ((await is_symlink(root)) || !(await is_directory(admitted_root)))
     throw new Error('backup retention root is no longer a regular directory');
-  const canonical = await resolved_path(root);
+  const canonical = await resolved_path(admitted_root);
   const current = new Set(
     await Promise.all(
-      (await verified_snapshot_retention_plan(root)).map((path) => resolved_path(path)),
+      (await verified_snapshot_retention_plan(admitted_root)).map((path) => resolved_path(path)),
     ),
   );
   for (const candidate of paths) {
     signal?.throwIfAborted();
-    const resolved = await resolved_path(candidate);
+    const resolved = admit_path?.(candidate) ?? (await resolved_path(candidate));
     if (
       (await is_symlink(candidate)) ||
       dirname(resolved) !== canonical ||
@@ -149,6 +151,7 @@ async function apply_retention(
 export async function apply_cleanup_inventory(
   inventory: CleanupInventory,
   signal?: AbortSignal,
+  admit_path?: (path: string) => string,
 ): Promise<CleanupResult> {
   signal?.throwIfAborted();
   const removed: string[] = [],
@@ -157,6 +160,8 @@ export async function apply_cleanup_inventory(
   const backups: CleanupCandidate[] = [];
   for (const candidate of inventory.candidates) {
     signal?.throwIfAborted();
+    const path = admit_path?.(candidate.path) ?? candidate.path;
+    if (admit_path) admit_path(candidate.root);
     if (candidate.kind === 'backup_retention') {
       backups.push(candidate);
       continue;
@@ -167,7 +172,7 @@ export async function apply_cleanup_inventory(
         continue;
       }
       signal?.throwIfAborted();
-      await rm(candidate.path, { recursive: true });
+      await rm(path, { recursive: true });
       removed.push(candidate.path);
       continue;
     }
@@ -181,7 +186,7 @@ export async function apply_cleanup_inventory(
       continue;
     }
     signal?.throwIfAborted();
-    await rename(candidate.path, rotatedPath);
+    await rename(path, admit_path?.(rotatedPath) ?? rotatedPath);
     rotated.push(candidate.path);
   }
   if (backups.length) {
@@ -190,7 +195,7 @@ export async function apply_cleanup_inventory(
     if (backups.some((candidate) => candidate.root !== root)) review_needed.push(...paths);
     else {
       try {
-        await apply_retention(root, paths, signal);
+        await apply_retention(root, paths, signal, admit_path);
       } catch {
         signal?.throwIfAborted();
         review_needed.push(...paths);

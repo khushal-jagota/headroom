@@ -26,6 +26,7 @@ export interface ScratchResult {
 /** One pass can refuse further operation dispatch after lifecycle shutdown. */
 export interface ScratchPassOptions {
   signal?: AbortSignal;
+  admit_path?: (path: string) => string;
   git_execution?: {
     readonly children: OwnedOneShotChildren;
     readonly environment: Readonly<NodeJS.ProcessEnv>;
@@ -37,11 +38,17 @@ export interface GitResult {
   stderr: string;
 }
 export interface TicketScratchOperations {
-  layout_under(root: string, home?: string): Promise<ScratchLayout>;
+  layout_under(
+    root: string,
+    home?: string,
+    admit_path?: ScratchPassOptions['admit_path'],
+  ): Promise<ScratchLayout>;
   layout_for(
     root: string | null,
     database: string | null,
     db_path: string,
+    home?: string,
+    admit_path?: ScratchPassOptions['admit_path'],
   ): Promise<ScratchLayout | null>;
   read_ticket_states(sql: ReadSql): TicketStates;
   read_ticket_states_from(db_path: string): Promise<TicketStates>;

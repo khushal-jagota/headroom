@@ -208,6 +208,11 @@ snapshot. It assembles only that command's production adapters. Status and clean
 share one invocation child owner, join actual closes, and preserve the first signal
 through cleanup failures. Path expansion uses that invocation's home.
 
+Test admission combines the invocation snapshot with the actual process test markers.
+Mutation builders use the returned checked paths before filesystem access. Link removal
+retains the checked parent and link name, so it removes the entry itself. Configuration
+selectors come from `core/config.ts`; both languages keep `data/planning.db` relative to cwd.
+
 Thirteen leaves are available: status, cleanup, backup, backup-current,
 provision-skills, restore, prepare, inspect, reset, remove, app-identity,
 server-event-loop-tasks, and stalls watchdog. App-build, run, serve, and restart
