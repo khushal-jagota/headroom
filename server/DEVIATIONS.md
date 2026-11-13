@@ -514,3 +514,17 @@ It rejects missing required fields and invalid command semantics, and it supplie
 Python's serializer can write a dataclass whose state did not pass that validation.
 The TypeScript sender must produce a message that the Python peer can read.
 Root-specific encoder inputs use the generated contracts. Nullable fields without defaults require an explicit null.
+
+## VPS mailbox shutdown admission
+
+The Manager's VPS executor Brief requires that shutdown seal new work immediately.
+The TypeScript mailbox rejects later owned work and returns an empty held poll before another SQL fetch.
+Python's mailbox can accept later work and fetches once more before its closed check.
+The direct mailbox comparison records one source fetch and zero candidate SQL calls after the seal.
+Already admitted commits retain their announcements, and actual settlement retains pending failures and cleanup.
+The stateless replacement participant and the single stall source retain Python's post-stop behavior.
+Their caller owns the SQL capability, admission and actual settlement.
+
+The Manager's mailbox review also requires timer-range admission.
+TypeScript refuses nonfinite waits and waits above Node's maximum timer delay before SQL starts.
+Python's event loop can accept longer durations. Finite negative waits retain immediate behavior.
