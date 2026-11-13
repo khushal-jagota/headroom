@@ -1,11 +1,12 @@
 /** Export-only private-file sequence. No executor transport or provider process. */
 import { copyFile, readFile, readdir, unlink, utimes, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { existsSync, fstatSync, readFileSync, watch, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, fstatSync, readFileSync, readlinkSync, watch, writeFileSync } from 'node:fs';
+import { isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { SpawnOptions, ChildProcess } from 'node:child_process';
 import { ChildProcesses } from '../../../../lifecycle/owned_processes.ts';
+import { OneShotChildren } from '../../../../lifecycle/one_shot_children.ts';
 import { FileUpdateAttemptStore, UpdateConflict } from '../../attempts.ts';
 import { canonical_json, parse_attempt, parse_attempt_json, parse_release } from '../../codec.ts';
 import type { UpdateAttempt, PublishedUpdate, UpdateProvider } from '../../contracts.ts';
@@ -14,7 +15,7 @@ import type { MacUpdateReport, MacUpdateHealthRead } from '../contracts.ts';
 interface Inspection {
   release: Record<string, unknown>;
   artifact: string;
-  mode?: 'eof' | 'ebadf' | 'unexpected';
+  mode?: 'eof' | 'ebadf' | 'unexpected' | 'mutation' | 'abort';
   proposed?: boolean;
 }
 
@@ -37,6 +38,7 @@ interface Request {
 }
 export async function mac_update_sequence(request: Request): Promise<unknown> {
   const owner = new ChildProcesses(),
+    one_shot_children = new OneShotChildren(owner),
     native_spawn = owner.spawn.bind(owner);
   const entry = fileURLToPath(new URL('../../../release/archive_unpack_main.ts', import.meta.url));
   let spawned = 0,
@@ -68,9 +70,11 @@ export async function mac_update_sequence(request: Request): Promise<unknown> {
         error: string | null;
       }
     | undefined;
+  let abort_inspection: (() => void) | undefined;
   const terminate = () => {
     stopping = true;
     owner.seal();
+    one_shot_children.seal();
     try {
       owner.force_kill(performance.now() / 1000 + 5);
     } catch (error) {
@@ -109,24 +113,43 @@ export async function mac_update_sequence(request: Request): Promise<unknown> {
       } catch (error) {
         evidence.error = String(error);
       }
-      child.stdin!.end();
+      if (evidence.mode === 'abort') abort_inspection!();
+      else child.stdin!.end();
     };
-    const watcher = evidence?.mode === 'eof' ? watch(String(options.cwd), observed) : undefined;
+    const blocked = evidence?.mode === 'eof' || evidence?.mode === 'abort';
+    const watcher = blocked ? watch(String(options.cwd), observed) : undefined;
     let launch = args;
     try {
       if (evidence?.mode) {
         const preload = join(request.root, 'inspection-preload.mjs');
+        // This Linux fixture mutates only the already-held private archive inode.
+        const mutable =
+          evidence.mode === 'mutation' ? readlinkSync(`/proc/self/fd/${options.stdio[3]}`) : null;
+        if (mutable !== null) {
+          const suffix = relative(request.root, mutable);
+          if (isAbsolute(suffix) || suffix === '..' || suffix.startsWith('../'))
+            throw new Error('Mutation fixture archive escaped its private root');
+        }
         writeFileSync(
           preload,
           `import fs from 'node:fs';
 import {syncBuiltinESMExports} from 'node:module';
-const mode=${JSON.stringify(evidence.mode)}, marker=${JSON.stringify(marker)};
-const original=fs.createReadStream; let first=true;
+const mode=${JSON.stringify(evidence.mode)}, marker=${JSON.stringify(marker)}, mutable=${JSON.stringify(mutable)};
+const original=fs.createReadStream; let reads=0;
 fs.createReadStream=function(...args){
-  if(first&&args[1]?.fd===3){first=false;
+  if(args[1]?.fd===3&&++reads===2&&mode==='mutation'){
+    const target=fs.openSync(mutable,'r+');
+    try{
+      const source=fs.fstatSync(3), destination=fs.fstatSync(target);
+      if(source.dev!==destination.dev||source.ino!==destination.ino)throw new Error('Mutation fixture inode changed');
+      const byte=Buffer.alloc(1);if(fs.readSync(target,byte,0,1,4)!==1)throw new Error('Mutation fixture has no gzip header');
+      byte[0]^=1;fs.writeSync(target,byte,0,1,4);
+    }finally{fs.closeSync(target);}
+  }
+  if(reads===1&&args[1]?.fd===3){
     if(mode==='ebadf')fs.closeSync(3);
     if(mode==='unexpected')throw new Error('Recorded inspection failure');
-    if(mode==='eof'){
+    if(mode==='eof'||mode==='abort'){
       const stream=Reflect.apply(original,this,args); let marked=false;
       stream._read=()=>{if(!marked){marked=true;const s=fs.fstatSync(3);fs.writeFileSync(marker+'.tmp',JSON.stringify({dev:s.dev,ino:s.ino}));fs.renameSync(marker+'.tmp',marker);}};
       return stream;
@@ -146,9 +169,9 @@ syncBuiltinESMExports();\n`,
         clearTimeout(timer);
         watcher?.close();
       });
-      if (evidence?.mode === 'eof') {
+      if (blocked) {
         timer = setTimeout(() => {
-          evidence.forced = true;
+          evidence!.forced = true;
           try {
             owner.force_kill(performance.now() / 1000 + 5);
           } catch (error) {
@@ -192,6 +215,7 @@ syncBuiltinESMExports();\n`,
         provider: available ? provider : null,
         current_app_sha: sha,
         child_processes: owner,
+        signal: one_shot_children.signal,
         ready_release: () => ready,
         emit_change: () => emitted++,
       });
@@ -280,11 +304,15 @@ syncBuiltinESMExports();\n`,
     const inspections: Record<string, unknown> = {};
     for (const [name, spec] of Object.entries(request.inspections)) {
       if (stopping) throw new Error('Mac fixture terminated');
+      const inspection_children =
+        spec.mode === 'abort' ? new OneShotChildren(owner) : one_shot_children;
+      abort_inspection = () => inspection_children.seal();
       const service = new MacUpdateService({
         root: join(request.root, name),
         attempts,
         current_app_sha: 'a'.repeat(40),
         child_processes: owner,
+        signal: inspection_children.signal,
         ready_release: () => null,
         emit_change: () => {},
         provider: {
@@ -320,12 +348,23 @@ syncBuiltinESMExports();\n`,
         JSON.stringify(after)
       )
         throw new Error('Mac inspection changed unrelated fixture state');
-      inspections[name] = { outcome, evidence: active, proposed: spec.proposed === true };
+      inspections[name] = {
+        outcome,
+        evidence: active,
+        proposed: spec.proposed === true,
+        ...(spec.mode === 'abort'
+          ? {
+              temporary_removed: (await readdir(join(request.root, name, 'archives'))).length === 0,
+            }
+          : {}),
+      };
       active = undefined;
+      abort_inspection = undefined;
     }
     return { parity, inspections, children: { spawned, closed } };
   } finally {
     owner.seal();
+    one_shot_children.seal();
     try {
       try {
         owner.force_kill(performance.now() / 1000 + 5);

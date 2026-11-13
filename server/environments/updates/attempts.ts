@@ -53,7 +53,7 @@ export function exclusive_lock<T>(path: string, action: () => T): T {
     closeSync(fd);
   }
 }
-function missing(error: unknown): boolean {
+export function missing(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 function read_record_json(path: string): unknown {

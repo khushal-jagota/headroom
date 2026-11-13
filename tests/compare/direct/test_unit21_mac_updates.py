@@ -365,6 +365,9 @@ def test_unit21_mac_updates_retained_archive_and_leased_report_sequence(
     )
     for mode in ("ebadf", "unexpected", "eof"):
         inspect(mode, valid, mode=mode)
+    # A valid gzip-header mutation after hash pass one must refuse before acceptance.
+    inspect("mutation", valid, mode="mutation")
+    inspect("abort", valid, mode="abort")
     # The Manager accepted these refusals, conditional on unchanged hosted producer compatibility.
     inspect(
         "global-size",
@@ -483,10 +486,22 @@ process.stdout.write(codec.canonical_json(result));"""
         "error": "Error",
         "message": "Recorded inspection failure",
     }
+    assert actual["inspections"]["mutation"]["outcome"] == {
+        "error": "UpdateConflict",
+        "message": "The Mac runtime archive changed during inspection.",
+    }
     eof = actual["inspections"]["eof"]
     assert "error" in eof["outcome"] and eof["evidence"]["entered"]
     assert eof["evidence"]["identity"] and not eof["evidence"]["forced"]
     assert eof["evidence"]["error"] is None
+    aborted = actual["inspections"]["abort"]
+    assert aborted["outcome"] == {
+        "error": "Error",
+        "message": "One-shot processes stopped at shutdown",
+    }
+    assert aborted["evidence"]["entered"] and aborted["evidence"]["identity"]
+    assert not aborted["evidence"]["forced"] and aborted["evidence"]["error"] is None
+    assert aborted["temporary_removed"]
     print(
         "Mac informational restrictions/JSON diagnostics: "
         + json.dumps(observed, ensure_ascii=False)

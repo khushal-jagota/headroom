@@ -40,7 +40,7 @@ The Manager accepted four groups. They cover global PAX size and NUL refusal, UT
 
 The physical TAR caps are 8 GiB expanded, 250,000 headers, 1 MiB per extension body, and 64 MiB cumulative metadata/path/link bytes. Trailing zero padding must occupy 1–20 KiB in whole 512-byte blocks. Existing Mac limits stay at 2 GiB compressed, 4 GiB logical member bytes, and 16 KiB for the manifest.
 
-Acceptance requires that the unchanged real Mac producer passes the hosted compatibility gate. That result is pending. The direct report measures four archive observations and parser diagnostics, with accepted:true. Other accepted limits and framing rules have source review, without a measured boundary claim. [The difference registry](../../DEVIATIONS.md#mac-archive-inspection-policies-and-json-diagnostics--accepted-conditionally) records the scope and proof. No Mac format change, default factory activation, executor transport, or real producer compatibility claim follows.
+Acceptance requires that the unchanged real Mac producer passes the hosted compatibility gate. The first run passed unchanged on the PR merge tree for head `37333bd6e`, with a 268.48-second build and 7.59-second inspection. The gate now runs on every Darwin job and requires its evidence files. The final-head repeat after review repairs remains pending. The direct report measures four archive observations and parser diagnostics, with accepted:true. Other accepted limits and framing rules have source review, without a measured boundary claim. [The difference registry](../../DEVIATIONS.md#mac-archive-inspection-policies-and-json-diagnostics--accepted-conditionally) records the scope and proof. Default factory activation and executor transport remain later work.
 
 Static native inventory is packaging-only. Its command helper and every native tool call require the caller's invocation owner, stop signal, and original deadline. A later build/update binding must supply that same execution scope inside APP. Synthetic loader lookup and outside-target checks remain in the existing release comparison. They do not prove a full native closure.
 
@@ -54,3 +54,6 @@ Host/report comparisons use synthetic observations against Python. The actual pr
 
 The probe executes candidate code with the host user's rights and is not a sandbox.
 Descendants of a tool that exits normally are not swept, as in Python.
+Mac inspection takes the invocation signal and one absolute 120-second deadline before it opens the input. Its bounded observer retains a separate full-cleanup promise when cancellation cannot settle immediately. Mac preparation joins that promise before temporary-file removal or the next queued flight. Both descriptor passes compute hashes, and the second must equal the first before acceptance.
+
+Mac downloads preserve Python’s 30-second metadata and 60-second stream-read timeouts. The same invocation signal aborts metadata, download, ZIP reads, and queued preparation. These network timeouts do not bound disk writes or the complete download.

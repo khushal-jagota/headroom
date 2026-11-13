@@ -22,8 +22,19 @@ import { pipeline } from 'node:stream/promises';
 import { Pack } from 'tar';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import { stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
-import type { AppManifest, ArchiveUnpackRequest, MacArchiveInspection } from './contracts.ts';
-import { AppValidationError, MacArchiveInspectionError, MacArchiveJsonError } from './contracts.ts';
+import type {
+  AppManifest,
+  ArchiveUnpackRequest,
+  MacArchiveInspection,
+  MacInspectionExecution,
+} from './contracts.ts';
+import {
+  AppValidationError,
+  MacArchiveInspectionError,
+  MacArchiveInspectionUnsettled,
+  MacArchiveJsonError,
+} from './contracts.ts';
+import { observe_shutdown } from '../../conversation/shutdown.ts';
 import { decode_mac_manifest } from '../updates/mac/manifest.ts';
 import { MAX_MAC_RUNTIME_MANIFEST_BYTES } from '../updates/mac/configuration.ts';
 import {
@@ -122,15 +133,58 @@ export async function inspect_mac_archive(
   archive: string,
   archive_sha256: string,
   archive_size: number,
-  child_processes: OwnedChildProcesses,
+  execution: MacInspectionExecution,
 ): Promise<MacArchiveInspection> {
-  return (await extract_archive(
+  if (!Number.isFinite(execution.deadline))
+    throw new AppValidationError('Mac archive inspection requires a finite deadline');
+  execution.signal.throwIfAborted();
+  if (performance.now() / 1000 >= execution.deadline)
+    throw new AppValidationError('Mac archive inspection deadline expired before admission');
+  let interrupt: ((reason: unknown) => void) | undefined;
+  let stopped!: (reason: unknown) => void;
+  const interrupted = new Promise<never>((_resolve, reject) => {
+    stopped = reject;
+  });
+  const abort = () => {
+    interrupt?.(execution.signal.reason);
+    stopped(execution.signal.reason);
+  };
+  execution.signal.addEventListener('abort', abort);
+  const actual = extract_archive(
     archive,
     null,
     { purpose: 'mac-inspection', archive_sha256, archive_size },
-    child_processes,
+    execution.child_processes,
     filesystem_free_bytes,
-  )) as MacArchiveInspection;
+    (cancel) => {
+      interrupt = cancel;
+    },
+  );
+  let complete = false;
+  void actual.then(
+    () => {
+      complete = true;
+    },
+    () => {
+      complete = true;
+    },
+  );
+  const settled = actual.then(() => {});
+  void settled.catch(() => {});
+  try {
+    await observe_shutdown(
+      Promise.race([actual, interrupted]),
+      execution,
+      'Mac archive inspection did not settle before its deadline',
+    );
+    return (await actual) as MacArchiveInspection;
+  } catch (error) {
+    interrupt?.(error);
+    if (!complete) throw new MacArchiveInspectionUnsettled(settled, error);
+    throw error;
+  } finally {
+    execution.signal.removeEventListener('abort', abort);
+  }
 }
 function inspection_error(message: Record<string, unknown>): Error {
   if (typeof message.message !== 'string') throw new Error('invalid Mac inspection error');
@@ -162,6 +216,7 @@ async function extract_archive(
     | { purpose: 'mac-inspection'; archive_sha256: string; archive_size: number },
   child_processes: OwnedChildProcesses,
   read_free_space: (path: string) => Promise<bigint>,
+  register_cancel?: (cancel: (reason: unknown) => void) => void,
 ): Promise<AppManifest | MacArchiveInspection> {
   let input: FileHandle | undefined, work: string | undefined, child: ChildProcess | undefined;
   let closed: Promise<void> | undefined,
@@ -172,6 +227,18 @@ async function extract_archive(
     result: AppManifest | MacArchiveInspection | undefined,
     failure: unknown;
   const errors: unknown[] = [];
+  register_cancel?.((reason) => {
+    failure ??= reason;
+    if (child && !ended) {
+      child.stdin?.destroy();
+      child.stdout?.destroy(reason instanceof Error ? reason : new Error(String(reason)));
+      try {
+        stop_one_shot_child(child);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+  });
   const inspection = purpose.purpose === 'mac-inspection';
   let target = destination === null ? '' : resolve(destination);
   const require_live = (): void => {
@@ -345,7 +412,7 @@ async function extract_archive(
       );
     success = true;
   } catch (error) {
-    failure = error;
+    failure ??= error;
     if (child && !ended)
       try {
         stop_one_shot_child(child);

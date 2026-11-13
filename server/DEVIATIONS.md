@@ -675,5 +675,7 @@ Both implementations refuse malformed JSON, with different parser error types an
 The direct proof is `tests/compare/direct/test_unit21_mac_updates.py::test_unit21_mac_updates_retained_archive_and_leased_report_sequence`.
 Its `unit21-mac-updates.json` report retains both outcomes and marks the accepted observations explicitly.
 Acceptance requires that the unchanged real Mac producer passes the hosted gate in `.github/workflows/typescript-lifecycle-native.yml`.
-The hosted result is **pending**. Its evidence will appear under `mac-producer-compatibility` in the existing native ABI artifact.
+The [first real producer proof](https://github.com/khushal-jagota/headroom/actions/runs/43466927540/job/132028428389) passed on the PR merge tree for head `37333bd6e`.
+Its 597,087,278-byte archive passed unchanged, with both direct children closed. Build plus inspection took 276.07 seconds.
+The final-head repeat after review repairs is **pending**. Evidence stays under `mac-producer-compatibility` in the existing native ABI artifact.
 If that producer fails any accepted policy, stop and ask the Manager before further work.
