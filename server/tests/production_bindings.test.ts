@@ -15,6 +15,7 @@ import * as claude from '../conversation/backends/claude_agent_sdk/adapter.ts';
 import * as codex from '../conversation/backends/codex_app_server/adapter.ts';
 import * as hermes from '../conversation/backends/hermes_acp/adapter.ts';
 import { HermesModelCatalogOwner } from '../conversation/backends/hermes_acp/catalog.ts';
+import { ModelCatalogCleanupFailed } from '../conversation/backends/catalog_cleanup.ts';
 import * as snapshot from '../conversation/snapshot/composition.ts';
 import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
 import {
@@ -153,7 +154,6 @@ test('real bindings share owners and durable memory while Hermes cleanup retains
         return owned_http;
       },
     });
-    hold = true;
     expect(constructors.map((spy) => spy.mock.calls.length)).toEqual([1, 1, 1]);
     const claude_call = constructors[0].mock.calls[0]!,
       codex_call = constructors[1].mock.calls[0]!;
@@ -184,11 +184,41 @@ test('real bindings share owners and durable memory while Hermes cleanup retains
     other.forget(generation);
     expect(memory.applies_to(generation)).toBe(false);
     const base = http_runtime.mock.results[0]!.value;
+    const original_base_stop = base.shutdown!;
     const base_stop = vi.spyOn(base, 'shutdown');
     const retained = http_runtime.mock.calls[0]![0].providers.hermes!;
     await expect(without_runner('1', () => retained({ refresh: true }))).rejects.toThrow(
       'Production backend I/O is unavailable in tests. Inject recording adapters.',
     );
+    const failure = new Error('Retained Hermes cleanup failed');
+    const retry_cleanup = vi.fn(async () => {});
+    const retry_failure = new ModelCatalogCleanupFailed(undefined, [failure], retry_cleanup);
+    base_stop.mockImplementationOnce(async () => {
+      throw retry_failure;
+    });
+    await expect(owned_http.shutdown!(stop)).rejects.toMatchObject({ errors: [retry_failure] });
+    let raw_settled = false;
+    void owned_http.settled().then(
+      () => {
+        raw_settled = true;
+      },
+      () => {
+        raw_settled = true;
+      },
+    );
+    await new Promise<void>((yes) => setImmediate(yes));
+    expect(raw_settled).toBe(false);
+    expect(retry_cleanup).not.toHaveBeenCalled();
+    expect(base_stop).toHaveBeenCalledExactlyOnceWith(stop);
+    expect(catalog_stop).toHaveBeenCalledTimes(1);
+    expect(() => acquireRuntimeOwnership(path)).toThrow('ConversationRuntimeAlreadyOwned');
+    base_stop.mockClear();
+    catalog_stop.mockClear();
+    base_stop.mockImplementationOnce(async (options: StopOptions) => {
+      await retry_failure.retry_cleanup();
+      await original_base_stop.call(base, options);
+    });
+    hold = true;
     const closing = server.close(stop);
     void closing.catch(() => {});
     let settled = false;
@@ -207,12 +237,13 @@ test('real bindings share owners and durable memory while Hermes cleanup retains
     expect(settled).toBe(false);
     expect(() => acquireRuntimeOwnership(path)).toThrow('ConversationRuntimeAlreadyOwned');
     expect(context.database.read((sql) => sql.get('SELECT 1 AS alive'))).toEqual({ alive: 1 });
-    const failure = new Error('Retained Hermes cleanup failed');
     release(failure);
     await expect(owned_http.settled()).rejects.toMatchObject({ errors: [failure] });
     await expect(closing).rejects.toThrow('Shutdown failed after settlement');
     expect(catalog_stop).toHaveBeenCalledTimes(1);
     expect(base_stop).toHaveBeenCalledExactlyOnceWith(stop);
+    expect(retry_cleanup).toHaveBeenCalledTimes(1);
+    expect(retry_failure.pending).toBe(false);
     const successor = acquireRuntimeOwnership(path);
     successor.close();
     for (const trap of traps) expect(trap).not.toHaveBeenCalled();

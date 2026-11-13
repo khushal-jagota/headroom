@@ -229,21 +229,21 @@ export async function staging_parity(
     probe.response = original;
     probe.entered = () => entered.resolve();
     let schema_completed = false;
-    const actual = migration
-      .schema_change_pending(
+    const actual = Promise.resolve(
+      migration.schema_change_pending(
         '~/schema.sqlite',
         join(spec.root, 'typescript/current/.app-next-' + receipt.manifest.app_sha),
-      )
-      .then(
-        () => {
-          schema_completed = true;
-          return null;
-        },
-        (error: unknown) => {
-          schema_completed = true;
-          return error;
-        },
-      );
+      ),
+    ).then(
+      () => {
+        schema_completed = true;
+        return null;
+      },
+      (error: unknown) => {
+        schema_completed = true;
+        return error;
+      },
+    );
     await entered.promise;
     const state = probe.calls.at(-1)!.state;
     try {
