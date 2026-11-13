@@ -9,10 +9,8 @@ import {
 } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { createHash } from 'node:crypto';
-import koffi from 'koffi';
+import { flock } from './flock.ts';
 export { observe_existing_flock } from './observe.ts';
-const libc = koffi.load(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6');
-const flock = libc.func('int flock(int fd, int operation)');
 export interface LockHandle {
   close(): void;
 }
@@ -27,17 +25,10 @@ export function acquireLock(path: string): LockHandle | null {
   mkdirSync(dirname(path), { recursive: true });
   return lock_file(path, constants.O_RDWR | constants.O_CREAT | constants.O_APPEND, 0o644);
 }
-function retry_flock(fd: number, operation: number): number {
-  let result: number;
-  do {
-    result = flock(fd, operation);
-  } while (result !== 0 && koffi.errno() === 4);
-  return result;
-}
 function lock_file(path: string, flags: number, mode: number): LockHandle | null {
   const fd = openSync(path, flags, mode);
-  if (retry_flock(fd, 2 | 4) !== 0) {
-    const errno = koffi.errno();
+  const errno = flock(fd, 'try-exclusive');
+  if (errno !== 0) {
     closeSync(fd);
     if (errno === 11 || errno === 35) return null;
     throw new Error(`flock failed: errno ${errno}`);
@@ -48,7 +39,7 @@ function lock_file(path: string, flags: number, mode: number): LockHandle | null
       if (closed) return;
       closed = true;
       try {
-        retry_flock(fd, 8);
+        flock(fd, 'unlock');
       } finally {
         closeSync(fd);
       }

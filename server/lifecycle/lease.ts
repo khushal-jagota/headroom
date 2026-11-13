@@ -1,12 +1,10 @@
 /** Existing advisory lease bytes and names, shared with the future supervisor. */
 import { chmodSync, closeSync, constants, mkdirSync, openSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import koffi from 'koffi';
+import { getSystemErrorMessage } from 'node:util';
+import { flock } from '../core/locks/flock.ts';
 import { ServerLifecycleAlreadyOwnedError, ServerLifecycleError } from './contracts.ts';
 import type { LifecycleLease } from './contracts.ts';
-const libc = koffi.load(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6');
-const flock = libc.func('int flock(int fd, int operation)');
-const strerror = libc.func('const char *strerror(int error)');
 
 export function resolve_server_lifecycle_lease_path(port: number): string {
   const directory = join('/tmp', `panels-${process.getuid!()}`);
@@ -19,13 +17,13 @@ export function acquire_server_lifecycle_lease(path: string, port: number): Life
   }
   // Staging's parent is prepared by materialization. Do not silently create a missing run root.
   const descriptor = openSync(path, constants.O_RDWR | constants.O_CREAT, 0o600);
-  if (flock(descriptor, 2 | 4) !== 0) {
-    const error = koffi.errno();
+  const error = flock(descriptor, 'try-exclusive');
+  if (error !== 0) {
     closeSync(descriptor);
     if ([11, 13, 35].includes(error))
       throw new ServerLifecycleAlreadyOwnedError(`Port ${port} already has a Panels supervisor.`);
     throw new ServerLifecycleError(
-      `Could not acquire Panels lifecycle lease: [Errno ${error}] ${strerror(error)}`,
+      `Could not acquire Panels lifecycle lease: [Errno ${error}] ${getSystemErrorMessage(-error)}`,
     );
   }
   let closed = false;
@@ -34,7 +32,7 @@ export function acquire_server_lifecycle_lease(path: string, port: number): Life
       if (closed) return;
       closed = true;
       try {
-        flock(descriptor, 8);
+        flock(descriptor, 'unlock');
       } finally {
         closeSync(descriptor);
       }
