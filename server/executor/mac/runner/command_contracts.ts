@@ -14,8 +14,10 @@ export type OwedOutput = Pick<
   QueuedEnvelope,
   'conversation_id' | 'kind' | 'payload' | 'submission_id'
 >;
+export type MacOutputEntry = Pick<QueuedEnvelope, 'conversation_id' | 'kind' | 'payload'> &
+  Partial<Pick<QueuedEnvelope, 'submission_id'>>;
 export interface MacOutputPublication {
-  add(entry: OwedOutput): Promise<void>;
+  add(entry: MacOutputEntry, options?: { ticket_id?: string }): Promise<void>;
 }
 export interface MacCommandRecordView {
   readonly command: ChildCommand;

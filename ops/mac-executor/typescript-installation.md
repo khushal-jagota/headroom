@@ -256,3 +256,12 @@ A failed settlement retains its retry point. A later stop retries it before actu
 Exact command stop follows Python when a currently joined command task fails: it returns an uncertain outcome before native cleanup.
 Permanent host shutdown separately attempts native cleanup and joins the failed work.
 The owner still decides whether exact command stop must also continue cleanup across that failed join.
+
+## Local event composition
+
+`MacRunner` in `server/executor/mac/runner/index.ts` connects command, native, source, event, maintenance, and lifetime owners before admission opens.
+Its live port carries text deltas, thinking, and tool progress. The later host supplies the lossy sender.
+Other native events enter durable source custody. Completed messages, finished tools, and ended turns capture Ticket artifacts through the outbox.
+Exact stop joins admitted sources and final native events before it publishes the stop certificate.
+Permanent stop refuses new command, replay, and ordinary source work, and drops late live events.
+The host still owns transport, the Unix socket, update installation, and storage closure after the runner's actual join.
