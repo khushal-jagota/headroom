@@ -115,6 +115,80 @@ export function provider_launch_settings(env: Readonly<NodeJS.ProcessEnv> = proc
     app_root: env.PLAN_APP_ROOT,
   };
 }
+const installer_unit_environment_names = new Set([
+  'HOME',
+  'CODEX_HOME',
+  'CLAUDE_CONFIG_DIR',
+  'HERMES_HOME',
+  'PLAN_HERMES_HOME',
+  'PATH',
+  'LANG',
+  'LANGUAGE',
+  'TERM',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'USER',
+  'LOGNAME',
+  'XDG_RUNTIME_DIR',
+  'DBUS_SESSION_BUS_ADDRESS',
+  'PLAN_CONFIG_PATH',
+  'PLAN_DB_PATH',
+  'PLAN_APP_ROOT',
+  'PLAN_LOGS_DIR',
+  'PLAN_BACKUP_DIR',
+  'PLAN_WORKSPACE_ROOT',
+  'PLAN_TICKET_SCRATCH_ROOT',
+  'PLAN_TICKET_SCRATCH_DATABASE',
+  'PLAN_CREDENTIAL_KEY_PATH',
+  'PLAN_DISPATCHER_LOCK_PATH',
+  'PLAN_SERVER_CONTROL_SOCKET',
+  'PLAN_SERVER_LIFECYCLE_LEASE_PATH',
+  'PLAN_SERVER_URL',
+  'PLAN_TEST_MODE',
+]);
+const installer_unit_path_names = new Set([
+  'HOME',
+  'CODEX_HOME',
+  'CLAUDE_CONFIG_DIR',
+  'HERMES_HOME',
+  'PLAN_HERMES_HOME',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'XDG_RUNTIME_DIR',
+  'PLAN_CONFIG_PATH',
+  'PLAN_DB_PATH',
+  'PLAN_APP_ROOT',
+  'PLAN_LOGS_DIR',
+  'PLAN_BACKUP_DIR',
+  'PLAN_WORKSPACE_ROOT',
+  'PLAN_TICKET_SCRATCH_ROOT',
+  'PLAN_TICKET_SCRATCH_DATABASE',
+  'PLAN_CREDENTIAL_KEY_PATH',
+  'PLAN_DISPATCHER_LOCK_PATH',
+  'PLAN_SERVER_CONTROL_SOCKET',
+  'PLAN_SERVER_LIFECYCLE_LEASE_PATH',
+]);
+/** Select explicit production-unit inputs without forwarding test-runner markers. */
+export function installer_unit_environment(env: Readonly<NodeJS.ProcessEnv>): {
+  environment: NodeJS.ProcessEnv;
+  paths: readonly string[];
+} {
+  const environment: NodeJS.ProcessEnv = {},
+    paths: string[] = [];
+  for (const [name, value] of Object.entries(env)) {
+    if (
+      (!installer_unit_environment_names.has(name) && !/^LC_[A-Z_]+$/.test(name)) ||
+      value === undefined
+    )
+      continue;
+    environment[name] = value;
+    if (installer_unit_path_names.has(name) && value) paths.push(value);
+  }
+  return { environment, paths };
+}
+
 /** Application evidence has the same environment-only selector as Python. */
 export function applicationRootFromEnvironment(env: NodeJS.ProcessEnv = process.env): string {
   return env.PLAN_APP_ROOT ?? fileURLToPath(new URL('../../', import.meta.url));

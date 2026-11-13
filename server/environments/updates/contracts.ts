@@ -109,7 +109,11 @@ export interface UpdateExperienceOptions {
 }
 export interface UpdateProvider {
   available(): Promise<PublishedUpdate | null>;
-  download_artifact(artifact_id: NumericJSON<number>, destination: string): Promise<void>;
+  download_artifact(
+    artifact_id: NumericJSON<number>,
+    destination: string,
+    signal?: AbortSignal,
+  ): Promise<void>;
 }
 /** Required adapters; callers cannot silently replace an unavailable operation. */
 export interface ReleaseStaging {
@@ -125,6 +129,7 @@ export interface InstallerOperations {
   ): Promise<string>;
   prepare(options: {
     current_root: string;
+    database: string;
     data_directory: string;
     attempt_id: string;
     service_unit: string;

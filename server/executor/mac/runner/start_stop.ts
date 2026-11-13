@@ -13,6 +13,7 @@ import type {
   MacRunningChild,
 } from './contracts.ts';
 import { MacChildAdmissionRefused } from './contracts.ts';
+import { same_reference } from './logic/outcomes.ts';
 interface Entry {
   reference: ChildReference;
   ticket_id: string;
@@ -22,13 +23,6 @@ interface Entry {
   start: Promise<MacRunningChild> | undefined;
   stop: Promise<void> | undefined;
   native_stop: Promise<void> | undefined;
-}
-function same_reference(left: ChildReference, right: ChildReference): boolean {
-  return (
-    left.child_id === right.child_id &&
-    left.executor_incarnation === right.executor_incarnation &&
-    left.conversation_id === right.conversation_id
-  );
 }
 export class MacNativeChildren implements MacNativeChildrenContract {
   private readonly options: MacNativeChildrenOptions;
@@ -52,6 +46,11 @@ export class MacNativeChildren implements MacNativeChildrenContract {
   }
   get(child_id: string): MacRunningChild | null {
     return this.entries.get(child_id)?.child ?? null;
+  }
+  retained_children(): readonly MacRunningChild[] {
+    return [...this.entries.values()].flatMap((entry) =>
+      entry.child === null ? [] : [entry.child],
+    );
   }
   is_retiring(child_id: string): boolean {
     return this.entries.get(child_id)?.retiring ?? false;
@@ -148,6 +147,8 @@ export class MacNativeChildren implements MacNativeChildrenContract {
         localized_start,
         lock: new FifoLock(),
         active_turn: null,
+        open_tool_calls: new Set(),
+        background_task_ids: new Set(),
         model: localized_start.model,
         reasoning_effort: localized_start.reasoning_effort,
       };
@@ -164,7 +165,7 @@ export class MacNativeChildren implements MacNativeChildrenContract {
       if (entry.child !== null) {
         entry.retiring = true;
         try {
-          await this.stop_native(entry);
+          await this.stop_locked(entry);
         } catch (cleanup) {
           this.record_failure(cleanup);
           throw new AggregateError([error, cleanup], 'Native start and cleanup failed.');
@@ -198,42 +199,63 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     const entry = this.entries.get(reference.child_id);
     if (!entry || !same_reference(entry.reference, reference)) return Promise.resolve();
     entry.retiring = true;
-    if (!entry.stop) {
-      const task = Promise.resolve().then(async () => {
-        await entry.start?.catch(() => {});
-        await this.stop_native(entry, invoking);
-      });
-      entry.stop = task;
-      void task.catch((error) => {
-        if (!(error instanceof MacChildAdmissionRefused)) this.record_failure(error);
-        if (entry.stop === task) entry.stop = undefined;
+    if (entry.stop) {
+      const stopped = entry.stop;
+      return Promise.resolve().then(() => {
+        invoking();
+        return stopped;
       });
     }
+    const task = Promise.resolve().then(async () => {
+      await entry.start?.catch(() => {});
+      await this.stop_locked(entry, invoking);
+    });
+    entry.stop = task;
+    void task.catch((error) => {
+      if (!(error instanceof MacChildAdmissionRefused)) this.record_failure(error);
+      if (entry.stop === task) entry.stop = undefined;
+    });
     return entry.stop;
   }
-  private async stop_native(entry: Entry, invoking?: () => void): Promise<void> {
-    if (entry.stopped) return;
+  private async stop_locked(entry: Entry, invoking?: () => void): Promise<void> {
+    if (entry.stopped) {
+      invoking?.();
+      return;
+    }
     if (entry.child) await entry.child.lock.run(() => this.stop_process(entry, invoking));
     else entry.stopped = true;
   }
+  stop_native(reference: ChildReference): Promise<void> {
+    const entry = this.entries.get(reference.child_id);
+    if (!entry || !same_reference(entry.reference, reference)) return Promise.resolve();
+    return this.stop_process(entry).catch((error: unknown) => {
+      if (error instanceof ServerLifecycleError) throw error;
+      throw Object.assign(new ServerLifecycleError('Mac native cleanup failed.'), { cause: error });
+    });
+  }
   /** Host shutdown closes the process before a provider call can release its lock. */
   private stop_process(entry: Entry, invoking?: () => void): Promise<void> {
-    if (entry.stopped || entry.child === null) return Promise.resolve();
-    if (!entry.native_stop) {
-      const native = entry.child.native;
-      const task = Promise.resolve()
-        .then(() => {
-          invoking?.();
-          return native.stop();
-        })
-        .then(() => {
-          entry.stopped = true;
-        });
-      entry.native_stop = task;
-      void task.catch(() => {
-        if (entry.native_stop === task) entry.native_stop = undefined;
-      });
+    if (entry.stopped || entry.child === null) {
+      invoking?.();
+      return Promise.resolve();
     }
+    if (entry.native_stop) {
+      invoking?.();
+      return entry.native_stop;
+    }
+    const native = entry.child.native;
+    const task = Promise.resolve()
+      .then(() => {
+        invoking?.();
+        return native.stop();
+      })
+      .then(() => {
+        entry.stopped = true;
+      });
+    entry.native_stop = task;
+    void task.catch(() => {
+      if (entry.native_stop === task) entry.native_stop = undefined;
+    });
     return entry.native_stop;
   }
   retire(reference: ChildReference): void {
