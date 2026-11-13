@@ -135,12 +135,22 @@ def test_unsupported_loader_host_refuses_before_candidate_exec(
     monkeypatch.setattr(bootstrap, "host_target", lambda: "linux")
     monkeypatch.setattr(bootstrap, "preflight", lambda *_: None)
     monkeypatch.setattr(bootstrap, "select_publication", lambda *_: (archive, receipt))
-    monkeypatch.setattr(bootstrap.platform, "freedesktop_os_release", lambda: {"ID": "unsupported"})
+    monkeypatch.setattr(
+        "scripts.panels_install.platform.freedesktop_os_release", lambda: {"ID": "unsupported"}
+    )
 
     def never_execute(*arguments: Any, **keywords: Any) -> None:
         raise AssertionError("The candidate interpreter must not execute on an unsupported host")
 
-    monkeypatch.setattr(bootstrap.subprocess, "run", never_execute)
+    monkeypatch.setattr("scripts.panels_install.subprocess.run", never_execute)
     with pytest.raises(SystemExit, match="supported Linux distribution"):
         bootstrap.main()
     assert not (tmp_path / "home").exists()
+
+
+def test_registered_platform_refuses_before_installation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An owner-issued Linux command must not use its credential on a Mac runtime."""
+    monkeypatch.setattr("sys.argv", ["panels_install.py", "join", "--platform", "linux"])
+    monkeypatch.setattr(bootstrap, "host_target", lambda: "darwin")
+    with pytest.raises(SystemExit, match="registered --platform"):
+        bootstrap.main()

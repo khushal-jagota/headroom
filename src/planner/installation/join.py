@@ -22,25 +22,29 @@ from planner.executor.credential_file import credential_path, write_credential
 
 
 def check_mac_prerequisites(signing_identity: str | None) -> str:
-    """Refuse unavailable native tools and signing authority before installation writes."""
+    """Check native tools and an optional certificate before installation writes."""
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("Mac join needs an Apple Silicon Mac")
     if int(platform.mac_ver()[0].split(".")[0]) < 15:
         raise ValueError("Mac join needs macOS 15 or newer")
-    if signing_identity is None or re.fullmatch(r"[0-9A-Fa-f]{40}", signing_identity) is None:
-        raise ValueError("Mac join needs --signing-identity with an Apple Development fingerprint")
-    identities = subprocess.run(
-        ["/usr/bin/security", "find-identity", "-v", "-p", "codesigning"],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    ).stdout
-    if not any(
-        signing_identity.lower() in line.lower() and "Apple Development:" in line
-        for line in identities.splitlines()
-    ):
-        raise ValueError("Install the selected Apple Development certificate and private key")
+    signing_identity = signing_identity or "-"
+    if signing_identity != "-":
+        if re.fullmatch(r"[0-9A-Fa-f]{40}", signing_identity) is None:
+            raise ValueError("Use - for ad-hoc signing or an Apple Development fingerprint")
+        identities = subprocess.run(
+            ["/usr/bin/security", "find-identity", "-v", "-p", "codesigning"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout
+        if not any(
+            signing_identity.lower() in line.lower() and "Apple Development:" in line
+            for line in identities.splitlines()
+        ):
+            raise ValueError("Install the selected Apple Development certificate and private key")
+    if not Path("/usr/bin/codesign").is_file():
+        raise ValueError("Mac join needs the macOS codesign tool")
     subprocess.run(
         ["/usr/bin/xcrun", "--find", "clang"], check=True, capture_output=True, timeout=10
     )
@@ -79,6 +83,10 @@ def wait_for_lease(python: Path, root: Path, revision: str, *, timeout: float = 
                 status = json.loads(result.stdout)
                 if (
                     status.get("identity", {}).get("application_revision") == revision
+                    and status.get("identity", {}).get("protocol_version") == 26
+                    and status.get("last_lease_failure") is None
+                    and status.get("going_to_sleep") is False
+                    and status.get("admission_stopped") is False
                     and isinstance(status.get("lease_accepted_at_mac_ms"), int)
                     and status["lease_accepted_at_mac_ms"] >= started_ms
                     and status.get("refusal") is None

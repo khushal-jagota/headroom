@@ -50,6 +50,13 @@ def test_owner_join_command_keeps_secret_out_of_command(monkeypatch: pytest.Monk
     assert machine_id in command and REVISION in command
     assert CREDENTIAL not in command
     assert result.output.count(CREDENTIAL) == 1
+    linux = CliRunner().invoke(
+        machine_join_command,
+        ["Server", "--home", "https://home.example", "--revision", REVISION, "--platform", "linux"],
+    )
+    assert linux.exit_code == 0, linux.output
+    assert calls[-1] == ("POST", "/api/machines", {"name": "Server", "platform": "linux"})
+    assert "--platform linux" in linux.output
 
 
 def test_join_refuses_existing_installation_before_native_actions(tmp_path: Path) -> None:
@@ -81,7 +88,13 @@ def test_join_requires_fresh_matching_accepted_lease(
         assert kwargs["env"]["PLAN_EXECUTOR_ROOT"] == str(tmp_path)
         assert "PLAN_DB_PATH" not in kwargs["env"]
         status = {
-            "identity": {"application_revision": "wrong" if attempts == 1 else REVISION},
+            "identity": {
+                "application_revision": "wrong" if attempts == 1 else REVISION,
+                "protocol_version": 26,
+            },
+            "last_lease_failure": None,
+            "going_to_sleep": False,
+            "admission_stopped": attempts == 2,
             "lease_accepted_at_mac_ms": time.time_ns() // 1_000_000 + 1,
             "refusal": None,
         }
@@ -91,7 +104,7 @@ def test_join_requires_fresh_matching_accepted_lease(
     monkeypatch.setattr("planner.installation.join.subprocess.run", run)
     monkeypatch.setattr("planner.installation.join.time.sleep", lambda _: None)
     join.wait_for_lease(tmp_path / "python", tmp_path, REVISION)
-    assert attempts == 2
+    assert attempts == 3
 
     monkeypatch.setattr("planner.installation.join.time.monotonic", lambda: 0.0)
     with pytest.raises(ValueError, match="did not report an accepted lease"):

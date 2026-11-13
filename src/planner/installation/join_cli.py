@@ -18,12 +18,23 @@ from planner.executor.configuration import validate_server_url
     "--home", "home_url", required=True, help="Use this same home's trusted HTTPS origin."
 )
 @click.option("--revision", required=True, help="Full published release SHA for the bootstrap.")
-@click.option("--signing-identity", help="Apple Development certificate fingerprint for a Mac.")
+@click.option(
+    "--platform",
+    "target_platform",
+    type=click.Choice(["darwin", "linux"]),
+    default="darwin",
+    show_default=True,
+)
+@click.option(
+    "--signing-identity",
+    help="Mac ad-hoc signing is the default. Use - or an optional legacy certificate fingerprint.",
+)
 def machine_join_command(
     name: str,
     home_url: str,
     revision: str,
     signing_identity: str | None,
+    target_platform: str,
 ) -> None:
     """Register a machine, then print its join command and private credential once."""
     try:
@@ -31,19 +42,30 @@ def machine_join_command(
         if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
             raise ValueError("Use the full lowercase published release SHA")
         if (
-            signing_identity is not None
+            signing_identity not in (None, "-")
             and re.fullmatch(r"[0-9A-Fa-f]{40}", signing_identity) is None
         ):
-            raise ValueError("Use the Apple Development certificate fingerprint")
+            raise ValueError("Use - for ad-hoc signing or the legacy certificate fingerprint")
     except ValueError as error:
         raise click.ClickException(str(error)) from error
-    data = http.send("POST", "/api/machines", as_json=False, json_body={"name": name})
+    body = {"name": name}
+    if target_platform == "linux":
+        body["platform"] = target_platform
+    data = http.send("POST", "/api/machines", as_json=False, json_body=body)
     # Registration remains the only issuer. This command never copies owner authority.
     machine_id = str(UUID(data["machine_id"]))
     credential = data["credential"]
     if not isinstance(credential, str) or re.fullmatch(r"[A-Za-z0-9_-]{43}", credential) is None:
         raise click.ClickException("The home returned an invalid machine credential")
-    arguments = ["join", "--home", home_url, "--machine-id", machine_id]
+    arguments = [
+        "join",
+        "--home",
+        home_url,
+        "--machine-id",
+        machine_id,
+        "--platform",
+        target_platform,
+    ]
     if signing_identity:
         arguments += ["--signing-identity", signing_identity]
     arguments += ["--revision", revision, "--github-cli"]

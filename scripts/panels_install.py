@@ -132,22 +132,24 @@ def preflight(args: argparse.Namespace, target: str) -> None:
                     "Install the Xcode command line tools with xcode-select --install."
                 )
             _run("xcrun", "--find", "clang")
-            if not args.signing_identity or not re.fullmatch(
-                r"[0-9a-fA-F]{40}", args.signing_identity
-            ):
-                raise ValueError(
-                    "Select an Apple Development certificate fingerprint with --signing-identity."
-                )
-            identities = _run(
-                "/usr/bin/security", "find-identity", "-v", "-p", "codesigning"
-            ).stdout
-            if not any(
-                args.signing_identity.lower() in line.lower() and "Apple Development" in line
-                for line in identities.splitlines()
-            ):
-                raise ValueError(
-                    "This login keychain lacks the selected Apple Development certificate."
-                )
+            identity = args.signing_identity or "-"
+            if identity != "-":
+                if re.fullmatch(r"[0-9a-fA-F]{40}", identity) is None:
+                    raise ValueError(
+                        "Use - for ad-hoc signing or an Apple Development fingerprint."
+                    )
+                identities = _run(
+                    "/usr/bin/security", "find-identity", "-v", "-p", "codesigning"
+                ).stdout
+                if not any(
+                    identity.lower() in line.lower() and "Apple Development" in line
+                    for line in identities.splitlines()
+                ):
+                    raise ValueError(
+                        "This login keychain lacks the selected Apple Development certificate."
+                    )
+            if not Path("/usr/bin/codesign").is_file():
+                raise ValueError("Mac join needs the macOS codesign tool.")
     else:
         if shutil.which("systemctl") is None:
             raise ValueError(
@@ -416,7 +418,11 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--isolated-providers", action="store_true")
     result.add_argument("--home")
     result.add_argument("--machine-id")
-    result.add_argument("--signing-identity")
+    result.add_argument("--platform", choices=("darwin", "linux"))
+    result.add_argument(
+        "--signing-identity",
+        help="Default: ad-hoc (-). An explicit certificate fingerprint remains supported.",
+    )
     return result
 
 
@@ -424,6 +430,8 @@ def main() -> None:
     args = parser().parse_args()
     try:
         target = host_target()
+        if args.platform is not None and args.platform != target:
+            raise ValueError("This machine does not match the registered --platform.")
         args.service = args.service or (
             "com.panels.home" if args.command == "home" else "com.panels.executor"
         )
