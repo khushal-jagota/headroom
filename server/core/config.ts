@@ -118,6 +118,15 @@ export function lifecycle_launch_settings(env: Readonly<NodeJS.ProcessEnv>) {
     listener_fd,
   };
 }
+/** Update discovery uses the invocation snapshot, without another Config load. */
+export function update_repository_configuration(
+  environment: Readonly<NodeJS.ProcessEnv>,
+): { readonly repository: string; readonly token_file: string } | null {
+  const repository = environment.PLAN_UPDATE_REPOSITORY;
+  const token_file = environment.PLAN_UPDATE_TOKEN_FILE;
+  return repository && token_file ? { repository, token_file } : null;
+}
+
 /** Account launch inputs are environment-only, shared by native hosts and discovery. */
 export function provider_launch_settings(env: Readonly<NodeJS.ProcessEnv> = process.env) {
   return {

@@ -13,6 +13,8 @@ export interface ProductionEnvironmentDependencies {
   readonly executor: ExecutorUpdateBindings | null;
   readonly application_root: string;
   readonly node_executable: string;
+  /** Explicit packaging admission fact. Null admits no legacy-null runtime. */
+  readonly admitted_legacy_null_sha: string | null;
 }
 /** Production requires this explicit adapter. There is no successful missing adapter. */
 export type ProductionEnvironmentFactory = (

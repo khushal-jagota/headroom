@@ -932,6 +932,12 @@ def test_service_continuations_fence_stop_and_observe_external_attempts(
         "ready": None,
         "trace": ["stage", "stage"],
     }
+    assert actual["schema_fence"] == {
+        "backup": 0,
+        "prepare": 0,
+        "launch": 0,
+        "unchanged_after_ownership": True,
+    }
     assert actual["backup_fence"] == {
         "provider": 1,
         "stage": 1,
