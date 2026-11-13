@@ -42,6 +42,7 @@ export class GatewayListener {
   private closing: Promise<void> | undefined;
   private closed = false;
   private readonly sockets = new Set<Socket>();
+  private readonly admitted = new Set<Socket>();
   private readonly handlers = new Set<Promise<void>>();
   constructor(
     handle: (request: IpcRequest) => Promise<IpcResponse>,
@@ -101,6 +102,8 @@ export class GatewayListener {
       } catch {
         return;
       } // Framing and connection failures never admit a publication.
+      if (this.closed) return;
+      this.admitted.add(socket);
       let response: IpcResponse;
       try {
         response = await this.handle(request);
@@ -122,6 +125,7 @@ export class GatewayListener {
       socket.destroy();
       await closed;
       this.sockets.delete(socket);
+      this.admitted.delete(socket);
     });
     this.handlers.add(task);
     void task.then(
@@ -134,7 +138,7 @@ export class GatewayListener {
   }
   close(): Promise<void> {
     this.closed = true;
-    for (const socket of this.sockets) socket.destroy();
+    for (const socket of this.sockets) if (!this.admitted.has(socket)) socket.destroy();
     if (!this.closing)
       this.closing = (async () => {
         await this.opening?.catch(() => {});

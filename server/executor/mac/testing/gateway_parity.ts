@@ -38,6 +38,9 @@ let stopped = false,
   source_gate = new Deferred<void>();
 const sources: Promise<unknown>[] = [];
 let source_entered = new Deferred<void>();
+const catalog_entered = new Deferred<void>(),
+  catalog_release = new Deferred<void>();
+let exit_stop: Promise<void> | undefined;
 const options: GatewayOptions = {
   outbox: spool,
   runner: {
@@ -99,9 +102,13 @@ const options: GatewayOptions = {
   settle_catalogs: async () => {
     assert.equal(stopped, true);
     calls.push(['catalog']);
+    catalog_entered.resolve();
+    await catalog_release.promise;
   },
   request_exit: () => {
     calls.push(['exit']);
+    exit_stop = gateway.stop(deadline());
+    void exit_stop.catch(() => {});
   },
   on_failure: (e) => faults.push(e),
 };
@@ -188,13 +195,23 @@ try {
     ),
   );
   replies.push(await gateway.handle(make('unknown', 'retry', { submission_id: 'absent' })));
-  const quiesced = await gateway.handle(make('quiesce', 'quiesce', { exit_when_ready: true }));
+  const quiescing = socket_request(
+    'quiesce',
+    { exit_when_ready: true },
+    { ...process.env, PLAN_EXECUTOR_ROOT: root },
+  );
+  await catalog_entered.promise;
+  const sealed = await gateway.handle(
+    make('sealed', 'write', { operation: 'ticket.edit', arguments: {} }),
+  );
+  catalog_release.resolve();
+  const quiesced = await quiescing;
+  assert.equal(quiesced.result!.exit_committed, true);
+  quiesced.request_id = 'quiesce';
   delete quiesced.result!.process_id;
   replies.push(quiesced);
-  replies.push(
-    await gateway.handle(make('sealed', 'write', { operation: 'ticket.edit', arguments: {} })),
-  );
-  await gateway.stop(deadline());
+  replies.push(sealed);
+  await exit_stop;
   await gateway.settled();
   assert.equal(existsSync(path), false);
   // Same store and scripted ports prove actual publication custody beyond a stop deadline.

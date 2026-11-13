@@ -291,8 +291,9 @@ export class AgentGateway {
   stop(options: StopOptions): Promise<void> {
     if (!this.cleanup) {
       this.closed = true;
+      let closing: Promise<void>;
       this.cleanup = Promise.resolve().then(async () => {
-        await this.listener.close();
+        await closing;
         while (this.operations.size) await Promise.allSettled([...this.operations]);
         if (this.failures.size)
           throw new AggregateError(
@@ -302,6 +303,7 @@ export class AgentGateway {
       });
       void this.cleanup.catch(() => {});
       void this.cleanup.then(this.resolve_actual, this.reject_actual);
+      closing = this.listener.close();
       this.controller.abort();
     }
     return observe_shutdown(

@@ -90,10 +90,13 @@ async def reference(root: Path, patch: pytest.MonkeyPatch) -> dict[str, Any]:
             raise ExecutorHttpError(int(read.path[1:]), "refused", "scripted read refusal")
 
     runner = Runner()
+    catalog_entered, catalog_release = asyncio.Event(), asyncio.Event()
 
     async def catalogs() -> None:
         assert runner.admission_stopped
         calls.append(["catalog"])
+        catalog_entered.set()
+        await catalog_release.wait()
 
     spool = MacOutbox(root / "spool")
     gateway = AgentGateway(
@@ -211,19 +214,24 @@ async def reference(root: Path, patch: pytest.MonkeyPatch) -> dict[str, Any]:
                         )
                     )
                 )
-            quiesced = p.as_object(
-                await gateway.handle(make("quiesce", "quiesce", {"exit_when_ready": True}))
+            quiescing = asyncio.create_task(
+                asyncio.to_thread(
+                    ipc_client.request, p.IpcOperation.quiesce, {"exit_when_ready": True}
+                )
             )
+            await catalog_entered.wait()
+            sealed = p.as_object(
+                await gateway.handle(
+                    make("sealed", "write", {"operation": "ticket.edit", "arguments": {}})
+                )
+            )
+            catalog_release.set()
+            quiesced = p.as_object(await quiescing)
+            quiesced["request_id"] = "quiesce"
             assert isinstance(quiesced["result"], dict)
             del quiesced["result"]["process_id"]
             replies.append(quiesced)
-            replies.append(
-                p.as_object(
-                    await gateway.handle(
-                        make("sealed", "write", {"operation": "ticket.edit", "arguments": {}})
-                    )
-                )
-            )
+            replies.append(sealed)
         return dict(replies=replies, envelope=envelope, calls=calls)
     finally:
         await asyncio.gather(*sources)
