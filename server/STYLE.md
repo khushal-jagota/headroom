@@ -11,8 +11,8 @@ Use TypeScript, Node APIs, and maintained JavaScript packages. Keep one shared h
 - Use the existing `tar` package for TAR archives. Keep hash-first admission, explicit path and link policy, size budgets, and owned cleanup around the package.
 - Prefer Node APIs before a new dependency. A package must replace real code and add no native addon. Name each added package and its purpose in the review.
 
-Preserve the HTTP API, executor wire protocol, database schema, and CLI contracts. Their externally required shapes, names, types, statuses, options, output, and exit codes remain authoritative. Python formatting belongs only at those boundaries when the contract requires it.
+Preserve the HTTP API, executor wire protocol, and database schema. Preserve CLI command names, options, `--json` fields, and exit codes. Human text, help, and error wording are not CLI contracts. Python formatting belongs only at boundaries where an external contract requires it.
 
-The native-style CI check compares changed TypeScript files with the pull request base. It rejects new Python representation imports, Koffi imports outside `core/locks/flock.ts`, and flock or deadline helper definitions. Existing occurrences remain grandfathered. This check does not authorize new Python imitation or replace source review.
+The native-style CI check scans added TypeScript lines against the pull request base. It rejects Python representation imports, Koffi imports outside `core/locks/flock.ts`, and named flock or deadline helper definitions. These small text checks cover ordinary import and function syntax. They do not parse TypeScript or replace source review. Unchanged occurrences remain grandfathered.
 
 Reuse focused behavioral coverage. Add a test only for a distinct failure risk that existing coverage does not prove. Keep production code independent of test helpers.
