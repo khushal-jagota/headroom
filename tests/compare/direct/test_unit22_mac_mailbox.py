@@ -71,7 +71,6 @@ def performance_spec(journal: CommandJournal) -> dict[str, Any]:
     decoded = type_adapter(MailboxPollReply).validate_json(poll)
     canonical = type_adapter(MailboxCommand).dump_json(decoded.commands[0])
     journal.record_poll_reply(decoded, "inc")
-    raw["child_command"]["arguments"]["content"][0]["text"] = ""
     reports = []
     for sequence, size in enumerate((4 * 1024 * 1024 - 4096, 4 * 1024 * 1024 + 4096), 14):
         identifier = f"size-{sequence}"
@@ -87,8 +86,7 @@ def performance_spec(journal: CommandJournal) -> dict[str, Any]:
         )
         journal.mark_reported((identifier,))
     return dict(
-        template=raw,
-        text_bytes=text_bytes,
+        poll=poll.decode(),
         raw_poll_bytes=len(poll),
         canonical_command=_digest(canonical),
         reports=reports,

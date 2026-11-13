@@ -28,7 +28,7 @@ interface Input {
   report_commands: string;
   report_replies: string[];
   now_ms: string;
-  performance: { template: MailboxCommand; text_bytes: number };
+  performance: { poll: string };
 }
 const deferred = () => Promise.withResolvers<void>();
 function aborted(signal: AbortSignal): Promise<never> {
@@ -420,14 +420,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     };
     await journal.mark_reported(['shutdown']);
     phase = 'performance-setup';
-    const template = input.performance.template;
-    if (template.child_command?.arguments.kind !== undefined)
-      throw new Error('Expansion probe requires inferred argument kind');
-    const raw = template as unknown as {
-      child_command: { arguments: { content: { text: string }[] } };
-    };
-    raw.child_command.arguments.content[0]!.text = 'x'.repeat(input.performance.text_bytes);
-    const poll_bytes = Buffer.from(JSON.stringify({ commands: [template] }));
+    const poll_bytes = Buffer.from(input.performance.poll);
     phase = 'canonical-poll';
     const started_poll = performance.now();
     const canonical = await drain(await journal.record_poll_reply(poll_bytes, 'inc', 0n));
