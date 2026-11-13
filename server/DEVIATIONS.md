@@ -2,17 +2,6 @@
 
 This file records intentional differences that the migration Manager accepted. No new difference enters this file without that acceptance. Close an entry when Python adopts the same behavior.
 
-## Exact Mac stop after a failed command join
-
-The migration Manager accepted this difference on November 13, 2026, for the final Mac executor slice.
-Python joins only command tasks that remain pending. If one rejects during that join, Python returns an uncertain outcome before native cleanup.
-TypeScript joins every selected actual command with `allSettled`, drains source work, attempts native cleanup, and drains final source work.
-It still returns uncertain and issues no successful stop certificate for that failed join.
-The exact child's joined-command errors and accompanying cleanup errors remain retained across retries, including after the failed tasks leave the active view.
-Later stops retry retained native cleanup but cannot turn that known failed join into a success certificate.
-A combined diagnostic preserves command and cleanup messages. Each wire error detail keeps the existing Unicode character bound.
-Ordinary successful stops keep Python behavior.
-
 ## Unidentified callers from the TypeScript service
 
 The migration Manager accepted the exact cgroup component `panels-typescript.service`
@@ -420,6 +409,17 @@ The Manager requires one stop proof for each update request and exact child acro
 TypeScript retains that proof's command identity until its required output settles.
 Python allocates a fresh `update_stop_` identity on each preparation attempt.
 The caller supplies the real update request ID. A retry cannot publish a second `child_stopped` entry for the same request and child.
+
+### Exact Mac stop after a failed command join
+
+The migration Manager accepted this difference on November 13, 2026, for the final Mac executor slice.
+Python joins only command tasks that remain pending. If one rejects during that join, Python returns an uncertain outcome before native cleanup.
+TypeScript joins every selected actual command with `allSettled`, drains source work, attempts native cleanup, and drains final source work.
+It still returns uncertain and issues no successful stop certificate for that failed join.
+The exact child's joined-command errors and accompanying cleanup errors remain retained across retries, including after the failed tasks leave the active view.
+Later stops retry retained native cleanup but cannot turn that known failed join into a success certificate.
+A combined diagnostic preserves command and cleanup messages. Each wire error detail keeps the existing Unicode character bound.
+Ordinary successful stops keep Python behavior.
 
 ## Mac canonical skill publication ownership and durability
 
