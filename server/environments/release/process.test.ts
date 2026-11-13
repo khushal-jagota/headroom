@@ -114,7 +114,8 @@ test.skipIf(process.platform !== 'linux')(
 // The shared command case cannot prove the archive caller's own output cleanup boundary.
 test('source export retains its original deadline through spool cleanup and removes output', async () => {
   const root = await mkdtemp(join(tmpdir(), 'panels-source-cleanup-'));
-  const owner = new ChildProcesses(), controller = new AbortController();
+  const owner = new ChildProcesses(),
+    controller = new AbortController();
   let pending: Promise<void> | undefined, restore_clock: (() => void) | undefined;
   const deadline = performance.now() / 1000 + 10;
   try {
@@ -147,30 +148,67 @@ test('source export retains its original deadline through spool cleanup and remo
 test('builder retains its deadline through final cleanup and preserves the published candidate', async () => {
   const root = await mkdtemp(join(tmpdir(), 'panels-build-cleanup-'));
   const owner = new ChildProcesses();
-  const execution = { child_processes: owner, signal: new AbortController().signal,
-    deadline: performance.now() / 1000 + 15 };
+  const execution = {
+    child_processes: owner,
+    signal: new AbortController().signal,
+    deadline: performance.now() / 1000 + 15,
+  };
   let pending: Promise<AppManifest> | undefined, restore_clock: (() => void) | undefined;
-  const source = join(root, 'source'), candidate = join(root, 'candidate');
+  const source = join(root, 'source'),
+    candidate = join(root, 'candidate');
   try {
     await mkdir(join(source, 'server/cli'), { recursive: true });
     // Official CLI bytes are source input only. This fixture never executes them.
-    await writeFile(join(source, 'server/cli/main.ts'), await readFile(new URL('../../cli/main.ts', import.meta.url)));
+    await writeFile(
+      join(source, 'server/cli/main.ts'),
+      await readFile(new URL('../../cli/main.ts', import.meta.url)),
+    );
     await chmod(join(source, 'server/cli/main.ts'), 0o755);
-    for (const args of [['init', '-q', source], ['-C', source, 'add', '.'],
-      ['-C', source, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'private source']])
+    for (const args of [
+      ['init', '-q', source],
+      ['-C', source, 'add', '.'],
+      [
+        '-C',
+        source,
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.com',
+        'commit',
+        '-qm',
+        'private source',
+      ],
+    ])
       await run_release_command(['git', ...args], { timeout_seconds: null }, execution);
-    const sha = (await run_release_command(['git', '-C', source, 'rev-parse', 'HEAD'],
-      { timeout_seconds: null }, execution)).stdout.trim();
-    cleanup.after = path => {
-      if (typeof path !== 'string' || dirname(path) !== root || !basename(path).startsWith('.candidate-')) return;
+    const sha = (
+      await run_release_command(
+        ['git', '-C', source, 'rev-parse', 'HEAD'],
+        { timeout_seconds: null },
+        execution,
+      )
+    ).stdout.trim();
+    cleanup.after = (path) => {
+      if (
+        typeof path !== 'string' ||
+        dirname(path) !== root ||
+        !basename(path).startsWith('.candidate-')
+      )
+        return;
       const clock = vi.spyOn(performance, 'now').mockReturnValue((execution.deadline + 1) * 1000);
       restore_clock = () => clock.mockRestore();
       cleanup.after = undefined;
     };
-    pending = build_exported_app(source, { requested_sha: sha, candidate_app: candidate,
-      install_dependencies: false }, { public_cli_entrypoint: 'server/cli/main.ts' }, execution);
+    pending = build_exported_app(
+      source,
+      { requested_sha: sha, candidate_app: candidate, install_dependencies: false },
+      { public_cli_entrypoint: 'server/cli/main.ts' },
+      execution,
+    );
     await expect(pending).rejects.toThrow('release operation exceeded its time budget');
-    expect((await validate_app_manifest(join(candidate, 'manifest.json'), { expected_sha: sha })).app_sha).toBe(sha);
+    expect(
+      (await validate_app_manifest(join(candidate, 'manifest.json'), { expected_sha: sha }))
+        .app_sha,
+    ).toBe(sha);
   } finally {
     cleanup.after = undefined;
     restore_clock?.();
