@@ -1389,6 +1389,14 @@ def run(browser, urls):
     assert page.locator('[data-field="consequences"] [contenteditable]').count() == 0
     personal_outcome.fill("Completed by user")
     personal_outcome.press("Tab")
+    expect(page.locator('[data-ticket-section="t_personal"]')).to_have_attribute(
+        "data-section-stage", "needs_consequences"
+    )
+    # Completion moves the value into lazy history. Open it before checking the saved body.
+    page.locator("[data-stage-fold]").evaluate("node => { node.open = true; }")
+    page.locator('[data-stage-fold] [data-field="outcome"]').evaluate(
+        "node => { node.open = true; }"
+    )
     page.wait_for_function("document.body.textContent.includes('Completed by user')")
     assert writes[-1] == {"personal_outcome": {"body": "Completed by user"}}
     page.evaluate("window.__showTicket('t_kickoff')")
