@@ -1,6 +1,6 @@
 {
   "oldest_supported_build": 1,
   "decision": "compatible",
-  "contract_sha256": "93ee85a76d7c7967d2b817c842f607108212e2ea1ae4c178af54c96d461d405f",
-  "evidence": "Source review against native build 1 for the offered-model check: no route, request or response shape changed. Ticket employee-configuration, which TicketAPI.setTicketWorkerConfiguration sends, can now return the existing 400 validation envelope for a model the Ticket's machine does not list. APIClient.validate decodes error.message and APIError shows it, as it already did for disabled models. Dispatch refusals reuse the existing model_resolution_failed reason, which ConversationDelivery.refusalText and TicketRecapDelivery.note already map. No native code changed. This is source review only; no signed-device, TestFlight, or native reconnect checks ran."
+  "contract_sha256": "a18c461500e412fa79d9eea19e818a9d70d9b52c86948b93e8942ae42263670a",
+  "evidence": "Source review against native build 1 for recorded usage pricing: the usage routes, request parameters, contractVersion 5, aggregate token fields, costUsd numeric type and costSource values remain unchanged. RecordedUsageSummary in ios/Panels/Features/More/Usage/UsageModels.swift decodes the same fields. One-hour cache-write counts stay internal to transcript records and the server scan cache; costs still enter existing numeric bucket fields. The browser-only refresh opt-out does not change native networking. The 81 usage/API checks passed, including the summary transport test. No signed-device, TestFlight, or native reconnect checks ran. The minimum build remains 1."
 }
