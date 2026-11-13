@@ -303,7 +303,12 @@ export class MacNativeChildren implements MacNativeChildrenContract {
       });
     }
     return observe_shutdown(
-      Promise.all([this.cleanup, ...observations]),
+      Promise.all([this.cleanup, ...observations]).catch((error: unknown) => {
+        if (error instanceof ServerLifecycleError) throw error;
+        throw Object.assign(new ServerLifecycleError('Mac native cleanup failed.'), {
+          cause: error,
+        });
+      }),
       options,
       'Mac native children remain unfinished at the shutdown deadline.',
     );

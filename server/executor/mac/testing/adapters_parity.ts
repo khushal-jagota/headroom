@@ -331,7 +331,10 @@ const failed_publisher = new MacNativeChildren({
   },
   on_failure: (error) => cleanup_faults.push(error),
 });
-await failed_publisher.stop(deadline()).catch(() => {});
+const failed_stop = await failed_publisher.stop(deadline()).then(
+  () => null,
+  (error: unknown) => error,
+);
 const failed_actual = await observe_shutdown(
   failed_publisher.settled(),
   deadline(),
@@ -341,6 +344,11 @@ const failed_actual = await observe_shutdown(
   (error: unknown) => error,
 );
 Object.assign(lifecycle, {
+  publisher_stop_failure_retained:
+    failed_stop instanceof ServerLifecycleError &&
+    (failed_stop.cause === publisher_failure ||
+      (failed_stop.cause instanceof AggregateError &&
+        failed_stop.cause.errors.includes(publisher_failure))),
   publisher_cleanup_reached_actual:
     failed_actual instanceof AggregateError && failed_actual.errors.includes(publisher_failure),
   publisher_fault_once: cleanup_faults.length === 1 && cleanup_faults[0] === publisher_failure,
