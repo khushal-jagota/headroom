@@ -4,11 +4,11 @@ import {
   mkdirSync,
   openSync,
   lstatSync,
-  readlinkSync,
   chmodSync,
 } from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { resolve_path_sync } from '../path_resolution.ts';
 import koffi from 'koffi';
 export { observe_existing_flock } from './observe.ts';
 const libc = koffi.load(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6');
@@ -56,37 +56,7 @@ function lock_file(path: string, flags: number, mode: number): LockHandle | null
   };
 }
 export function canonical_database_path(path: string): string {
-  function walk(value: string, base: string, active: Set<string>): string {
-    let current = isAbsolute(value) ? '/' : base;
-    for (const part of value.split('/')) {
-      if (!part || part === '.') continue;
-      if (part === '..') {
-        current = dirname(current);
-        continue;
-      }
-      const candidate = (current === '/' ? '' : current) + '/' + part;
-      let entry;
-      try {
-        entry = lstatSync(candidate);
-      } catch (error) {
-        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
-        current = candidate;
-        continue;
-      }
-      if (entry.isSymbolicLink()) {
-        if (active.has(candidate))
-          throw Object.assign(new Error('symbolic link loop'), { code: 'ELOOP' });
-        active.add(candidate);
-        try {
-          current = walk(readlinkSync(candidate), current, active);
-        } finally {
-          active.delete(candidate);
-        }
-      } else current = candidate;
-    }
-    return current;
-  }
-  return walk(path, process.cwd(), new Set());
+  return resolve_path_sync(path, { missing_only: true });
 }
 /** Pure naming: status inspection must never create the authority it observes. */
 export function runtime_authority_path(canonical: string): string {
