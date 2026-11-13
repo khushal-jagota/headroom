@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process';
+import type { SpawnOptions } from 'node:child_process';
 import { lstat, readdir, stat } from 'node:fs/promises';
 import { constants, homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { createReadAccess } from '../../core/database/index.ts';
+import { stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
 import type { ReadSql } from '../../core/database/contracts.ts';
 import { resolved_path } from '../paths.ts';
 import { LEGACY_HOME_FOLDERS, SCRATCH_FOLDERS } from './configuration.ts';
@@ -45,24 +47,31 @@ export function git(
 ): Promise<GitResult> {
   options.signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
-    const child = spawn('git', ['-C', directory, ...args], {
+    const launch_options: SpawnOptions = {
       env: Object.fromEntries(
-        Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')),
+        Object.entries(options.git_execution?.environment ?? process.env).filter(
+          ([key]) => !key.startsWith('GIT_'),
+        ),
       ),
       stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    };
+    const argv = ['-C', directory, ...args];
+    const child = options.git_execution
+      ? options.git_execution.children.spawn('git', argv, launch_options)
+      : spawn('git', argv, launch_options);
     const stdout: Buffer[] = [],
       stderr: Buffer[] = [];
     let failure: Error | undefined;
-    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+    child.stdout!.on('data', (chunk: Buffer) => stdout.push(chunk));
+    child.stderr!.on('data', (chunk: Buffer) => stderr.push(chunk));
     child.once('error', (error) => {
       failure = error;
     });
     const abort = () => {
-      child.kill('SIGTERM');
-      child.stdout.destroy();
-      child.stderr.destroy();
+      if (options.git_execution) stop_one_shot_child(child);
+      else child.kill('SIGTERM');
+      child.stdout!.destroy();
+      child.stderr!.destroy();
     };
     options.signal?.addEventListener('abort', abort, { once: true });
     child.once('close', (code, signal) => {
@@ -110,10 +119,14 @@ export async function layout_for(
   root: string | null,
   database: string | null,
   db_path: string,
+  home?: string,
 ): Promise<ScratchLayout | null> {
   if (root === null || database === null) return null;
-  const [configured, actual] = await Promise.all([resolved_path(database), resolved_path(db_path)]);
-  return configured === actual ? layout_under(root) : null;
+  const [configured, actual] = await Promise.all([
+    resolved_path(database, home),
+    resolved_path(db_path, home),
+  ]);
+  return configured === actual ? layout_under(root, home) : null;
 }
 export function read_ticket_states(sql: ReadSql): TicketStates {
   return new Map(

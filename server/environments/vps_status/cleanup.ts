@@ -117,7 +117,12 @@ async function temporary_still_safe(
   );
   return !references.has(await resolved_path(candidate.path));
 }
-async function apply_retention(root: string, paths: readonly string[]): Promise<void> {
+async function apply_retention(
+  root: string,
+  paths: readonly string[],
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
   if ((await is_symlink(root)) || !(await is_directory(root)))
     throw new Error('backup retention root is no longer a regular directory');
   const canonical = await resolved_path(root);
@@ -127,6 +132,7 @@ async function apply_retention(root: string, paths: readonly string[]): Promise<
     ),
   );
   for (const candidate of paths) {
+    signal?.throwIfAborted();
     const resolved = await resolved_path(candidate);
     if (
       (await is_symlink(candidate)) ||
@@ -136,15 +142,21 @@ async function apply_retention(root: string, paths: readonly string[]): Promise<
     ) {
       throw new Error('backup retention target is no longer verified');
     }
+    signal?.throwIfAborted();
     await rm(resolved, { recursive: true });
   }
 }
-export async function apply_cleanup_inventory(inventory: CleanupInventory): Promise<CleanupResult> {
+export async function apply_cleanup_inventory(
+  inventory: CleanupInventory,
+  signal?: AbortSignal,
+): Promise<CleanupResult> {
+  signal?.throwIfAborted();
   const removed: string[] = [],
     rotated: string[] = [],
     review_needed: string[] = [];
   const backups: CleanupCandidate[] = [];
   for (const candidate of inventory.candidates) {
+    signal?.throwIfAborted();
     if (candidate.kind === 'backup_retention') {
       backups.push(candidate);
       continue;
@@ -154,6 +166,7 @@ export async function apply_cleanup_inventory(inventory: CleanupInventory): Prom
         review_needed.push(candidate.path);
         continue;
       }
+      signal?.throwIfAborted();
       await rm(candidate.path, { recursive: true });
       removed.push(candidate.path);
       continue;
@@ -167,6 +180,7 @@ export async function apply_cleanup_inventory(inventory: CleanupInventory): Prom
       review_needed.push(candidate.path);
       continue;
     }
+    signal?.throwIfAborted();
     await rename(candidate.path, rotatedPath);
     rotated.push(candidate.path);
   }
@@ -176,13 +190,15 @@ export async function apply_cleanup_inventory(inventory: CleanupInventory): Prom
     if (backups.some((candidate) => candidate.root !== root)) review_needed.push(...paths);
     else {
       try {
-        await apply_retention(root, paths);
+        await apply_retention(root, paths, signal);
       } catch {
+        signal?.throwIfAborted();
         review_needed.push(...paths);
         return { removed, rotated, review_needed };
       }
       removed.push(...paths);
     }
   }
+  signal?.throwIfAborted();
   return { removed, rotated, review_needed };
 }

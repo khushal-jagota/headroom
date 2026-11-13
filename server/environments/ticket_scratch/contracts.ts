@@ -1,6 +1,6 @@
 /** Type-only boundary for the existing Ticket scratch policy. */
 import type { ReadSql } from '../../core/database/contracts.ts';
-import type { ComposedBackgroundService } from '../../lifecycle/contracts.ts';
+import type { ComposedBackgroundService, OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 
 export interface ScratchLayout {
   readonly repository: string;
@@ -26,6 +26,10 @@ export interface ScratchResult {
 /** One pass can refuse further operation dispatch after lifecycle shutdown. */
 export interface ScratchPassOptions {
   signal?: AbortSignal;
+  git_execution?: {
+    readonly children: OwnedOneShotChildren;
+    readonly environment: Readonly<NodeJS.ProcessEnv>;
+  };
 }
 export interface GitResult {
   returncode: number;

@@ -3,10 +3,15 @@ import { statSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from '../core/config.ts';
+import { backend_io_is_test } from '../conversation/snapshot/environment.ts';
 import { load_apns_config } from '../notifications/config.ts';
 import { message_chief } from './alarms.ts';
 import { run_watchdog, watchdog_summary } from './watchdog.ts';
 
+export interface WatchdogArguments {
+  readonly db: string;
+  readonly state_dir: string;
+}
 export async function watchdog_command(
   args: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
@@ -23,10 +28,19 @@ export async function watchdog_command(
   const state_dir = values['state-dir'];
   if (!db_path) throw new Error('Missing option --db');
   if (!state_dir) throw new Error('Missing option --state-dir');
+  return watchdog_handler({ db: db_path, state_dir }, env);
+}
+export async function watchdog_handler(
+  args: WatchdogArguments,
+  env: NodeJS.ProcessEnv,
+  home?: string,
+): Promise<string> {
+  const { db: db_path, state_dir } = args;
   if (!statSync(db_path).isFile()) throw new Error('--db must name an existing database file');
-  const config = loadConfig(env.PLAN_CONFIG_PATH, env);
+  const config = loadConfig(env.PLAN_CONFIG_PATH, env, { home });
   // A test-mode command must never instantiate a provider transport.
-  if (config.test_mode) throw new Error('watchdog provider command is unavailable in test mode');
+  if (config.test_mode || backend_io_is_test())
+    throw new Error('watchdog provider command is unavailable in test mode');
   const { StandardsWebPushAdapter } = await import('../notifications/web_push.ts');
   const { TokenAPNsAdapter, canonical_server_origin } = await import('../notifications/apns.ts');
   const origin = canonical_server_origin(config.trusted_ingress_canonical_origin);

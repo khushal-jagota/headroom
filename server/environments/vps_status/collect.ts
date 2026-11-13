@@ -36,9 +36,11 @@ import type {
 } from './contracts.ts';
 export async function resolve_status_application_root(
   environment: Record<string, string | undefined> = process.env,
+  home?: string,
 ): Promise<string> {
   return resolved_path(
     environment.PLAN_APP_ROOT ?? fileURLToPath(new URL('../../../', import.meta.url)),
+    home,
   );
 }
 export async function backup_section(

@@ -62,6 +62,7 @@ export function testModeFromEnvironment(env: NodeJS.ProcessEnv = process.env): b
 export function loadConfig(
   path: string | undefined = undefined,
   env: NodeJS.ProcessEnv = process.env,
+  paths: { readonly home?: string } = {},
 ): Config {
   const refusalFlag = env.PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS ?? '0';
   const refuse_unidentified_agent_calls = parseConfigBoolean(
@@ -98,7 +99,14 @@ export function loadConfig(
     if (v == null) return null;
     if (typeof v !== 'string' || !v.trim())
       throw new PlannerError('validation', `invalid ${key}: ${pythonRepr(v)}`);
-    const expanded = v === '~' ? homedir() : v.startsWith('~/') ? join(homedir(), v.slice(2)) : v;
+    // Partial-env callers keep their existing ambient default unless home is explicit.
+    const directory_home = paths.home === '' ? '/' : paths.home;
+    const expanded =
+      v === '~'
+        ? (directory_home ?? homedir())
+        : v.startsWith('~/')
+          ? join(directory_home ?? homedir(), v.slice(2))
+          : v;
     try {
       if (!isAbsolute(expanded)) throw new Error('the path must be absolute');
       const result = realpathSync(expanded);

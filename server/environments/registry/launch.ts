@@ -3,6 +3,8 @@ import { pure_posix_path } from '../../core/python_path.ts';
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { expand_path } from '../paths.ts';
+import { assert_temporary_path } from '../../core/test_paths.ts';
+import { backend_io_is_test } from '../../conversation/snapshot/environment.ts';
 import { managed_skills_home } from '../../skills/files.ts';
 import { provision_native_backend_skills } from '../../skills/sources.ts';
 import type { EnvironmentRunOptions, ResolvedEnvironmentInstance } from './contracts.ts';
@@ -64,7 +66,16 @@ export function provision_environment_skills(options: {
   codex_home: string;
   claude_home: string;
 }): void {
+  if (backend_io_is_test())
+    for (const path of [
+      options.database_parent,
+      options.hermes_home,
+      options.codex_home,
+      options.claude_home,
+    ])
+      assert_temporary_path(path);
   const root = managed_skills_home(options.database_parent);
+  if (backend_io_is_test()) assert_temporary_path(root);
   let exists = false;
   try {
     exists = statSync(root).isDirectory();

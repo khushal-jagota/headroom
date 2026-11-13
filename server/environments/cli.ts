@@ -1,9 +1,8 @@
-import { python_string_repr } from '../core/python_repr.ts';
 /** Function-only environment commands. No argv parser, installed wrapper or process IO. */
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { getSystemErrorMap } from 'node:util';
-import koffi from 'koffi';
+import { python_os_error_message as error_message } from '../core/os_errors.ts';
 import { jsonFailure } from '../core/http/json.ts';
 import { JsonNumber, stringify_python_json } from '../core/http/numeric_json.ts';
 import { create_database_backup } from './backup/capture.ts';
@@ -15,6 +14,7 @@ import type {
   EnvironmentCommandArguments as Args,
   EnvironmentCommandResult as Result,
   HostEnvironmentCommandDependencies,
+  OperatorPathInputs,
 } from './command_contracts.ts';
 import { provision_environment_skills } from './registry/launch.ts';
 import { EnvironmentValidationError } from './registry/contracts.ts';
@@ -48,35 +48,12 @@ const success = (stdout: string, stderr = ''): Result => ({
 const failed = (error: Error, stderr = ''): Result => ({
   exit_code: 1,
   stdout: '',
-  stderr: stderr + `Error: ${error_message(error)}\n`,
+  failure_message: error_message(error),
+  stderr_prefix: stderr,
 });
 const json = (value: unknown) =>
   stringify_python_json(value, { sort_keys: true, ensure_ascii: true });
 const os_error_codes = new Set([...getSystemErrorMap().values()].map(([name]) => name));
-const os_error_numbers = new Map(
-  [...getSystemErrorMap()].map(([number, [name]]) => [name, Math.abs(number)]),
-);
-let native_strerror: ((number: number) => string) | undefined;
-function path_repr(path: string): string {
-  return python_string_repr(path);
-}
-function error_message(error: Error): string {
-  if (!('code' in error) || typeof error.code !== 'string') return error.message;
-  const known_number = os_error_numbers.get(error.code);
-  if (known_number === undefined) return error.message;
-  const number =
-    'errno' in error && typeof error.errno === 'number' ? Math.abs(error.errno) : known_number;
-  native_strerror ??= koffi
-    .load(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6')
-    .func('const char *strerror(int error)');
-  let message = `[Errno ${number}] ${native_strerror(number)}`;
-  if ('path' in error && typeof error.path === 'string') {
-    message += `: ${path_repr(error.path)}`;
-    if ('dest' in error && typeof error.dest === 'string')
-      message += ` -> ${path_repr(error.dest)}`;
-  }
-  return message;
-}
 const os_error = (error: unknown): boolean =>
   error instanceof Error &&
   (('code' in error && typeof error.code === 'string' && os_error_codes.has(error.code)) ||
@@ -93,60 +70,90 @@ export async function environment_status(
   args: Args['status'],
   deps: HostEnvironmentCommandDependencies,
 ): Promise<Result> {
-  const payload = await collect_vps_status(deps.load_config(), deps.status_options);
-  // Python round(float, 2) retains its float kind even at an integral percentage.
-  const percent = payload.disk.free_percent;
-  const document = {
-    ...payload,
-    disk: {
-      ...payload.disk,
-      free_percent:
-        typeof percent === 'number'
-          ? new JsonNumber(String(percent) + (Number.isInteger(percent) ? '.0' : ''))
-          : percent,
-    },
-  };
-  return success(args.json ? json(document) : `${payload.overall_state}: ${payload.collected_at}`);
+  return deps.with_resources(async (resources) => {
+    const config = deps.load_config();
+    deps.admit_path(config.db_path);
+    const payload = await collect_vps_status(config, resources.status_options);
+    resources.require_active();
+    // Python round(float, 2) retains its float kind even at an integral percentage.
+    const percent = payload.disk.free_percent;
+    const document = {
+      ...payload,
+      disk: {
+        ...payload.disk,
+        free_percent:
+          typeof percent === 'number'
+            ? new JsonNumber(String(percent) + (Number.isInteger(percent) ? '.0' : ''))
+            : percent,
+      },
+    };
+    return success(
+      args.json ? json(document) : `${payload.overall_state}: ${payload.collected_at}`,
+    );
+  });
 }
 export async function environment_cleanup(
   args: Args['cleanup'],
   deps: HostEnvironmentCommandDependencies,
 ): Promise<Result> {
-  const config = deps.load_config();
-  const inventory = await collect_cleanup_inventory(config, deps.status_options);
-  const payload: Record<string, unknown> = { dry_run: !args.apply, ...inventory_body(inventory) };
-  const layout = await layout_for(
-    config.ticket_scratch_root,
-    config.ticket_scratch_database,
-    config.db_path,
-  );
-  let scratches: TicketScratch[] = [],
-    scratch_result: ScratchResult | undefined;
-  if (layout !== null) {
-    const states = await read_ticket_states_from(config.db_path),
-      now = Math.floor(deps.now_unix());
-    scratches = await collect_ticket_scratch(layout, states, now);
-    payload.ticket_scratch = scratches;
-    if (args.apply) {
-      payload.result = await apply_cleanup_inventory(inventory);
-      scratch_result = await remove_ticket_scratch(layout, scratches, states, now);
-      payload.ticket_scratch_result = scratch_result;
-    }
-  } else if (args.apply) payload.result = await apply_cleanup_inventory(inventory);
-  if (args.json) return success(json(payload));
-  const lines = [args.apply ? 'applied cleanup' : 'cleanup dry run'];
-  for (const candidate of inventory.candidates) lines.push(`${candidate.kind}: ${candidate.path}`);
-  for (const scratch of scratches)
-    for (const entry of scratch.entries) lines.push(`ticket_scratch: ${entry}`);
-  for (const kept of scratch_result?.skipped ?? [])
-    lines.push(`kept: ${kept.path} (${kept.reason})`);
-  return success(lines.join('\n'));
-}
-export async function environment_backup(args: Args['backup']): Promise<Result> {
-  try {
-    return success(
-      await create_database_backup(args.source_db, args.backup_dir, args.deployed_revision),
+  return deps.with_resources(async (resources) => {
+    const config = deps.load_config();
+    deps.admit_path(config.db_path);
+    const inventory = await collect_cleanup_inventory(config, resources.status_options);
+    resources.require_active();
+    const payload: Record<string, unknown> = { dry_run: !args.apply, ...inventory_body(inventory) };
+    const layout = await layout_for(
+      config.ticket_scratch_root,
+      config.ticket_scratch_database,
+      config.db_path,
+      deps.home,
     );
+    resources.require_active();
+    let scratches: TicketScratch[] = [],
+      scratch_result: ScratchResult | undefined;
+    if (layout !== null) {
+      const states = await read_ticket_states_from(config.db_path),
+        now = Math.floor(deps.now_unix());
+      resources.require_active();
+      scratches = await collect_ticket_scratch(layout, states, now, resources.scratch_options);
+      payload.ticket_scratch = scratches;
+      if (args.apply) {
+        resources.require_active();
+        payload.result = await apply_cleanup_inventory(inventory, resources.signal);
+        resources.require_active();
+        scratch_result = await remove_ticket_scratch(
+          layout,
+          scratches,
+          states,
+          now,
+          resources.scratch_options,
+        );
+        payload.ticket_scratch_result = scratch_result;
+      }
+    } else if (args.apply)
+      payload.result = await apply_cleanup_inventory(inventory, resources.signal);
+    resources.require_active();
+    if (args.json) return success(json(payload));
+    const lines = [args.apply ? 'applied cleanup' : 'cleanup dry run'];
+    for (const candidate of inventory.candidates)
+      lines.push(`${candidate.kind}: ${candidate.path}`);
+    for (const scratch of scratches)
+      for (const entry of scratch.entries) lines.push(`ticket_scratch: ${entry}`);
+    for (const kept of scratch_result?.skipped ?? [])
+      lines.push(`kept: ${kept.path} (${kept.reason})`);
+    return success(lines.join('\n'));
+  });
+}
+export async function environment_backup(
+  args: Args['backup'],
+  deps: OperatorPathInputs,
+): Promise<Result> {
+  try {
+    const source = deps.expand_path(args.source_db),
+      backup = deps.expand_path(args.backup_dir);
+    deps.admit_path(source);
+    deps.admit_path(backup);
+    return success(await create_database_backup(source, backup, args.deployed_revision));
   } catch (error) {
     if (!domain_error(error)) throw error;
     return failed(error);
@@ -177,6 +184,7 @@ export async function environment_backup_current(
   let warning = '';
   try {
     const manifest_path = join(args.current_app, 'manifest.json');
+    deps.admit_path(manifest_path);
     const value = manifest_json(
       new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
         await readFile(manifest_path),
@@ -205,10 +213,11 @@ export async function environment_backup_current(
     }
     // Backup's domain RuntimeErrors are distinct from unexpected validator errors.
     try {
-      return success(
-        await create_database_backup(args.source_db, args.backup_dir, revision),
-        warning,
-      );
+      const source = deps.expand_path(args.source_db),
+        backup = deps.expand_path(args.backup_dir);
+      deps.admit_path(source);
+      deps.admit_path(backup);
+      return success(await create_database_backup(source, backup, revision), warning);
     } catch (error) {
       if (!domain_error(error)) throw error;
       return failed(error, warning);
@@ -233,9 +242,20 @@ export async function environment_provision_skills(
     return failed(error);
   }
 }
-export async function environment_restore(args: Args['restore']): Promise<Result> {
+export async function environment_restore(
+  args: Args['restore'],
+  deps: OperatorPathInputs,
+): Promise<Result> {
   try {
-    await restore_database_snapshot(args.snapshot, args.destination_db, {
+    const snapshot = args.live_stopped ? deps.expand_path(args.snapshot) : args.snapshot;
+    const destination = args.live_stopped
+      ? deps.expand_path(args.destination_db)
+      : args.destination_db;
+    if (args.live_stopped) {
+      deps.admit_path(snapshot);
+      deps.admit_path(destination);
+    }
+    await restore_database_snapshot(snapshot, destination, {
       live_stopped: args.live_stopped,
     });
     return success(args.destination_db);
@@ -267,11 +287,27 @@ async function registry_result(
     return failed(error);
   }
 }
-export const environment_prepare = (args: Args['prepare']): Promise<Result> =>
-  registry_result(() => prepare_environment_instance(args), args.json);
+function registry_paths(args: Args['prepare'] | Args['reset'], deps: OperatorPathInputs): void {
+  if (!isAbsolute(args.environment_root)) return; // Preserve the registry's literal-root refusal.
+  deps.admit_path(args.environment_root);
+  deps.admit_path(
+    args.environment_root + (args.kind === 'live' ? '/current' : '/staging') + '/data/planner.db',
+  );
+}
+export const environment_prepare = (
+  args: Args['prepare'],
+  deps: OperatorPathInputs,
+): Promise<Result> =>
+  registry_result(() => {
+    registry_paths(args, deps);
+    return prepare_environment_instance(args);
+  }, args.json);
 export const environment_inspect = (args: Args['inspect']): Promise<Result> =>
   registry_result(() => inspect_environment_instance(args), args.json);
-export const environment_reset = (args: Args['reset']): Promise<Result> =>
-  registry_result(() => reset_environment_instance(args), args.json);
+export const environment_reset = (args: Args['reset'], deps: OperatorPathInputs): Promise<Result> =>
+  registry_result(() => {
+    registry_paths(args, deps);
+    return reset_environment_instance(args);
+  }, args.json);
 export const environment_remove = (args: Args['remove']): Promise<Result> =>
   registry_result(() => remove_environment_instance(args), args.json, false);
