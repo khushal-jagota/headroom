@@ -615,4 +615,5 @@ The resolved target then passes through the same NOFOLLOW directory walk and reg
 Contained same-conversation leaf links keep Python behavior. Later substitutions refuse as not found.
 NUL artifact paths retain Python's exact `lstat: embedded null character in path` refusal.
 Ancestor symlink loops produce the clean `artifact path contains symlink` validation refusal, without raw Node errors.
+Python raises a raw `RuntimeError` for the same ancestor loop. The Manager accepts this clean TypeScript refusal.
 The Manager reviews these implementation differences before this slice merges.
