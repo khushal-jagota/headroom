@@ -3,6 +3,7 @@ import type { BigIntStats } from 'node:fs';
 import { readdir, lstat, opendir } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import {
   assertDatabaseVersion,
   createDurableSidecarDatabase,
@@ -61,6 +62,7 @@ function unreadable(error: unknown): boolean {
   );
 }
 export class OutboxStore {
+  readonly pending_events = new EventEmitter();
   readonly health_fence = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
   readonly sender_id: string;
   readonly root: string;
@@ -279,13 +281,16 @@ export class OutboxStore {
           ),
     );
   }
-  pending_conversations(): readonly (readonly [string, bigint])[] {
+  pending_conversations(
+    limit: number | null = MAX_LEASE_WAITING_CONVERSATIONS + 1,
+  ): readonly (readonly [string, bigint])[] {
     this.admit();
     return this.database.read((sql) =>
       sql
         .all<{ conversation_id: string; oldest: bigint }>(
-          'SELECT conversation_id,MIN(sequence) AS oldest FROM items WHERE receipt_json IS NULL GROUP BY conversation_id ORDER BY MIN(sequence) LIMIT ?',
-          [MAX_LEASE_WAITING_CONVERSATIONS + 1],
+          'SELECT conversation_id,MIN(sequence) AS oldest FROM items WHERE receipt_json IS NULL GROUP BY conversation_id ORDER BY MIN(sequence)' +
+            (limit === null ? '' : ' LIMIT ?'),
+          limit === null ? [] : [limit],
         )
         .map((row) => [row.conversation_id, row.oldest] as const),
     );
@@ -350,6 +355,7 @@ export class OutboxStore {
       return held;
     });
     this.first_held.set(row.sequence, this.clock.monotonic());
+    this.pending_events.emit('pending');
     return row;
   }
   with_capture<T>(ticket_id: string, callback: (capture: CaptureRows) => T): Promise<T> {
