@@ -2,8 +2,6 @@
 
 This file records intentional differences that the migration Manager accepted. No new difference enters this file without that acceptance. Close an entry when Python adopts the same behavior.
 
-Mac workspace resolution refuses traversal through a non-directory with Python 3.13's ENOTDIR text; Python 3.12 accepts a file before `..`. The Manager approved this Mac-only difference. Shared resolver defaults remain unchanged.
-
 ## Staging merge 12: decision notes and recap freshness
 
 The Manager accepts that decision routes admit revision `1.0` as `1`, because Fastify’s native JSON parser does not retain numeric token kinds.
@@ -403,6 +401,8 @@ TypeScript opens artifact sources with `O_NONBLOCK`, then requires a regular fil
 A FIFO therefore refuses instead of blocking the event loop before that check, as Python can do.
 Large copy, hash, and strict flush operations run in an owned worker with the shared shutdown deadline.
 The file formats, hashes, and successful publication behavior retain the Python contract.
+
+Mac workspace resolution refuses traversal through a non-directory with Python 3.13's ENOTDIR text; Python 3.12 accepts a file before `..`. The Manager approved this Mac-only difference. Shared resolver defaults remain unchanged.
 
 ### Command settlement and update stop proof identity
 
