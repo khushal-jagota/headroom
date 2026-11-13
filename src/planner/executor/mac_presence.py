@@ -114,7 +114,6 @@ class MacLeaseLoop:
         self._workspace_cleanup_task: asyncio.Task[None] | None = None
 
     async def _request(self) -> LeaseRequest:
-        await self.runner.refresh_worker_cleanup()
         backlog = await asyncio.to_thread(self.outbox.lease_backlog)
         # The runner's state is read on the loop, which is the only thread changing it.
         return LeaseRequest(
@@ -192,6 +191,9 @@ class MacLeaseLoop:
 
     async def _cleanup_workspaces(self) -> None:
         try:
+            # Startup and explicit Ticket actions refresh their own cleanup proof.
+            # Retained history belongs to this slow task, never the lease request.
+            await self.runner.refresh_worker_cleanup()
             ticket_ids = await asyncio.to_thread(
                 _local_workspace_ticket_ids, self.runner.paths.artifacts
             )
