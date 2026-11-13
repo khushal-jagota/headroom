@@ -3,8 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { posix_child_path } from '../core/python_path.ts';
 import { python_os_error_message as error_message } from '../core/os_errors.ts';
-import { jsonFailure } from '../core/http/json.ts';
-import { JsonNumber, stringify_python_json } from '../core/http/numeric_json.ts';
+import { JsonNumber } from '../core/http/numeric_json.ts';
 import { create_database_backup } from './backup/capture.ts';
 import { restore_database_snapshot } from './backup/restore.ts';
 import { AppManifestValidationFailure } from './command_contracts.ts';
@@ -52,8 +51,7 @@ const failed = (error: Error, stderr = ''): Result => ({
   failure_message: error_message(error),
   stderr_prefix: stderr,
 });
-const json = (value: unknown) =>
-  stringify_python_json(value, { sort_keys: true, ensure_ascii: true });
+const json = (value: unknown) => JSON.stringify(value);
 
 export async function environment_status(
   args: Args['status'],
@@ -163,17 +161,7 @@ function manifest_json(text: string): unknown {
     return parse_attempt_json(text);
   } catch (error) {
     if (!(error instanceof SyntaxError)) throw error;
-    const { position, message } = jsonFailure(text, { allow_non_finite: true });
-    const prefix = Array.from(text).slice(0, position).join('');
-    const line = prefix.split('\n').length,
-      column = Array.from(prefix.slice(prefix.lastIndexOf('\n') + 1)).length + 1;
-    const detail = text.startsWith('\ufeff')
-      ? 'Unexpected UTF-8 BOM (decode using utf-8-sig)'
-      : message;
-    throw new AppManifestValidationFailure(
-      'value',
-      `${detail}: line ${line} column ${column} (char ${position})`,
-    );
+    throw new AppManifestValidationFailure('value', error.message);
   }
 }
 export async function environment_backup_current(

@@ -1,5 +1,3 @@
-import { python_string_repr } from '../core/python_repr.ts';
-import { casefold } from '../core/casefold.ts';
 /** Public Ticket reads. All queries share the caller's read snapshot. */
 import { dirname, join, parse } from 'node:path';
 import { existsSync, lstatSync, readdirSync, statSync } from 'node:fs';
@@ -317,7 +315,7 @@ export function list_ticket_summaries(
       const broken = broken_ticket(sql, row.id)!;
       if (
         filters.search !== null &&
-        !casefold(python_repr(broken)).includes(casefold(filters.search))
+        !JSON.stringify(broken).toLowerCase().includes(filters.search.toLowerCase())
       )
         continue;
       matches.push(broken);
@@ -343,7 +341,7 @@ export function list_ticket_summaries(
           .map((field) => ticket.field_values[field.id]),
         row.pending_proposal ? (JSON.parse(row.pending_proposal) as { body: string }).body : '',
       ].join('\n');
-      if (!casefold(text).includes(casefold(filters.search))) continue;
+      if (!text.toLowerCase().includes(filters.search.toLowerCase())) continue;
     }
     matches.push({
       is_backlogged: Boolean(v.is_backlogged),
@@ -370,7 +368,7 @@ export function list_ticket_summaries(
 }
 export function copy_text(sql: ReadSql, id: string): string {
   const broken = broken_ticket(sql, id);
-  if (broken) return python_repr(broken);
+  if (broken) return JSON.stringify(broken);
   const ticket = data.read_ticket(sql, id),
     ownership = ticket.workflow.stages.find((s) => s.id === ticket.stage)?.ownership_mode ?? null,
     summary = blocker_summary(sql, id);
@@ -384,22 +382,6 @@ export function copy_text(sql: ReadSql, id: string): string {
       .map((r) => `- ${r.title} (${r.ticket_id}, ${r.stage})`)
       .join('\n') || '(none)';
   return `${ticket.title}\nstage: ${ticket.stage}\nemployee_backend: ${ticket.employee_backend}\nowner: ${ownership ?? '(none)'}\n\n${field_blocks}pending proposal:\n${show(ticket.pending_proposal?.body)}\nrecap:\n${show(ticket.recap)}\n\nblocked_by:\n${blockers}\n`;
-}
-function python_repr(value: unknown): string {
-  if (value === null) return 'None';
-  if (value === true) return 'True';
-  if (value === false) return 'False';
-  if (typeof value === 'string') return python_string_repr(value);
-  if (Array.isArray(value)) return '[' + value.map(python_repr).join(', ') + ']';
-  if (typeof value === 'object')
-    return (
-      '{' +
-      Object.entries(value as Json)
-        .map(([k, v]) => python_repr(k) + ': ' + python_repr(v))
-        .join(', ') +
-      '}'
-    );
-  return String(value);
 }
 export function review_view(sql: ReadSql): Json {
   const items: Json[] = [];

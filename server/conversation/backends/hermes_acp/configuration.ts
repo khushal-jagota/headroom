@@ -16,7 +16,7 @@ import type {
 import { ConversationAccess } from '../../contracts.ts';
 import type { ResolvedConversationStart } from '../../contracts.ts';
 import { NeedsRebind, PromptWriteFailed, SessionLoadFailed } from '../contracts.ts';
-import { python_repr, error_text } from '../claude_agent_sdk/failure_summary.ts';
+import { error_text } from '../claude_agent_sdk/failure_summary.ts';
 import type { HermesAcpClient } from './client.ts';
 
 export function hermes_error_text(error: unknown): string {
@@ -156,7 +156,7 @@ export class HermesConfiguration {
     const option = this.option('thought_level');
     if (!option)
       throw new ConfigurationNotApplied(
-        `this session advertises no reasoning-effort option, so it cannot be put on ${python_repr(effort)}`,
+        `this session advertises no reasoning-effort option, so it cannot be put on ${JSON.stringify(effort)}`,
       );
     await this.set_option(option.id, effort);
     this.reasoning_effort = effort;

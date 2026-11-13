@@ -7,7 +7,7 @@ import {
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import { is_value_error } from '../../../core/value_error.ts';
-import { python_text } from '../../../cli/python_text.ts';
+import { scalar_text } from '../../../cli/text.ts';
 import { as_object, decode_value, integer_value, ValueError } from '../../protocol.ts';
 import type {
   AcceptanceReceipt,
@@ -113,7 +113,7 @@ export class AgentGateway {
           result = await this.options.client.read(
             {
               child: child.reference,
-              path: python_text(request.payload.path),
+              path: scalar_text(request.payload.path),
               params: (request.payload.params ?? {}) as JsonObject,
             },
             this.controller.signal,

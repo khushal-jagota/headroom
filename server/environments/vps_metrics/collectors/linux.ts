@@ -10,7 +10,7 @@ import type {
   ServiceRecord,
 } from '../contracts.ts';
 import { float, number } from '../codec.ts';
-import { JsonNumber, stringify_python_json } from '../../../core/http/numeric_json.ts';
+import { JsonNumber } from '../../../core/http/numeric_json.ts';
 import { counter_rate, host_cpu_percent } from '../logic/rates.ts';
 import type { CollectorDependencies, CollectorPaths } from './contracts.ts';
 import { evidence_error, source_error } from './errors.ts';
@@ -371,7 +371,7 @@ export class LinuxCollector implements Collector {
         const fields = words(text.slice(end + 2)),
           pid = integer(name),
           start_ticks = integer(field(fields, 19));
-        const identity = `${boot}:${stringify_python_json(pid)}:${stringify_python_json(start_ticks)}`;
+        const identity = `${boot}:${JSON.stringify(pid)}:${JSON.stringify(start_ticks)}`;
         const metrics: Metrics = {
           cpu_percent: this.rate(
             identity + ':cpu',
@@ -390,7 +390,7 @@ export class LinuxCollector implements Collector {
           uid = integer(field(words(row!), 1));
         } catch (error) {
           source_error(error, ['OSError', 'ValueError', 'IndexError', 'StopIteration']);
-          errors.push(`PID ${stringify_python_json(pid)} uid unavailable`);
+          errors.push(`PID ${JSON.stringify(pid)} uid unavailable`);
         }
         let io: Record<string, number> = {},
           io_error: string | null = null;
@@ -413,7 +413,7 @@ export class LinuxCollector implements Collector {
               'bytes_per_second',
               io_error ?? 'missing field',
             );
-            errors.push(`PID ${stringify_python_json(pid)} ${direction} io unavailable`);
+            errors.push(`PID ${JSON.stringify(pid)} ${direction} io unavailable`);
           }
         }
         let group: string, kind: string;
@@ -422,14 +422,14 @@ export class LinuxCollector implements Collector {
         } catch (error) {
           source_error(error, ['OSError']);
           group = kind = 'unassigned';
-          errors.push(`PID ${stringify_python_json(pid)} cgroup unavailable`);
+          errors.push(`PID ${JSON.stringify(pid)} cgroup unavailable`);
         }
         const final_stat = await this.read(join(path, 'stat')),
           final_end = final_stat.lastIndexOf(')');
         if (final_end < 0) fail('ValueError');
         if (
-          stringify_python_json(integer(field(words(final_stat.slice(final_end + 2)), 19))) !==
-          stringify_python_json(start_ticks)
+          JSON.stringify(integer(field(words(final_stat.slice(final_end + 2)), 19))) !==
+          JSON.stringify(start_ticks)
         )
           fail('ValueError');
         groups.set(group, kind);

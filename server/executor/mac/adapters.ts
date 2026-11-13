@@ -1,5 +1,4 @@
 /** Host the same provider factories with this Mac's account and launch settings. */
-import { dirname } from 'node:path';
 import { pure_posix_path } from '../../core/python_path.ts';
 import { provider_launch_settings } from '../../core/config.ts';
 import { claude_executable_override } from '../../conversation/snapshot/environment.ts';
@@ -17,7 +16,10 @@ import {
   RememberedCodexLoginRejection,
 } from '../../conversation/backends/codex_app_server/login.ts';
 import { create_hermes_backend_child_factory } from '../../conversation/backends/hermes_acp/adapter.ts';
-import { hermes_acp_child_launch } from '../../conversation/backends/hermes_acp/launch.ts';
+import {
+  hermes_acp_child_launch,
+  hermes_source_root,
+} from '../../conversation/backends/hermes_acp/launch.ts';
 import type { AcpChildLaunch } from '../../conversation/backends/hermes_acp/launch.ts';
 import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import { expand_executor_path } from './platform.ts';
@@ -44,16 +46,6 @@ export interface MacAdapterHost {
   };
   factory(start: ResolvedConversationStart): BackendChildFactory;
   native_skill_home(backend: ResolvedConversationStart['backend_key']): string;
-}
-function hermes_source_root(python: string): string {
-  const first = dirname(python);
-  let parent = first;
-  for (let depth = 1; depth < 3; depth++) {
-    const next = dirname(parent);
-    if (next === parent) return first;
-    parent = next;
-  }
-  return parent;
 }
 export function create_mac_adapter_host(options: MacAdapterOptions): MacAdapterHost {
   const settings = provider_launch_settings(options.environment);

@@ -2,6 +2,7 @@
 import { dirname } from 'node:path';
 import type { TestCompositionContext } from '../../core/start.ts';
 import { createEnvironmentRuntime } from '../runtime.ts';
+import type { EnvironmentOperations } from '../runtime.ts';
 import { create_mac_update_composition } from '../updates/mac/composition.ts';
 import { collect_vps_status } from '../vps_status/collect.ts';
 
@@ -9,7 +10,12 @@ const unavailable = (): never => {
   throw new Error('External environment operations are unavailable in the comparison host');
 };
 export function create_test_environment_runtime(context: TestCompositionContext) {
-  return createEnvironmentRuntime(context, {
+  return createEnvironmentRuntime(context, create_test_environment_operations(context));
+}
+export function create_test_environment_operations(
+  context: TestCompositionContext,
+): EnvironmentOperations {
+  return {
     app_root: dirname(context.config.db_path),
     service_unit: null,
     provider: () => null,
@@ -59,5 +65,5 @@ export function create_test_environment_runtime(context: TestCompositionContext)
           platform_name: () => (process.platform === 'darwin' ? 'Darwin' : 'Linux'),
         },
       }),
-  });
+  };
 }

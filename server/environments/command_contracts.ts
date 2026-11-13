@@ -19,6 +19,12 @@ export interface EnvironmentCommandFailure {
   readonly failure_message: string;
   readonly stderr_prefix: string;
 }
+export interface PreparedOperatorLaunch {
+  readonly interrupted?: Promise<never>;
+  output_flushed?(): void;
+  execute(): never;
+  close(): void | Promise<void>;
+}
 export type EnvironmentCommandResult = EnvironmentCommandTranscript | EnvironmentCommandFailure;
 export interface OperatorPathInputs {
   expand_path(path: string): string;
@@ -112,10 +118,26 @@ export type OperatorDependencies<Name extends OperatorName> = Name extends Envir
   ? EnvironmentCommandDependencies<Name>
   : Name extends 'app-identity'
     ? { validate_app_manifest(path: string, options?: AppValidationOptions): Promise<AppManifest> }
-    : Name extends 'watchdog'
-      ? { run_watchdog(args: WatchdogArguments): Promise<string> }
-      : undefined;
-export type OperatorResult<Name extends OperatorName> = EnvironmentCommandResult;
+    : Name extends 'app-build'
+      ? { build_app(args: OperatorArguments['app-build']): Promise<AppManifest> }
+      : Name extends 'run'
+        ? {
+            prepare_run(
+              args: OperatorArguments['run'],
+            ): Promise<{ launch: PreparedOperatorLaunch; stderr: string }>;
+          }
+        : Name extends 'serve'
+          ? { run_supervisor(): Promise<0 | 1> }
+          : Name extends 'restart'
+            ? { request_restart(): Promise<void> }
+            : Name extends 'watchdog'
+              ? { run_watchdog(args: WatchdogArguments): Promise<string> }
+              : undefined;
+export type OperatorResult<Name extends OperatorName> =
+  | EnvironmentCommandResult
+  | (Name extends 'run'
+      ? EnvironmentCommandTranscript & { readonly launch: PreparedOperatorLaunch }
+      : never);
 export type OperatorHandler<Name extends OperatorName> = (
   args: OperatorArguments[Name],
   deps: OperatorDependencies<Name>,

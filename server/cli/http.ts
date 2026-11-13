@@ -1,7 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { delimiter, join } from 'node:path';
-import { constants } from 'node:os';
 import { checkServerIdentity } from 'node:tls';
 import { isIP, type Socket } from 'node:net';
 import { request as http_request, type ClientRequest } from 'node:http';
@@ -9,7 +8,7 @@ import { request as https_request, type RequestOptions } from 'node:https';
 import { gunzipSync, inflateSync, brotliDecompressSync } from 'node:zlib';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { rates_proxy_for } from '../conversation/usage/proxy.ts';
-import { parse_numeric_json, stringify_python_json } from '../core/http/numeric_json.ts';
+import { parse_numeric_json } from '../core/http/numeric_json.ts';
 import type { CommandResult, Invocation } from './contracts.ts';
 import { CliFailure, human_error } from './errors.ts';
 import { is_value_error } from '../core/value_error.ts';
@@ -29,8 +28,16 @@ export const CLI_TRANSPORT_LIMITS: Readonly<TransportLimits> = Object.freeze({
 
 export const json = (
   value: unknown,
-  options: Parameters<typeof stringify_python_json>[1] = {},
-): string => stringify_python_json(value, { ensure_ascii: true, ...options });
+  options: { ensure_ascii?: boolean; compact?: boolean; indent?: 2 } = {},
+): string =>
+  JSON.stringify(
+    value,
+    (_key, item) =>
+      typeof item === 'bigint'
+        ? (JSON as unknown as { rawJSON(text: string): unknown }).rawJSON(String(item))
+        : item,
+    options.indent,
+  );
 export function emit(data: unknown, as_json: boolean, human: string): CommandResult {
   return { exit_code: 0, stdout: (as_json ? json(data) : human) + '\n', stderr: '' };
 }
@@ -68,29 +75,10 @@ function fail_response(inv: Invocation, status: number, data: any, text: string)
         : undefined;
   throw new CliFailure(human_error(inv.command, String(error.message), 1, { no_route }));
 }
-/** System errors use the complete platform errno map, not a fixed error shortlist. */
+/** Keep the native cause so a connection failure describes the actual runtime. */
 export async function connection_message(error: unknown): Promise<string> {
-  const native =
-    error instanceof Error && 'cause' in error && error.cause instanceof Error
-      ? error.cause
-      : error;
-  const detail = native as NodeJS.ErrnoException;
-  if (detail?.code === 'ENOTFOUND') return '[Errno -2] Name or service not known';
-  if (detail?.code === 'EAI_AGAIN') return '[Errno -3] Temporary failure in name resolution';
-  if (detail?.code === 'ETIMEDOUT' || detail?.name === 'TimeoutError') return 'timed out';
-  if (detail?.message === 'socket hang up')
-    return 'Server disconnected without sending a response.';
-  const number =
-    detail?.code === undefined
-      ? undefined
-      : constants.errno[detail.code as keyof typeof constants.errno];
-  if (number !== undefined) {
-    const { python_os_error_message } = await import('../core/os_errors.ts');
-    return python_os_error_message(detail as Error, { include_paths: false });
-  }
-  // TLS/protocol diagnostics retain the native cause. They must not claim a guessed
-  // CPython/OpenSSL source filename or version-dependent line number.
-  return detail?.message ?? String(native);
+  const cause = error instanceof Error && error.cause instanceof Error ? error.cause : error;
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function no_proxy(url: URL, env: NodeJS.ProcessEnv): boolean {
@@ -476,7 +464,7 @@ export async function send(
   try {
     data = parse_numeric_json(text.startsWith('\uFEFF') ? text.slice(1) : text);
   } catch {
-    /* Python retains null for non-JSON responses. */
+    /* A non-JSON response has no decoded data. */
   }
   if (response.ok && !(data && typeof data === 'object' && 'error' in data)) return data;
   return fail_response(inv, response.status, data, text);

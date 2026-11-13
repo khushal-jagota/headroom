@@ -2,11 +2,11 @@
 import { chmodSync, closeSync, constants, mkdirSync, openSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import koffi from 'koffi';
+import { getSystemErrorMessage } from 'node:util';
 import { ServerLifecycleAlreadyOwnedError, ServerLifecycleError } from './contracts.ts';
 import type { LifecycleLease } from './contracts.ts';
 const libc = koffi.load(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6');
 const flock = libc.func('int flock(int fd, int operation)');
-const strerror = libc.func('const char *strerror(int error)');
 
 export function resolve_server_lifecycle_lease_path(port: number): string {
   const directory = join('/tmp', `panels-${process.getuid!()}`);
@@ -25,7 +25,7 @@ export function acquire_server_lifecycle_lease(path: string, port: number): Life
     if ([11, 13, 35].includes(error))
       throw new ServerLifecycleAlreadyOwnedError(`Port ${port} already has a Panels supervisor.`);
     throw new ServerLifecycleError(
-      `Could not acquire Panels lifecycle lease: [Errno ${error}] ${strerror(error)}`,
+      `Could not acquire Panels lifecycle lease: ${getSystemErrorMessage(-Math.abs(error))}`,
     );
   }
   let closed = false;

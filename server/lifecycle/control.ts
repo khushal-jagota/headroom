@@ -1,7 +1,6 @@
 import net from 'node:net';
 import { lstat, mkdir, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { python_os_error_message } from '../core/os_errors.ts';
 import {
   CONTROL_EXCHANGE_SECONDS,
   MAX_CONTROL_MESSAGE_BYTES,
@@ -74,7 +73,7 @@ export async function request_control(
         `Panels supervisor returned an incompatible response: ${error.message}`,
       );
     throw new ServerRestartConnectionError(
-      `Could not connect to the Panels supervisor at ${path}: ${error instanceof Error ? python_os_error_message(error, { include_paths: false }) : 'connection failure'}`,
+      `Could not connect to the Panels supervisor at ${path}: ${error instanceof Error ? error.message : 'connection failure'}`,
     );
   } finally {
     socket.end();

@@ -131,8 +131,8 @@ it('rejects missing consumed fields before native facts can reach the sink', () 
   ).toThrow("Missing required field in assistant message: 'id'");
 });
 it('redacts native failure secrets and preserves the authentication policy', () => {
-  expect(normalized_failure_summary('api_key="private"; Authorization: Bearer secret')).toBe(
-    'api_key=[redacted]; Authorization: [redacted]',
+  expect(normalized_failure_summary({ api_key: 'private', Authorization: 'Bearer secret' })).toBe(
+    '{"api_key":[redacted],"Authorization":[redacted]}',
   );
   expect(normalized_failure_summary('untrusted provider text', 401)).toBe(
     'authentication was rejected (HTTP 401)',

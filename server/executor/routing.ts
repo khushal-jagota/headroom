@@ -9,6 +9,9 @@ import type {
 } from '../conversation/backends/contracts.ts';
 import type { ResolvedConversationStart } from '../conversation/contracts.ts';
 import type { Database } from '../core/database/contracts.ts';
+import { PlannerError } from '../core/contracts.ts';
+import { BackendSpawnFailed } from '../conversation/backends/contracts.ts';
+import { read_ticket_by_conversation_id } from '../tickets/data/index.ts';
 
 export function ticket_id_of(start: ResolvedConversationStart): string | null {
   const environment = Object.fromEntries(
@@ -40,12 +43,24 @@ export class LocaleBackendChildFactory {
   }
   create(options: Parameters<BackendChildFactory>[0]): BackendChild {
     const ticket_id = ticket_id_of(options.resolved_start);
-    const remote = this.database.read(
-      (sql) =>
+    const remote = this.database.read((sql) => {
+      let canonical;
+      try {
+        canonical = read_ticket_by_conversation_id(sql, options.resolved_start.conversation_id);
+      } catch (error) {
+        if (!(error instanceof PlannerError && error.code === 'not_found')) throw error;
+      }
+      if (canonical?.locale === 'macos') {
+        if (canonical.id !== ticket_id)
+          throw new BackendSpawnFailed('Mac Ticket requires its canonical Worker identity');
+        return true;
+      }
+      return (
         ticket_id !== null &&
         sql.get<{ locale: string }>('SELECT locale FROM tickets WHERE id=?', [ticket_id])
-          ?.locale === 'macos',
-    );
+          ?.locale === 'macos'
+      );
+    });
     return (remote ? this.remote_factory : this.local_factory)(options);
   }
   /** The existing core consumes a callable factory with retained recovery methods. */
