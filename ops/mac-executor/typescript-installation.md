@@ -2,6 +2,7 @@
 
 This document starts the native handoff for the TypeScript executor. Packaging and the complete installation procedure remain pending.
 No command in this document ran on the owner's Mac during this Ticket.
+The shared codec embeds its schema as `WIRE_SCHEMA` in `server/executor/wire.generated.ts`. It does not read `wire.schema.json` at runtime.
 Use a separate app, supervisor, job, and state root. Keep the Python installation idle for rollback after cutover.
 
 The TypeScript default state root is `~/Library/Application Support/Panels/executor-typescript`.
@@ -140,22 +141,23 @@ The operator must record the reviewed revision, Node version, arm64 architecture
 The Koffi bridge can load only the operating system's `libSystem.B.dylib` on macOS.
 Missing symbols or failed calls must refuse the operation. A path-based fallback is forbidden.
 
-| Call or boundary | Required real Mac check |
-|---|---|
-| `openat(int,const char*,int,...)` | Variadic mode passed as explicit promoted `int`, created-file mode 0600, directory/no-follow and Darwin close-on-exec flags, FIFO refusal, and ancestor-swap containment |
-| `mkdirat(int,const char*,uint16_t)` | Darwin 16-bit `mode_t`, 0700 creation, existing-directory behavior, and parent-relative placement |
-| `unlinkat(int,const char*,int)` | Correct zero flags, retained-parent cleanup, and missing-entry/error behavior |
-| `renameat(int,const char*,int,const char*)` | Retained source/target parents, atomic publication, and failure cleanup |
-| `fsync(int)` | Directory flushes, error propagation, and successful commits on the selected native filesystem |
-| `fcntl(int,int,...)` with `F_FULLFSYNC=51` and explicit `int` zero | Variadic Darwin ABI and defined third slot, strict full-flush success, and refusal without a weaker fallback |
-| `flock(int,int)` | Exclusive/nonblocking/unlock flags, contention refusal, crash release, and interrupted-call behavior |
-| `getpwnam` and Darwin `passwd` layout | Field offsets, pointer decoding, named-user expansion, and missing-account refusal |
-| Packaged Koffi addon | arm64 Mach-O architecture, pinned addon load from the relocated package, and no extra native library |
-| Native app and LaunchAgent | Signed requester attribution, startup/restart, exact Unix socket path/mode, consent, and permission retention |
-| Root aliases | Refusal of the Python root and descendants through symlinks and native case-insensitive aliases |
-| Process ownership | Darwin PID/start-time observations, priority, descendants, direct-child exit, and no leftover owned child |
-| Provider homes and shared skills | Fresh Claude/Codex/Hermes sessions, selected model/effort, canonical bytes, and owner-approved link restoration |
-| Sleep, files, and updates | Sleep/wake order and receipts, both file directions, failed-readiness rollback, and zero-work quiescence |
+| Call or boundary                                                   | Required real Mac check                                                                                                                                                  |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `openat(int,const char*,int,...)`                                  | Variadic mode passed as explicit promoted `int`, created-file mode 0600, directory/no-follow and Darwin close-on-exec flags, FIFO refusal, and ancestor-swap containment |
+| `mkdirat(int,const char*,uint16_t)`                                | Darwin 16-bit `mode_t`, 0700 creation, existing-directory behavior, and parent-relative placement                                                                        |
+| `unlinkat(int,const char*,int)`                                    | Correct zero flags, retained-parent cleanup, and missing-entry/error behavior                                                                                            |
+| `renameat(int,const char*,int,const char*)`                        | Retained source/target parents, atomic publication, and failure cleanup                                                                                                  |
+| `fsync(int)`                                                       | Directory flushes, error propagation, and successful commits on the selected native filesystem                                                                           |
+| `fcntl(int,int,...)` with `F_FULLFSYNC=51` and explicit `int` zero | Variadic Darwin ABI and defined third slot, strict full-flush success, and refusal without a weaker fallback                                                             |
+| `flock(int,int)`                                                   | Exclusive/nonblocking/unlock flags, contention refusal, crash release, and interrupted-call behavior                                                                     |
+| `getpwnam` and Darwin `passwd` layout                              | Field offsets, pointer decoding, named-user expansion, and missing-account refusal                                                                                       |
+| Packaged Koffi addon                                               | arm64 Mach-O architecture, pinned addon load from the relocated package, and no extra native library                                                                     |
+| Packaged better-sqlite3 addon and journal worker                   | arm64 addon load inside the journal worker, full-flush commits, interrupted transaction recovery, and native connection cleanup before joined worker exit                |
+| Native app and LaunchAgent                                         | Signed requester attribution, startup/restart, exact Unix socket path/mode, consent, and permission retention                                                            |
+| Root aliases                                                       | Refusal of the Python root and descendants through symlinks and native case-insensitive aliases                                                                          |
+| Process ownership                                                  | Darwin PID/start-time observations, priority, descendants, direct-child exit, and no leftover owned child                                                                |
+| Provider homes and shared skills                                   | Fresh Claude/Codex/Hermes sessions, selected model/effort, canonical bytes, and owner-approved link restoration                                                          |
+| Sleep, files, and updates                                          | Sleep/wake order and receipts, both file directions, failed-readiness rollback, and zero-work quiescence                                                                 |
 
 Physical power-loss durability and permission persistence remain native evidence limits.
 Synthetic Linux checks prove neither Darwin ABI nor native disk behavior.

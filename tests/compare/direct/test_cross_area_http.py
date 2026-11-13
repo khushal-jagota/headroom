@@ -13,10 +13,10 @@ from typing import Any, cast
 from unittest.mock import patch
 
 import httpx
+from tests.support.synthetic_homes import create_synthetic_homes
 
 from planner.measure_sources.transport import request as source_request
 from planner.stalls.alarms import message_chief
-from tests.support.synthetic_homes import create_synthetic_homes
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -35,7 +35,8 @@ def test_cross_area_http(tmp_path: Path) -> None:
 
         def do_GET(self) -> None:
             self.rfile.read(int(self.headers.get("Content-Length", "0")))
-            seen.append({"port": cast(ThreadingHTTPServer, self.server).server_port, "path": self.path,
+            seen.append({"port": cast(ThreadingHTTPServer, self.server).server_port,
+                         "path": self.path,
                          "secret": self.headers.get("X-Synthetic-Key"),
                          "custom": self.headers.get("X-Test-Secret"),
                          "authorization": self.headers.get("Authorization")})
@@ -44,7 +45,9 @@ def test_cross_area_http(tmp_path: Path) -> None:
             if self.path == "/same":
                 destination = "/final"
             elif self.path in ("/cross", "/updates"):
-                destination = second_origin + ("/update-final" if self.path == "/updates" else "/final")
+                destination = second_origin + (
+                    "/update-final" if self.path == "/updates" else "/final"
+                )
             elif self.path == "/api/messages/send":
                 destination = second_origin + "/chief-final"
                 status = 307
@@ -60,14 +63,20 @@ def test_cross_area_http(tmp_path: Path) -> None:
                 self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
-            body = (b'{"workflow_runs": []}' if self.path in ("/update-final", "/slow", "/idle", "/slow-chief/api/messages/send", "/idle-chief/api/messages/send")
+            body = (b'{"workflow_runs": []}' if self.path in (
+                        "/update-final", "/slow", "/idle",
+                        "/slow-chief/api/messages/send", "/idle-chief/api/messages/send",
+                    )
                     else self.command.encode() if self.path == "/method" else b"{}")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             try:
-                if self.path in ("/slow", "/idle", "/slow-chief/api/messages/send", "/idle-chief/api/messages/send"):
+                if self.path in (
+                    "/slow", "/idle", "/slow-chief/api/messages/send",
+                    "/idle-chief/api/messages/send",
+                ):
                     for offset in range(0, len(body), 4):
                         time.sleep(0.08 if self.path.startswith("/slow") else 0.4)
                         self.wfile.write(body[offset:offset + 4])
@@ -84,10 +93,14 @@ def test_cross_area_http(tmp_path: Path) -> None:
         thread.start()
     try:
         assert source_request(first + "/cross").status_code == 200
-        assert source_request(first + "/cross", headers={"X-Synthetic-Key": "synthetic-secret"}).status_code == 200
+        assert source_request(
+            first + "/cross", headers={"X-Synthetic-Key": "synthetic-secret"},
+        ).status_code == 200
         assert seen[-1]["port"] == servers[1].server_port
         assert seen[-1]["secret"] == "synthetic-secret"
-        assert source_request(first + "/rewrite", method="POST", json_body={"value": 1}).text == "GET"
+        assert source_request(
+            first + "/rewrite", method="POST", json_body={"value": 1},
+        ).text == "GET"
         assert source_request(first + "/chain/20").status_code == 200
         try:
             source_request(first + "/chain/21")
