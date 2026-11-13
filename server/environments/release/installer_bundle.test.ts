@@ -15,12 +15,14 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { syncBuiltinESMExports } from 'node:module';
+import { createRequire, isBuiltin, syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dirname, extname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { it } from 'vitest';
+import ts from 'typescript';
+import { inside } from '../../files/logic/paths.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import {
   copy_installer_runtime,
@@ -44,12 +46,111 @@ import {
   INSTALLER_PACKAGE_ROOTS,
 } from './installer_bundle_configuration.ts';
 
+it('keeps the frozen payload complete for static installer and trusted admission imports', () => {
+  const checkout = fileURLToPath(new URL('../../../', import.meta.url));
+  const require = createRequire(join(checkout, 'server/package.json'));
+  const frozen = new Set<string>(INSTALLER_SOURCE_FILES),
+    seen = new Set<string>();
+  const packages = new Set<string>([...INSTALLER_PACKAGE_ROOTS, INSTALLER_KOFFI_OPTIONAL_ROOT]);
+  function visit(name: string): void {
+    if (seen.has(name)) return;
+    seen.add(name);
+    const absolute = resolve(checkout, name);
+    inside(checkout, absolute);
+    const source = ts.createSourceFile(
+      name,
+      readFileSync(absolute, 'utf8'),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    function dependency(specifier: string): void {
+      if (isBuiltin(specifier)) return;
+      if (specifier.startsWith('.')) {
+        const path = resolve(dirname(absolute), specifier);
+        inside(checkout, path);
+        visit(relative(checkout, path).split(sep).join('/'));
+      } else {
+        const package_name = specifier
+          .split('/')
+          .slice(0, specifier.startsWith('@') ? 2 : 1)
+          .join('/');
+        const selected = 'server/node_modules/' + package_name;
+        assert(packages.has(selected), 'new bare package escapes copied closure: ' + specifier);
+        inside(
+          fs.realpathSync(join(checkout, selected)),
+          fs.realpathSync(require.resolve(specifier)),
+        );
+      }
+    }
+    function walk(node: ts.Node): void {
+      if (ts.isImportDeclaration(node)) {
+        const clause = node.importClause;
+        const only_types =
+          clause?.isTypeOnly ||
+          (!clause?.name &&
+            clause?.namedBindings &&
+            ts.isNamedImports(clause.namedBindings) &&
+            clause.namedBindings.elements.length > 0 &&
+            clause.namedBindings.elements.every((item) => item.isTypeOnly));
+        if (!only_types && ts.isStringLiteral(node.moduleSpecifier))
+          dependency(node.moduleSpecifier.text);
+      } else if (
+        ts.isExportDeclaration(node) &&
+        !node.isTypeOnly &&
+        node.moduleSpecifier &&
+        ts.isStringLiteral(node.moduleSpecifier)
+      ) {
+        const only_types =
+          node.exportClause &&
+          ts.isNamedExports(node.exportClause) &&
+          node.exportClause.elements.length > 0 &&
+          node.exportClause.elements.every((item) => item.isTypeOnly);
+        if (!only_types) dependency(node.moduleSpecifier.text);
+      } else if (
+        ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+        node.arguments[0] &&
+        ts.isStringLiteralLike(node.arguments[0])
+      ) {
+        dependency(node.arguments[0].text);
+      } else if (
+        ts.isNewExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === 'URL' &&
+        node.arguments?.length === 2 &&
+        ts.isStringLiteralLike(node.arguments[0])
+      ) {
+        const base = node.arguments[1];
+        if (
+          ts.isPropertyAccessExpression(base) &&
+          base.name.text === 'url' &&
+          ts.isMetaProperty(base.expression) &&
+          base.expression.keywordToken === ts.SyntaxKind.ImportKeyword
+        ) {
+          const path = fileURLToPath(new URL(node.arguments[0].text, pathToFileURL(absolute)));
+          if (['.ts', '.json'].includes(extname(path))) {
+            inside(checkout, path);
+            visit(relative(checkout, path).split(sep).join('/'));
+          }
+        }
+      }
+      ts.forEachChild(node, walk);
+    }
+    walk(source);
+  }
+  visit(INSTALLER_ENTRY);
+  visit('server/environments/release/admission.ts');
+  assert(seen.has('server/environments/ticket_scratch/logic.ts'));
+  assert(seen.has('server/environments/ticket_scratch/configuration.ts'));
+  assert.deepEqual([...seen].filter((name) => !frozen.has(name)).sort(), []);
+});
+
 it('copies a complete selected closure once and refuses changed source or an application-owned Node', async () => {
   // Existing installer parity never copies packages, native provider edges, links, or licenses.
   const root = mkdtempSync(join(tmpdir(), 'panels-installer-copy-'));
   const current = join(root, 'current'),
     app = join(current, 'app'),
-    data = join(root, 'records');
+    data = join(current, 'data');
   const owner = new ChildProcesses(),
     controller = new AbortController();
   const hash = (bytes: string): string => createHash('sha256').update(bytes).digest('hex');
@@ -59,7 +160,7 @@ it('copies a complete selected closure once and refuses changed source or an app
     writeFileSync(path, value, { mode });
   };
   try {
-    mkdirSync(data);
+    mkdirSync(data, { recursive: true });
     for (const path of INSTALLER_SOURCE_FILES) write(path, '// structural source: ' + path + '\n');
     write('server/package.json', '{"type":"module"}');
     for (const name of ['koffi', 'yaml']) {
@@ -181,16 +282,24 @@ it('copies a complete selected closure once and refuses changed source or an app
       '// structural source: ' + INSTALLER_ENTRY + '\n',
     );
     renameSync(retired, app);
-    const original_copy = fs.copyFileSync;
+    const original_open = fs.openSync,
+      original_write = fs.writeSync;
     let failure_seen = false;
-    fs.copyFileSync = (source, destination, flags) => {
-      if (destination === join(data, 'update-installer-copy-failure/work/server/core/config.ts')) {
-        assert(existsSync(dirname(destination)));
+    let target_descriptor: number | undefined;
+    fs.openSync = (path, flags, mode) => {
+      const descriptor = original_open(path, flags, mode);
+      if (path === join(data, 'update-installer-copy-failure/work/server/core/config.ts'))
+        target_descriptor = descriptor;
+      return descriptor;
+    };
+    fs.writeSync = ((descriptor: number, ...arguments_: unknown[]) => {
+      if (descriptor === target_descriptor) {
+        assert(existsSync(join(data, 'update-installer-copy-failure/work/server/core')));
         failure_seen = true;
         throw Object.assign(new Error('injected owned copy failure'), { code: 'EIO' });
       }
-      return original_copy(source, destination, flags);
-    };
+      return Reflect.apply(original_write, fs, [descriptor, ...arguments_]);
+    }) as typeof fs.writeSync;
     syncBuiltinESMExports();
     try {
       assert.throws(
@@ -213,7 +322,8 @@ it('copies a complete selected closure once and refuses changed source or an app
         '// structural source: ' + INSTALLER_ENTRY + '\n',
       );
     } finally {
-      fs.copyFileSync = original_copy;
+      fs.openSync = original_open;
+      fs.writeSync = original_write;
       syncBuiltinESMExports();
     }
     write('server/node_modules/koffi/index.js', 'tampered');

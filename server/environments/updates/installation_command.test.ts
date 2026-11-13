@@ -9,7 +9,7 @@ import {
   selected_installer_environment,
 } from './installation_command.ts';
 
-it('keeps literal paths, actual markers and only selected variables in the manager handoff', () => {
+it('keeps literal paths and production variables without forwarding test-runner markers', () => {
   // No existing command proof crosses the detached service environment boundary.
   const root = mkdtempSync(join(tmpdir(), 'panels-installer-command-'));
   try {
@@ -17,6 +17,7 @@ it('keeps literal paths, actual markers and only selected variables in the manag
       HOME: join(root, 'literal $HOME'),
       PLAN_DB_PATH: join(root, 'custom database.sqlite'),
       PLAN_TEST_MODE: '1',
+      VITEST: 'true',
       PYTEST_CURRENT_TEST: 'retained',
       LANG: 'C.UTF-8',
       DBUS_SESSION_BUS_ADDRESS: 'unix:path=' + join(root, 'bus'),
@@ -34,11 +35,12 @@ it('keeps literal paths, actual markers and only selected variables in the manag
       '--quiet',
       '--unit=panels-update-attempt-1',
       '--expand-environment=no',
-      '--property=UnsetEnvironment=NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH',
+      '--property=UnsetEnvironment=NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH VITEST PYTEST_CURRENT_TEST',
     ]);
     assert(argv.includes('--setenv=HOME=' + environment.HOME));
     assert(argv.includes('--setenv=PLAN_DB_PATH=' + environment.PLAN_DB_PATH));
-    assert(argv.includes('--setenv=PYTEST_CURRENT_TEST=retained'));
+    assert(!argv.some((part) => part.startsWith('--setenv=VITEST=')));
+    assert(!argv.some((part) => part.startsWith('--setenv=PYTEST_CURRENT_TEST=')));
     assert.deepEqual(argv.slice(-4), ['--', ...command]);
     assert(!argv.some((part) => part.includes('must not travel')));
     assert.deepEqual(Object.keys(selected_installer_environment(environment)).sort(), [
@@ -48,7 +50,6 @@ it('keeps literal paths, actual markers and only selected variables in the manag
       'LC_NUMERIC',
       'PLAN_DB_PATH',
       'PLAN_TEST_MODE',
-      'PYTEST_CURRENT_TEST',
     ]);
     assert.throws(
       () => installer_transient_command('attempt\n', command, environment),
