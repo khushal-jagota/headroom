@@ -55,6 +55,13 @@ def _boot_identity() -> str | None:
 
 def host_boot_identity() -> LocalHostBootIdentity | None:
     """A stable machine identity keeps a copied database from proving another host stopped."""
+    if sys.platform == "darwin":
+        from planner.platform_runtime.darwin.worker_processes import DarwinWorkerProcesses
+
+        try:
+            return DarwinWorkerProcesses().host_boot(time.monotonic() + 5)
+        except (OSError, ValueError, TimeoutError):
+            return None
     boot = _boot_identity()
     if not boot:
         return None
@@ -63,18 +70,6 @@ def host_boot_identity() -> LocalHostBootIdentity | None:
             machine = Path("/etc/machine-id").read_text().strip().lower()
             if re.fullmatch(r"[0-9a-f]{32}", machine):
                 return LocalHostBootIdentity(f"linux:{machine}", boot)
-        elif sys.platform == "darwin":
-            result = subprocess.run(
-                ["/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-                env={**os.environ, "LC_ALL": "C"},
-            )
-            match = re.search(r'"IOPlatformUUID"\s*=\s*"([0-9A-Fa-f-]{36})"', result.stdout)
-            if result.returncode == 0 and match is not None:
-                return LocalHostBootIdentity(f"darwin:{match[1].lower()}", boot)
     except (OSError, subprocess.TimeoutExpired):
         pass
     return None

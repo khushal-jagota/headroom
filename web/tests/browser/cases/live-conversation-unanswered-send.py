@@ -115,14 +115,14 @@ _NOT_LATEST = "()=>document.querySelector('[data-conversation-thread]')?.dataset
 def _settle(page, until=None, arg=None, *, label=""):
     """Wait for the end state a step needs, then for the pane to settle.
 
-    A timeout proceeds to the step's own assertions, which report the state.
+    A timeout reports the unsettled state before another action can hide it.
     """
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
     page.evaluate("window.__settled={stable:0,key:null}")
     try:
         page.wait_for_function(_SETTLED, arg={"frames": _SETTLED_FRAMES, "until": until, "arg": arg}, polling="raf", timeout=5_000)
-    except PlaywrightTimeoutError:
-        print("SETTLE_TIMEOUT", label, until, page.evaluate("window.__settled"), flush=True)
+    except PlaywrightTimeoutError as error:
+        raise AssertionError(("SETTLE_TIMEOUT", label, until, page.evaluate("window.__settled"))) from error
 
 
 def _frames(page, count):

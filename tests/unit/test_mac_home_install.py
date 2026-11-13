@@ -66,10 +66,16 @@ def test_release_jobs_read_the_current_app_and_keep_provider_guard(
     assert main["ProgramArguments"] == [str(home / "app/bin/panels"), "serve"]
     assert backup["ProgramArguments"][-2:] == ["--current-app", str(home / "app")]
     assert "PLAN_APP_SHA" not in main["EnvironmentVariables"]
-    assert main["EnvironmentVariables"]["PATH"].split(os.pathsep) == [
+    search_path = main["EnvironmentVariables"]["PATH"].split(os.pathsep)
+    assert search_path[:2] == [
         str(home / "app/agent_backends/node_modules/.bin"), str(home / "app/.venv/bin"),
-        "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
     ]
+    assert set(search_path) >= {
+        str(Path.home() / ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin",
+        "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+    }
+    assert "/build/icu/bin" not in search_path
+    assert "/production/executor/bin" not in search_path
     assert backup["EnvironmentVariables"] == main["EnvironmentVariables"]
     assert "--deployed-revision" not in backup["ProgramArguments"]
     config = json.loads((home / "data/config.yaml").read_text())
@@ -85,6 +91,13 @@ def test_release_jobs_read_the_current_app_and_keep_provider_guard(
     monkeypatch.setattr("scripts.mac_home_install.account_skill_provisioning_conflict", occupied)
     codex = tmp_path / "canonical codex"
     monkeypatch.setenv("CODEX_HOME", str(codex))
+    provider_bin = tmp_path / "provider/bin"
+    provider_bin.mkdir(parents=True)
+    executable = provider_bin / "codex"
+    executable.write_text("#!/bin/sh\nexit 0\n")
+    executable.chmod(0o700)
+    monkeypatch.setenv("PATH", str(provider_bin) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("PLAN_CLAUDE_EXECUTABLE", str(provider_bin / "custom-claude"))
     normal = tmp_path / "normal home"
     install_home(normal, tmp_path / "archive", "a" * 64, "a" * 40,
                  "com.panels.normal", 9877, Path(sys.executable))
@@ -92,6 +105,11 @@ def test_release_jobs_read_the_current_app_and_keep_provider_guard(
     normal_job = plistlib.loads((normal / "agents/com.panels.normal.plist").read_bytes())
     assert configured["provision_account_skills"] is True
     assert normal_job["EnvironmentVariables"]["CODEX_HOME"] == str(codex)
+    assert normal_job["EnvironmentVariables"]["PLAN_CLAUDE_EXECUTABLE"] == str(
+        provider_bin / "custom-claude"
+    )
+    assert str(provider_bin) in normal_job["EnvironmentVariables"]["PATH"].split(os.pathsep)
+    assert "/build/icu/bin" not in normal_job["EnvironmentVariables"]["PATH"].split(os.pathsep)
     assert guards == [normal / "data"]
     assert "Warning: occupied account skills" in capsys.readouterr().out
 
