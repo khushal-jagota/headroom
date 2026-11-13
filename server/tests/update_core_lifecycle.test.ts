@@ -11,7 +11,7 @@ import { createReadAccess } from '../core/database/index.ts';
 import { acquireRuntimeOwnership } from '../core/locks/index.ts';
 import { BackgroundLoops } from '../core/loops.ts';
 import { SqliteProcessConversationSystem } from '../conversation/system.ts';
-import { model_is_enabled } from '../conversation/backend_state.ts';
+import { BackendStateStore } from '../conversation/backend_state.ts';
 import {
   canonical_ticket_execution_refusal,
   conversation_execution_refusal,
@@ -192,8 +192,7 @@ async function owned_server(installer?: Partial<InstallerOperations>) {
       createConversationCore(value) {
         return new SqliteProcessConversationSystem({
           store: value.record.store,
-          model_is_enabled: (backend, model) =>
-            value.database.read((sql) => model_is_enabled(sql, backend, model)),
+          delivery_model_refusal: (backend, model, ticket_id) => new BackendStateStore(value.database).delivery_model_refusal(backend, model, ticket_id),
           execution_refusal: (id) =>
             value.database.read((sql) =>
               conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),

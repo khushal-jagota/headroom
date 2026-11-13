@@ -23,7 +23,7 @@ import {
 } from './conversation/snapshot/composition.ts';
 import { TicketModelSnapshots } from './conversation/snapshot/testing/ticket_models.ts';
 import { makeUsageService } from './conversation/usage/composition.ts';
-import { model_is_enabled } from './conversation/backend_state.ts';
+import { BackendStateStore } from './conversation/backend_state.ts';
 import {
   canonical_ticket_execution_refusal,
   conversation_execution_refusal,
@@ -90,8 +90,7 @@ await startServer({
                 clock.nowUnix(),
               ),
           ),
-          model_is_enabled: (backend_key, model_id) =>
-            database.read((sql) => model_is_enabled(sql, backend_key, model_id)),
+          delivery_model_refusal: (backend_key, model_id, ticket_id) => new BackendStateStore(database).delivery_model_refusal(backend_key, model_id, ticket_id),
         });
       },
   testAreas: (context): readonly Area[] => [

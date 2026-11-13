@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { createDatabase } from '../../../core/database/index.ts';
 import { ConversationStore } from '../../record/data/store.ts';
 import { SqliteProcessConversationSystem } from '../../system.ts';
-import { model_is_enabled } from '../../backend_state.ts';
+import { BackendStateStore } from '../../backend_state.ts';
 import {
   canonical_ticket_execution_refusal,
   conversation_execution_refusal,
@@ -138,8 +138,7 @@ export async function run_part2_parity(spec: Spec): Promise<unknown> {
   const frames: unknown[] = [];
   const core = new SqliteProcessConversationSystem({
     store: new ConversationStore(database, { integer_now: () => now }),
-    model_is_enabled: (backend, model) =>
-      database.read((sql) => model_is_enabled(sql, backend, model)),
+    delivery_model_refusal: (backend, model, ticket_id) => new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),
     execution_refusal: (id) =>
       database.read((sql) =>
         conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),

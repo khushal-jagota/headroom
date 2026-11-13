@@ -1,3 +1,4 @@
+import { ticket_id_of } from '../../executor/routing.ts';
 import { is_memory_notice_sender_message_id } from '../../runtime/worker_memory.ts';
 /** A local prompt crosses the provider boundary once, then settles only its record. */
 import {
@@ -133,13 +134,13 @@ export async function deliver_prompt(
 ): Promise<DeliveryAttempt> {
   const first = batch[0];
   const requested = first.model_change ?? state.record.model;
-  if (
-    requested !== null &&
-    host.options.model_is_enabled(state.record.backend_key, requested) === false
-  ) {
+  const refusal = requested === null ? null : host.options.delivery_model_refusal(
+    state.record.backend_key, requested, ticket_id_of(state.record.resolved_start()),
+  );
+  if (refusal !== null) {
     return result({
       refusal_reason: R.model_resolution_failed,
-      refusal_detail: `Model ${requested} is disabled`,
+      refusal_detail: refusal,
       record_refusal: true,
     });
   }

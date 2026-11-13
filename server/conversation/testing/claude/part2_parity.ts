@@ -12,7 +12,7 @@ import { AgentMessageDeltaFrame, UserInputAnswer } from '../../events.ts';
 import { text_message_content } from '../../message_content.ts';
 import { delivery_fate_json } from '../../http.ts';
 import { install_owned_launch_boundary, selected_node_executable } from './part2_containment.ts';
-import { model_is_enabled } from '../../backend_state.ts';
+import { BackendStateStore } from '../../backend_state.ts';
 import {
   canonical_ticket_execution_refusal,
   conversation_execution_refusal,
@@ -67,8 +67,7 @@ export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
   let liveTarget: 'plain' | 'resume' | null = 'plain';
   const core = new SqliteProcessConversationSystem({
     store,
-    model_is_enabled: (backend, model) =>
-      database.read((sql) => model_is_enabled(sql, backend, model)),
+    delivery_model_refusal: (backend, model, ticket_id) => new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),
     execution_refusal: (id) =>
       database.read((sql) =>
         conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),

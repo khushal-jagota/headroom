@@ -34,7 +34,7 @@ import * as notificationData from '../notifications/data.ts';
 import * as apnsData from '../notifications/apns_data.ts';
 import { startServer } from '../core/start.ts';
 import { SqliteProcessConversationSystem } from '../conversation/system.ts';
-import { model_is_enabled } from '../conversation/backend_state.ts';
+import { BackendStateStore } from '../conversation/backend_state.ts';
 import {
   canonical_ticket_execution_refusal,
   conversation_execution_refusal,
@@ -492,8 +492,7 @@ test('startServer reconciles before core construction and a route collision star
           };
           return new SqliteProcessConversationSystem({
             store: context.record.store,
-            model_is_enabled: (backend, model) =>
-              context.database.read((sql) => model_is_enabled(sql, backend, model)),
+            delivery_model_refusal: (backend, model, ticket_id) => new BackendStateStore(context.database).delivery_model_refusal(backend, model, ticket_id),
             execution_refusal: (id) =>
               context.database.read((sql) =>
                 conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
@@ -559,8 +558,7 @@ test('startServer closes both services after a background start failure while re
           return new SqliteProcessConversationSystem({
             store: context.record.store,
             message_files: new ConversationMessageFiles(path),
-            model_is_enabled: (backend, model) =>
-              context.database.read((sql) => model_is_enabled(sql, backend, model)),
+            delivery_model_refusal: (backend, model, ticket_id) => new BackendStateStore(context.database).delivery_model_refusal(backend, model, ticket_id),
             execution_refusal: (id) =>
               context.database.read((sql) =>
                 conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
