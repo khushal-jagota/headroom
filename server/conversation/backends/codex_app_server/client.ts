@@ -1,5 +1,6 @@
 /** One Codex JSONL wire, correlated replies, and owned child lifetime. */
 import { Buffer } from 'node:buffer';
+import { copy_environment } from '../../../core/environment.ts';
 import {
   JsonNumber,
   parse_numeric_json,
@@ -276,11 +277,7 @@ export class CodexAppServerClient {
       owned = await spawn_codex_process([executable, '--version'], {
         child_processes: this.child_processes,
         environment: {
-          ...Object.fromEntries(
-            Object.entries(process.env).filter(
-              (entry): entry is [string, string] => entry[1] !== undefined,
-            ),
-          ),
+          ...copy_environment(process.env),
           ...environment,
         },
         working_directory,

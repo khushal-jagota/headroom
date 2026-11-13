@@ -1,5 +1,6 @@
 /** The real SDK owns the protocol. Public streams preserve Python's consumed facts. */
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { copy_environment } from '../../../core/environment.ts';
 import { Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { CLAUDE_AGENT_SDK_VERSION, load_claude_sdk } from '../claude_sdk.ts';
@@ -200,10 +201,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
   async connect(): Promise<void> {
     if (this.cleanup_started) throw new Error('a Claude transport cannot reconnect after cleanup');
     if (this.cli !== null) throw new Error('Claude transport is already connected');
-    const overrides: Record<string, string> = {};
-    for (const [key, value] of Object.entries(this.options.env ?? {})) {
-      if (value !== undefined) overrides[key] = value;
-    }
+    const overrides = copy_environment(this.options.env ?? {});
     await ensure_cli_compatible('claude', this.options.pathToClaudeCodeExecutable, {
       environment: overrides,
       working_directory: this.options.cwd,
@@ -211,10 +209,8 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       children: this.options.one_shot_children,
     });
     with_tool_shell_kill_priority(overrides);
-    const environment: Record<string, string> = {};
-    for (const [key, value] of Object.entries(process.env)) {
-      if (key !== 'CLAUDECODE' && value !== undefined) environment[key] = value;
-    }
+    const environment = copy_environment(process.env);
+    delete environment.CLAUDECODE;
     environment.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts';
     Object.assign(environment, overrides);
     // These are the two explicitly accepted migration differences from Python.

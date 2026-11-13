@@ -1,5 +1,6 @@
 /** Model choices come from the selected CLI's startup handshake, without a prompt. */
 import type { OwnedOneShotChildren, StopOptions } from '../../lifecycle/contracts.ts';
+import { copy_environment } from '../../core/environment.ts';
 import { OneShotChildren, stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { load_claude_sdk, CLAUDE_AGENT_SDK_VERSION } from './claude_sdk.ts';
@@ -115,9 +116,7 @@ export async function probe_claude_model_catalog(
     ? AbortSignal.any([children.signal, options.signal])
     : children.signal;
   signal.throwIfAborted();
-  const environment: Record<string, string> = {};
-  for (const [name, value] of Object.entries(options.environment ?? process.env))
-    if (value !== undefined) environment[name] = value;
+  const environment = copy_environment(options.environment ?? process.env);
   const state: {
     owned: OwnedCodexProcess | null;
     cli: Query | null;
