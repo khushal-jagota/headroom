@@ -19,6 +19,10 @@ import {
   VendorSessionCursorRebound,
 } from './backends/contracts.ts';
 import type { BackendEventSink, BackendEventValue, TurnToken } from './backends/contracts.ts';
+import type { BackendChild, ChildReference } from './backends/contracts.ts';
+import type { WireValue } from '../executor/contracts.ts';
+import { integer_value } from '../executor/integers.ts';
+import { ValueError } from '../core/value_error.ts';
 import {
   ConversationBackendKey,
   AnswerFate,
@@ -48,6 +52,10 @@ import {
   ModelChangedEventPayload,
   ModelThinkingFrame,
   ToolCallProgressFrame,
+  PromptEventPayload,
+  PromptDiscardedEventPayload,
+  PromptDeliveryRefusedEventPayload,
+  PromptDeliveryUncertainEventPayload,
 } from './events.ts';
 import type { ConversationLiveTailFrame } from './events.ts';
 import { interpret_backend_event } from './logic/backend_events.ts';
@@ -56,7 +64,13 @@ import { leading_run_that_can_share_a_turn } from './logic/held_line.ts';
 import { require_message_content } from './message_content.ts';
 import type { MessageContent } from './message_content.ts';
 import { ConversationRecord } from './record/contracts.ts';
-import type { RunningTurn, StoredConversationEvent } from './record/contracts.ts';
+import type {
+  RunningTurn,
+  StoredConversationEvent,
+  RecordCommitParticipant,
+  AcceptedRecordEvent,
+  UndeliveredTurnPrompt,
+} from './record/contracts.ts';
 import {
   LifecycleKind as K,
   LifecycleOperation as O,
@@ -73,7 +87,8 @@ import type {
 } from './runtime/contracts.ts';
 import { deliver_prompt, stop_child } from './runtime/delivery.ts';
 import { MODEL_THINKING_PULSE_INTERVAL_SECONDS } from './runtime/configuration.ts';
-import { take_backend_event } from './runtime/backend_events.ts';
+import { take_backend_event, take_backend_event_with_receipt } from './runtime/backend_events.ts';
+import * as remote from './runtime/remote.ts';
 import * as controls from './runtime/controls.ts';
 import * as answers from './runtime/answers.ts';
 import {
@@ -170,7 +185,10 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     if (typeof options.model_is_enabled !== 'function')
       throw new Error('Conversation model admission is required');
     this.options = options;
-    this.background_tasks_left_by_previous_process = options.store.read_live_background_task_ids();
+    const adopted = remote.initialize_retained_runs(this);
+    this.background_tasks_left_by_previous_process = new Map(
+      [...options.store.read_live_background_task_ids()].filter(([id]) => !adopted.has(id)),
+    );
   }
   async tell_agents_of_background_tasks_lost_at_restart(): Promise<void> {
     this.require_runtime_ownership();
@@ -215,6 +233,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     const record = this.options.store.read_conversation(conversation_id);
     if (!record) return null;
     const state = new ConversationState(record);
+    remote.restore_retained_run(this, state);
     this.conversations.set(conversation_id, state);
     return state;
   }
@@ -240,6 +259,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     state: ConversationState,
     work: () => T,
     mutations: readonly RuntimeMutation[] = [],
+    retry_later_at?: number,
   ): Promise<T> {
     let failures = 0;
     let tracked: import('./runtime/contracts.ts').TrackedSaveRetry | null = null;
@@ -273,7 +293,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
           throw error;
         }
       },
-      { shutdown_signal: this.shutdown_controller.signal },
+      { shutdown_signal: this.shutdown_controller.signal, retry_later_at },
     );
     return task.finally(() => tracked?.close());
   }
@@ -573,6 +593,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       prompt_accepted: false,
       messages: [],
       mode: PromptDeliveryMode.queue,
+      shutdown_owned: false,
+      shutdown_fate: null,
     };
     state.model_thinking_shown_at_monotonic = 0;
     state.reserved_turn = reserved;
@@ -598,6 +620,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       );
       delivery = await deliver_prompt(this, state, reservation, batch);
     } catch (error) {
+      if (reservation.shutdown_owned)
+        return reservation.shutdown_fate ?? new PromptDeliveryUncertain();
       if (this.shutting_down) throw error;
       if (error instanceof PromptWriteFailed) {
         await this.record_delivery_uncertainty(state, reservation, batch);
@@ -670,6 +694,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       .map((message) => message.owner_read_through_sequence!);
     const drain_read_through = drain_bounds.length > 0 ? Math.max(...drain_bounds) : null;
     const fate = await state.lock.run(async () => {
+      if (reservation.shutdown_owned)
+        return reservation.shutdown_fate ?? new PromptDeliveryUncertain();
       try {
         if (delivery.refusal_reason !== null) {
           const lifecycle = [
@@ -932,7 +958,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
           return;
         }
         this.enqueue_backend_event(state, async () => {
-          await this.take_backend_event(state, token, event, sink);
+          await this.take_local_backend_event(state, token, event, sink);
         });
       },
     };
@@ -986,13 +1012,161 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       await state.reserved_turn.resolved.promise;
     }
   }
-  async take_backend_event(
+  async take_local_backend_event(
     state: ConversationState,
     token: TurnToken | null,
     event: BackendEventValue,
     expected_sink?: BackendEventSink,
   ): Promise<boolean> {
     return take_backend_event(this, state, token, event, expected_sink);
+  }
+  take_backend_event(
+    turn: WireValue<'TurnToken'> | null,
+    event: BackendEventValue,
+    options: {
+      in_commit?: RecordCommitParticipant<WireValue<'JsonObject'>>;
+      conversation_id?: string;
+      retry_later_at?: number;
+      expected_sink?: BackendEventSink;
+    } = {},
+  ): Promise<AcceptedRecordEvent<WireValue<'JsonObject'>>> {
+    this.require_runtime_ownership();
+    const token = turn === null ? null : remote.admit_remote_turn(turn);
+    if (
+      token !== null &&
+      options.conversation_id !== undefined &&
+      options.conversation_id !== token.conversation_id
+    )
+      throw new ValueError('event conversation conflicts with turn');
+    const id = token?.conversation_id ?? options.conversation_id;
+    if (id === undefined) throw new ValueError('a session event must name its conversation');
+    const state = this.conversation_state(id);
+    if (state === null) throw new ValueError('event names an unknown conversation');
+    return own_settlement(
+      state,
+      take_backend_event_with_receipt(this, state, token, event, options),
+    );
+  }
+  take_answer_application(
+    turn: WireValue<'TurnToken'>,
+    answer_id: string,
+    provider_id: string,
+    kind: string,
+    in_commit: RecordCommitParticipant<WireValue<'JsonObject'>>,
+    options: { retry_later_at?: number } = {},
+  ): Promise<AcceptedRecordEvent<WireValue<'JsonObject'>>> {
+    return remote.take_answer_application(
+      this,
+      remote.admit_remote_turn(turn),
+      answer_id,
+      provider_id,
+      kind,
+      in_commit,
+      options.retry_later_at,
+    );
+  }
+  retained_run(state: ConversationState) {
+    return remote.retained_run(this, state);
+  }
+  fence_replaced_remote_child(
+    reference: ChildReference,
+    options: { retry_later_at?: number } = {},
+  ): Promise<void> {
+    return remote.fence_replaced_remote_child(this, reference, options.retry_later_at);
+  }
+  confirm_remote_child_termination(reference: ChildReference): Promise<void> {
+    return remote.confirm_remote_child_termination(this, reference);
+  }
+  retire_replaced_remote_child(
+    reference: ChildReference,
+    options: { replaced_by: string; undelivered_prompt?: UndeliveredTurnPrompt | null },
+  ): Promise<void> {
+    return remote.retire_replaced_remote_child(
+      this,
+      reference,
+      options.replaced_by,
+      options.undelivered_prompt,
+    );
+  }
+  resume_undelivered_prompt(
+    reference: ChildReference,
+    prompt: UndeliveredTurnPrompt,
+    options: { start_needed: boolean },
+  ): Promise<void> {
+    return remote.resume_undelivered_prompt(this, reference, prompt, options.start_needed);
+  }
+  stop_interrupted_remote_child(reference: ChildReference, child: BackendChild): Promise<void> {
+    return remote.stop_interrupted_remote_child(this, reference, child);
+  }
+  async emit_answer(turn: TurnToken, emit: () => Promise<unknown>): Promise<void> {
+    const state = this.conversation_state(turn.conversation_id);
+    if (state !== null)
+      await state.lock.run(async () => {
+        if (
+          same_turn(state.running_turn?.token ?? null, turn) &&
+          !state.running_turn!.callbacks_revoked
+        )
+          await emit();
+      });
+  }
+  async await_late_steer(
+    conversation_id: string,
+    uncertain_sequence: WireValue<'TurnToken'>['turn_number'],
+    not_delivered: Promise<boolean>,
+  ): Promise<void> {
+    const state = this.conversation_state(conversation_id);
+    if (state === null) return;
+    // Bind the exact SQLite integer without native-number arithmetic or rounding.
+    const sequence = integer_value(uncertain_sequence) as unknown as number;
+    const row = this.options.store.read_event(conversation_id, sequence);
+    if (
+      !(row?.payload instanceof PromptDeliveryUncertainEventPayload) ||
+      row.payload.mode !== PromptDeliveryMode.steer
+    )
+      return;
+    const payload = row.payload;
+    const later = this.options.store.read_events_after(conversation_id, sequence);
+    if (
+      later.some(
+        (event) =>
+          (event.payload instanceof PromptEventPayload ||
+            event.payload instanceof PromptDeliveryRefusedEventPayload ||
+            event.payload instanceof PromptDeliveryUncertainEventPayload ||
+            event.payload instanceof PromptDiscardedEventPayload) &&
+          (payload.sender_message_id !== null
+            ? event.payload.sender_message_id === payload.sender_message_id
+            : event.payload instanceof PromptEventPayload &&
+              isDeepStrictEqual(event.payload.content, payload.content) &&
+              event.payload.sender_label === payload.sender_label),
+      )
+    )
+      return;
+    controls.watch_late_steer(
+      this,
+      state,
+      not_delivered,
+      {
+        held_prompt_id: '',
+        content: payload.content,
+        sender_label: payload.sender_label,
+        model_change: null,
+        reasoning_effort_change: null,
+        reasoning_effort_is_set: false,
+        sender_message_id: payload.sender_message_id,
+        sent_at_unix_milliseconds: payload.sent_at_unix_milliseconds,
+        snapshot_sent_at_unix_milliseconds: 0,
+        sender: payload.sender,
+        recipient: payload.recipient,
+        queue_reason: PromptQueueReason.steer_refused,
+        owner_read_through_sequence: null,
+        acknowledge_owner_on_failure: false,
+        recovery_references: payload.recovery_references,
+        recording_receipt: null,
+        delivery_uncertain: false,
+        system_generated: payload.sender === null,
+      },
+      [],
+    );
   }
   async begin_attempt(
     state: ConversationState,
@@ -1114,6 +1288,10 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     state: ConversationState,
     child: import('./backends/contracts.ts').BackendChild,
   ): Promise<boolean> {
+    if (child.stop_outside_lock) {
+      remote.schedule_child_retirement(this, state, child);
+      return false;
+    }
     // A pending stop remains owned even when the active slot becomes available.
     this.child_stop_ownership.set(child, state);
     if (state.child === child) state.child = null;
@@ -1128,6 +1306,11 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       state.child_is_quarantined = true;
     }
     return stopped;
+  }
+  retire_child_for_rebind(state: ConversationState, child: BackendChild): Promise<boolean> {
+    return child.stop_outside_lock
+      ? remote.schedule_child_retirement(this, state, child, false)
+      : this.discard_child(state, child);
   }
   async automatic_compaction_may_start(state: ConversationState): Promise<boolean> {
     return (

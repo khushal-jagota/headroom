@@ -1,5 +1,11 @@
 /** FIFO process ownership. No lock survives a provider call unless the rule requires it. */
-import type { BackendChild, BackendEventSink, TurnToken } from '../backends/contracts.ts';
+import type {
+  BackendChild,
+  BackendEventSink,
+  TurnToken,
+  ChildReference,
+} from '../backends/contracts.ts';
+import { PlannerError } from '../../core/contracts.ts';
 import type { ConversationRecord, RunningTurn } from '../record/contracts.ts';
 import type { ConversationPhase, Message, ReservedTurn, SenderAdmission } from './contracts.ts';
 
@@ -24,9 +30,31 @@ export class FifoLock {
   get locked(): boolean {
     return this.#locked;
   }
-  async acquire(): Promise<() => void> {
+  async acquire(deadline?: number): Promise<() => void> {
     if (this.#locked) {
-      await new Promise<void>((resolve) => this.#waiters.push(resolve));
+      await new Promise<void>((resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const resume = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        this.#waiters.push(resume);
+        if (deadline !== undefined)
+          timer = setTimeout(
+            () => {
+              const position = this.#waiters.indexOf(resume);
+              if (position < 0) return;
+              this.#waiters.splice(position, 1);
+              reject(
+                new PlannerError(
+                  'retry_later',
+                  'The conversation is still busy with earlier work; send this item again',
+                ),
+              );
+            },
+            Math.max(0, deadline * 1000 - performance.now()),
+          );
+      });
     } else {
       this.#locked = true;
     }
@@ -66,6 +94,9 @@ export class ConversationState {
   last_ended_turn_token: TurnToken | null = null;
   last_ended_turn_was_automatic_compaction = false;
   child: BackendChild | null = null;
+  retained_child_reference: ChildReference | null = null;
+  retirement_task: Promise<boolean> | null = null;
+  retiring_child: BackendChild | null = null;
   child_event_sink: BackendEventSink | null = null;
   readonly steer_settlements = new Set<Deferred<void>>();
   late_steer_generation = 0;

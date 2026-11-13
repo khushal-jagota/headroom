@@ -2,6 +2,32 @@
 import { setTimeout as pause } from 'node:timers/promises';
 import { WRITE_LOCK_RETRY_MILLISECONDS } from './configuration.ts';
 import type { ConversationState } from './state.ts';
+import { PlannerError } from '../../core/contracts.ts';
+
+/** Sender-owned items stop waiting without cancelling the earlier work. */
+export async function retry_later_wait<T>(work: Promise<T>, deadline?: number): Promise<T> {
+  if (deadline === undefined) return work;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new PlannerError(
+                'retry_later',
+                'The conversation is still busy with earlier work; send this item again',
+              ),
+            ),
+          Math.max(0, deadline * 1000 - performance.now()),
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export class LockLease {
   private release_lock: (() => void) | null;
@@ -29,11 +55,15 @@ export class LockLease {
     }
   }
 }
-export async function acquire_after_steers(state: ConversationState): Promise<LockLease> {
+export async function acquire_after_steers(
+  state: ConversationState,
+  deadline?: number,
+): Promise<LockLease> {
   while (true) {
     if (state.closing) throw new DOMException('The operation was aborted', 'AbortError');
-    for (const barrier of [...state.steer_settlements]) await barrier.promise;
-    const release = await state.lock.acquire();
+    for (const barrier of [...state.steer_settlements])
+      await retry_later_wait(barrier.promise, deadline);
+    const release = await state.lock.acquire(deadline);
     if (state.closing) {
       release();
       throw new DOMException('The operation was aborted', 'AbortError');
