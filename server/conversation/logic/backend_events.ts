@@ -44,12 +44,13 @@ export interface InterpretedBackendEvent {
 }
 export function normalized_failure_summary(detail: string | null): string {
   let text = (detail ?? '').trim().replace(/\s+/gu, ' ');
+  // Credential recognition retains control separators even when native display whitespace keeps them.
   // Keep Unicode credential-name boundaries and redaction for dotted/dotless I.
   const assignment =
-    /(["']?(?<![\p{L}\p{N}_])(?:author[iİı]zat[iİı]on|password|ap[iİı][ -]key|(?:[a-z0-9İı]+[_-])*(?:ap[iİı][_-]?key|author[iİı]zat[iİı]on|password|secret|token)(?:[_-][a-z0-9İı]+)*)(?![\p{L}\p{N}_])["']? *[:=] *)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:bearer +)?[^,;}]+)/giu;
+    /(["']?(?<![\p{L}\p{N}_])(?:author[iİı]zat[iİı]on|password|ap[iİı][ \u0085\u001c-\u001f-]key|(?:[a-z0-9İı]+[_-])*(?:ap[iİı][_-]?key|author[iİı]zat[iİı]on|password|secret|token)(?:[_-][a-z0-9İı]+)*)(?![\p{L}\p{N}_])["']?[ \u0085\u001c-\u001f]*[:=][ \u0085\u001c-\u001f]*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:bearer[ \u0085\u001c-\u001f]+)?[^,;}]+)/giu;
   text = text.replace(assignment, '$1[redacted]');
   text = text.replace(
-    /(?<![\p{L}\p{N}_])bearer +(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^ ]+)/giu,
+    /(?<![\p{L}\p{N}_])bearer[ \u0085\u001c-\u001f]+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^ \u0085\u001c-\u001f]+)/giu,
     'Bearer [redacted]',
   );
   if (!text) return 'the turn failed for an unknown reason';
