@@ -79,6 +79,17 @@ compact, hyphenated, braced, and lower-case URN wrappers, plus the underlying he
 integer grammar. Invalid values retain Click's usage error and the stripped value's
 shared Python string representation. Identity remains an independent environment fact.
 
-The lifecycle command table will be bound in the third PR. Executor transport and
-its second command table remain with the executor unit. This package does not
-switch the installed wrapper or deploy an application.
+`operator_commands.ts` binds the lifecycle table after parsing. It passes the
+selected name and invocation environment to the production dependency factory.
+The executable assembles no services. Parsed JSON flags and the watchdog database
+option map to the handler's typed argument names. Raw failure messages pass through
+the same error renderer once, after the separate warning prefix. The hidden task
+diagnostic keeps its literal unsupported transcript.
+
+The entry awaits output writes before normal process completion. An interrupted
+operator returns only after its factory joins actual cleanup. SIGINT uses Python's
+caller-stopped transcript. SIGTERM writes any retained prefix and then retains
+native signal termination. App-build, run, serve, and restart retain their accepted
+temporary refusals until the release-side prerequisites merge in a later Ticket.
+Executor transport and its second command table remain with the executor unit.
+This package does not switch the installed wrapper or deploy an application.
