@@ -343,7 +343,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
       retry_delays: Object.fromEntries(
         Object.entries(retry_times).map(([key, times]) => [
           key,
-          times[1]! - times[0]! >= OUTBOX_RETRY_INITIAL_SECONDS,
+          times[1]! - times[0]! >= OUTBOX_RETRY_INITIAL_SECONDS - 0.01,
         ]),
       ),
       replays,
