@@ -71,31 +71,29 @@ export async function createApp(config: Config, services: AppServices): Promise<
     const health = services.executor.health_payload();
     const present = health.presence === 'present';
     const identity = services.executor.health().identity;
-    return reply
-      .type('application/json')
-      .send(
-        stringify_python_json(
-          {
-            ...health,
-            mode: 'remote',
-            identity:
-              identity === null
-                ? null
-                : {
-                    ...identity,
-                    connection_generation: normalize_integer(
-                      integer_value(identity.connection_generation) > (present ? 1n : 0n)
-                        ? integer_value(identity.connection_generation)
-                        : present
-                          ? 1n
-                          : 0n,
-                    ),
-                  },
-            connection_state: present ? 'ready' : 'disconnected',
-          },
-          { compact: true },
-        ),
-      );
+    return reply.type('application/json').send(
+      stringify_python_json(
+        {
+          ...health,
+          mode: 'remote',
+          identity:
+            identity === null
+              ? null
+              : {
+                  ...identity,
+                  connection_generation: normalize_integer(
+                    integer_value(identity.connection_generation) > (present ? 1n : 0n)
+                      ? integer_value(identity.connection_generation)
+                      : present
+                        ? 1n
+                        : 0n,
+                  ),
+                },
+          connection_state: present ? 'ready' : 'disconnected',
+        },
+        { compact: true },
+      ),
+    );
   });
   for (const area of services.areas ?? [])
     registerArea(app, area, {
