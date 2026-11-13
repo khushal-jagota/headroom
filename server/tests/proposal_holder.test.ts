@@ -144,21 +144,22 @@ test('a_move_puts_a_stranded_proposal_back_in_the_user_review', () => {
     );
     const before = guidanceDigest(db, t.id);
     db.write((tx) => {
-      const guarded: TransactionSql = {
+      const guard = (current: TransactionSql): TransactionSql => ({
+        savepoint: (work) => current.savepoint((nested) => work(guard(nested))),
         get: (sql, p) => {
           if (/\bguidance\b/i.test(sql)) throw new Error('guidance access denied');
-          return tx.get(sql, p);
+          return current.get(sql, p);
         },
         all: (sql, p) => {
           if (/\bguidance\b/i.test(sql)) throw new Error('guidance access denied');
-          return tx.all(sql, p);
+          return current.all(sql, p);
         },
         run: (sql, p) => {
           if (/\bguidance\b/i.test(sql)) throw new Error('guidance access denied');
-          return tx.run(sql, p);
+          return current.run(sql, p);
         },
-      };
-      data.edit_ticket(guarded, t.id, {
+      });
+      data.edit_ticket(guard(tx), t.id, {
         edit: { manager_id: joined },
         title_max_chars: 200,
         principal: OWNER,
