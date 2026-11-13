@@ -15,6 +15,7 @@ import {
 import { basename, dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import koffi from 'koffi';
+import { getSystemErrorName } from 'node:util';
 import type { UpdateAttempt, UpdateAttemptState } from './contracts.ts';
 import { ATTEMPT_FILE_NAME } from './configuration.ts';
 import {
@@ -44,12 +45,30 @@ export function utc_now(): string {
 }
 export function exclusive_lock<T>(path: string, action: () => T): T {
   mkdirSync(dirname(path), { recursive: true });
+  return exclusive_existing_lock(path, action);
+}
+function lock(fd: number, operation: number): void {
+  while (flock(fd, operation) !== 0) {
+    const errno = koffi.errno();
+    if (errno === 4) continue;
+    throw Object.assign(new Error('flock failed'), {
+      errno: -errno,
+      code: getSystemErrorName(-errno),
+      syscall: 'flock',
+    });
+  }
+}
+/** Installer records must not recreate a removed data parent. No await in action. */
+export function exclusive_existing_lock<T>(path: string, action: () => T): T {
   const fd = openSync(path, 'a+');
   try {
-    if (flock(fd, 2) !== 0) throw new Error(`flock failed: errno ${koffi.errno()}`);
-    return action();
+    lock(fd, 2);
+    try {
+      return action();
+    } finally {
+      lock(fd, 8);
+    }
   } finally {
-    flock(fd, 8);
     closeSync(fd);
   }
 }
@@ -73,6 +92,11 @@ export function atomic_write_json(path: string, payload: Record<string, unknown>
   } catch (error) {
     if (!missing(error)) throw error;
   }
+  replace_existing_json(path, payload);
+}
+/** Atomic replacement with Python os.replace semantics in an existing parent. */
+export function replace_existing_json(path: string, payload: Record<string, unknown>): void {
+  const parent = dirname(path);
   const encoded = Buffer.from(canonical_json(payload) + '\n');
   const temporary = join(parent, `.${basename(path)}.${randomUUID()}.tmp`);
   let descriptor: number | undefined;

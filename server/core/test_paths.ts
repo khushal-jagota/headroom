@@ -2,7 +2,7 @@ import { testModeFromEnvironment } from './config.ts';
 /** Test processes must never open ambient application data. */
 import { lstatSync, readlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { isAbsolute, relative, resolve, join, sep } from 'node:path';
+import { basename, dirname, isAbsolute, parse, relative, resolve, join, sep } from 'node:path';
 
 const testRoots = new Set<string>();
 
@@ -38,12 +38,17 @@ export function assert_test_database_path(
 /** The same physical constraint, even when only an explicit invocation is in test mode. */
 export function assert_temporary_path(path: string): string {
   const roots = [resolve(tmpdir()), ...testRoots];
-  const canonicalRoots = roots.map((root) => realpathSync(root));
   const refuse = (): never => {
     throw new Error(
       'Tests can only use databases inside the OS temp folder or a registered test root',
     );
   };
+  const canonicalRoots = roots.map((root) => realpathSync(root));
+  for (const root of [...roots, ...canonicalRoots]) {
+    const filesystem_root = parse(root).root;
+    if (root === filesystem_root || (dirname(root) === filesystem_root && basename(root) !== 'tmp'))
+      refuse();
+  }
   function checked(candidate: string, links = 0): string {
     if (links > 40) refuse();
     const index = [...roots, ...canonicalRoots].findIndex((root) => inside(candidate, root));

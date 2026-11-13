@@ -189,6 +189,29 @@ They do not coordinate same-user programs that change entries concurrently. Ther
 The root-local lock does not serialize a second installation's writes into the same account home.
 The owner must choose that policy before concurrent real use. Never snapshot or restore provider credentials or databases.
 
+## Adapter and catalog handover
+
+The Mac host reuses the Claude, Codex, and Hermes factories with the invocation's shared `child_processes` and `one_shot_children` owners.
+Canonical skills publish before factory creation. The trusted host supplies the real account paths under the restrictions above.
+
+Each Codex native-start factory receives an explicit fresh `RememberedCodexLoginRejection`.
+This matches Python Mac `MacRunner._factory`: rejection memory belongs to that factory and disappears with it.
+The VPS uses durable database memory across factories. The independent machine catalog reads saved login standing without that local rejection memory.
+
+The existing snapshot API materializes the SDK snapshot on the main thread.
+Canonical serialization, retained result bodies, and bounded readers belong to the catalog worker.
+This slice does not put all catalog bulk work off the main thread.
+
+Failed catalog cleanup faults the invocation and retains the native close capability for retry.
+Shutdown retries that close before it joins a dependent process-close barrier.
+The actual join remains incomplete until resource closure. After closure, it still reports the retained failure.
+
+Real Darwin and provider checks remain part of the later separate native Ticket:
+
+1. Check the real account homes, canonical skills, selected model and effort, and fresh provider sessions.
+2. Stop a provider during startup. Check direct-child exit, pipe cleanup, and the shared owners' actual joins.
+3. Exercise a failed catalog close and its retry. Check that neither an optional catalog answer nor a shutdown deadline certifies resource closure.
+
 ## Measure the main-thread database budget
 
 The export-only `spool_burst(parent)` helper in `server/executor/mac/storage/testing/parity.ts` writes 256 near-1 MiB items.
