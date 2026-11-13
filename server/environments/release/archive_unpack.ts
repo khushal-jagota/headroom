@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { constants } from 'node:fs';
-import { chmod, link, mkdir, open, stat, symlink } from 'node:fs/promises';
+import { chmod, link, mkdir, open, symlink } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
@@ -12,6 +12,7 @@ import { createGunzip } from 'node:zlib';
 import { AppValidationError } from './contracts.ts';
 import { validate_app_manifest } from './identity.ts';
 import { ArchiveMembers } from './logic/archive_members.ts';
+import { set_archive_times } from './archive_times.ts';
 import {
   ARCHIVE_MAX_COMPRESSED_BYTES,
   ARCHIVE_MAX_EXPANDED_BYTES,
@@ -127,8 +128,7 @@ async function extract_members(
       constants.O_RDONLY | constants.O_NOFOLLOW,
     );
     try {
-      // Node treats negative numbers as now; numeric strings preserve Unix time.
-      await file.utimes(String(member.mtime), String(member.mtime));
+      set_archive_times(file.fd, member.mtime, fence);
       await file.chmod(member.mode);
       await file.sync();
     } finally {
@@ -145,16 +145,13 @@ async function extract_members(
     const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
       const member = declared.get(path);
-      if (member) await file.utimes(String(member.mtime), String(member.mtime));
+      if (member) set_archive_times(file.fd, member.mtime, fence);
       await file.chmod(path === destination ? 0o700 : (member?.mode ?? 0o700));
       await file.sync();
     } finally {
       await file.close();
     }
   }
-  for (const member of ordinary)
-    if (((await stat(join(destination, member.path))).mode & 0o7777) !== member.mode)
-      throw new AppValidationError('app archive did not preserve permissions');
 }
 export async function unpack_archive_child(
   request: UnpackRequest,
