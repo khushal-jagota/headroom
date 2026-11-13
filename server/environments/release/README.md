@@ -35,3 +35,14 @@ The child uses the existing Koffi dependency for descriptor-based `futimens` bec
 The existing comparison sequence covers synthetic ordinary archives and hostile input. Full real-producer tree equality, timestamp precision, child memory/disk cost, and cancellation evidence remain hosted gates. Each actual Python/TS producer must supply its real archive for Python/TS extraction comparison. Sealed-package evidence must retain every package's own license files and name packages that ship none. Development dependency scans do not prove that inventory. No root notice entry is required for the installed tar dependency.
 
 The fixed stopped-database capture entry publishes unavailable evidence before it takes runtime ownership and reads one zero-wait readonly snapshot. It changes no application rows or schema. The fixed restore entry delegates to the existing stopped restore primitive. Both entries are release payload files. The external installer owns their deadlines and actual process cleanup. Real installer integration and copied-runtime independence remain open gates.
+
+
+Receipt staging binds the receipt hash, complete manifest, and fresh runtime admission before the final sibling rename. A matching retained stage gets fresh admission without another download. Permission-restoring cleanup applies only to the exclusive workspace.
+
+The schema adapter checks the complete v2 frontier through a zero-timeout readonly snapshot. V1 status uses the admitted candidate’s own isolated Python helper. UpdateService awaits that result and fences backup after shutdown. Actual v1 execution and sealed v2 admission remain hosted gates.
+
+VPS Mac readiness constructs one real MacUpdateService with the runtime’s actual store, provider, lazy ready-release callback, and invocation child owner. A genuinely absent executor stays absent. Inspection uses one held descriptor, a bounded hash-first read, and one inflate pass. It creates no spool or output tree. The null-manifest sentinel and last Python marker retain source behavior. Extraction link and mode restrictions do not apply to inspection.
+
+Additional Mac restrictions remain proposed: physical eight-GiB, header and metadata limits, sparse members, closed PAX keys, non-UTF8 paths, and NUL names or PAX values. Global PAX size, numeric forms, strict end padding, and UTF16/32/non-scalar manifest encoding restrictions also remain proposed. Local PAX size and UTF8 BOM remain supported. Node SyntaxError versus Python JSONDecodeError diagnostics remain proposed. Reports retain accepted:false for these observations.
+
+No accepted deviation entry, Mac format change, default factory activation, executor transport, or real producer compatibility claim follows.

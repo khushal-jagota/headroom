@@ -59,6 +59,14 @@ export function parseConfigBoolean(
 export function testModeFromEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
   return parseConfigBoolean(env.PLAN_TEST_MODE ?? '0', 'test_mode');
 }
+/** Update discovery uses the invocation snapshot, without another Config load. */
+export function update_repository_configuration(
+  environment: Readonly<NodeJS.ProcessEnv>,
+): { readonly repository: string; readonly token_file: string } | null {
+  const repository = environment.PLAN_UPDATE_REPOSITORY;
+  const token_file = environment.PLAN_UPDATE_TOKEN_FILE;
+  return repository && token_file ? { repository, token_file } : null;
+}
 export function loadConfig(
   path: string | undefined = undefined,
   env: NodeJS.ProcessEnv = process.env,
