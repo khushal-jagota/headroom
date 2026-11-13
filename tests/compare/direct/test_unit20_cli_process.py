@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -52,7 +53,6 @@ def test_unit20_cli_native_process_boundaries(
             ]
             for result in evidence["entry"][" ".join(argv)]:
                 driver._check_output(result, {"exit_code": 0}, argv, "text", candidate=True)
-            assert direct.returncode == linked.returncode == 0
             assert direct.stdout == linked.stdout and direct.stderr == linked.stderr == b""
         # Close the read end before launch. Unlike head timing, this reliably
         # forces a real EPIPE without depending on pipe capacity or scheduling.
@@ -64,38 +64,28 @@ def test_unit20_cli_native_process_boundaries(
             read_end, write_end = os.pipe()
             os.close(read_end)
             try:
-                child = subprocess.Popen(
+                child = subprocess.run(
                     command,
                     cwd=driver.ROOT,
                     env=env,
                     stdin=subprocess.DEVNULL,
                     stdout=write_end if stream == "stdout" else subprocess.PIPE,
                     stderr=write_end if stream == "stderr" else subprocess.PIPE,
+                    timeout=40,
+                    check=False,
                 )
             finally:
                 os.close(write_end)
-            try:
-                _, stderr = child.communicate(timeout=40)
-            finally:
-                if child.poll() is None:
-                    child.kill()
-                    child.wait(timeout=5)
             evidence["closed_pipe"][name] = {
                 "exit_code": child.returncode,
-                "stderr": (stderr or b"").decode(),
+                "stderr": (child.stderr or b"").decode(),
             }
-        assert (
-            evidence["closed_pipe"]["python"]
-            == evidence["closed_pipe"]["typescript"]
-            == {
-                "exit_code": 1,
-                "stderr": "",
-            }
-        )
-        assert evidence["closed_pipe"]["sigterm"] == {
-            "exit_code": -signal.SIGTERM,
-            "stderr": "",
-        }
+        for name, code in (
+            ("python", 1),
+            ("typescript", 1),
+            ("sigterm", -signal.SIGTERM),
+        ):
+            assert evidence["closed_pipe"][name] == {"exit_code": code, "stderr": ""}
         # A foreign socket at an arbitrary free port cannot borrow this host's
         # valid database/PID handle and reach the metadata or subprocess doors.
         with socket.socket() as foreign:
@@ -152,6 +142,22 @@ def test_unit20_cli_native_process_boundaries(
         assert answers[0]["stdout"] == "" and answers[0]["stderr"].startswith("Warning: ")
         assert "\nerror: " in answers[0]["stderr"]
         assert "\nUse: panels environment backup-current" in answers[0]["stderr"]
+        success = list(failure)
+        success[success.index("--backup-dir") + 1] = str(input_root / "warning-backups")
+        completed = [
+            driver.raw_process([*entry, *success], env, merge_stderr=True)
+            for entry in (driver.PYTHON, driver.TYPESCRIPT)
+        ]
+        combined = [result.stdout.decode() for result in completed]
+        assert all(result.returncode == 0 for result in completed)
+        assert all(
+            text.startswith(answers[0]["stderr"].splitlines()[0] + "\n") for text in combined
+        )
+        basename = r"(?<=/)snapshot-\d{8}T\d{6}Z-[0-9a-f]{8}(?=\n$)"
+        assert re.sub(basename, "snapshot-<generated>", combined[0]) == re.sub(
+            basename, "snapshot-<generated>", combined[1]
+        )
+        assert all(Path(text.splitlines()[-1]).is_dir() for text in combined)
         interrupted = driver.raw_process([*preload, "restart"], env)
         stopped = driver.raw_process([*preload, "serve"], env)
 
@@ -166,6 +172,11 @@ def test_unit20_cli_native_process_boundaries(
         assert stopped.stderr == b"T" * (2 * 1024 * 1024)
         evidence["operators"] = {
             "failure": {"python": answers[0], "typescript": answers[1]},
+            "warning_success": {
+                "python": {"exit_code": completed[0].returncode, "combined": combined[0]},
+                "typescript": {"exit_code": completed[1].returncode, "combined": combined[1]},
+                "snapshot_basename_rule": basename,
+            },
             "sigint": {"python": abort_reference, "typescript": driver.process_answer(interrupted)},
             "sigterm": driver.process_answer(stopped),
         }

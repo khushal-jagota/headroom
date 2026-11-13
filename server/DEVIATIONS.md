@@ -636,6 +636,8 @@ JSON stderr is the existing error envelope with code `unsupported`, the first se
 Await-chain inspection remains deferred. Resource counts do not replace this diagnostic.
 The public CLI prints that callback's literal result. Node's built-in diagnostic report is the operator alternative.
 
+Unexpected operator failures, including cleanup AggregateErrors, print the error text at exit 1 instead of Python's traceback, as accepted by the Manager.
+
 ## VPS file descriptor custody
 
 The accepted executor plan uses Linux procfs descriptors for the VPS file module.

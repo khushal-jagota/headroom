@@ -16,13 +16,14 @@ export async function run(
     for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
     return Buffer.concat(chunks);
   },
+  write_stderr?: Invocation['write_stderr'],
 ): Promise<CommandResult> {
   let invocation: Invocation | undefined;
   try {
     const parsed = parse(argv, commands, environment);
     if (parsed.help)
       return { exit_code: 0, stdout: render_help(parsed.command, commands), stderr: '' };
-    invocation = { ...parsed, environment, stdin };
+    invocation = { ...parsed, environment, stdin, write_stderr };
     switch (parsed.command.path[0]) {
       case 'environment':
       case 'stalls':
@@ -93,7 +94,9 @@ if (is_entrypoint()) {
   process.stdout.on('error', stream_error);
   process.stderr.on('error', stream_error);
   try {
-    const result = await run(process.argv.slice(2));
+    const result = await run(process.argv.slice(2), process.env, undefined, (text) =>
+      write(process.stderr, text),
+    );
     await write(process.stdout, result.stdout);
     await write(process.stderr, result.stderr);
     process.exitCode = result.exit_code;

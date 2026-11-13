@@ -2,7 +2,11 @@
 import { operator_commands } from '../environments/commands.ts';
 import { create_production_operator_dependencies } from '../environments/operator_dependencies.ts';
 import { OperatorInterrupted } from '../environments/command_contracts.ts';
-import type { OperatorArguments, OperatorName } from '../environments/command_contracts.ts';
+import type {
+  CurrentAppCommandDependencies,
+  OperatorArguments,
+  OperatorName,
+} from '../environments/command_contracts.ts';
 import type { CommandResult, Invocation } from './contracts.ts';
 import { command_shape, human_error } from './errors.ts';
 
@@ -25,6 +29,8 @@ async function invoke<Name extends OperatorName>(
     undefined,
     invocation.environment,
   );
+  if (name === 'backup-current')
+    (dependencies as CurrentAppCommandDependencies).write_warning = invocation.write_stderr;
   const result = await operator_commands[name].handler(
     values as OperatorArguments[Name],
     dependencies,
