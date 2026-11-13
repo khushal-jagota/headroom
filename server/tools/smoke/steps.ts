@@ -67,7 +67,7 @@ async function cli_ticket(base: string, id: string, environment: NodeJS.ProcessE
       maxBuffer: 1024 * 1024,
     },
   );
-  const ticket = JSON.parse(stdout) as Json;
+  const ticket = (JSON.parse(stdout) as { header: Json }).header;
   assert.equal(ticket.id, id);
   assert.equal(ticket.title, title);
   return ticket;
@@ -86,7 +86,7 @@ async function review_gate(base: string, ticket_id: string): Promise<void> {
   const review = await api<{ items: Json[] }>('/api/review');
   assert.ok(
     review.items.some(
-      (item) => item.ticket_id === ticket_id && item.review_item_type === 'proposal',
+      (item) => item.ticket_id === ticket_id && item.review_item_type === 'ticket' && item.proposal,
     ),
   );
   await poll(
@@ -114,7 +114,7 @@ export async function smoke_before_restart(
 ): Promise<SmokeState> {
   const api = client(base),
     step = options.step ?? log;
-  const populated = await api<{ tickets: Json[] }>('/api/tickets?limit=5');
+  const populated = await api<{ tickets: Json[] }>('/api/tickets?detail=summary&limit=5');
   assert.ok(populated.tickets.length > 0, 'Expected the populated synthetic seed');
   step('01 populated production reads');
   const ticket = await api('/api/tickets', { title, worker_type: 'coding', locale: 'vps' });

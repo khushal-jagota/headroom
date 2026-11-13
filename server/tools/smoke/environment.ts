@@ -109,9 +109,8 @@ export async function create_environment(
   );
   const actions = [
     {
-      do: 'agent_delta',
-      item_id: 'smoke-answer',
-      text: 'Production smoke reply.',
+      do: 'item_completed',
+      item: { type: 'agentMessage', id: 'smoke-answer', text: 'Production smoke reply.' },
     },
     { do: 'complete', status: 'completed' },
   ];
