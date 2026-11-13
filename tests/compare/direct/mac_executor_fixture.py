@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import re
 import signal
 import subprocess
 import time
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+from uuid import UUID
 
 import pytest
+from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
+
+from planner.executor.mac_outbox import MacOutbox
+from planner.executor.protocol import QueuedEnvelope, as_object, type_adapter
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -124,3 +131,40 @@ def report_direct(
                 indent=2,
             )
         )
+
+
+def pending_envelopes(box: MacOutbox) -> list[dict[str, Any]]:
+    rows = [as_object(row) for row in box.pending()]
+    assert len({row["submission_id"] for row in rows}) == len(rows)
+    for index, row in enumerate(rows):
+        assert UUID(cast(str, row["sender_id"])).hex == row["sender_id"]
+        row["sender_id"] = "<sender>"
+        submission = row["submission_id"]
+        if row["kind"] == "backend_event" and re.fullmatch("[a-f0-9]{32}", cast(str, submission)):
+            assert UUID(cast(str, submission)).hex == submission
+            row["submission_id"] = f"event_{index}"
+        type_adapter(QueuedEnvelope).validate_python(row)
+    return rows
+
+
+def paired_fixture(
+    tmp_path: Path,
+    patch: pytest.MonkeyPatch,
+    *,
+    reference: Callable[[Path, pytest.MonkeyPatch], Awaitable[dict[str, Any]]],
+    inputs: Callable[[Path], dict[str, Any]],
+    entry: str,
+    python_timeout: float,
+    node_timeout: int,
+) -> tuple[dict[str, Any], dict[str, Any], Path]:
+    homes = create_synthetic_homes(tmp_path)
+    with synthetic_home_environment(homes), patch.context() as local:
+        expected = asyncio.run(asyncio.wait_for(reference(tmp_path / "py", local), python_timeout))
+    target = tmp_path / "ts"
+    data = inputs(target)
+    target.mkdir(exist_ok=True)
+    (target / "input.json").write_text(json.dumps(data))
+    observed = run_node(entry, target, homes, timeout=node_timeout)
+    (target / "expected.json").write_text(json.dumps(expected, indent=2))
+    (target / "observed.json").write_text(json.dumps(observed, indent=2))
+    return expected, observed, target
