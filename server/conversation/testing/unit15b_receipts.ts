@@ -8,7 +8,7 @@ import { ConversationStartRequest } from '../contracts.ts';
 import { conversation_message_content, delivery_fate_json } from '../http.ts';
 import { text_message_content } from '../message_content.ts';
 import { ScriptedBackendRegistry } from './scripted_registry.ts';
-import { model_is_enabled } from '../backend_state.ts';
+import { BackendStateStore } from '../backend_state.ts';
 import {
   canonical_ticket_execution_refusal,
   conversation_execution_refusal,
@@ -24,8 +24,8 @@ export async function run_receipts(spec: { database: string }): Promise<unknown>
   const files = new ConversationMessageFiles(spec.database);
   const core = new SqliteProcessConversationSystem({
     store,
-    model_is_enabled: (backend, model) =>
-      database.read((sql) => model_is_enabled(sql, backend, model)),
+    delivery_model_refusal: (backend, model, ticket_id) =>
+      new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),
     execution_refusal: (id) =>
       database.read((sql) =>
         conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),

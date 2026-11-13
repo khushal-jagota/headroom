@@ -144,6 +144,18 @@
       "status": 200,
       "area": "worker-settings",
       "json": {}
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/model-list",
+      "status": 200,
+      "json": {
+        "machine": "vps",
+        "backend": "codex",
+        "models": [
+          "gpt-6.1-sol"
+        ]
+      }
     }
   ],
   "requests": [
@@ -534,22 +546,22 @@
     {
       "method": "PUT",
       "path": "/api/workers/comparison_worker/launch-defaults",
-      "status": 200,
-      "area": "worker-settings",
+      "status": 400,
+      "area": "unoffered-model-admission",
       "json": {
         "employee_backend": "codex",
-        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_model": "unoffered-model",
         "employee_launch_reasoning_effort": "high"
       }
     },
     {
       "method": "PUT",
       "path": "/api/workers/chief-of-staff/launch-defaults",
-      "status": 200,
-      "area": "worker-settings",
+      "status": 400,
+      "area": "unoffered-model-admission",
       "json": {
         "employee_backend": "codex",
-        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_model": "unoffered-model",
         "employee_launch_reasoning_effort": "high"
       }
     },
@@ -1398,6 +1410,17 @@
       "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D",
       "status": 200,
       "area": "navigation"
+    },
+    {
+      "area": "unoffered-model-admission",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 400,
+      "json": {
+        "title": "Refused model",
+        "worker_type": "coding",
+        "employee_launch_model": "unoffered-model"
+      }
     }
   ],
   "probes": [

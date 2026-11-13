@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from typing import Protocol
 
-from planner.conversation.backend_state import require_enabled_model
+from planner.conversation.backend_state import require_usable_model
 from planner.conversation.contracts import require_conversation_backend_key
 from planner.core import authority, ticket_blocks
 from planner.core.authority.logic import can_hold_review
@@ -290,7 +290,10 @@ def resolve_ticket_draft_context(
     )
     assert launch_configuration.employee_launch_model is not None
     backend_key = require_conversation_backend_key(launch_configuration.employee_backend)
-    require_enabled_model(conn, backend_key, launch_configuration.employee_launch_model)
+    resolved_locale = resolve_ticket_locale(locale)
+    require_usable_model(
+        conn, backend_key, launch_configuration.employee_launch_model, resolved_locale
+    )
     if manager_id is not None:
         item = conn.execute(
             "SELECT project_id FROM managers WHERE id = ?",
@@ -305,7 +308,6 @@ def resolve_ticket_draft_context(
         blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
 
-    resolved_locale = resolve_ticket_locale(locale)
     return ResolvedTicketCreationContext(resolved_locale, launch_configuration, project_id)
 
 
@@ -959,8 +961,8 @@ def write_employee_configuration(
 
     with _txn(conn):
         registered_backend = require_conversation_backend_key(employee_backend)
-        require_enabled_model(conn, registered_backend, employee_launch_model)
         ticket = _load_ticket_for_write(conn, ticket_id)
+        require_usable_model(conn, registered_backend, employee_launch_model, ticket.locale)
         current = employee_launch_configuration(ticket)
         candidate = EmployeeLaunchConfiguration(
             employee_backend=registered_backend,
