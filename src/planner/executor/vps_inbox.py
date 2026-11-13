@@ -32,7 +32,7 @@ from planner.conversation.backends.contracts import BackendEventValue, TurnToken
 from planner.core.clock import Clock
 from planner.core.config import MAC_ITEM_RETRY_LATER_SECONDS
 from planner.core.contracts import ErrorCode, PlannerError, PrincipalKind
-from planner.core.db import connect
+from planner.core.runtime_connections import runtime_connection
 from planner.core.task_settlement import run_on_worker_thread, wait_for_settlement
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.clock import now_ms
@@ -284,13 +284,10 @@ class InboxStore(VpsDatabase):
         )
 
     def require_sender(self, identity: ExecutorIdentity) -> None:
-        connection = connect(self.db_path)
-        try:
+        with runtime_connection(self.db_path) as connection:
             require_current_incarnation_in_transaction(
                 connection, identity.executor_incarnation, self.machine_id
             )
-        finally:
-            connection.close()
 
     def require_envelope(
         self, envelope: QueuedEnvelope, identity: ExecutorIdentity
@@ -298,8 +295,7 @@ class InboxStore(VpsDatabase):
         child = type_adapter(ChildReference).validate_python(
             envelope_child(envelope.payload)
         )
-        connection = connect(self.db_path)
-        try:
+        with runtime_connection(self.db_path) as connection:
             require_current_incarnation_in_transaction(
                 connection, identity.executor_incarnation, self.machine_id
             )
@@ -310,8 +306,6 @@ class InboxStore(VpsDatabase):
                 raise PlannerError(
                     ErrorCode.agent_forbidden, "item belongs to another conversation"
                 )
-        finally:
-            connection.close()
 
     def file_target(self, manifest: FileManifest) -> Path:
         safe_component(manifest.owner_id)
@@ -356,11 +350,8 @@ class InboxStore(VpsDatabase):
         is refused leaves earlier groups published, as a rename that survived a crash
         is; the retry finds them at their targets.
         """
-        connection = connect(self.db_path)
-        try:
+        with runtime_connection(self.db_path) as connection:
             self.require_file_owner(connection, envelope)
-        finally:
-            connection.close()
         ready: list[PublishedFile | None] = []
         uploaded: list[tuple[int, Path, PublishedFile]] = []
         missing: list[FileManifest] = []
@@ -466,11 +457,8 @@ class InboxStore(VpsDatabase):
         the endpoint retains the per-conversation lock across both, and through native
         outcome recording, and must preserve sender dedup IDs.
         """
-        connection = connect(self.db_path)
-        try:
+        with runtime_connection(self.db_path) as connection:
             return self._prior_receipt(connection, envelope, identity)
-        finally:
-            connection.close()
 
     def _prior_receipt(
         self,

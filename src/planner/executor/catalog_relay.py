@@ -10,12 +10,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from contextlib import closing
 from dataclasses import replace
 
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.snapshot import BackendSnapshot
-from planner.core.db import connect
+from planner.core.runtime_connections import runtime_connection
 from planner.core.task_settlement import run_on_worker_thread
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.configuration import MODEL_LIST_LIMIT_SECONDS
@@ -56,9 +55,9 @@ class VpsCatalogRelay:
         return self.runs.owns_conversation(conversation_id)
 
     def retained(self, backend_key: ConversationBackendKey) -> BackendSnapshot | None:
-        # Panels currently has one configured Mac. Its process incarnation changes
-        # on restart, whereas this copy belongs to the machine, including offline.
-        with closing(connect(self.runs.db_path)) as conn:
+        # The saved copy belongs to this machine across process incarnations,
+        # including while that machine is offline.
+        with runtime_connection(self.runs.db_path) as conn:
             row = conn.execute(
                 "SELECT snapshot_json FROM machine_backend_snapshots "
                 "WHERE machine_id=? AND backend_key=?",
@@ -141,7 +140,7 @@ class VpsCatalogRelay:
                 default_reasoning_effort=previous.default_reasoning_effort,
                 models_complete=True,
             )
-        with closing(connect(self.runs.db_path)) as conn:
+        with runtime_connection(self.runs.db_path) as conn:
             conn.execute(
                 "INSERT INTO machine_backend_snapshots VALUES (?,?,?) "
                 "ON CONFLICT(machine_id,backend_key) DO UPDATE "

@@ -27,6 +27,7 @@ from starlette.types import Receive, Scope, Send
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect as database_connect
 from planner.core.response_compression import answers_uncompressed
+from planner.core.runtime_connections import runtime_connection
 from planner.core.task_settlement import run_on_worker_thread
 from planner.environments.mac_updates import MacUpdateService
 from planner.environments.update_attempts import UpdateConflict
@@ -183,15 +184,12 @@ def build_executor_router() -> APIRouter:
         raise PlannerError(ErrorCode.retry_later, "executor endpoint unavailable")
 
     def authenticate(connection: HTTPConnection, claimed_id: str) -> str:
-        conn = database_connect(database_path(connection))
-        try:
+        with runtime_connection(database_path(connection)) as conn:
             return executor_credentials.authenticate_executor(
                 conn, claimed_id, connection.headers.get(EXECUTOR_CREDENTIAL_HEADER),
                 connection.app.state.executor_id,
                 connection.headers.get(EXECUTOR_INCARNATION_HEADER),
             )
-        finally:
-            conn.close()
 
     async def authenticated_machine(connection: HTTPConnection) -> str:
         try:

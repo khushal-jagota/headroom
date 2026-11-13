@@ -36,6 +36,7 @@ HOST: Final = "127.0.0.1"  # §2: the bind is fixed, not tunable
 DEFAULT_CONFIG_PATH: Final = "config.yaml"
 SSE_HEARTBEAT_MS: Final = 15000
 DB_BUSY_TIMEOUT_MS: Final = 5000
+RUNTIME_DATABASE_CONNECTIONS: Final = 6
 SHUTDOWN_GRACE_SECONDS: Final = 30
 
 _TRUE: Final = frozenset({"1", "true", "yes", "on"})

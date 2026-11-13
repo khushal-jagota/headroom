@@ -55,6 +55,7 @@ from planner.core.response_compression import (
     answers_uncompressed,
     uncompressed_route_patterns,
 )
+from planner.core.runtime_connections import reuse_connections
 from planner.core.sse import change_stream
 from planner.core.task_settlement import run_on_worker_thread
 from planner.core.testmode import build_test_router
@@ -313,7 +314,10 @@ def create_app(
         }
         app.state.executor_registry = executor_registry
         app.state.executor_endpoint = None
-        with register_workspace_root(config.db_path, config.workspace_root):
+        with (
+            reuse_connections(config.db_path),
+            register_workspace_root(config.db_path, config.workspace_root),
+        ):
             from planner.tickets.integrity import TicketIntegrityError
 
             ticket_integrity_faults: list[TicketIntegrityError] = []

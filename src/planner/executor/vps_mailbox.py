@@ -36,7 +36,8 @@ from planner.conversation.lifecycle import (
     LifecycleStatus,
 )
 from planner.conversation.start_admission import AutomaticStartAdmission
-from planner.core.db import commit_without_change_signal, connect
+from planner.core.db import commit_without_change_signal
+from planner.core.runtime_connections import runtime_connection
 from planner.core.sse import register_open_stream_closer
 from planner.core.task_settlement import run_on_worker_thread
 from planner.execution_identity import ChildReference, ExecutorIdentity, TurnToken
@@ -223,159 +224,155 @@ class SqliteCommandMailbox:
     def _insert_child_command(
         self, command: ChildCommand, now: int
     ) -> MailboxCommand | CommandOutcome:
-        connection = connect(self.db_path)
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            require_incarnation_owner(
-                connection, command.child.executor_incarnation, self.machine_id
-            )
-            if isinstance(command.arguments, RecheckCleanup):
+        with runtime_connection(self.db_path) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
                 require_incarnation_owner(
-                    connection,
-                    command.arguments.source.executor_incarnation,
-                    self.machine_id,
+                    connection, command.child.executor_incarnation, self.machine_id
                 )
-            existing = _read_row(connection, command.command_id)
-            if existing is not None:
-                connection.rollback()
-                if existing.command.child_command != command:
-                    raise ValueError("command identity reused with different content")
-                return existing.command
-            child = command.child
-            if isinstance(command.arguments, RecheckCleanup):
-                source = command.arguments.source
-                ticket = connection.execute(
-                    "SELECT conversation_id FROM tickets WHERE id=?",
-                    (command.arguments.ticket_id,),
-                ).fetchone()
-                assignment = connection.execute(
-                    "SELECT principal_kind,principal_id FROM executor_child_assignments "
-                    "WHERE executor_incarnation=? AND child_id=? AND conversation_id=?",
-                    (
-                        source.executor_incarnation,
-                        source.child_id,
-                        source.conversation_id,
-                    ),
-                ).fetchone()
-                authorized = (
+                if isinstance(command.arguments, RecheckCleanup):
+                    require_incarnation_owner(
+                        connection,
+                        command.arguments.source.executor_incarnation,
+                        self.machine_id,
+                    )
+                existing = _read_row(connection, command.command_id)
+                if existing is not None:
+                    connection.rollback()
+                    if existing.command.child_command != command:
+                        raise ValueError("command identity reused with different content")
+                    return existing.command
+                child = command.child
+                if isinstance(command.arguments, RecheckCleanup):
+                    source = command.arguments.source
+                    ticket = connection.execute(
+                        "SELECT conversation_id FROM tickets WHERE id=?",
+                        (command.arguments.ticket_id,),
+                    ).fetchone()
+                    assignment = connection.execute(
+                        "SELECT principal_kind,principal_id FROM executor_child_assignments "
+                        "WHERE executor_incarnation=? AND child_id=? AND conversation_id=?",
+                        (
+                            source.executor_incarnation,
+                            source.child_id,
+                            source.conversation_id,
+                        ),
+                    ).fetchone()
+                    authorized = (
+                        current_incarnation(connection, self.machine_id)
+                        == child.executor_incarnation
+                        and assignment is not None
+                        and tuple(assignment) == ("ticket", command.arguments.ticket_id)
+                        and ticket is not None
+                        and (child.child_id, child.conversation_id)
+                        == (source.child_id, source.conversation_id)
+                    )
+                    if not authorized:
+                        connection.rollback()
+                        return CommandOutcome(
+                            command.command_id,
+                            child,
+                            CommandDisposition.refused,
+                            {"reason": "cleanup_source_not_owned"},
+                        )
+                    # Inspection grants no native start/stop authority. Historical ownership
+                    # remains valid after an older home already closed its source assignment.
+                    placed = self._insert(
+                        connection,
+                        MailboxCommand(0, command.command_id, now, child_command=command),
+                        executor_incarnation=child.executor_incarnation,
+                        conversation_id=child.conversation_id,
+                        child_id=child.child_id,
+                        turn_number=None,
+                    )
+                    connection.commit()
+                    return placed
+                if (
                     current_incarnation(connection, self.machine_id)
-                    == child.executor_incarnation
-                    and assignment is not None
-                    and tuple(assignment) == ("ticket", command.arguments.ticket_id)
-                    and ticket is not None
-                    and (child.child_id, child.conversation_id)
-                    == (source.child_id, source.conversation_id)
-                )
-                if not authorized:
+                    != child.executor_incarnation
+                    or self.store.open_child_assignment(connection, child) is None
+                ):
                     connection.rollback()
                     return CommandOutcome(
                         command.command_id,
                         child,
                         CommandDisposition.refused,
-                        {"reason": "cleanup_source_not_owned"},
+                        {"reason": CommandSettlementReason.executor_process_replaced.value},
                     )
-                # Inspection grants no native start/stop authority. Historical ownership
-                # remains valid after an older home already closed its source assignment.
+                if command.operation in (
+                    ChildOperation.start,
+                    ChildOperation.write_prompt,
+                    ChildOperation.stop,
+                ):
+                    ExecutorStore.prepare_command_in_transaction(connection, command)
+                turn_number = None if command.turn is None else command.turn.turn_number
+                if (
+                    command.operation is ChildOperation.cancel_running_turn
+                    and turn_number is None
+                ):
+                    # The native cancel targets the child's current turn. Keep that turn
+                    # beside its immutable wire command so a retry stays idempotent and a
+                    # later turn cannot acquire this cancel's withdrawal authority.
+                    # A held start can precede its prompt commit. mac_runs still names
+                    # the previous turn there, while the binding names this pending start.
+                    bound = connection.execute(
+                        "SELECT turn_number FROM automatic_start_bindings WHERE conversation_id=? "
+                        "AND executor_incarnation=? AND child_id=? "
+                        "ORDER BY turn_number DESC LIMIT 1",
+                        (child.conversation_id, child.executor_incarnation, child.child_id),
+                    ).fetchone()
+                    if bound is not None:
+                        turn_number = int(bound[0])
+                    else:
+                        row = connection.execute(
+                            "SELECT turn_number FROM mac_runs WHERE conversation_id=? "
+                            "AND executor_incarnation=? AND child_id=?",
+                            (
+                                child.conversation_id,
+                                child.executor_incarnation,
+                                child.child_id,
+                            ),
+                        ).fetchone()
+                        if row is not None and row[0]:
+                            turn_number = int(row[0])
                 placed = self._insert(
                     connection,
                     MailboxCommand(0, command.command_id, now, child_command=command),
                     executor_incarnation=child.executor_incarnation,
                     conversation_id=child.conversation_id,
                     child_id=child.child_id,
-                    turn_number=None,
+                    turn_number=turn_number,
                 )
                 connection.commit()
                 return placed
-            if (
-                current_incarnation(connection, self.machine_id)
-                != child.executor_incarnation
-                or self.store.open_child_assignment(connection, child) is None
-            ):
+            except BaseException:
                 connection.rollback()
-                return CommandOutcome(
-                    command.command_id,
-                    child,
-                    CommandDisposition.refused,
-                    {"reason": CommandSettlementReason.executor_process_replaced.value},
-                )
-            if command.operation in (
-                ChildOperation.start,
-                ChildOperation.write_prompt,
-                ChildOperation.stop,
-            ):
-                ExecutorStore.prepare_command_in_transaction(connection, command)
-            turn_number = None if command.turn is None else command.turn.turn_number
-            if (
-                command.operation is ChildOperation.cancel_running_turn
-                and turn_number is None
-            ):
-                # The native cancel targets the child's current turn. Keep that turn
-                # beside its immutable wire command so a retry stays idempotent and a
-                # later turn cannot acquire this cancel's withdrawal authority.
-                # A held start can precede its prompt commit. mac_runs still names
-                # the previous turn there, while the binding names this pending start.
-                bound = connection.execute(
-                    "SELECT turn_number FROM automatic_start_bindings WHERE conversation_id=? "
-                    "AND executor_incarnation=? AND child_id=? "
-                    "ORDER BY turn_number DESC LIMIT 1",
-                    (child.conversation_id, child.executor_incarnation, child.child_id),
-                ).fetchone()
-                if bound is not None:
-                    turn_number = int(bound[0])
-                else:
-                    row = connection.execute(
-                        "SELECT turn_number FROM mac_runs WHERE conversation_id=? "
-                        "AND executor_incarnation=? AND child_id=?",
-                        (
-                            child.conversation_id,
-                            child.executor_incarnation,
-                            child.child_id,
-                        ),
-                    ).fetchone()
-                    if row is not None and row[0]:
-                        turn_number = int(row[0])
-            placed = self._insert(
-                connection,
-                MailboxCommand(0, command.command_id, now, child_command=command),
-                executor_incarnation=child.executor_incarnation,
-                conversation_id=child.conversation_id,
-                child_id=child.child_id,
-                turn_number=turn_number,
-            )
-            connection.commit()
-            return placed
-        except BaseException:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+                raise
 
     def _insert_model_list_request(
         self, request: ModelListRequest, now: int
     ) -> MailboxCommand:
         from uuid import uuid4
 
-        connection = connect(self.db_path)
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            incarnation = current_incarnation(connection, self.machine_id)
-            if incarnation is None:
-                raise ValueError("no Mac executor process is known")
-            placed = self._insert(
-                connection,
-                MailboxCommand(0, str(uuid4()), now, model_list_request=request),
-                executor_incarnation=incarnation,
-                conversation_id=None,
-                child_id=None,
-                turn_number=None,
-            )
-            commit_without_change_signal(connection)
-            return placed
-        except BaseException:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+        with runtime_connection(self.db_path) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                incarnation = current_incarnation(connection, self.machine_id)
+                if incarnation is None:
+                    raise ValueError("no Mac executor process is known")
+                placed = self._insert(
+                    connection,
+                    MailboxCommand(0, str(uuid4()), now, model_list_request=request),
+                    executor_incarnation=incarnation,
+                    conversation_id=None,
+                    child_id=None,
+                    turn_number=None,
+                )
+                commit_without_change_signal(connection)
+                return placed
+            except BaseException:
+                connection.rollback()
+                raise
 
     def _insert(
         self,
@@ -462,140 +459,140 @@ class SqliteCommandMailbox:
         self, incarnation: str, after: int, now: int, arrived_at: int
     ) -> tuple[MailboxPollReply | None, list[tuple[MailboxCommand, CommandResult]]]:
         """None: the poll has no evidence the Mac is still there, and marked nothing."""
-        connection = connect(self.db_path)
-        try:
-            require_current_incarnation_in_transaction(
-                connection, incarnation, self.machine_id
-            )
-            pending = connection.execute(
-                "SELECT 1 WHERE EXISTS(SELECT 1 FROM executor_commands "
-                "WHERE machine_id=? AND executor_incarnation=? AND command_sequence>? "
-                "AND state IN ('waiting','delivered')) OR EXISTS(SELECT 1 FROM executor_commands "
-                "WHERE machine_id=? AND state='delivered' AND executor_incarnation<>?)",
-                (self.machine_id, incarnation, after, self.machine_id, incarnation),
-            ).fetchone()
-            if pending is None:
-                return MailboxPollReply(()), []
-            connection.execute("BEGIN IMMEDIATE")
-            require_current_incarnation_in_transaction(
-                connection, incarnation, self.machine_id
-            )
-            settled = self._settle_replaced_deliveries(
-                connection, incarnation, after, now
-            )
-            if now - arrived_at > HELD_POLL_EVIDENCE_MS:
-                presence = read_presence(connection, self.machine_id)
-                last_lease = None if presence is None else presence.last_lease_at_ms
-                if last_lease is None or now - last_lease > HELD_POLL_EVIDENCE_MS:
-                    commit_without_change_signal(connection)
-                    return None, settled
-            rows = connection.execute(
-                "SELECT command_sequence,command_json,state,conversation_id "
-                "FROM executor_commands WHERE executor_incarnation=? AND command_sequence>? "
-                "AND state IN ('waiting','delivered') ORDER BY command_sequence LIMIT ?",
-                (incarnation, after, MAX_MAILBOX_POLL_COMMANDS),
-            ).fetchall()
-            facts: dict[str, tuple[LifecycleFact, ...]] = {}
-            answered: list[MailboxCommand] = []
-            moved_conversations: set[str] = set()
-            withdrawn_ids: set[str] = set()
-            withdrawn_turns: set[TurnToken] = set()
-            budget = MAX_MAILBOX_POLL_BYTES - _POLL_REPLY_OVERHEAD_BYTES
-            for sequence, text, state, conversation_id in rows:
-                command = _mailbox_command(text)
-                if command.command_id in withdrawn_ids:
-                    continue
-                if conversation_id in moved_conversations:
-                    continue
-                if state == MailboxCommandState.waiting.value:
-                    if conversation_id is not None and command.command_id not in facts:
-                        facts[command.command_id] = self._expiry_facts(
-                            connection, command
-                        )
-                    reason = expiry_reason(
-                        command, facts.get(command.command_id, ()), now
-                    )
-                    if reason is not None:
-                        result = settlement_result(
-                            command, CommandDisposition.refused, reason
-                        )
-                        connection.execute(
-                            "UPDATE executor_commands SET state='expired',outcome_json=?,"
-                            "finished_at_ms=? WHERE command_sequence=?",
-                            (_json(result), now, sequence),
-                        )
-                        settled.append((command, result))
+        with runtime_connection(self.db_path) as connection:
+            try:
+                require_current_incarnation_in_transaction(
+                    connection, incarnation, self.machine_id
+                )
+                pending = connection.execute(
+                    "SELECT 1 WHERE EXISTS(SELECT 1 FROM executor_commands "
+                    "WHERE machine_id=? AND executor_incarnation=? AND command_sequence>? "
+                    "AND state IN ('waiting','delivered')) OR EXISTS("
+                    "SELECT 1 FROM executor_commands "
+                    "WHERE machine_id=? AND state='delivered' AND executor_incarnation<>?)",
+                    (self.machine_id, incarnation, after, self.machine_id, incarnation),
+                ).fetchone()
+                if pending is None:
+                    return MailboxPollReply(()), []
+                connection.execute("BEGIN IMMEDIATE")
+                require_current_incarnation_in_transaction(
+                    connection, incarnation, self.machine_id
+                )
+                settled = self._settle_replaced_deliveries(
+                    connection, incarnation, after, now
+                )
+                if now - arrived_at > HELD_POLL_EVIDENCE_MS:
+                    presence = read_presence(connection, self.machine_id)
+                    last_lease = None if presence is None else presence.last_lease_at_ms
+                    if last_lease is None or now - last_lease > HELD_POLL_EVIDENCE_MS:
+                        commit_without_change_signal(connection)
+                        return None, settled
+                rows = connection.execute(
+                    "SELECT command_sequence,command_json,state,conversation_id "
+                    "FROM executor_commands WHERE executor_incarnation=? AND command_sequence>? "
+                    "AND state IN ('waiting','delivered') ORDER BY command_sequence LIMIT ?",
+                    (incarnation, after, MAX_MAILBOX_POLL_COMMANDS),
+                ).fetchall()
+                facts: dict[str, tuple[LifecycleFact, ...]] = {}
+                answered: list[MailboxCommand] = []
+                moved_conversations: set[str] = set()
+                withdrawn_ids: set[str] = set()
+                withdrawn_turns: set[TurnToken] = set()
+                budget = MAX_MAILBOX_POLL_BYTES - _POLL_REPLY_OVERHEAD_BYTES
+                for sequence, text, state, conversation_id in rows:
+                    command = _mailbox_command(text)
+                    if command.command_id in withdrawn_ids:
                         continue
-                child_command = command.child_command
-                start_turn = None if child_command is None else child_command.turn
-                if child_command is not None and isinstance(
-                    child_command.arguments, StartRun
-                ):
-                    bound = connection.execute(
-                        "SELECT turn_number FROM automatic_start_bindings WHERE conversation_id=? "
-                        "AND executor_incarnation=? AND child_id=?",
-                        (
-                            child_command.child.conversation_id,
-                            child_command.child.executor_incarnation,
-                            child_command.child.child_id,
-                        ),
-                    ).fetchone()
-                    if bound is not None:
-                        start_turn = TurnToken(
-                            child_command.child.conversation_id, int(bound[0])
+                    if conversation_id in moved_conversations:
+                        continue
+                    if state == MailboxCommandState.waiting.value:
+                        if conversation_id is not None and command.command_id not in facts:
+                            facts[command.command_id] = self._expiry_facts(
+                                connection, command
+                            )
+                        reason = expiry_reason(
+                            command, facts.get(command.command_id, ()), now
                         )
-                if (
-                    state == MailboxCommandState.waiting.value
-                    and self.start_admission is not None
-                    and child_command is not None
-                    and isinstance(child_command.arguments, (StartRun, WritePrompt))
-                    and start_turn is not None
-                ):
-                    self.start_admission.restore_bindings(connection, start_turn)
-                    if not self.start_admission.allow_dispatch(start_turn):
-                        if self._later_control_stops_delivery(
-                            connection, command, start_turn
-                        ):
-                            withdrawn = self._withdraw_held_delivery(
-                                connection,
-                                command,
-                                start_turn,
-                                now,
+                        if reason is not None:
+                            result = settlement_result(
+                                command, CommandDisposition.refused, reason
                             )
-                            withdrawn_ids.update(
-                                item.command_id for item, _result in withdrawn
+                            connection.execute(
+                                "UPDATE executor_commands SET state='expired',outcome_json=?,"
+                                "finished_at_ms=? WHERE command_sequence=?",
+                                (_json(result), now, sequence),
                             )
-                            withdrawn_turns.add(start_turn)
-                            settled.extend(withdrawn)
+                            settled.append((command, result))
                             continue
-                        if not self._has_later_control(connection, command):
-                            break
-                        if not self._defer_waiting_conversation(connection, command):
-                            break
-                        moved_conversations.add(conversation_id)
-                        continue
-                size = len(text.encode()) + 1
-                if answered and size > budget:
-                    break
-                budget -= size
-                if state == MailboxCommandState.waiting.value:
-                    connection.execute(
-                        "UPDATE executor_commands SET state='delivered',delivered_at_ms=? "
-                        "WHERE command_sequence=?",
-                        (now, sequence),
-                    )
-                answered.append(command)
-            # Delivery and fetch-time expiry change nothing a screen shows.
-            commit_without_change_signal(connection)
-            if self.start_admission is not None:
-                for turn in withdrawn_turns:
-                    self.start_admission.observe(turn)
-            return MailboxPollReply(tuple(answered)), settled
-        except BaseException:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+                    child_command = command.child_command
+                    start_turn = None if child_command is None else child_command.turn
+                    if child_command is not None and isinstance(
+                        child_command.arguments, StartRun
+                    ):
+                        bound = connection.execute(
+                            "SELECT turn_number FROM automatic_start_bindings "
+                            "WHERE conversation_id=? "
+                            "AND executor_incarnation=? AND child_id=?",
+                            (
+                                child_command.child.conversation_id,
+                                child_command.child.executor_incarnation,
+                                child_command.child.child_id,
+                            ),
+                        ).fetchone()
+                        if bound is not None:
+                            start_turn = TurnToken(
+                                child_command.child.conversation_id, int(bound[0])
+                            )
+                    if (
+                        state == MailboxCommandState.waiting.value
+                        and self.start_admission is not None
+                        and child_command is not None
+                        and isinstance(child_command.arguments, (StartRun, WritePrompt))
+                        and start_turn is not None
+                    ):
+                        self.start_admission.restore_bindings(connection, start_turn)
+                        if not self.start_admission.allow_dispatch(start_turn):
+                            if self._later_control_stops_delivery(
+                                connection, command, start_turn
+                            ):
+                                withdrawn = self._withdraw_held_delivery(
+                                    connection,
+                                    command,
+                                    start_turn,
+                                    now,
+                                )
+                                withdrawn_ids.update(
+                                    item.command_id for item, _result in withdrawn
+                                )
+                                withdrawn_turns.add(start_turn)
+                                settled.extend(withdrawn)
+                                continue
+                            if not self._has_later_control(connection, command):
+                                break
+                            if not self._defer_waiting_conversation(connection, command):
+                                break
+                            moved_conversations.add(conversation_id)
+                            continue
+                    size = len(text.encode()) + 1
+                    if answered and size > budget:
+                        break
+                    budget -= size
+                    if state == MailboxCommandState.waiting.value:
+                        connection.execute(
+                            "UPDATE executor_commands SET state='delivered',delivered_at_ms=? "
+                            "WHERE command_sequence=?",
+                            (now, sequence),
+                        )
+                    answered.append(command)
+                # Delivery and fetch-time expiry change nothing a screen shows.
+                commit_without_change_signal(connection)
+                if self.start_admission is not None:
+                    for turn in withdrawn_turns:
+                        self.start_admission.observe(turn)
+                return MailboxPollReply(tuple(answered)), settled
+            except BaseException:
+                connection.rollback()
+                raise
 
     @staticmethod
     def _withdraw_held_delivery(
@@ -856,55 +853,53 @@ class SqliteCommandMailbox:
         recorded: list[str] = []
         rejected: list[RejectedCommandResult] = []
         settled: list[tuple[MailboxCommand, CommandResult]] = []
-        connection = connect(self.db_path)
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            require_current_incarnation_in_transaction(
-                connection, incarnation, self.machine_id
-            )
-            for result in results:
-                row = _read_row(connection, result.command_id)
-                reason = self._result_refusal(row, result, incarnation)
-                if reason is not None:
-                    rejected.append(RejectedCommandResult(result.command_id, reason))
-                    continue
-                assert row is not None
-                recorded.append(result.command_id)
-                if row.state is MailboxCommandState.finished:
-                    continue  # The first result written wins.
-                child_command = row.command.child_command
-                outcome = result.child_outcome
-                if (
-                    child_command is not None
-                    and child_command.operation is ChildOperation.stop
-                    and outcome is not None
-                    and outcome.disposition is CommandDisposition.succeeded
-                ):
-                    # A stop is proven only by its accepted child_stopped item. Its result
-                    # is kept, and the row stays open until that proof arrives.
+        with runtime_connection(self.db_path) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                require_current_incarnation_in_transaction(
+                    connection, incarnation, self.machine_id
+                )
+                for result in results:
+                    row = _read_row(connection, result.command_id)
+                    reason = self._result_refusal(row, result, incarnation)
+                    if reason is not None:
+                        rejected.append(RejectedCommandResult(result.command_id, reason))
+                        continue
+                    assert row is not None
+                    recorded.append(result.command_id)
+                    if row.state is MailboxCommandState.finished:
+                        continue  # The first result written wins.
+                    child_command = row.command.child_command
+                    outcome = result.child_outcome
+                    if (
+                        child_command is not None
+                        and child_command.operation is ChildOperation.stop
+                        and outcome is not None
+                        and outcome.disposition is CommandDisposition.succeeded
+                    ):
+                        # A stop is proven only by its accepted child_stopped item. Its result
+                        # is kept, and the row stays open until that proof arrives.
+                        connection.execute(
+                            "UPDATE executor_commands SET outcome_json=COALESCE(outcome_json,?),"
+                            "state='delivered',delivered_at_ms=COALESCE(delivered_at_ms,?) "
+                            "WHERE command_id=?",
+                            (_json(result), now, result.command_id),
+                        )
+                        continue
                     connection.execute(
-                        "UPDATE executor_commands SET outcome_json=COALESCE(outcome_json,?),"
-                        "state='delivered',delivered_at_ms=COALESCE(delivered_at_ms,?) "
-                        "WHERE command_id=?",
+                        "UPDATE executor_commands SET state='finished',outcome_json=?,"
+                        "finished_at_ms=? WHERE command_id=?",
                         (_json(result), now, result.command_id),
                     )
-                    continue
-                connection.execute(
-                    "UPDATE executor_commands SET state='finished',outcome_json=?,"
-                    "finished_at_ms=? WHERE command_id=?",
-                    (_json(result), now, result.command_id),
-                )
-                if child_command is not None and outcome is not None:
-                    ExecutorStore.record_prompt_outcome_in_transaction(
-                        connection, child_command, outcome
-                    )
-                settled.append((row.command, result))
-            connection.commit()
-        except BaseException:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+                    if child_command is not None and outcome is not None:
+                        ExecutorStore.record_prompt_outcome_in_transaction(
+                            connection, child_command, outcome
+                        )
+                    settled.append((row.command, result))
+                connection.commit()
+            except BaseException:
+                connection.rollback()
+                raise
         return CommandOutcomeReply(tuple(recorded), tuple(rejected)), settled
 
     @staticmethod
@@ -960,11 +955,8 @@ class SqliteCommandMailbox:
                 self._waiters.pop(command_id, None)
 
     def _settled_row(self, command_id: str) -> MailboxRow | None:
-        connection = connect(self.db_path)
-        try:
+        with runtime_connection(self.db_path) as connection:
             row = _read_row(connection, command_id)
-        finally:
-            connection.close()
         return row if row is not None and row.state.value in _SETTLED_STATES else None
 
     def _settled(self, settled: Iterable[tuple[MailboxCommand, CommandResult]]) -> None:
@@ -984,27 +976,26 @@ class SqliteCommandMailbox:
     def _withdraw(
         self, command_id: str, reason: CommandSettlementReason, now: int
     ) -> list[tuple[MailboxCommand, CommandResult]]:
-        connection = connect(self.db_path)
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            row = _read_row(connection, command_id)
-            if row is None or row.state is not MailboxCommandState.waiting:
+        with runtime_connection(self.db_path) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                row = _read_row(connection, command_id)
+                if row is None or row.state is not MailboxCommandState.waiting:
+                    connection.rollback()
+                    return []
+                # A withdrawn row is proof the command never ran.
+                result = settlement_result(row.command, CommandDisposition.refused, reason)
+                connection.execute(
+                    "UPDATE executor_commands "
+                    "SET state='withdrawn',outcome_json=?,finished_at_ms=? "
+                    "WHERE command_id=? AND state='waiting'",
+                    (_json(result), now, command_id),
+                )
+                commit_without_change_signal(connection)
+                return [(row.command, result)]
+            except BaseException:
                 connection.rollback()
-                return []
-            # A withdrawn row is proof the command never ran.
-            result = settlement_result(row.command, CommandDisposition.refused, reason)
-            connection.execute(
-                "UPDATE executor_commands SET state='withdrawn',outcome_json=?,finished_at_ms=? "
-                "WHERE command_id=? AND state='waiting'",
-                (_json(result), now, command_id),
-            )
-            commit_without_change_signal(connection)
-            return [(row.command, result)]
-        except BaseException:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+                raise
 
     async def finish_by_proof(self, command_id: str, outcome: CommandOutcome) -> None:
         """Settle a stop by its accepted child_stopped item."""
@@ -1014,26 +1005,24 @@ class SqliteCommandMailbox:
     def _finish_by_proof(
         self, command_id: str, outcome: CommandOutcome
     ) -> list[tuple[MailboxCommand, CommandResult]]:
-        connection = connect(self.db_path)
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            row = _read_row(connection, command_id)
-            if row is None or row.state.value in _SETTLED_STATES:
+        with runtime_connection(self.db_path) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                row = _read_row(connection, command_id)
+                if row is None or row.state.value in _SETTLED_STATES:
+                    connection.rollback()
+                    return []
+                result = row.result or CommandResult(command_id, child_outcome=outcome)
+                connection.execute(
+                    "UPDATE executor_commands SET state='finished',outcome_json=?,finished_at_ms=? "
+                    "WHERE command_id=?",
+                    (_json(result), self._clock(), command_id),
+                )
+                connection.commit()
+                return [(row.command, result)]
+            except BaseException:
                 connection.rollback()
-                return []
-            result = row.result or CommandResult(command_id, child_outcome=outcome)
-            connection.execute(
-                "UPDATE executor_commands SET state='finished',outcome_json=?,finished_at_ms=? "
-                "WHERE command_id=?",
-                (_json(result), self._clock(), command_id),
-            )
-            connection.commit()
-            return [(row.command, result)]
-        except BaseException:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+                raise
 
     def replace_incarnation_in_transaction(
         self, conn: sqlite3.Connection, *, replaced: str, current: str, now_ms: int
@@ -1071,34 +1060,27 @@ class SqliteCommandMailbox:
     def high_sequence(self) -> int:
         """The highest command_sequence, kept in memory once read."""
         if self._high_sequence is None:
-            connection = connect(self.db_path)
-            try:
+            with runtime_connection(self.db_path) as connection:
                 self._high_sequence = connection.execute(
                     "SELECT COALESCE(MAX(command_sequence),0) FROM executor_commands WHERE "
                     "machine_id=?",
                     (self.machine_id,),
                 ).fetchone()[0]
-            finally:
-                connection.close()
         return self._high_sequence
 
     def command_row(self, command_id: str) -> MailboxRow | None:
         """Blocking: call on a worker thread."""
-        connection = connect(self.db_path)
-        try:
+        with runtime_connection(self.db_path) as connection:
             row = _read_row(connection, command_id)
             if row is not None:
                 require_incarnation_owner(
                     connection, row.executor_incarnation, self.machine_id
                 )
             return row
-        finally:
-            connection.close()
 
     def open_command_ids_of(self, child: ChildReference) -> tuple[str, ...]:
         """The child's rows not yet settled. Blocking."""
-        connection = connect(self.db_path)
-        try:
+        with runtime_connection(self.db_path) as connection:
             return tuple(
                 row[0]
                 for row in connection.execute(
@@ -1107,8 +1089,6 @@ class SqliteCommandMailbox:
                     (child.executor_incarnation, child.child_id),
                 )
             )
-        finally:
-            connection.close()
 
     def prompt_withdrawn_at_replacement(
         self, child: ChildReference, turn_number: int
@@ -1116,8 +1096,7 @@ class SqliteCommandMailbox:
         """The turn's prompt, if its row was withdrawn because its process was replaced
         and the child was never asked to cancel: proof that it never reached an agent.
         Blocking."""
-        connection = connect(self.db_path)
-        try:
+        with runtime_connection(self.db_path) as connection:
             row = connection.execute(
                 "SELECT command_json FROM executor_commands WHERE executor_incarnation=? "
                 "AND child_id=? AND operation='write_prompt' AND turn_number=? "
@@ -1134,8 +1113,6 @@ class SqliteCommandMailbox:
                     child.child_id,
                 ),
             ).fetchone()
-        finally:
-            connection.close()
         command = None if row is None else _mailbox_command(row[0]).child_command
         if command is None or not isinstance(command.arguments, WritePrompt):
             return None
@@ -1148,8 +1125,7 @@ class SqliteCommandMailbox:
         earlier child at its process's replacement: each was made to write it again.
         Each is (child, turn, prompt, its prompt row committed, its start row committed).
         Blocking."""
-        connection = connect(self.db_path)
-        try:
+        with runtime_connection(self.db_path) as connection:
             rows = connection.execute(
                 "SELECT r.executor_incarnation,r.child_id,r.conversation_id,r.turn_number,"
                 "c.command_json FROM mac_runs AS r "
@@ -1192,8 +1168,6 @@ class SqliteCommandMailbox:
                     )
                 )
             return tuple(found)
-        finally:
-            connection.close()
 
     def late_steers_left_by_a_restart(
         self,
@@ -1215,8 +1189,7 @@ class SqliteCommandMailbox:
         from planner.conversation.message_content import message_content_text
 
         limit_ms = int(STEER_DELIVERY_LIMIT_SECONDS * 1000)
-        connection = connect(self.db_path)
-        try:
+        with runtime_connection(self.db_path) as connection:
             uncertain = connection.execute(
                 "SELECT e.conversation_id,e.sequence,e.payload FROM conversation_events AS e "
                 "WHERE e.kind='prompt_delivery_uncertain' AND EXISTS(SELECT 1 FROM "
@@ -1287,20 +1260,15 @@ class SqliteCommandMailbox:
                     )
                     break
             return tuple(found)
-        finally:
-            connection.close()
 
     def start_of(self, child: ChildReference) -> ResolvedConversationStart | None:
         """What the child was started with, from its start row. Blocking."""
-        connection = connect(self.db_path)
-        try:
+        with runtime_connection(self.db_path) as connection:
             row = connection.execute(
                 "SELECT command_json FROM executor_commands WHERE child_id=? "
                 "AND operation='start' ORDER BY command_sequence DESC LIMIT 1",
                 (child.child_id,),
             ).fetchone()
-        finally:
-            connection.close()
         command = None if row is None else _mailbox_command(row[0]).child_command
         if command is None or command.child != child or not isinstance(command.arguments, StartRun):
             return None

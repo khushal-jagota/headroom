@@ -15,7 +15,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.core.contracts import ErrorCode, PlannerError
-from planner.core.db import connect
+from planner.core.runtime_connections import runtime_connection
 from planner.execution_identity import ChildReference, TicketLocale
 from planner.executor.protocol import (
     ChildCommand,
@@ -50,24 +50,21 @@ class VpsDatabase:
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
-        connection = connect(self.db_path)
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            yield connection
-            connection.commit()
-        except BaseException:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+        with runtime_connection(self.db_path) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                yield connection
+                connection.commit()
+            except BaseException:
+                connection.rollback()
+                raise
 
 
 class ExecutorStore(VpsDatabase):
     def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
         """Every run, with whether a stop is in the mailbox and whether its process is the
         current one. Only an open run of the current incarnation is adopted live."""
-        connection = connect(self.db_path)
-        try:
+        with runtime_connection(self.db_path) as connection:
             return tuple(
                 RetainedBackendRun(
                     ChildReference(
@@ -89,14 +86,11 @@ class ExecutorStore(VpsDatabase):
                     (self.machine_id,),
                 )
             )
-        finally:
-            connection.close()
 
     def unresolved_runs_of_replaced_incarnations(self) -> tuple[ChildReference, ...]:
         """Runs not closed whose process is no longer the current one: each waits for its
         conversation's items to drain before it is closed."""
-        connection = connect(self.db_path)
-        try:
+        with runtime_connection(self.db_path) as connection:
             return tuple(
                 ChildReference(row[0], row[1], row[2])
                 for row in connection.execute(
@@ -107,8 +101,6 @@ class ExecutorStore(VpsDatabase):
                     (self.machine_id,),
                 )
             )
-        finally:
-            connection.close()
 
     def prepare_command(self, command: ChildCommand) -> None:
         """Commit uncertainty before transport. An old callback cannot reopen custody."""
@@ -251,8 +243,7 @@ class ExecutorStore(VpsDatabase):
 
     def has_closed_child_assignment(self, child: ChildReference) -> bool:
         """Historical identity evidence only; this grants no child/domain authority."""
-        connection = connect(self.db_path)
-        try:
+        with runtime_connection(self.db_path) as connection:
             require_incarnation_owner(
                 connection, child.executor_incarnation, self.machine_id
             )
@@ -264,15 +255,10 @@ class ExecutorStore(VpsDatabase):
                 ).fetchone()
                 is not None
             )
-        finally:
-            connection.close()
 
     def child_assignment(self, child: ChildReference) -> tuple[str, str] | None:
-        connection = connect(self.db_path)
-        try:
+        with runtime_connection(self.db_path) as connection:
             return self.open_child_assignment(connection, child)
-        finally:
-            connection.close()
 
     def open_child_assignment(
         self, connection: sqlite3.Connection, child: ChildReference
