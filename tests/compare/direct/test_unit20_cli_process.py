@@ -128,6 +128,7 @@ def test_unit20_cli_native_process_boundaries(
         # The existing owned host supplies the same private paths and process guard.
         import click
         from tests.support.update_apps import build_app
+
         from planner.cli.main import main
 
         app = build_app(input_root / "operator-app", "a" * 40, "marker")
