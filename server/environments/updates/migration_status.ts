@@ -3,13 +3,14 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
-import { createReadAccess } from '../../core/database/index.ts';
+import { createReadAccess, is_sqlite_error } from '../../core/database/index.ts';
 import { validate_app_manifest } from '../release/identity.ts';
 import { AppValidationError } from '../release/contracts.ts';
 import type { AppManifest } from '../release/contracts.ts';
 import { read_migration_graph, require_node_database_frontier } from '../release/migrations.ts';
 import { RuntimeProbeUnsettled, run_runtime_json_probe } from '../release/admission_process.ts';
 import { RUNTIME_PROBE_TIMEOUT_SECONDS } from '../release/process_configuration.ts';
+import { candidate_tool_path } from '../release/admission.ts';
 import type { InstallerOperations } from './contracts.ts';
 import { PYTHON_SCHEMA_STATUS_PROBE } from './migration_probe.ts';
 import { resolved_path } from '../paths.ts';
@@ -43,7 +44,7 @@ async function python_schema_change_pending(
     await writeFile(join(state, 'config.yaml'), '{}\n', { mode: 0o600 });
     const result = await run_runtime_json_probe(
       [
-        join(root, '.venv/bin/python'),
+        await candidate_tool_path(root, join(root, '.venv/bin/python'), true),
         '-I',
         '-B',
         '-c',
@@ -96,11 +97,16 @@ export function create_migration_status(
   return {
     async require_exact_schema_frontier(database, staged_app) {
       const graph = await read_migration_graph(staged_app);
-      const reader = createReadAccess(database, { busyTimeoutMs: 0 });
       try {
-        reader.read((sql) => require_node_database_frontier(sql, graph));
-      } finally {
-        reader.close();
+        const reader = createReadAccess(database);
+        try {
+          reader.read((sql) => require_node_database_frontier(sql, graph));
+        } finally {
+          reader.close();
+        }
+      } catch (error) {
+        if (is_sqlite_error(error)) throw new AppValidationError((error as Error).message);
+        throw error;
       }
     },
     async schema_change_pending(database, staged_app) {
