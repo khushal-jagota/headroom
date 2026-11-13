@@ -99,6 +99,8 @@ Each conversation starts in one folder and keeps it through resume and restart. 
 
 ## What comes back out
 
+The owner can request a fresh recap from any agent. Chief can request one from any Manager or Ticket. A Manager can request one from its own Tickets. A Ticket cannot request one. The request clears the previous recap and sends the standard Panels instruction with the requester identified.
+
 Automation sends a Ticket its [Worker steps](worker-steps.md), a Manager its goal and wakes ([Managers and Chief](managers.md)), the Chief a recap request, and any interrupted conversation its recovery notice, all through the ordinary send path.
 
 The notebook feeds attention: messages to the owner, open asks, and failures become the marks the rail, [Review](review.md), and [notifications](notifications.md) read. Unread dots and working marks are per conversation, so a child Ticket's dot is not its Manager's. A working mark means a running turn or a running background task. A failed Ticket turn wakes the agent who holds the Ticket's ceiling, or reaches Khushal through attention when he holds it. Gated Ticket text changes only through [proposals](tickets.md#how-a-stage-advances). Files an agent writes are artifacts on disk, not notebook rows. Usage rows feed the cost lines on [Usage](usage.md). An agent asking for an API key is covered by [Credentials](credentials.md).
@@ -120,4 +122,4 @@ The pane reads a stored view that is built from the notebook. When the app conne
 - `src/planner/runtime/conversation_start.py` and `runtime/workspaces.py`: starting a conversation and choosing its folder.
 - `web/src/components/conversation/` and `web/src/lib/conversation/`: the pane and composer.
 
-_Last verified: 2026-11-12._
+_Last verified: 2026-11-13._

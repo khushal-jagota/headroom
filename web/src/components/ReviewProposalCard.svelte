@@ -28,8 +28,7 @@
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import WorkerProposalCard from "./WorkerProposalCard.svelte";
   import ComposerField from "./conversation/ComposerField.svelte";
-  import type { ReviewNoteDelivery } from "../lib/review/noteDelivery";
-  import type { DeliveredMessage } from "../lib/conversation/wire";
+  import type { ReviewDecisionBody } from "../lib/review/decision";
   import {
     createVoiceCapture,
     voiceCaptureAvailable,
@@ -203,21 +202,6 @@
     return result;
   }
 
-  function sendNote(delivery: ReviewNoteDelivery): Promise<DeliveredMessage> {
-    requireVisibleProposal();
-    return mutateJson<DeliveredMessage>(`/api/tickets/${ticketId}/conversation/send`, {
-      method: "POST",
-      body: {
-        conversation_id: delivery.conversationId,
-        content: delivery.message.content,
-        sender_label: delivery.message.senderLabel,
-        mode: delivery.message.mode,
-        sender_message_id: delivery.message.messageId,
-        sent_at_unix_milliseconds: delivery.message.sentAtUnixMilliseconds
-      }
-    });
-  }
-
   function saveTitle(raw: string): Promise<unknown> {
     return write(`/api/tickets/${ticketId}`, {
       method: "PATCH",
@@ -225,9 +209,9 @@
     });
   }
 
-  async function returnProposal(message: string): Promise<void> {
+  async function returnProposal(body: ReviewDecisionBody): Promise<void> {
     const proposalKey = currentKey;
-    await write(`/api/tickets/${ticketId}/reject`, { method: "POST", body: { message } });
+    await write(`/api/tickets/${ticketId}/reject`, { method: "POST", body });
     if (currentKey !== proposalKey) return;
     revisionDraft = "";
     announceResolved();
@@ -298,7 +282,7 @@
         {#if acceptField}
           {#if lc && ticketDetail.pending_proposal}
             {#key `${ticketDetail.pending_proposal.field}:${ticketDetail.pending_proposal.created_at}:${ticketDetail.pending_proposal.revision}:${lc.workerType}:${lc.stageOrder.join(",")}:${lc.ceilingRange.join(",")}`}
-            <WorkerProposalCard {ticketId} conversationId={ticketDetail.conversation_id} onSendNote={sendNote} proposal={ticketDetail.pending_proposal} lifecycle={lc} stage={ticketDetail.stage}
+            <WorkerProposalCard {ticketId} proposal={ticketDetail.pending_proposal} lifecycle={lc} stage={ticketDetail.stage}
               ceiling={ticketDetail.ceiling} holder={ticketDetail.ceiling_holder} manager={reviewManager}
               {initialEditedBody} {onEditedBodyChange} canReturn={Boolean(ticketDetail.conversation_id)}
               onAccept={accept}
@@ -314,7 +298,7 @@
 
       {#snippet revisionEditor()}
         <!-- One line for the Worker, always on the card: Send it back (or Enter here) sends it as the return's
-             guidance, and Approve delivers it to the Worker and then approves. It is the composer's field (ComposerField); speaking
+             guidance, and Approve sends it with the approval. It is the composer's field (ComposerField); speaking
              with words already in the line appends to them. -->
         <div class="review-revise review-arrive review-arrive--4" data-review-revision>
           <ComposerField
