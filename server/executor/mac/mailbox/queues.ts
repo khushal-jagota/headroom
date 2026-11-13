@@ -4,6 +4,7 @@ import { stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
 import * as protocol from '../../protocol.ts';
 import type { CommandResult, MailboxCommand } from '../../wire.generated.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
+import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import { OUTBOX_RETRY_INITIAL_SECONDS, OUTBOX_RETRY_MAX_SECONDS } from '../configuration.ts';
 import { mailbox_failure as failure_name } from './diagnostics.ts';
 import type { CanonicalCatalogResult, QueueDependencies } from './contracts.ts';
@@ -158,6 +159,7 @@ export class MacCommandQueues {
         try {
           snapshot = await catalog.read_result(command.command_id, command.model_list_request!);
         } catch (error) {
+          if (error instanceof ServerLifecycleError) throw error;
           console.warn('Model list read failed:', failure_name(error));
         }
       }

@@ -27,7 +27,7 @@ type Diagnostic =
   | { tag: 'object'; entries: [string, Diagnostic][] }
   | { tag: 'bytes'; value: Uint8Array; buffer: boolean }
   | { tag: 'scalar'; value: unknown };
-function pack(value: unknown): Diagnostic {
+export function pack(value: unknown): Diagnostic {
   if (value instanceof JsonNumber)
     return { tag: 'numeric', kind: value.kind, integer: value.integer, value: value.value };
   if (value instanceof Uint8Array)
@@ -40,7 +40,7 @@ function pack(value: unknown): Diagnostic {
     };
   return { tag: 'scalar', value };
 }
-function unpack(value: Diagnostic): unknown {
+export function unpack(value: Diagnostic): unknown {
   switch (value.tag) {
     case 'numeric':
       return Object.freeze(

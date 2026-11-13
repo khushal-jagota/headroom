@@ -21,6 +21,7 @@ import { BackendStateStore, create_durable_codex_login_rejection } from '../back
 import { SubprocessBackendProbeEnvironment, backend_io_is_test } from './environment.ts';
 import { RecordingBackendProbeEnvironment } from './recording_environment.ts';
 import { observe_shutdown } from '../shutdown.ts';
+import { ModelCatalogCleanupFailed } from '../backends/catalog_cleanup.ts';
 export interface BackendProviders {
   readonly codex: CodexModelCatalogSource | null;
   readonly claude: ClaudeModelCatalogSource | null;
@@ -51,24 +52,53 @@ export function create_backend_runtime(options: {
     reject_resource_join = reject;
   });
   let shutdown_result: Promise<void> | undefined;
+  const cleanup_history: unknown[] = [];
+  const retained_cleanup = (error: unknown): boolean =>
+    error instanceof ModelCatalogCleanupFailed ||
+    (error instanceof AggregateError && error.errors.some(retained_cleanup));
   return {
     shutdown(options = {}) {
       if (shutdown_result === undefined) {
-        // Publish the raw join before either cleanup can reenter shutdown.
-        shutdown_result = resource_join;
-        void Promise.allSettled([
-          Promise.resolve().then(() => environment.shutdown?.()),
-          Promise.resolve().then(() => providers.codex_sign_in?.shutdown()),
-        ]).then((results) => {
-          const failures = results.filter((result) => result.status === 'rejected');
-          if (failures.length)
-            reject_resource_join(
-              new AggregateError(
-                failures.map((failure) => failure.reason),
-                'Backend shutdown failed',
-              ),
+        let resolve_attempt!: () => void, reject_attempt!: (error: unknown) => void;
+        const attempt = new Promise<void>((resolve, reject) => {
+          resolve_attempt = resolve;
+          reject_attempt = reject;
+        });
+        // Publish before either cleanup can reenter shutdown. A failed catalog
+        // close keeps the actual join pending and permits a later cleanup attempt.
+        shutdown_result = attempt;
+        void Promise.resolve().then(async () => {
+          const environment_stop = Promise.allSettled([
+            Promise.resolve().then(() => environment.shutdown?.()),
+          ]);
+          const provider_stop = await Promise.allSettled([
+            Promise.resolve().then(() => providers.codex_sign_in?.shutdown()),
+          ]);
+          // A failed provider close must escape before the common process-close
+          // barrier: that barrier can remain pending until a later close retry.
+          const pending_cleanup = provider_stop.filter(
+            (result): result is PromiseRejectedResult =>
+              result.status === 'rejected' && retained_cleanup(result.reason),
+          );
+          if (pending_cleanup.length) {
+            const error = new AggregateError(
+              pending_cleanup.map((result) => result.reason),
+              'Backend shutdown failed',
             );
+            cleanup_history.push(...pending_cleanup.map((result) => result.reason));
+            if (shutdown_result === attempt) shutdown_result = undefined;
+            reject_attempt(error);
+            return;
+          }
+          const results = [...provider_stop, ...(await environment_stop)];
+          const failures = results.filter((result) => result.status === 'rejected');
+          if (failures.length) {
+            cleanup_history.push(...failures.map((failure) => failure.reason));
+          }
+          if (cleanup_history.length)
+            reject_resource_join(new AggregateError(cleanup_history, 'Backend shutdown failed'));
           else resolve_resource_join();
+          void resource_join.then(resolve_attempt, reject_attempt);
         });
       }
       return observe_shutdown(
