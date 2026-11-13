@@ -15,6 +15,7 @@ from tests.support.update_apps import SHA_B, release
 
 from planner.environments import update_provider
 from planner.environments.runtime_contracts import NodeRuntimeContract
+from planner.environments.update_attempts import parse_release
 from planner.environments.update_contracts import PublishedLinuxExecutorUpdate
 
 DEPLOY = ".github/workflows/deploy.yml"
@@ -107,6 +108,19 @@ def test_absent_optional_workflow_and_linux_artifact_leave_deploy_releases_offer
         "publish-typescript-release.yml": None,
     })
     assert github.available() == published
+    payload = json.loads(json.dumps(asdict(published)))
+    payload["linux_executor"] = {"artifact_id": 99}
+    assert parse_release(payload) == PYTHON_RELEASE
+    payload["linux_executor"] = "malformed"
+    assert parse_release(payload) == PYTHON_RELEASE
+    # Required identities remain strict despite unavailable optional Linux metadata.
+    payload["mac"] = "malformed"
+    with pytest.raises(ValueError, match="Mac publication"):
+        parse_release(payload)
+    payload["mac"] = None
+    payload["manifest"] = "malformed"
+    with pytest.raises(ValueError, match="publication manifest"):
+        parse_release(payload)
     missing_deploy = provider(tmp_path, monkeypatch, listed={
         "deploy.yml": None, "publish-typescript-release.yml": [],
     })

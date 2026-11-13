@@ -58,8 +58,16 @@ def parse_release(payload: dict[str, object]) -> PublishedUpdate:
     if mac is not None and not isinstance(mac, dict):
         raise ValueError("Mac publication must be an object")
     linux = payload.get("linux_executor")
-    if linux is not None and not isinstance(linux, dict):
-        raise ValueError("Linux executor publication must be an object")
+    linux_update = None
+    if isinstance(linux, dict):
+        try:
+            linux_update = PublishedLinuxExecutorUpdate(
+                artifact_id=linux["artifact_id"], archive_sha256=linux["archive_sha256"],
+                archive_size=linux["archive_size"],
+            )
+        except KeyError:
+            # Optional executor metadata cannot invalidate the home publication.
+            pass
     return PublishedUpdate(
         publication_run_id=int(str(payload["publication_run_id"])),
         artifact_id=int(str(payload["artifact_id"])),
@@ -73,10 +81,7 @@ def parse_release(payload: dict[str, object]) -> PublishedUpdate:
         archive_sha256=str(payload["archive_sha256"]),
         schema_floor=str(payload["schema_floor"]),
         expires_at=str(payload["expires_at"]),
-        linux_executor=None if linux is None else PublishedLinuxExecutorUpdate(
-            artifact_id=linux["artifact_id"], archive_sha256=linux["archive_sha256"],
-            archive_size=linux["archive_size"],
-        ),
+        linux_executor=linux_update,
         mac=None if mac is None else PublishedMacUpdate(
             artifact_id=mac["artifact_id"], archive_sha256=mac["archive_sha256"],
             archive_size=mac["archive_size"],
