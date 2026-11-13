@@ -7,7 +7,7 @@ import { is_object } from '../codec.ts';
 import { create_installer_effects, error_detail } from './commands.ts';
 import { install } from './install.ts';
 import { InstallationRecord } from './record.ts';
-import { assert_installer_path } from './configuration.ts';
+import { assert_installer_health_url, assert_installer_path } from './configuration.ts';
 import type { InstallerRequest } from './contracts.ts';
 
 function read_request(path: string): InstallerRequest {
@@ -37,17 +37,26 @@ function read_request(path: string): InstallerRequest {
     (typeof legacy !== 'string' || legacy.length !== 40 || !/^[0-9a-f]{40}$/.test(legacy))
   )
     throw new Error('Invalid admitted legacy SHA');
+  const health_url = text('health_url');
+  assert_installer_health_url(health_url);
   return {
     current_root: absolute('current_root'),
     database: absolute('database'),
     data_directory: absolute('data_directory'),
     attempt_id: text('attempt_id'),
     service_unit: text('service_unit'),
-    health_url: text('health_url'),
+    health_url,
     health_timeout_seconds: timeout,
     node_executable: absolute('node_executable'),
     admitted_legacy_null_sha: legacy,
   };
+}
+function stderr(text: string): void {
+  try {
+    writeSync(2, text);
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'EPIPE')) throw error;
+  }
 }
 async function main(): Promise<0 | 1 | 2> {
   const child_processes = new ChildProcesses(),
@@ -89,7 +98,7 @@ async function main(): Promise<0 | 1 | 2> {
       effects,
       {
         stderr: (text) => {
-          process.stderr.write(text);
+          stderr(text);
         },
       },
       controller.signal,
@@ -102,12 +111,10 @@ async function main(): Promise<0 | 1 | 2> {
       try {
         new InstallationRecord(request).record('failed', 'failed', detail);
       } catch (failure) {
-        process.stderr.write(
-          `Could not record the failed update: ${error_detail(failure).message}\n`,
-        );
+        stderr(`Could not record the failed update: ${error_detail(failure).message}\n`);
       }
     }
-    process.stderr.write(detail + '\n');
+    stderr(detail + '\n');
     return 1;
   } finally {
     child_processes.seal();

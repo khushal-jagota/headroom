@@ -9,9 +9,11 @@ import { stop_one_shot_child } from '../../../lifecycle/one_shot_children.ts';
 import { run_release_command } from '../../release/process.ts';
 import { AppValidationError } from '../../release/contracts.ts';
 import { INSTALLED_RUNTIME_CLASSIFIER_SOURCE } from '../../release/units.ts';
+import { RUNTIME_PROBE_TIMEOUT_SECONDS } from '../../release/process_configuration.ts';
 import { healthy } from './health.ts';
 import {
   assert_installer_path,
+  assert_installer_health_url,
   installer_test_mode,
   SERVICE_COMMAND_TIMEOUT_SECONDS,
   INTERRUPTION_CAPTURE_BUDGET_SECONDS,
@@ -189,6 +191,7 @@ export function create_installer_effects(
   assert_installer_path(request.current_root, execution.environment);
   assert_installer_path(request.database, execution.environment);
   assert_installer_path(request.data_directory, execution.environment);
+  assert_installer_health_url(request.health_url, execution.environment);
   return {
     async service(action) {
       if (installer_test_mode(execution.environment))
@@ -200,9 +203,8 @@ export function create_installer_effects(
       });
     },
     async capture() {
-      const value = phase(execution, INTERRUPTION_CAPTURE_BUDGET_SECONDS);
       try {
-        const selected = await runtime(request, value);
+        const selected = await runtime(request, phase(execution, RUNTIME_PROBE_TIMEOUT_SECONDS));
         const app = join(request.current_root, 'app'),
           capture_id = randomUUID().replaceAll('-', '');
         assert_installer_path(request.database, execution.environment);
@@ -236,7 +238,11 @@ export function create_installer_effects(
               ];
         return {
           kind: 'returned',
-          returncode: await run_installer_command(argv, value, { check: false, output: 'ignore' }),
+          returncode: await run_installer_command(
+            argv,
+            phase(execution, INTERRUPTION_CAPTURE_BUDGET_SECONDS),
+            { check: false, output: 'ignore' },
+          ),
         };
       } catch (error) {
         execution.signal.throwIfAborted();
@@ -285,7 +291,14 @@ export function create_installer_effects(
       await run_installer_command(argv, value, { check: true, output: 'inherit' });
     },
     healthy(sha) {
-      return healthy(request.health_url, sha, request.health_timeout_seconds, execution.signal);
+      assert_installer_health_url(request.health_url, execution.environment);
+      return healthy(
+        request.health_url,
+        sha,
+        request.health_timeout_seconds,
+        execution.signal,
+        execution.environment,
+      );
     },
   };
 }
