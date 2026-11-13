@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import socket
 import subprocess
 import time
@@ -33,6 +34,12 @@ def test_unit20_cli_native_process_boundaries(
         input_root = tmp_path / "input"
         driver._admit(host, input_root)
         env = driver.environment(host, {"actor": "owner"}, input_root)
+        preload = [
+            "node",
+            "--import",
+            str(driver.ROOT / "server/cli/testing/operator_probe.ts"),
+            str(driver.ROOT / "server/cli/main.ts"),
+        ]
         link = tmp_path / "panels"
         link.symlink_to(driver.ROOT / "server/cli/main.ts")
         # Existing host state is populated with default projects. Both executions
@@ -49,17 +56,21 @@ def test_unit20_cli_native_process_boundaries(
             assert direct.stdout == linked.stdout and direct.stderr == linked.stderr == b""
         # Close the read end before launch. Unlike head timing, this reliably
         # forces a real EPIPE without depending on pipe capacity or scheduling.
-        for name, command in (("python", driver.PYTHON), ("typescript", driver.TYPESCRIPT)):
+        for name, command, stream in (
+            ("python", [*driver.PYTHON, "--help"], "stdout"),
+            ("typescript", [*driver.TYPESCRIPT, "--help"], "stdout"),
+            ("sigterm", [*preload, "serve"], "stderr"),
+        ):
             read_end, write_end = os.pipe()
             os.close(read_end)
             try:
                 child = subprocess.Popen(
-                    [*command, "--help"],
+                    command,
                     cwd=driver.ROOT,
                     env=env,
                     stdin=subprocess.DEVNULL,
-                    stdout=write_end,
-                    stderr=subprocess.PIPE,
+                    stdout=write_end if stream == "stdout" else subprocess.PIPE,
+                    stderr=write_end if stream == "stderr" else subprocess.PIPE,
                 )
             finally:
                 os.close(write_end)
@@ -71,7 +82,7 @@ def test_unit20_cli_native_process_boundaries(
                     child.wait(timeout=5)
             evidence["closed_pipe"][name] = {
                 "exit_code": child.returncode,
-                "stderr": stderr.decode(),
+                "stderr": (stderr or b"").decode(),
             }
         assert (
             evidence["closed_pipe"]["python"]
@@ -81,6 +92,10 @@ def test_unit20_cli_native_process_boundaries(
                 "stderr": "",
             }
         )
+        assert evidence["closed_pipe"]["sigterm"] == {
+            "exit_code": -signal.SIGTERM,
+            "stderr": "",
+        }
         # A foreign socket at an arbitrary free port cannot borrow this host's
         # valid database/PID handle and reach the metadata or subprocess doors.
         with socket.socket() as foreign:
@@ -110,6 +125,49 @@ def test_unit20_cli_native_process_boundaries(
                         tmp_path / "refused-input",
                     )
         evidence["foreign_listener"] = "refused before metadata, files or subprocesses"
+        # The existing owned host supplies the same private paths and process guard.
+        import click
+        from tests.support.update_apps import build_app
+        from planner.cli.main import main
+
+        app = build_app(input_root / "operator-app", "a" * 40, "marker")
+        (app / "marker").write_text("changed after manifest")
+        (input_root / "blocked'app").write_text("not a directory")
+        failure = [
+            "environment",
+            "backup-current",
+            "--source-db",
+            str(handle.db_path),
+            "--backup-dir",
+            str(input_root / "blocked'app/backup"),
+            "--current-app",
+            str(app),
+        ]
+        answers = [
+            driver.process_answer(driver.raw_process([*entry, *failure], env))
+            for entry in (driver.PYTHON, driver.TYPESCRIPT)
+        ]
+        assert answers[0] == answers[1] and answers[0]["exit_code"] == 1
+        assert answers[0]["stdout"] == "" and answers[0]["stderr"].startswith("Warning: ")
+        assert "\nerror: " in answers[0]["stderr"]
+        assert "\nUse: panels environment backup-current" in answers[0]["stderr"]
+        interrupted = driver.raw_process([*preload, "restart"], env)
+        stopped = driver.raw_process([*preload, "serve"], env)
+
+        def abort() -> None:
+            click.echo("retained prefix", err=True)
+            raise click.Abort()
+
+        with patch.object(main.commands["restart"], "callback", abort):
+            abort_reference = driver._python_library(["restart"], b"", env)
+        assert driver.process_answer(interrupted) == abort_reference
+        assert stopped.returncode == -signal.SIGTERM and stopped.stdout == b""
+        assert stopped.stderr == b"T" * (2 * 1024 * 1024)
+        evidence["operators"] = {
+            "failure": {"python": answers[0], "typescript": answers[1]},
+            "sigint": {"python": abort_reference, "typescript": driver.process_answer(interrupted)},
+            "sigterm": driver.process_answer(stopped),
+        }
         evidence["transport"] = {}
         _transport_proof(host, tmp_path, env, evidence["transport"])
     finally:

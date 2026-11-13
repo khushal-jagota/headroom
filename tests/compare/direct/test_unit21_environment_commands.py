@@ -23,7 +23,7 @@ from typing import Any
 import click
 import pytest
 from tests.compare.direct.test_unit21_status import _seed
-from tests.compare.direct.unit20_metadata import declarations
+from tests.compare.direct.unit20_cli import _python_library
 from tests.support.synthetic_homes import create_synthetic_homes
 from tests.unit.test_database_backups import _legacy_snapshot
 from tests.unit.test_ticket_scratch import _layout
@@ -140,6 +140,7 @@ def test_unit21_environment_command_function_parity(
         "LANG": "C.UTF-8",
         **create_synthetic_homes(tmp_path),
         "PLAN_TEST_MODE": "1",
+        "PLAN_SERVER_URL": "http://127.0.0.1:0",
     }
     with (
         tempfile.TemporaryDirectory(
@@ -284,8 +285,31 @@ def test_unit21_environment_command_function_parity(
             expected = _python(root, calls, monkeypatch)
             # Both functions see the same original app/status state and private paths.
             (root / "app/manifest.json").unlink()
+            bindings = json.loads(
+                (Path(__file__).with_name("unit20_operators.json"))
+                .read_text()
+                .replace("@root@", str(root))
+            )
+            routing: list[dict[str, Any]] = []
+            aliases = {"as_json": "json", "json_output": "json", "db_path": "db"}
+            from planner.cli.main import main
+
+            for case in bindings:
+                command: Any = main
+                for name in case["path"]:
+                    command = command.commands[name]
+
+                def record(_name: str = case["name"], **values: Any) -> None:
+                    routing.append(
+                        {"name": _name, "args": {aliases.get(k, k): v for k, v in values.items()}}
+                    )
+
+                with monkeypatch.context() as callback:
+                    callback.setattr(command, "callback", record)
+                    parsed = _python_library(case["argv"], b"", environment)
+                assert parsed["exit_code"] == 0, parsed
             spec = root / "calls.json"
-            spec.write_text(json.dumps(dict(root=str(root), calls=calls)))
+            spec.write_text(json.dumps(dict(root=str(root), calls=calls, bindings=bindings)))
             launcher = root / "probe.mjs"
             launcher.write_text(
                 "import{readFileSync}from'node:fs';"
@@ -302,7 +326,7 @@ def test_unit21_environment_command_function_parity(
                 "signals_unchanged:['SIGINT','SIGTERM'].every((s,i)=>process.listenerCount(s)===signals[i])};"
                 "const{command_probe}=await import(process.argv[2]);"
                 "const s=JSON.parse(readFileSync(process.argv[3],'utf8'));"
-                "const result=await command_probe(s.root,s.calls);"
+                "const result=await command_probe(s.root,s.calls,s.bindings);"
                 "const{default:koffi}=await import("
                 "new URL('../../node_modules/koffi/index.js',process.argv[2]));"
                 "const load=koffi.load;let injected=0,acquire_calls=0,actions=0,registry;"
@@ -349,17 +373,7 @@ def test_unit21_environment_command_function_parity(
         assert stable(actual["results"][:-1]) == stable(expected[:-1])
         assert expected[-1] == {"thrown": "DatabaseError"}
         assert actual["results"][-1] == {"thrown": "SqliteError"}
-        expected_table = {
-            row["path"][-1]: row
-            for row in declarations()
-            if not row["group"]
-            and (
-                row["path"][:1] == ["environment"]
-                or row["path"] == ["stalls", "watchdog"]
-                or row["path"] in (["serve"], ["restart"], ["server-event-loop-tasks"])
-            )
-        }
-        assert len(actual["table"]) == 17 and actual["table"] == expected_table
+        assert actual["routing"] == json.loads(json.dumps(routing, default=str))
         operators = actual["operators"]
         assert operators["invocation_home"] == str(root)
         assert operators["unsafe_paths_refused"] == 8
@@ -421,8 +435,13 @@ def test_unit21_environment_command_function_parity(
                     "seconds": time.perf_counter() - started,
                     "boundary": (
                         "Plain Python callback/TS handler streams and error classification. "
-                        "No parser/help, real app validator, dispatcher or host-service acceptance."
+                        "The parser and binder use recorded handlers with real factory selection. "
+                        "No real app validator or host-service acceptance."
                     ),
+                    "routing": {
+                        "python": json.loads(json.dumps(routing, default=str)),
+                        "typescript": actual["routing"],
+                    },
                     "results": actual["results"],
                     "raw_results": actual["raw_results"],
                     "operators": actual["operators"],
