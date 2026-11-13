@@ -9,7 +9,7 @@ import type { ConversationViewRuntime } from '../views/routes.ts';
 import { ConversationViewRebuilder } from '../views/data/rebuild.ts';
 import { ConversationStore } from './data/store.ts';
 import { retained_run_is_unresolved } from './data/lifecycle.ts';
-import type { ConversationStoreOptions } from './contracts.ts';
+import type { ConversationStoreOptions, OpenRunTurn } from './contracts.ts';
 
 export function createConversationRuntime() {
   let runtime: ConversationViewRuntime | undefined;
@@ -24,13 +24,18 @@ export function createConversationRuntime() {
   return {
     getRuntime,
     routes: createConversationViewRoutes(getRuntime),
-    initialize(database: Database, config: Config, options: ConversationStoreOptions = {}): void {
+    initialize(
+      database: Database,
+      config: Config,
+      options: ConversationStoreOptions = {},
+      open_runs: ReadonlyMap<string, OpenRunTurn> = new Map(),
+    ): void {
       if (runtime !== undefined) {
         throw new Error('Conversation record runtime is already initialized');
       }
       // startServer owns the canonical conversation lock before any area initializes.
       const store = new ConversationStore(database, options);
-      database.write((tx) => store.reconcile_in_transaction(tx, new Map()), {
+      database.write((tx) => store.reconcile_in_transaction(tx, open_runs), {
         changeSignal: 'silent',
       });
       const live_tail = new ConversationLiveTail({

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 import pytest
@@ -76,14 +77,19 @@ def test_explicit_ticket_parts_read_only_the_named_retained_field(
                 "stage": "needs_what_changes",
                 "ticket_status": "empty",
                 "project": None,
+                "recap": "Ready.",
                 "recap_preview": "Ready.",
+                "recap_updated_at": None,
             },
         ),
         (
             ("manager", "list"),
             "/api/managers",
             "managers",
-            {"id": "si_one", "title": "One", "settled": False},
+            {
+                "id": "si_one", "title": "One", "settled": False,
+                "recap": "", "recap_updated_at": None,
+            },
         ),
         (
             ("project", "list"),
@@ -167,7 +173,10 @@ def test_manager_state_survives_cli_reads_and_filters(
     monkeypatch: pytest.MonkeyPatch, prefix: tuple[str, ...]
 ) -> None:
     calls: list[dict[str, Any]] = []
-    record: dict[str, Any] = {"id": "si_one", "title": "One", "goal": "Goal", "recap": "Recap"}
+    record: dict[str, Any] = {
+        "id": "si_one", "title": "One", "goal": "Goal", "recap": "Recap",
+        "recap_updated_at": None,
+    }
 
     def send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         calls.append(kwargs["params"])
@@ -296,3 +305,37 @@ def test_ticket_delete_force_and_deferral_need_no_confirmations(
         ("POST", "/api/tickets/t_old/backlog", {}),
         ("POST", "/api/tickets/t_old/resume", {}),
     ]
+
+
+@pytest.mark.parametrize(
+    ("recap", "updated_at", "changed", "expected"),
+    (
+        ("", None, False, "no recap"),
+        ("Historical", None, False, "Historical (recap age unknown)"),
+        ("Current", 89200, False, "Current (recap 3h old)"),
+        ("Previous stage", 89200, True, "Previous stage (recap 3h old, stage changed since)"),
+    ),
+)
+def test_overview_recap_text_exposes_missing_age_and_stage_changes(
+    monkeypatch: pytest.MonkeyPatch,
+    recap: str, updated_at: int | None, changed: bool, expected: str,
+) -> None:
+    monkeypatch.setattr(time, "time", lambda: 100000)
+    assert cli_main._format_recap({
+        "recap": recap, "recap_updated_at": updated_at, "recap_stage_changed": changed,
+    }) == expected
+
+
+@pytest.mark.parametrize("kind", ("ticket", "manager"))
+def test_recap_request_commands_use_the_shared_door(
+    monkeypatch: pytest.MonkeyPatch, kind: str,
+) -> None:
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+    def send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path, kwargs["json_body"]))
+        return {"fate": "queued"}
+    monkeypatch.setattr(http, "send", send)
+    result = CliRunner().invoke(cli_main.main, [kind, "request-recap", "example", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {"fate": "queued"}
+    assert calls == [("POST", "/api/recap-requests", {"target": {"kind": kind, "id": "example"}})]

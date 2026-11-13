@@ -45,6 +45,8 @@ export function broken_ticket(sql: ReadSql, id: string): Json | null {
     ticket_status: 'errored',
     integrity_error: { reason },
     recap: row.recap,
+    recap_updated_at: row.recap_updated_at,
+    recap_stage_changed: Boolean(row.recap_stage_changed),
     conversation_id: row.conversation_id,
     manager_id: row.manager_id,
     manager_kind: row.manager_kind,
@@ -89,6 +91,8 @@ export function ticket_json(ticket: Ticket, _now = 0): Json {
     },
     manager_title: ticket.manager_title,
     recap: ticket.recap,
+    recap_updated_at: ticket.recap_updated_at,
+    recap_stage_changed: ticket.recap_stage_changed,
     ceiling: ticket.ceiling,
     ceiling_holder: ticket.ceiling_holder,
     ticket_status: ticket.ticket_status,
@@ -355,7 +359,10 @@ export function list_ticket_summaries(
       manager_id: v.manager_id,
       manager: { kind: v.manager_kind, id: v.manager_id ?? 'chief' },
       manager_title: row.manager_title,
+      recap: v.recap,
       recap_preview: v.recap_preview,
+      recap_updated_at: v.recap_updated_at,
+      recap_stage_changed: Boolean(v.recap_stage_changed),
     });
   }
   const tickets = matches.slice(page.offset, page.offset + page.limit);

@@ -1,5 +1,5 @@
 import { PlannerError } from '../core/contracts.ts';
-import type { Database, ReadSql } from '../core/database/contracts.ts';
+import type { Database, ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { validate_launch_defaults } from './logic/launch_defaults.ts';
 export { validate_launch_defaults } from './logic/launch_defaults.ts';
 import type { WorkerProfile, WorkerTypeDefinition } from '../worker_types/contracts.ts';
@@ -146,6 +146,12 @@ export function read_chief_settings(sql: ReadSql): ManagedChiefSettings {
   };
 }
 export function update_chief_recap(database: Database, payload: unknown): ManagedChiefSettings {
+  return database.write((tx) => update_chief_recap_in_transaction(tx, payload));
+}
+export function update_chief_recap_in_transaction(
+  tx: TransactionSql,
+  payload: unknown,
+): ManagedChiefSettings {
   if (
     !payload ||
     typeof payload !== 'object' ||
@@ -154,13 +160,11 @@ export function update_chief_recap(database: Database, payload: unknown): Manage
     typeof (payload as Record<string, unknown>).recap !== 'string'
   )
     fail('Chief recap requires exactly one string recap');
-  return database.write((tx) => {
-    tx.run('UPDATE chief_settings SET recap = ? WHERE employee_id = ?', [
-      (payload as { recap: string }).recap,
-      CHIEF_SETTINGS_KEY,
-    ]);
-    return read_chief_settings(tx);
-  });
+  tx.run('UPDATE chief_settings SET recap = ? WHERE employee_id = ?', [
+    (payload as { recap: string }).recap,
+    CHIEF_SETTINGS_KEY,
+  ]);
+  return read_chief_settings(tx);
 }
 export function update_chief_launch_defaults(
   database: Database,

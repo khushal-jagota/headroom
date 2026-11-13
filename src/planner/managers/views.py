@@ -35,6 +35,7 @@ def manager_json(item: Manager) -> JsonDict:
         "settled": item.settled,
         "goal": item.goal,
         "recap": item.recap,
+        "recap_updated_at": item.recap_updated_at,
         "page_revision": item.page_revision,
         "page_character_count": (
             len(json.dumps(item.page, ensure_ascii=False)) if item.page is not None else 0
@@ -94,6 +95,8 @@ def manager_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
                 "title": str(r["title"]),
                 "recap": str(r["recap"]),
                 "recap_preview": recap_preview(str(r["recap"])),
+                "recap_updated_at": r["recap_updated_at"],
+                "recap_stage_changed": bool(r["recap_stage_changed"]),
                 "project_id": r["effective_project_id"],
                 "manager_id": r["manager_id"],
                 "stage": stage,
@@ -192,6 +195,9 @@ def manager_summary(item: Manager) -> ManagerSummary:
         project=item.project_name,
         created_at=item.created_at,
         updated_at=item.updated_at,
+        recap=item.recap,
+        recap_preview=recap_preview(item.recap),
+        recap_updated_at=item.recap_updated_at,
     )
 
 
