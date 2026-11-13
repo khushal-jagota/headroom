@@ -261,22 +261,26 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     for (const entry of entries) entry.retiring = true;
     // Every call retries retained native/publisher close capabilities, even while
     // the original actual chain still joins a provider start that needs that stop.
-    const observe = (operation: () => Promise<void>) =>
+    const observe = (operation: () => Promise<void>, bounded: boolean) =>
       Promise.resolve()
         .then(operation)
         .catch((error) => {
-          if (!(error instanceof ShutdownDeadlineExceeded)) this.record_failure(error);
+          if (!bounded || !(error instanceof ShutdownDeadlineExceeded)) this.record_failure(error);
           throw error;
         });
     const observations = [
-      observe(() => this.options.skills.stop(options)),
-      ...entries.map((entry) => observe(() => this.stop_process(entry))),
+      observe(() => this.options.skills.stop(options), true),
+      ...entries.map((entry) => observe(() => this.stop_process(entry), false)),
     ];
     if (!this.cleanup) {
       const task = Promise.resolve().then(async () => {
         // Reentrant factory construction can publish a child after stop was called,
         // but before this chain starts. Fence and stop that actual handle too.
-        await Promise.allSettled(entries.map((entry) => this.stop_process(entry)));
+        const first_stops = await Promise.allSettled(
+          entries.map((entry) => this.stop_process(entry)),
+        );
+        for (const result of first_stops)
+          if (result.status === 'rejected') this.record_failure(result.reason);
         const skills_actual = this.options.skills.settled();
         void skills_actual.catch(() => {});
         await Promise.allSettled(entries.map((entry) => entry.start));
