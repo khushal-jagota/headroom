@@ -3,6 +3,8 @@
     "attention_history_metadata.started_at": "Schema initialization reads real wall time."
   },
   "response_tokens": {
+    "body.resources.*.revision": "Resource revisions hash native JSON. Compare continuity changes, not digest bytes.",
+    "body.revision": "Resource body revisions hash native JSON. Compare continuity changes, not digest bytes.",
     "body.coverage.revision": "Navigation revisions count commits. Compare continuity changes, not counter magnitude.",
     "body.ordering_generation": "TypeScript uses Intl.Collator under its own approved ordering generation.",
     "body.*.data.ordering_generation": "The initial SSE frame declares the same approved Intl.Collator generation as snapshots."

@@ -26,23 +26,14 @@ export function hasColumn(sql: ReadSql, table: string, column: string): boolean 
   return !!sql.get('SELECT 1 FROM pragma_table_info(?) WHERE name=?', [table, column]);
 }
 export function recapPreview(recap: string): string {
-  // Python str.split includes ASCII separators and Unicode whitespace, including U+0085.
-  const compact = recap
-    .split(
-      /[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/u,
-    )
-    .filter(Boolean)
-    .join(' ');
+  const compact = recap.trim().split(/\s+/u).join(' ');
   const points = [...compact];
   return points.length <= RECAP_PREVIEW_CHARACTERS
     ? compact
     : points
         .slice(0, RECAP_PREVIEW_CHARACTERS - 1)
         .join('')
-        .replace(
-          /[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/u,
-          '',
-        ) + '…';
+        .trimEnd() + '…';
 }
 export function storedWorkflow(raw: string, context: DerivationContext): Workflow {
   const saved = context.workflows.get(raw);

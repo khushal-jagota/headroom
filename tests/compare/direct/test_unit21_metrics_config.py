@@ -153,7 +153,9 @@ def test_unit21_metrics_configuration_and_sidecar_paths(
                     "canonical_paths": len(paths),
                     "python": expected,
                     "typescript": actual,
-                    "comparison_rule": "Keep fields; permit native numbers, text and MetricsValueError.",
+                    "comparison_rule": (
+                        "Keep fields; permit native numbers, text and MetricsValueError."
+                    ),
                     "proposed_difference": {
                         "accepted": True,
                         "python_accepts_integer": str(python_unsafe),

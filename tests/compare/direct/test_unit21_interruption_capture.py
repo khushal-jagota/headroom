@@ -76,10 +76,10 @@ def _capture(
     stdout, seconds = _run(command, environment)
     value = json.loads((manifest_root(database) / "paired" / f"{identity}.json").read_text())
     manifest = manifest_from_dict(value)
-    assert (
-        stdout
-        == json.dumps({"state": manifest.state, "detail": (manifest.detail or "")[:1000]}) + "\n"
-    )
+    assert json.loads(stdout) == {
+        "state": manifest.state,
+        "detail": (manifest.detail or "")[:1000],
+    }
     assert _database_state(database) == before
     return value, seconds
 

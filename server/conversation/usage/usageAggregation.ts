@@ -205,10 +205,10 @@ export class UsageAggregator {
     // Stable ordering keeps payloads diffable and snapshot tests meaningful.
     buckets.sort(
       (a, b) =>
-        codePointOrder(a.day, b.day) ||
-        codePointOrder(a.hourStart ?? '', b.hourStart ?? '') ||
-        codePointOrder(a.provider, b.provider) ||
-        codePointOrder(a.model, b.model),
+        textOrder(a.day, b.day) ||
+        textOrder(a.hourStart ?? '', b.hourStart ?? '') ||
+        textOrder(a.provider, b.provider) ||
+        textOrder(a.model, b.model),
     );
 
     return {
@@ -219,12 +219,8 @@ export class UsageAggregator {
   }
 }
 
-function codePointOrder(left: string, right: string): number {
-  const a = Array.from(left, (value) => value.codePointAt(0)!);
-  const b = Array.from(right, (value) => value.codePointAt(0)!);
-  for (let index = 0; index < Math.min(a.length, b.length); index++)
-    if (a[index] !== b[index]) return a[index]! - b[index]!;
-  return a.length - b.length;
+function textOrder(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 /**

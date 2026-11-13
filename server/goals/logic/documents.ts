@@ -6,7 +6,7 @@ import { dependencies, parse_formula } from '../../measures/logic/formulas.ts';
 import type { FormulaExpression } from '../../measures/contracts.ts';
 import type { ChartBlock, PageDocument, Block } from '../contracts.ts';
 import { validate_category_chart } from './categories.ts';
-import { numeric_projection, codepoint_order } from '../category_contracts.ts';
+import { numeric_projection, text_order } from '../category_contracts.ts';
 function fail(message: string): never {
   throw new TypeError(message);
 }
@@ -129,7 +129,7 @@ function validate(value: unknown, schema: Schema, path: string): void {
       allowed = Object.keys(fields).map((key) => key.replace(/\?$/, ''));
     const unknown = Object.keys(value)
       .filter((key) => !allowed.includes(key))
-      .sort(codepoint_order)[0];
+      .sort(text_order)[0];
     if (unknown !== undefined)
       fail(
         /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(unknown)
@@ -262,7 +262,7 @@ export function measure_ids(primary: ChartBlock | null | undefined, page: PageDo
     if (chart.binding?.kind === 'scalar_inputs')
       for (const input of chart.binding.inputs) ids.add(input.measure_id);
   }
-  return [...ids].sort(codepoint_order);
+  return [...ids].sort(text_order);
 }
 export function dataset_ids(primary: ChartBlock | null | undefined, page: PageDocument): string[] {
   return [
@@ -271,7 +271,7 @@ export function dataset_ids(primary: ChartBlock | null | undefined, page: PageDo
         chart.binding?.kind === 'dataset' ? [chart.binding.dataset_id] : [],
       ),
     ),
-  ].sort(codepoint_order);
+  ].sort(text_order);
 }
 export function expectation_measure_ids(
   primary: ChartBlock | null | undefined,
@@ -283,5 +283,5 @@ export function expectation_measure_ids(
         'expectation' in chart ? [...dependencies(chart.expectation as FormulaExpression)] : [],
       ),
     ),
-  ].sort(codepoint_order);
+  ].sort(text_order);
 }

@@ -15,7 +15,6 @@ import { installCompatibility } from './core/http/compatibility.ts';
 import { registerCoreRoutes } from './core/routes.ts';
 import type { Changes } from './core/routes.ts';
 import { registerArea } from './core/authority/register.ts';
-import { stringify_python_json } from './core/http/numeric_json.ts';
 import { integer_value, normalize_integer } from './executor/integers.ts';
 import { create_executor_routes } from './executor/app_transport.ts';
 import type { VpsExecutor } from './executor/vps_transport.ts';
@@ -72,27 +71,24 @@ export async function createApp(config: Config, services: AppServices): Promise<
     const present = health.presence === 'present';
     const identity = services.executor.health().identity;
     return reply.type('application/json').send(
-      stringify_python_json(
-        {
-          ...health,
-          mode: 'remote',
-          identity:
-            identity === null
-              ? null
-              : {
-                  ...identity,
-                  connection_generation: normalize_integer(
-                    integer_value(identity.connection_generation) > (present ? 1n : 0n)
-                      ? integer_value(identity.connection_generation)
-                      : present
-                        ? 1n
-                        : 0n,
-                  ),
-                },
-          connection_state: present ? 'ready' : 'disconnected',
-        },
-        { compact: true },
-      ),
+      JSON.stringify({
+        ...health,
+        mode: 'remote',
+        identity:
+          identity === null
+            ? null
+            : {
+                ...identity,
+                connection_generation: normalize_integer(
+                  integer_value(identity.connection_generation) > (present ? 1n : 0n)
+                    ? integer_value(identity.connection_generation)
+                    : present
+                      ? 1n
+                      : 0n,
+                ),
+              },
+        connection_state: present ? 'ready' : 'disconnected',
+      }),
     );
   });
   for (const area of services.areas ?? [])

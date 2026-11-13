@@ -1,8 +1,4 @@
-import {
-  parse_numeric_json,
-  JsonNumber,
-  stringify_python_json,
-} from '../../core/http/numeric_json.ts';
+import { parse_numeric_json, JsonNumber } from '../../core/http/numeric_json.ts';
 import { MAX_CONTROL_MESSAGE_BYTES } from '../configuration.ts';
 import { ServerRestartProtocolError } from '../contracts.ts';
 import type { ControlRequest, ControlResponse, StopCapabilityRecord } from '../contracts.ts';
@@ -38,9 +34,7 @@ export function decode_message(bytes: Buffer): Record<string, unknown> {
 export function encode_message(
   value: ControlRequest | ControlResponse | StopCapabilityRecord,
 ): Buffer {
-  const bytes = Buffer.from(
-    stringify_python_json(value, { compact: true, ensure_ascii: true }) + '\n',
-  );
+  const bytes = Buffer.from(JSON.stringify(value) + '\n');
   if (bytes.length > MAX_CONTROL_MESSAGE_BYTES)
     throw new ServerRestartProtocolError('control message exceeds the protocol limit');
   return bytes;
