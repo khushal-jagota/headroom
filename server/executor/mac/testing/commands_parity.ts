@@ -732,7 +732,7 @@ try {
         ...launch.resolved_start,
         role_materials: {
           ...materials,
-          identity_environment_variables: materials.identity_environment_variables.map(
+          identity_environment_variables: materials.identity_environment_variables!.map(
             ([key, value]): [string, string] => [
               key,
               key === 'PLAN_TICKET_ID' ? 'cached-stop-ticket' : value,
