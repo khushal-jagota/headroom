@@ -20,6 +20,7 @@ import type { Area } from './authority/register.ts';
 import type { OwnedAreaContext } from './authority/register.ts';
 import type { ConversationSystem } from '../conversation/contracts.ts';
 import type { ConversationViewRuntime } from '../conversation/views/routes.ts';
+import type { OpenRunTurn } from '../conversation/record/contracts.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import { createConversationRoutes } from '../conversation/routes.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
@@ -119,6 +120,10 @@ export interface ServerOptions {
   testAreas?: readonly Area[] | ((context: TestCompositionContext) => readonly Area[]);
   /** Lifecycle composition opts in explicitly. Ordinary startup never polls wakes. */
   areaLoops?: AreaLoopOptions;
+  /** Retained facts enter the sole reconciliation before the core adopts them. */
+  readOpenRuns?: (
+    context: Omit<ConversationCompositionContext, 'record'>,
+  ) => ReadonlyMap<string, OpenRunTurn>;
   createConversationCore?: (
     context: ConversationCompositionContext,
   ) => SqliteProcessConversationSystem;
@@ -604,7 +609,19 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         one_shot_children,
         child_processes,
       }) ?? null;
-    const open_runs = executor?.open_runs() ?? new Map();
+    const before_record: Omit<ConversationCompositionContext, 'record'> = {
+      database,
+      config,
+      clock,
+      changes,
+      publication,
+      require_runtime_ownership: requireOwnership,
+      revoke_signal: revokeSignal,
+      one_shot_children,
+      child_processes,
+      executor,
+    };
+    const open_runs = options.readOpenRuns?.(before_record) ?? executor?.open_runs() ?? new Map();
     areas.initialize(
       database,
       config,
@@ -617,17 +634,8 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       open_runs,
     );
     const context: ConversationCompositionContext = {
-      database,
-      config,
-      clock,
-      changes,
+      ...before_record,
       record: areas.getRuntime(),
-      publication,
-      require_runtime_ownership: requireOwnership,
-      revoke_signal: revokeSignal,
-      one_shot_children,
-      child_processes,
-      executor,
     };
     core = options.createConversationCore?.(context);
     if (isClosing()) return abort_late_setup();

@@ -131,6 +131,7 @@ test('configured restart adopts before reconciliation and Mac locality never sel
         });
         return endpoint;
       },
+      readOpenRuns: () => endpoint.open_runs(),
       createConversationCore(current) {
         context = current;
         const http = create_backend_runtime({

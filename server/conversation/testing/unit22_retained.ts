@@ -1,69 +1,94 @@
-/** Actual core joins over the copied source database; no provider or listener. */
+/** Retained joins through the existing server lifecycle over copied source state. */
 import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import type { Database } from '../../core/database/contracts.ts';
 import { createDatabase } from '../../core/database/index.ts';
-import { ChangeSignal } from '../../core/changes/index.ts';
-import { ConversationStore } from '../record/data/store.ts';
-import { ConversationMessageFiles } from '../record/message_files.ts';
-import { SqliteProcessConversationSystem } from '../system.ts';
-import { retained_open_runs } from '../runtime/remote.ts';
+import { startServer } from '../../core/start.ts';
+import type { StartedServer } from '../../core/start.ts';
+import type { SqliteProcessConversationSystem } from '../system.ts';
 import { text_message_content } from '../message_content.ts';
 import { delivery_fate_json } from '../http.ts';
 import { UserInputAnswer } from '../events.ts';
-import { SignalPublicationCoordinator } from '../publication/coordinator.ts';
-import { deployment_participants } from '../deploy_interruptions/participants.ts';
+import { values as signal_values } from '../publication/persistence.ts';
 import { run_automatic_recovery } from '../deploy_interruptions/coordinator.ts';
-import { executor_remote_recovery } from '../../lifecycle/production.ts';
+import { create_production_conversation_core } from '../../lifecycle/production.ts';
+import { compose_production_backends } from '../../lifecycle/production_bindings.ts';
+import { create_backend_runtime, unavailable_backend_providers } from '../snapshot/composition.ts';
 import { InboxStore } from '../../executor/data/inbox.ts';
 import { FileStaging } from '../../executor/vps_files.ts';
-import { MacRuns } from '../../executor/vps_runs.ts';
-import { SqliteCommandMailbox } from '../../executor/vps_mailbox.ts';
-import { MacPresenceService } from '../../executor/vps_presence.ts';
+import { VpsExecutor } from '../../executor/vps_transport.ts';
 import { accept_lease_in_transaction } from '../../executor/vps_presence_store.ts';
 import { as_object, parse_identity } from '../../executor/protocol.ts';
 import type { WireValue } from '../../executor/contracts.ts';
 
 const spec = JSON.parse(readFileSync(0, 'utf8'));
-const database = createDatabase(spec.path),
-  old = parse_identity(spec.old);
+const old = parse_identity(spec.old),
+  root = dirname(spec.path);
+Object.assign(process.env, {
+  PLAN_DB_PATH: spec.path,
+  PLAN_PORT: '0',
+  PLAN_TEST_MODE: '1',
+  PLAN_EXECUTOR_ID: 'synthetic-executor',
+  PLAN_DISPATCH_ENABLED: 'false',
+  PLAN_LOGS_DIR: join(root, 'logs'),
+  PLAN_BACKUP_DIR: join(root, 'backups'),
+  PLAN_DISPATCHER_LOCK_PATH: join(root, 'dispatcher.lock'),
+});
 const original_now = Date.now;
 Date.now = () => 1000000;
-let core!: SqliteProcessConversationSystem, runs!: MacRuns;
-let mailbox!: SqliteCommandMailbox, presence!: MacPresenceService;
-function cycle() {
-  mailbox = new SqliteCommandMailbox(database, { clock: () => 1000000 });
-  presence = new MacPresenceService(database, mailbox, {
-    changes: new ChangeSignal(),
-    clock: () => 1000000,
+let database!: Database, core!: SqliteProcessConversationSystem, endpoint!: VpsExecutor;
+let server!: StartedServer,
+  first_signal = false;
+async function cycle() {
+  let bound!: ReturnType<typeof compose_production_backends>;
+  const local = () => {
+    throw new Error('retained Mac work selected a local child');
+  };
+  server = await startServer({
+    createExecutor(current) {
+      database = current.database;
+      endpoint = new VpsExecutor(database, current.clock, {
+        db_path: spec.path,
+        changes: current.changes,
+        media_signal: current.media_signal,
+      });
+      return endpoint;
+    },
+    readOpenRuns: () => endpoint.open_runs(),
+    createConversationCore(current) {
+      bound = compose_production_backends(current, {
+        claude: () => local,
+        codex: () => local,
+        hermes: () => local,
+        http: () =>
+          create_backend_runtime({
+            database,
+            config: current.config,
+            now: () => current.clock.now(),
+            providers: unavailable_backend_providers(),
+            one_shot_children: current.one_shot_children,
+          }),
+        stall_sources: () => [],
+      });
+      core = create_production_conversation_core(current, bound);
+      return core;
+    },
+    createBackendServices: () => bound.http,
+    testAreas(current) {
+      first_signal = current.database.read(
+        (sql) =>
+          signal_values(sql).find((value) => value.conversation_id === 'retained')!.attention
+            .awaiting_answer,
+      );
+      return [];
+    },
   });
-  runs = new MacRuns(database, presence, mailbox);
-  const remote = runs.as_factory();
-  const factories = { codex: remote, claude: remote, hermes: remote };
-  const store = new ConversationStore(database, {
-    ...deployment_participants(spec.path),
-    integer_now: () => 1000,
-  });
-  database.write((tx) => store.reconcile_in_transaction(tx, retained_open_runs(factories)));
-  core = new SqliteProcessConversationSystem({
-    store,
-    backend_child_factories: factories,
-    message_files: new ConversationMessageFiles(spec.path),
-    model_is_enabled: () => true,
-    execution_refusal: () => null,
-    unix_time_now: () => 1000,
-    monotonic_now: () => 1000,
-    remote_recovery: executor_remote_recovery(database, () => core),
-  });
-  runs.conversations = core;
 }
 async function close() {
-  const options = { deadline: performance.now() / 1000 + 5 };
-  await core.shutdown(options);
-  await runs.stop(options);
-  await presence.stop(options);
-  await mailbox.stop(options);
-  await Promise.all([runs.settled(), presence.settled(), mailbox.settled()]);
+  await server.close({ deadline: performance.now() / 1000 + 5 });
+  await server.shutdown_settled;
 }
-cycle();
+await cycle();
 try {
   const running = core.conversations.get('retained')!.running_turn!;
   const stopped = core.conversations.get('stopping')!;
@@ -71,22 +96,7 @@ try {
     adopted: [running.token.turn_number, [...running.pending_user_input_questions.keys()].sort()],
     stopping: [stopped.running_turn === null, stopped.child_is_quarantined],
   };
-  const publication = new SignalPublicationCoordinator({
-    database,
-    require_runtime_ownership: () => core.require_runtime_ownership(),
-  });
-  publication.bind_runtime((id) => core.runtime_turn(id));
-  publication.initialize();
-  const attachment = publication.attach_signal_publication({
-    install: (_tx, snapshot) => {
-      result.first_signal = snapshot.values.find(
-        (value) => value.conversation_id === 'retained',
-      )!.attention.awaiting_answer;
-    },
-    participate: () => {},
-    unavailable: () => {},
-  });
-  attachment.close();
+  result.first_signal = first_signal;
   result.saved = [
     await core.answer_permission_ask('retained', spec.permission, 'allow-once'),
     await core.answer_user_input('retained', spec.user_input, [
@@ -118,7 +128,7 @@ try {
     )
     .map((row) => JSON.parse(row.command_json).child_command.arguments.content);
   await close();
-  cycle();
+  await cycle();
   const inbox = new InboxStore(database, new FileStaging(spec.path));
   const applications: unknown[] = [];
   result.applications = applications;
@@ -158,14 +168,19 @@ try {
     }
   }
   await close();
-  database.write((tx) => accept_lease_in_transaction(tx, spec.fresh_lease, 1000000));
-  cycle();
+  // The stopped server owns its closed database; reopen only for the source lease seed.
+  const seed = createDatabase(spec.path);
+  try {
+    seed.write((tx) => accept_lease_in_transaction(tx, spec.fresh_lease, 1000000));
+  } finally {
+    seed.close();
+  }
+  await cycle();
   result.stale = delivery_fate_json(
     await core.send('retained', text_message_content('wait'), { sender_label: 'owner' }),
   );
   process.stdout.write(JSON.stringify(result));
 } finally {
   await close();
-  database.close();
   Date.now = original_now;
 }
