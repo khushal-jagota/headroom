@@ -165,6 +165,7 @@ def test_parallel_publication_binds_checked_build_and_native_mac_before_receipt(
     assert receipt["env"] == {
         "PANELS_ARTIFACT_ID": "${{ needs.build.outputs.app_artifact_id }}",
         "PANELS_MAC_ARTIFACT_ID": "${{ needs.mac-runtime.outputs.artifact_id }}",
+        "PANELS_MAC_HOME_ARTIFACT_ID": "${{ needs.mac-runtime.outputs.home_artifact_id }}",
         "PANELS_MAC_BUILD_RESULT": "${{ needs.mac-runtime.result }}",
     }
     assert receipt["run"] == "python3 scripts/update_publication.py receipt"
@@ -174,8 +175,8 @@ def test_parallel_publication_binds_checked_build_and_native_mac_before_receipt(
     assert not any("app-build" in step.get("run", "") for step in suites["steps"])
     downloads = [step for step in publication["steps"]
                  if "actions/download-artifact@" in step.get("uses", "")]
-    assert len(downloads) == 7
-    assert len({step["with"]["path"] for step in downloads}) == 7
+    assert len(downloads) == 8
+    assert len({step["with"]["path"] for step in downloads}) == 8
     assert steps["Download checked native Mac publication"]["with"] == {
         "artifact-ids": "${{ needs.mac-runtime.outputs.artifact_id }}",
         "run-id": "${{ github.run_id }}",
@@ -184,6 +185,16 @@ def test_parallel_publication_binds_checked_build_and_native_mac_before_receipt(
         "merge-multiple": True,
     }
     assert "!${{ env.PANELS_GATE_DIR }}/mac/panels-mac-runtime.tar.gz" in (
+        steps["Retain publication proof"]["with"]["path"]
+    )
+    assert steps["Download checked native Mac home"]["with"] == {
+        "artifact-ids": "${{ needs.mac-runtime.outputs.home_artifact_id }}",
+        "run-id": "${{ github.run_id }}",
+        "github-token": "${{ github.token }}",
+        "path": "${{ env.PANELS_GATE_DIR }}/mac-home",
+        "merge-multiple": True,
+    }
+    assert "!${{ env.PANELS_GATE_DIR }}/mac-home/panels-app.tar.gz" in (
         steps["Retain publication proof"]["with"]["path"]
     )
 

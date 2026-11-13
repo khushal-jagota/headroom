@@ -118,6 +118,9 @@ class UpdateService:
         self._paused_attempt_id: str | None = None
         self._last_state: str | None = None
         self._tasks: set[concurrent.futures.Future[None]] = set()
+        self._work_wake_lock = threading.Lock()
+        self._waiting_for_work = False
+        self._unsubscribe_work: Callable[[], None] | None = None
 
     # --- prefetch ------------------------------------------------------------------
 
@@ -287,6 +290,7 @@ class UpdateService:
 
     def cancel(self, attempt_id: str) -> None:
         self.attempts.remove(attempt_id, frozenset({"waiting"}))
+        self._wait_for_work(False)
 
     def update_now(self, attempt_id: str, *, confirm_activity: bool) -> UpdateAttempt:
         if self._unavailable_reason is not None:
@@ -325,9 +329,16 @@ class UpdateService:
 
     def start(self, event_loop: asyncio.AbstractEventLoop) -> None:
         """Begin owning updates on this event loop; a `preparing` record is from a dead process."""
+        self.stop()
         if self._unavailable_reason is not None:
             return
-        self._event_loop = event_loop
+        with self._work_wake_lock:
+            self._event_loop = event_loop
+        system = self.conversation()
+        if system is not None:
+            self._unsubscribe_work = system.workspace_admission.subscribe_operations_finished(
+                lambda: self._operations_finished(event_loop)
+            )
         attempt = self.attempts.read()
         if attempt is not None and attempt.state == "preparing":
             try:
@@ -339,12 +350,57 @@ class UpdateService:
                 pass
         self.schedule_advance()
 
-    def schedule_advance(self) -> None:
-        if self._event_loop is None:
+    def stop(self) -> None:
+        """Invalidate copied completion callbacks before the workspace shuts down."""
+        with self._work_wake_lock:
+            self._event_loop = None
+            self._waiting_for_work = False
+        if self._unsubscribe_work is not None:
+            self._unsubscribe_work()
+            self._unsubscribe_work = None
+
+    def _wait_for_work(self, waiting: bool) -> None:
+        with self._work_wake_lock:
+            self._waiting_for_work = waiting
+
+    def _operations_finished(self, owner: asyncio.AbstractEventLoop) -> None:
+        with self._work_wake_lock:
+            if self._event_loop is not owner or not self._waiting_for_work:
+                return
+            self._waiting_for_work = False
+        try:
+            owner.call_soon_threadsafe(self._advance_after_operations, owner)
+        except RuntimeError:
+            # A callback already copied by an operation can outlive its owner.
             return
-        future = asyncio.run_coroutine_threadsafe(self.advance(), self._event_loop)
-        self._tasks.add(future)
-        future.add_done_callback(self._tasks.discard)
+
+    def _advance_after_operations(self, owner: asyncio.AbstractEventLoop) -> None:
+        with self._work_wake_lock:
+            if self._event_loop is not owner:
+                return
+        self.schedule_advance()
+
+    def schedule_advance(self) -> None:
+        with self._work_wake_lock:
+            owner = self._event_loop
+            if owner is None or owner.is_closed():
+                return
+            future = asyncio.run_coroutine_threadsafe(self._advance_for_owner(owner), owner)
+            self._tasks.add(future)
+            future.add_done_callback(self._advance_finished)
+
+    async def _advance_for_owner(self, owner: asyncio.AbstractEventLoop) -> None:
+        with self._work_wake_lock:
+            if self._event_loop is not owner:
+                return
+        await self.advance()
+
+    def _advance_finished(self, future: concurrent.futures.Future[None]) -> None:
+        self._tasks.discard(future)
+        if not future.cancelled() and (error := future.exception()) is not None:
+            _LOG.error(
+                "Update admission check failed", exc_info=(type(error), error, error.__traceback__)
+            )
 
     def poll(self) -> bool:
         """The readiness-loop hook. True holds back new worker steps for this pass.
@@ -363,11 +419,14 @@ class UpdateService:
             return True
         if attempt.state != "waiting":
             return False
-        system = self.conversation()
-        if attempt.mode == "idle" and (system is None or system.workspace_activity() != "idle"):
-            return False
+        # Background reconcilers share this wake and can briefly hold admission.
+        # Let the event-loop owner check idle and claim admission, even when this
+        # thread samples that temporary work. Keep the readiness hold unchanged.
         self.schedule_advance()
-        return True
+        system = self.conversation()
+        return attempt.mode != "idle" or (
+            system is not None and system.workspace_activity() == "idle"
+        )
 
     async def advance(self) -> None:
         """Begin the waiting attempt when it may begin. Runs on the server's event loop."""
@@ -384,8 +443,10 @@ class UpdateService:
             return
         attempt = self.attempts.read()
         system = self.conversation()
+        self._wait_for_work(False)
         if attempt is None or attempt.state != "waiting" or system is None:
             return
+        self._wait_for_work(attempt.mode == "idle")
         if attempt.mode == "idle" and system.workspace_activity() != "idle":
             return
         attempt_id = attempt.attempt_id
@@ -427,6 +488,7 @@ class UpdateService:
                 pause_work, require_idle=attempt.mode == "idle" or not attempt.confirm_activity
             )
         except UpdateConflict:
+            self._wait_for_work(False)
             return
         if not admitted:
             if attempt.mode == "now":
@@ -434,6 +496,7 @@ class UpdateService:
             return
         # Work stays paused from here until the installer stops this service, or until
         # the attempt ends while this process still runs (see _reopen_after_unstarted).
+        self._wait_for_work(False)
         self._paused_attempt_id = attempt_id
         try:
             await asyncio.to_thread(self._start_installer, attempt_id)
@@ -453,9 +516,12 @@ class UpdateService:
             raise OSError("the staged release is missing")
         backup: str | None = None
         if isinstance(attempt.release.manifest.runtime_contract, NodeRuntimeContract):
-            # Checked again here, the last step before the installer stops Panels.
+            # A backup never permits a Node release to skip its exact schema frontier.
             require_exact_schema_frontier(self.database, staged)
-        elif schema_change_pending(self.database, staged):
+            schema_changes = False
+        else:
+            schema_changes = schema_change_pending(self.database, staged)
+        if schema_changes or get_platform_adapter().update_requires_snapshot:
             backup = str(create_database_backup(
                 self.database, self.backup_directory, attempt.from_sha
             ))
@@ -485,6 +551,7 @@ class UpdateService:
     def _fail(
         self, attempt_id: str, expected: frozenset[UpdateAttemptState], detail: str
     ) -> None:
+        self._wait_for_work(False)
         try:
             self.attempts.change(
                 attempt_id, expected,

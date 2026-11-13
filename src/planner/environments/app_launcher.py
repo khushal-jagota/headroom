@@ -64,7 +64,8 @@ def build_app_launch_env(
         for key, value in ambient.items()
         if key in EXTERNAL_RUNTIME_ENVIRONMENT_KEYS or key.startswith("LC_")
     }
-    allowed.update({"PLAN_APP_SHA": manifest.app_sha, "PLAN_APP_ROOT": str(root)})
+    allowed.update({"PLAN_APP_SHA": manifest.app_sha, "PLAN_APP_ROOT": str(root),
+                    "PYTHONDONTWRITEBYTECODE": "1"})
     return allowed
 
 

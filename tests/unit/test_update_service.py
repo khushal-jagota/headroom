@@ -146,9 +146,15 @@ def test_press_answers_at_once_then_pauses_work_and_starts_the_installer(
         harness.service.install(SHA_B, "now", confirm_activity=True)
 
 
-def test_schema_change_takes_the_backup_before_the_installer_starts(tmp_path: Path) -> None:
-    """Only a migrating release pays for a backup, and it is taken while Panels still runs."""
-    harness = Harness(tmp_path / "current", migrated=False)
+@pytest.mark.parametrize("native_snapshot", [False, True])
+def test_required_snapshot_precedes_installer_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_snapshot: bool
+) -> None:
+    """Mac trials also need a restorable record when their schema stays unchanged."""
+    from planner.platform_runtime.linux.adapter import LinuxPlatformAdapter
+
+    monkeypatch.setattr(LinuxPlatformAdapter, "update_requires_snapshot", native_snapshot)
+    harness = Harness(tmp_path / "current", migrated=native_snapshot)
     harness.service.install(SHA_B, "now", confirm_activity=False)
     harness.advance()
     recorded = harness.store.read()
@@ -157,6 +163,25 @@ def test_schema_change_takes_the_backup_before_the_installer_starts(tmp_path: Pa
     assert snapshot.parent == harness.root / "data" / "backups"
     assert json.loads((snapshot / "metadata.json").read_text())["deployed_revision"] == SHA_A
     assert "backup" in recorded.steps and harness.launched
+
+
+
+def test_native_snapshot_policy_still_refuses_unknown_schema(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unconditional snapshot must not admit an incompatible database revision."""
+    from planner.platform_runtime.linux.adapter import LinuxPlatformAdapter
+
+    monkeypatch.setattr(LinuxPlatformAdapter, "update_requires_snapshot", True)
+    with sqlite3.connect(harness.database) as db:
+        db.execute("UPDATE alembic_version SET version_num = 'unknown_revision'")
+    harness.service.install(SHA_B, "now", confirm_activity=False)
+    harness.advance()
+    attempt = harness.store.read()
+    assert attempt is not None and attempt.state == "failed"
+    assert attempt.detail is not None and "schema revision" in attempt.detail
+    assert not harness.launched and attempt.backup is None
+    assert not harness.system.workspace_admission.closed
 
 
 def test_node_release_needs_the_exact_schema_frontier_at_staging(tmp_path: Path) -> None:
@@ -200,7 +225,118 @@ def test_node_release_rechecks_the_frontier_before_the_stop(
     assert recorded.backup is None and not harness.launched
 
 
-def test_idle_wait_cancel_and_update_now(harness: Harness) -> None:
+def test_idle_update_advances_after_reconcilers_finish_without_another_poll(
+    harness: Harness,
+) -> None:
+    """A queued check can still be busy; the operation's exit must wake it again."""
+    harness.system.activity = "busy"
+    waiting = harness.service.install(SHA_B, "idle", confirm_activity=False)
+    harness.service.cancel(waiting.attempt_id)
+
+    async def run() -> None:
+        harness.service.start(asyncio.get_running_loop())
+        await asyncio.gather(*(
+            asyncio.wrap_future(task) for task in tuple(harness.service._tasks)
+        ))
+        with harness.system.workspace_admission.operation() as admitted:
+            assert admitted
+            harness.store.create(waiting)
+            assert not harness.launched
+            assert harness.service.poll() is False
+            await asyncio.gather(*(
+                asyncio.wrap_future(task) for task in tuple(harness.service._tasks)
+            ))
+            assert harness.store.read().state == "waiting"  # type: ignore[union-attr]
+            harness.system.activity = "idle"
+        # No additional poll, database commit, or explicit advance follows release.
+        await asyncio.sleep(0)
+        await asyncio.gather(*(
+            asyncio.wrap_future(task) for task in tuple(harness.service._tasks)
+        ))
+        assert harness.launched
+        harness.service.stop()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("action", ["cancel", "stop"])
+def test_ended_update_ignores_copied_work_completion_callbacks(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, action: str,
+) -> None:
+    """A callback already copied by a worker cannot revive a canceled or stopped owner."""
+    harness.system.activity = "busy"
+    waiting = harness.service.install(SHA_B, "idle", confirm_activity=False)
+    callbacks: list[Callable[[], None]] = []
+    subscribe = harness.system.workspace_admission.subscribe_operations_finished
+
+    def observe(callback: Callable[[], None]) -> Callable[[], None]:
+        callbacks.append(callback)
+        return subscribe(callback)
+
+    monkeypatch.setattr(
+        harness.system.workspace_admission, "subscribe_operations_finished", observe,
+    )
+
+    async def run() -> None:
+        harness.service.start(asyncio.get_running_loop())
+        await asyncio.gather(*(
+            asyncio.wrap_future(task) for task in tuple(harness.service._tasks)
+        ))
+        harness.system.activity = "idle"
+        harness.service.schedule_advance()
+        queued = tuple(harness.service._tasks)
+        if action == "cancel":
+            harness.service.cancel(waiting.attempt_id)
+        else:
+            harness.service.stop()
+        callbacks[0]()  # Simulate delivery after unsubscribe or cancellation.
+        await asyncio.gather(*(asyncio.wrap_future(task) for task in queued))
+        await asyncio.sleep(0)
+        assert not harness.service._tasks and not harness.launched
+        harness.service.stop()
+
+    asyncio.run(run())
+
+
+def test_unexpected_background_admission_error_reaches_the_home_log(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Discarding a concurrent future must not hide the cause of a waiting attempt."""
+    harness.service.install(SHA_B, "idle", confirm_activity=False)
+
+    async def broken(operation: Callable[[], None], *, require_idle: bool) -> bool:
+        raise OSError("admission diagnostic receipt")
+
+    monkeypatch.setattr(harness.system, "run_with_workspace_admission", broken)
+
+    async def run() -> None:
+        harness.service.start(asyncio.get_running_loop())
+        await asyncio.gather(*(
+            asyncio.wrap_future(task) for task in tuple(harness.service._tasks)
+        ), return_exceptions=True)
+        harness.service.stop()
+
+    asyncio.run(run())
+    assert "Update admission check failed" in caplog.text
+    assert "admission diagnostic receipt" in caplog.text
+    assert not harness.launched
+
+
+@pytest.fixture(params=["linux", "darwin"])
+def update_platform(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Select the OS policy, while the existing harness captures installer launch."""
+    from planner.platform_runtime.darwin.adapter import DarwinPlatformAdapter
+    from planner.platform_runtime.linux.adapter import LinuxPlatformAdapter
+
+    adapter = DarwinPlatformAdapter() if request.param == "darwin" else LinuxPlatformAdapter()
+    # Host authentication is a native proof. These cases prove the common owner
+    # policy through the selected adapter, without asking launchd about a Linux test.
+    monkeypatch.setattr(adapter, "installer_python", lambda root: Path("/usr/bin/python3"))
+    monkeypatch.setattr("planner.environments.update_service.get_platform_adapter", lambda: adapter)
+    monkeypatch.setattr("planner.environments.update_install.get_platform_adapter", lambda: adapter)
+
+
+def test_idle_wait_cancel_and_update_now(harness: Harness, update_platform: None) -> None:
     """Waiting holds until idle; cancel removes it; Update now needs confirmation."""
     harness.system.activity = "busy"
     waiting = harness.service.install(SHA_B, "idle", confirm_activity=False)
@@ -219,7 +355,9 @@ def test_idle_wait_cancel_and_update_now(harness: Harness) -> None:
         harness.service.cancel(second.attempt_id)
 
 
-def test_idle_wait_outlives_the_install_deadline_then_installs(harness: Harness) -> None:
+def test_idle_wait_outlives_the_install_deadline_then_installs(
+    harness: Harness, update_platform: None
+) -> None:
     """A wait for idle has no deadline: hours of busy work leave it waiting, not failed.
 
     On 7 November a refused start sent a wait back with its 15-minute deadline still set,

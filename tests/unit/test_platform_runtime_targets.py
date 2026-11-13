@@ -26,12 +26,12 @@ def test_contract_dispatch_refuses_an_unimplemented_os(tmp_path: Path) -> None:
     )
 
     with pytest.raises(RuntimeContractError, match="unsupported runtime operating system"):
-        parse_optional_runtime_contract({"system": "darwin"})
+        parse_optional_runtime_contract({"system": "haiku"})
 
     root = build_app(tmp_path / "app", SHA_B, "new")
     path = root / "manifest.json"
     manifest = json.loads(path.read_text())
-    manifest["runtime_contract"]["system"] = "darwin"
+    manifest["runtime_contract"]["system"] = "haiku"
     path.write_text(json.dumps(manifest))
     with pytest.raises(AppValidationError, match="unsupported runtime operating system"):
         validate_app_manifest(path)

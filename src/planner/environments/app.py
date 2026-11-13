@@ -329,7 +329,8 @@ def _write_app_entrypoints(app_root: Path, *, app_sha: str) -> None:
         "set -eu\n"
         'root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)\n'
         f'export PLAN_APP_ROOT="$root" PLAN_APP_SHA="{app_sha}"\n'
-        'exec "$root/.venv/bin/python" -I -m planner "$@"\n',
+        'export PYTHONDONTWRITEBYTECODE=1\n'
+        'exec "$root/.venv/bin/python" -I -B -m planner "$@"\n',
         encoding="utf-8",
     )
     cli.chmod(0o755)
@@ -338,7 +339,7 @@ def _write_app_entrypoints(app_root: Path, *, app_sha: str) -> None:
         "#!/bin/sh\n"
         "set -eu\n"
         'root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)\n'
-        'exec "$root/.venv/bin/python" -m planner.environments.app_launcher "$root" "$@"\n',
+        'exec "$root/.venv/bin/python" -B -m planner.environments.app_launcher "$root" "$@"\n',
         encoding="utf-8",
     )
     launcher.chmod(0o755)
