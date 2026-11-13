@@ -28,7 +28,7 @@ Space admission has three checks:
 
 The cited tree needs roughly 6.6 GiB at peak, including reserve, before filesystem overhead. Concurrent users can still exhaust a filesystem. The parent removes partial output after failure.
 
-The Manager accepted refusal of GNU sparse input and members behind any link member. [The difference registry](../../DEVIATIONS.md) records both. Other closed-reader choices remain **proposed**: unknown inert PAX keys, binary path encodings, empty effective paths, and nonzero directory/link bodies. They must not be reported as Python equality or as accepted differences. Ordinary file/directory modification times and Unix modes are restored before their final fsync.
+The Manager accepted refusal of GNU sparse input, members behind links, unknown inert PAX keys, empty effective paths, non-UTF8 names, and directory/link bodies. [The difference registry](../../DEVIATIONS.md) records these policies. The release writer can lose fractional mtimes in ordinary headers. Fractional PAX times it writes stay intact. Readers preserve Python's nanoseconds exactly for either producer. Ordinary file/directory times and Unix modes are restored before their final fsync.
 
 The child uses the existing Koffi dependency for descriptor-based `futimens` because Node's `utimes` truncates nanoseconds. Its conversion mirrors Python's split and floor operations. No timestamp tolerance or new binary is introduced. The parent protocol import does not load Koffi.
 

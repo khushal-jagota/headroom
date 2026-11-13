@@ -215,15 +215,19 @@ def _archive_vectors(root: Path, ordinary: Path) -> list[dict[str, str]]:
         ),
         (
             "unknown-pax-key",
-            "proposed",
+            "accepted_restriction",
             x({"vendor.inert": "ignored-by-python"}) + _record("vendor"),
         ),
-        ("empty-pax-path", "proposed", x({"path": ""}) + _record("empty-name")),
-        ("directory-body", "proposed", _record("odd-directory", tarfile.DIRTYPE, body=b"x")),
+        ("empty-pax-path", "accepted_restriction", x({"path": ""}) + _record("empty-name")),
+        (
+            "directory-body",
+            "accepted_restriction",
+            _record("odd-directory", tarfile.DIRTYPE, body=b"x"),
+        ),
     ]
     invalid_utf8 = bytearray(_record("raw-encoding")[:512])
     invalid_utf8[:2] = b"\xff\0"
-    cases.append(("non-utf8-name", "proposed", _checksum(invalid_utf8)))
+    cases.append(("non-utf8-name", "accepted_restriction", _checksum(invalid_utf8)))
     vectors = []
     for name, policy, records in cases:
         archive = root / (name + ".tar.gz")
@@ -279,10 +283,10 @@ def _archive_vectors(root: Path, ordinary: Path) -> list[dict[str, str]]:
         "octal-edge": "Whitespace and plus sign in octal header",
         "v7": "Old header without ustar prefix fields",
         "oversized-metadata": "Declared metadata allocation limit before body read",
-        "unknown-pax-key": "Proposed unknown metadata policy",
-        "empty-pax-path": "Proposed empty effective path policy",
-        "directory-body": "Proposed nonempty directory body policy",
-        "non-utf8-name": "Proposed path decoding policy",
+        "unknown-pax-key": "Accepted refusal of unknown inert PAX metadata",
+        "empty-pax-path": "Accepted refusal of an empty effective PAX path",
+        "directory-body": "Accepted refusal of nonempty directory or link bodies",
+        "non-utf8-name": "Accepted refusal of non-UTF-8 archive names",
         "truncated-gzip": "Missing gzip trailer",
         "truncated-body": "Missing declared member bytes",
         "partial-header": "Incomplete trailing header",
@@ -559,25 +563,41 @@ def test_unit21_release_identity_archive_and_frontier(
         assert (restored_tree / "directory-alias").is_symlink()
         assert os.readlink(restored_tree / "directory-alias") == "a"
         assert (restored_tree / "directory-alias/data").read_text() == "a/data"
-    for archive in (tmp_path / "python.tar.gz", tmp_path / "node.tar.gz"):
+    producer_timestamps = {}
+    for producer, archive in (
+        ("python", tmp_path / "python.tar.gz"),
+        ("typescript", tmp_path / "node.tar.gz"),
+    ):
         with tarfile.open(archive, "r:gz") as bundle:
-            names = bundle.getnames()
+            members = bundle.getmembers()
+        names = [member.name for member in members]
         assert "directory-alias" in names
         assert "directory-alias/data" not in names
+        producer_timestamps[producer] = sum(
+            member.mtime != int(member.mtime)
+            for member in members
+            if member.isfile() or member.isdir()
+        )
+        if producer == "typescript":
+            by_name = {member.name: member for member in members}
+            assert by_name["sentinel"].mtime == FIXTURE_TIME_NS // 1_000_000_000
+            assert "mtime" not in by_name["sentinel"].pax_headers
+            for name in ("\ue000", "\U00010000"):
+                assert by_name[name].mtime == FIXTURE_TIME_NS / 1_000_000_000
+                assert float(by_name[name].pax_headers["mtime"]) == FIXTURE_TIME_NS / 1_000_000_000
     table = []
     for item in actual["archive_table"]:
         name, policy, observed = item["name"], item["policy"], item["result"]
         python_result = python_table[name]
-        if policy != "proposed":
-            assert observed["settled_at_return"] and observed["spools_absent"]
-            assert observed["spawned"] == observed["closed"]
-            if policy == "parity" and python_result["status"] == "restored":
-                assert observed["status"] == "restored", (name, observed)
-                assert observed["tree"] == python_result["tree"], name
-            else:
-                assert observed["status"] == "refused", (name, observed)
-                assert observed["error_type"] == "AppValidationError", (name, observed)
-                assert not observed["destination_exists"], name
+        assert observed["settled_at_return"] and observed["spools_absent"]
+        assert observed["spawned"] == observed["closed"]
+        if policy == "parity" and python_result["status"] == "restored":
+            assert observed["status"] == "restored", (name, observed)
+            assert observed["tree"] == python_result["tree"], name
+        else:
+            assert observed["status"] == "refused", (name, observed)
+            assert observed["error_type"] == "AppValidationError", (name, observed)
+            assert not observed["destination_exists"], name
         table.append(
             dict(
                 name=name,
@@ -585,13 +605,11 @@ def test_unit21_release_identity_archive_and_frontier(
                 policy=policy,
                 python=python_result,
                 typescript=observed,
-                accepted=policy != "proposed",
+                accepted=True,
                 equality_asserted=(policy == "parity"),
                 comparison=(
                     "source parity"
                     if policy == "parity"
-                    else "PROPOSED observation; no gate"
-                    if policy == "proposed"
                     else "accepted TS admission; Python outcome recorded separately"
                 ),
             )
@@ -654,7 +672,8 @@ def test_unit21_release_identity_archive_and_frontier(
                     "source_parity": {
                         "equal": True,
                         "scope": "Small real Python/TS producer trees and identity/cache rules. "
-                        "Excludes accepted/proposed archive restrictions and full release scale.",
+                        "Excludes accepted archive restrictions, writer time precision "
+                        "and full release scale.",
                     },
                     "archive_table": table,
                     "owned_archive_operations": actual["owned"],
@@ -662,15 +681,32 @@ def test_unit21_release_identity_archive_and_frontier(
                     "producer_trees": actual["producer_trees"],
                     "node_v2_protocol": actual["node_protocol"],
                     "frontier": actual["frontier"],
-                    "accepted_restrictions": ["GNU sparse", "PAX sparse", "member behind link"],
+                    "accepted_restrictions": [
+                        "GNU sparse",
+                        "PAX sparse",
+                        "member behind link",
+                        "unknown inert PAX",
+                        "empty PAX path",
+                        "directory/link body",
+                        "non-UTF-8 names",
+                    ],
+                    "writer_timestamp_policy": {
+                        "accepted": True,
+                        "scope": (
+                            "Release application producer only; "
+                            "reader retains exact effective nanoseconds"
+                        ),
+                        "fractional_ordinary_members": producer_timestamps,
+                        "typescript_policy": (
+                            "Ordinary headers can lose fractions; "
+                            "written fractional PAX mtime stays intact"
+                        ),
+                    },
                     "limits": {
                         "oversized_header": "metadata entry bytes",
                         "compressed_bomb": "end-padding bytes",
                         "expanded_8GiB_bomb": "HOSTED OPEN; not run locally; no cap override",
                     },
-                    "proposed_restrictions": (
-                        "Observed only; not CI/equality gates before acceptance"
-                    ),
                     "unproven": [
                         "Representative full release tree/memory/disk/cost on hosted root",
                         "Sealed bundled-package license inventory",

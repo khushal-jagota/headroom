@@ -481,6 +481,19 @@ Python supports these sparse formats. Neither actual release producer emits them
 The TypeScript reader returns `AppValidationError` before the destination exists.
 The existing release comparison records this accepted difference instead of Python equality.
 
+## Release archive metadata, names and writer timestamps — accepted
+
+The Manager accepted these five differences on November 13, 2026:
+
+- Unknown inert PAX keys are refused under the closed metadata-key policy.
+- An empty effective PAX file path is a typed refusal. This Python fault is not reproduced.
+- Bodies on directory or link members are refused under the closed member policy.
+- Release names must be valid UTF-8. A non-UTF-8 name is a typed refusal.
+- The TS release writer can lose the fractional part of an mtime because node-tar writes whole seconds in an ordinary header. A fractional time that it writes in a PAX header stays intact. The reader keeps Python's nanoseconds exactly for either archive. This applies to release application archives only.
+
+The four reader refusals use `AppValidationError` before output creation. Python accepts three forms and fails after destination creation for an empty path.
+The existing release comparison pins these intentional differences and retains Python's observations without claiming equality.
+
 ## Release archive members behind links — accepted
 
 The Manager accepted refusal of any member whose parent is another archive link member.
