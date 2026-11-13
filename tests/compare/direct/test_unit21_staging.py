@@ -135,7 +135,7 @@ def test_unit21_receipt_staging_and_readonly_frontier(
         "JSON.stringify(target+'?actual')+';"
         "export async function run_runtime_json_probe(argv,state,deadline,owner){"
         "const p=globalThis.__schema;p.calls.push({argv,state,deadline,owner});"
-        "return p.response;}'};}});"
+        "p.entered?.();if(p.response instanceof Error)throw p.response;return p.response;}'};}});"
         "try{const{staging_parity}=await import(process.argv[2]);console.log(JSON.stringify("
         "await staging_parity(JSON.parse(readFileSync(process.argv[3],'utf8')),probe)));}"
         "finally{hooks.deregister();}"
@@ -183,6 +183,25 @@ def test_unit21_receipt_staging_and_readonly_frontier(
     candidate = (
         tmp_path / "typescript/current" / (".app-next-" + receipt.manifest.app_sha)
     )
+    held = actual["held_cleanup"]
+    assert held["fresh"] == {
+        "held": True,
+        "original_error": True,
+        "candidate_after": False,
+        "workspace_after": False,
+    }
+    assert held["retained"] == {
+        "held": True,
+        "original_error": True,
+        "candidate_after": True,
+        "workspace_after": True,
+    }
+    assert held["schema"] == {
+        "held": True,
+        "original_error": True,
+        "cleanup_error": True,
+        "state_removed": True,
+    }
     argv = actual["argv"]
     assert isinstance(receipt.manifest.runtime_contract, RuntimeContract)
     assert argv[:4] == [str(candidate / ".venv/bin/python"), "-I", "-B", "-c"]
@@ -199,6 +218,14 @@ def test_unit21_receipt_staging_and_readonly_frontier(
         dict(
             seconds=time.perf_counter() - began,
             node_seconds=time.perf_counter() - node_began,
+            held_cleanup_seconds=held["seconds"],
+            held_cleanup_boundary=(
+                "The existing host holds actual RuntimeProbeUnsettled cleanup. "
+                "Real staging retains fresh and retained candidates until settlement. "
+                "Real schema status retains private state and preserves both failure identities. "
+                "Outer service adapter coverage does not prove consumer deletion order. "
+                "No additional host, test case, or candidate process runs."
+            ),
             result=actual,
             actual_candidate_python="HOSTED OPEN; recorded argv and compile-only wrapper here",
         ),

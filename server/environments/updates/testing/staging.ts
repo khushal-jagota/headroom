@@ -6,13 +6,25 @@ import { fileURLToPath } from 'node:url';
 import type { SpawnOptions } from 'node:child_process';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { AppValidationError } from '../../release/contracts.ts';
+import { RuntimeProbeUnsettled } from '../../release/admission_process.ts';
 import { parse_release } from '../codec.ts';
 import { create_release_staging } from '../staging.ts';
 import { create_migration_status } from '../migration_status.ts';
 
 interface Probe {
   response: unknown;
+  entered?: () => void;
   calls: { argv: string[]; state: string; deadline: number; owner: unknown }[];
+}
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((complete, fail) => {
+    resolve = complete;
+    reject = fail;
+  });
+  void promise.catch(() => {});
+  return { promise, resolve, reject };
 }
 export async function staging_parity(
   spec: { root: string; artifact: string; release: Record<string, unknown>; schema_error: string },
@@ -51,8 +63,13 @@ export async function staging_parity(
   try {
     const receipt = parse_release(spec.release),
       rows = [];
-    const stage = create_release_staging(owner, async () => {
+    let held_admission: { error: RuntimeProbeUnsettled; entered: (root: string) => void } | undefined;
+    const stage = create_release_staging(owner, async (root) => {
       admissions++;
+      if (held_admission) {
+        held_admission.entered(root);
+        throw held_admission.error;
+      }
       if (refusing) throw new AppValidationError('runtime probe failed');
     });
     for (const kind of ['fresh', 'reuse', 'retained-refusal', 'manifest', 'admission']) {
@@ -139,10 +156,81 @@ export async function staging_parity(
       )
     )
       throw new Error('Schema probe lost owner, original deadline or temporary cleanup');
+    // These observations use the same host and real consumers, without candidate execution.
+    const cleanup_began = performance.now(), cleanup_spawned = spawned;
+    const held_stage = async (current: string, retained: boolean) => {
+      const cleanup = deferred<void>(), entered = deferred<string>();
+      const original = new RuntimeProbeUnsettled(
+        cleanup.promise, new AppValidationError('Held staged runtime probe'),
+      );
+      held_admission = { error: original, entered: entered.resolve };
+      let completed = false;
+      const actual = stage.stage({
+        available: async () => null,
+        download_artifact: async (_id, destination) => {
+          if (retained) throw new Error('Retained stage downloaded again');
+          await copyFile(spec.artifact, destination);
+        },
+      }, receipt, current).then(
+        () => { completed = true; return null; },
+        (error: unknown) => { completed = true; return error; },
+      );
+      const candidate = await entered.promise;
+      try {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        if (completed || !existsSync(candidate) || !existsSync(dirname(candidate)))
+          throw new Error('Staging removed or completed an unsettled candidate');
+      } finally {
+        cleanup.resolve();
+      }
+      const failure = await actual;
+      held_admission = undefined;
+      if (failure !== original || existsSync(candidate) !== retained ||
+          existsSync(dirname(candidate)) !== retained)
+        throw new Error('Staging lost original error or actual cleanup ordering');
+      return { held: true, original_error: true, candidate_after: retained, workspace_after: retained };
+    };
+    const fresh_cleanup = await held_stage(join(spec.root, 'typescript/admission'), false);
+    const retained_cleanup = await held_stage(join(spec.root, 'typescript/current'), true);
+    const cleanup = deferred<void>(), entered = deferred<void>();
+    const original = new RuntimeProbeUnsettled(
+      cleanup.promise, new AppValidationError('Held schema runtime probe'),
+    );
+    const cleanup_failure = new Error('Recorded schema capture cleanup failure');
+    probe.response = original;
+    probe.entered = () => entered.resolve();
+    let schema_completed = false;
+    const actual = migration.schema_change_pending(
+      '~/schema.sqlite', join(spec.root, 'typescript/current/.app-next-' + receipt.manifest.app_sha),
+    ).then(
+      () => { schema_completed = true; return null; },
+      (error: unknown) => { schema_completed = true; return error; },
+    );
+    await entered.promise;
+    const state = probe.calls.at(-1)!.state;
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      if (schema_completed || !existsSync(state))
+        throw new Error('Schema status removed or completed unsettled probe state');
+    } finally {
+      cleanup.reject(cleanup_failure);
+      delete probe.entered;
+    }
+    const failure = await actual;
+    if (!(failure instanceof AggregateError) || failure.errors.length !== 2 ||
+        failure.errors[0] !== original || failure.errors[1] !== cleanup_failure || existsSync(state))
+      throw new Error('Schema status lost error identity or actual cleanup ordering');
+    const held_cleanup = {
+      fresh: fresh_cleanup, retained: retained_cleanup,
+      schema: { held: true, original_error: true, cleanup_error: true, state_removed: true },
+      seconds: (performance.now() - cleanup_began) / 1000,
+      archive_children: spawned - cleanup_spawned,
+    };
     return {
       rows,
       frontier,
       schema,
+      held_cleanup,
       argv: call.argv,
       spawned,
       closed,

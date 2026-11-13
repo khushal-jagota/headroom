@@ -8,7 +8,7 @@ import { validate_app_manifest } from '../release/identity.ts';
 import { AppValidationError } from '../release/contracts.ts';
 import type { AppManifest } from '../release/contracts.ts';
 import { read_migration_graph, require_node_database_frontier } from '../release/migrations.ts';
-import { run_runtime_json_probe } from '../release/admission_process.ts';
+import { RuntimeProbeUnsettled, run_runtime_json_probe } from '../release/admission_process.ts';
 import { RUNTIME_PROBE_TIMEOUT_SECONDS } from '../release/process_configuration.ts';
 import type { InstallerOperations } from './contracts.ts';
 import { PYTHON_SCHEMA_STATUS_PROBE } from './migration_probe.ts';
@@ -24,6 +24,7 @@ async function python_schema_change_pending(
   if (manifest.runtime_contract?.version !== 1)
     throw new AppValidationError('Python schema status requires an admitted version-1 runtime');
   const state = await mkdtemp(join(tmpdir(), 'panels-schema-probe-'));
+  let failure: unknown;
   try {
     for (const name of [
       'config',
@@ -67,9 +68,25 @@ async function python_schema_change_pending(
         throw new AppValidationError(result.error);
     }
     throw new AppValidationError('Python schema probe returned an incompatible response');
+  } catch (error) {
+    failure = error;
+    if (error instanceof RuntimeProbeUnsettled) {
+      try {
+        await error.settled;
+      } catch (cleanup) {
+        failure = new AggregateError([error, cleanup], 'Schema probe cleanup failed');
+      }
+    }
+    throw failure;
   } finally {
-    // The probe owns its actual close; it never joins unrelated invocation children.
-    await rm(state, { recursive: true, force: true });
+    // Retain this state until this exact probe's close and capture cleanup settle.
+    try {
+      await rm(state, { recursive: true, force: true });
+    } catch (cleanup) {
+      if (failure !== undefined)
+        throw new AggregateError([failure, cleanup], 'Schema state cleanup failed');
+      throw cleanup;
+    }
   }
 }
 

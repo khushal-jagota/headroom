@@ -57,6 +57,6 @@ Host/report comparisons use synthetic observations against Python. The actual pr
 The probe executes candidate code with the host user's rights and is not a sandbox.
 Descendants of a tool that exits normally are not swept, as in Python.
 
-Receipt staging binds the receipt hash, complete manifest, and fresh runtime admission before the final sibling rename. A matching retained stage gets fresh admission without another download. Permission-restoring cleanup applies only to the exclusive workspace.
+Receipt staging binds the receipt hash, complete manifest, and fresh runtime admission before the final sibling rename. A matching retained stage gets fresh admission without another download. Permission-restoring cleanup applies only to the exclusive workspace. Staging and schema status retain their exclusive paths until an unsettled probe’s actual cleanup completes. Original probe and cleanup failures remain visible.
 
 The schema adapter checks the complete v2 frontier through a zero-timeout readonly snapshot. V1 status uses the admitted candidate’s own isolated Python helper. UpdateService awaits that result and fences backup after shutdown. Actual v1 execution and sealed v2 admission remain hosted gates.

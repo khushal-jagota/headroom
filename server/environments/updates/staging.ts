@@ -11,6 +11,7 @@ import { validate_app_manifest } from '../release/identity.ts';
 import { extract_app_archive, remove_owned_tree } from '../release/archive.ts';
 import { APP_ARCHIVE_NAME } from '../release/configuration.ts';
 import { admit_runtime } from '../release/admission.ts';
+import { RuntimeProbeUnsettled } from '../release/admission_process.ts';
 import { python_json_equal } from '../release/logic/manifest.ts';
 import { STAGED_APP_PREFIX } from './configuration.ts';
 import { with_zip_member } from './zip.ts';
@@ -52,6 +53,20 @@ export function create_release_staging(
   child_processes: OwnedChildProcesses,
   admit: RuntimeAdmission = (root, manifest) => admit_runtime(root, manifest, child_processes),
 ): ReleaseStaging {
+  const admit_candidate: RuntimeAdmission = async (root, manifest) => {
+    try {
+      await admit(root, manifest);
+    } catch (error) {
+      if (error instanceof RuntimeProbeUnsettled) {
+        try {
+          await error.settled;
+        } catch (cleanup) {
+          throw new AggregateError([error, cleanup], 'Staged runtime cleanup failed');
+        }
+      }
+      throw error;
+    }
+  };
   return {
     async stage(provider, release, current_root) {
       const app_sha = release.manifest.app_sha;
@@ -65,12 +80,13 @@ export function create_release_staging(
       }
       if (await directory(staged)) {
         if (python_json_equal(await staged_manifest(staged, app_sha), release.manifest)) {
-          await admit(staged, release.manifest);
+          await admit_candidate(staged, release.manifest);
           return staged;
         }
         await remove_directory(staged);
       }
       const work = await mkdtemp(join(current_root, '.app-download-'));
+      let failure: unknown;
       try {
         const artifact = join(work, 'artifact.zip');
         const archive = join(work, APP_ARCHIVE_NAME);
@@ -90,12 +106,21 @@ export function create_release_staging(
         await unlink(archive);
         if (!python_json_equal(manifest, release.manifest))
           throw new AppValidationError('The downloaded app differs from its publication receipt.');
-        await admit(unpacked, manifest);
+        await admit_candidate(unpacked, manifest);
         await rename(unpacked, staged);
         return staged;
+      } catch (error) {
+        failure = error;
+        throw error;
       } finally {
         // Only this exclusive workspace gets permission-restoring cleanup.
-        await remove_owned_tree(work);
+        try {
+          await remove_owned_tree(work);
+        } catch (cleanup) {
+          if (failure !== undefined)
+            throw new AggregateError([failure, cleanup], 'Staged app cleanup failed');
+          throw cleanup;
+        }
       }
     },
   };
