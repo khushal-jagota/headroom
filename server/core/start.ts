@@ -19,6 +19,7 @@ import type { Area } from './authority/register.ts';
 import type { OwnedAreaContext } from './authority/register.ts';
 import type { ConversationSystem } from '../conversation/contracts.ts';
 import type { ConversationViewRuntime } from '../conversation/views/routes.ts';
+import type { OpenRunTurn } from '../conversation/record/contracts.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import { createConversationRoutes } from '../conversation/routes.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
@@ -107,6 +108,10 @@ export interface ServerOptions {
   testAreas?: readonly Area[] | ((context: TestCompositionContext) => readonly Area[]);
   /** Lifecycle composition opts in explicitly. Ordinary startup never polls wakes. */
   areaLoops?: AreaLoopOptions;
+  /** Retained facts enter the sole reconciliation before the core adopts them. */
+  readOpenRuns?: (
+    context: Omit<ConversationCompositionContext, 'record'>,
+  ) => ReadonlyMap<string, OpenRunTurn>;
   createConversationCore?: (
     context: ConversationCompositionContext,
   ) => SqliteProcessConversationSystem;
@@ -571,22 +576,32 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     if (!config.test_mode && config.dispatch_enabled) {
       dispatcher = acquireLock(config.dispatcher_lock_path);
     }
-    areas.initialize(database, config, clock, () => {
-      if (dispatcher_admitted(config, dispatcher !== null)) {
-        reconcile_background_attention({ database: database! });
-      }
-    });
-    const context: ConversationCompositionContext = {
+    const before_record: Omit<ConversationCompositionContext, 'record'> = {
       database,
       config,
       clock,
       changes,
-      record: areas.getRuntime(),
       publication,
       require_runtime_ownership: requireOwnership,
       revoke_signal: revokeSignal,
       one_shot_children,
       child_processes,
+    };
+    const open_runs = options.readOpenRuns?.(before_record) ?? new Map();
+    areas.initialize(
+      database,
+      config,
+      clock,
+      () => {
+        if (dispatcher_admitted(config, dispatcher !== null)) {
+          reconcile_background_attention({ database: database! });
+        }
+      },
+      open_runs,
+    );
+    const context: ConversationCompositionContext = {
+      ...before_record,
+      record: areas.getRuntime(),
     };
     core = options.createConversationCore?.(context);
     if (isClosing()) return abort_late_setup();

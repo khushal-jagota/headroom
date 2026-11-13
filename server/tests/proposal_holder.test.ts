@@ -119,7 +119,7 @@ test('rejection_rolls_back_feedback_proposal_and_claim_together', () => {
   expect(unchanged.pending_proposal).toEqual(t.pending_proposal);
   expect(unchanged.worker_step_claim).toBe('none');
   expect(
-    db.read((sql) => sql.get('SELECT * FROM ticket_revision_feedback WHERE ticket_id=?', [t.id])),
+    db.read((sql) => sql.get('SELECT * FROM ticket_decision_messages WHERE ticket_id=?', [t.id])),
   ).toBeUndefined();
 });
 test('the_holder_moves_while_a_proposal_is_parked', () => {

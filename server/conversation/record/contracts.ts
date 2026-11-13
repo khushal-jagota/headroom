@@ -302,6 +302,7 @@ export interface ConversationRecordStore {
     options: { before_sequence: number | null; limit: number },
   ): readonly StoredConversationEvent[];
   read_event(conversation_id: string, sequence: number): StoredConversationEvent | null;
+  current_turn_start_sequence(conversation_id: string): number | null;
   sender_message_outcome(
     conversation_id: string,
     sender_message_id: string,

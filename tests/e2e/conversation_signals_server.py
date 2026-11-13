@@ -286,6 +286,27 @@ def build_app(config: Config) -> FastAPI:
         children[conversation_id].reject_next_prompt = True
         return {"ok": True}
 
+    @app.post("/api/test/signals/{conversation_id}/deliver-decisions")
+    async def deliver_decisions(conversation_id: str) -> dict[str, bool]:
+        # Production delivery, manually polled because this host disables automatic
+        # Worker readiness. The decision endpoints and conversation core stay real.
+        from planner.runtime.decision_message_delivery import deliver_ticket_decision_messages
+        from planner.worker_types.configuration import configured_worker_type_registry
+
+        with closing(connect(config.db_path)) as conn:
+            row = conn.execute(
+                "SELECT id FROM tickets WHERE conversation_id=?", (conversation_id,),
+            ).fetchone()
+        assert row is not None
+        await deliver_ticket_decision_messages(
+            str(row["id"]),
+            connect_database=lambda: connect(config.db_path),
+            conversation_system=app.state.conversation.system,
+            worker_type_registry=configured_worker_type_registry(),
+            now=build_clock(config).now_unix,
+        )
+        return {"ok": True}
+
     @app.get("/api/test/signals/{conversation_id}/delivered")
     async def delivered(conversation_id: str) -> dict[str, list[str]]:
         return {"texts": delivered_text[conversation_id]}

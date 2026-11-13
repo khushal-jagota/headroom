@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import {
   fixture,
   fixture_path,
-  create,
+  create as create_ticket,
   edit,
   read,
   now,
@@ -13,7 +13,7 @@ import {
   propose,
 } from './ticket_fixture.ts';
 import * as data from '../tickets/data/index.ts';
-import * as feedback from '../tickets/revision_feedback.ts';
+import * as decisions from '../tickets/decision_messages.ts';
 import { restart_worker } from '../tickets/worker_restart.ts';
 import { OWNER } from '../core/contracts.ts';
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
@@ -40,6 +40,16 @@ import { Deferred } from '../conversation/runtime/state.ts';
 import { acquireLock } from '../core/locks/index.ts';
 import { ChangeSignal } from '../core/changes/index.ts';
 afterEach(() => vi.restoreAllMocks());
+// Ordinary-step cases start after the initial approval instruction reached its Worker.
+function create(...args: Parameters<typeof create_ticket>): ReturnType<typeof create_ticket> {
+  const ticket = create_ticket(...args);
+  args[0].write((sql) =>
+    sql.run("UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?", [
+      ticket.id,
+    ]),
+  );
+  return ticket;
+}
 function setup() {
   const db = fixture();
   configure_conversation_start(db, {
@@ -173,17 +183,6 @@ test('restart refuses a Mac ticket while the Mac is away without changing it', a
   const ticket = create(db);
   await start_ready_worker_step(ticket.id, options);
   db.write((tx) => {
-    // The minimal Ticket fixture omits executor migrations. Use the actual empty
-    // presence table from executor_mailboxes, so the real reader finds no Mac.
-    tx.run(`CREATE TABLE mac_executor_presence (
-      singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-      executor_incarnation TEXT, identity_json TEXT,
-      last_contact_at_ms INTEGER,
-      last_lease_at_ms INTEGER,
-      continuous_since_ms INTEGER,
-      going_to_sleep_at_ms INTEGER,
-      lease_json TEXT,
-      refusal_json TEXT)`);
     tx.run("UPDATE tickets SET locale='macos' WHERE id=?", [ticket.id]);
   });
   const before = read(db, ticket.id);
@@ -280,32 +279,63 @@ test('a refused user-stage opener forgets its opener and permits a retry', async
     ),
   ).toBeUndefined();
 });
-test('successful delivery only acknowledges the feedback revision its prompt carried', async () => {
+test('decisions reach the actual prompt and queue ownership prevents replay', async () => {
   const { db, system, options } = setup();
-  const ticket = create(db);
+  const ticket = create_ticket(db);
+  expect((await start_ready_worker_step(ticket.id, options)).started).toBe(true);
+  const id = read(db, ticket.id).conversation_id!;
+  expect(system.backend_prompt_writes(id)[0]).toMatchObject({
+    content: expect.arrayContaining([
+      expect.objectContaining({
+        text: expect.stringContaining('User approved the Brief proposal.'),
+      }),
+    ]),
+  });
+  const proposed = propose(db, read(db, ticket.id), 'Revise this proposal.');
   db.write((tx) =>
-    feedback.set_feedback(tx, ticket.id, {
-      stage: ticket.stage,
-      sender: OWNER,
-      message: 'first',
+    data.reject_proposal(tx, ticket.id, {
+      message: 'Keep the note.',
+      principal: OWNER,
+      expected_proposal_revision: proposed.pending_proposal_revision,
+      decision_id: 'test-reject',
       now,
     }),
   );
-  const send = system.send.bind(system);
-  vi.spyOn(system, 'send').mockImplementation(async (...args) => {
-    const result = await send(...args);
-    db.write((tx) =>
-      feedback.set_feedback(tx, ticket.id, {
-        stage: ticket.stage,
-        sender: OWNER,
-        message: 'later',
-        now,
+  await start_ready_worker_step(ticket.id, options);
+  await start_ready_worker_step(ticket.id, options);
+  expect(await system.held_prompts(id)).toHaveLength(1);
+  expect((await system.held_prompts(id))[0]!.content).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        text: 'User sent back the What Changes proposal with this note:\nKeep the note.',
       }),
-    );
-    return result;
+    ]),
+  );
+  expect(db.read((sql) => decisions.has_undelivered(sql, ticket.id))).toBe(true);
+  // Without a queue item or durable outcome, only explicit restart authorizes retry.
+  vi.spyOn(system, 'held_prompts').mockResolvedValueOnce([]);
+  await start_ready_worker_step(ticket.id, options);
+  const status = () =>
+    db.read((sql) =>
+      sql.get<{ delivery_status: string }>(
+        "SELECT delivery_status FROM ticket_decision_messages WHERE decision_id='test-reject'",
+      ),
+    )!.delivery_status;
+  expect(status()).toBe('uncertain');
+  expect(read(db, ticket.id).worker_step_claim).toBe('errored');
+  await start_ready_worker_step(ticket.id, options);
+  expect(status()).toBe('uncertain');
+  const result = await restart_worker(system, db, OWNER, ticket.id, {
+    now: options.now,
+    start_worker_step: () => start_ready_worker_step(ticket.id, options),
   });
-  expect((await start_ready_worker_step(ticket.id, options)).started).toBe(true);
-  expect(db.read((sql) => feedback.snapshot(sql, ticket.id))?.text).toContain('later');
+  expect(result.revision_restarted_in_fresh_conversation).toBe(true);
+  expect(status()).toBe('delivered');
+  const fresh = read(db, ticket.id).conversation_id!;
+  expect(fresh).not.toBe(id);
+  expect(system.backend_prompt_writes(fresh)[0]!.text).toContain(
+    'User sent back the What Changes proposal with this note:\nKeep the note.',
+  );
 });
 test('successful user-stage opener releases its claim and cannot run twice', async () => {
   const { db, system, options } = setup();

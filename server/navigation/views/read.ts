@@ -12,6 +12,7 @@ import type {
   ViewWindowRequest,
 } from '../../../web/src/lib/navigation/contracts.ts';
 import { coverage } from '../data/registry.ts';
+import { SCHEMA_VERSION } from '../contracts.ts';
 import { compact, digest, ORDERING_GENERATION } from '../logic/json.ts';
 import { NavigationUnavailable } from '../logic/errors.ts';
 import { windowKey } from '../logic/view.ts';
@@ -35,7 +36,7 @@ function continuity(sql: ReadSql): Continuity {
     ordering_generation: string;
   }>('SELECT projection_version,epoch,revision,ordering_generation FROM navigation_view_meta');
   if (
-    source.schema_version !== 10 ||
+    source.schema_version !== SCHEMA_VERSION ||
     !meta ||
     meta.projection_version !== 1 ||
     meta.epoch !== source.epoch ||

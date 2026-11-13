@@ -26,6 +26,7 @@ import { read_migration_graph, migration_frontier } from './migrations.ts';
 import { resolved_path, expand_path } from '../paths.ts';
 import { stringify_python_json } from '../../core/http/numeric_json.ts';
 import { exists, is_symlink } from '../backup/evidence.ts';
+import { write_installer_file_manifest } from './installer_bundle.ts';
 
 const BUILD_PATH = dirname(process.execPath) + ':/usr/local/bin:/usr/bin:/bin';
 function git_environment(object_directory?: string, home?: string): NodeJS.ProcessEnv {
@@ -230,6 +231,8 @@ export async function build_exported_app(
     }
     assert_release_execution(execution);
     await write_app_entrypoints(payload, requested, dependencies, execution);
+    if (options.install_dependencies)
+      await write_installer_file_manifest(payload, requested, execution);
     manifest = {
       app_sha: requested,
       source_digest,

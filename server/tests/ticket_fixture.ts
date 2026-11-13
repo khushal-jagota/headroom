@@ -19,31 +19,19 @@ const repository = resolve(import.meta.dirname, '../..');
 const root = mkdtempSync(join(tmpdir(), 'panels-ticket-rules-'));
 const seed = join(root, 'seed.sqlite');
 // Follow the existing database fixture's Python-stdlib boundary. Read the fresh
-// schema's literal declarations without importing Planner or Alembic. This proves
+// generated schema without importing Planner or Alembic. This proves
 // rule writers on the current schema, but does not exercise migration/bootstrap.
 execFileSync(
   'python3',
   [
     '-c',
-    `import ast, json, pathlib, sqlite3, sys
-source = pathlib.Path(sys.argv[2]) / 'src/planner/core/migrations/versions/current_schema.py'
-statements = []
-for node in ast.parse(source.read_text()).body:
-    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == 'BASELINE_STATEMENTS':
-        statements.extend(ast.literal_eval(node.value))
-    elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) and node.target.id == 'BASELINE_STATEMENTS':
-        if not isinstance(node.op, ast.Add):
-            raise RuntimeError('unexpected schema declaration')
-        statements.extend(ast.literal_eval(node.value))
-if not statements:
-    raise RuntimeError('fresh schema declarations not found')
+    `import json, pathlib, sqlite3, sys
+schema = json.loads((pathlib.Path(sys.argv[2]) / 'server/core/database/application_schema.json').read_text())
 with sqlite3.connect(sys.argv[1]) as connection:
-    for statement in statements:
+    for statement in schema['statements']:
         connection.execute(statement)
-    schema = json.loads((pathlib.Path(sys.argv[2]) / 'server/core/database/application_schema.json').read_text())
-    connection.execute(next(statement for statement in schema['statements'] if statement.startswith('CREATE TABLE alembic_version (')))
     connection.execute('INSERT INTO alembic_version(version_num) VALUES (?)', (schema['alembicRevision'],))
-    connection.execute('INSERT INTO attention_history_metadata VALUES (1,0)')
+    connection.execute('INSERT OR IGNORE INTO attention_history_metadata VALUES (1,0)')
     connection.executemany('INSERT INTO projects (id,name,created_at,updated_at) VALUES (?,?,0,0)', [('project_other','Other'),('project_vylo','Vylo')])
 `,
     seed,

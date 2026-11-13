@@ -18,7 +18,7 @@ import type { MessageContent } from '../message_content.ts';
 import type { DeliveryAttempt, DeliveryServices, Message, ReservedTurn } from './contracts.ts';
 import type { ConversationState } from './state.ts';
 import { ROLE_TEXT_PROMPT_SEPARATOR } from './configuration.ts';
-import { same_turn } from './state.ts';
+import { Deferred, same_turn } from './state.ts';
 
 function result(values: Partial<DeliveryAttempt> = {}): DeliveryAttempt {
   return {
@@ -36,6 +36,7 @@ function result(values: Partial<DeliveryAttempt> = {}): DeliveryAttempt {
 function owned(host: DeliveryServices, state: ConversationState, reservation: ReservedTurn): void {
   if (
     host.shutting_down ||
+    reservation.shutdown_owned ||
     state.reserved_turn !== reservation ||
     (state.last_ended_turn_token !== null &&
       state.last_ended_turn_token.turn_number >= reservation.token.turn_number)
@@ -86,10 +87,13 @@ async function ensure_child(
     event_sink: sink,
     message_files: host.options.message_files,
   });
-  // This core does not yet adopt retained executor runs. Unit 22 must compose
-  // that ownership before this explicit incompatibility can be removed.
-  if (child.stop_outside_lock)
-    throw new BackendSpawnFailed('Backend did not retain its run identity');
+  if (child.stop_outside_lock) {
+    const retained = host.retained_run(state);
+    if (retained === null) throw new BackendSpawnFailed('Backend did not retain its run identity');
+    state.retained_child_reference = retained.reference;
+    state.delivery_uncertain = false;
+    state.child = child;
+  }
   state.preparing_child = child;
   try {
     await host.native_operation(() =>
@@ -288,9 +292,13 @@ export async function deliver_prompt(
       if (state.child !== child) throw new DeliveryCancelled();
       state.child_is_quarantined = true;
     });
-    if (!(await host.discard_child(state, child)))
+    if (!(await host.retire_child_for_rebind(state, child)))
       return result({ refusal_reason: R.write_to_backend_failed });
-    owned(host, state, reservation);
+    const ready = await state.lock.run(() => {
+      owned(host, state, reservation);
+      return state.child === null && !state.child_is_quarantined;
+    });
+    if (!ready) return result({ refusal_reason: R.write_to_backend_failed });
     try {
       child = await ensure_child(host, state, reservation, first);
       owned(host, state, reservation);
@@ -351,4 +359,81 @@ function refusal_or_throw(error: unknown): DeliveryAttempt {
     });
   if (error instanceof SessionLoadFailed) return result({ refusal_reason: R.session_did_not_load });
   throw error;
+}
+
+/** A durable never-ran prompt already has its row. Repeat bytes on its original turn only. */
+export async function write_replayed_prompt(
+  host: DeliveryServices,
+  state: ConversationState,
+  token: import('../backends/contracts.ts').TurnToken,
+  prompt: import('../record/contracts.ts').UndeliveredTurnPrompt,
+  check_owner: () => void,
+): Promise<void> {
+  const reservation: ReservedTurn = {
+    token,
+    resolved: new Deferred<void>(),
+    automatic_compaction: prompt.automatic_compaction,
+    automatic_notice: false,
+    memory_notice_only: false,
+    prompt_accepted: false,
+    messages: [],
+    mode: prompt.mode,
+    shutdown_owned: false,
+    shutdown_fate: null,
+  };
+  const release = await state.lock.acquire();
+  try {
+    check_owner();
+    state.reserved_turn = reservation;
+    // Its original prompt is already durable, so callbacks need no receipt barrier.
+    reservation.resolved.resolve();
+  } finally {
+    release();
+  }
+  try {
+    let child = state.child;
+    if (child === null) {
+      const message: Message = {
+        held_prompt_id: '',
+        content: prompt.sender_content,
+        sender_label: prompt.sender_label,
+        sender: null,
+        recipient: null,
+        sender_message_id: null,
+        sent_at_unix_milliseconds: null,
+        snapshot_sent_at_unix_milliseconds: 0,
+        model_change: prompt.model_change,
+        reasoning_effort_change: prompt.reasoning_effort_change,
+        reasoning_effort_is_set: prompt.reasoning_effort_is_set,
+        owner_read_through_sequence: null,
+        acknowledge_owner_on_failure: false,
+        recovery_references: [],
+        recording_receipt: null,
+        queue_reason: 'requested',
+        delivery_uncertain: false,
+        system_generated: true,
+      };
+      child = await ensure_child(host, state, reservation, message);
+    }
+    check_owner();
+    await host.native_operation(() =>
+      child!.write_prompt(token, prompt.content, {
+        sender_label: prompt.sender_label,
+        sender_content: prompt.sender_content,
+        sender_message_count: prompt.sender_message_count,
+        mode: prompt.mode,
+        model_change: prompt.model_change,
+        reasoning_effort_change: prompt.reasoning_effort_change,
+        reasoning_effort_is_set: prompt.reasoning_effort_is_set,
+        automatic_compaction: prompt.automatic_compaction,
+      }),
+    );
+    check_owner();
+  } catch (error) {
+    check_owner();
+    throw error;
+  } finally {
+    if (state.reserved_turn === reservation) state.reserved_turn = null;
+    reservation.resolved.resolve();
+  }
 }

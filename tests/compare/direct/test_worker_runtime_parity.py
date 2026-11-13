@@ -150,6 +150,102 @@ def compare(
     return expected
 
 
+def check_decisions(conn: sqlite3.Connection, root: Path) -> dict[str, Any]:
+    from planner.conversation.logic.conversation_start_resolution import (
+        resolve_conversation_start_request,
+    )
+    from planner.conversation.storage import ConversationStore
+    from planner.core.contracts import Principal, PrincipalKind
+    from planner.tickets import decision_messages
+
+    ticket = new_ticket(conn)
+    asyncio.run(
+        ConversationStore(str(root / "python.sqlite"), integer_now=lambda: NOW).create_conversation(
+            resolve_conversation_start_request(
+                ConversationStartRequest(
+                    conversation_id="decision-parity-conversation",
+                    model="gpt-6.1-sol",
+                    workspace_folder=root,
+                )
+            )
+        )
+    )
+    # Canonical decision writes require an existing session for attributed guidance.
+    ticket = tickets.write_ticket_conversation_start(
+        conn,
+        ticket.id,
+        conversation_id="decision-parity-conversation",
+        backend="codex",
+        model=ticket.employee_launch_model,
+        reasoning_effort=ticket.employee_launch_reasoning_effort,
+        now=NOW,
+    )
+    ticket = tickets.file_current_proposal(
+        conn,
+        ticket.id,
+        body="Decision parity scope",
+        principal=Principal(PrincipalKind.ticket, ticket.id),
+        now=NOW,
+    )
+
+    def python() -> dict[str, Any]:
+        tickets.reject_proposal(
+            conn,
+            ticket.id,
+            message="Keep the attributed note.",
+            principal=OWNER_PRINCIPAL,
+            now=NOW,
+            expected_proposal_revision=ticket.pending_proposal_revision,
+            decision_id="parity-decision",
+        )
+        tickets.reject_proposal(
+            conn,
+            ticket.id,
+            message="Keep the attributed note.",
+            principal=OWNER_PRINCIPAL,
+            now=NOW,
+            expected_proposal_revision=ticket.pending_proposal_revision,
+            decision_id="parity-decision",
+        )
+        revised = tickets.file_current_proposal(
+            conn,
+            ticket.id,
+            body="Reviewed scope",
+            principal=Principal(PrincipalKind.ticket, ticket.id),
+            now=NOW,
+        )
+        tickets.accept_proposal(
+            conn,
+            ticket.id,
+            field="what_changes",
+            principal=OWNER_PRINCIPAL,
+            now=NOW,
+            next_ceiling="needs_implementation",
+            next_holder=OWNER_PRINCIPAL,
+            expected_proposal_revision=revised.pending_proposal_revision,
+            message="Approuvé — café et 日本語.",
+            decision_id="parity-approval",
+        )
+        conn.execute(
+            "UPDATE ticket_decision_messages SET delivery_status='uncertain' WHERE ticket_id=?",
+            (ticket.id,),
+        )
+        decision_messages.rearm_after_restart(conn, ticket.id)
+        conn.commit()
+        return {
+            "rows": [
+                dict(row)
+                for row in conn.execute(
+                    "SELECT * FROM ticket_decision_messages ORDER BY decision_id"
+                )
+            ],
+            "pending": decision_messages.pending_ticket_ids(conn),
+            "undelivered": decision_messages.has_undelivered(conn, ticket.id),
+        }
+
+    return compare(conn, root, {"mode": "decisions", "ticket_id": ticket.id}, python)
+
+
 def presence(conn: sqlite3.Connection, state: str) -> None:
     identity = dict(
         protocol_version=PROTOCOL_VERSION,
@@ -433,3 +529,13 @@ def test_worker_runtime_parity(tmp_path: Path, request: pytest.FixtureRequest) -
             {"match": report["match"], "seconds": report["seconds"], "cases": len(report["cases"])}
         )
     )
+
+
+def test_worker_decisions_parity(tmp_path: Path) -> None:
+    with synthetic_home_environment(create_synthetic_homes(tmp_path)):
+        conn = connect(str(tmp_path / "python.sqlite"))
+        try:
+            create_schema(conn)
+            check_decisions(conn, tmp_path)
+        finally:
+            conn.close()

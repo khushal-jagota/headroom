@@ -1,20 +1,8 @@
-"""The owner's standing ask for a fresh recap, as a Panels system message.
+"""A superior's ask for a fresh recap, delivered as a Panels system message.
 
-A recap is the one line the owner reads to know what a piece of work is doing. Before
-this, the only way to get a fresh one was to wait for the agent or to go and talk to it.
-
-Asking is a message and nothing else, so this sends the same words through the same door
-every other message uses, with Panels as its source. It owns no transport, no queue, and
-no record of its own. What it owns is the sentence, which belongs beside the system that
-delivers it rather than in the browser that presses the button.
-
-The answer to this message is the recap the agent writes, not words it sends back. A
-press leaves the owner's attention alone and the fresh recap is the whole result.
-
-Asking also clears the recap being replaced. The owner read that line before pressing, so
-it is spent, and leaving it in place makes a pending recap look like a current one. The
-clear is the owner's own decision and it is permanent: a refused send leaves the line
-empty, and every surface showing that recap shows it empty at once.
+The request clears the spent recap before delivery, even if delivery is refused.
+The standard instruction and requester name travel together through the ordinary
+conversation path, including its queue. The agent answers with its recap tool.
 """
 
 from __future__ import annotations
@@ -22,7 +10,9 @@ from __future__ import annotations
 import sqlite3
 
 from planner.conversation.contracts import ConversationSystem
-from planner.core.authctx import RequestContext
+from planner.core.authctx import RequestContext, require_owner
+from planner.core.authority import contracts as targets
+from planner.core.authority import service as authority
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
@@ -61,18 +51,40 @@ async def request_recap(
             "a recap can be asked of a ticket, a Manager, or the Chief",
             {"kind": recipient.kind.value},
         )
-    # The clear is a write, so it waits on the SQLite lock on a worker thread.
-    await run_on_worker_thread(_clear_recap, conn, clock, ctx, recipient)
+    # Admission precedes the clear and send, including callers outside HTTP.
+    message = await run_on_worker_thread(_prepare_request, conn, clock, ctx, recipient)
     return await service.send_message(
         conversations,
         conn,
         clock,
         ctx,
         recipient,
-        RECAP_REQUEST_MESSAGE,
+        message,
         MessageDeliveryMode.steer,
         system_message=True,
     )
+
+
+def _prepare_request(
+    conn: sqlite3.Connection, clock: Clock, ctx: RequestContext, recipient: Principal
+) -> str:
+    # The current parent must remain the same from admission through the clear.
+    with tickets_data._txn(conn):
+        if recipient.kind is PrincipalKind.chief:
+            require_owner(ctx)
+        elif recipient.kind is PrincipalKind.manager:
+            authority.require_above(conn, ctx.principal, targets.manager(recipient.id))
+        else:
+            authority.require_above(conn, ctx.principal, targets.ticket(recipient.id))
+
+        if ctx.principal.kind is PrincipalKind.owner:
+            requester = "the owner"
+        elif ctx.principal.kind is PrincipalKind.chief:
+            requester = "Chief"
+        else:
+            requester = f"Manager {managers_data.read_manager(conn, ctx.principal.id).item.title}"
+        _clear_recap(conn, clock, ctx, recipient)
+        return f"{RECAP_REQUEST_MESSAGE}\nRequested by {requester}."
 
 
 def _clear_recap(

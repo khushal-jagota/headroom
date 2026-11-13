@@ -6,6 +6,7 @@ import type {
   RecordKind,
 } from '../../../web/src/lib/navigation/contracts.ts';
 import { compact, digest, ORDERING_GENERATION } from '../logic/json.ts';
+import { SCHEMA_VERSION } from '../contracts.ts';
 import type { Fact, Key, Membership, ProjectionMetadata } from './contracts.ts';
 import { VIEW_CONFIG } from './configuration.ts';
 import {
@@ -513,7 +514,7 @@ export function rebuildProjection(tx: TransactionSql): void {
   if (
     !prepared(tx) ||
     tx.get<{ schema_version: number }>('SELECT schema_version FROM navigation_meta')
-      ?.schema_version !== 10
+      ?.schema_version !== SCHEMA_VERSION
   )
     return;
   prepareOrdered(tx);

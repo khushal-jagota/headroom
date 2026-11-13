@@ -6,20 +6,16 @@
   import ErrorLine from "./ErrorLine.svelte";
   import ComposerField from "./conversation/ComposerField.svelte";
   import { advanceTargetFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
-  import { deliverReviewNote, forgetReviewNote, recallReviewNote, reviewNoteText, type ReviewNoteDelivery } from "../lib/review/noteDelivery";
-  import type { DeliveredMessage } from "../lib/conversation/wire";
-  import MarkdownBlock from "./MarkdownBlock.svelte";
+  import { decisionIdentity, decisionId, recallReviewDecision, submitReviewDecision, type ReviewDecisionBody } from "../lib/review/decision";
   import type { PendingTicketProposal, Principal } from "../lib/types";
 
-  let { ticketId, conversationId, onSendNote, proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, revisionText = $bindable(""), holdDecisions = false, initialEditedBody, onEditedBodyChange, contextRow, utilityActions }: {
+  let { ticketId, proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, revisionText = $bindable(""), holdDecisions = false, initialEditedBody, onEditedBodyChange, contextRow, utilityActions }: {
     ticketId: string;
-    conversationId: string | null;
-    onSendNote: (delivery: ReviewNoteDelivery) => Promise<DeliveredMessage>;
     proposal: PendingTicketProposal; lifecycle: Lifecycle; stage: string; ceiling: string; holder: Principal;
     manager: { id: string; title: string } | null;
     onAccept: (body: Record<string, unknown>) => Promise<unknown>;
     onScope: (body: Record<string,unknown>) => Promise<void>;
-    onReturn: (message: string) => Promise<unknown>;
+    onReturn: (body: ReviewDecisionBody) => Promise<unknown>;
     canReturn?: boolean;
     disabled?: boolean;
     /** The Review screen's voice-enabled note field beside the decision controls.
@@ -39,8 +35,6 @@
   } = $props();
   let scopePicker = $state<{openApproval: (anchor?: HTMLElement) => void; openReviewer: (anchor?: HTMLElement) => void; readonly expanded: boolean; readonly controls: string | undefined} | undefined>();
   let draft = $state("");
-  let noteDelivery = $state<ReviewNoteDelivery | null>(null);
-  let noteRecoveryError = $state<unknown>(null);
   let mounted = true;
   onDestroy(() => { mounted = false; });
   let busy = $state(false);
@@ -51,24 +45,22 @@
   let nextCeiling = $derived(preferredScopeCeilingFor(lifecycle, newStage));
   let finalApproval = $derived(newStage !== null && lifecycle.stageIsTerminal[newStage] === true);
   let identity = $derived([ticketId, proposal.field, proposal.created_at, proposal.revision, lifecycle.workerType, newStage, finalApproval, lifecycle.stageOrder.join(","), lifecycle.ceilingRange.join(","), manager?.id || ""].join("|"));
-  // Match Review identity so a route switch retains the same message receipt.
-  let noteKey = $derived(JSON.stringify([ticketId, proposal.field, proposal.field, proposal.created_at, proposal.revision]));
+  let decisionKey = $derived(decisionIdentity(ticketId, proposal.revision));
   $effect(() => {
     if (identity === lastKey) return;
     const first = lastKey === null;
     lastKey = identity;
     draft = first ? initialEditedBody ?? proposal.body : proposal.body;
     if (!first) revisionText = "";
-    noteRecoveryError = null;
-    try {
-      noteDelivery = recallReviewNote(noteKey);
-      if (noteDelivery?.status === "pending" && !revisionText.trim()) revisionText = reviewNoteText(noteDelivery);
-    } catch (error) {
-      noteDelivery = null;
-      noteRecoveryError = error;
-    }
     resolved = false;
     error = null;
+    try {
+      const pending = recallReviewDecision(decisionKey);
+      if (pending) {
+        revisionText = pending.body.message ?? "";
+        draft = pending.body.edited_body ?? proposal.body;
+      }
+    } catch (recoveryError) { error = recoveryError; }
   });
   function reviewerLabel(value: Principal): string {
     return value.kind === "owner" ? "User" : value.kind === "chief" ? "Chief" : value.kind === "ticket" ? "Worker" : "Manager";
@@ -78,26 +70,17 @@
     // Capture the exact proposal displayed for this gesture before awaiting any write.
     const revision = proposal.revision;
     const editedBody = draft;
-    const key = noteKey;
-    const text = revisionText.trim();
-    const send = onSendNote;
+    const key = decisionKey;
+    const text = revisionText;
     busy = true; error = null;
     try {
       if (change.approval && change.ceiling) {
-        await deliverReviewNote({
-          identity: key, conversationId, text,
-          onChange: (delivery) => { if (mounted && noteKey === key) noteDelivery = delivery; },
-          send: (delivery) => {
-            if (!mounted || noteKey !== key) throw new Error("the visible proposal changed; read it again before accepting");
-            return send(delivery);
-          }
-        });
-        if (!mounted || noteKey !== key) throw new Error("the visible proposal changed; read it again before accepting");
-        if (holdDecisions || revisionText.trim() !== text) throw new Error("The note changed. Check it before approval.");
-        await onAccept({ next_ceiling:change.ceiling, next_holder:change.holder, expected_proposal_revision:revision,
-          ...(editedBody !== proposal.body ? { edited_body:editedBody } : {}) });
-        forgetReviewNote(key);
-        if (!mounted || noteKey !== key) return;
+        await submitReviewDecision(key, { action: "approve", body: {
+          decision_id: decisionId(key, "approve"), message: text || null,
+          next_ceiling: change.ceiling, next_holder: change.holder, expected_proposal_revision: revision,
+          ...(editedBody !== proposal.body ? { edited_body: editedBody } : {})
+        } }, onAccept);
+        if (!mounted || decisionKey !== key) return;
         revisionText = "";
         resolved = true;
       } else {
@@ -109,11 +92,13 @@
   async function sendBack(message: string): Promise<void> {
     if (proposal.field === "brief" || disabled || !canReturn || busy || resolved || holdDecisions || !message) return;
     busy = true; error = null;
-    const key = noteKey;
+    const key = decisionKey;
+    const revision = proposal.revision;
     try {
-      await onReturn(message);
-      forgetReviewNote(key);
-      if (!mounted || noteKey !== key) return;
+      await submitReviewDecision(key, { action: "send_back", body: {
+        decision_id: decisionId(key, "send_back"), message, expected_proposal_revision: revision
+      } }, onReturn);
+      if (!mounted || decisionKey !== key) return;
       revisionText = "";
       resolved = true;
     }
@@ -123,8 +108,8 @@
   let revisionSlot = $state<HTMLElement | null>(null);
   function sendItBack(): void {
     if (!canReturn || holdDecisions) return;
-    const message = revisionText.trim();
-    if (message) void sendBack(message);
+    const message = revisionText;
+    if (message.trim()) void sendBack(message);
     else revisionSlot?.querySelector<HTMLElement>("textarea")?.focus();
   }
 
@@ -148,16 +133,6 @@
   </div>
   {#if contextRow}<div class="context">{@render contextRow()}</div>{/if}
   <div class="revision" bind:this={revisionSlot}>
-    {#if noteRecoveryError}
-      <ErrorLine error={noteRecoveryError} />
-    {:else if noteDelivery?.status === "pending"}
-      <div data-review-note-pending>
-        <ErrorLine error={{ code: "not_approved", message: "The note delivery is unconfirmed. Approve checks it again before approval." }} />
-        {#if revisionText.trim() !== reviewNoteText(noteDelivery)}
-          <MarkdownBlock text={reviewNoteText(noteDelivery)} />
-        {/if}
-      </div>
-    {/if}
     {#if revisionEditor}{@render revisionEditor()}{:else}
       <ComposerField bind:value={revisionText} placeholder="Add a note for the worker…"
         inputAttributes={{ "data-revision-note": "" }}
