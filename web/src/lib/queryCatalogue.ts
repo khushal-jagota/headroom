@@ -66,8 +66,14 @@ export const queries = {
   }),
 
   updates: () => jsonQuery<import("./updates/contracts").UpdateStatus>(["updates"], "/api/updates"),
-  recordedUsage: (input: UsageSummaryInput) =>
-    jsonQuery<UsageSummary>(["recorded-usage", input], usageSummaryPath(input)),
+  recordedUsage: (input: UsageSummaryInput) => ({
+    ...jsonQuery<UsageSummary>(["recorded-usage", input], usageSummaryPath(input)),
+    // Transcript scans follow explicit window changes and Refresh, not database commits.
+    meta: { resourceBody: true, followsChangeStream: false },
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false
+  }),
   managerTicketSummaries: (principal: ManagerPrincipal, filter: ManagerChildFilter, offset: number, limit = 30) =>
     jsonQuery<TicketSummariesResponse>(
       ["tickets", "manager", { principal, filter, offset, limit }],

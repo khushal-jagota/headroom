@@ -1,11 +1,13 @@
 """All T3 usageAggregation.test.ts cases, revision 75e4ceb9 (MIT)."""
 
+import json
 from typing import Any
 
 import pytest
 
 from planner.conversation.usage.usageAggregation import UsageAggregator
-from planner.conversation.usage.usageTranscripts import parseTimestampMs
+from planner.conversation.usage.usagePricing import parseRateTable
+from planner.conversation.usage.usageTranscripts import parseClaudeLine, parseTimestampMs
 
 RATES = {
     "claude-fable-5": dict(
@@ -197,3 +199,48 @@ def test_separates_providers_and_models_into_their_own_buckets() -> None:
         [record(), record(provider="codex", model="gpt-5.6-sol"), record(model="claude-opus-5")]
     )
     assert len(result["buckets"]) == 3
+
+
+def test_prices_mixed_cache_durations_before_aggregation_without_extra_tokens() -> None:
+    rates = parseRateTable(
+        {
+            "model": {
+                "input_cost_per_token": 1e-6,
+                "output_cost_per_token": 5e-6,
+                "cache_read_input_token_cost": 0.1e-6,
+                "cache_creation_input_token_cost": 1.25e-6,
+                "cache_creation_input_token_cost_above_1hr": 2e-6,
+                "input_cost_per_token_above_272k_tokens": 2e-6,
+            }
+        }
+    )
+    aggregator = UsageAggregator(
+        dict(timeZone="UTC", sinceDay="2026-08-01", untilDay="2026-08-31", rates=rates)
+    )
+    for index in range(2):
+        parsed = parseClaudeLine(
+            json.dumps(
+                dict(
+                    type="assistant",
+                    timestamp="2026-08-07T04:05:13.944Z",
+                    message=dict(
+                        id=str(index),
+                        model="model",
+                        usage=dict(
+                            input_tokens=200_000,
+                            output_tokens=10,
+                            cache_creation_input_tokens=100,
+                            cache_creation=dict(
+                                ephemeral_5m_input_tokens=60, ephemeral_1h_input_tokens=40
+                            ),
+                        ),
+                    ),
+                )
+            )
+        )
+        assert parsed is not None
+        aggregator.add(parsed)
+    bucket = aggregator.finish()["buckets"][0]
+    # The combined prompt exceeds the tier, but neither individual request does.
+    assert bucket["costUsd"] == pytest.approx(2 * (0.2 + 10 * 5e-6 + 60 * 1.25e-6 + 40 * 2e-6))
+    assert bucket["totals"]["cacheCreationTokens"] == 200
