@@ -1,5 +1,27 @@
-/** Installed runtime selection uses only Node builtins and never runs candidate code. */
+/** New-unit producers. The installed bootstrap imports only Node builtins. */
+import { readFileSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
+import { shell_quote } from '../../conversation/worker_unit/logic.ts';
+import { TYPESCRIPT_SERVICE_NAME } from '../../lifecycle/service_identity.ts';
+import { UNIT_TIMEOUT_STOP_SECONDS } from '../../lifecycle/configuration.ts';
+
 export type ClassifiedRuntime = 'node-v2' | 'python-v1' | 'python-legacy-null';
+export interface ManagedUnitOptions {
+  readonly current_root: string;
+  readonly node_executable: string;
+  readonly config_path: string;
+  readonly runtime_directory_name: string;
+  readonly admitted_legacy_null_sha: string | null;
+  readonly environment: Readonly<Record<string, string>>;
+}
+export interface WatchdogUnitOptions {
+  readonly current_root: string;
+  readonly node_executable: string;
+  readonly config_path: string;
+  readonly database_path: string;
+  readonly state_directory: string;
+  readonly environment: Readonly<Record<string, string>>;
+}
 
 /** One executable source, embedded unchanged into BOTH unit actions.
  * This is structural routing. The actual launcher retains complete admission.
@@ -76,3 +98,136 @@ try {
   process.exitCode = 1;
 }
 `;
+
+function valid_text(value: string): string {
+  if (value.includes('\0')) throw new Error('Unit values must not contain NUL');
+  return value;
+}
+function absolute(value: string): string {
+  if (!isAbsolute(valid_text(value))) throw new Error('Unit paths must be absolute');
+  return value;
+}
+/** Environment= does not expand dollars. Exec command words do. */
+function unit_word(value: string, command: boolean): string {
+  let escaped = valid_text(value)
+    .replaceAll('\\', '\\\\')
+    .replaceAll('"', '\\"')
+    .replaceAll('\n', '\\n')
+    .replaceAll('\r', '\\r')
+    .replaceAll('\t', '\\t')
+    .replaceAll('%', '%%');
+  if (command) escaped = escaped.replaceAll('$', () => '$$');
+  return '"' + escaped + '"';
+}
+function environment_lines(values: Readonly<Record<string, string>>): string {
+  return Object.entries(values)
+    .map(([key, value]) => {
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.exec(key)?.[0] !== key)
+        throw new Error('Invalid unit environment name');
+      return 'Environment=' + unit_word(key + '=' + value, false);
+    })
+    .join('\n');
+}
+function template(name: string, values: Readonly<Record<string, string>>): string {
+  const source = readFileSync(
+    new URL('../../../ops/panels-environments/' + name + '.in', import.meta.url),
+    'utf8',
+  );
+  return source.replace(/\{\{([A-Z_]+)\}\}/g, (_match, key: string) => {
+    if (!Object.hasOwn(values, key)) throw new Error('Unknown unit template field: ' + key);
+    return values[key]!;
+  });
+}
+function shell_command(script: string, runtime?: string): string {
+  return (
+    '/bin/sh -c ' +
+    unit_word(script, true) +
+    ' panels-unit' +
+    (runtime ? ' "%t/' + runtime + '"' : '')
+  );
+}
+function guarded_prefix(config_path: string): string {
+  return (
+    'set -eu\nunset NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH\n' +
+    'export PLAN_CONFIG_PATH=' +
+    shell_quote(absolute(config_path)) +
+    ' PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS=1\n'
+  );
+}
+export function render_managed_unit(options: ManagedUnitOptions): string {
+  const app = join(absolute(options.current_root), 'app');
+  const node = absolute(options.node_executable);
+  const name = options.runtime_directory_name;
+  if (/^[A-Za-z0-9_-]+$/.exec(name)?.[0] !== name)
+    throw new Error('Runtime directory must be one safe component');
+  const sha = options.admitted_legacy_null_sha;
+  if (sha !== null && /^[0-9a-f]{40}$/.exec(sha)?.[0] !== sha)
+    throw new Error('Invalid admitted legacy SHA');
+  const prefix =
+    guarded_prefix(options.config_path) +
+    'cd -- ' +
+    shell_quote(options.current_root) +
+    ' || exit\n' +
+    'runtime=$(' +
+    shell_quote(node) +
+    ' --input-type=module -e ' +
+    shell_quote(INSTALLED_RUNTIME_CLASSIFIER_SOURCE) +
+    ' ' +
+    shell_quote(app) +
+    ' ' +
+    shell_quote(sha ?? '') +
+    ')\n';
+  const start =
+    prefix +
+    'case "$runtime" in\n' +
+    'node-v2) exec ' +
+    shell_quote(node) +
+    ' ' +
+    shell_quote(join(app, 'server/environments/release/launcher_main.ts')) +
+    ' serve --managed-linux-runtime-directory "$1";;\n' +
+    'python-v1|python-legacy-null) exec ' +
+    shell_quote(join(app, 'bin/panels-launcher')) +
+    ' serve;;\n' +
+    '*) exit 1;;\nesac\n';
+  const stop =
+    prefix +
+    'case "$runtime" in\n' +
+    'node-v2) exec ' +
+    shell_quote(node) +
+    ' ' +
+    shell_quote(join(app, 'server/lifecycle/stop_main.ts')) +
+    ' "$1";;\n' +
+    'python-v1|python-legacy-null) exit 0;;\n*) exit 1;;\nesac\n';
+  return template(TYPESCRIPT_SERVICE_NAME, {
+    ENVIRONMENT: environment_lines(options.environment),
+    RUNTIME_DIRECTORY: name,
+    EXEC_START: shell_command(start, name),
+    EXEC_STOP: shell_command(stop, name),
+    TIMEOUT_STOP: String(UNIT_TIMEOUT_STOP_SECONDS),
+  });
+}
+export function render_watchdog_units(options: WatchdogUnitOptions): {
+  readonly service: string;
+  readonly timer: string;
+} {
+  const app = join(absolute(options.current_root), 'app');
+  const script =
+    guarded_prefix(options.config_path) +
+    'exec ' +
+    shell_quote(absolute(options.node_executable)) +
+    ' ' +
+    shell_quote(join(app, 'server/stalls/watchdog_main.ts')) +
+    ' ' +
+    shell_quote(absolute(options.database_path)) +
+    ' ' +
+    shell_quote(absolute(options.state_directory)) +
+    '\n';
+  const name = TYPESCRIPT_SERVICE_NAME.replace(/\.service$/, '-stall-watchdog.service');
+  return {
+    service: template(name, {
+      ENVIRONMENT: environment_lines(options.environment),
+      EXEC_START: shell_command(script),
+    }),
+    timer: template(name.replace(/\.service$/, '.timer'), { WATCHDOG_SERVICE: name }),
+  };
+}

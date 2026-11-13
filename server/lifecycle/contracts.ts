@@ -188,6 +188,16 @@ export interface ManagedStopArguments {
 export interface ManagedStopContext {
   readonly deadline: number;
 }
+export interface ManagedEntrypointArguments {
+  readonly runtime_directory: string;
+}
+export interface UnitLifecycleContext extends ManagedEntrypointArguments {
+  readonly control_socket_path: string;
+  readonly lease_path: string;
+  readonly port: number;
+  readonly config_path: string;
+  readonly config: Config;
+}
 export interface CapabilityCaptureRoots {
   readonly application_root: string;
   readonly database_parent: string;

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import gzip
+import hashlib
 import json
 import os
 import shutil
@@ -48,6 +49,129 @@ from planner.environments.update_install import require_exact_schema_frontier, s
 ROOT = Path(__file__).resolve().parents[3]
 SHA = "a" * 40
 FIXTURE_TIME_NS = 1_700_000_000_125_000_000
+
+
+def _unit_boundaries(
+    root: Path, observed: dict[str, Any], node: str, environment: dict[str, str], literal: str
+) -> dict[str, Any]:
+    """Inert layout markers prove routing only, never interpreter/CLI/runtime success."""
+    began = time.perf_counter()
+    layout = root / "unit-layout"
+    for name in (
+        "bin/panels",
+        "bin/panels-launcher",
+        ".venv/bin/python",
+    ):
+        path = layout / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# inert structural marker, never executed\n")
+        path.chmod(0o700)
+    (layout / "runtime").mkdir()
+    routes = []
+    # Other classifier routes already belong to the prerequisite Vitest case.
+    for contract, payload, missing, expected in (
+        ({"version": 3}, {"version": 3}, False, "unsupported runtime contract version"),
+        ({"version": 1}, {"version": 1}, True, ".venv/bin/python"),
+    ):
+        (layout / "manifest.json").write_text(
+            json.dumps(
+                dict(
+                    format="panels-app-v1",
+                    app_sha=SHA,
+                    source_digest="b" * 64,
+                    artifact_digest="c" * 64,
+                    runtime_contract=contract,
+                )
+            )
+        )
+        (layout / "runtime/contract.json").write_text(json.dumps(payload))
+        if missing:
+            (layout / ".venv/bin/python").unlink()
+        result = subprocess.run(
+            [
+                node,
+                "--input-type=module",
+                "-e",
+                observed["classifier_source"],
+                str(layout),
+                "",
+            ],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        assert result.returncode == 1 and result.stdout == ""
+        assert result.stderr.startswith("Panels runtime classification failed: ")
+        assert expected in result.stderr
+        routes.append(dict(expected=expected, exit_code=result.returncode))
+    assert all(observed["context"].values()), observed["context"]
+    refusal = subprocess.run(
+        [
+            node,
+            str(ROOT / "server/stalls/watchdog_main.ts"),
+            str(root / "unit-empty.sqlite"),
+            str(root / "unit-watchdog"),
+        ],
+        env={
+            **environment,
+            "PLAN_CONFIG_PATH": str(root / "unit-config.yaml"),
+            "PLAN_TEST_MODE": "1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    assert (refusal.returncode, refusal.stdout, refusal.stderr) == (
+        1,
+        "",
+        "watchdog provider command is unavailable in test mode\n",
+    )
+    managed = observed["managed"]
+    assert "WorkingDirectory=" not in managed and "TimeoutStopSec=90\n" in managed
+    assert "RuntimeDirectory=panels-proof\nRuntimeDirectoryMode=0700\n" in managed
+    assert managed.count("PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS=1") == 2
+    assert managed.count("unset NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH") == 2
+    assert managed.count('"%t/panels-proof"') == 2
+    assert "$$runtime" in managed and "$$1" in managed and "unit $$%% " in managed
+    assert "OOMScoreAdjust=-500\n" in managed
+    actions = [
+        line.partition("=")[2]
+        for line in managed.splitlines()
+        if line.startswith(("ExecStart=", "ExecStop="))
+    ]
+    assert (
+        len(actions) == 2 and actions[0].partition("case ")[0] == actions[1].partition("case ")[0]
+    )
+    escaped = (
+        literal.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("%", "%%")
+    )
+    for output in (managed, observed["watchdog"]["service"]):
+        assert 'Environment="UNIT_LITERAL=' + escaped + '"\n' in output
+    watchdog = observed["watchdog"]
+    assert "TimeoutStartSec=300\n" in watchdog["service"]
+    assert "server/stalls/watchdog_main.ts" in watchdog["service"]
+    for directive in (
+        "OnBootSec=60s",
+        "OnUnitActiveSec=30s",
+        "AccuracySec=5s",
+        "Unit=panels-typescript-stall-watchdog.service",
+    ):
+        assert directive + "\n" in watchdog["timer"]
+    return dict(
+        routes=routes,
+        context=observed["context"],
+        watchdog_refusal=refusal.stderr,
+        rendered_sha256={
+            name: hashlib.sha256(text.encode()).hexdigest()
+            for name, text in {"managed": managed, **watchdog}.items()
+        },
+        producer_milliseconds=observed["milliseconds"],
+        seconds=time.perf_counter() - began,
+        scope="structural/local only",
+    )
 
 
 def _admission_group_proof(root: Path, environment: dict[str, str], node: str) -> dict[str, Any]:
@@ -679,6 +803,7 @@ def test_unit21_release_identity_archive_and_frontier(
         "server/lifecycle/managed_main.ts",
         "server/lifecycle/application.ts",
         "server/lifecycle/stop_main.ts",
+        "server/stalls/watchdog_main.ts",
         "server/conversation/usage/usageWorker.ts",
         "src/planner/conversation/backends/hermes_acp_extension.py",
         "src/planner/conversation/backends/hermes_model_catalog.py",
@@ -740,13 +865,15 @@ def test_unit21_release_identity_archive_and_frontier(
     launcher = tmp_path / "probe.mjs"
     launcher.write_text(
         "const{release_parity,native_loader_parity,admission_rules_parity,builder_parity,"
-        "hostile_native_parity}="
+        "unit_boundaries_parity,hostile_native_parity}="
         "await import(process.argv[2]);"
         "const result=await release_parity(process.argv[3],JSON.parse(process.argv[4]));"
         "result.native_loader=await native_loader_parity(JSON.parse(process.argv[5]));"
         "result.admission=await admission_rules_parity("
         "process.argv[3],JSON.parse(process.argv[6]));"
         "result.builder=await builder_parity(process.argv[3],JSON.parse(process.argv[7]));"
+        "result.units=await unit_boundaries_parity(process.argv[3],{...process.env},"
+        "JSON.parse(process.argv[8]));"
         "result.hostile_native=await hostile_native_parity(process.argv[3]);"
         "console.log(JSON.stringify(result));"
     )
@@ -773,6 +900,9 @@ def test_unit21_release_identity_archive_and_frontier(
         "PLAN_SERVER_LIFECYCLE_LEASE_PATH": "lifecycle.lock",
     }.items():
         env[key] = str(tmp_path / relative_path)
+    # loadConfig requires these configured directory roots to exist before resolution.
+    for key in ("PLAN_WORKSPACE_ROOT", "PLAN_TICKET_SCRATCH_ROOT"):
+        Path(env[key]).mkdir()
     cli_relative = "server/cli/main.ts"
     # These real bytes prove layout only; this deliberately small source cannot execute the CLI.
     with patch.dict(os.environ, env, clear=True):
@@ -832,6 +962,7 @@ def test_unit21_release_identity_archive_and_frontier(
         == 0o750
     )
     builder_spec = dict(sha=build_sha, cli=cli_relative, source_paths=source_paths)
+    unit_literal = "space ' \" \\ $HOME %t\nlast"
     node_started = time.perf_counter()
     process = subprocess.Popen(
         [
@@ -843,6 +974,7 @@ def test_unit21_release_identity_archive_and_frontier(
             json.dumps(loader_input),
             json.dumps(admission_spec),
             json.dumps(builder_spec),
+            json.dumps(unit_literal),
         ],
         cwd=ROOT,
         env=env,
@@ -869,6 +1001,7 @@ def test_unit21_release_identity_archive_and_frontier(
     node_seconds = time.perf_counter() - node_started
     assert process.returncode == 0, stderr
     actual: dict[str, Any] = json.loads(stdout)
+    actual["units"] = _unit_boundaries(tmp_path, actual["units"], node, env, unit_literal)
     assert actual["native_tree_admission"] == "app contains a symlink outside its root"
     assert native_sentinel.read_bytes() == b"outside native write sentinel\n"
     assert (
@@ -1083,6 +1216,7 @@ def test_unit21_release_identity_archive_and_frontier(
                     "admission_rules": actual["admission"],
                     "admission_group": group_proof,
                     "source_only_builder": built,
+                    "unit_boundaries": actual["units"],
                     "public_cli_executed": False,
                     "hostile_native": hostile_native,
                     "accepted_restrictions": [

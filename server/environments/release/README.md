@@ -53,6 +53,10 @@ The v2 probe uses resolved host Node 22, at least 22.18.0. Trusted host-only ope
 
 Host/report comparisons use synthetic observations against Python. The actual process case proves the timer, private environment, complete JSON capture, and local child join. A hosted-only Linux branch separately pins and reaps both group members. These checks do not prove a sealed Node v2 payload. The Python bridge prerequisite is merged through staging merge 10, PR 788 at `990538d5e804b43d36ae8d3bbf0b408c6acc84f4`. No unmerged admission patch is used.
 
+`units.ts` renders only the new TypeScript service and watchdog templates. Its absolute host Node22>=22.18 prerequisite applies before the initial legacy Python transition too. The builtin classifier text is identical in start/stop, and the real launchers retain full validation. Candidate admission still rejects a null contract. The installed legacy-null branch requires its one explicit SHA and real private Python.
+
+The templates preserve config/refusal inputs, private runtime placement, client80 and per-phase unit90 margins around supervisor60. The watchdog keeps its300-second command limit and60/30/5 timer schedule through a fixed private entry. These are source producers, not an installed or complete production release. The copied installer, default environment, official public CLI acceptance and sealed-package license inventory remain open. The reserved publisher workflow is unchanged.
+
 The probe executes candidate code with the host user's rights and is not a sandbox.
 Descendants of a tool that exits normally are not swept, as in Python.
 
