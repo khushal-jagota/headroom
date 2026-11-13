@@ -64,16 +64,20 @@ jobs:
         run: |
           schema_root=$(mktemp -d "$RUNNER_TEMP/panels-schema.XXXXXX")
           trap 'rm -rf -- "$schema_root"' EXIT
+          mkdir -p "$schema_root"/{home,codex,claude,hermes,app,logs,backups,workspace,scratch,run}
           printf '{}\n' > "$schema_root/config.yaml"
           env -i PATH="$PATH" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
             HOME="$schema_root/home" CODEX_HOME="$schema_root/codex" \
             CLAUDE_CONFIG_DIR="$schema_root/claude" HERMES_HOME="$schema_root/hermes" \
             PLAN_HERMES_HOME="$schema_root/hermes" TMPDIR="$schema_root" \
             PLAN_CONFIG_PATH="$schema_root/config.yaml" PLAN_DB_PATH="$schema_root/private.sqlite" \
+            PLAN_APP_ROOT="$schema_root/app" PLAN_TICKET_SCRATCH_ROOT="$schema_root/scratch" \
+            PLAN_TICKET_SCRATCH_DATABASE="$schema_root/private.sqlite" \
             PLAN_LOGS_DIR="$schema_root/logs" PLAN_BACKUP_DIR="$schema_root/backups" \
             PLAN_WORKSPACE_ROOT="$schema_root/workspace" PLAN_CREDENTIAL_KEY_PATH="$schema_root/key" \
             PLAN_DISPATCHER_LOCK_PATH="$schema_root/dispatcher.lock" \
             PLAN_SERVER_CONTROL_SOCKET="$schema_root/control.sock" \
+            PLAN_SERVER_LIFECYCLE_LEASE_PATH="$schema_root/run/lifecycle.lock" \
             PLAN_SERVER_URL=http://127.0.0.1:0 PLAN_TEST_MODE=1 PLAN_DISPATCH_ENABLED=false \
             .venv/bin/python tests/compare/direct/unit21_schema_seed.py --check
       - name: Compare direct runtime checks against Python
