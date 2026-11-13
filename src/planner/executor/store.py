@@ -22,7 +22,11 @@ from planner.executor.protocol import (
     ChildOperation,
     CommandOutcome,
 )
-from planner.executor.vps_presence_store import current_incarnation
+from planner.executor.vps_presence_store import (
+    current_incarnation,
+    require_incarnation_owner,
+)
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 
 
 def _json(value: object) -> str:
@@ -38,8 +42,11 @@ def _invalid(message: str) -> PlannerError:
 
 
 class VpsDatabase:
-    def __init__(self, db_path: str) -> None:
+    def __init__(
+        self, db_path: str, *, machine_id: str = ORIGINAL_MAC_MACHINE_ID
+    ) -> None:
         self.db_path = db_path
+        self.machine_id = machine_id
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
@@ -64,17 +71,22 @@ class ExecutorStore(VpsDatabase):
             return tuple(
                 RetainedBackendRun(
                     ChildReference(
-                        row["executor_incarnation"], row["child_id"], row["conversation_id"]
+                        row["executor_incarnation"],
+                        row["child_id"],
+                        row["conversation_id"],
                     ),
                     TurnToken(row["conversation_id"], row["turn_number"]),
                     bool(row["delivery_uncertain"]),
                     row["stop_state"] == "closed",
                     stop_requested=row["stop_state"] == "stopping",
-                    incarnation_current=row["executor_incarnation"] == row["current_incarnation"],
+                    incarnation_current=row["executor_incarnation"]
+                    == row["current_incarnation"],
                 )
                 for row in connection.execute(
                     "SELECT r.*,p.executor_incarnation AS current_incarnation FROM mac_runs AS r "
-                    "LEFT JOIN mac_executor_presence AS p ON p.singleton=1"
+                    "LEFT JOIN mac_executor_presence AS p ON p.machine_id=r.machine_id "
+                    "WHERE r.machine_id=?",
+                    (self.machine_id,),
                 )
             )
         finally:
@@ -89,9 +101,10 @@ class ExecutorStore(VpsDatabase):
                 ChildReference(row[0], row[1], row[2])
                 for row in connection.execute(
                     "SELECT r.executor_incarnation,r.child_id,r.conversation_id FROM mac_runs AS r "
-                    "LEFT JOIN mac_executor_presence AS p ON p.singleton=1 "
-                    "WHERE r.stop_state<>'closed' "
-                    "AND r.executor_incarnation IS NOT p.executor_incarnation"
+                    "LEFT JOIN mac_executor_presence AS p ON p.machine_id=r.machine_id "
+                    "WHERE r.machine_id=? AND r.stop_state<>'closed' "
+                    "AND r.executor_incarnation IS NOT p.executor_incarnation",
+                    (self.machine_id,),
                 )
             )
         finally:
@@ -168,9 +181,11 @@ class ExecutorStore(VpsDatabase):
         with self._transaction() as connection:
             # The binding fence: a child is assigned only under the current process, read
             # in the same transaction that writes the assignment.
-            current = current_incarnation(connection)
+            current = current_incarnation(connection, self.machine_id)
             if current != child.executor_incarnation:
-                from planner.tickets.locale_configuration import execution_unavailable_reason
+                from planner.tickets.locale_configuration import (
+                    execution_unavailable_reason,
+                )
 
                 raise BackendSpawnFailed(
                     "The Mac executor process changed before this child was assigned"
@@ -191,7 +206,8 @@ class ExecutorStore(VpsDatabase):
                     raise _invalid("Child assignment identity conflicts")
                 return
             retained = connection.execute(
-                "SELECT * FROM mac_runs WHERE conversation_id=?", (child.conversation_id,)
+                "SELECT * FROM mac_runs WHERE conversation_id=?",
+                (child.conversation_id,),
             ).fetchone()
             if retained is not None and retained["stop_state"] != "closed":
                 raise _invalid("An unresolved Mac run already owns this conversation")
@@ -204,10 +220,13 @@ class ExecutorStore(VpsDatabase):
                 (child.conversation_id,),
             ).fetchone()
             connection.execute(
-                "INSERT INTO mac_runs VALUES(?,?,?,?,?,?,0,'open') "
+                "INSERT INTO mac_runs(conversation_id,executor_incarnation,child_id,principal_kind,"
+                "principal_id,turn_number,delivery_uncertain,stop_state,machine_id) "
+                "VALUES(?,?,?,?,?,?,0,'open',?) "
                 "ON CONFLICT(conversation_id) DO UPDATE SET "
                 "executor_incarnation=excluded.executor_incarnation,child_id=excluded.child_id,"
                 "principal_kind=excluded.principal_kind,principal_id=excluded.principal_id,"
+                "machine_id=excluded.machine_id,"
                 "turn_number=excluded.turn_number,delivery_uncertain=0,stop_state='open'",
                 (
                     child.conversation_id,
@@ -215,7 +234,7 @@ class ExecutorStore(VpsDatabase):
                     child.child_id,
                     principal_kind,
                     principal_id,
-                    turn[0],
+                    turn[0], self.machine_id,
                 ),
             )
             connection.execute(
@@ -234,6 +253,9 @@ class ExecutorStore(VpsDatabase):
         """Historical identity evidence only; this grants no child/domain authority."""
         connection = connect(self.db_path)
         try:
+            require_incarnation_owner(
+                connection, child.executor_incarnation, self.machine_id
+            )
             return (
                 connection.execute(
                     "SELECT 1 FROM executor_child_assignments WHERE executor_incarnation=? "
@@ -252,10 +274,12 @@ class ExecutorStore(VpsDatabase):
         finally:
             connection.close()
 
-    @staticmethod
     def open_child_assignment(
-        connection: sqlite3.Connection, child: ChildReference
+        self, connection: sqlite3.Connection, child: ChildReference
     ) -> tuple[str, str] | None:
+        require_incarnation_owner(
+            connection, child.executor_incarnation, self.machine_id
+        )
         row = connection.execute(
             "SELECT principal_kind,principal_id FROM executor_child_assignments "
             "WHERE executor_incarnation=? AND child_id=? AND conversation_id=? "

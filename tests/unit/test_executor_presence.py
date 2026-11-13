@@ -461,6 +461,10 @@ def test_a_silent_working_turn_is_exempted_by_a_running_tool_and_restarted_by_ac
             endpoint.presence._clock = clock
             identity = mac_identity()
             child = ChildReference(identity.executor_incarnation, "child", "c")
+            await endpoint.lease(lease_request(identity))
+            endpoint.runs.store.register_child(child, "ticket", "ticket-1", 1)
+            with connect(endpoint.db_path) as connection:
+                connection.execute("UPDATE mac_runs SET turn_number=1 WHERE conversation_id='c'")
 
             async def lease(tool_running: bool) -> None:
                 working = (WorkingTurn(child, TurnToken("c", 1), tool_running),)
@@ -572,7 +576,7 @@ def test_large_ticket_history_never_breaks_an_accepted_lease(
     from planner.executor.protocol import encode_bounded
     from planner.executor.update_contracts import MacUpdateTarget
 
-    monkeypatch.setattr(ingress, "require_executor_ingress", lambda *args: None)
+    monkeypatch.setattr(ingress, "executor_ingress_claim", lambda *args: "synthetic")
 
     async def exercise() -> None:
         async with _endpoint(_database(tmp_path)) as endpoint:
@@ -601,6 +605,12 @@ def test_large_ticket_history_never_breaks_an_accepted_lease(
                     "X-Panels-Executor-Protocol": str(PROTOCOL_VERSION),
                     "X-Panels-Executor-Incarnation": identity.executor_incarnation,
                 }
+                endpoint.runs.store.register_child(
+                    ChildReference(
+                        identity.executor_incarnation, "history-child", "history-conversation"
+                    ),
+                    "ticket", "t_00000001", 1,
+                )
                 query = {"ticket_ids": ["t_00000001", "t_99999999"]}
                 response = await client.post(
                     "/api/executor/workspaces/states", headers=headers, json=query

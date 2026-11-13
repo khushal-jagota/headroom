@@ -451,9 +451,9 @@ def _link_mac_tickets(db_path: Path, *conversation_ids: str) -> None:
             "executor_incarnation": "inc-2",
         }
         conn.execute(
-            "INSERT INTO mac_executor_presence(singleton,executor_incarnation,identity_json,"
-            "last_contact_at_ms,last_lease_at_ms,continuous_since_ms) VALUES (1,'inc-2',?,1,1,1)",
-            (json.dumps(identity),),
+            "INSERT INTO mac_executor_presence(machine_id,executor_incarnation,identity_json,"
+            "last_contact_at_ms,last_lease_at_ms,continuous_since_ms) VALUES (?,'inc-2',?,1,1,1)",
+            (ORIGINAL_MAC_MACHINE_ID, json.dumps(identity)),
         )
         conn.commit()
     finally:
@@ -466,7 +466,10 @@ def _record_open_runs(db_path: Path, *references: ChildReference) -> None:
     try:
         for reference in references:
             conn.execute(
-                "INSERT INTO mac_runs VALUES (?,?,?,'ticket',?,1,0,'open')",
+                "INSERT INTO "
+                "mac_runs(conversation_id,executor_incarnation,child_id,principal_kind,"
+                "principal_id,turn_number,delivery_uncertain,stop_state) VALUES (?,?,?,"
+                "'ticket',?,1,0,'open')",
                 (
                     reference.conversation_id,
                     reference.executor_incarnation,

@@ -78,8 +78,17 @@ def test_server_loads_both_retained_owners_before_adoption_and_dispatches_cleanu
                 (incarnation, f"child{number}", f"conversation{number}", f"ticket{number}"),
             )
             conn.execute(
-                "INSERT INTO mac_runs VALUES (?,?,?,'ticket',?,1,0,'open')",
-                (f"conversation{number}", incarnation, f"child{number}", f"ticket{number}"),
+                "INSERT INTO "
+                "mac_runs(conversation_id,executor_incarnation,child_id,principal_kind,"
+                "principal_id,turn_number,delivery_uncertain,stop_state,machine_id) VALUES "
+                "(?,?,?,'ticket',?,1,0,'open',?)",
+                (
+                    f"conversation{number}",
+                    incarnation,
+                    f"child{number}",
+                    f"ticket{number}",
+                    machine,
+                ),
             )
     seen = []
     retained = VpsExecutorRegistry.retained_runs
