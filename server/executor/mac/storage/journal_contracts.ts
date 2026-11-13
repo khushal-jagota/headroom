@@ -57,6 +57,8 @@ export interface SelectedJournalReport {
   readonly command_ids: readonly string[];
   readonly body: CanonicalReader;
 }
+/** Private selection custody: cancellation releases without charging failure fairness. */
+export type JournalReportFeedback = readonly string[] | null | 'cancelled';
 export interface AsyncCommandJournal extends OutboxCleanup {
   assert_healthy(): void;
   delivery_failure(message: string, cause?: unknown): Error;
@@ -77,7 +79,7 @@ export interface AsyncCommandJournal extends OutboxCleanup {
   /** The reader has a separate owner; this journal's readers share its ordered operation chain. */
   finish_stream(command_id: string, body: CanonicalReader, outputs_owed: boolean): Promise<void>;
   select_report(): Promise<SelectedJournalReport | null>;
-  report_feedback(selection: number, settled_ids: readonly string[] | null): Promise<boolean>;
+  report_feedback(selection: number, settled_ids: JournalReportFeedback): Promise<boolean>;
   mark_outputs_published(command_id: string): Promise<void>;
   unpublished(): Promise<JournalCursor<UnpublishedJournalCommand>>;
   unreported(limit: number): Promise<JournalCursor<UnreportedJournalResult>>;

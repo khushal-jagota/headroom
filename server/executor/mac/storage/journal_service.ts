@@ -31,6 +31,7 @@ import type {
   UnpublishedJournalCommand,
   UnreportedJournalResult,
   SelectedJournalReport,
+  JournalReportFeedback,
 } from './journal_contracts.ts';
 import type { JournalServiceDependencies } from './journal_internal_contracts.ts';
 
@@ -486,10 +487,17 @@ export class CommandJournal implements AsyncCommandJournal {
   private call<T>(action: JournalAction): Promise<T> {
     return this.enqueue(() => this.raw(action) as Promise<T>);
   }
-  private enqueue<T>(work: () => Promise<T>): Promise<T> {
+  private call_cleanup<T>(
+    action: JournalAction & { operation: 'report_feedback' | 'reader_close' | 'cursor_close' },
+  ): Promise<T> {
+    // These capabilities already belong to bounded selections/readers/cursors.
+    // Queue their release behind ordinary work without refusing cleanup for its count.
+    return this.enqueue(() => this.raw(action) as Promise<T>, true);
+  }
+  private enqueue<T>(work: () => Promise<T>, owned_cleanup = false): Promise<T> {
     try {
       this.admit();
-      if (this.operations.size >= JOURNAL_OPERATIONS)
+      if (!owned_cleanup && this.operations.size >= JOURNAL_OPERATIONS)
         throw Object.assign(new ServerLifecycleError('Journal operation capacity reached.'), {
           code: 'EBUSY',
           unadmitted: true,
@@ -678,10 +686,14 @@ export class CommandJournal implements AsyncCommandJournal {
     } | null>({ operation: 'select_report' });
     return value === null ? null : { ...value, body: new Reader(this, value.body) };
   }
-  report_feedback(selection: number, settled_ids: readonly string[] | null): Promise<boolean> {
-    if (settled_ids !== null && settled_ids.length > MAX_COMMAND_OUTCOMES_PER_REPORT)
+  report_feedback(selection: number, settled_ids: JournalReportFeedback): Promise<boolean> {
+    if (
+      settled_ids !== null &&
+      settled_ids !== 'cancelled' &&
+      settled_ids.length > MAX_COMMAND_OUTCOMES_PER_REPORT
+    )
       return Promise.reject(new RangeError('Journal feedback exceeds its report limit.'));
-    return this.call({ operation: 'report_feedback', selection, settled_ids });
+    return this.call_cleanup({ operation: 'report_feedback', selection, settled_ids });
   }
   mark_outputs_published(command_id: string): Promise<void> {
     return this.call({ operation: 'mark_outputs_published', command_id });
@@ -715,7 +727,7 @@ export class CommandJournal implements AsyncCommandJournal {
   }
   async close_reference(operation: 'reader_close' | 'cursor_close', id: number): Promise<void> {
     if (this.closed) return;
-    await this.call(
+    await this.call_cleanup(
       operation === 'reader_close' ? { operation, reader: id } : { operation, cursor: id },
     );
   }

@@ -325,6 +325,7 @@ async def reference(
         reporting.cancel()
         await asyncio.gather(reporting, return_exceptions=True)
         reporting = None
+        late_reply_ack_applied = all(result.command_id != "f" for result in journal.unreported(32))
         journal.record_poll_reply(reply(commands["shutdown"]), "inc")
         queues.submit(commands["shutdown"])
         await catalog_entered.wait()
@@ -357,6 +358,7 @@ async def reference(
             planned_blocked=planned_blocked,
             second_not_started=second_not_started,
             fifo=fifo,
+            late_reply_ack_applied=late_reply_ack_applied,
             calls=calls,
             retry_delays={
                 key: times[1] - times[0] >= OUTBOX_RETRY_INITIAL_SECONDS - 0.01
@@ -441,6 +443,7 @@ def test_unit22_mac_mailbox_scripted_flow(
     assert observed["observations"] == expected, observed["stats"]
     assert expected["planned_blocked"] and expected["fifo"] and expected["stop_waited"]
     assert expected["second_not_started"]
+    assert expected["late_reply_ack_applied"]
     assert expected["retry_delays"] and all(expected["retry_delays"].values())
     assert expected["replays"] == ["duplicate"] and len(expected["reports"]) == 5
     assert observed["aggregate_shutdown"] and all(observed["aggregate_shutdown"].values())
