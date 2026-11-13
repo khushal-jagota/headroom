@@ -323,7 +323,7 @@ async function extract_archive(
         );
       success = true;
     } catch (error) {
-    failure ??= error;
+      failure ??= error;
       if (child && !ended)
         try {
           stop_one_shot_child(child);

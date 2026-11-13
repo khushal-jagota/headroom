@@ -61,9 +61,25 @@ async function git_output(
     throw error;
   }
 }
-async function install_app_dependencies(root: string, home: string, execution: ReleaseExecution): Promise<void> {
-  for (const name of ['', 'config', 'cache', 'codex', 'claude', 'hermes', 'data',
-    'logs', 'backups', 'app', 'workspace', 'scratch']) {
+async function install_app_dependencies(
+  root: string,
+  home: string,
+  execution: ReleaseExecution,
+): Promise<void> {
+  for (const name of [
+    '',
+    'config',
+    'cache',
+    'codex',
+    'claude',
+    'hermes',
+    'data',
+    'logs',
+    'backups',
+    'app',
+    'workspace',
+    'scratch',
+  ]) {
     assert_release_execution(execution);
     await mkdir(join(home, name), { recursive: true });
   }
@@ -74,13 +90,18 @@ async function install_app_dependencies(root: string, home: string, execution: R
     await writeFile(join(home, name), '', { flag: 'wx', mode: 0o600 });
   }
   const environment = {
-    ...probe_environment(home), PATH: BUILD_PATH,
-    NPM_CONFIG_USERCONFIG: join(home, 'user.npmrc'), NPM_CONFIG_GLOBALCONFIG: join(home, 'global.npmrc'),
+    ...probe_environment(home),
+    PATH: BUILD_PATH,
+    NPM_CONFIG_USERCONFIG: join(home, 'user.npmrc'),
+    NPM_CONFIG_GLOBALCONFIG: join(home, 'global.npmrc'),
     NPM_CONFIG_CACHE: join(home, 'cache/npm'),
   };
-  const run = (argv: readonly string[]) => run_release_command(
-    [argv[0]!, '--ignore-scripts=false', ...argv.slice(1)],
-    { timeout_seconds: null, environment, cwd: root }, execution);
+  const run = (argv: readonly string[]) =>
+    run_release_command(
+      [argv[0]!, '--ignore-scripts=false', ...argv.slice(1)],
+      { timeout_seconds: null, environment, cwd: root },
+      execution,
+    );
   await run(['npm', 'ci', '--omit=dev', '--prefix', join(root, 'server')]);
   if (await exists(join(root, 'web/package-lock.json')))
     await run(['npm', 'ci', '--prefix', join(root, 'web')]);
@@ -114,7 +135,8 @@ export async function build_exported_app(
   if (actual !== requested)
     throw new AppValidationError('checkout HEAD does not match requested SHA');
   const candidate_input = expand_path(options.candidate_app);
-  const symlink_input = candidate_input.replace(/\/+$/, '') ||
+  const symlink_input =
+    candidate_input.replace(/\/+$/, '') ||
     (candidate_input.startsWith('/') ? '/' : candidate_input);
   if (await is_symlink(symlink_input))
     throw new AppValidationError('candidate app must not be a symlink');
@@ -133,26 +155,54 @@ export async function build_exported_app(
   assert_release_execution(execution);
   const workspace = await mkdtemp(join(dirname(destination), `.${basename(destination)}-`));
   const payload = join(dirname(destination), `.${basename(destination)}-payload-${randomUUID()}`),
-    archive = join(workspace, 'source.tar'), git_directory = join(workspace, 'git');
-  let own_payload = false, manifest: AppManifest;
+    archive = join(workspace, 'source.tar'),
+    git_directory = join(workspace, 'git');
+  let own_payload = false,
+    manifest: AppManifest;
   const fail_after_cleanup = async (failure: unknown, paths: readonly string[]): Promise<never> => {
     const errors: unknown[] = [];
     for (const path of paths) {
-      try { await remove_owned_tree(path); } catch (error) { errors.push(error); }
+      try {
+        await remove_owned_tree(path);
+      } catch (error) {
+        errors.push(error);
+      }
     }
-    if (errors.length) throw new AggregateError([failure, ...errors],
-      `app build cleanup failed; owned paths: ${paths.join(', ')}`, { cause: failure });
+    if (errors.length)
+      throw new AggregateError(
+        [failure, ...errors],
+        `app build cleanup failed; owned paths: ${paths.join(', ')}`,
+        { cause: failure },
+      );
     throw failure;
   };
   try {
-    const object_directory = await git_output(source, execution,
-      'rev-parse', '--path-format=absolute', '--git-path', 'objects');
-    await run_release_command(['git', 'init', '--bare', '--template=', git_directory],
-      { timeout_seconds: null, environment: git_environment(undefined, workspace) }, execution);
+    const object_directory = await git_output(
+      source,
+      execution,
+      'rev-parse',
+      '--path-format=absolute',
+      '--git-path',
+      'objects',
+    );
     await run_release_command(
-      ['git', '-c', 'core.attributesFile=/dev/null', '--git-dir=' + git_directory,
-        'archive', '--format=tar', `--output=${archive}`, requested],
-      { timeout_seconds: null, environment: git_environment(object_directory, workspace) }, execution,
+      ['git', 'init', '--bare', '--template=', git_directory],
+      { timeout_seconds: null, environment: git_environment(undefined, workspace) },
+      execution,
+    );
+    await run_release_command(
+      [
+        'git',
+        '-c',
+        'core.attributesFile=/dev/null',
+        '--git-dir=' + git_directory,
+        'archive',
+        '--format=tar',
+        `--output=${archive}`,
+        requested,
+      ],
+      { timeout_seconds: null, environment: git_environment(object_directory, workspace) },
+      execution,
     );
     await extract_git_export(archive, payload, execution);
     own_payload = true;
