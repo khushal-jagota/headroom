@@ -27,12 +27,7 @@ import { NATIVE_WORKER_CONTEXT } from '../configuration.ts';
 import { MacChildAdmissionRefused } from './contracts.ts';
 import type { MacRunningChild } from './contracts.ts';
 import type { MacCommandDependencies, MacCommandWork } from './command_contracts.ts';
-import {
-  CHILD_START_FAILED,
-  outcome,
-  outcome_detail,
-  same_wire,
-} from './logic/outcomes.ts';
+import { CHILD_START_FAILED, outcome, outcome_detail, same_wire } from './logic/outcomes.ts';
 
 function native_content(content: MessageContent): NativeContent {
   // Shared validation chose each union member. Retain its exact numeric values.

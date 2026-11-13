@@ -18,12 +18,7 @@ import type {
   OwedOutput,
 } from './command_contracts.ts';
 import { dispatch_command } from './commands.ts';
-import {
-  error_message,
-  error_outcome,
-  owed_outputs,
-  same_wire,
-} from './logic/outcomes.ts';
+import { error_message, error_outcome, owed_outputs, same_wire } from './logic/outcomes.ts';
 
 class Record implements MacCommandRecordView {
   readonly command: ChildCommand;

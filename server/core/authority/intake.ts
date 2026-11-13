@@ -19,8 +19,7 @@ function object(value: unknown): Record<string, unknown> {
   return is_record(value) ? value : {};
 }
 function principal(raw: unknown): Principal {
-  if (!is_record(raw))
-    throw new PlannerError('validation', 'target must be a principal object');
+  if (!is_record(raw)) throw new PlannerError('validation', 'target must be a principal object');
   const value = object(raw),
     kind = value.kind;
   if (typeof kind !== 'string' || !['owner', 'chief', 'manager', 'ticket', 'goal'].includes(kind))

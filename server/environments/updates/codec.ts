@@ -1,5 +1,5 @@
-/** Python-compatible persisted JSON decoding and canonical encoding. */
 import { python_string_repr } from '../../core/python_repr.ts';
+/** Python-compatible persisted JSON decoding and canonical encoding. */
 import type {
   PublishedUpdate,
   UpdateAttempt,
