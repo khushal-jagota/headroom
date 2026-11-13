@@ -273,8 +273,15 @@ jobs:
             'tests/e2e/test_goals_browser.py::test_goal_page_persistence_external_refresh_and_owned_conversation[chromium]'
             'tests/e2e/test_goal_holders_browser.py::test_goal_promotion_and_stable_url_share_manager_name[chromium]'
             'tests/e2e/test_goal_holders_browser.py::test_leaving_a_goal_manager_with_text_blocks_opens_each_next_page[chromium]'
+            'tests/e2e/test_live_update.py::test_composing_survives_a_change_to_the_same_ticket'
+            'tests/e2e/test_ticket_file_previews.py::test_a_video_preview_shows_a_poster_then_plays_and_seeks'
+            'tests/e2e/test_goals_browser.py::test_formula_expectation_projection_and_correction_reach_mounted_chart'
           )
-          scripts/dev pytest "${browser_cases[@]}" --browser chromium \
+          cli_plugin=()
+          if [[ "$PANELS_TEST_SERVER_BACKEND" == typescript ]]; then
+            cli_plugin=(-p tests.compare.direct.unit20_e2e_cli)
+          fi
+          scripts/dev pytest "${cli_plugin[@]}" "${browser_cases[@]}" --browser chromium \
             --basetemp "$TMPDIR/pytest" --junitxml "$BROWSER_EVIDENCE_DIR/results.xml"
           BROWSER
       - name: Preserve browser evidence

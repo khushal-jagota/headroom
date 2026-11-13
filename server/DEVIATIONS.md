@@ -645,7 +645,9 @@ The typed `server-event-loop-tasks` callback returns exit 1 and empty stdout.
 Human stderr is exactly `error: The TypeScript runtime cannot enumerate Promise await chains.\nThis diagnostic is unavailable in the TypeScript server.\n`.
 JSON stderr is the existing error envelope with code `unsupported`, the first sentence as its message, empty detail, and a newline.
 Await-chain inspection remains deferred. Resource counts do not replace this diagnostic.
-The public CLI binding remains open. Node's built-in diagnostic report is the operator alternative.
+The public CLI prints that callback's literal result. Node's built-in diagnostic report is the operator alternative.
+
+Unexpected operator failures, including cleanup AggregateErrors, print the error text at exit 1 instead of Python's traceback, as accepted by the Manager.
 
 ## VPS file descriptor custody
 
