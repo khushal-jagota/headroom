@@ -1,10 +1,12 @@
 /** Shared synthetic native setup and real-store custody for the Mac direct proofs. */
 import { mkdirSync } from 'node:fs';
+import assert from 'node:assert/strict';
 import { stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import type { ConversationMessageFiles } from '../../../conversation/message_files.ts';
-import { encode_value } from '../../protocol.ts';
-import type { MailboxCommand } from '../../wire.generated.ts';
+import { decode_json, encode_value } from '../../protocol.ts';
+import { normalize_integer } from '../../integers.ts';
+import type { MailboxCommand, QueuedEnvelope } from '../../wire.generated.ts';
 import type { MacNativeChildrenOptions } from '../runner/contracts.ts';
 import { OutboxStore } from '../storage/outbox.ts';
 import { open_command_journal } from '../storage/journal.ts';
@@ -56,7 +58,7 @@ export interface FixtureStores {
   journal: AsyncCommandJournal;
 }
 type Cleanup = Pick<AsyncCommandJournal, 'stop' | 'settled'>;
-async function close_owners(
+export async function close_fixture_owners(
   owners: readonly Cleanup[],
   options: StopOptions,
   bounded_startup = false,
@@ -116,7 +118,7 @@ export async function open_fixture_stores(
     const carried = (error as { cleanup?: Cleanup } | null)?.cleanup;
     if (carried && !owners.includes(carried)) owners.unshift(carried);
     const cleanup: Cleanup = {
-      stop: (next) => close_owners(owners, next, true),
+      stop: (next) => close_fixture_owners(owners, next, true),
       async settled() {
         const joined = await Promise.allSettled(owners.map((owner) => owner.settled()));
         const errors = joined.flatMap((result) =>
@@ -137,7 +139,7 @@ export async function open_fixture_stores(
 }
 
 export function close_fixture_stores(stores: FixtureStores, options: StopOptions): Promise<void> {
-  return close_owners([stores.journal, stores.store], options);
+  return close_fixture_owners([stores.journal, stores.store], options);
 }
 
 export async function record_commands(
@@ -154,4 +156,26 @@ export async function record_commands(
   } finally {
     await cursor.close();
   }
+}
+
+export function pending_envelopes(store: OutboxStore): QueuedEnvelope[] {
+  const rows = store.pending();
+  assert.match(store.sender_id, /^[a-f0-9]{32}$/);
+  assert.equal(new Set(rows.map((row) => row.submission_id)).size, rows.length);
+  return rows.map((row, index) => {
+    const stored = decode_json(row.payload_json, 'JsonObject');
+    const random_event = row.kind === 'backend_event' && /^[a-f0-9]{32}$/.test(row.submission_id);
+    return decode_json(
+      stringify_pydantic_json({
+        sender_id: '<sender>',
+        sequence: normalize_integer(row.sequence),
+        conversation_id: row.conversation_id,
+        submission_id: random_event ? 'event_' + index : row.submission_id,
+        kind: row.kind,
+        payload: stored.payload,
+        file_dependencies: stored.files,
+      }),
+      'QueuedEnvelope',
+    );
+  });
 }
