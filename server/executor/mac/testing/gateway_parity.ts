@@ -18,12 +18,12 @@ import { ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 const root = process.argv[2];
 const input: any = parse_numeric_json(readFileSync(join(root, 'input.json'), 'utf8'));
 const started = performance.now();
-const deadline = () => ({ deadline: performance.now() / 1000 + 5 });
+const shutdown_options = () => ({ deadline: performance.now() / 1000 + 5 });
 const faults: Error[] = [];
 const store = await OutboxStore.open(
   join(root, 'spool'),
   { monotonic: () => 100, now_ns: () => 1700000000000000000n },
-  deadline(),
+  shutdown_options(),
   (e) => faults.push(e),
 );
 const spool = new GatewayOutbox(store);
@@ -107,7 +107,7 @@ const options: GatewayOptions = {
   },
   request_exit: () => {
     calls.push(['exit']);
-    exit_stop = gateway.stop(deadline());
+    exit_stop = gateway.stop(shutdown_options());
     void exit_stop.catch(() => {});
   },
   on_failure: (e) => faults.push(e),
@@ -264,7 +264,7 @@ try {
     ),
   );
 } finally {
-  await gateway.stop(deadline()).catch(() => {});
-  await store.stop(deadline());
+  await gateway.stop(shutdown_options()).catch(() => {});
+  await store.stop(shutdown_options());
   await store.settled();
 }
