@@ -96,6 +96,7 @@ async def reference(root: Path, patch: pytest.MonkeyPatch) -> dict[str, Any]:
     paths = ExecutorPaths(root / "state")
     (root / "home/project").mkdir(parents=True)
     (root / "absolute").mkdir()
+    (root / "not-directory").write_text("regular file", encoding="utf-8")
     calls: list[Any] = []
     starts = start_inputs(root)
 
@@ -333,7 +334,7 @@ def test_unit22_mac_adapters(
     (target / "expected.json").write_text(json.dumps(expected, indent=2))
     (target / "observed.json").write_text(json.dumps(observed, indent=2))
     python_directory = expected.pop("non_directory_workspace")
-    exact_error = "Mac workspace unavailable: [Errno 20] Not a directory: '<root>/not-directory'"
+    exact_error = "Mac workspace unavailable: Not a directory"
     assert observed["non_directory_workspace"]["error"] == exact_error
     assert all(call[0] == "skills" for call in observed["non_directory_workspace"]["calls"])
     if sys.version_info < (3, 13):
@@ -342,7 +343,17 @@ def test_unit22_mac_adapters(
             call[0] for call in python_directory["calls"]
         }
     else:
-        assert python_directory == observed["non_directory_workspace"]
+        assert python_directory["calls"] == observed["non_directory_workspace"]["calls"]
+        assert "[Errno 20] Not a directory" in python_directory["error"]
+    python_missing = expected["errors"][-1]
+    native_missing = observed["parity"]["errors"][-1]
+    assert python_missing == (
+        "Mac workspace unavailable: [Errno 2] No such file or directory: '<root>/missing'"
+    )
+    assert native_missing == (
+        "Mac workspace unavailable: ENOENT: no such file or directory, lstat '<root>/missing'"
+    )
+    expected["errors"][-1] = native_missing
     assert observed["parity"] == expected
     assert observed["lifecycle"] and all(observed["lifecycle"].values())
     report_direct(
@@ -357,5 +368,10 @@ def test_unit22_mac_adapters(
             "python": python_directory,
             "typescript": observed["non_directory_workspace"],
             "reason": "Manager selected Python 3.13 refusal; pinned Python 3.12 accepts",
+            "workspace_error_wording": {
+                "python": python_missing,
+                "typescript": native_missing,
+                "reason": "Native human error wording is not a CLI or executor wire contract",
+            },
         },
     )

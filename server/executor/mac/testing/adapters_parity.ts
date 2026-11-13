@@ -1,5 +1,5 @@
 /** Composition uses scripted native children; existing adapter suites own vendor protocols. */
-import { readFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -84,6 +84,7 @@ for (const [override, installed] of [
 }
 mkdirSync(join(root, 'home/project'), { recursive: true });
 mkdirSync(join(root, 'absolute'));
+writeFileSync(join(root, 'not-directory'), 'regular file');
 const paths = new ExecutorPaths(join(root, 'state'));
 const calls: unknown[] = [],
   errors: string[] = [],
