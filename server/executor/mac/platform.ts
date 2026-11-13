@@ -78,6 +78,103 @@ export function rmdir_relative(parent: number, name: string): void {
   const remove_directory = native_platform() === 'darwin' ? 0x80 : 0x200;
   checked('unlinkat', () => unlinkat(parent, name, remove_directory));
 }
+/** Enumeration opens only dot relative to the held inode and retains the stream until close succeeds. */
+const directory_readers = new Set<() => void>();
+export function cleanup_directory_readers(): void {
+  for (const close of directory_readers) close();
+}
+export function owns_directory_readers(): boolean {
+  return directory_readers.size > 0;
+}
+export function read_directory_names(descriptor: number): string[] {
+  if (process.arch !== 'x64' && process.arch !== 'arm64')
+    throw new Error('Directory enumeration requires a supported 64-bit native ABI.');
+  const darwin = native_platform() === 'darwin',
+    close_on_exec = darwin ? 0x1000000 : 0x80000;
+  const duplicate = checked('openat', () =>
+    native('int openat(int dirfd, const char *path, int flags, ...)')(
+      descriptor,
+      '.',
+      directory_open_flags | close_on_exec,
+      'int',
+      0,
+    ),
+  );
+  let stream: unknown = null;
+  const close = () => {
+    if (stream === null) closeSync(duplicate);
+    else checked('closedir', () => native('int closedir(void *directory)')(stream));
+    directory_readers.delete(close);
+  };
+  directory_readers.add(close);
+  try {
+    // arm64 has only the 64-bit Darwin ABI. x86_64 selects its explicit inode64 symbols.
+    const suffix = darwin && process.arch === 'x64' ? '$INODE64' : '';
+    const fdopendir = libc().func('fdopendir' + suffix, 'void *', ['int']);
+    const readdir = libc().func('readdir' + suffix, 'void *', ['void *']);
+    stream = fdopendir(duplicate);
+    if (stream === null) throw new Error(`fdopendir failed: errno ${koffi.errno()}`);
+    const names: string[] = [];
+    for (;;) {
+      koffi.errno(0);
+      const entry = readdir(stream);
+      if (entry === null) {
+        const errno = koffi.errno();
+        if (errno === os_constants.errno.EINTR) continue;
+        if (errno !== 0) throw new Error(`readdir failed: errno ${errno}`);
+        break;
+      }
+      // XNU bsd/sys/dirent.h inode64: name offset 21; Linux dirent64: offset 19.
+      const offset = darwin ? 21 : 19,
+        length = Number(koffi.decode(entry, 16, 'uint16_t'));
+      // Reject records larger than the verified native structs before decoding their names.
+      if (length <= offset || length > (darwin ? 1048 : 280))
+        throw new Error('Unsupported native directory record length.');
+      const bytes = Buffer.from(
+        koffi.decode(entry, offset, 'uint8_t', length - offset) as Uint8Array,
+      );
+      const end = bytes.indexOf(0);
+      if (
+        end < 1 ||
+        end > (darwin ? 1023 : 255) ||
+        (darwin && end !== Number(koffi.decode(entry, 18, 'uint16_t')))
+      )
+        throw new Error('Invalid native directory name length.');
+      const name = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, end));
+      if (name !== '.' && name !== '..') {
+        require_relative_component(name);
+        names.push(name);
+      }
+    }
+    return names;
+  } finally {
+    close();
+  }
+}
+/** Undefined means absent, null means an existing entry that is not a link. */
+export function readlink_relative(parent: number, name: string): string | null | undefined {
+  require_relative_component(name);
+  const buffer = Buffer.alloc(65536);
+  const readlinkat = native(
+    'long readlinkat(int dirfd, const char *path, _Out_ void *buffer, size_t size)',
+  );
+  let length: number;
+  try {
+    length = checked('readlinkat', () => Number(readlinkat(parent, name, buffer, buffer.length)));
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return undefined;
+    if (code === 'EINVAL') return null;
+    throw error;
+  }
+  if (length === buffer.length) throw new Error('Native symbolic link target exceeds its buffer.');
+  return new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, length));
+}
+export function symlink_relative(parent: number, name: string, target: string): void {
+  require_relative_component(name);
+  const symlinkat = native('int symlinkat(const char *target, int dirfd, const char *path)');
+  checked('symlinkat', () => symlinkat(target, parent, name));
+}
 export function rename_relative(
   source_parent: number,
   source: string,

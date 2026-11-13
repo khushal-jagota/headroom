@@ -450,3 +450,28 @@ It rejects missing required fields and invalid command semantics, and it supplie
 Python's serializer can write a dataclass whose state did not pass that validation.
 The TypeScript sender must produce a message that the Python peer can read.
 Root-specific encoder inputs use the generated contracts. Nullable fields without defaults require an explicit null.
+
+
+## Mac canonical skill publication ownership and durability
+
+The Manager accepted these Mac-only safety differences during PR 817 source review on November 13, 2026.
+The shared server publisher keeps Python behavior, including legacy `skills` symlink conversion and replacement of existing entries.
+The Mac uses an explicit owned-link policy in that same shared module. It never recursively removes provider entries.
+Before any publication or derived-state write, the Mac requires an absolute existing provider home and an existing real `skills` directory.
+The trusted adapter host supplies that home separately from the snapshot. Its real path must equal its configured normalized path.
+The Mac refuses linked homes or skills directories, managed-name collisions with files/directories/foreign links, case-only collisions, and link loops.
+It preserves unrelated entries and dangling user links. Only links that resolve inside its own executor state root belong to it.
+The Mac retains the provider directory and uses descriptor-relative unlink, symlink, and rename operations.
+New links first use recognizable private temporary names. Replacement is atomic, after an immediate ownership recheck.
+A later publication removes only recognized temporary links that still point into that executor's own root.
+
+The held directory and rechecks prevent a swapped folder from redirecting deletion into a replacement folder.
+They do not coordinate same-user programs that write that folder at the same time. Rename is not an atomic ownership comparison.
+The root-local installation lock does not serialize another executor installation. The two-executor publication policy remains an owner decision.
+The Mac also refuses linked ancestors of its state root, including native `/tmp` and `/var` aliases. Use reviewed canonical native paths.
+
+New generation files receive strict full flushes, and their directories receive flushes before atomic generation publication.
+A damaged derived generation is preserved under a private `.invalid-*` name and rebuilt from the authoritative snapshot.
+Python instead refuses that existing generation. No source or provider user data is discarded by the rebuild.
+The successor host/storage maintenance work owns eventual removal of unreferenced generations and abandoned stages.
+This slice adds no generation sweeper. Native durability, Darwin directory ABI, and filesystem failure behavior remain later Mac checks.

@@ -42,14 +42,18 @@ def _tree(path: Path, root: Path, prefix: str = "") -> list[Any]:
 
 
 def _prepare(root: Path) -> None:
-    provider = root / "provider"
-    legacy = root / "legacy"
-    legacy.mkdir(parents=True)
-    (legacy / "user-skill").mkdir()
-    (legacy / "user-skill" / "custom").write_text("unrelated", encoding="utf-8")
-    (legacy / "panels-rollover").mkdir()
-    provider.mkdir()
-    (provider / "skills").symlink_to(legacy, target_is_directory=True)
+    skills = root / "provider" / "skills"
+    skills.mkdir(parents=True)
+    (skills / "user-skill").mkdir()
+    (skills / "user-skill" / "custom").write_text("unrelated", encoding="utf-8")
+    (skills / "user-dead").symlink_to(root / "missing-user-skill")
+    (skills / "panels-rollover").symlink_to(root / "state" / "skills" / "old" / "panels-rollover")
+    (skills / ".panels-skill-00000000-0000-0000-0000-000000000000").symlink_to(
+        root / "state" / "skills" / "old"
+    )
+    (skills / ".panels-skill-11111111-1111-1111-1111-111111111111").symlink_to(
+        root / "user-temporary"
+    )
 
 
 def test_unit22_mac_skills(tmp_path: Path, request: pytest.FixtureRequest) -> None:
@@ -97,7 +101,10 @@ def test_unit22_mac_skills(tmp_path: Path, request: pytest.FixtureRequest) -> No
         )
     generation = install_native_skill_snapshot(second, paths=paths, native_home=py / "provider")
     (generation / "skills" / "panels" / "SKILL.md").write_text("corrupt", encoding="utf-8")
-    for value in (second, *snapshots[3:]):
+    with pytest.raises(Exception) as corrupt_error:
+        install_native_skill_snapshot(second, paths=paths, native_home=py / "provider")
+    assert type(corrupt_error.value).__name__ == "BackendSpawnFailed"
+    for value in snapshots[3:]:
         with pytest.raises(Exception) as error:
             install_native_skill_snapshot(value, paths=paths, native_home=py / "provider")
         assert type(error.value).__name__ == "BackendSpawnFailed"
@@ -137,6 +144,24 @@ def test_unit22_mac_skills(tmp_path: Path, request: pytest.FixtureRequest) -> No
     assert process.returncode == 0, stdout + stderr
     result = json.loads((ts / "result.json").read_text())
     assert result["report"] == expected
+    assert result["mac_only"]["folder_swap"]["refused"] is True
+    assert result["mac_only"]["folder_swap"]["unchanged"] is True
+    assert result["mac_only"]["corrupt_rebuilt"] is True
+    assert result["mac_only"]["corrupt_preserved"] is True
+    assert [case["case"] for case in result["mac_only"]["refusals"]] == [
+        "managed-directory",
+        "managed-file",
+        "foreign-link",
+        "case-only-name",
+        "absent-home",
+        "relative-home",
+        "linked-home",
+        "linked-skills",
+        "linked-state-ancestor",
+        "link-loop",
+    ]
+    for case in result["mac_only"]["refusals"]:
+        assert case["refused"] and case["unchanged"] and case["entry_named"], case
     assert result["lifecycle"] == {
         "stopped_refused": True,
         "expired": True,
@@ -166,6 +191,8 @@ def test_unit22_mac_skills(tmp_path: Path, request: pytest.FixtureRequest) -> No
                     "cleanup_worker_ms": result["cleanup_worker_ms"],
                     "observations": result["report"],
                     "lifecycle": result["lifecycle"],
+                    "accepted_mac_differences": result["mac_only"],
+                    "python_corrupt_refusal": str(corrupt_error.value),
                     "limits": "No network, provider, native Mac, or account coexistence proof.",
                 },
                 indent=2,

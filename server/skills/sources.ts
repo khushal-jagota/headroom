@@ -30,7 +30,10 @@ export function provision_native_backend_skills(
   parent: string,
   options: { test_home?: string; required_skill_names?: readonly string[] } = {},
 ): string {
-  return publish_native_backend_skills(home, managed_skills_home(parent), options);
+  return publish_native_backend_skills(home, managed_skills_home(parent), {
+    ...options,
+    policy: { kind: 'server' },
+  });
 }
 const libc = koffi.load(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6');
 const mkdirat = libc.func('int mkdirat(int dirfd, const char *path, unsigned int mode)');

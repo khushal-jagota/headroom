@@ -26,6 +26,7 @@ export class MacSkillsPublisher {
     this.on_failure = on_failure;
     void this.actual.catch(() => {});
   }
+  /** native_home is the configured provider target from the trusted adapter host, never a command field. */
   install_native_skill_snapshot(
     snapshot: CanonicalSkillSnapshot,
     options: { root: string; native_home: string },
