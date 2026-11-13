@@ -2,6 +2,8 @@
 import { chmod, copyFile, mkdir, realpath, stat, utimes } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { CopiedNativeComponent, ElfObject, ReleaseExecution } from '../contracts.ts';
+import { is_file } from '../../backup/evidence.ts';
+import { inside } from '../../ticket_scratch/logic.ts';
 import { RuntimeContractError } from '../../updates/logic/runtime_contract.ts';
 import {
   assert_release_execution,
@@ -16,19 +18,6 @@ import {
 } from './configuration.ts';
 import { hash_native_file } from './elf.ts';
 
-async function is_file(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isFile();
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      'code' in error &&
-      (error.code === 'ENOENT' || error.code === 'ENOTDIR')
-    )
-      return false;
-    throw error;
-  }
-}
 export async function resolve_provider(
   name: string,
   requester: ElfObject,
@@ -143,8 +132,7 @@ export async function copied_component(
     throw new RuntimeContractError(`no license notice for copied library: ${source}`);
   const license = join(LICENSE_DIRECTORY, package_name.replaceAll(':', '_') + '.txt');
   const destination = join(app_root, license);
-  const suffix = relative(app_root, await resolved_path(destination));
-  if (suffix === '..' || suffix.startsWith('../') || isAbsolute(suffix))
+  if (!inside(await resolved_path(destination), app_root))
     throw new RuntimeContractError('native license path escapes archive');
   assert_release_execution(execution);
   await mkdir(dirname(destination), { recursive: true });

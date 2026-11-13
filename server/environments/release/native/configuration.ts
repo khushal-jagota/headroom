@@ -15,3 +15,12 @@ export const MACH_O_MAGIC = new Set([
   'cafebabf',
   'bfbafeca',
 ]);
+/** Canonical host directories allowed to provide only the declared glibc names. */
+export const SYSTEM_LIBRARY_DIRECTORIES = [
+  '/lib',
+  '/lib64',
+  '/lib/x86_64-linux-gnu',
+  '/usr/lib',
+  '/usr/lib64',
+  '/usr/lib/x86_64-linux-gnu',
+] as const;
