@@ -107,6 +107,7 @@ def test_unit21_release_identity_archive_and_frontier(
         path = app / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(name)
+    (app / "directory-alias").symlink_to("a", target_is_directory=True)
     # Python compares payload JSON values, not JSON number kinds or Boolean identity.
     payload = json.loads((app / "runtime/contract.json").read_text())
     payload.update(version=True, node_major=22.0)
@@ -291,6 +292,15 @@ def test_unit21_release_identity_archive_and_frontier(
     )
     assert (restored / "sentinel").stat().st_mode & 0o7777 == 0o640
     assert os.readlink(restored / "bin/alias") == "panels"
+    for restored_tree in (tmp_path / "node-from-python", restored):
+        assert (restored_tree / "directory-alias").is_symlink()
+        assert os.readlink(restored_tree / "directory-alias") == "a"
+        assert (restored_tree / "directory-alias/data").read_text() == "a/data"
+    for archive in (tmp_path / "python.tar.gz", tmp_path / "node.tar.gz"):
+        with tarfile.open(archive, "r:gz") as bundle:
+            names = bundle.getnames()
+        assert "directory-alias" in names
+        assert "directory-alias/data" not in names
     (restored / "sentinel").write_text("independent proof tree")
     assert hash_archive(tmp_path / "python.tar.gz") == checksum
     assert hash_archive(tmp_path / "node.tar.gz") == actual["node_archive_sha256"]
