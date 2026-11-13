@@ -19,8 +19,10 @@ import {
   unlinkSync,
   writeFileSync,
   existsSync,
+  openSync,
+  closeSync,
 } from 'node:fs';
-import { dirname, join, relative, sep } from 'node:path';
+import { basename, dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { SpawnOptions } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
@@ -59,6 +61,119 @@ import { build_exported_app } from '../build.ts';
 import { build_app_launch_env } from '../entrypoints.ts';
 import { run_release_command } from '../process.ts';
 import type { ReleaseExecution } from '../contracts.ts';
+import {
+  INSTALLED_RUNTIME_CLASSIFIER_SOURCE,
+  render_managed_unit,
+  render_watchdog_units,
+} from '../units.ts';
+import { application_launch, resolve_unit_lifecycle_context } from '../../../lifecycle/context.ts';
+
+/** Structural/private-file boundaries only. No service or installed runtime starts. */
+export async function unit_boundaries_parity(
+  root: string,
+  environment: NodeJS.ProcessEnv,
+  literal: string,
+): Promise<unknown> {
+  const began = performance.now(),
+    current = join(root, "unit $% 'current"),
+    config_path = join(root, 'unit-config.yaml'),
+    database = join(root, 'unit-empty.sqlite'),
+    control = join('/nonexistent', 'panels-unit-proof-' + basename(root), 'control.sock'),
+    lease = join('/nonexistent', 'panels-unit-proof-' + basename(root), 'unit.lock');
+  writeFileSync(config_path, '{}\n');
+  writeFileSync(database, '');
+  const input = {
+    ...environment,
+    PLAN_CONFIG_PATH: config_path,
+    PLAN_SERVER_CONTROL_SOCKET: control,
+    PLAN_SERVER_LIFECYCLE_LEASE_PATH: lease,
+    PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS: '1',
+    PLAN_TEST_MODE: '1',
+    PLAN_PORT: '0',
+  };
+  const runtime_directory = join(root, 'unit-runtime');
+  let refusal_preserved = false;
+  const context = await (async () => {
+    const saved = Object.fromEntries(Object.keys(input).map((key) => [key, process.env[key]]));
+    Object.assign(process.env, input);
+    try {
+      const resolved = await resolve_unit_lifecycle_context(
+        { runtime_directory },
+        process.env,
+        current,
+      );
+      refusal_preserved = process.env.PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS === '1';
+      return resolved;
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  })();
+  const fd = openSync(database, 'r');
+  let listener: { close(): void } | undefined;
+  let descriptor_closed = false,
+    listener_removed = false;
+  try {
+    const launch = application_launch(current, { ...input, PLAN_SERVER_LISTENER_FD: String(fd) });
+    listener = launch.listener;
+    listener_removed = !Object.hasOwn(launch.environment, 'PLAN_SERVER_LISTENER_FD');
+    listener!.close();
+    listener!.close();
+    try {
+      fstatSync(fd);
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'EBADF')) throw error;
+      descriptor_closed = true;
+    }
+  } finally {
+    if (listener) listener.close();
+    else closeSync(fd);
+  }
+  const options = {
+    current_root: current,
+    node_executable: process.execPath,
+    config_path,
+    environment: {
+      UNIT_LITERAL: literal,
+      PLAN_CONFIG_PATH: '/unused-conflicting-config',
+      PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS: '0',
+      NODE_OPTIONS: '--unused-loader-marker',
+    },
+  };
+  const managed = await render_managed_unit({
+    ...options,
+    runtime_directory_name: 'panels-proof',
+    admitted_legacy_null_sha: null,
+    control_socket_path: control,
+    lease_path: lease,
+    environment_file_path: join(root, 'managed.env'),
+  });
+  const watchdog = await render_watchdog_units({
+    ...options,
+    database_path: database,
+    state_directory: join(root, 'unit-watchdog'),
+    environment_file_path: join(root, 'watchdog.env'),
+  });
+  return {
+    classifier_source: INSTALLED_RUNTIME_CLASSIFIER_SOURCE,
+    managed: managed.service,
+    managed_environment: managed.environment_file,
+    watchdog,
+    context: {
+      control: context.control_socket_path === control,
+      lease: context.lease_path === lease,
+      config: context.config_path === config_path,
+      runtime: context.runtime_directory === runtime_directory,
+      refusal: context.config.refuse_unidentified_agent_calls,
+      refusal_preserved,
+      listener_removed,
+      descriptor_closed,
+    },
+    milliseconds: performance.now() - began,
+  };
+}
 
 /** Source-only Git/build work. No dependencies, native tools, public CLI or provider runs. */
 export async function builder_parity(
