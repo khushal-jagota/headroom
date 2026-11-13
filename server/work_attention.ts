@@ -167,8 +167,9 @@ export async function add_work_attention(
     const id = String(row.id);
     const own = conversations.get(links.get(id) ?? '');
     const signal = own?.signal ?? { working: false, message_for_owner: false };
-    Object.assign(row, empty_attention(), {
+    Object.assign(row, {
       conversation_signal: signal,
+      ...empty_attention(),
       awaiting_reply: signal.message_for_owner,
       awaiting_answer: own?.awaiting_answer ?? false,
       agent_state: signal.working ? 'working' : own?.last_turn_failed ? 'errored' : 'idle',
