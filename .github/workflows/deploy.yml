@@ -128,7 +128,7 @@ jobs:
           git worktree add --detach "$RUNNER_TEMP/mac-publication-source" "$PANELS_REQUESTED_SHA"
           test "$(git -C "$RUNNER_TEMP/mac-publication-source" rev-parse HEAD)" = "$PANELS_REQUESTED_SHA"
       - name: Install native ICU build prerequisites
-        run: brew install icu4c pkgconf
+        run: brew install pkgconf
       - name: Build and prove sealed native Mac runtime
         run: |
           python3 scripts/build_mac_runtime.py \

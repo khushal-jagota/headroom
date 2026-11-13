@@ -124,7 +124,9 @@ def test_runtime_roots_use_exact_canonical_pins_without_development_tools(tmp_pa
     requirements = tmp_path / "requirements.txt"
     requirements.write_text("aiohttp==3.14.3\nhttpx==0.28.1\nPyICU==2.16.2\npytest==9.1.1\n")
     assert runtime_requirements(tmp_path) == [
-        "aiohttp==3.14.3", "httpx[http2]==0.28.1", "PyICU==2.16.2"
+        "aiohttp==3.14.3",
+        "httpx[http2]==0.28.1",
+        "PyICU==2.16.2",
     ]
     build_mac_runtime.validate_installed_pins(
         {"aiohttp": "3.14.3", "bootstrap": "1"}, {"aiohttp": "aiohttp==3.14.3"}, {"bootstrap": "1"}
@@ -161,8 +163,15 @@ def test_panels_launcher_uses_its_relocated_interpreter_with_spaces(tmp_path: Pa
     assert not original.exists()
 
 
-def test_library_audit_rejects_a_homebrew_dependency(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("minimum", "dependency", "reason"),
+    [
+        ("15.0", "/opt/homebrew/lib/libicuuc.dylib", "unresolved/external library"),
+        ("27.0", "/usr/lib/libSystem.B.dylib", "requires newer than macOS 15.0"),
+    ],
+)
+def test_library_audit_rejects_a_foreign_library_or_newer_deployment_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, minimum: str, dependency: str, reason: str
 ) -> None:
     binary = tmp_path / "python/bin/python3"
     binary.parent.mkdir(parents=True)
@@ -172,11 +181,13 @@ def test_library_audit_rejects_a_homebrew_dependency(
         if command[0].endswith("lipo"):
             return "arm64\n"
         if "-L" in command:
-            return f"{binary}:\n\t/opt/homebrew/lib/libicuuc.dylib (compatibility version 1.0.0)\n"
+            return f"{binary}:\n\t{dependency} (compatibility version 1.0.0)\n"
+        if "-l" in command:
+            return f"cmd LC_BUILD_VERSION\ncmdsize 32\nplatform 1\nminos {minimum}\nsdk 27.0\n"
         return f"{binary}:\n"
 
     monkeypatch.setattr(build_mac_runtime, "run", fake_run)
-    with pytest.raises(ValueError, match="unresolved/external library"):
+    with pytest.raises(ValueError, match=reason):
         build_mac_runtime.audit_native_dependencies(tmp_path, {})
 
 
@@ -224,3 +235,39 @@ def test_workflow_requires_same_run_native_artifact_before_publication() -> None
         receipt["env"]["PANELS_MAC_ARTIFACT_ID"] == "${{ needs.mac-runtime.outputs.artifact_id }}"
     )
     assert receipt["env"]["PANELS_MAC_BUILD_RESULT"] == "${{ needs.mac-runtime.result }}"
+
+
+def test_private_icu_environment_replaces_host_library_and_compiler_inputs(tmp_path: Path) -> None:
+    configured = build_mac_runtime.private_icu_environment(
+        tmp_path,
+        {
+            "PATH": "/opt/homebrew/bin:/usr/bin:/bin",
+            "PKG_CONFIG_PATH": "/opt/homebrew/icu",
+            "PKG_CONFIG_LIBDIR": "/host/pkgconfig",
+            "CFLAGS": "-mmacosx-version-min=27.0",
+            "CXXFLAGS": "-mmacosx-version-min=27.0",
+            "LDFLAGS": "-L/opt/homebrew/lib",
+            "MACOSX_DEPLOYMENT_TARGET": "27.0",
+        },
+    )
+    assert configured["PKG_CONFIG_LIBDIR"] == str(tmp_path / "lib/pkgconfig")
+    assert configured["PKG_CONFIG_PATH"] == str(tmp_path / "lib/pkgconfig")
+    assert configured["PATH"].split(":")[0] == str(tmp_path / "bin")
+    assert configured["MACOSX_DEPLOYMENT_TARGET"] == "15.0"
+    for key in ("CFLAGS", "CXXFLAGS", "LDFLAGS"):
+        assert "-arch arm64" in configured[key]
+        assert "-mmacosx-version-min=15.0" in configured[key]
+        assert "27.0" not in configured[key] and "/opt/homebrew" not in configured[key]
+
+
+@pytest.mark.parametrize(
+    "commands",
+    [
+        "cmd LC_BUILD_VERSION\ncmdsize 32\nplatform MACOS\nminos 15.0\nsdk 27.0\n",
+        "cmd LC_VERSION_MIN_MACOSX\ncmdsize 16\nversion 15.0\nsdk 27.0\n",
+    ],
+)
+def test_minimum_macos_metadata_is_distinct_from_the_build_sdk(commands: str) -> None:
+    assert build_mac_runtime.minimum_macos_versions(commands) == ["15.0"]
+    with pytest.raises(ValueError, match="lacks minimum macOS metadata"):
+        build_mac_runtime.minimum_macos_versions("cmd LC_RPATH\ncmdsize 32\n")

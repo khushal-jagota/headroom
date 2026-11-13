@@ -27,7 +27,7 @@ installer unit: stop → swap folders → start → health ── healthy → do
 
 ## What a release needs from the host
 
-A release brings its own Python, so installation never runs a package installer. Before publication, a separate proof runs the archive on a minimal Debian root with no Python 3.12 and no network.
+A release brings its own Python, so installation never runs a package installer. The Mac builder compiles pinned ICU source for macOS 15. Host Homebrew bottles do not set the release minimum. Before publication, a separate proof runs the archive on a minimal Debian root with no Python 3.12 and no network.
 
 The host supplies the glibc loader and a short named list of system libraries, Node 22, Hermes, media tools such as `ffprobe`, `python3` 3.11 or newer for the installer, and every credential. Credentials live in the host's service environment and agent homes, so replacing the app never replaces them. Each release states its needs in a versioned runtime contract, and Panels checks it against the host before it offers the release.
 

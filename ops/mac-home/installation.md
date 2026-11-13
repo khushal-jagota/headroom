@@ -13,6 +13,7 @@ Use the darwin arm64 **home** publication, not the Mac executor runtime.
 Obtain its `panels-app.tar.gz`, expected app SHA, and archive SHA256 from the approved publication receipt.
 Use macOS 15 or newer, Node 22, and an external Python 3.11 or newer.
 The external interpreter remains a host prerequisite for this slice.
+Release publication builds private ICU libraries for macOS 15. It does not reuse the host Homebrew ICU bottle.
 Do not select an interpreter inside the installation or temporary bootstrap folder.
 
 Extract the checked archive into a fresh bootstrap folder. Its private Python runs setup without a source checkout.
