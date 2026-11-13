@@ -4,6 +4,7 @@ import { is_os_error } from '../core/system_errors.ts';
 import { stringify_python_json } from '../core/http/numeric_json.ts';
 import { python_repr } from './protocol_errors.ts';
 import { ConversationBackendKey } from '../conversation/contracts.ts';
+import { save_machine_model_list } from '../conversation/backend_state.ts';
 import type { BackendSnapshot, SnapshotOptions } from '../conversation/snapshot/contracts.ts';
 import type { RemoteCatalogSource } from '../conversation/model_resolution/contracts.ts';
 import { observe_shutdown, is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
@@ -14,7 +15,7 @@ import type { SqliteCommandMailbox } from './vps_mailbox.ts';
 import type { MacPresenceService } from './vps_presence.ts';
 import { MODEL_LIST_LIMIT_SECONDS, CATALOG_CLEANUP_SECONDS } from './configuration.ts';
 import { CommandSettlementReason } from './contracts.ts';
-import { as_object, decode_json, ValueError } from './protocol.ts';
+import { decode_json, ValueError } from './protocol.ts';
 
 export const MAC_AWAY_DIAGNOSIS = 'The Mac is away.';
 export interface CatalogRunAuthority {
@@ -55,7 +56,6 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
     this.resolve_completion = resolve;
     this.reject_completion = reject;
   });
-  readonly machine_id: string;
   private readonly database: Database;
   readonly runs: CatalogRunAuthority;
   readonly presence: Presence;
@@ -65,13 +65,11 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
     runs: CatalogRunAuthority,
     presence: Presence,
     mailbox: Mailbox,
-    options: { machine_id?: string } = {},
   ) {
     this.database = database;
     this.runs = runs;
     this.presence = presence;
     this.mailbox = mailbox;
-    this.machine_id = options.machine_id ?? 'macos';
     void this.completion.catch(() => {});
   }
   get identity() {
@@ -91,7 +89,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
     const row = this.database.read((sql) =>
       sql.get<{ snapshot_json: string }>(
         'SELECT snapshot_json FROM machine_backend_snapshots WHERE machine_id=? AND backend_key=?',
-        [this.machine_id, backend_key],
+        ['macos', backend_key],
       ),
     );
     return row ? this.decode(row.snapshot_json) : null;
@@ -272,15 +270,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
         default_reasoning_effort: previous.default_reasoning_effort,
         models_complete: true,
       };
-    const body = stringify_python_json(as_object(snapshot, 'BackendSnapshot'));
-    this.database.write((tx) =>
-      tx.run(
-        'INSERT INTO machine_backend_snapshots VALUES (?,?,?) ' +
-          'ON CONFLICT(machine_id,backend_key) DO UPDATE SET snapshot_json=excluded.snapshot_json ' +
-          'WHERE snapshot_json != excluded.snapshot_json',
-        [this.machine_id, backend_key, body],
-      ),
-    );
+    this.database.write((tx) => save_machine_model_list(tx, 'macos', snapshot));
     return snapshot;
   }
   private answer(
