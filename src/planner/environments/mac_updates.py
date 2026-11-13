@@ -93,6 +93,8 @@ class MacUpdateService:
         self._preparation_lock = threading.Lock()
         self._last_preparation: tuple[str, float] | None = None
         self._ready_archives: set[str] = set()
+        # Rejected bytes stay rejected for this home process, across ordinary refreshes.
+        self._rejected_archive_digest: str | None = None
         self.archive_root = root if archive_root is None else archive_root
         self._machines: dict[str, MacUpdateService] = {}
         self.current_app_sha = current_app_sha
@@ -149,7 +151,7 @@ class MacUpdateService:
             return
         owner = self._linux_owner()
         digest = release.linux_executor.archive_sha256
-        if digest in owner._ready_archives:
+        if digest in owner._ready_archives or digest == owner._rejected_archive_digest:
             return
         if not owner._preparation_lock.acquire(blocking=False):
             return
@@ -342,24 +344,29 @@ class MacUpdateService:
                 downloaded = Path(temporary) / "artifact.zip"
                 self.provider.download_artifact(mac.artifact_id, downloaded)
                 candidate = Path(temporary) / self._archive_name
-                with zipfile.ZipFile(downloaded) as artifact:
-                    entries = artifact.infolist()
-                    names = {entry.filename for entry in entries}
-                    if len(names) != len(entries) or names not in (
-                        {self._archive_name},
-                        {self._archive_name, self._proof_name},
-                    ):
-                        raise UpdateConflict("The Mac runtime artifact is invalid.")
-                    runtime = artifact.getinfo(self._archive_name)
-                    if runtime.file_size != mac.archive_size:
-                        raise UpdateConflict("The Mac runtime artifact size differs.")
-                    # The VPS publication receipt pins these bytes. The optional
-                    # build proof travels beside them but grants no separate authority.
-                    with artifact.open(runtime) as source, candidate.open("xb") as output:
-                        shutil.copyfileobj(source, output)
-                        output.flush()
-                        os.fsync(output.fileno())
-                self._validate_archive(candidate, release)
+                try:
+                    with zipfile.ZipFile(downloaded) as artifact:
+                        entries = artifact.infolist()
+                        names = {entry.filename for entry in entries}
+                        if len(names) != len(entries) or names not in (
+                            {self._archive_name},
+                            {self._archive_name, self._proof_name},
+                        ):
+                            raise UpdateConflict("The Mac runtime artifact is invalid.")
+                        runtime = artifact.getinfo(self._archive_name)
+                        if runtime.file_size != mac.archive_size:
+                            raise UpdateConflict("The Mac runtime artifact size differs.")
+                        # The VPS publication receipt pins these bytes. The optional
+                        # build proof travels beside them but grants no separate authority.
+                        with artifact.open(runtime) as source, candidate.open("xb") as output:
+                            shutil.copyfileobj(source, output)
+                            output.flush()
+                            os.fsync(output.fileno())
+                    self._validate_archive(candidate, release)
+                except (ValueError, tarfile.TarError, zipfile.BadZipFile):
+                    if self.platform == "linux":
+                        self._rejected_archive_digest = mac.archive_sha256
+                    raise
                 os.replace(candidate, destination)
                 directory = os.open(destination.parent, os.O_RDONLY)
                 try:

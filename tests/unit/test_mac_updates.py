@@ -669,3 +669,25 @@ def test_linux_download_failure_never_gates_home_or_mac_and_is_shared(
     # A record left by the old shared-store bug cannot create a Mac target.
     atomic_write_json(service._applied_path, attempt_to_dict(attempt(linux_only, "done")))
     assert service.check().target is None
+
+    # Successfully downloaded, rejected bytes are not fetched again after the retry window.
+    published = provider.publish_linux(NEXT_SHA)
+    assert published.linux_executor is not None
+    rejected = published.linux_executor
+    content = provider.linux_archives[rejected.artifact_id]
+    provider.linux_archives[rejected.artifact_id] = bytes([content[0] ^ 1]) + content[1:]
+    write(service, attempt(published, "installing"))
+    first.check()
+    finish_linux_preparation(service)
+    owner._last_preparation = None  # Ordinary retry throttling no longer prevents a fetch.
+    assert first.check().prefetch is None and second.check().prefetch is None
+    finish_linux_preparation(service)
+    assert provider.downloads.count(rejected.artifact_id) == 1
+    published = provider.publish_linux("d" * 40)
+    write(service, attempt(published, "installing"))
+    first.check()
+    finish_linux_preparation(service)
+    fresh = first.check().prefetch
+    assert fresh is not None and published.linux_executor is not None
+    assert fresh.archive_sha256 == published.linux_executor.archive_sha256
+    assert provider.downloads.count(published.linux_executor.artifact_id) == 1
