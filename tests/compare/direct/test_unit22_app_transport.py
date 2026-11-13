@@ -726,6 +726,7 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
             assert process.returncode == 0, stdout + stderr
             final = await read("state")
             assert final["catalog_state"] == "withdrawn" and final["descriptors"] == []
+            assert final["poll_disconnected"] is True
             assert final["reports"] == updates.reports
             assert actual == expected and actual_core == expected_core
             return {
@@ -737,6 +738,7 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
                 "refused_connection_attempts": 0,
                 "remaining_input_descriptors": [],
                 "catalog_state_after_stop": final["catalog_state"],
+                "disconnected_poll_settled": final["poll_disconnected"],
             }
         finally:
             listener.close()

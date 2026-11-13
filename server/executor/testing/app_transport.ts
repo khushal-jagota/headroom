@@ -1,6 +1,7 @@
 /** One owned HTTP host under the existing synthetic TLS proxy; no native backend. */
 import { readFileSync, writeFileSync, readdirSync, readlinkSync } from 'node:fs';
 import { createInterface } from 'node:readline';
+import { request as http_request } from 'node:http';
 import { setTimeout as pause } from 'node:timers/promises';
 import { createDatabase } from '../../core/database/index.ts';
 import { loadConfig } from '../../core/config.ts';
@@ -96,9 +97,48 @@ const address = app.server.address();
 if (address === null || typeof address === 'string' || address.address !== '127.0.0.1')
   throw new Error('fixture listener is not its inherited loopback socket');
 writeFileSync(spec.ready, JSON.stringify(address));
-let closing = false;
+let closing = false,
+  poll_disconnected = false;
 for await (const command of createInterface({ input: process.stdin })) {
   if (command === 'continue') {
+    const poll = endpoint.mailbox.poll.bind(endpoint.mailbox);
+    let entered!: () => void, finished!: () => void, signal: AbortSignal | undefined;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const settled = new Promise<void>((resolve) => {
+      finished = resolve;
+    });
+    endpoint.mailbox.poll = (...args) => {
+      signal = args[3]?.signal;
+      const result = poll(...args);
+      entered();
+      return result.finally(finished);
+    };
+    // This listener was bound and verified above; no input URL can select a target.
+    const connection = http_request({
+      host: address.address,
+      port: address.port,
+      path: '/api/executor/commands?after=999999&wait=50',
+      headers: {
+        'Tailscale-User-Login': 'owner@example.com',
+        'X-Panels-Executor-ID': 'test-executor',
+        'X-Panels-Executor-Incarnation': '11111111-1111-4111-8111-111111111111',
+        'X-Panels-Executor-Protocol': '22',
+      },
+    });
+    connection.on('error', () => {});
+    try {
+      connection.end();
+      await started;
+      connection.destroy();
+      await settled;
+      if (!signal?.aborted) throw new Error('Disconnected poll retained its mailbox wait');
+      poll_disconnected = true;
+    } finally {
+      connection.destroy();
+      endpoint.mailbox.poll = poll;
+    }
     writeFileSync(spec.continuation, JSON.stringify(await continue_core(database, endpoint)));
     continue;
   }
@@ -139,7 +179,10 @@ for await (const command of createInterface({ input: process.stdin })) {
       }
     })
     .filter((path) => path.includes('/files/conversations/'));
-  writeFileSync(spec.state, JSON.stringify({ reports, descriptors, catalog_state }));
+  writeFileSync(
+    spec.state,
+    JSON.stringify({ reports, descriptors, catalog_state, poll_disconnected }),
+  );
   database.close();
   break;
 }

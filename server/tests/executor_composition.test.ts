@@ -17,13 +17,21 @@ import {
   unavailable_backend_providers,
 } from '../conversation/snapshot/composition.ts';
 import { write_ticket_conversation_start } from '../tickets/data/index.ts';
-import { create_production_conversation_core } from '../lifecycle/production.ts';
-import { create_test_environment_runtime } from '../environments/testing/composition.ts';
+import {
+  create_production_conversation_core,
+  start_production_server,
+} from '../lifecycle/production.ts';
+import {
+  create_test_environment_operations,
+  create_test_environment_runtime,
+} from '../environments/testing/composition.ts';
+import { MailboxStallSource } from '../executor/data/mailbox.ts';
+import type { StallSource } from '../stalls/contracts.ts';
 import { MacUpdateService } from '../environments/updates/mac/service.ts';
 import type { MacUpdateServiceContract } from '../environments/updates/mac/contracts.ts';
 
 const incarnation = '11111111-1111-4111-8111-111111111111';
-test('configured restart adopts before reconciliation and Mac locality never selects a local child', async () => {
+function retained_fixture() {
   const database = fixture(),
     path = fixture_path(database),
     root = dirname(path);
@@ -103,6 +111,10 @@ test('configured restart adopts before reconciliation and Mac locality never sel
     PLAN_DISPATCHER_LOCK_PATH: join(root, 'dispatcher.lock'),
   }))
     vi.stubEnv(key, value);
+  return { path, start, materials, root };
+}
+test('configured restart adopts before reconciliation and Mac locality never selects a local child', async () => {
+  const { path, start, materials } = retained_fixture();
   const local = vi.fn<BackendChildFactory>(() => {
     throw new Error('local constructor selected');
   });
@@ -110,6 +122,17 @@ test('configured restart adopts before reconciliation and Mac locality never sel
   let context!: ConversationCompositionContext,
     bound!: ReturnType<typeof compose_production_backends>;
   let mac_updates!: MacUpdateServiceContract;
+  const local_source: StallSource = {
+    tracked_waits: () => [
+      {
+        kind: 'vps_save_retrying',
+        wait_key: 'local',
+        conversation_id: 'kept',
+        detail: 'Synthetic local save',
+        started_at_ms: 100,
+      },
+    ],
+  };
   let server: StartedServer | undefined;
   try {
     server = await startServer({
@@ -135,7 +158,7 @@ test('configured restart adopts before reconciliation and Mac locality never sel
           codex: () => local,
           hermes: () => local,
           http: () => http,
-          stall_sources: () => [],
+          stall_sources: () => [local_source],
         });
         core = create_production_conversation_core(current, bound);
         return core;
@@ -151,7 +174,9 @@ test('configured restart adopts before reconciliation and Mac locality never sel
     expect(core.conversation_state('kept')?.child).toBeInstanceOf(MacRemoteChild);
     expect(endpoint.presence.is_present()).toBe(false);
     expect(bound.http.machine_catalog()).toBe(endpoint.catalog);
-    expect(bound.stall_sources()).toHaveLength(3);
+    const sources = bound.stall_sources();
+    expect(sources).toContain(local_source);
+    expect(sources.some((source) => source instanceof MailboxStallSource)).toBe(true);
     expect(mac_updates).toBeInstanceOf(MacUpdateService);
     expect(endpoint.updates).toBe(mac_updates);
     const check = vi.spyOn(mac_updates, 'check');
@@ -205,6 +230,64 @@ test('configured restart adopts before reconciliation and Mac locality never sel
   } finally {
     await server?.close({ deadline: performance.now() / 1000 + 5 });
     await server?.shutdown_settled;
+    vi.unstubAllEnvs();
+  }
+});
+
+// The earlier composed-host case supplied its own executor constructor and could
+// not catch missing production machine identity, revision, or inventory handoff.
+test('production constructs its real executor and reconciles that executor inventory', async () => {
+  const { root } = retained_fixture();
+  const revision = 'a'.repeat(40);
+  vi.stubEnv('PLAN_APP_SHA', revision);
+  const inventory = vi.spyOn(VpsExecutor.prototype, 'open_runs');
+  const local = vi.fn<BackendChildFactory>(() => {
+    throw new Error('local constructor selected');
+  });
+  let endpoint!: VpsExecutor, core!: SqliteProcessConversationSystem;
+  let server: StartedServer | undefined;
+  try {
+    server = await start_production_server({
+      backends: {
+        claude: () => local,
+        codex: () => local,
+        hermes: () => local,
+        http: (current) =>
+          create_backend_runtime({
+            database: current.database,
+            config: current.config,
+            now: () => current.clock.now(),
+            providers: unavailable_backend_providers(),
+          }),
+        stall_sources: () => [],
+      },
+      environments: {
+        dependencies: { application_root: root, node_executable: process.execPath },
+        async factory(current, dependencies) {
+          if (!(current.executor instanceof VpsExecutor) || !current.core)
+            throw new Error('Production must supply its real invocation executor and core');
+          endpoint = current.executor;
+          core = current.core;
+          expect(dependencies.executor).toBe(endpoint);
+          return create_test_environment_operations(current);
+        },
+      },
+    });
+    expect(endpoint.catalog.machine_id).toBe('synthetic-executor');
+    expect(endpoint.application_revision).toBe(revision);
+    expect(inventory).toHaveBeenCalledTimes(1);
+    expect(inventory.mock.contexts[0]).toBe(endpoint);
+    expect(inventory.mock.results[0]!.value.get('kept')).toEqual({
+      turn_number: 1,
+      executor_process_current: true,
+    });
+    expect(core.runtime_turn('kept')?.token.turn_number).toBe(1);
+    expect(core.conversation_state('kept')?.child).toBeInstanceOf(MacRemoteChild);
+    expect(local).not.toHaveBeenCalled();
+  } finally {
+    await server?.close({ deadline: performance.now() / 1000 + 5 });
+    await server?.shutdown_settled;
+    inventory.mockRestore();
     vi.unstubAllEnvs();
   }
 });

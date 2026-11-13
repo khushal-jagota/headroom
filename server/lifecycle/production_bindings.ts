@@ -148,7 +148,10 @@ export function compose_production_backends(
     factories,
     http,
     execution_refusal,
-    stall_sources: () => context.executor?.stall_sources() ?? bindings.stall_sources(shared),
+    stall_sources: () => [
+      ...bindings.stall_sources(shared),
+      ...(context.executor?.stall_sources() ?? []),
+    ],
   };
 }
 export function default_production_dependencies(): ProductionServerDependencies {

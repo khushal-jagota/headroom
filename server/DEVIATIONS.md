@@ -552,6 +552,8 @@ The migration Manager accepted this temporary refusal. It remains until the exec
 
 ## Executor message and core admission
 
+The Manager requires the TypeScript command route to forward response disconnects into mailbox poll cancellation; Python's route has no explicit disconnect observer.
+
 ### Encoding validation
 
 The Manager required this admission rule in the shared codec review of PR 806.

@@ -704,7 +704,11 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     environments = await options.createEnvironments?.(testContext);
     if (isClosing()) return abort_late_setup();
     assert_startup_open();
-    if (environments?.mac_updates) executor?.bind_updates(environments.mac_updates);
+    if (executor) {
+      if (!environments?.mac_updates)
+        throw new Error('Configured executor requires the invocation Mac update service.');
+      executor.bind_updates(environments.mac_updates);
+    }
     const testAreas =
       typeof options.testAreas === 'function'
         ? options.testAreas(testContext)

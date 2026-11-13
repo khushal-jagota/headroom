@@ -14,6 +14,7 @@ import { run_automatic_recovery } from '../deploy_interruptions/coordinator.ts';
 import { create_production_conversation_core } from '../../lifecycle/production.ts';
 import { compose_production_backends } from '../../lifecycle/production_bindings.ts';
 import { create_backend_runtime, unavailable_backend_providers } from '../snapshot/composition.ts';
+import { create_test_environment_runtime } from '../../environments/testing/composition.ts';
 import { InboxStore } from '../../executor/data/inbox.ts';
 import { FileStaging } from '../../executor/vps_files.ts';
 import { VpsExecutor } from '../../executor/vps_transport.ts';
@@ -74,6 +75,7 @@ async function cycle() {
       return core;
     },
     createBackendServices: () => bound.http,
+    createEnvironments: create_test_environment_runtime,
     testAreas(current) {
       first_signal = current.database.read(
         (sql) =>

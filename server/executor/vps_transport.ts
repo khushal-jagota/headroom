@@ -23,6 +23,7 @@ import { MacInbox } from './vps_inbox.ts';
 import { InboxStore } from './data/inbox.ts';
 import { FileStaging, VpsFiles } from './vps_files.ts';
 import { VpsCatalogRelay } from './catalog_relay.ts';
+import { answer_by } from './item_budget.ts';
 import { as_object, decode_event_arguments, integer_value } from './protocol.ts';
 import { parse_executor_json } from './protocol_json.ts';
 import { JsonNumber, stringify_python_json } from '../core/http/numeric_json.ts';
@@ -52,27 +53,6 @@ const LIVE_METHODS = new Set([
   'model_thinking_happened',
   'tool_call_progress',
 ]);
-class RequestDeadline extends Error {}
-async function bounded<T>(
-  promise: Promise<T>,
-  seconds: number,
-  timeout: () => void = () => {},
-): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          reject(new RequestDeadline());
-          timeout();
-        }, seconds * 1000);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
 export interface VpsExecutorOptions {
   readonly db_path: string;
   readonly changes: ChangeSignal;
@@ -172,13 +152,10 @@ export class VpsExecutor {
       () => this.owned.delete(task),
       () => this.owned.delete(task),
     );
-    try {
-      return await (answer_within === undefined ? task : bounded(task, answer_within));
-    } catch (error) {
-      if (error instanceof RequestDeadline)
-        throw new PlannerError('retry_later', 'the VPS is still saving this');
-      throw error;
-    }
+    if (answer_within === undefined) return task;
+    const answer = await answer_by(task, performance.now() / 1000 + answer_within);
+    if (!answer.done) throw new PlannerError('retry_later', 'the VPS is still saving this');
+    return answer.value;
   }
   health() {
     return this.presence.health();
@@ -213,6 +190,7 @@ export class VpsExecutor {
     identity: ExecutorIdentity,
     after: WireValue<'WaitingConversation'>['oldest_sequence'],
     wait_seconds: number,
+    options: { signal?: AbortSignal } = {},
   ): Promise<WireValue<'MailboxPollReply'>> {
     this.admit();
     if (
@@ -220,7 +198,7 @@ export class VpsExecutor {
       !(wait_seconds >= 0 && wait_seconds <= COMMAND_POLL_HOLD_SECONDS)
     )
       throw new PlannerError('validation', 'invalid poll cursor or wait');
-    return this.mailbox.poll(identity, after, wait_seconds);
+    return this.mailbox.poll(identity, after, wait_seconds, options);
   }
   record_outcomes(
     identity: ExecutorIdentity,
@@ -293,32 +271,30 @@ export class VpsExecutor {
     const target = new URL(read.path, 'http://executor');
     target.search = params.toString();
     const controller = new AbortController();
+    const answer = await answer_by(
+      this.app.inject({
+        method: 'GET',
+        url: target.pathname + target.search,
+        headers,
+        signal: controller.signal,
+      }),
+      performance.now() / 1000 + LIVE_READ_SERVER_LIMIT_SECONDS,
+    );
+    if (!answer.done) {
+      controller.abort();
+      throw new PlannerError('retry_later', 'the read took too long');
+    }
+    const response = answer.value;
     try {
-      const response = await bounded(
-        this.app.inject({
-          method: 'GET',
-          url: target.pathname + target.search,
-          headers,
-          signal: controller.signal,
-        }),
-        LIVE_READ_SERVER_LIMIT_SECONDS,
-        () => controller.abort(),
-      );
-      try {
-        const value = parse_executor_json(response.rawPayload);
-        return value !== null &&
-          typeof value === 'object' &&
-          !Array.isArray(value) &&
-          !(value instanceof JsonNumber)
-          ? (value as WireValue<'JsonObject'>)
-          : { data: value };
-      } catch {
-        return { text: response.body };
-      }
-    } catch (error) {
-      if (error instanceof RequestDeadline)
-        throw new PlannerError('retry_later', 'the read took too long');
-      throw error;
+      const value = parse_executor_json(response.rawPayload);
+      return value !== null &&
+        typeof value === 'object' &&
+        !Array.isArray(value) &&
+        !(value instanceof JsonNumber)
+        ? (value as WireValue<'JsonObject'>)
+        : { data: value };
+    } catch {
+      return { text: response.body };
     }
   }
   async live(
@@ -359,13 +335,13 @@ export class VpsExecutor {
       () => this.owned.delete(task),
       () => this.owned.delete(task),
     );
-    try {
-      await bounded(task, LIVE_EVENT_SERVER_LIMIT_SECONDS, () => {
-        expired = true;
-      });
-    } catch (error) {
-      if (error instanceof RequestDeadline) return;
-      throw error;
+    const answer = await answer_by(
+      task,
+      performance.now() / 1000 + LIVE_EVENT_SERVER_LIMIT_SECONDS,
+    );
+    if (!answer.done) {
+      expired = true;
+      return;
     }
     if (batch.events.length) this.presence.note_conversation_activity(conversation_id);
   }

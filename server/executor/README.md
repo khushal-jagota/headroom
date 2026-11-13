@@ -16,7 +16,7 @@ Live batches carry only message deltas, thinking notices, and tool progress. The
 
 ## Routes and authority
 
-All thirteen executor endpoints require trusted Tailscale login, the configured executor ID, no browser Origin, and no duplicate security headers. There is no executor bearer token. Work routes also require the supported protocol and current incarnation. Incarnation fences rows; it is not a credential. Writers repeat the relevant current-incarnation and assignment checks inside their transaction. Updates remain reachable before work-version admission.
+All thirteen executor endpoints require trusted Tailscale login, the configured executor ID, no browser Origin, and no duplicate security headers. There is no executor bearer token. Work requests carrying incarnation headers check the supported protocol and current identity before reading the body; a lease admits identity from its payload. Incarnation is a row fence, not a credential. Transaction participants compare affected row incarnations and relevant assignments with the admitted request. Updates remain reachable before work-version admission.
 
 | Method | Path | Boundary |
 | --- | --- | --- |
@@ -135,7 +135,7 @@ Sequence, turn and recovery counters retain exact SQL text reads and bigint bind
 
 Callers establish authority before they enter this internal API. The transport admits executor ingress, configured ID, protocol, and current incarnation before polls or outcome reports. Incarnation and command arguments are row fences, not credentials. Data helpers require a caller-owned SQL capability, and `finish_by_proof` requires an already-authorized matching `child_stopped` inbox item.
 
-Each held poll owns a removable wake registration. Timeout, abort, listener failure and shutdown release it. Abort reasons use a shared typed cancellation or an AbortError with the original reason as its cause. Waits require finite durations within Node's timer range. Finite negative durations return immediately, and a null result-wait timeout remains unbounded.
+The command route aborts its poll when the response connection closes. Each held poll owns a removable wake registration. Timeout, abort, listener failure and shutdown release it. Abort reasons use a shared typed cancellation or an AbortError with the original reason as its cause. Waits require finite durations within Node's timer range. Finite negative durations return immediately, and a null result-wait timeout remains unbounded.
 
 ### Known Python hazards
 

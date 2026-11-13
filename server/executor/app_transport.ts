@@ -287,12 +287,20 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
       work(async (request, reply) => {
         const { endpoint, identity } = current_for(request),
           { after, wait } = poll_parameters(request);
-        return typed_reply(
-          reply,
-          await endpoint.poll(identity, after, wait),
-          'MailboxPollReply',
-          MAX_MAILBOX_POLL_BYTES,
-        );
+        const cancellation = new AbortController();
+        const disconnected = () => cancellation.abort();
+        reply.raw.once('close', disconnected);
+        if (reply.raw.destroyed) disconnected();
+        try {
+          return typed_reply(
+            reply,
+            await endpoint.poll(identity, after, wait, { signal: cancellation.signal }),
+            'MailboxPollReply',
+            MAX_MAILBOX_POLL_BYTES,
+          );
+        } finally {
+          reply.raw.off('close', disconnected);
+        }
       }),
     );
     app.post(
