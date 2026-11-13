@@ -1,3 +1,4 @@
+import { pure_posix_path } from '../../core/python_path.ts';
 /** Existing environment allowlist and explicit skill provisioning. No runtime launcher argv. */
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,16 +10,10 @@ import { validate_environment_values } from './logic.ts';
 
 const ALLOWED_AMBIENT = new Set(['LANG', 'LANGUAGE', 'PATH', 'TERM', 'TMPDIR']);
 function pure_path(path: string): string {
-  const prefix =
-    path.startsWith('//') && !path.startsWith('///') ? '//' : path.startsWith('/') ? '/' : '';
-  return (
-    prefix +
-    path
-      .split('/')
-      .filter((part) => part && part !== '.')
-      .join('/')
-  );
+  const result = pure_posix_path(path);
+  return result === '.' ? '' : result;
 }
+
 export function build_environment_run_env(
   instance: ResolvedEnvironmentInstance,
   options: EnvironmentRunOptions,

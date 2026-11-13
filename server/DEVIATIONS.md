@@ -380,3 +380,12 @@ Python can reject a successful capture callback after its append commits, when t
 A caller without a fixed submission ID can then retry and queue the same output twice as new.
 TypeScript logs that cleanup failure and retains the callback result. A later sweep retries blob cleanup.
 The durable append and receipt behavior otherwise retain Python's contract.
+
+## Executor messages validate before encoding
+
+The Manager required this admission rule in the shared codec review of PR 806.
+TypeScript validates each root-specific encoder input through the wire decoder before serialization.
+It rejects missing required fields and invalid command semantics, and it supplies Python's declared defaults.
+Python's serializer can write a dataclass whose state did not pass that validation.
+The TypeScript sender must produce a message that the Python peer can read.
+Root-specific encoder inputs use the generated contracts. Nullable fields without defaults require an explicit null.
