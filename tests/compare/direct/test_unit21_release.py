@@ -37,25 +37,14 @@ from planner.environments.app import (
     digest_app_source,
     validate_app_manifest,
 )
-from planner.environments.runtime_contracts import (
-    NodeRuntimeContract,
-    RuntimeContractError,
-)
-from planner.environments.runtime_elf import (
-    ElfDynamic,
-    ElfObject,
-    read_dynamic,
-    resolve_provider,
-)
+from planner.environments.runtime_contracts import NodeRuntimeContract, RuntimeContractError
+from planner.environments.runtime_elf import ElfDynamic, ElfObject, read_dynamic, resolve_provider
 from planner.environments.update_artifacts import (
     create_app_archive,
     extract_app_archive,
     hash_archive,
 )
-from planner.environments.update_install import (
-    require_exact_schema_frontier,
-    schema_change_pending,
-)
+from planner.environments.update_install import require_exact_schema_frontier, schema_change_pending
 
 ROOT = Path(__file__).resolve().parents[3]
 SHA = "a" * 40
@@ -228,9 +217,7 @@ def _unit_boundaries(
     )
 
 
-def _admission_group_proof(
-    root: Path, environment: dict[str, str], node: str
-) -> dict[str, Any]:
+def _admission_group_proof(root: Path, environment: dict[str, str], node: str) -> dict[str, Any]:
     """Hosted only: independent pinned cleanup survives a regressed leader-only kill."""
     from tests.compare.direct.test_unit21_stop_coherence import (
         _native_dead,
@@ -256,9 +243,7 @@ def _admission_group_proof(
             [
                 node,
                 str(entry),
-                (
-                    ROOT / "server/environments/release/testing/release_parity.ts"
-                ).as_uri(),
+                (ROOT / "server/environments/release/testing/release_parity.ts").as_uri(),
                 str(root),
             ],
             cwd=ROOT,
@@ -270,18 +255,13 @@ def _admission_group_proof(
         marker = root / "group-identities.json"
         until = time.monotonic() + 15
         while not marker.exists():
-            assert (
-                process.poll() is None
-            ), "Admission fixture exited before its identity handoff"
-            assert (
-                time.monotonic() < until
-            ), "Admission fixture did not publish its owned identities"
+            assert process.poll() is None, "Admission fixture exited before its identity handoff"
+            assert time.monotonic() < until, (
+                "Admission fixture did not publish its owned identities"
+            )
             time.sleep(0.01)
         identities = json.loads(marker.read_text())
-        for name, parent in (
-            ("leader", process.pid),
-            ("descendant", identities["leader"]["pid"]),
-        ):
+        for name, parent in (("leader", process.pid), ("descendant", identities["leader"]["pid"])):
             identity = identities[name]
             handles[identity["pid"]] = _pin_native(identity, parent)
         assert len(handles) == 2
@@ -375,14 +355,8 @@ def _admission_rules(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
             return read_text(path, *args, **kwargs)
 
         with (
-            patch(
-                "planner.environments.runtime_admission.platform.system",
-                lambda: "Linux",
-            ),
-            patch(
-                "planner.environments.runtime_admission.platform.machine",
-                lambda: "x86_64",
-            ),
+            patch("planner.environments.runtime_admission.platform.system", lambda: "Linux"),
+            patch("planner.environments.runtime_admission.platform.machine", lambda: "x86_64"),
             patch(
                 "planner.environments.runtime_admission.platform.freedesktop_os_release",
                 lambda: {"ID": "ubuntu", "VERSION_ID": "24.04"},
@@ -391,24 +365,18 @@ def _admission_rules(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
                 "planner.environments.runtime_admission.platform.libc_ver",
                 lambda: ("glibc", "2.39"),
             ),
-            patch(
-                "planner.environments.runtime_admission.ctypes.CDLL", lambda name: None
-            ),
+            patch("planner.environments.runtime_admission.ctypes.CDLL", lambda name: None),
             patch(
                 "planner.environments.runtime_admission.shutil.which",
                 lambda *args, **kwargs: "/synthetic/tool",
             ),
             patch.object(
-                admission,
-                "_run_probe",
-                lambda *args, _node=item["node"], **kwargs: _node,
+                admission, "_run_probe", lambda *args, _node=item["node"], **kwargs: _node
             ),
             patch.object(Path, "read_text", synthetic_text),
         ):
             try:
-                admission.verify_runtime_host(
-                    v1 if item["version"] == 1 else v2, state=root
-                )
+                admission.verify_runtime_host(v1 if item["version"] == 1 else v2, state=root)
                 expected_hosts.append(None)
             except AppValidationError as error:
                 expected_hosts.append(str(error))
@@ -421,9 +389,7 @@ def _admission_rules(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     expected_reports: list[str | None] = []
     for report in reports:
         with patch.object(
-            admission,
-            "_run_json_probe",
-            lambda *args, _report=report, **kwargs: _report,
+            admission, "_run_json_probe", lambda *args, _report=report, **kwargs: _report
         ):
             try:
                 admission._run_node_probe(
@@ -443,26 +409,19 @@ def _native_loader_fixture(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         (root / name).mkdir(parents=True)
     for name in ("ancestor", "private"):
         (root / name / library).write_text(name + " ABI")
-    caller = ElfObject(
-        root / "bin/node", ElfDynamic((), ("$ORIGIN/../ancestor",), None, None)
-    )
+    caller = ElfObject(root / "bin/node", ElfDynamic((), ("$ORIGIN/../ancestor",), None, None))
     extension = root / "extensions/addon.node"
     requester = ElfObject(extension, ElfDynamic((), (), None, None))
     private = ("$ORIGIN/../private",)
     scenarios = [
         (library, requester, (caller,)),
-        (
-            library,
-            ElfObject(extension, ElfDynamic((), (), ("$ORIGIN/absent",), None)),
-            (caller,),
-        ),
+        (library, ElfObject(extension, ElfDynamic((), (), ("$ORIGIN/absent",), None)), (caller,)),
         (
             library,
             requester,
             (
                 ElfObject(
-                    caller.path,
-                    ElfDynamic((), caller.dynamic.rpath, caller.dynamic.rpath, None),
+                    caller.path, ElfDynamic((), caller.dynamic.rpath, caller.dynamic.rpath, None)
                 ),
             ),
         ),
@@ -477,16 +436,10 @@ def _native_loader_fixture(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
 
     for name, owner, ancestors in scenarios:
         requests.append(
-            dict(
-                name=name,
-                requester=wire(owner),
-                ancestors=[wire(value) for value in ancestors],
-            )
+            dict(name=name, requester=wire(owner), ancestors=[wire(value) for value in ancestors])
         )
         try:
-            providers.append(
-                dict(provider=str(resolve_provider(name, owner, ancestors, {})))
-            )
+            providers.append(dict(provider=str(resolve_provider(name, owner, ancestors, {}))))
         except RuntimeContractError as error:
             providers.append(dict(error=str(error)))
     dynamic = (
@@ -500,9 +453,7 @@ def _native_loader_fixture(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
 
     with patch("planner.environments.runtime_elf.subprocess.run", fake_read):
         parsed = asdict(read_dynamic(extension))
-    expected: dict[str, Any] = json.loads(
-        json.dumps(dict(dynamic=parsed, providers=providers))
-    )
+    expected: dict[str, Any] = json.loads(json.dumps(dict(dynamic=parsed, providers=providers)))
     return dict(dynamic=[dynamic, header], providers=requests), expected
 
 
@@ -510,9 +461,7 @@ def _tree(root: Path) -> list[dict[str, Any]]:
     """Compare actual bytes/modes/link topology, without following directory aliases."""
     rows: list[dict[str, Any]] = []
     inodes: dict[tuple[int, int], str] = {}
-    for path in sorted(
-        root.rglob("*"), key=lambda value: value.relative_to(root).as_posix()
-    ):
+    for path in sorted(root.rglob("*"), key=lambda value: value.relative_to(root).as_posix()):
         info = path.lstat()
         row: dict[str, Any] = dict(
             path=path.relative_to(root).as_posix(), mode=stat.S_IMODE(info.st_mode)
@@ -572,8 +521,7 @@ def _archive_vectors(root: Path, ordinary: Path) -> list[dict[str, str]]:
     raw = gzip.decompress(ordinary.read_bytes())
     with tarfile.open(ordinary, "r:gz") as bundle:
         end = max(
-            member.offset_data + (member.size + 511) // 512 * 512
-            for member in bundle.getmembers()
+            member.offset_data + (member.size + 511) // 512 * 512 for member in bundle.getmembers()
         )
     prefix = raw[:end]
     eof = bytes(1024)
@@ -608,11 +556,7 @@ def _archive_vectors(root: Path, ordinary: Path) -> list[dict[str, str]]:
         ("duplicate-slash", "parity", _record("a/", tarfile.DIRTYPE, mode=0o755)),
         ("fifo", "parity", _record("fifo", tarfile.FIFOTYPE)),
         ("special", "parity", _record("special", mode=0o4755)),
-        (
-            "outside-symlink",
-            "parity",
-            _record("dir/link", tarfile.SYMTYPE, target="../../outside"),
-        ),
+        ("outside-symlink", "parity", _record("dir/link", tarfile.SYMTYPE, target="../../outside")),
         (
             "link-parent",
             "accepted_restriction",
@@ -623,16 +567,11 @@ def _archive_vectors(root: Path, ordinary: Path) -> list[dict[str, str]]:
             "accepted_restriction",
             _record("late/child") + _record("late", tarfile.SYMTYPE, target="a"),
         ),
-        (
-            "gnu-sparse",
-            "accepted_restriction",
-            _record("sparse", tarfile.GNUTYPE_SPARSE),
-        ),
+        ("gnu-sparse", "accepted_restriction", _record("sparse", tarfile.GNUTYPE_SPARSE)),
         (
             "pax-sparse-local",
             "accepted_restriction",
-            x({"GNU.sparse.map": "0,0", "GNU.sparse.size": "0"})
-            + _record("pax-sparse"),
+            x({"GNU.sparse.map": "0,0", "GNU.sparse.size": "0"}) + _record("pax-sparse"),
         ),
         (
             "pax-sparse-global",
@@ -673,9 +612,7 @@ def _archive_vectors(root: Path, ordinary: Path) -> list[dict[str, str]]:
         (
             "gnu-long-name",
             "parity",
-            _record(
-                "././@LongLink", tarfile.GNUTYPE_LONGNAME, long_name.encode() + b"\0"
-            )
+            _record("././@LongLink", tarfile.GNUTYPE_LONGNAME, long_name.encode() + b"\0")
             + _record("raw"),
         ),
         (
@@ -706,11 +643,7 @@ def _archive_vectors(root: Path, ordinary: Path) -> list[dict[str, str]]:
             "accepted_restriction",
             x({"vendor.inert": "ignored-by-python"}) + _record("vendor"),
         ),
-        (
-            "empty-pax-path",
-            "accepted_restriction",
-            x({"path": ""}) + _record("empty-name"),
-        ),
+        ("empty-pax-path", "accepted_restriction", x({"path": ""}) + _record("empty-name")),
         (
             "directory-body",
             "accepted_restriction",
@@ -723,19 +656,13 @@ def _archive_vectors(root: Path, ordinary: Path) -> list[dict[str, str]]:
     vectors = []
     for name, policy, records in cases:
         archive = root / (name + ".tar.gz")
-        archive.write_bytes(
-            gzip.compress(prefix + records + eof, compresslevel=1, mtime=0)
-        )
+        archive.write_bytes(gzip.compress(prefix + records + eof, compresslevel=1, mtime=0))
         vectors.append(dict(name=name, policy=policy))
     extra = {
         "truncated-gzip": gzip.compress(prefix + eof, mtime=0)[:-8],
-        "truncated-body": gzip.compress(
-            prefix + _record("cut", size=513) + b"x", mtime=0
-        ),
+        "truncated-body": gzip.compress(prefix + _record("cut", size=513) + b"x", mtime=0),
         "partial-header": gzip.compress(prefix + b"partial", mtime=0),
-        "post-end-bytes": gzip.compress(
-            prefix + eof + b"not-zero" + bytes(504), mtime=0
-        ),
+        "post-end-bytes": gzip.compress(prefix + eof + b"not-zero" + bytes(504), mtime=0),
         "end-padding-bomb": gzip.compress(
             prefix + bytes(20 * 1024 + 512), compresslevel=1, mtime=0
         ),
@@ -744,13 +671,9 @@ def _archive_vectors(root: Path, ordinary: Path) -> list[dict[str, str]]:
         (root / (name + ".tar.gz")).write_bytes(content)
         vectors.append(dict(name=name, policy="resource_admission"))
     (root / "partial-output-cleanup.tar.gz").write_bytes(
-        gzip.compress(
-            prefix + _record("inaccessible", tarfile.DIRTYPE, mode=0) + eof, mtime=0
-        )
+        gzip.compress(prefix + _record("inaccessible", tarfile.DIRTYPE, mode=0) + eof, mtime=0)
     )
-    vectors.append(
-        dict(name="partial-output-cleanup", policy="cleanup", expected_sha="b" * 40)
-    )
+    vectors.append(dict(name="partial-output-cleanup", policy="cleanup", expected_sha="b" * 40))
     risks = {
         "escape": "Raw member parent traversal",
         "outside-hardlink": "Archive-root-relative hard-link escape",
@@ -803,9 +726,7 @@ def _archive_vectors(root: Path, ordinary: Path) -> list[dict[str, str]]:
     return vectors
 
 
-def _python_archive_result(
-    archive: Path, destination: Path, expected_sha: str
-) -> dict[str, Any]:
+def _python_archive_result(archive: Path, destination: Path, expected_sha: str) -> dict[str, Any]:
     failed = False
     try:
         extract_app_archive(archive, destination, hash_archive(archive), expected_sha)
@@ -897,22 +818,16 @@ def test_unit21_release_identity_archive_and_frontier(
         with sqlite3.connect(tmp_path / (name + ".sqlite")) as connection:
             connection.execute("CREATE TABLE alembic_version(version_num TEXT)")
             if database_revision is not None:
-                connection.execute(
-                    "INSERT INTO alembic_version VALUES (?)", (database_revision,)
-                )
+                connection.execute("INSERT INTO alembic_version VALUES (?)", (database_revision,))
         pending: bool | None = None
         pending_error: str | None = None
         node_error: str | None = None
         try:
-            pending = schema_change_pending(
-                tmp_path / (name + ".sqlite"), tmp_path / "graph-app"
-            )
+            pending = schema_change_pending(tmp_path / (name + ".sqlite"), tmp_path / "graph-app")
         except ValueError as error:
             pending_error = str(error)
         try:
-            require_exact_schema_frontier(
-                tmp_path / (name + ".sqlite"), tmp_path / "graph-app"
-            )
+            require_exact_schema_frontier(tmp_path / (name + ".sqlite"), tmp_path / "graph-app")
         except ValueError as error:
             node_error = str(error)
         python_frontier.append(
@@ -988,9 +903,7 @@ def test_unit21_release_identity_archive_and_frontier(
     native_library = native_root / "runtime/lib/libfixture.so"
     native_library.parent.mkdir(parents=True)
     native_library.symlink_to(native_sentinel)
-    native_paths = sorted(
-        str(item.relative_to(native_root)) for item in native_root.rglob("*")
-    )
+    native_paths = sorted(str(item.relative_to(native_root)) for item in native_root.rglob("*"))
     node = shutil.which("node")
     assert node is not None
     loader_input, expected_loader = _native_loader_fixture(tmp_path / "loader")
@@ -1090,9 +1003,7 @@ def test_unit21_release_identity_archive_and_frontier(
         if row["path"] in source_paths
     ]
     assert (
-        next(row for row in expected_source_metadata if row["path"] == "server/cli")[
-            "mode"
-        ]
+        next(row for row in expected_source_metadata if row["path"] == "server/cli")["mode"]
         == 0o750
     )
     builder_spec = dict(sha=build_sha, cli=cli_relative, source_paths=source_paths)
@@ -1135,9 +1046,7 @@ def test_unit21_release_identity_archive_and_frontier(
     node_seconds = time.perf_counter() - node_started
     assert process.returncode == 0, stderr
     actual: dict[str, Any] = json.loads(stdout)
-    actual["units"] = _unit_boundaries(
-        tmp_path, actual["units"], node, env, unit_literal
-    )
+    actual["units"] = _unit_boundaries(tmp_path, actual["units"], node, env, unit_literal)
     assert actual["native_tree_admission"] == "app contains a symlink outside its root"
     assert native_sentinel.read_bytes() == b"outside native write sentinel\n"
     assert (
@@ -1163,10 +1072,7 @@ def test_unit21_release_identity_archive_and_frontier(
     assert built["failed"] and built["failed_absent"] and built["cleanup"]
     assert built["graph"] == expected_graph and built["graph_drift_refused"]
     assert built["source_abort"] == dict(
-        validated=True,
-        actual_child_closed=True,
-        destination_absent=True,
-        unrelated_live=True,
+        validated=True, actual_child_closed=True, destination_absent=True, unrelated_live=True
     )
     assert built["children"]["spawned"] == built["children"]["closed"] > 0
     assert built["launch_environment"] == dict(
@@ -1179,15 +1085,10 @@ def test_unit21_release_identity_archive_and_frontier(
     hostile_native = actual["hostile_native"]
     if hostile_native["executed"]:
         assert hostile_native["refused"] is True
-        assert hostile_native["outside_library"] == str(
-            tmp_path / "outside-native/libm.so.6"
-        )
+        assert hostile_native["outside_library"] == str(tmp_path / "outside-native/libm.so.6")
         assert hostile_native["native_operation"] == "cos(0) = 1"
     else:
-        assert (
-            hostile_native["reason"]
-            == "Native candidate admission requires Linux x64 Node 22"
-        )
+        assert hostile_native["reason"] == "Native candidate admission requires Linux x64 Node 22"
     group_proof = (
         _admission_group_proof(tmp_path / "hosted-admission-group", env, node)
         if os.environ.get("GITHUB_ACTIONS") == "true" and sys.platform == "linux"
@@ -1199,16 +1100,13 @@ def test_unit21_release_identity_archive_and_frontier(
         "manifest": manifest.as_dict(),
     }
     assert actual["legacy"] == expected_legacy
-    assert actual["producer_trees"]["python"]["status"] == "restored", actual[
-        "producer_trees"
-    ]["python"]
+    assert actual["producer_trees"]["python"]["status"] == "restored", actual["producer_trees"][
+        "python"
+    ]
     assert actual["restored"] == manifest.as_dict()
     assert actual["exclusive_refused"]
     bad_hash = actual["hash_refusal"]
-    assert (
-        bad_hash["status"] == "refused"
-        and bad_hash["error_type"] == "AppValidationError"
-    )
+    assert bad_hash["status"] == "refused" and bad_hash["error_type"] == "AppValidationError"
     assert bad_hash["message"] == str(hash_first.value)
     assert bad_hash["spools_absent"] and not bad_hash["destination_exists"]
     assert not (tmp_path / "outside").exists()
@@ -1221,26 +1119,18 @@ def test_unit21_release_identity_archive_and_frontier(
     assert actual["frontier"] == python_frontier
     restored = tmp_path / "python-from-node"
     assert (
-        extract_app_archive(
-            tmp_path / "node.tar.gz", restored, actual["node_archive_sha256"], SHA
-        )
+        extract_app_archive(tmp_path / "node.tar.gz", restored, actual["node_archive_sha256"], SHA)
         == manifest
     )
     python_from_python = tmp_path / "python-from-python"
     extract_app_archive(tmp_path / "python.tar.gz", python_from_python, checksum, SHA)
-    for producer, python_tree in (
-        ("python", python_from_python),
-        ("typescript", restored),
-    ):
+    for producer, python_tree in (("python", python_from_python), ("typescript", restored)):
         result_tree = actual["producer_trees"][producer]
         assert result_tree["status"] == "restored"
         assert result_tree["tree"] == _tree(python_tree)
         assert result_tree["output_private"] and result_tree["spool_private"]
         assert result_tree["settled_at_return"] and result_tree["descriptor_held"]
-        assert (
-            result_tree["spools_absent"]
-            and result_tree["spawned"] == result_tree["closed"] == 1
-        )
+        assert result_tree["spools_absent"] and result_tree["spawned"] == result_tree["closed"] == 1
     for restored_tree in (tmp_path / "work-python-producer/output", restored):
         assert (restored_tree / "directory-alias").is_symlink()
         assert os.readlink(restored_tree / "directory-alias") == "a"
@@ -1266,10 +1156,7 @@ def test_unit21_release_identity_archive_and_frontier(
             assert "mtime" not in by_name["sentinel"].pax_headers
             for name in ("\ue000", "\U00010000"):
                 assert by_name[name].mtime == FIXTURE_TIME_NS / 1_000_000_000
-                assert (
-                    float(by_name[name].pax_headers["mtime"])
-                    == FIXTURE_TIME_NS / 1_000_000_000
-                )
+                assert float(by_name[name].pax_headers["mtime"]) == FIXTURE_TIME_NS / 1_000_000_000
     table = []
     for item in actual["archive_table"]:
         name, policy, observed = item["name"], item["policy"], item["result"]
@@ -1303,10 +1190,7 @@ def test_unit21_release_identity_archive_and_frontier(
     assert python_table["pax-leading-zero-length"]["status"] == "restored"
     hex_time = python_table["pax-hex-mtime"]
     assert hex_time["status"] == "restored"
-    assert (
-        next(row for row in hex_time["tree"] if row["path"] == "hex-time")["mtime_ns"]
-        == "0"
-    )
+    assert next(row for row in hex_time["tree"] if row["path"] == "hex-time")["mtime_ns"] == "0"
     assert "metadata" in limits["oversized-metadata"]["message"]
     assert "end-padding" in limits["end-padding-bomb"]["message"]
     assert (
@@ -1316,24 +1200,17 @@ def test_unit21_release_identity_archive_and_frontier(
     assert limits["partial-output-cleanup"]["validated"]
     owned = {item["mode"]: item["result"] for item in actual["owned"]}
     replaced = owned["replace"]
-    assert replaced["status"] == "restored" and replaced["tree"] == _tree(
-        python_from_python
-    )
+    assert replaced["status"] == "restored" and replaced["tree"] == _tree(python_from_python)
     assert replaced["replaced_before_read"] and replaced["replaced_after_hash"]
-    assert (
-        replaced["replacement"] == "replaced after hash" and replaced["descriptor_held"]
-    )
+    assert replaced["replacement"] == "replaced after hash" and replaced["descriptor_held"]
     assert owned["appeared"]["status"] == "refused"
     assert owned["appeared"]["competitor"] == "competitor"
     assert owned["kill"]["status"] == "refused" and owned["kill"]["killed"]
     assert not owned["kill"]["destination_exists"]
     channel_loss = owned["channel-loss"]
+    assert channel_loss["channel_closed"] and not channel_loss["channel_close_timed_out"]
     assert (
-        channel_loss["channel_closed"] and not channel_loss["channel_close_timed_out"]
-    )
-    assert (
-        channel_loss["status"] == "refused"
-        and channel_loss["error_type"] == "AppValidationError"
+        channel_loss["status"] == "refused" and channel_loss["error_type"] == "AppValidationError"
     )
     assert not channel_loss["destination_exists"]
     for result_owned in owned.values():
