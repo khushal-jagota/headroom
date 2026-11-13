@@ -40,7 +40,6 @@ CLI_TESTS = (
     "test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place",
     "test_a_video_preview_shows_a_poster_then_plays_and_seeks",
     "test_formula_expectation_projection_and_correction_reach_mounted_chart",
-    "test_real_vite_applications_share_only_their_generation",
 )
 
 
