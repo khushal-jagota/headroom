@@ -13,7 +13,12 @@ import type {
 } from './contracts.ts';
 import { RUNTIME_CONTRACT_PATH, RUNTIME_INVENTORY_PATH } from './configuration.ts';
 import { app_tree_paths, validate_app_tree } from './identity.ts';
-import { find_release_executable, run_release_command } from './process.ts';
+import {
+  assert_release_execution,
+  find_release_executable,
+  run_release_command,
+} from './process.ts';
+import type { ReleaseExecution } from './contracts.ts';
 import { canonical_json } from '../updates/codec.ts';
 import {
   GLIBC_LIBRARIES,
@@ -64,7 +69,11 @@ async function exists(path: string): Promise<boolean> {
     throw error;
   }
 }
-export async function complete_node_runtime(app_root: string): Promise<NodeRuntimeContract> {
+export async function complete_node_runtime(
+  app_root: string,
+  execution: ReleaseExecution,
+): Promise<NodeRuntimeContract> {
+  assert_release_execution(execution);
   app_root = await realpath(app_root);
   // Admit every existing write target before mkdir, dependency copies, or patchelf.
   await validate_app_tree(app_root);
@@ -84,15 +93,16 @@ export async function complete_node_runtime(app_root: string): Promise<NodeRunti
   const { resolved_path } = await import('../paths.ts');
   if (!inside(app_root, await resolved_path(library_root)))
     throw new RuntimeContractError('native library directory escapes archive');
+  assert_release_execution(execution);
   await mkdir(library_root, { recursive: true });
-  const cache = await host_library_cache(),
+  const cache = await host_library_cache(execution),
     objects = new Map<string, ElfObject>(),
     origins = new Map<string, string>();
   async function source_object(source: string): Promise<ElfObject> {
     source = await realpath(source);
     let object = objects.get(source);
     if (object === undefined) {
-      object = { path: source, dynamic: await read_dynamic(source) };
+      object = { path: source, dynamic: await read_dynamic(source, execution) };
       objects.set(source, object);
     }
     return object;
@@ -108,7 +118,7 @@ export async function complete_node_runtime(app_root: string): Promise<NodeRunti
     const info = await lstat(path);
     if (!info.isFile() || (await native_format(path)) !== 'ELF') continue;
     const object = await source_object(path),
-      header = await read_elf(path, '-hW');
+      header = await read_elf(path, '-hW', execution);
     const executable = elf_executable(header, object.dynamic.interpreter);
     const entry: Pending = [
       path,
@@ -135,13 +145,13 @@ export async function complete_node_runtime(app_root: string): Promise<NodeRunti
     const name = relative(app_root, path),
       dynamic = object.dynamic;
     const paths = dynamic.runpath ?? dynamic.rpath;
-    const header = await read_elf(path, '-hW');
+    const header = await read_elf(path, '-hW', execution);
     if (!header.includes('Advanced Micro Devices X86-64'))
       throw new RuntimeContractError(`unknown ELF architecture: ${name}`);
     const inactive = await inactive_musl(path, dynamic.needed, dynamic.interpreter);
     if (dynamic.interpreter !== null && !inactive && dynamic.interpreter !== GLIBC_INTERPRETER)
       throw new RuntimeContractError(`unknown ELF loader: ${name}: ${dynamic.interpreter}`);
-    const notes = await read_elf(path, '-nW');
+    const notes = await read_elf(path, '-nW', execution);
     if (!inactive && notes.includes('x86-64-v4'))
       throw new RuntimeContractError(`ELF requires unsupported x86-64-v4: ${name}`);
     const providers: Record<string, string> = Object.create(null);
@@ -161,7 +171,7 @@ export async function complete_node_runtime(app_root: string): Promise<NodeRunti
             if ((await hash_native_file(original)) !== (await hash_native_file(provider)))
               throw new RuntimeContractError(`conflicting bundled library: ${needed}`);
           } else {
-            await copy_with_metadata(provider, destination);
+            await copy_with_metadata(provider, destination, execution);
             origins.set(relative(app_root, destination), provider);
           }
           provider = destination;
@@ -186,7 +196,7 @@ export async function complete_node_runtime(app_root: string): Promise<NodeRunti
       continue;
     }
     providers_by_path.set(path, providers);
-    const version_notes = await read_elf(path, '-VW');
+    const version_notes = await read_elf(path, '-VW', execution);
     const versions = [
       ...new Set([...version_notes.matchAll(/\bGLIBC_(\d+\.\d+)\b/g)].map((match) => match[1])),
     ].sort();
@@ -226,10 +236,11 @@ export async function complete_node_runtime(app_root: string): Promise<NodeRunti
         path,
       ],
       { timeout_seconds: NATIVE_TOOL_SECONDS },
+      execution,
     );
   const inventory: (NativeElfFile | InactiveNativeFile)[] = [];
   for (const [path, draft] of drafts) {
-    const dynamic = await read_dynamic(path),
+    const dynamic = await read_dynamic(path, execution),
       paths = dynamic.runpath ?? dynamic.rpath;
     if (draft.active) {
       for (const entry of paths)
@@ -268,7 +279,7 @@ export async function complete_node_runtime(app_root: string): Promise<NodeRunti
   }
   const copied_components: Record<string, CopiedNativeComponent> = {};
   for (const [path, source] of origins)
-    copied_components[path] = await copied_component(source, app_root);
+    copied_components[path] = await copied_component(source, app_root, execution);
   const document: NativeInventory = {
     version: 2,
     node_major: 22,
@@ -281,6 +292,7 @@ export async function complete_node_runtime(app_root: string): Promise<NodeRunti
     packaging_tools: ['readelf', 'patchelf'],
   };
   const bytes = Buffer.from(canonical_json(document));
+  assert_release_execution(execution);
   await writeFile(join(app_root, RUNTIME_INVENTORY_PATH), bytes);
   const contract: NodeRuntimeContract = {
     version: 2,
@@ -294,6 +306,8 @@ export async function complete_node_runtime(app_root: string): Promise<NodeRunti
     external_executables: ['sh', 'node'],
     inventory_sha256: createHash('sha256').update(bytes).digest('hex'),
   };
+  assert_release_execution(execution);
   await writeFile(join(app_root, RUNTIME_CONTRACT_PATH), canonical_json(contract));
+  assert_release_execution(execution);
   return contract;
 }

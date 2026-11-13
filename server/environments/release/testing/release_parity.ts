@@ -542,8 +542,16 @@ async function compare_release(
     }
   }
   let native_tree_admission: string;
+  const native_owner = new ChildProcesses();
+  native_owner.spawn = () => {
+    throw new Error('Native tree refusal must precede tools');
+  };
   try {
-    await complete_node_runtime(join(root, 'native-link-provider'));
+    await complete_node_runtime(join(root, 'native-link-provider'), {
+      child_processes: native_owner,
+      signal: new AbortController().signal,
+      deadline: null,
+    });
     throw new Error('native packaging admitted an outside write target');
   } catch (error) {
     if (

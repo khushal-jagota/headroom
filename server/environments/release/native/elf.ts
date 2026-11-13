@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { open, readFile, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { ElfDynamic } from '../contracts.ts';
+import type { ElfDynamic, ReleaseExecution } from '../contracts.ts';
 import { FILE_CHUNK_BYTES } from '../configuration.ts';
 import { run_release_command } from '../process.ts';
 import { MACH_O_MAGIC, NATIVE_TOOL_SECONDS } from './configuration.ts';
@@ -20,13 +20,24 @@ export function parse_dynamic(output: string, program_header: string): ElfDynami
     interpreter: /Requesting program interpreter: (.*?)\]/.exec(program_header)?.[1] ?? null,
   };
 }
-export async function read_elf(path: string, flag: string): Promise<string> {
+export async function read_elf(
+  path: string,
+  flag: string,
+  execution: ReleaseExecution,
+): Promise<string> {
   return (
-    await run_release_command(['readelf', flag, path], { timeout_seconds: NATIVE_TOOL_SECONDS })
+    await run_release_command(
+      ['readelf', flag, path],
+      { timeout_seconds: NATIVE_TOOL_SECONDS },
+      execution,
+    )
   ).stdout;
 }
-export async function read_dynamic(path: string): Promise<ElfDynamic> {
-  return parse_dynamic(await read_elf(path, '-dW'), await read_elf(path, '-lW'));
+export async function read_dynamic(path: string, execution: ReleaseExecution): Promise<ElfDynamic> {
+  return parse_dynamic(
+    await read_elf(path, '-dW', execution),
+    await read_elf(path, '-lW', execution),
+  );
 }
 export function elf_executable(header: string, interpreter: string | null): boolean {
   return (

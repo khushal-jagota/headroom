@@ -1,5 +1,6 @@
 /** Application identity and the pure database frontier. */
 import { AppManifestValidationFailure } from '../command_contracts.ts';
+import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 export type {
   AppManifest,
   NodeRuntimeContract,
@@ -69,4 +70,11 @@ export interface ElfDynamic {
 export interface ElfObject {
   readonly path: string;
   readonly dynamic: ElfDynamic;
+}
+
+/** Null deadline is explicit standalone build policy, never a server default. */
+export interface ReleaseExecution {
+  readonly child_processes: OwnedChildProcesses;
+  readonly signal: AbortSignal;
+  readonly deadline: number | null;
 }

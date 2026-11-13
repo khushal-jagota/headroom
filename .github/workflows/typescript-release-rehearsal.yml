@@ -2,7 +2,7 @@ name: TypeScript archive release-scale proof
 
 on:
   push:
-    branches: [ticket/t_3ud37ykx-release-native]
+    branches: [ticket/t_wbvdjey1-native]
   workflow_dispatch:
 
 permissions:
