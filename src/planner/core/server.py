@@ -380,6 +380,7 @@ def create_app(
                     if conversation_system_for_test is None
                     else conversation_system_for_test
                 )
+                app.state.conversation = conversation
 
                 async def release_normal_work() -> None:
                     nonlocal recovery_task, video_cleanup_task, ticket_scratch_task
@@ -436,7 +437,6 @@ def create_app(
                             conversation.system.workspace_admission,
                         )
                     )
-                    app.state.conversation = conversation
                     await asyncio.to_thread(video_uploads.recover_and_cleanup)
                     video_cleanup_task = asyncio.create_task(_clean_video_uploads())
                     scratch_layout = ticket_scratch.layout_for(

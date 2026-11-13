@@ -356,6 +356,8 @@ def test_trial_boot_holds_runtime_until_installer_releases_cut(
     with TestClient(app) as client:
         response = client.get("/api/health", params={"expected_sha": TO_SHA})
         assert response.status_code == 200
+        assert app.state.conversation is not None
+        assert client.get("/api/conversation/conversations/missing").status_code == 404
         assert not starts
         assert app.state.conversation_system.workspace_admission.closed
         assert marker_observed.wait(timeout=5)
