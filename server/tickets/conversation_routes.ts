@@ -1,3 +1,4 @@
+import { require_usable_model } from '../conversation/backend_state.ts';
 /** Ticket and Chief conversation routes. Runtime helpers own associations and execution. */
 import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices } from '../core/authority/register.ts';
@@ -53,25 +54,14 @@ function runs_under(body: OwnerSendBody): ConversationStartOverrides {
 }
 function resolve_configuration(
   services: AreaServices,
+  ticket_id: string,
   backend: string,
   model: string,
   effort: string | null,
 ): EmployeeLaunchConfiguration {
   const employee_backend = require_conversation_backend_key(backend);
   services.database.read((sql) => {
-    const row = sql.get<{
-      enabled: number;
-    }>('SELECT enabled FROM backend_model_enablement WHERE backend_key=? AND model_id=?', [
-      employee_backend,
-      model,
-    ]);
-    if (row && !row.enabled) {
-      throw new PlannerError(
-        'validation',
-        `Model "${model}" is disabled. Choose an enabled model.`,
-        { employee_backend, employee_launch_model: model },
-      );
-    }
+    require_usable_model(sql, employee_backend, model, data.read_ticket(sql, ticket_id).locale);
   });
   return {
     employee_backend,
@@ -97,6 +87,7 @@ export const conversation_routes: FastifyPluginAsync<AreaServices> = async (app,
     }
     const resolved = resolve_configuration(
       services,
+      request.params.ticket_id,
       body_str(raw, 'employee_backend'),
       body_str(raw, 'employee_launch_model'),
       body_opt_str(raw, 'employee_launch_reasoning_effort'),
@@ -126,7 +117,7 @@ export const conversation_routes: FastifyPluginAsync<AreaServices> = async (app,
     const effort = body_opt_str(request.body, 'employee_launch_reasoning_effort');
     const resolved =
       backend !== null && model !== null
-        ? resolve_configuration(services, backend, model, effort)
+        ? resolve_configuration(services, request.params.ticket_id, backend, model, effort)
         : null;
     return restart_worker(
       conversations(services),

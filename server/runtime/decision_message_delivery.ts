@@ -121,7 +121,7 @@ export async function deliver_ticket_decision_messages(
             sender_label: 'system',
             sender_message_id: row.sender_message_id,
             worker_type_registry: options.worker_type_registry,
-            retain_backend_start_failure: true,
+            retain_definite_start_refusal: true,
             now: options.now(),
             signal: options.signal,
           },

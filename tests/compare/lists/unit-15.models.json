@@ -3,7 +3,8 @@
     "src/planner/conversation/system.py",
     "src/planner/conversation/api.py",
     "src/planner/conversation/logic/",
-    "src/planner/conversation/backends/contracts.py"
+    "src/planner/conversation/backends/contracts.py",
+    "src/planner/conversation/backend_state.py"
   ],
   "scenarios": [
     "test_a_send_carrying_a_model_change_changes_the_model_from_that_delivery_on",
@@ -283,7 +284,7 @@
       }
     },
     {
-      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
+      "area": "test_an_unoffered_model_change_records_refusal_without_provider_delivery",
       "method": "POST",
       "path": "/api/conversation/conversations",
       "status": 201,
@@ -295,7 +296,7 @@
       }
     },
     {
-      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
+      "area": "test_an_unoffered_model_change_records_refusal_without_provider_delivery",
       "method": "GET",
       "path": "/api/test/signals/u15-s20/inspect",
       "status": 200,
@@ -304,7 +305,7 @@
       }
     },
     {
-      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
+      "area": "test_an_unoffered_model_change_records_refusal_without_provider_delivery",
       "method": "POST",
       "path": "/api/conversation/conversations/u15-s20/send",
       "status": 200,
@@ -319,7 +320,7 @@
       }
     },
     {
-      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
+      "area": "test_an_unoffered_model_change_records_refusal_without_provider_delivery",
       "method": "GET",
       "path": "/api/test/signals/u15-s20/inspect",
       "status": 200,
@@ -328,13 +329,13 @@
       }
     },
     {
-      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
+      "area": "test_an_unoffered_model_change_records_refusal_without_provider_delivery",
       "method": "POST",
       "path": "/api/test/signals/u15-s20/finish",
       "status": 200
     },
     {
-      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
+      "area": "test_an_unoffered_model_change_records_refusal_without_provider_delivery",
       "method": "GET",
       "path": "/api/test/signals/u15-s20/inspect",
       "status": 200,
@@ -343,22 +344,7 @@
       }
     },
     {
-      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
-      "method": "POST",
-      "path": "/api/test/signals/u15-s20/configure",
-      "status": 200,
-      "json": {
-        "command": "write_prompt",
-        "behavior": {
-          "error": {
-            "name": "PromptWriteRefused",
-            "message": "Scripted PromptWriteRefused."
-          }
-        }
-      }
-    },
-    {
-      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
+      "area": "test_an_unoffered_model_change_records_refusal_without_provider_delivery",
       "method": "POST",
       "path": "/api/conversation/conversations/u15-s20/send",
       "status": 200,
@@ -374,7 +360,7 @@
       }
     },
     {
-      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
+      "area": "test_an_unoffered_model_change_records_refusal_without_provider_delivery",
       "method": "GET",
       "path": "/api/test/signals/u15-s20/inspect",
       "status": 200,
@@ -580,6 +566,29 @@
     {
       "source_test": "test_a_waiting_message_that_names_another_model_starts_its_own_turn",
       "coverage": "plain batch stops before model change; changed-model message batches with its following message"
+    },
+    {
+      "source_test": "model-admission",
+      "coverage": "The existing refused-change case now installs a complete list before the send. Its HTTP fate and unchanged child observations compare refusal text and no provider delivery."
+    }
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/test/model-list",
+      "status": 200,
+      "json": {
+        "machine": "vps",
+        "backend": "codex",
+        "models": [
+          "first-model",
+          "second-model",
+          "start-model",
+          "next-model",
+          "a-model",
+          "other-model"
+        ]
+      }
     }
   ]
 }

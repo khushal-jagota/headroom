@@ -4,7 +4,6 @@ import { SignalPublicationCoordinator } from '../publication/coordinator.ts';
 import * as persistence from '../publication/persistence.ts';
 import { InboxStore } from '../../executor/data/inbox.ts';
 import { FileStaging } from '../../executor/vps_files.ts';
-import { add_inbox_presence_table } from '../../executor/testing/inbox_fixture.ts';
 import { PlannerError } from '../../core/contracts.ts';
 import { as_object } from '../../executor/protocol.ts';
 import {
@@ -47,7 +46,6 @@ test('a refused remote take restores runtime before the global finalizer and pub
     },
     unavailable: () => {},
   });
-  add_inbox_presence_table(f.database);
   const identity = {
     executor_incarnation: 'remote',
     protocol_version: 22,
