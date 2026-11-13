@@ -466,9 +466,18 @@ All other bytes, numeric spellings, row arrays, dimension declarations, and fiel
 The same owned hosts compare a populated Ticket search across two numeric fields in descending order.
 No shared JSON parser or object representation changes form part of this acceptance.
 
-## CLI executor socket transport — pending acceptance
+## CLI executor socket transport — accepted, temporary, owner: the executor unit
 
 HTTP-client commands currently refuse `PLAN_EXECUTOR_ROOT` with a validation error while Unit 22 supplies the executor socket route.
 Python routes those calls through its executor transport. Help and offline declarations do not need that route.
 This is a temporary implementation gap owned by Unit 22, with CLI binding in Unit 20.
-The migration Manager must accept this temporary refusal before the CLI pull request merges.
+The migration Manager accepted this temporary refusal. It remains until the executor unit supplies the socket route.
+
+## Executor messages validate before encoding
+
+The Manager required this admission rule in the shared codec review of PR 806.
+TypeScript validates each root-specific encoder input through the wire decoder before serialization.
+It rejects missing required fields and invalid command semantics, and it supplies Python's declared defaults.
+Python's serializer can write a dataclass whose state did not pass that validation.
+The TypeScript sender must produce a message that the Python peer can read.
+Root-specific encoder inputs use the generated contracts. Nullable fields without defaults require an explicit null.

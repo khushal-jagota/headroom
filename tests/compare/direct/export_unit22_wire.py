@@ -8,6 +8,9 @@ from dataclasses import is_dataclass
 from pathlib import Path
 from typing import Any
 
+import pydantic
+from pydantic.json_schema import GenerateJsonSchema
+
 # Resolve this checkout, never a historical worktree or installed Panels package.
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
@@ -17,8 +20,31 @@ from planner.executor import protocol, protocol_schema, update_contracts  # noqa
 from planner.executor.contracts import ExecutorHealthRead  # noqa: E402
 
 
+class ExecutorSchema(GenerateJsonSchema):
+    """Annotate the same schema with only the Python distinctions JSON erases."""
+
+    def dataclass_schema(self, schema: Any) -> Any:
+        result = super().dataclass_schema(schema)
+        result["x-python-fields"] = schema["fields"]
+        return result
+
+    def enum_schema(self, schema: Any) -> Any:
+        result = super().enum_schema(schema)
+        result["x-python-enum"] = {
+            "name": schema["cls"].__name__,
+            "members": [[member.name, member.value] for member in schema["members"]],
+        }
+        return result
+
+    def tuple_schema(self, schema: Any) -> Any:
+        return {**super().tuple_schema(schema), "x-python-container": "tuple"}
+
+    def list_schema(self, schema: Any) -> Any:
+        return {**super().list_schema(schema), "x-python-container": "list"}
+
+
 def export_wire() -> dict[str, Any]:
-    roots = {
+    roots: dict[str, Any] = {
         name: value
         for name, value in vars(protocol).items()
         if isinstance(value, type) and is_dataclass(value)
@@ -30,7 +56,11 @@ def export_wire() -> dict[str, Any]:
             if isinstance(value, type) and is_dataclass(value)
         }
     )
-    roots.update(BackendSnapshot=BackendSnapshot, ExecutorHealthRead=ExecutorHealthRead)
+    roots.update(
+        BackendSnapshot=BackendSnapshot,
+        ExecutorHealthRead=ExecutorHealthRead,
+        JsonObject=protocol.JsonObject,
+    )
     definitions: dict[str, Any] = {}
 
     def define(name: str, schema: dict[str, Any]) -> None:
@@ -40,7 +70,7 @@ def export_wire() -> dict[str, Any]:
 
     for name, value in sorted(roots.items()):
         schema = protocol_schema._without_documentation(
-            protocol.type_adapter(value).json_schema()
+            protocol.type_adapter(value).json_schema(schema_generator=ExecutorSchema)
         )
         assert isinstance(schema, dict)
         for nested_name, nested in schema.pop("$defs", {}).items():
@@ -53,6 +83,7 @@ def export_wire() -> dict[str, Any]:
         "roots": sorted(roots),
         "manifest": protocol_schema.protocol_manifest(),
         "event_codecs": protocol_schema.protocol_schemas()["event_codecs"],
+        "pydantic_error_version": ".".join(pydantic.__version__.split(".")[:2]),
     }
 
 
