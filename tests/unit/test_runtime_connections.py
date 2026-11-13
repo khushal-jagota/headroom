@@ -21,7 +21,7 @@ from planner.core.runtime_connections import (
 
 def test_exhausted_pool_does_not_queue_event_loop_read_behind_writers(tmp_path: Path) -> None:
     path = str(tmp_path / "pool.db")
-    pool = RuntimeConnections(path)
+    pool = RuntimeConnections(path, capacity=6)
     writer = connect(path)
     writer.execute("CREATE TABLE source(value INTEGER)")
     writer.execute("INSERT INTO source VALUES(1)")
