@@ -109,24 +109,30 @@ test.skipIf(process.platform !== 'linux')(
 );
 
 // The shared command case cannot prove the archive caller's own output cleanup boundary.
-test('source export cancels through spool cleanup and removes unpublished output', async () => {
+test('source export retains its original deadline through spool cleanup and removes output', async () => {
   const root = await mkdtemp(join(tmpdir(), 'panels-source-cleanup-'));
   const owner = new ChildProcesses(), controller = new AbortController();
-  let pending: Promise<void> | undefined;
+  let pending: Promise<void> | undefined, restore_clock: (() => void) | undefined;
+  const deadline = performance.now() / 1000 + 10;
   try {
     await mkdir(join(root, 'source'));
     await writeFile(join(root, 'source/payload'), 'private source');
     await create_tar({ cwd: join(root, 'source'), file: join(root, 'source.tar') }, ['payload']);
-    cleanup.after = () => controller.abort(new Error('Abort during source cleanup'));
+    cleanup.after = () => {
+      const clock = vi.spyOn(performance, 'now').mockReturnValue((deadline + 1) * 1000);
+      restore_clock = () => clock.mockRestore();
+      cleanup.after = undefined;
+    };
     pending = extract_git_export(join(root, 'source.tar'), join(root, 'output'), {
       child_processes: owner,
       signal: controller.signal,
-      deadline: performance.now() / 1000 + 10,
+      deadline,
     });
-    await expect(pending).rejects.toThrow('Abort during source cleanup');
+    await expect(pending).rejects.toThrow('release operation exceeded its time budget');
     await expect(stat(join(root, 'output'))).rejects.toMatchObject({ code: 'ENOENT' });
   } finally {
     cleanup.after = undefined;
+    restore_clock?.();
     owner.force_kill(performance.now() / 1000 + 5);
     await pending?.catch(() => {});
     await owner.settled();
