@@ -6,6 +6,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [feature/typescript-backend]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,9 +18,12 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
+      # Pull requests run only Node 22 and the direct part, which includes the
+      # static checks. Pushes to the branch and manual runs run the full matrix.
+      # The matrix itself shrinks, so no skipped entries are left pending.
       matrix:
-        node: ['22', '24']
-        part: [direct, areas]
+        node: ${{ fromJSON(github.event_name == 'pull_request' && '["22"]' || '["22", "24"]') }}
+        part: ${{ fromJSON(github.event_name == 'pull_request' && '["direct"]' || '["direct", "areas"]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -225,8 +229,9 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      # Pull requests run only the TypeScript leg; pushes and manual runs run both.
       matrix:
-        backend: [python, typescript]
+        backend: ${{ fromJSON(github.event_name == 'pull_request' && '["typescript"]' || '["python", "typescript"]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
