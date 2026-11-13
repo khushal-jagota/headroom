@@ -22,7 +22,7 @@ import {
   openSync,
   closeSync,
 } from 'node:fs';
-import { dirname, join, relative, sep } from 'node:path';
+import { basename, dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { SpawnOptions } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
@@ -78,14 +78,14 @@ export async function unit_boundaries_parity(
     current = join(root, "unit $% 'current"),
     config_path = join(root, 'unit-config.yaml'),
     database = join(root, 'unit-empty.sqlite'),
-    control = join(current, 'control.sock'),
-    lease = join(root, 'unit.lock');
+    control = join('/nonexistent', 'panels-unit-proof-' + basename(root), 'control.sock'),
+    lease = join('/nonexistent', 'panels-unit-proof-' + basename(root), 'unit.lock');
   writeFileSync(config_path, '{}\n');
   writeFileSync(database, '');
   const input = {
     ...environment,
     PLAN_CONFIG_PATH: config_path,
-    PLAN_SERVER_CONTROL_SOCKET: 'control.sock',
+    PLAN_SERVER_CONTROL_SOCKET: control,
     PLAN_SERVER_LIFECYCLE_LEASE_PATH: lease,
     PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS: '1',
     PLAN_TEST_MODE: '1',
@@ -142,18 +142,25 @@ export async function unit_boundaries_parity(
       NODE_OPTIONS: '--unused-loader-marker',
     },
   };
+  const managed = await render_managed_unit({
+    ...options,
+    runtime_directory_name: 'panels-proof',
+    admitted_legacy_null_sha: null,
+    control_socket_path: control,
+    lease_path: lease,
+    environment_file_path: join(root, 'managed.env'),
+  });
+  const watchdog = await render_watchdog_units({
+    ...options,
+    database_path: database,
+    state_directory: join(root, 'unit-watchdog'),
+    environment_file_path: join(root, 'watchdog.env'),
+  });
   return {
     classifier_source: INSTALLED_RUNTIME_CLASSIFIER_SOURCE,
-    managed: render_managed_unit({
-      ...options,
-      runtime_directory_name: 'panels-proof',
-      admitted_legacy_null_sha: null,
-    }),
-    watchdog: render_watchdog_units({
-      ...options,
-      database_path: database,
-      state_directory: join(root, 'unit-watchdog'),
-    }),
+    managed: managed.service,
+    managed_environment: managed.environment_file,
+    watchdog,
     context: {
       control: context.control_socket_path === control,
       lease: context.lease_path === lease,

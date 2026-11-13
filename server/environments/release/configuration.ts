@@ -14,6 +14,7 @@ export const NODE_RUNTIME_FILES = [
   'server/lifecycle/application.ts',
   'server/lifecycle/stop_main.ts',
   'server/stalls/watchdog_main.ts',
+  'server/stalls/watchdog_main.ts',
   'server/conversation/usage/usageWorker.ts',
   'src/planner/conversation/backends/hermes_acp_extension.py',
   'src/planner/conversation/backends/hermes_model_catalog.py',

@@ -2,7 +2,7 @@
 import { closeSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig } from '../core/config.ts';
+import { lifecycle_launch_settings, loadConfig } from '../core/config.ts';
 import { strip } from '../projects/logic/index.ts';
 import { expand_path, resolved_path } from '../environments/paths.ts';
 import { resolve_server_lifecycle_lease_path } from './lease.ts';
@@ -21,10 +21,11 @@ export async function resolve_unit_lifecycle_context(
   environment: NodeJS.ProcessEnv,
   launch_root: string,
 ): Promise<UnitLifecycleContext> {
-  const config_path = environment.PLAN_CONFIG_PATH ?? join(launch_root, 'config.yaml');
+  const settings = lifecycle_launch_settings(environment);
+  const config_path = settings.config_path ?? join(launch_root, 'config.yaml');
   // loadConfig consumes the refusal switch. APP must receive the original input.
-  const config = loadConfig(config_path, { ...environment });
-  const explicit = strip(environment.PLAN_SERVER_CONTROL_SOCKET ?? '');
+  const config = loadConfig(config_path, settings.environment);
+  const explicit = strip(settings.control_socket_path ?? '');
   let control_socket_path: string;
   if (explicit) {
     const path = expand_path(explicit);
@@ -34,7 +35,7 @@ export async function resolve_unit_lifecycle_context(
       /\.lock$/,
       '.sock',
     );
-  const lease = environment.PLAN_SERVER_LIFECYCLE_LEASE_PATH;
+  const lease = settings.lease_path;
   // Python Path.resolve does not expand '~' for this explicit lease input.
   const lease_path = lease
     ? await resolved_path(isAbsolute(lease) ? lease : process.cwd() + '/' + lease)
@@ -57,11 +58,7 @@ export function application_launch(
   launch_root: string,
   environment: NodeJS.ProcessEnv,
 ): ApplicationLaunch {
-  const values = Object.fromEntries(
-    Object.entries(environment).filter((pair): pair is [string, string] => pair[1] !== undefined),
-  );
-  const raw = values.PLAN_SERVER_LISTENER_FD;
-  delete values.PLAN_SERVER_LISTENER_FD;
+  const { environment: values, listener_fd: raw } = lifecycle_launch_settings(environment);
   let listener: ApplicationLaunch['listener'];
   if (raw !== undefined) {
     const token = strip(raw);

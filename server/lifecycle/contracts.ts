@@ -198,6 +198,17 @@ export interface UnitLifecycleContext extends ManagedEntrypointArguments {
   readonly config_path: string;
   readonly config: Config;
 }
+export interface RenderedUnitEnvironment {
+  readonly path: string;
+  readonly contents: string;
+}
+export interface ManagedUnitFiles {
+  readonly service: string;
+  readonly environment_file: RenderedUnitEnvironment;
+}
+export interface WatchdogUnitFiles extends ManagedUnitFiles {
+  readonly timer: string;
+}
 export interface CapabilityCaptureRoots {
   readonly application_root: string;
   readonly database_parent: string;

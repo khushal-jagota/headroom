@@ -11,6 +11,7 @@ try {
   const args = private_runtime_argument(process.argv.slice(2));
   const root = await lifecycle_launch_root();
   const context = await resolve_unit_lifecycle_context(args, process.env, root);
+  process.chdir(root);
   process.exitCode = await run_server_supervisor({
     mode: {
       kind: 'managed-linux',

@@ -1,15 +1,21 @@
 /** New-unit producers. The installed bootstrap imports only Node builtins. */
 import { readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { shell_quote } from '../../conversation/worker_unit/logic.ts';
+import { environment_file, shell_quote } from '../../conversation/worker_unit/logic.ts';
 import { TYPESCRIPT_SERVICE_NAME } from '../../lifecycle/service_identity.ts';
-import { UNIT_TIMEOUT_STOP_SECONDS } from '../../lifecycle/configuration.ts';
+import { CAPABILITY_FILENAME, UNIT_TIMEOUT_STOP_SECONDS } from '../../lifecycle/configuration.ts';
+import type { ManagedUnitFiles, WatchdogUnitFiles } from '../../lifecycle/contracts.ts';
+import { resolved_path } from '../paths.ts';
+import { inside } from '../ticket_scratch/logic.ts';
 
 export type ClassifiedRuntime = 'node-v2' | 'python-v1' | 'python-legacy-null';
 export interface ManagedUnitOptions {
   readonly current_root: string;
   readonly node_executable: string;
   readonly config_path: string;
+  readonly control_socket_path: string;
+  readonly lease_path: string;
+  readonly environment_file_path: string;
   readonly runtime_directory_name: string;
   readonly admitted_legacy_null_sha: string | null;
   readonly environment: Readonly<Record<string, string>>;
@@ -20,10 +26,11 @@ export interface WatchdogUnitOptions {
   readonly config_path: string;
   readonly database_path: string;
   readonly state_directory: string;
+  readonly environment_file_path: string;
   readonly environment: Readonly<Record<string, string>>;
 }
 
-/** One executable source, embedded unchanged into BOTH unit actions.
+/** One executable source shared with installed-runtime consumers.
  * This is structural routing. The actual launcher retains complete admission.
  * Node22.18 ships JSON reviver source context (V8 HARMONY_SHIPPING_BASE).
  */
@@ -35,11 +42,12 @@ function classify_installed_runtime(input, admitted_null_sha) {
   const matches = (pattern, value) => typeof value === 'string' && pattern.exec(value)?.[0] === value;
   const fail = message => { throw new Error(message); };
   if (!path.isAbsolute(input)) fail('application root must be absolute');
+  if (fs.lstatSync(input.replace(/\/+$/, '') || '/').isSymbolicLink()) fail('application root must not be a symlink');
   if (admitted_null_sha && !matches(/^[0-9a-f]{40}$/, admitted_null_sha)) fail('invalid admitted legacy SHA');
   const root = fs.realpathSync(input);
   const sources = new WeakMap();
   function regular(name, executable = false) {
-    const file = path.join(root, name);
+    const file = input + path.sep + name;
     const actual = fs.realpathSync(file);
     const suffix = path.relative(root, actual);
     if (suffix === '..' || suffix.startsWith('..' + path.sep) || path.isAbsolute(suffix)) fail('runtime file escapes application');
@@ -87,7 +95,7 @@ function classify_installed_runtime(input, admitted_null_sha) {
     regular('.venv/bin/python', true);
     return 'python-v1';
   }
-  for (const name of ['server/environments/release/launcher_main.ts', 'server/lifecycle/foreground_main.ts', 'server/lifecycle/managed_main.ts', 'server/lifecycle/application.ts', 'server/lifecycle/stop_main.ts', 'server/environments/updates/interruption_capture_main.ts', 'server/environments/updates/restore_main.ts', 'runtime/installer-files.json', 'server/environments/updates/installer/main.ts']) regular(name);
+  for (const name of ['server/environments/release/launcher_main.ts', 'server/lifecycle/foreground_main.ts', 'server/lifecycle/managed_main.ts', 'server/lifecycle/application.ts', 'server/lifecycle/stop_main.ts', 'server/stalls/watchdog_main.ts', 'server/environments/updates/interruption_capture_main.ts', 'server/environments/updates/restore_main.ts', 'runtime/installer-files.json', 'server/environments/updates/installer/main.ts']) regular(name);
   return 'node-v2';
 }
 try {
@@ -107,26 +115,8 @@ function absolute(value: string): string {
   if (!isAbsolute(valid_text(value))) throw new Error('Unit paths must be absolute');
   return value;
 }
-/** Environment= does not expand dollars. Exec command words do. */
-function unit_word(value: string, command: boolean): string {
-  let escaped = valid_text(value)
-    .replaceAll('\\', '\\\\')
-    .replaceAll('"', '\\"')
-    .replaceAll('\n', '\\n')
-    .replaceAll('\r', '\\r')
-    .replaceAll('\t', '\\t')
-    .replaceAll('%', '%%');
-  if (command) escaped = escaped.replaceAll('$', () => '$$');
-  return '"' + escaped + '"';
-}
-function environment_lines(values: Readonly<Record<string, string>>): string {
-  return Object.entries(values)
-    .map(([key, value]) => {
-      if (/^[A-Za-z_][A-Za-z0-9_]*$/.exec(key)?.[0] !== key)
-        throw new Error('Invalid unit environment name');
-      return 'Environment=' + unit_word(key + '=' + value, false);
-    })
-    .join('\n');
+function unit_value(value: string): string {
+  return JSON.stringify(valid_text(value)).replaceAll('%', '%%');
 }
 function template(name: string, values: Readonly<Record<string, string>>): string {
   const source = readFileSync(
@@ -141,83 +131,133 @@ function template(name: string, values: Readonly<Record<string, string>>): strin
 function shell_command(script: string, runtime?: string): string {
   return (
     '/bin/sh -c ' +
-    unit_word(script, true) +
+    unit_value(script).replaceAll('$', () => '$$') +
     ' panels-unit' +
     (runtime ? ' "%t/' + runtime + '"' : '')
   );
 }
-function guarded_prefix(config_path: string): string {
+function guarded_prefix(): string {
   return (
-    'set -eu\nunset NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH\n' +
-    'export PLAN_CONFIG_PATH=' +
-    shell_quote(absolute(config_path)) +
-    ' PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS=1\n'
+    'set -euf\nunset NODE_OPTIONS NODE_PATH\n' +
+    'for panels_environment_word in $(export -p); do\n' +
+    '  panels_environment_name=${panels_environment_word%%=*}\n' +
+    '  case "$panels_environment_name" in LD_*)\n' +
+    '    case "$panels_environment_name" in *[!A-Za-z0-9_]*) ;; *) unset "$panels_environment_name";; esac;;\n' +
+    '  esac\ndone\nunset panels_environment_word panels_environment_name\n'
   );
 }
-export function render_managed_unit(options: ManagedUnitOptions): string {
-  const app = join(absolute(options.current_root), 'app');
-  const node = absolute(options.node_executable);
-  const name = options.runtime_directory_name;
-  if (/^[A-Za-z0-9_-]+$/.exec(name)?.[0] !== name)
-    throw new Error('Runtime directory must be one safe component');
-  const sha = options.admitted_legacy_null_sha;
-  if (sha !== null && /^[0-9a-f]{40}$/.exec(sha)?.[0] !== sha)
-    throw new Error('Invalid admitted legacy SHA');
-  const prefix =
-    guarded_prefix(options.config_path) +
-    'cd -- ' +
-    shell_quote(options.current_root) +
+function environment_bundle(
+  options: Pick<ManagedUnitOptions, 'environment_file_path' | 'environment' | 'config_path'>,
+  addresses: Readonly<Record<string, string>> = {},
+): ManagedUnitFiles['environment_file'] {
+  const values: Record<string, string> = {
+    ...options.environment,
+    PLAN_CONFIG_PATH: absolute(options.config_path),
+    PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS: '1',
+    ...addresses,
+  };
+  delete values.RUNTIME_DIRECTORY;
+  delete values.MAINPID;
+  return { path: absolute(options.environment_file_path), contents: environment_file(values) };
+}
+async function shared_address(value: string): Promise<string> {
+  const path = await resolved_path(absolute(value));
+  for (const temporary of ['/tmp', '/var/tmp'])
+    if (inside(path, await resolved_path(temporary)))
+      throw new Error('Unit control and lease paths must be outside private temporary directories');
+  return path;
+}
+function start_prefix(current: string, node: string, sha: string): string {
+  const app = join(absolute(current), 'app');
+  return (
+    guarded_prefix() +
+    'if [ -L ' +
+    shell_quote(app) +
+    ' ]; then echo "Panels application root must not be a symlink" >&2; exit 1; fi\n' +
+    'cd -P -- ' +
+    shell_quote(app) +
     ' || exit\n' +
     'runtime=$(' +
     shell_quote(node) +
     ' --input-type=module -e ' +
     shell_quote(INSTALLED_RUNTIME_CLASSIFIER_SOURCE) +
-    ' ' +
-    shell_quote(app) +
-    ' ' +
-    shell_quote(sha ?? '') +
-    ')\n';
+    ' "/proc/$$/cwd/." ' +
+    shell_quote(sha) +
+    ')\n'
+  );
+}
+const RUNNING_STOP_SOURCE = String.raw`
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
+const runtime = process.argv[1], main = process.argv[2];
+let record;
+try {
+  record = JSON.parse(fs.readFileSync(path.join(runtime, ${JSON.stringify(CAPABILITY_FILENAME)}), 'utf8'));
+} catch (error) {
+  if (error && error.code === 'ENOENT') process.exit(0);
+  throw new Error('Could not read the private managed stop capability');
+}
+const pid = Number(main);
+if (/^[1-9][0-9]*$/.exec(main)?.[0] !== main || !Number.isSafeInteger(pid) ||
+    !record || record.supervisor_pid !== pid)
+  throw new Error('Managed stop capability differs from the running supervisor');
+const entry = '/proc/' + pid + '/cwd/server/lifecycle/stop_main.ts';
+process.argv = [process.execPath, entry, runtime];
+await import(pathToFileURL(entry).href);
+`;
+export async function render_managed_unit(options: ManagedUnitOptions): Promise<ManagedUnitFiles> {
+  const node = absolute(options.node_executable),
+    name = options.runtime_directory_name;
+  if (/^[A-Za-z0-9_-]+$/.exec(name)?.[0] !== name)
+    throw new Error('Runtime directory must be one safe component');
+  const sha = options.admitted_legacy_null_sha;
+  if (sha !== null && /^[0-9a-f]{40}$/.exec(sha)?.[0] !== sha)
+    throw new Error('Invalid admitted legacy SHA');
+  const [control, lease] = await Promise.all([
+    shared_address(options.control_socket_path),
+    shared_address(options.lease_path),
+  ]);
+  const environment = environment_bundle(options, {
+    PLAN_SERVER_CONTROL_SOCKET: control,
+    PLAN_SERVER_LIFECYCLE_LEASE_PATH: lease,
+  });
   const start =
-    prefix +
+    start_prefix(options.current_root, node, sha ?? '') +
     'case "$runtime" in\n' +
     'node-v2) exec ' +
     shell_quote(node) +
-    ' ' +
-    shell_quote(join(app, 'server/environments/release/launcher_main.ts')) +
-    ' serve --managed-linux-runtime-directory "$1";;\n' +
-    'python-v1|python-legacy-null) exec ' +
-    shell_quote(join(app, 'bin/panels-launcher')) +
-    ' serve;;\n' +
+    ' server/environments/release/launcher_main.ts serve --managed-linux-runtime-directory "$1";;\n' +
+    'python-v1|python-legacy-null) exec ./bin/panels-launcher serve;;\n' +
     '*) exit 1;;\nesac\n';
   const stop =
-    prefix +
-    'case "$runtime" in\n' +
-    'node-v2) exec ' +
-    shell_quote(node) +
-    ' ' +
-    shell_quote(join(app, 'server/lifecycle/stop_main.ts')) +
-    ' "$1";;\n' +
-    'python-v1|python-legacy-null) exit 0;;\n*) exit 1;;\nesac\n';
-  return template(TYPESCRIPT_SERVICE_NAME, {
-    ENVIRONMENT: environment_lines(options.environment),
-    RUNTIME_DIRECTORY: name,
-    EXEC_START: shell_command(start, name),
-    EXEC_STOP: shell_command(stop, name),
-    TIMEOUT_STOP: String(UNIT_TIMEOUT_STOP_SECONDS),
-  });
-}
-export function render_watchdog_units(options: WatchdogUnitOptions): {
-  readonly service: string;
-  readonly timer: string;
-} {
-  const app = join(absolute(options.current_root), 'app');
-  const script =
-    guarded_prefix(options.config_path) +
+    guarded_prefix() +
     'exec ' +
-    shell_quote(absolute(options.node_executable)) +
-    ' ' +
-    shell_quote(join(app, 'server/stalls/watchdog_main.ts')) +
-    ' ' +
+    shell_quote(node) +
+    ' --input-type=module -e ' +
+    shell_quote(RUNNING_STOP_SOURCE) +
+    ' "$1" "${MAINPID-}"\n';
+  return {
+    service: template(TYPESCRIPT_SERVICE_NAME, {
+      ENVIRONMENT_FILE: unit_value(environment.path),
+      RUNTIME_DIRECTORY: name,
+      EXEC_START: shell_command(start, name),
+      EXEC_STOP: shell_command(stop, name),
+      TIMEOUT_STOP: String(UNIT_TIMEOUT_STOP_SECONDS),
+    }),
+    environment_file: environment,
+  };
+}
+export async function render_watchdog_units(
+  options: WatchdogUnitOptions,
+): Promise<WatchdogUnitFiles> {
+  const node = absolute(options.node_executable),
+    environment = environment_bundle(options);
+  const script =
+    start_prefix(options.current_root, node, '') +
+    '[ "$runtime" = node-v2 ] || exit 1\nexec ' +
+    shell_quote(node) +
+    ' server/stalls/watchdog_main.ts ' +
     shell_quote(absolute(options.database_path)) +
     ' ' +
     shell_quote(absolute(options.state_directory)) +
@@ -225,9 +265,10 @@ export function render_watchdog_units(options: WatchdogUnitOptions): {
   const name = TYPESCRIPT_SERVICE_NAME.replace(/\.service$/, '-stall-watchdog.service');
   return {
     service: template(name, {
-      ENVIRONMENT: environment_lines(options.environment),
+      ENVIRONMENT_FILE: unit_value(environment.path),
       EXEC_START: shell_command(script),
     }),
     timer: template(name.replace(/\.service$/, '.timer'), { WATCHDOG_SERVICE: name }),
+    environment_file: environment,
   };
 }
