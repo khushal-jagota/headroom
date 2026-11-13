@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import time
 from dataclasses import replace
 from sqlite3 import Connection
+from typing import Any
 
 import pytest
 
@@ -512,3 +514,33 @@ def test_proposal_busy_deadline_returns_retryable_503_without_partial_effects(
         ).fetchone()[0]
         == 0
     )
+
+
+def test_proposal_retries_extended_busy_before_any_effects(
+    tmp_db: Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sqlite3
+
+    from planner.tickets import proposal_contention
+
+    attempts = []
+
+    class BusyOnce(sqlite3.Connection):
+        def execute(self, sql: str, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+            if sql == "BEGIN IMMEDIATE":
+                attempts.append(sql)
+                if len(attempts) == 1:
+                    error = sqlite3.OperationalError("database is locked")
+                    error.sqlite_errorcode = sqlite3.SQLITE_BUSY_RECOVERY
+                    raise error
+            return super().execute(sql, *args, **kwargs)
+
+    conn = sqlite3.connect(":memory:", factory=BusyOnce)
+    monkeypatch.setattr(time, "sleep", lambda seconds: None)
+    try:
+        proposal_contention.begin_proposal(conn)
+        assert len(attempts) == 2
+        assert conn.in_transaction
+    finally:
+        conn.close()

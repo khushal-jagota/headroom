@@ -19,11 +19,11 @@ from planner.conversation.contracts import (
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.core.task_settlement import run_on_worker_thread
 from planner.executor.clock import now_ms
+from planner.machines.contracts import HOME_MACHINE_ID
 from planner.runtime import conversation_start
 from planner.tickets import data as tickets_data
 from planner.tickets import decision_messages, locale_configuration
-from planner.tickets.contracts import Ticket
-from planner.machines.contracts import HOME_MACHINE_ID
+from planner.tickets.contracts import Ticket, WorkerStepClaim
 from planner.worker_types.registry import WorkerTypeRegistry
 
 _log = logging.getLogger(__name__)
@@ -138,6 +138,8 @@ async def deliver_ticket_decision_messages(
 
                 try:
                     ticket = await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
+                    if ticket.worker_step_claim is WorkerStepClaim.errored:
+                        break
                     delivered = await conversation_start.send_to_ticket_conversation(
                         conversation_system,
                         conn,
@@ -155,11 +157,11 @@ async def deliver_ticket_decision_messages(
                     # A setup failure before content_for is safe to retry. Anything
                     # after the marker stays ambiguous until its conversation outcome.
                     _log.exception("decision message could not be sent (ticket=%s)", ticket_id)
-                    def read_attempt() -> sqlite3.Row | None:
+                    def read_attempt(decision_identity: str = identity) -> sqlite3.Row | None:
                         return cast(sqlite3.Row | None, conn.execute(
                             "SELECT delivery_status,conversation_id FROM ticket_decision_messages "
                             "WHERE decision_id=?",
-                            (identity,),
+                            (decision_identity,),
                         ).fetchone())
 
                     attempt = await run_on_worker_thread(read_attempt)

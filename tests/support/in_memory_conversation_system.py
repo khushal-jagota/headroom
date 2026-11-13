@@ -223,6 +223,7 @@ class InMemoryConversationSystem:
     def __init__(self) -> None:
         self._conversations: dict[str, _ConversationState] = {}
         self.workspace_admission = WorkspaceAdmission()
+        self.kill_failures: dict[str, Exception] = {}
 
     # --- the contract ---
 
@@ -645,6 +646,8 @@ class InMemoryConversationSystem:
         return CleanupResult(True, "No retained Worker processes")
 
     async def kill(self, conversation_id: str) -> None:
+        if failure := self.kill_failures.get(conversation_id):
+            raise failure
         state = self._conversations.get(conversation_id)
         if state is None:
             return

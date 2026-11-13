@@ -480,3 +480,82 @@ def test_recheck_retires_idle_custody_after_parent_crash_without_a_turn(
         await harness.system.shutdown()
 
     asyncio.run(exercise())
+
+
+def test_refused_kill_recheck_keeps_held_work_until_an_ordinary_send(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.support.principals import OWNER_PRINCIPAL
+
+    from planner.conversation.contracts import PromptDeliveryQueued
+    from planner.core.errors import PlannerError
+    from planner.ticket_workspaces.contracts import WorkspaceIdentity
+    from planner.ticket_workspaces.data import register_workspace
+    from planner.tickets.data import create_ticket
+
+    db_path = tmp_path / "planner.db"
+    _create_database(db_path)
+
+    async def exercise() -> None:
+        harness = _Harness(db_path)
+        try:
+            await _start(harness, "old")
+            await harness.system.send("old", text_message_content("old work"), sender_label="Owner")
+            await harness.complete_turn("old")
+            with closing_connection(connect(str(db_path))) as conn:
+                ticket = create_ticket(
+                    conn, title="Recheck without restart", principal=OWNER_PRINCIPAL,
+                    now=1, title_max_chars=200, worker_type="coding",
+                )
+                conn.execute("UPDATE tickets SET conversation_id='old' WHERE id=?", (ticket.id,))
+                register_workspace(conn, ticket.id, "old", WorkspaceIdentity("host", "folder"))
+                conn.commit()
+            backend = harness.backend("old")
+            # A prior admission deferral must not survive kill disposition and later
+            # wake the message that arrives behind the failed stop.
+            with monkeypatch.context() as admission:
+                admission.setattr(
+                    harness.system.start_admission, "begin_queued", lambda ids: False,
+                )
+                await harness.system.send(
+                    "old", text_message_content("discarded work"), sender_label="Owner",
+                )
+                await harness.settle()
+            assert "old" in harness.system._deferred_start_conversations
+            deferred_retry = harness.system._deferred_start_drain
+            assert deferred_retry is not None
+            backend.stop_raises_something_unnamed = True
+            kill_owned = harness.system._kill_owned
+
+            async def arrive_during_refused_stop(state: Any) -> None:
+                await kill_owned(state)
+                fate = await harness.system.send(
+                    "old", text_message_content("held work"), sender_label="Owner",
+                )
+                assert isinstance(fate, PromptDeliveryQueued)
+
+            monkeypatch.setattr(harness.system, "_kill_owned", arrive_during_refused_stop)
+            with pytest.raises(PlannerError, match="not proven ended"):
+                await harness.system.kill("old")
+            backend.stop_raises_something_unnamed = False
+            assert (await harness.system.recheck_worker_cleanup(ticket.id)).complete
+            harness.clock.advance(2)
+            await asyncio.wait_for(deferred_retry, 3)
+            await harness.settle()
+            assert "old" not in harness.system._deferred_start_conversations
+            assert backend.session_starts == 1
+            assert backend.written_texts() == ("old work",)
+            held = await harness.system.held_prompts("old")
+            assert held is not None and len(held) == 1
+            await harness.system.send("old", text_message_content("new work"), sender_label="Owner")
+            await harness.settle()
+            assert backend.session_starts == 2
+            assert len(backend.written_texts()) == 2
+            resumed = backend.sender_written_texts()[-1]
+            assert resumed.index("held work") < resumed.index("new work")
+            assert await harness.system.held_prompts("old") == ()
+        finally:
+            harness.backend("old").stop_raises_something_unnamed = False
+            await harness.system.shutdown()
+
+    asyncio.run(exercise())

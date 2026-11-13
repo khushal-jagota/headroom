@@ -17,6 +17,10 @@ Use `/opt/homebrew/bin/node` on the Mac. Linux requires x86_64, an active system
 If lingering is absent, setup refuses before installation. Run `loginctl enable-linger "$USER"`, then repeat the command.
 The sealed release also checks its native runtime requirements before the service starts.
 
+Mac release jobs use bundled tools, resolved provider CLI directories, common user bins, and standard system directories.
+The Homebrew directory precedes provider directories so that provider installs do not replace the required Node runtime.
+Jobs do not inherit the entire installation shell PATH. Direct use of the packaged installer preserves an explicit `PLAN_CLAUDE_EXECUTABLE`.
+
 Authenticate the GitHub CLI for the release repository, then run this command:
 
 ```sh
