@@ -794,6 +794,28 @@
       "method": "GET",
       "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${created_manager}%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D}",
       "status": 200
+    },
+    {
+      "area": "unoffered-model-admission",
+      "method": "PUT",
+      "path": "/api/managers/launch-defaults",
+      "status": 400,
+      "json": {
+        "employee_backend": "codex",
+        "employee_launch_model": "unoffered-model",
+        "employee_launch_reasoning_effort": "high"
+      }
+    },
+    {
+      "area": "unoffered-model-admission",
+      "method": "PUT",
+      "path": "/api/managers/${manager}/launch-defaults",
+      "status": 400,
+      "json": {
+        "employee_backend": "codex",
+        "employee_launch_model": "unoffered-model",
+        "employee_launch_reasoning_effort": "high"
+      }
     }
   ],
   "report_captures": [
@@ -839,6 +861,18 @@
       "method": "POST",
       "path": "/api/conversation/conversations/${conversation}/kill",
       "status": 204
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/model-list",
+      "status": 200,
+      "json": {
+        "machine": "vps",
+        "backend": "codex",
+        "models": [
+          "gpt-6.1-sol"
+        ]
+      }
     }
   ],
   "candidate": "typescript"

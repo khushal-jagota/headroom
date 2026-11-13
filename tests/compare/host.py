@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import os
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import asdict, fields, is_dataclass
@@ -260,6 +261,20 @@ def _scripted_routes(
     @app.post("/api/test/signals/{conversation_id}/terminal-save/join")
     async def join_terminal(conversation_id: str) -> dict[str, Any]:
         return await terminal.join(conversation_id)
+
+    @app.post("/api/test/model-list")
+    async def model_list(body: dict[str, Any]) -> dict[str, bool]:
+        # Seed persisted machine observations without any provider or executor I/O.
+        with connect(db_path) as conn:
+            conn.execute(
+                "INSERT INTO machine_backend_snapshots VALUES (?,?,?) "
+                "ON CONFLICT(machine_id,backend_key) DO UPDATE SET snapshot_json=excluded.snapshot_json",
+                (body["machine"], body["backend"], json.dumps({
+                    "models_complete": body.get("complete", True),
+                    "available_models": [{"model_id": model} for model in body["models"]],
+                })),
+            )
+        return {"configured": True}
 
     @app.post("/api/test/signals/{conversation_id}/saved-model-enablement")
     async def model_enablement(conversation_id: str, body: dict[str, bool]) -> dict[str, bool]:

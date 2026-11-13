@@ -3,7 +3,8 @@
     "src/planner/conversation/system.py",
     "src/planner/conversation/api.py",
     "src/planner/conversation/logic/",
-    "src/planner/conversation/backends/contracts.py"
+    "src/planner/conversation/backends/contracts.py",
+    "src/planner/conversation/backend_state.py"
   ],
   "scenarios": [
     "test_a_send_carrying_a_model_change_changes_the_model_from_that_delivery_on",
@@ -544,6 +545,46 @@
       "capture": {
         "u15_model_boundary_completed": ""
       }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/model-list",
+      "status": 200,
+      "json": {
+        "machine": "vps",
+        "backend": "codex",
+        "models": [
+          "start-model"
+        ]
+      }
+    },
+    {
+      "area": "unoffered-model-delivery",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s18/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "must refuse before provider delivery"
+          }
+        ],
+        "sender_label": "owner",
+        "model_change": "unoffered-model"
+      },
+      "capture": {
+        "unoffered_model_fate": ""
+      }
+    },
+    {
+      "area": "unoffered-model-delivery",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s18/inspect",
+      "status": 200,
+      "capture": {
+        "unoffered_model_unchanged": ""
+      }
     }
   ],
   "probes": [],
@@ -573,7 +614,9 @@
     "u15_model_boundary_following_held",
     "u15_model_boundary_plain_released",
     "u15_model_boundary_changed_released",
-    "u15_model_boundary_completed"
+    "u15_model_boundary_completed",
+    "unoffered_model_fate",
+    "unoffered_model_unchanged"
   ],
   "candidate": "typescript",
   "external_proofs": [

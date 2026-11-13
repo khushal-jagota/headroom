@@ -179,6 +179,21 @@ export function scriptedConversationControls(
         app.post('/signals/:conversation_id/terminal-save/join', async (request) =>
           terminal.join(identity(request)),
         );
+        app.post<{ Body: { machine: string; backend: string; models: string[]; complete?: boolean } }>(
+          '/model-list',
+          async (request) => {
+            const body = request.body;
+            context.database.write((tx) => tx.run(
+              'INSERT INTO machine_backend_snapshots VALUES (?,?,?) ' +
+              'ON CONFLICT(machine_id,backend_key) DO UPDATE SET snapshot_json=excluded.snapshot_json',
+              [body.machine, body.backend, JSON.stringify({
+                models_complete: body.complete ?? true,
+                available_models: body.models.map((model_id) => ({ model_id })),
+              })],
+            ));
+            return { configured: true };
+          },
+        );
         app.post<{ Body: { enabled: boolean } }>(
           '/signals/:conversation_id/saved-model-enablement',
           async (request) => {
