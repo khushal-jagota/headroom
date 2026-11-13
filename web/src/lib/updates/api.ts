@@ -7,7 +7,7 @@ import type { InstallUpdateBody, UpdateMode, UpdateNowBody, UpdateStatus } from 
 /** One owner press, mapped to its contract route. */
 export type UpdateActionRequest =
   | { action: "install"; mode: UpdateMode }
-  | { action: "cancel" | "now" | "retry" | "retry_mac" };
+  | { action: "cancel" | "now" | "retry" | "retry_mac" | "wait" };
 
 /** The server answer a press that starts an update was made against, until the answer moves.
  * Both card mounts read it, so the card shows Updating… at once. An attempt can be
@@ -33,6 +33,7 @@ export function updateActionRoute(status: UpdateStatus, request: UpdateActionReq
   if (!status.attempt) throw new Error("This update changed. Close this dialog and try again.");
   const attempt = `/api/updates/attempts/${encodeURIComponent(status.attempt.attempt_id)}`;
   switch (request.action) {
+    case "wait": return { path: `${attempt}/wait` };
     case "cancel": return { path: `${attempt}/cancel` };
     case "now": return { path: `${attempt}/now`, body: { confirm_activity: true } };
     case "retry": return { path: `${attempt}/retry` };
@@ -52,7 +53,7 @@ let pressInFlight = false;
 export async function performUpdateAction(status: UpdateStatus, request: UpdateActionRequest): Promise<void> {
   if (pressInFlight) return;
   const { path, body } = updateActionRoute(status, request);
-  const starts = request.action !== "cancel" && !(request.action === "install" && request.mode === "idle");
+  const starts = request.action !== "cancel" && request.action !== "wait" && !(request.action === "install" && request.mode === "idle");
   const pressedAgainst = answerKey(status);
   pressInFlight = true;
   if (starts) {

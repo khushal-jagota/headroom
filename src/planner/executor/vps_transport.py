@@ -20,6 +20,7 @@ from planner.core.clock import Clock
 from planner.core.contracts import ErrorCode, PlannerError, PrincipalKind
 from planner.core.db import connect
 from planner.core.task_settlement import run_on_worker_thread, wait_for_settlement
+from planner.environments.update_barrier import UpdateBarrier
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.catalog_relay import VpsCatalogRelay
 from planner.executor.configuration import (
@@ -120,6 +121,7 @@ class VpsExecutor:
         self.conversations: SqliteProcessConversationSystem
         self.app: ASGIApp
         self._owned: set[asyncio.Task[Any]] = set()
+        self.update_barrier: UpdateBarrier | None = None
 
     def bind_conversations(
         self, conversations: SqliteProcessConversationSystem
@@ -138,6 +140,7 @@ class VpsExecutor:
     ) -> None:
         self.bind_conversations(conversations)
         self.app = app
+        self.update_barrier = getattr(getattr(app, "state", None), "update_barrier", None)
         if update_check is not None:
             self.presence.update_check = update_check
 
@@ -159,12 +162,27 @@ class VpsExecutor:
         await self.presence.close()
 
     async def _owned_work[Result](
-        self, work: Coroutine[Any, Any, Result], *, answer_within: float | None = None
+        self,
+        work: Coroutine[Any, Any, Result],
+        *,
+        answer_within: float | None = None,
+        protect_update: bool = False,
     ) -> Result:
         """Run work to its end even if the request that asked for it goes away. With
         answer_within, the request is answered retry later past that limit while the work
         goes on; its resend finds what it saved."""
-        task = asyncio.create_task(work)
+
+        async def save() -> Result:
+            barrier = self.update_barrier
+            if not protect_update or barrier is None:
+                return await work
+            with barrier.operation() as admitted:
+                if not admitted:
+                    work.close()
+                    raise PlannerError(ErrorCode.retry_later, "Home update in progress.")
+                return await work
+
+        task = asyncio.create_task(save())
         self._owned.add(task)
         task.add_done_callback(self._owned.discard)
         try:
@@ -246,6 +264,7 @@ class VpsExecutor:
     ) -> None:
         await self._owned_work(
             run_on_worker_thread(self._register_workspace, identity, registration),
+            protect_update=True,
             answer_within=LIVE_READ_SERVER_LIMIT_SECONDS,
         )
 
@@ -294,6 +313,7 @@ class VpsExecutor:
     ) -> WorkspaceRetirementReply:
         return await self._owned_work(
             run_on_worker_thread(self._retire_workspace, identity, state, workspace, replay),
+            protect_update=True,
             answer_within=LIVE_READ_SERVER_LIMIT_SECONDS,
         )
 
@@ -381,7 +401,13 @@ class VpsExecutor:
         answered again by the next poll, which asks from the same cursor."""
         if after < 0 or not 0 <= wait_seconds <= COMMAND_POLL_HOLD_SECONDS:
             raise PlannerError(ErrorCode.validation, "invalid poll cursor or wait")
-        return await self.mailbox.poll(identity, after, wait_seconds)
+        barrier = self.update_barrier
+        if barrier is None:
+            return await self.mailbox.poll(identity, after, wait_seconds)
+        with barrier.operation() as admitted:
+            if not admitted:
+                raise PlannerError(ErrorCode.retry_later, "Home update in progress.")
+            return await self.mailbox.poll(identity, after, wait_seconds)
 
     async def record_outcomes(
         self, identity: ExecutorIdentity, report: CommandOutcomeReport
@@ -392,13 +418,16 @@ class VpsExecutor:
         return await self._owned_work(
             self.mailbox.record_results(identity, report),
             answer_within=COMMAND_OUTCOME_SERVER_LIMIT_SECONDS,
+            protect_update=True,
         )
 
     async def accept_items(
         self, identity: ExecutorIdentity, conversation_id: str, batch: ItemBatch
     ) -> ItemBatchReply:
         """Route 4."""
-        reply = await self._owned_work(self.inbox.accept_batch(conversation_id, batch, identity))
+        reply = await self._owned_work(
+            self.inbox.accept_batch(conversation_id, batch, identity), protect_update=True
+        )
         if reply.receipts:
             self.presence.note_conversation_activity(conversation_id)
         return reply
@@ -412,7 +441,9 @@ class VpsExecutor:
         chunks: AsyncIterator[bytes],
     ) -> None:
         """Route 5."""
-        await self._owned_work(self.files.upload(identity, sha256, upload, content_length, chunks))
+        await self._owned_work(
+            self.files.upload(identity, sha256, upload, content_length, chunks), protect_update=True
+        )
 
     async def input_file(
         self, identity: ExecutorIdentity, command_id: str, stored_file_id: str

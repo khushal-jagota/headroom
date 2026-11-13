@@ -41,6 +41,16 @@ class UpdateAdmissionMiddleware:
             return
 
         state = request.app.state
+        barrier = getattr(state, "update_barrier", None)
+        if (
+            barrier is not None and barrier.frozen
+            and request.method not in {"GET", "HEAD", "OPTIONS"}
+            and not path.startswith(("/api/updates", "/api/executor/"))
+        ):
+            await JSONResponse(
+                status_code=503, content={"detail": "Owner update in progress."}
+            )(scope, receive, send)
+            return
         system: ConversationSystem | None = state.conversation_system
         if (
             system is not None

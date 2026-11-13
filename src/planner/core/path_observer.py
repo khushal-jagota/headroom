@@ -1,4 +1,4 @@
-"""Bounded polling for one externally written file.
+"""Bounded polling for externally written files.
 
 The update installer writes the attempt record outside SQLite and outside this
 process.  This observer only bridges a filesystem change into Panels' existing
@@ -37,15 +37,21 @@ async def observe_path_changes(
     emit: Callable[[], None],
     *,
     poll_seconds: float = 0.25,
+    additional_paths: tuple[Path, ...] = (),
 ) -> None:
     """Emit after create, replacement, mutation, or deletion until cancelled."""
 
     if poll_seconds <= 0:
         raise ValueError("poll interval must be positive")
-    previous = await asyncio.to_thread(path_signature, path)
+    paths = (path, *additional_paths)
+
+    def signatures() -> tuple[PathSignature, ...]:
+        return tuple(path_signature(item) for item in paths)
+
+    previous = await asyncio.to_thread(signatures)
     while True:
         await asyncio.sleep(poll_seconds)
-        current = await asyncio.to_thread(path_signature, path)
+        current = await asyncio.to_thread(signatures)
         if current != previous:
             previous = current
             emit()

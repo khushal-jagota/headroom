@@ -55,6 +55,8 @@ Commands wait in the home's durable mailbox until their destination fetches them
 
 The outbox saves each durable event before delivery. Each conversation sends its numbered items in order. The home commits each item and its receipt together. A duplicate receives the stored receipt. Machine ownership is checked before receipt access, including duplicates.
 
+During a home update trial, the home defers new result receipts. Extra machines retain output until the healthy home or restored previous home accepts it. A rollback never removes an accepted result from that boundary.
+
 Live text and tool progress remain lossy. Finished messages and durable events wait in the outbox through an outage. A slow or failed conversation does not block the others.
 
 Files reach the home before an item that refers to them. Uploads wait privately until the home accepts their item. The home checks file ownership before publication and publishes in small groups so other writers can proceed. A matching digest does not grant another machine access.
@@ -70,6 +72,8 @@ An executor restart preserves its journal and outbox. The home separates command
 Each executor uses the shared Worker supervisor. It records exact process ownership and retains cleanup fences when termination remains unknown. Cleanup for one machine does not target another machine's processes. Native platform limits remain separate from protocol correctness.
 
 ## Updates and health
+
+A machine update closes its admission, confirms exact child retirement, and saves pending output before replacement. Its replacement retains journal and outbox custody until the home accepts replay.
 
 The signed Mac launcher and fixed supervisor select a versioned runtime. The data folder retains journals, outboxes, credentials, files, and logs across updates. Update offers and progress belong to the requesting destination. Content-addressed archives can share storage without sharing update authority.
 

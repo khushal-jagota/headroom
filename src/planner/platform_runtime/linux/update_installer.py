@@ -367,6 +367,15 @@ class Installation:
             current["updated_at"] = now
             self.write(current)
 
+    def release_barrier(self) -> None:
+        """Only a healthy surviving home can accept output after the rollback cut."""
+        (self.root / "data/update-barrier.json").unlink(missing_ok=True)
+        directory = os.open(self.root / "data", os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
     def claim(self) -> dict[str, object] | None:
         """Read this attempt; only an `installing` attempt with this id may proceed."""
         with self.locked():
@@ -487,6 +496,7 @@ def install(arguments: argparse.Namespace) -> int:
             installation, arguments, attempt, reason,
             previous_moved=previous_moved, new_app_moved=new_app_moved,
         )
+    installation.release_barrier()
     installation.record("healthy")
     completion_detail = None
     if installation.mac is not None:
@@ -532,6 +542,7 @@ def roll_back(
             installation.mac.validate_running_home()
             if not healthy(arguments.health_url, from_sha, arguments.health_timeout_seconds):
                 raise InstallFailed("the unchanged home did not pass health after its stop failed")
+            installation.release_barrier()
             installation.mac.resume_backup()
             installation.record("failed", state="failed", detail=(
                 f"{reason}. The previous app kept running. Its backup job was restored."
@@ -569,6 +580,7 @@ def roll_back(
             f"{reason}. Panels could not go back to the previous version: {problem}."
         ))
         return 1
+    installation.release_barrier()
     installation.record("rollback_healthy")
     backup_detail = ""
     if installation.mac is not None:

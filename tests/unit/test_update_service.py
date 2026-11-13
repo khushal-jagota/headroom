@@ -6,11 +6,14 @@ The installer itself is proved in tests/integration/test_update_installer.py.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import inspect
 import json
 import sqlite3
 import time
 from collections.abc import Callable
 from dataclasses import asdict, replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -28,9 +31,10 @@ from planner.environments.update_attempts import (
     UpdateConflict,
     import_legacy_request,
 )
+from planner.environments.update_barrier import UpdateBarrier
 from planner.environments.update_contracts import PublishedMacUpdate, PublishedUpdate
 from planner.environments.update_install import require_exact_schema_frontier
-from planner.environments.update_service import ACTIVITY_CHANGED_DETAIL, UpdateService
+from planner.environments.update_service import ACTIVITY_CHANGED_DETAIL, WAIT_DETAIL, UpdateService
 
 
 class System:
@@ -43,12 +47,18 @@ class System:
     def workspace_activity(self) -> str:
         return "unknown" if self.workspace_admission.closed else self.activity
 
-    async def run_with_workspace_admission(
-        self, operation: Callable[[], None], *, require_idle: bool
-    ) -> bool:
-        return self.workspace_admission.claim(
-            operation, idle=lambda: self.activity == "idle", require_idle=require_idle
-        )
+    async def prepare_update(self, mode: str) -> bool:
+        self.workspace_admission.claim(lambda: None, idle=lambda: True, require_idle=False)
+        if self.workspace_admission.active:
+            return False
+        return mode == "now" or self.activity == "idle"
+
+    def cancel_update(self) -> bool:
+        self.workspace_admission.reopen()
+        return True
+
+    def update_waiting_work(self) -> tuple[str, ...]:
+        return ("Example Worker",) if self.activity != "idle" else ()
 
 
 class Provider:
@@ -242,7 +252,7 @@ def test_idle_update_advances_after_reconcilers_finish_without_another_poll(
             assert admitted
             harness.store.create(waiting)
             assert not harness.launched
-            assert harness.service.poll() is False
+            assert harness.service.poll() is True
             await asyncio.gather(*(
                 asyncio.wrap_future(task) for task in tuple(harness.service._tasks)
             ))
@@ -304,10 +314,10 @@ def test_unexpected_background_admission_error_reaches_the_home_log(
     """Discarding a concurrent future must not hide the cause of a waiting attempt."""
     harness.service.install(SHA_B, "idle", confirm_activity=False)
 
-    async def broken(operation: Callable[[], None], *, require_idle: bool) -> bool:
+    async def broken(mode: str) -> bool:
         raise OSError("admission diagnostic receipt")
 
-    monkeypatch.setattr(harness.system, "run_with_workspace_admission", broken)
+    monkeypatch.setattr(harness.system, "prepare_update", broken)
 
     async def run() -> None:
         harness.service.start(asyncio.get_running_loop())
@@ -317,8 +327,8 @@ def test_unexpected_background_admission_error_reaches_the_home_log(
         harness.service.stop()
 
     asyncio.run(run())
-    assert "Update admission check failed" in caplog.text
-    assert "admission diagnostic receipt" in caplog.text
+    assert "admission diagnostic receipt" in (harness.store.read().detail or "")
+    assert harness.service.status().state == "waiting"
     assert not harness.launched
 
 
@@ -342,7 +352,7 @@ def test_idle_wait_cancel_and_update_now(harness: Harness, update_platform: None
     waiting = harness.service.install(SHA_B, "idle", confirm_activity=False)
     harness.advance()
     assert harness.store.read() == waiting and not harness.launched
-    assert harness.service.poll() is False
+    assert harness.service.poll() is True
     harness.service.cancel(waiting.attempt_id)
     assert harness.store.read() is None
     second = harness.service.install(SHA_B, "idle", confirm_activity=False)
@@ -355,27 +365,32 @@ def test_idle_wait_cancel_and_update_now(harness: Harness, update_platform: None
         harness.service.cancel(second.attempt_id)
 
 
-def test_idle_wait_outlives_the_install_deadline_then_installs(
+def test_idle_wait_requires_a_decision_at_the_drain_bound(
     harness: Harness, update_platform: None
 ) -> None:
-    """A wait for idle has no deadline: hours of busy work leave it waiting, not failed.
+    """Risk: an endless admission fence silently blocks all future work.
 
-    On 7 November a refused start sent a wait back with its 15-minute deadline still set,
-    and the wait failed on that deadline while agents worked.
+    Replace the old indefinite-wait policy proof with the finite decision boundary.
     """
     harness.system.activity = "busy"
     waiting = harness.service.install(SHA_B, "idle", confirm_activity=False)
-    assert waiting.deadline_at is None
-    later = time.time() + 2 * 3600
+    assert waiting.deadline_at is not None
+    harness.advance()
+    assert harness.system.workspace_admission.closed
+    later = time.time() + 301
     harness.service._now = lambda: later
     harness.advance()
-    assert harness.service.status().state == "waiting"
-    assert harness.store.read() == waiting and not harness.launched
+    status = harness.service.status()
+    assert status.state == "waiting" and status.detail == WAIT_DETAIL
+    assert status.allowed_actions == ("wait", "cancel", "update_now")
+    assert status.affected_work == ("Example Worker",)
     harness.system.activity = "idle"
     harness.advance()
+    assert not harness.launched  # An expired barrier needs a new owner decision.
+    harness.service.wait(waiting.attempt_id)
+    harness.advance()
     recorded = harness.store.read()
-    assert recorded is not None and recorded.attempt_id == waiting.attempt_id
-    assert recorded.state == "installing" and harness.launched
+    assert recorded is not None and recorded.state == "installing" and harness.launched
 
 
 def test_refusals_before_stop_fail_plainly_and_reopen_work(harness: Harness) -> None:
@@ -489,7 +504,7 @@ def test_routes_and_status_shape(harness: Harness, monkeypatch: pytest.MonkeyPat
         body = client.get("/api/updates").json()
         assert set(body) == {
             "state", "allowed_actions", "activity", "available", "attempt", "app_sha",
-            "detail", "deadline_at", "mac_details",
+            "detail", "deadline_at", "mac_details", "affected_work",
         }
         assert (body["state"], body["allowed_actions"], body["attempt"]) == (
             "available", ["update"], None
@@ -566,3 +581,151 @@ def test_installer_restarts_only_the_unit_this_server_runs_in() -> None:
     assert own_service_unit(terminal) is None
     assert own_service_unit("0::/user.slice/user-1000.slice/user@1000.service\n") is None
     assert own_service_unit("") is None
+
+
+def test_uncertain_retirement_keeps_update_fenced_until_recovery(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unproven child stop must not launch an installer or reopen starts."""
+    async def uncertain(mode: str) -> bool:
+        harness.system.workspace_admission.claim(
+            lambda: None, idle=lambda: True, require_idle=False,
+        )
+        raise RuntimeError("owned child did not stop")
+
+    monkeypatch.setattr(harness.system, "prepare_update", uncertain)
+    monkeypatch.setattr(harness.system, "cancel_update", lambda: False)
+    attempt = harness.service.install(SHA_B, "now", confirm_activity=True)
+    harness.advance()
+    status = harness.service.status()
+    assert status.state == "waiting" and "owned child did not stop" in (status.detail or "")
+    assert harness.system.workspace_admission.closed and not harness.launched
+    with pytest.raises(UpdateConflict, match="retirement is uncertain"):
+        harness.service.cancel(attempt.attempt_id)
+    assert harness.store.read() is not None
+
+
+def test_accepted_save_timeout_keeps_receipt_custody_and_blocks_snapshot(
+    harness: Harness,
+) -> None:
+    """A detached accepted save can outlive the wait. Never snapshot ahead of it."""
+    barrier = UpdateBarrier(harness.root / "data/update-barrier")
+    harness.service._update_barrier = barrier
+
+    async def run() -> None:
+        with barrier.operation() as admitted:
+            assert admitted
+            attempt = harness.service.install(SHA_B, "now", confirm_activity=True)
+            harness.store.change(attempt.attempt_id, frozenset({"waiting"}),
+                lambda current: replace(current, deadline_at=(
+                    datetime.now(UTC) + timedelta(milliseconds=50)).isoformat()))
+            await harness.service.advance()
+            assert barrier.frozen and not barrier.drained and not harness.launched
+            status = harness.service.status()
+            assert status.state == "waiting" and "result saves" in (status.detail or "")
+            with pytest.raises(UpdateConflict, match="result saves"):
+                harness.service.cancel(attempt.attempt_id)
+        harness.service.cancel(attempt.attempt_id)
+        assert not barrier.frozen and not harness.system.workspace_admission.closed
+
+    asyncio.run(run())
+
+
+def test_work_labels_do_not_scan_outside_an_offer_or_wait(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ordinary readiness polls must not acquire another per-conversation label scan."""
+    scans = []
+
+    def labels() -> tuple[str, ...]:
+        scans.append(True)
+        return ("Example Worker",)
+
+    monkeypatch.setattr(harness.system, "update_waiting_work", labels)
+    monkeypatch.setattr(harness.service, "refresh_available", lambda: None)
+    ready = harness.service._ready
+    harness.service._ready = None
+    assert harness.service.status().affected_work == ()
+    assert not scans
+    harness.service._ready = ready
+    assert harness.service.status().affected_work == ("Example Worker",)
+    harness.service.install(SHA_B, "now", confirm_activity=True)
+    harness.advance()
+    scans.clear()
+    assert harness.service.status().affected_work == ()
+    assert not scans
+
+
+def test_worker_actions_and_status_share_the_update_owner_loop(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancel must not reopen admission concurrently with the preparation transition."""
+    harness.system.activity = "busy"
+
+    async def run() -> None:
+        owner = asyncio.get_running_loop()
+        harness.service.start(owner)
+        labels = harness.system.update_waiting_work
+        cancel = harness.system.cancel_update
+        observations = []
+
+        def owner_labels() -> tuple[str, ...]:
+            assert asyncio.get_running_loop() is owner
+            observations.append("status")
+            return labels()
+
+        def owner_cancel() -> bool:
+            assert asyncio.get_running_loop() is owner
+            observations.append("cancel")
+            return cancel()
+
+        monkeypatch.setattr(harness.system, "update_waiting_work", owner_labels)
+        monkeypatch.setattr(harness.system, "cancel_update", owner_cancel)
+        attempt = await asyncio.to_thread(
+            harness.service.install, SHA_B, "idle", confirm_activity=False,
+        )
+        await asyncio.to_thread(harness.service.status)
+        await asyncio.to_thread(harness.service.cancel, attempt.attempt_id)
+        await asyncio.gather(*(asyncio.wrap_future(task) for task in tuple(harness.service._tasks)))
+        assert "status" in observations and "cancel" in observations
+        assert harness.store.read() is None and not harness.launched
+        assert not harness.system.workspace_admission.closed
+        harness.service.stop()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("failure", ["stalled", "closed"])
+def test_owner_controller_refusal_is_bounded_and_does_not_claim_cancellation(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    """The owner loop can disappear between the running check and its reply."""
+    owner = asyncio.new_event_loop()
+    queued = []
+
+    class NoReply(concurrent.futures.Future):
+        def result(self, timeout=None):
+            assert timeout == 5
+            raise TimeoutError
+
+    future = NoReply()
+
+    def schedule(pending, loop):
+        assert loop is owner
+        queued.append(pending)
+        if failure == "closed":
+            raise RuntimeError("Event loop is closed")
+        pending.close()  # The double retains no actual owner task.
+        return future
+
+    with monkeypatch.context() as patch:
+        harness.service._event_loop = owner
+        patch.setattr(owner, "is_running", lambda: True)
+        patch.setattr(asyncio, "run_coroutine_threadsafe", schedule)
+        with pytest.raises(UpdateConflict, match="Check update status before retrying"):
+            harness.service.cancel("absent")
+        assert inspect.getcoroutinestate(queued[0]) == inspect.CORO_CLOSED
+        assert future.cancelled() == (failure == "stalled")
+        assert harness.store.read() is None and not harness.launched
+        harness.service._event_loop = None
+    owner.close()

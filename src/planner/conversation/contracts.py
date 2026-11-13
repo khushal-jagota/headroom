@@ -711,6 +711,18 @@ class ConversationSystem(Protocol):
         """Return complete workspace activity without admitting new work."""
         ...
 
+    async def prepare_update(self, mode: Literal["idle", "now"]) -> bool:
+        """Close admission and prove local output safe before an update snapshot."""
+        ...
+
+    def update_waiting_work(self) -> tuple[str, ...]:
+        """Name active local and extra-machine work for update controls."""
+        ...
+
+    def cancel_update(self) -> bool:
+        """Release this update's admission only when owned cleanup is safe."""
+        ...
+
     async def run_with_workspace_admission(
         self,
         operation: Callable[[], None],

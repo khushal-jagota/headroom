@@ -236,6 +236,24 @@ class InMemoryConversationSystem:
             return "busy"
         return "idle"
 
+    async def prepare_update(self, mode: Literal["idle", "now"]) -> bool:
+        self.workspace_admission.claim(lambda: None, idle=lambda: True, require_idle=False)
+        if self.workspace_admission.active:
+            return False
+        if mode == "now":
+            for conversation_id in tuple(self._conversations):
+                await self.kill(conversation_id)
+        return not any(state.running_turn is not None or state.held_prompts
+                       for state in self._conversations.values())
+
+    def update_waiting_work(self) -> tuple[str, ...]:
+        return tuple("Active conversation" for state in self._conversations.values()
+                     if state.running_turn is not None or state.held_prompts)
+
+    def cancel_update(self) -> bool:
+        self.workspace_admission.reopen()
+        return True
+
     async def run_with_workspace_admission(
         self,
         operation: Callable[[], None],

@@ -25,13 +25,14 @@ from planner.conversation.contracts import ConversationSystem
 from planner.core import change_signal
 from planner.core.errors import PlannerError
 from planner.environments.backup import create_database_backup
-from planner.environments.logic.update_experience import resolve, settle
+from planner.environments.logic.update_experience import instant, resolve, settle
 from planner.environments.runtime_contracts import NodeRuntimeContract
 from planner.environments.update_attempts import (
     FileUpdateAttemptStore,
     UpdateConflict,
     utc_now,
 )
+from planner.environments.update_barrier import UpdateBarrier
 from planner.environments.update_configuration import (
     MAC_UPDATE_REPORT_SECONDS,
     UPDATE_AVAILABILITY_REFRESH_SECONDS,
@@ -65,6 +66,9 @@ _LOG = logging.getLogger(__name__)
 ACTIVITY_CHANGED_DETAIL = (
     "Work started before the update began. Confirm active work to update now."
 )
+UPDATE_DRAIN_SECONDS = 300
+WAIT_DETAIL = "Work did not reach a safe point in five minutes. Choose Wait, Cancel, or Update now."
+
 RESTARTED_DETAIL = "Panels restarted before the update began, so nothing changed."
 
 
@@ -87,6 +91,7 @@ class UpdateService:
         health_url: str,
         service_unit: str,
         unavailable_reason: str | None = None,
+        update_barrier: UpdateBarrier | None = None,
         prepare_mac_update: Callable[[PublishedUpdate], None] = lambda release: None,
         mac_phase: Callable[[str], str | None] = lambda mac_attempt_id: None,
         mac_reported_at: Callable[[str], float | None] = lambda mac_attempt_id: None,
@@ -104,6 +109,7 @@ class UpdateService:
         self._health_url = health_url
         self._service_unit = service_unit
         self._unavailable_reason = unavailable_reason
+        self._update_barrier = update_barrier
         self._prepare_mac_update, self._mac_phase = prepare_mac_update, mac_phase
         self._mac_reported_at = mac_reported_at
         self._mac_configured = mac_configured
@@ -121,6 +127,36 @@ class UpdateService:
         self._work_wake_lock = threading.Lock()
         self._waiting_for_work = False
         self._unsubscribe_work: Callable[[], None] | None = None
+
+    def _on_owner[T](self, action: Callable[[], T]) -> T:
+        """Serialize state decisions and admission changes with the update coroutine."""
+        owner = self._event_loop
+        if owner is None or owner.is_closed() or not owner.is_running():
+            return action()
+        try:
+            if asyncio.get_running_loop() is owner:
+                return action()
+        except RuntimeError:
+            pass
+
+        async def perform() -> T:
+            return action()
+
+        pending = perform()
+        try:
+            future = asyncio.run_coroutine_threadsafe(pending, owner)
+        except RuntimeError as exc:
+            pending.close()
+            raise UpdateConflict(
+                "Update controller stopped. Check update status before retrying."
+            ) from exc
+        try:
+            return future.result(timeout=5)
+        except TimeoutError as exc:
+            future.cancel()
+            raise UpdateConflict(
+                "Update controller did not answer. Check update status before retrying."
+            ) from exc
 
     # --- prefetch ------------------------------------------------------------------
 
@@ -185,6 +221,8 @@ class UpdateService:
         attempt = self.attempts.read()
         if attempt is None:
             return None
+        if self._update_barrier is not None and self._update_barrier.frozen:
+            return attempt  # A deadline or matching SHA does not prove trial health.
         ended = settle(attempt, self.current_app_sha, datetime.fromtimestamp(self._now(), UTC))
         if ended is None:
             return attempt
@@ -200,6 +238,9 @@ class UpdateService:
             return self.attempts.read()
 
     def status(self) -> UpdateStatus:
+        return self._on_owner(lambda: self._status())
+
+    def _status(self) -> UpdateStatus:
         if self._unavailable_reason is not None:
             return UpdateStatus(
                 "failed", (), "unknown", None, None, self.current_app_sha,
@@ -222,9 +263,11 @@ class UpdateService:
             mac_report_seconds=MAC_UPDATE_REPORT_SECONDS,
             now=datetime.fromtimestamp(self._now(), UTC),
         )
+        affected_work = (system.update_waiting_work()
+                         if system is not None and state in {"available", "waiting"} else ())
         return UpdateStatus(
             state, actions, activity, available, attempt, self.current_app_sha, detail,
-            deadline_at,
+            deadline_at, affected_work,
         )
 
     def _mac_report_time(self, attempt: UpdateAttempt | None) -> datetime | None:
@@ -243,14 +286,18 @@ class UpdateService:
         if paused is None:
             return
         if attempt is not None and attempt.attempt_id == paused and attempt.state in {
-            "preparing", "installing"
+            "waiting", "preparing", "installing"
         }:
             return
-        self._paused_attempt_id = None
+        if self._update_barrier is not None and not self._update_barrier.drained:
+            return
         system = self.conversation()
-        if system is not None:
-            system.workspace_admission.reopen()
-            change_signal.emit()
+        if system is not None and not system.cancel_update():
+            return
+        self._paused_attempt_id = None
+        if self._update_barrier is not None:
+            self._update_barrier.release()
+        change_signal.emit()
 
     def _deadline(self) -> str:
         return (
@@ -258,9 +305,23 @@ class UpdateService:
             + timedelta(seconds=UPDATE_INSTALL_DEADLINE_SECONDS)
         ).isoformat()
 
+    def _drain_deadline(self) -> str:
+        return (datetime.fromtimestamp(self._now(), UTC)
+                + timedelta(seconds=UPDATE_DRAIN_SECONDS)).isoformat()
+
+    def _remaining_drain(self, attempt: UpdateAttempt) -> float:
+        if attempt.deadline_at is None:
+            return float(UPDATE_DRAIN_SECONDS)
+        return max(0.001, instant(attempt.deadline_at).timestamp() - self._now())
+
     # --- owner actions -------------------------------------------------------------
 
     def install(self, app_sha: str, mode: UpdateMode, *, confirm_activity: bool) -> UpdateAttempt:
+        return self._on_owner(
+            lambda: self._install(app_sha, mode, confirm_activity=confirm_activity)
+        )
+
+    def _install(self, app_sha: str, mode: UpdateMode, *, confirm_activity: bool) -> UpdateAttempt:
         if self._unavailable_reason is not None:
             raise UpdateConflict(self._unavailable_reason)
         release = self.ready_release()
@@ -281,7 +342,7 @@ class UpdateService:
             created_at=now,
             updated_at=now,
             release=release,
-            deadline_at=self._deadline() if mode == "now" else None,
+            deadline_at=self._drain_deadline(),
             steps={"pressed": now},
             mac_attempt_id=uuid4().hex if release.mac is not None else None,
         ))
@@ -289,10 +350,29 @@ class UpdateService:
         return attempt
 
     def cancel(self, attempt_id: str) -> None:
+        return self._on_owner(lambda: self._cancel(attempt_id))
+
+    def _cancel(self, attempt_id: str) -> None:
+        attempt = self.attempts.read()
+        if attempt is None or attempt.attempt_id != attempt_id or attempt.state != "waiting":
+            raise UpdateConflict("The update already moved on.")
+        if self._update_barrier is not None and not self._update_barrier.drained:
+            raise UpdateConflict("Accepted result saves still wait. The update remains paused.")
+        system = self.conversation()
+        if system is not None and not system.cancel_update():
+            raise UpdateConflict("Child retirement is uncertain. The update remains paused.")
         self.attempts.remove(attempt_id, frozenset({"waiting"}))
+        self._paused_attempt_id = None
+        if self._update_barrier is not None:
+            self._update_barrier.release()
         self._wait_for_work(False)
 
     def update_now(self, attempt_id: str, *, confirm_activity: bool) -> UpdateAttempt:
+        return self._on_owner(
+            lambda: self._update_now(attempt_id, confirm_activity=confirm_activity)
+        )
+
+    def _update_now(self, attempt_id: str, *, confirm_activity: bool) -> UpdateAttempt:
         if self._unavailable_reason is not None:
             raise UpdateConflict(self._unavailable_reason)
         if not confirm_activity:
@@ -300,13 +380,29 @@ class UpdateService:
         attempt = self.attempts.change(
             attempt_id, frozenset({"waiting"}),
             lambda current: replace(
-                current, mode="now", confirm_activity=True, deadline_at=self._deadline()
+                current, mode="now", confirm_activity=True, detail=None,
+                deadline_at=self._drain_deadline()
             ),
         )
         self.schedule_advance()
         return attempt
 
+    def wait(self, attempt_id: str) -> UpdateAttempt:
+        return self._on_owner(lambda: self._wait(attempt_id))
+
+    def _wait(self, attempt_id: str) -> UpdateAttempt:
+        attempt = self.attempts.change(
+            attempt_id, frozenset({"waiting"}),
+            lambda current: replace(current, mode="idle", detail=None,
+                                    deadline_at=self._drain_deadline()),
+        )
+        self.schedule_advance()
+        return attempt
+
     def retry(self, attempt_id: str) -> UpdateAttempt:
+        return self._on_owner(lambda: self._retry(attempt_id))
+
+    def _retry(self, attempt_id: str) -> UpdateAttempt:
         """A new attempt for the same ready release; the press is its confirmation."""
         attempt = self.attempts.read()
         if attempt is None or attempt.attempt_id != attempt_id or attempt.state != "failed":
@@ -314,6 +410,9 @@ class UpdateService:
         return self.install(attempt.to_sha, "now", confirm_activity=True)
 
     def retry_mac(self, attempt_id: str) -> UpdateAttempt:
+        return self._on_owner(lambda: self._retry_mac(attempt_id))
+
+    def _retry_mac(self, attempt_id: str) -> UpdateAttempt:
         """A fresh Mac target for the same release; the Mac controller sees it as new."""
         if self._unavailable_reason is not None:
             raise UpdateConflict(self._unavailable_reason)
@@ -423,10 +522,7 @@ class UpdateService:
         # Let the event-loop owner check idle and claim admission, even when this
         # thread samples that temporary work. Keep the readiness hold unchanged.
         self.schedule_advance()
-        system = self.conversation()
-        return attempt.mode != "idle" or (
-            system is not None and system.workspace_activity() == "idle"
-        )
+        return True
 
     async def advance(self) -> None:
         """Begin the waiting attempt when it may begin. Runs on the server's event loop."""
@@ -446,10 +542,39 @@ class UpdateService:
         self._wait_for_work(False)
         if attempt is None or attempt.state != "waiting" or system is None:
             return
-        self._wait_for_work(attempt.mode == "idle")
-        if attempt.mode == "idle" and system.workspace_activity() != "idle":
-            return
         attempt_id = attempt.attempt_id
+        if attempt.detail:
+            return
+        if (attempt.deadline_at is not None
+                and datetime.fromtimestamp(self._now(), UTC) >= instant(attempt.deadline_at)):
+            self.attempts.change(attempt_id, frozenset({"waiting"}),
+                                 lambda current: replace(current, detail=WAIT_DETAIL))
+            return
+        if (attempt.mode == "now" and not attempt.confirm_activity
+                and self._paused_attempt_id is None and system.workspace_activity() != "idle"):
+            self._fail(attempt_id, frozenset({"waiting"}), ACTIVITY_CHANGED_DETAIL)
+            return
+        self._paused_attempt_id = attempt_id
+        self._wait_for_work(True)
+        try:
+            safe = await asyncio.wait_for(
+                system.prepare_update(attempt.mode), self._remaining_drain(attempt)
+            )
+        except TimeoutError:
+            self.attempts.change(attempt_id, frozenset({"waiting"}),
+                                 lambda current: replace(current, detail=WAIT_DETAIL))
+            return
+        except Exception as exc:
+            _LOG.warning("Update safe-point check stopped: %s", exc, exc_info=True)
+            # Unknown retirement is not a failed install: retain the admission fence.
+            detail = f"Work could not reach a safe point: {exc}. The update remains paused."
+            self.attempts.change(attempt_id, frozenset({"waiting"}),
+                                 lambda current: replace(current, detail=detail))
+            return
+        if not safe:
+            return
+        if (current := self.attempts.read()) is None or current.attempt_id != attempt_id:
+            return
 
         def pause_work() -> None:
             # Audit the stored definitions and Tickets in one writer-locked snapshot.
@@ -484,22 +609,26 @@ class UpdateService:
                 connection.close()
 
         try:
-            admitted = await system.run_with_workspace_admission(
-                pause_work, require_idle=attempt.mode == "idle" or not attempt.confirm_activity
-            )
+            pause_work()
         except UpdateConflict:
             self._wait_for_work(False)
-            return
-        if not admitted:
-            if attempt.mode == "now":
-                self._fail(attempt_id, frozenset({"waiting"}), ACTIVITY_CHANGED_DETAIL)
+            self._reopen_after_unstarted(self.attempts.read())
             return
         # Work stays paused from here until the installer stops this service, or until
         # the attempt ends while this process still runs (see _reopen_after_unstarted).
         self._wait_for_work(False)
         self._paused_attempt_id = attempt_id
         try:
+            if self._update_barrier is not None:
+                self._update_barrier.freeze(attempt_id)
+                await asyncio.wait_for(self._update_barrier.drain(), self._remaining_drain(attempt))
             await asyncio.to_thread(self._start_installer, attempt_id)
+        except TimeoutError:
+            # An accepted detached save still owns custody. Do not reopen or snapshot.
+            self.attempts.change(attempt_id, frozenset({"preparing"}), lambda current: replace(
+                current, state="waiting", detail=("Accepted result saves still wait. "
+                                                 "Choose Wait or Cancel after they finish."),
+            ))
         except Exception as exc:
             _LOG.exception("Update %s did not start its installer", attempt_id)
             self._fail(

@@ -184,9 +184,12 @@ def test_healthy_install_swaps_apps_keeps_one_previous_and_records_steps(
     write_app(scratch.root / "app-previous", OLDER_SHA)
     write_attempt(scratch, backup=str(scratch.root / "data/backups/snapshot"))
 
+    barrier = scratch.root / "data/update-barrier.json"
+    barrier.write_text(ATTEMPT_ID)
     result = scratch.run_installer()
 
     assert result.returncode == 0, result.stderr
+    assert not barrier.exists()
     record = scratch.record()
     assert record["state"] == "done" and record["detail"] is None
     steps = record["steps"]
@@ -224,9 +227,12 @@ def test_unhealthy_install_goes_back_and_restores_data_while_stopped(
     (snapshot / "database.sqlite").write_text("database before the update")
     write_attempt(scratch, backup=str(snapshot) if backup else None)
 
+    barrier = scratch.root / "data/update-barrier.json"
+    barrier.write_text(ATTEMPT_ID)
     result = scratch.run_installer()
 
     assert result.returncode == 1
+    assert not barrier.exists()
     record = scratch.record()
     assert record["state"] == "failed"
     calls = [call for call in scratch.calls() if not call.startswith("capture")]
@@ -275,3 +281,105 @@ def test_installer_refuses_an_attempt_that_is_not_this_installing_one(
     assert scratch.calls() == []
     assert scratch.record_path.read_bytes() == before
     assert json.loads((scratch.root / "app/manifest.json").read_text())["app_sha"] == FROM_SHA
+
+
+def test_failed_rollback_keeps_receipt_cut_closed(scratch: Scratch) -> None:
+    """A failed health trial and failed recovery cannot release remote output receipts."""
+    write_app(scratch.root / f".app-next-{TO_SHA}", TO_SHA, unhealthy=True)
+    (scratch.root / "app/unhealthy").touch()
+    write_attempt(scratch)
+    barrier = scratch.root / "data/update-barrier.json"
+    barrier.write_text(ATTEMPT_ID)
+    result = scratch.run_installer()
+    assert result.returncode == 1
+    assert barrier.exists()
+    assert "rollback_healthy" not in scratch.record()["steps"]
+
+
+def test_trial_boot_holds_runtime_until_installer_releases_cut(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only real lifespan order proves health does not admit producers during a trial."""
+    import threading
+    import time
+    from dataclasses import asdict
+
+    from fastapi.testclient import TestClient
+    from tests.support.update_apps import release
+
+    from planner.core import path_observer
+    from planner.core.clock import build_clock
+    from planner.core.config import load_config
+    from planner.core.db import connect
+    from planner.core.server import create_app
+    from planner.environments.update_attempts import atomic_write_json, utc_now
+    from planner.environments.update_barrier import UpdateBarrier
+    from planner.environments.update_contracts import UpdateAttempt
+    from planner.executor.registry import VpsExecutorRegistry
+
+    starts: list[bool] = []
+    original = VpsExecutorRegistry.start
+
+    async def record_start(self: VpsExecutorRegistry) -> None:
+        starts.append(True)
+        await original(self)
+
+    monkeypatch.setattr(VpsExecutorRegistry, "start", record_start)
+    database = tmp_path / "planner.db"
+    barrier = UpdateBarrier(tmp_path / "update-barrier.json")
+    barrier.freeze(ATTEMPT_ID)
+    marker_observed = threading.Event()
+    signature = path_observer.path_signature
+
+    def observed_signature(path: Path):
+        result = signature(path)
+        if path == barrier.path:
+            marker_observed.set()
+        return result
+
+    monkeypatch.setattr(path_observer, "path_signature", observed_signature)
+    now = utc_now()
+    record = UpdateAttempt(
+        attempt_id=ATTEMPT_ID, from_sha=FROM_SHA, to_sha=TO_SHA,
+        mode="idle", confirm_activity=False, state="installing",
+        created_at=now, updated_at=now, release=release(),
+    )
+    attempt_path = tmp_path / "update-attempt.json"
+    atomic_write_json(attempt_path, asdict(record))
+    config = load_config(path=None, env={
+        "PLAN_TEST_MODE": "1", "PLAN_APP_SHA": TO_SHA,
+        "PLAN_DB_PATH": str(database), "PLAN_LOGS_DIR": str(tmp_path / "logs"),
+        "PLAN_HERMES_HOME": str(tmp_path / "hermes"), "PLAN_DISPATCH_ENABLED": "0",
+        "PLAN_DISPATCHER_LOCK_PATH": str(tmp_path / "polling.lock"),
+    })
+    app = create_app(config, build_clock(config), lambda: connect(str(database)))
+    with TestClient(app) as client:
+        response = client.get("/api/health", params={"expected_sha": TO_SHA})
+        assert response.status_code == 200
+        assert not starts
+        assert app.state.conversation_system.workspace_admission.closed
+        assert marker_observed.wait(timeout=5)
+        # An installer crash after unlink must not leave a healthy home frozen.
+        # Deliberately omit its next attempt write to prove marker-only release.
+        barrier.release()
+        deadline = time.monotonic() + 5
+        while not starts and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert starts == [True]
+        assert not app.state.conversation_system.workspace_admission.closed
+
+    # A crash before launch needs no trial, including a timed-out intake drain.
+    # Waiting and preparing both prove that no installer can later restore data.
+    for interrupted_state in ("waiting", "preparing"):
+        barrier.freeze(ATTEMPT_ID)
+        atomic_write_json(attempt_path, {**asdict(record), "state": interrupted_state})
+        starts.clear()
+        recovered = create_app(config, build_clock(config), lambda: connect(str(database)))
+        with TestClient(recovered) as client:
+            assert client.get("/api/health", params={"expected_sha": TO_SHA}).status_code == 200
+            assert starts == [True]
+            assert not recovered.state.update_barrier.frozen
+            assert not recovered.state.conversation_system.workspace_admission.closed
+            attempt = recovered.state.updates.attempts.read()
+            assert attempt is not None and attempt.state == "failed"
+            assert attempt.detail == "Panels restarted before the update began, so nothing changed."

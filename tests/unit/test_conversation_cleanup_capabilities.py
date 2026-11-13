@@ -18,13 +18,15 @@ from planner.conversation.backends.contracts import (
     AgentMessageDelta,
     BackendEventSink,
     ModelThinkingHappened,
+    ToolCallFinished,
 )
 from planner.conversation.contracts import (
     ConversationBackendKey,
+    ConversationRoleMaterials,
     ConversationStartRequest,
     ResolvedConversationStart,
 )
-from planner.conversation.events import AgentMessageDeltaFrame, ModelThinkingFrame
+from planner.conversation.events import AgentMessageDeltaFrame, ModelThinkingFrame, ToolCallStatus
 from planner.conversation.lifecycle_storage import (
     ConversationRuntimeAlreadyOwned,
     acquire_runtime_ownership,
@@ -350,7 +352,7 @@ def test_retained_sink_cannot_publish_after_shutdown_starts(
     asyncio.run(asyncio.wait_for(exercise(), 15))
 
 
-def test_local_workspace_stop_holds_start_admission_through_detach(tmp_path: Path) -> None:
+def test_local_workspace_retirement_fences_only_its_ticket(tmp_path: Path) -> None:
     """A quiet cached child must stop while the exact folder still excludes starts."""
     from planner.ticket_workspaces.contracts import WorkspaceIdentity
     from planner.ticket_workspaces.data import register_workspace
@@ -384,18 +386,33 @@ def test_local_workspace_stop_holds_start_admission_through_detach(tmp_path: Pat
             detached = True
             return tmp_path / "retired"
 
-        task = asyncio.create_task(harness.system.retire_local_workspace(
-            "t_retirement", identity, detach
-        ))
+        task = asyncio.create_task(
+            harness.system.retire_local_workspace("t_retirement", identity, detach)
+        )
         try:
             await asyncio.wait_for(backend.stop_has_begun.wait(), 5)
             with pytest.raises(RuntimeError, match="admission is closed"):
-                await _start(harness, "replacement")
+                await _start(
+                    harness,
+                    "replacement",
+                    role_materials=ConversationRoleMaterials(
+                        "worker", (("PLAN_TICKET_ID", "t_retirement"),)
+                    ),
+                )
+            await _start(harness, "unrelated")
+            await harness.system.send(
+                "unrelated", text_message_content("other work"), sender_label="owner"
+            )
+            assert harness.backend("unrelated").live_turn_token is not None
+            # An update can close admission during cleanup. Cleanup cannot reopen it.
+            assert harness.system.workspace_admission.claim(
+                lambda: None, idle=lambda: True, require_idle=False
+            )
             assert not detached
             backend.stops_wait_for_release.set()
             assert await task == tmp_path / "retired"
             assert detached
-            assert not harness.system.workspace_admission.closed
+            assert harness.system.workspace_admission.closed
         finally:
             backend.stops_wait_for_release.set()
             await task
@@ -480,3 +497,124 @@ def test_recheck_retires_idle_custody_after_parent_crash_without_a_turn(
         await harness.system.shutdown()
 
     asyncio.run(exercise())
+
+
+def test_update_barrier_drains_admitted_turn_without_new_starts(tmp_path: Path) -> None:
+    """A busy update closes admission before its wait and preserves the admitted result."""
+    db_path = tmp_path / "planner.db"
+    _create_database(db_path)
+
+    async def exercise() -> None:
+        harness = _Harness(db_path)
+        try:
+            await _start(harness, "unused")
+            await _start(harness, "c")
+            await harness.system.send("c", text_message_content("work"), sender_label="owner")
+            assert harness.system.update_waiting_work() == ("hermes conversation",)
+            assert not await harness.system.prepare_update("idle")
+            with pytest.raises(RuntimeError, match="admission is closed"):
+                await _start(harness, "new")
+            backend = harness.backend("c")
+            assert backend.sink is not None
+            await backend.sink.report(
+                backend.live_turn_token,
+                ToolCallFinished(
+                    tool_call_id="finish",
+                    tool_call_status=ToolCallStatus.completed,
+                    detail="saved result",
+                ),
+            )
+            await harness.complete_turn("c")
+            assert await harness.system.prepare_update("idle")
+            assert harness.backend("c").stops == 1
+            assert any("saved result" in str(event.payload) for event in await harness.events("c"))
+            assert harness.system.cancel_update()
+            await _start(harness, "after")
+        finally:
+            await harness.system.shutdown()
+
+    asyncio.run(asyncio.wait_for(exercise(), 10))
+
+
+def test_update_now_keeps_final_stop_callback_before_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Native stop can publish a last result. Ending first would silently discard it."""
+    db_path = tmp_path / "planner.db"
+    _create_database(db_path)
+    original_stop = _FakeBackendChild.stop
+
+    async def stop_with_output(child: _FakeBackendChild) -> None:
+        token = child._backend.live_turn_token
+        if token is not None:
+            await child._sink.report(
+                token,
+                ToolCallFinished(
+                    tool_call_id="finish",
+                    tool_call_status=ToolCallStatus.completed,
+                    detail="final stop result",
+                ),
+            )
+        await original_stop(child)
+
+    monkeypatch.setattr(_FakeBackendChild, "stop", stop_with_output)
+
+    async def exercise() -> None:
+        harness = _Harness(db_path)
+        try:
+            await _start(harness, "c")
+            await harness.system.send("c", text_message_content("work"), sender_label="owner")
+            assert await harness.system.prepare_update("now")
+            events = await harness.events("c")
+            assert any("final stop result" in str(event.payload) for event in events)
+            assert harness.backend("c").live_children == 0
+        finally:
+            await harness.system.shutdown()
+
+    asyncio.run(asyncio.wait_for(exercise(), 10))
+
+
+@pytest.mark.parametrize("failure", ["native_stop", "result_commit"])
+def test_update_refuses_uncertain_stop_or_failed_result_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    """A drained queue and a stop request cannot prove that required output was saved."""
+    db_path = tmp_path / "planner.db"
+    _create_database(db_path)
+
+    async def exercise() -> None:
+        harness = _Harness(db_path)
+        try:
+            await _start(harness, "c")
+            await harness.system.send("c", text_message_content("work"), sender_label="owner")
+            if failure == "native_stop":
+                harness.backend("c").stop_raises_something_unnamed = True
+            else:
+
+                async def fail_commit(*args: Any, **kwargs: Any) -> None:
+                    raise RuntimeError("result write failed")
+
+                monkeypatch.setattr(harness.system, "take_backend_event", fail_commit)
+                backend = harness.backend("c")
+                assert backend.sink is not None
+                await backend.sink.report(
+                    backend.live_turn_token,
+                    ToolCallFinished(
+                        tool_call_id="finish",
+                        tool_call_status=ToolCallStatus.completed,
+                        detail="unsaved result",
+                    ),
+                )
+                await harness.settle()
+            with pytest.raises(RuntimeError):
+                await harness.system.prepare_update("now")
+            assert harness.system.workspace_admission.closed
+            assert not harness.system.cancel_update()
+        finally:
+            harness.backend("c").stop_raises_something_unnamed = False
+            await harness.system.shutdown()
+
+    asyncio.run(asyncio.wait_for(exercise(), 10))

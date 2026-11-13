@@ -4,7 +4,7 @@ import type { MacStatus } from "../ticketMachines";
 export type UpdateMode = "now" | "idle";
 export type UpdateActivity = "idle" | "busy" | "unknown";
 export type UpdateState = "up_to_date" | "available" | "waiting" | "updating" | "failed" | "mac_failed" | "mac_unreachable";
-export type UpdateAction = "update" | "cancel" | "update_now" | "retry" | "retry_mac";
+export type UpdateAction = "update" | "cancel" | "update_now" | "retry" | "retry_mac" | "wait";
 export type UpdateAttemptState = "waiting" | "preparing" | "installing" | "done" | "failed";
 
 /** The ready release. The page reads only the SHA it installs. */
@@ -24,6 +24,7 @@ export type UpdateStatus = {
   state: UpdateState;
   allowed_actions: UpdateAction[];
   activity: UpdateActivity;
+  affected_work?: string[];
   available: AvailableUpdate | null;
   attempt: UpdateAttempt | null;
   /** The running SHA. */

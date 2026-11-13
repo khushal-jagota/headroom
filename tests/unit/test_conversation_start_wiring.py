@@ -116,6 +116,15 @@ class _LinkWatchingConversationSystem:
     def workspace_activity(self) -> Literal["idle", "busy", "unknown"]:
         return self._system.workspace_activity()
 
+    async def prepare_update(self, mode: Literal["idle", "now"]) -> bool:
+        return await self._system.prepare_update(mode)
+
+    def update_waiting_work(self) -> tuple[str, ...]:
+        return self._system.update_waiting_work()
+
+    def cancel_update(self) -> bool:
+        return self._system.cancel_update()
+
     async def run_with_workspace_admission(
         self,
         operation: Callable[[], None],

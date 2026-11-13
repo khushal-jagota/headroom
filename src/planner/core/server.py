@@ -10,6 +10,7 @@ import re
 import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic as _monotonic
@@ -75,10 +76,11 @@ from planner.environments.update_attempts import (
     attempt_path,
     import_legacy_request,
 )
+from planner.environments.update_barrier import UpdateBarrier
 from planner.environments.update_configuration import DEPLOYMENT_SUCCESS_DISPLAY_SECONDS
 from planner.environments.update_install import own_service_unit
 from planner.environments.update_provider import GitHubUpdateProvider
-from planner.environments.update_service import UpdateService
+from planner.environments.update_service import RESTARTED_DETAIL, UpdateService
 from planner.environments.vps_metrics.api import router as vps_metrics_router
 from planner.environments.vps_metrics.config import load_config as load_metrics_config
 from planner.environments.vps_metrics.config import store_path
@@ -233,6 +235,7 @@ def create_app(
 
         recovery_task: asyncio.Task[None] | None = None
         attempt_observer: asyncio.Task[None] | None = None
+        work_release_task: asyncio.Task[None] | None = None
         video_cleanup_task: asyncio.Task[None] | None = None
         ticket_scratch_task: asyncio.Task[None] | None = None
         view_rebuild_task: asyncio.Task[None] | None = None
@@ -281,6 +284,8 @@ def create_app(
                 await attempt(stall_checker.close())
             if executor_registry is not None:
                 await attempt(executor_registry.close())
+            if work_release_task is not None:
+                await attempt(cancel_task(work_release_task))
             if attempt_observer is not None:
                 await attempt(cancel_task(attempt_observer))
             if failures:
@@ -340,6 +345,24 @@ def create_app(
                 defer_view_cleanup=True,
                 startup_audit=audit_startup_tickets,
             ) as conversation:
+                interrupted_attempt = update_attempts.read()
+                if (app.state.update_barrier.frozen and interrupted_attempt is not None
+                        and interrupted_attempt.state in {"waiting", "preparing"}):
+                    # Waiting and preparing precede installer launch. Runtime ownership proves
+                    # the prior home exited, so no installer can still restore data.
+                    # Release first: a crash before the record write remains recoverable.
+                    app.state.update_barrier.release()
+                    update_attempts.change(
+                        interrupted_attempt.attempt_id, frozenset({"waiting", "preparing"}),
+                        lambda current: replace(
+                            current, state="failed", detail=RESTARTED_DETAIL,
+                        ),
+                    )
+                startup_frozen = app.state.update_barrier.frozen
+                if startup_frozen:
+                    conversation.system.workspace_admission.claim(
+                        lambda: None, idle=lambda: True, require_idle=False
+                    )
                 # Mac runs survive a VPS restart: their rows, assignments and commands
                 # are all in the database, and the conversation core adopts them.
                 executor_registry.configure(
@@ -351,7 +374,6 @@ def create_app(
                     lambda destination: destination == HOME_MACHINE_ID
                     or executor_registry.is_present(destination)
                 )
-                await executor_registry.start()
                 conversation.system.configure_machine_catalog(executor_registry)
                 app.state.conversation_system = (
                     conversation.system
@@ -363,6 +385,7 @@ def create_app(
                     nonlocal recovery_task, video_cleanup_task, ticket_scratch_task
                     nonlocal view_rebuild_task
                     nonlocal loops, metrics, stall_checker
+                    await executor_registry.start()
                     conversation.live_tail.views.cleanup_stale_epochs()
                     database_parent = Path(config.db_path).resolve().parent
                     if config.workspace_root is not None:
@@ -484,11 +507,35 @@ def create_app(
                     app.state.updates.start(asyncio.get_running_loop())
                     change_signal.emit()
 
-                await release_normal_work()
+                normal_work_released = False
+
+                async def release_after_trial() -> None:
+                    nonlocal normal_work_released
+                    app.state.update_barrier.refresh()
+                    if app.state.update_barrier.frozen or normal_work_released:
+                        return
+                    normal_work_released = True
+                    if startup_frozen:
+                        conversation.system.workspace_admission.reopen()
+                    await release_normal_work()
+
+                def attempt_changed() -> None:
+                    nonlocal work_release_task
+                    change_signal.emit()
+                    if work_release_task is None or work_release_task.done():
+                        work_release_task = asyncio.create_task(release_after_trial())
+
+                if not startup_frozen:
+                    await release_after_trial()
                 # The installer writes the attempt record from outside this process.
                 attempt_observer = asyncio.create_task(
-                    observe_path_changes(update_attempts.path, change_signal.emit)
+                    observe_path_changes(
+                        update_attempts.path, attempt_changed,
+                        additional_paths=(app.state.update_barrier.path,),
+                    )
                 )
+                if startup_frozen:
+                    attempt_changed()
                 await preview_runtime.start()
                 yield
 
@@ -591,6 +638,7 @@ def create_app(
         own_service_unit() if installed_app and update_unavailable_reason is None else None
     )
     update_attempts = FileUpdateAttemptStore(attempt_path(data_directory))
+    app.state.update_barrier = UpdateBarrier(data_directory / "update-barrier.json")
     import_legacy_request(update_attempts, data_directory, config.app_sha)
     update_provider = GitHubUpdateProvider.configured() if service_unit is not None else None
     app.state.mac_updates = MacUpdateService(
@@ -612,6 +660,7 @@ def create_app(
         health_url=f"http://{HOST}:{config.port}/api/health",
         service_unit=service_unit or "",
         unavailable_reason=update_unavailable_reason,
+        update_barrier=app.state.update_barrier,
         prepare_mac_update=app.state.mac_updates.prepare,
         mac_phase=app.state.mac_updates.phase,
         mac_reported_at=app.state.mac_updates.reported_at,

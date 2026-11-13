@@ -2131,11 +2131,14 @@ def verify_owner_updates(browser, url):
         expect(page.locator("[data-mac-status]")).to_have_count(0)
 
         backend.activity = "busy"
+        backend.affected_work = ["Release proof", "Inbox cleanup"]
         signal()
         action.click()
         expect(dialog).to_be_visible()
         expect(dialog).to_contain_text("A new version is ready for Panels and the Mac. Panels restarts, then you refresh to finish.")
         expect(dialog).to_contain_text("Work is running. Updating now interrupts it.")
+        expect(dialog).to_contain_text("Release proof")
+        expect(dialog).to_contain_text("Inbox cleanup")
         assert len(posts) == 0
         page.keyboard.press("Escape")
         expect(action).to_be_focused()
@@ -2147,7 +2150,15 @@ def verify_owner_updates(browser, url):
         retained()
         capture("waiting")
         action.click()
-        expect(dialog).to_contain_text("Panels updates as soon as running work finishes.")
+        expect(dialog).to_contain_text("New work waits. Panels saves admitted work before the update.")
+        backend.detail = "Work did not reach a safe point in five minutes. Choose Wait, Cancel, or Update now."
+        signal()
+        expect(dialog).to_contain_text("Work did not reach a safe point in five minutes.")
+        expect(dialog).to_contain_text("Release proof")
+        page.screenshot(path=str(evidence / "wait-decision-dialog.png"))
+        dialog.get_by_role("button", name="Wait five more minutes", exact=True).click()
+        assert posts[-1]["path"] == "/api/updates/attempts/attempt-1/wait"
+        action.click()
         dialog.get_by_role("button", name="Cancel update", exact=True).click()
         expect(card).to_contain_text("Update available")
         assert posts[-1]["path"] == "/api/updates/attempts/attempt-1/cancel"
