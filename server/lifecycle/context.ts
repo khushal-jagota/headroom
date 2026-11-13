@@ -3,7 +3,6 @@ import { closeSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lifecycle_launch_settings, loadConfig } from '../core/config.ts';
-import { strip } from '../projects/logic/index.ts';
 import { expand_path, resolved_path } from '../environments/paths.ts';
 import { resolve_server_lifecycle_lease_path } from './lease.ts';
 import { ServerLifecycleError } from './contracts.ts';
@@ -30,7 +29,7 @@ export async function resolve_unit_lifecycle_context(
     home: environment.HOME,
     admit_path: paths.admit_path,
   });
-  const explicit = strip(settings.control_socket_path ?? '');
+  const explicit = (settings.control_socket_path ?? '').trim();
   let control_socket_path: string;
   if (explicit) {
     const path = expand_path(explicit, environment.HOME);
@@ -66,7 +65,7 @@ export function application_launch(
   const { environment: values, listener_fd: raw } = lifecycle_launch_settings(environment);
   let listener: ApplicationLaunch['listener'];
   if (raw !== undefined) {
-    const token = strip(raw);
+    const token = raw.trim();
     const fd = Number(token.replaceAll('_', ''));
     if (!/^\+?\d(?:_?\d)*$/.test(token) || !Number.isSafeInteger(fd) || fd < 0)
       throw new ServerLifecycleError('Invalid inherited Panels listener descriptor');

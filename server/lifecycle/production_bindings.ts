@@ -167,7 +167,6 @@ export function default_production_dependencies(): ProductionServerDependencies 
     environments: {
       factory: create_production_environment_operations,
       dependencies: {
-        executor: null,
         application_root: applicationRootFromEnvironment(),
         node_executable: process.execPath,
         admitted_legacy_null_sha: null,

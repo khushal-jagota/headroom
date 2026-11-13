@@ -262,7 +262,11 @@ test('production constructs its real executor and reconciles that executor inven
         stall_sources: () => [],
       },
       environments: {
-        dependencies: { application_root: root, node_executable: process.execPath },
+        dependencies: {
+          application_root: root,
+          node_executable: process.execPath,
+          admitted_legacy_null_sha: null,
+        },
         async factory(current, dependencies) {
           if (!(current.executor instanceof VpsExecutor) || !current.core)
             throw new Error('Production must supply its real invocation executor and core');
