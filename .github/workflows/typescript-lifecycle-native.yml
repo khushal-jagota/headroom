@@ -1,11 +1,15 @@
 name: TypeScript lifecycle native ABI
 
+# Runs after merge and on manual runs only; macOS runners are scarce, so pull
+# requests do not run this workflow.
 on:
-  pull_request:
-    branches: [feature/typescript-backend]
-    types: [opened, synchronize, reopened]
   push:
     branches: [feature/typescript-backend]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
