@@ -27,7 +27,6 @@ import { answer_by } from './item_budget.ts';
 import { as_object, decode_event_arguments, integer_value } from './protocol.ts';
 import { parse_executor_json } from './protocol_json.ts';
 import { JsonNumber, stringify_python_json } from '../core/http/numeric_json.ts';
-import { python_repr } from './protocol_errors.ts';
 import {
   COMMAND_POLL_HOLD_SECONDS,
   LEASE_SERVER_LIMIT_SECONDS,
@@ -262,7 +261,7 @@ export class VpsExecutor {
                 ? String(element).toLowerCase()
                 : typeof element === 'number' || element instanceof JsonNumber
                   ? stringify_python_json(element)
-                  : python_repr(element),
+                  : JSON.stringify(element),
         );
     }
     const target = new URL(read.path, 'http://executor');
