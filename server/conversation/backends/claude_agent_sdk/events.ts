@@ -1,6 +1,7 @@
 /** Native Claude facts enter the unchanged backend event seam here. */
 import { stringify_python_json } from '../../../core/http/numeric_json.ts';
 import { python_truth } from '../../../core/python_truth.ts';
+export { python_truth } from '../../../core/python_truth.ts';
 import { ComposerCatalogEntry, ComposerCatalogEntryKind } from '../../contracts.ts';
 import { PlanEntry, PlanEntryStatus, ToolCallStatus } from '../../events.ts';
 import { text_message_content } from '../../message_content.ts';

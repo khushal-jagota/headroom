@@ -9,7 +9,9 @@ import type { Readable, Writable } from 'node:stream';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
-import { AppValidationError } from './contracts.ts';
+import { AppValidationError, MacArchiveInspectionError, MacArchiveJsonError } from './contracts.ts';
+import type { ArchiveUnpackRequest, MacInspectionFailure } from './contracts.ts';
+import { MAX_MAC_RUNTIME_ARCHIVE_BYTES } from '../updates/mac/configuration.ts';
 import { validate_app_manifest } from './identity.ts';
 import { ArchiveMembers } from './logic/archive_members.ts';
 import { set_archive_times } from './archive_times.ts';
@@ -21,11 +23,40 @@ import {
   ARCHIVE_MAX_MESSAGE_BYTES,
 } from './configuration.ts';
 
-export interface UnpackRequest {
-  spool_root: string;
-  destination: string;
-  archive_sha256: string;
-  expected_sha: string;
+export type UnpackRequest = ArchiveUnpackRequest;
+export function mac_inspection_failure(error: unknown): MacInspectionFailure {
+  if (error instanceof MacArchiveInspectionError)
+    return { type: 'mac-inspection-error', kind: error.kind, message: error.message };
+  if (error instanceof AppValidationError)
+    return { type: 'mac-inspection-error', kind: 'archive', message: error.message };
+  const actual = error instanceof MacArchiveJsonError ? error.original : error;
+  const message = actual instanceof Error ? actual.message : String(actual);
+  const name = actual instanceof Error ? actual.name : 'Error';
+  if (error instanceof MacArchiveJsonError)
+    return { type: 'mac-inspection-error', kind: 'json', name, message };
+  if (
+    actual instanceof Error &&
+    'errno' in actual &&
+    typeof actual.errno === 'number' &&
+    'code' in actual &&
+    typeof actual.code === 'string'
+  ) {
+    const fields: { syscall?: string; path?: string; dest?: string } = {};
+    for (const key of ['syscall', 'path', 'dest'] as const) {
+      const value: unknown = Reflect.get(actual, key);
+      if (typeof value === 'string') fields[key] = value;
+    }
+    return {
+      type: 'mac-inspection-error',
+      kind: 'os',
+      name,
+      message,
+      errno: actual.errno,
+      code: actual.code,
+      ...fields,
+    };
+  }
+  return { type: 'mac-inspection-error', kind: 'unexpected', name, message };
 }
 export async function* read_archive_messages(
   stream: Readable,
@@ -189,85 +220,156 @@ export async function unpack_archive_child(
     pending_reply = reserve_reply();
     fence();
   };
+  const inspection = request.purpose === 'mac-inspection';
   let spool: FileHandle | undefined;
   try {
-    spool = await open(join(request.spool_root, 'expanded.tar'), 'wx+', 0o600);
-    const digest = createHash('sha256');
-    let bytes = 0;
-    for await (const chunk of createReadStream('', {
-      fd: 3,
-      start: 0,
-      autoClose: false,
-      highWaterMark: ARCHIVE_STREAM_CHUNK_BYTES,
-      signal: controller.signal,
-    })) {
+    if (!inspection) spool = await open(join(request.spool_root, 'expanded.tar'), 'wx+', 0o600);
+    const compressed_limit = inspection
+      ? MAX_MAC_RUNTIME_ARCHIVE_BYTES
+      : ARCHIVE_MAX_COMPRESSED_BYTES;
+    let checked_sha256: string;
+    {
+      const receipt = createHash('sha256');
+      let bytes = 0;
+      for await (const chunk of createReadStream('', {
+        fd: 3,
+        start: 0,
+        autoClose: false,
+        highWaterMark: ARCHIVE_STREAM_CHUNK_BYTES,
+        signal: controller.signal,
+      })) {
+        fence();
+        bytes += chunk.length;
+        if (bytes > compressed_limit)
+          throw new AppValidationError('app archive exceeds compressed size limit');
+        receipt.update(chunk);
+      }
       fence();
-      bytes += chunk.length;
-      if (bytes > ARCHIVE_MAX_COMPRESSED_BYTES)
-        throw new AppValidationError('app archive exceeds compressed size limit');
-      digest.update(chunk);
+      if (request.purpose === 'mac-inspection' && bytes !== request.archive_size)
+        throw new MacArchiveInspectionError(
+          'refusal',
+          'The Mac runtime archive size differs from its publication.',
+        );
+      checked_sha256 = receipt.digest('hex');
+      if (checked_sha256 !== request.archive_sha256) {
+        if (request.purpose === 'mac-inspection')
+          throw new MacArchiveInspectionError(
+            'refusal',
+            'The Mac runtime archive differs from its publication.',
+          );
+        throw new AppValidationError('app archive hash differs from publication receipt');
+      }
     }
-    fence();
-    if (digest.digest('hex') !== request.archive_sha256)
-      throw new AppValidationError('app archive hash differs from publication receipt');
-    const reader = new ArchiveMembers();
+    const reader = new ArchiveMembers(inspection ? 'mac-inspection' : 'extraction');
+    const second_digest = createHash('sha256');
     let compressed = 0,
       expanded = 0,
       credit = 0,
       magic = Buffer.alloc(0);
-    const compressed_input = new Transform({
+    const hashing = new Transform({
       transform(chunk: Buffer, _encoding, callback) {
         try {
           compressed += chunk.length;
-          if (compressed > ARCHIVE_MAX_COMPRESSED_BYTES)
+          if (compressed > compressed_limit)
             throw new AppValidationError('app archive exceeds compressed size limit');
           if (magic.length < 2) {
             magic = Buffer.concat([magic, chunk.subarray(0, 2 - magic.length)]);
             if (magic.length === 2 && (magic[0] !== 0x1f || magic[1] !== 0x8b))
               throw new AppValidationError('app archive is not gzip data');
           }
+          second_digest.update(chunk);
           callback(null, chunk);
         } catch (error) {
           callback(error instanceof Error ? error : new Error(String(error)));
         }
       },
     });
-    const gunzip = createGunzip({ chunkSize: ARCHIVE_STREAM_CHUNK_BYTES });
-    await pipeline(
-      createReadStream('', {
-        fd: 3,
-        start: 0,
-        autoClose: false,
-        highWaterMark: ARCHIVE_STREAM_CHUNK_BYTES,
-      }),
-      compressed_input,
-      gunzip,
-      async (source) => {
-        for await (const value of source) {
-          const bytes = Buffer.from(value);
-          if (expanded + bytes.length > ARCHIVE_MAX_EXPANDED_BYTES)
-            throw new AppValidationError('app archive exceeds expanded size limit');
-          reader.feed(bytes);
-          let start = 0;
-          while (start < bytes.length) {
-            if (!credit) {
-              await acknowledge({ type: 'space', bytes: ARCHIVE_SPOOL_BATCH_BYTES });
-              credit = ARCHIVE_SPOOL_BATCH_BYTES;
+    const decoding = createGunzip({ chunkSize: ARCHIVE_STREAM_CHUNK_BYTES });
+    const input_file = createReadStream('', {
+      fd: 3,
+      start: 0,
+      autoClose: false,
+      highWaterMark: ARCHIVE_STREAM_CHUNK_BYTES,
+    });
+    let origin: { source: 'input' | 'decoding' | 'processing'; error: unknown } | undefined;
+    input_file.once('error', (error) => {
+      origin ??= { source: 'input', error };
+    });
+    decoding.once('error', (error) => {
+      origin ??= { source: 'decoding', error };
+    });
+    try {
+      await pipeline(
+        input_file,
+        hashing,
+        decoding,
+        async (source) => {
+          for await (const value of source) {
+            try {
+              const bytes = Buffer.from(value);
+              if (expanded + bytes.length > ARCHIVE_MAX_EXPANDED_BYTES)
+                throw new AppValidationError('app archive exceeds expanded size limit');
+              reader.feed(bytes);
+              if (inspection) {
+                expanded += bytes.length;
+                continue;
+              }
+              let start = 0;
+              while (start < bytes.length) {
+                if (!credit) {
+                  await acknowledge({ type: 'space', bytes: ARCHIVE_SPOOL_BATCH_BYTES });
+                  credit = ARCHIVE_SPOOL_BATCH_BYTES;
+                }
+                const count = Math.min(credit, bytes.length - start);
+                await write_all(spool!, bytes.subarray(start, start + count), expanded);
+                expanded += count;
+                credit -= count;
+                start += count;
+              }
+            } catch (error) {
+              origin ??= { source: 'processing', error };
+              throw error;
             }
-            const count = Math.min(credit, bytes.length - start);
-            await write_all(spool!, bytes.subarray(start, start + count), expanded);
-            expanded += count;
-            credit -= count;
-            start += count;
           }
-        }
-      },
-      { signal: controller.signal },
-    );
+        },
+        { signal: controller.signal },
+      );
+    } catch (error) {
+      // Retain the first origin before pipeline propagates the same error through its peers.
+      const failure = inspection && !controller.signal.aborted && origin ? origin.error : error;
+      if (
+        inspection &&
+        origin?.source === 'decoding' &&
+        origin.error === failure &&
+        !controller.signal.aborted
+      )
+        throw new MacArchiveInspectionError(
+          'archive',
+          failure instanceof Error ? failure.message : String(failure),
+        );
+      throw failure;
+    }
+    if (second_digest.digest('hex') !== checked_sha256) {
+      if (inspection)
+        throw new MacArchiveInspectionError(
+          'refusal',
+          'The Mac runtime archive changed during inspection.',
+        );
+      throw new AppValidationError('app archive changed during extraction');
+    }
     reader.finish();
-    await spool.sync();
+    if (request.purpose === 'mac-inspection') {
+      await write_archive_message(output, {
+        type: 'mac-inspection-result',
+        manifest_bytes: reader.manifest_bytes?.toString('base64') ?? null,
+        python: reader.python,
+      });
+      fence();
+      return;
+    }
+    await spool!.sync();
     await acknowledge({ type: 'validated', expanded_bytes: expanded });
-    await extract_members(spool, request.destination, reader, fence);
+    await extract_members(spool!, request.destination, reader, fence);
     fence();
     const manifest = await validate_app_manifest(join(request.destination, 'manifest.json'), {
       expected_sha: request.expected_sha,
