@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import plistlib
+import shutil
 import subprocess
 import sys
 import time
@@ -96,6 +97,13 @@ def test_release_jobs_read_the_current_app_and_keep_provider_guard(
     executable = provider_bin / "codex"
     executable.write_text("#!/bin/sh\nexit 0\n")
     executable.chmod(0o700)
+    # A provider from nvm also exposes Node. Existing directory-presence checks
+    # do not prove that it cannot replace the required Homebrew runtime.
+    homebrew_bin = tmp_path / "homebrew/bin"
+    homebrew_bin.mkdir(parents=True)
+    for node in (provider_bin / "node", homebrew_bin / "node"):
+        node.write_text("#!/bin/sh\nexit 0\n")
+        node.chmod(0o700)
     monkeypatch.setenv("PATH", str(provider_bin) + os.pathsep + os.environ["PATH"])
     monkeypatch.setenv("PLAN_CLAUDE_EXECUTABLE", str(provider_bin / "custom-claude"))
     normal = tmp_path / "normal home"
@@ -108,8 +116,16 @@ def test_release_jobs_read_the_current_app_and_keep_provider_guard(
     assert normal_job["EnvironmentVariables"]["PLAN_CLAUDE_EXECUTABLE"] == str(
         provider_bin / "custom-claude"
     )
-    assert str(provider_bin) in normal_job["EnvironmentVariables"]["PATH"].split(os.pathsep)
-    assert "/build/icu/bin" not in normal_job["EnvironmentVariables"]["PATH"].split(os.pathsep)
+    provider_path = normal_job["EnvironmentVariables"]["PATH"].split(os.pathsep)
+    assert provider_path.index("/opt/homebrew/bin") < provider_path.index(str(provider_bin))
+    # Substitute a private Homebrew fixture without writes to the host prefix.
+    private_path = os.pathsep.join(
+        str(homebrew_bin) if directory == "/opt/homebrew/bin" else directory
+        for directory in provider_path
+    )
+    assert shutil.which("node", path=private_path) == str(homebrew_bin / "node")
+    assert shutil.which("codex", path=private_path) == str(executable)
+    assert "/build/icu/bin" not in provider_path
     assert guards == [normal / "data"]
     assert "Warning: occupied account skills" in capsys.readouterr().out
 

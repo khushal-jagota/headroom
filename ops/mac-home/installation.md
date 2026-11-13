@@ -13,6 +13,7 @@ Use the darwin arm64 **home** publication, not the Mac executor runtime.
 Obtain its `panels-app.tar.gz`, expected app SHA, and archive SHA256 from the approved publication receipt.
 Use macOS 15 or newer, Node 22 at `/opt/homebrew/bin/node`, and an external Python 3.11 or newer.
 The release jobs use bundled tools, resolved provider CLI directories, common user bins, and standard system directories.
+The Homebrew directory precedes provider directories so that provider installs do not replace the required Node runtime.
 They do not inherit the installation shell PATH. Setup preserves `PLAN_CLAUDE_EXECUTABLE` when the owner supplies it.
 The sealed launchers and jobs suppress Python bytecode writes. The app digest still covers every sealed file.
 The external interpreter remains a host prerequisite for this slice.

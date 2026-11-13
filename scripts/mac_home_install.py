@@ -26,8 +26,11 @@ def provider_search_path(app: Path) -> str:
     providers = [shutil.which(name) for name in ("codex", "claude")]
     directories = [
         str(app / "agent_backends/node_modules/.bin"), str(app / ".venv/bin"),
+        # Provider installs can include their own Node. Keep the required host
+        # runtime ahead of those directories while retaining provider discovery.
+        "/opt/homebrew/bin",
         *(str(Path(path).absolute().parent) for path in providers if path),
-        str(Path.home() / ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin",
+        str(Path.home() / ".local/bin"), "/usr/local/bin",
         "/usr/bin", "/bin", "/usr/sbin", "/sbin",
     ]
     return os.pathsep.join(dict.fromkeys(directories))
