@@ -1,21 +1,38 @@
 /** Manager control is mocked before import; subprocess APIs fail closed in this file. */
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
+import type { OwnedWorkerUnit } from '../../lifecycle/contracts.ts';
 
 const fake = vi.hoisted(() => ({
   control: vi.fn<(...args: string[]) => Promise<readonly [number, string]>>(),
+  retained: new Map<object, { owner: unknown; name: string }>(),
   home: '',
   mounts: '1 0 0:1 / / rw - ext4 /dev/synthetic rw\n',
   spawn: vi.fn(() => {
     throw new Error('Containment tests prohibit all subprocess creation');
   }),
 }));
-vi.mock('./control.ts', () => ({ control: fake.control }));
+vi.mock('./control.ts', () => ({
+  control: fake.control,
+  control_retained: (capability: object, action: string, ...extra: string[]) => {
+    const unit = fake.retained.get(capability);
+    if (!unit) throw new Error('Unregistered test unit cleanup');
+    return Reflect.apply(fake.control, undefined, [unit.owner, action, unit.name, ...extra]);
+  },
+}));
 vi.mock('node:child_process', () => ({
   spawn: fake.spawn,
   exec: fake.spawn,
@@ -41,17 +58,28 @@ vi.mock('node:fs', async (importOriginal) => {
 });
 import { WorkerUnit, WorkerUnitError } from './index.ts';
 import { with_tool_shell_kill_priority, TOOL_SHELL_STARTUP } from '../tool_shell_kill_priority.ts';
+const retain = ChildProcesses.prototype.retain_worker_unit;
 
 beforeEach(() => {
   fake.home = mkdtempSync(`${tmpdir()}/worker-unit-`);
   fake.mounts = '1 0 0:1 / / rw - ext4 /dev/synthetic rw\n';
   fake.control.mockReset();
   fake.spawn.mockClear();
+  fake.retained.clear();
+  vi.spyOn(ChildProcesses.prototype, 'retain_worker_unit').mockImplementation(function (
+    this: ChildProcesses,
+    unit: OwnedWorkerUnit,
+  ) {
+    const capability = retain.call(this, unit);
+    fake.retained.set(capability, { owner: this, name: unit.name });
+    return capability;
+  });
 });
 afterEach(() => {
   expect(fake.spawn).not.toHaveBeenCalled();
   rmSync(fake.home, { recursive: true, force: true });
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
 });
 
 const linux = describe.skipIf(process.platform !== 'linux');
@@ -95,14 +123,32 @@ linux('Worker containment policy, with no service-manager connection', () => {
         child_processes: new ChildProcesses(),
       }),
     ).rejects.toThrow(`Worker temporary storage must use disk: ${fake.home}`);
+    fake.mounts = '1 0 0:1 / / rw - ext4 /dev/synthetic rw\n';
+    let release!: (value: readonly [number, string]) => void;
+    fake.control.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const owner = new ChildProcesses();
+    const before = readdirSync(fake.home);
+    const creating = WorkerUnit.create({ PLAN_TICKET_ID: 'synthetic-worker' }, fake.home, {
+      child_processes: owner,
+    });
+    owner.seal();
+    release([0, 'LoadState=loaded\nCPUWeight=10']);
+    await expect(creating).rejects.toThrow('admission is closed');
+    expect(readdirSync(fake.home)).toEqual(before);
   });
 
   it('keeps private state and exact cleanup handles until stop succeeds', async () => {
     fake.control.mockResolvedValue([0, 'LoadState=loaded\nCPUWeight=10']);
+    const owner = new ChildProcesses();
     const unit = await WorkerUnit.create(
       { PLAN_TICKET_ID: 'synthetic-worker', VALUE: '$`\n' },
       fake.home,
-      { child_processes: new ChildProcesses() },
+      { child_processes: owner },
     );
     expect(unit).not.toBeNull();
     if (unit === null) throw new Error('Expected owned synthetic unit');
@@ -136,6 +182,7 @@ linux('Worker containment policy, with no service-manager connection', () => {
     });
     unit.begin_launch();
     unit.track_wrapper(wrapper as unknown as ChildProcess);
+    owner.seal();
     fake.control.mockReset();
     fake.control
       .mockResolvedValueOnce([0, 'LoadState=loaded'])
@@ -169,9 +216,6 @@ linux('Worker containment policy, with no service-manager connection', () => {
       ['show', unit.name, '--property=LoadState'],
       ['stop', unit.name],
       ['reset-failed', unit.name],
-      ['show', unit.name, '--property=LoadState'],
-      ['stop', unit.name],
-      ['reset-failed', unit.name],
     ]);
     fake.control.mockClear();
     await unit.stop();
@@ -179,9 +223,10 @@ linux('Worker containment policy, with no service-manager connection', () => {
   });
 
   it('retains private files when ownership cannot be inspected', async () => {
+    const name = 'panels-worker-' + 'c'.repeat(32) + '.service';
     const unit = new WorkerUnit({
       child_processes: new ChildProcesses(),
-      name: 'synthetic-owned.service',
+      name,
       directory: `${fake.home}/owned`,
       environment: {},
       working_directory: fake.home,
@@ -192,7 +237,7 @@ linux('Worker containment policy, with no service-manager connection', () => {
     await expect(unit.stop()).rejects.toBeInstanceOf(WorkerUnitError);
     expect(existsSync(unit.directory)).toBe(true);
     expect(fake.control.mock.calls.map(([, ...command]) => command)).toEqual([
-      ['show', 'synthetic-owned.service', '--property=LoadState'],
+      ['show', name, '--property=LoadState'],
     ]);
   });
 

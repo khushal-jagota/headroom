@@ -1,5 +1,6 @@
 /** Observe the real core's save retry through the stalls registry. */
 import { createDatabase } from '../../core/database/index.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../../lifecycle/configuration.ts';
 import { ProcessWaitRegistry } from '../../stalls/registry.ts';
 import { ConversationStore } from '../record/data/store.ts';
 import { ConversationMessageFiles } from '../record/message_files.ts';
@@ -7,6 +8,11 @@ import { SqliteProcessConversationSystem } from '../system.ts';
 import { ConversationStartRequest } from '../contracts.ts';
 import { text_message_content } from '../message_content.ts';
 import { ScriptedChild } from './scripted_child.ts';
+import { model_is_enabled } from '../backend_state.ts';
+import {
+  canonical_ticket_execution_refusal,
+  conversation_execution_refusal,
+} from '../../tickets/execution_admission.ts';
 
 export async function run_wait(database_path: string): Promise<unknown> {
   const database = createDatabase(database_path);
@@ -29,6 +35,12 @@ export async function run_wait(database_path: string): Promise<unknown> {
   };
   const core = new SqliteProcessConversationSystem({
     store,
+    model_is_enabled: (backend, model) =>
+      database.read((sql) => model_is_enabled(sql, backend, model)),
+    execution_refusal: (id) =>
+      database.read((sql) =>
+        conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
+      ),
     message_files: new ConversationMessageFiles(database_path),
     backend_child_factories: { codex: factory, claude: factory, hermes: factory },
     unix_time_now: () => 100,
@@ -87,7 +99,7 @@ export async function run_wait(database_path: string): Promise<unknown> {
     capture('saved');
     return { checkpoints, attempts };
   } finally {
-    await core.shutdown();
+    await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     for (const child of children) await child.terminate();
     await store.finish_writes();
     database.close();

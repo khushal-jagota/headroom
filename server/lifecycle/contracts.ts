@@ -30,7 +30,7 @@ export interface ShutdownState {
   readonly failures: readonly ShutdownFailure[];
 }
 export interface ShutdownOwner {
-  close(options?: StopOptions): Promise<void>;
+  close(options: StopOptions): Promise<void>;
   readonly shutdown_state: ShutdownState;
   /** Actual already-begun work only, without any automatic finalization. */
   readonly shutdown_settled: Promise<void>;
@@ -41,14 +41,19 @@ export interface OwnedWorkerUnit {
   /** Fulfillment confirms inactivity/natural completion or proven never launched. */
   readonly finished: Promise<void>;
 }
+/** Cleanup of one already-retained unit cannot launch new application work. */
+export interface OwnedUnitControl {
+  spawn(action: 'show' | 'stop' | 'reset-failed', extra: readonly string[]): ChildProcess;
+}
 export interface OwnedChildProcesses {
+  seal(): void;
   spawn(
     command: string,
     args: readonly string[],
     options: SpawnOptionsWithoutStdio,
   ): ChildProcessWithoutNullStreams;
   spawn(command: string, args: readonly string[], options: SpawnOptions): ChildProcess;
-  retain_worker_unit(unit: OwnedWorkerUnit): void;
+  retain_worker_unit(unit: OwnedWorkerUnit): OwnedUnitControl;
   settled(): Promise<void>;
   /** All guarded groups, then one bounded exact-owned unit batch. */
   force_kill(force_deadline: number): void;
@@ -84,7 +89,11 @@ export type BackgroundServiceFactory = (
   context: BackgroundCompositionContext,
 ) => ComposedBackgroundService;
 export interface RunningServer {
-  close(): Promise<void>;
+  close(options: StopOptions): Promise<void>;
+}
+export type ShutdownCompletion = (code: 0 | 1) => void;
+export interface ApplicationEntrypoint {
+  start(onShutdownComplete?: ShutdownCompletion): Promise<RunningServer>;
 }
 /** The retained advisory lease shared by environment operators and the future supervisor. */
 export interface LifecycleLease {

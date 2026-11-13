@@ -1,10 +1,10 @@
 import { Runtime as SourceRuntime } from './measure_sources/runtime/supervisor.ts';
 import { observe_shutdown } from './lifecycle/deadline.ts';
 import { ShutdownDeadlineExceeded } from './lifecycle/contracts.ts';
-import { SHUTDOWN_GRACE_SECONDS } from './core/config.ts';
+import type { StopOptions } from './lifecycle/contracts.ts';
 import { SourceScheduleLoop } from './measure_sources/schedule_loop.ts';
 import { build_participants as source_participants } from './measure_sources/scheduling.ts';
-import { routes as previews } from './previews/routes.ts';
+import { createPreviewRoutes } from './previews/routes.ts';
 import { routes as files } from './files/routes.ts';
 import { routes as measures } from './measures/routes.ts';
 import {
@@ -76,6 +76,7 @@ export function createAreasRuntime(
   additionalResourceProviders: () => readonly ResourceProvider[] = () => [],
 ) {
   const conversation = createConversationRuntime();
+  const previews = createPreviewRoutes();
   let publication: SignalPublicationCoordinator | undefined;
   let navigation: ReturnType<typeof createSignalNavigationRuntime> | undefined;
   let recordReady = false;
@@ -90,11 +91,27 @@ export function createAreasRuntime(
   return {
     commitSteps,
     getRuntime: conversation.getRuntime,
+    startRecordReplay(admission?: { readonly closed: boolean }): void {
+      conversation.start_rebuild(admission);
+    },
+    async startRouteServices(): Promise<void> {
+      await navigation!.start();
+      await previews.start();
+    },
+    sealPreviews(): void {
+      previews.seal();
+    },
+    stopPreviews(options: StopOptions, http_actual: Promise<void>): Promise<void> {
+      return previews.stop(options, http_actual);
+    },
+    previewsSettled(): Promise<void> {
+      return previews.settled();
+    },
     bindRuntimeFacts(facts: ConversationViewRuntime['runtime_facts']): void {
       conversation.bind_runtime_facts(facts);
     },
-    prepare(database: Database): void {
-      database.write((tx) => audit_ticket_registry_integrity(tx, { startup: true }));
+    prepare(database: Database) {
+      return database.write((tx) => audit_ticket_registry_integrity(tx, { startup: true }));
     },
     initialize(
       database: Database,
@@ -162,7 +179,7 @@ export function createAreasRuntime(
     },
     get areas(): readonly Area[] {
       return [
-        { prefix: '', routes: previews },
+        { prefix: '', routes: previews.routes },
         { prefix: '/api', routes: measures, admission: measure_admission },
         { prefix: '/api', routes: measureSources, admission: source_admission },
         { prefix: '/api', routes: datasets, admission: measure_admission },
@@ -247,11 +264,9 @@ export function composeAreaLoops(context: OwnedAreaContext, options: AreaLoopOpt
       unsubscribe = context.changes.subscribe(() => wakes?.wake());
       wakes.start(context.config.tick_seconds);
     },
-    stop(options: { deadline?: number } = {}): Promise<void> {
+    stop(options: StopOptions): Promise<void> {
       if (closing) return closing;
-      const stop = {
-        deadline: options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS,
-      };
+      const stop = options;
       const drains: Promise<unknown>[] = [];
       actual_stop = Promise.resolve().then(async () => {
         for (const actual of [() => wakes?.settled(), () => sources?.settled()]) {

@@ -1,5 +1,6 @@
 /** Real-core companion for the fresh Python review-start comparison. */
 import { configure_conversation_start } from '../../runtime/conversation_start.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../../lifecycle/configuration.ts';
 import { createDatabase } from '../../core/database/index.ts';
 import { load_worker_runtime_definitions } from '../../worker_types/configuration.ts';
 import { ConversationStore } from '../record/data/store.ts';
@@ -22,6 +23,11 @@ import type { WakeBatch } from '../../manager_wakes/contracts.ts';
 import { dirname } from 'node:path';
 import { OWNER, CHIEF } from '../../core/contracts.ts';
 import { delivery_fate_json } from '../http.ts';
+import { model_is_enabled } from '../backend_state.ts';
+import {
+  canonical_ticket_execution_refusal,
+  conversation_execution_refusal,
+} from '../../tickets/execution_admission.ts';
 
 interface Spec {
   path: string;
@@ -59,6 +65,12 @@ export async function run(spec: Spec) {
   });
   let core = new SqliteProcessConversationSystem({
     store,
+    model_is_enabled: (backend, model) =>
+      database.read((sql) => model_is_enabled(sql, backend, model)),
+    execution_refusal: (id) =>
+      database.read((sql) =>
+        conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
+      ),
     backend_child_factories: registry.factories,
     message_files: new ConversationMessageFiles(spec.path),
     unix_time_now: () => 100,
@@ -211,11 +223,17 @@ export async function run(spec: Spec) {
       await Promise.all(['c', 'current'].map(async (id) => [id, await registry.inspect(id)])),
     );
     if (spec.case === 'prepare') {
-      await core.shutdown();
+      await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
       await registry.close();
       registry = new ScriptedBackendRegistry();
       core = new SqliteProcessConversationSystem({
         store,
+        model_is_enabled: (backend, model) =>
+          database.read((sql) => model_is_enabled(sql, backend, model)),
+        execution_refusal: (id) =>
+          database.read((sql) =>
+            conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
+          ),
         backend_child_factories: registry.factories,
         message_files: new ConversationMessageFiles(spec.path),
         unix_time_now: () => 100,
@@ -240,7 +258,7 @@ export async function run(spec: Spec) {
       running: await core.is_running('c'),
     };
   } finally {
-    await core.shutdown();
+    await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     await registry.close();
     database.close();
   }

@@ -444,7 +444,11 @@ function retire_obsolete_source_notices(sql: TransactionSql, now: number): void 
 /** The caller uses one silent write transaction for batch construction. */
 export function claim_next_batch(
   sql: TransactionSql,
-  options: { process_token: string; now: number },
+  options: {
+    process_token: string;
+    now: number;
+    target_admitted?: (sql: ReadSql, target: Principal) => boolean;
+  },
 ): WakeBatch | null {
   retire_obsolete_unsent_proposals(sql, options.now);
   retire_obsolete_source_notices(sql, options.now);
@@ -454,11 +458,23 @@ export function claim_next_batch(
     AND NOT EXISTS (SELECT 1 FROM manager_wake_batch_members recent_m
     JOIN manager_wake_batches recent_b ON recent_b.id=recent_m.batch_id
     WHERE recent_m.wake_id=w.id AND recent_b.status IN ('refused','discarded') AND recent_b.updated_at > ?)`;
-  const target = sql.get<{ target_kind: Principal['kind']; target_id: string }>(
-    `SELECT w.target_kind,w.target_id FROM manager_wakes w WHERE ${available}
+  type Target = { target_kind: Principal['kind']; target_id: string };
+  const target =
+    options.target_admitted === undefined
+      ? sql.get<Target>(
+          `SELECT w.target_kind,w.target_id FROM manager_wakes w WHERE ${available}
      ORDER BY w.created_at,w.id LIMIT 1`,
-    [options.now - 5],
-  );
+          [options.now - 5],
+        )
+      : sql
+          .all<Target>(
+            `SELECT w.target_kind,w.target_id FROM manager_wakes w WHERE ${available}
+     ORDER BY w.created_at,w.id`,
+            [options.now - 5],
+          )
+          .find((candidate) =>
+            options.target_admitted!(sql, { kind: candidate.target_kind, id: candidate.target_id }),
+          );
   if (!target) return null;
   const rows = sql.all<Pick<WakeRow, 'id' | 'summary'>>(
     `SELECT w.id,w.summary FROM manager_wakes w

@@ -1,5 +1,6 @@
 /** Attention provenance through the real area composition and scripted core. */
 import { createDatabase } from '../../core/database/index.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../../lifecycle/configuration.ts';
 import { loadConfig } from '../../core/config.ts';
 import { createAreasRuntime } from '../../areas.ts';
 import { SqliteProcessConversationSystem } from '../system.ts';
@@ -10,6 +11,11 @@ import { delivery_fate_json } from '../http.ts';
 import { ScriptedChild } from './scripted_child.ts';
 import { read_summary } from '../../attention/actions.ts';
 import { summary_request } from '../../attention/contracts.ts';
+import { model_is_enabled } from '../backend_state.ts';
+import {
+  canonical_ticket_execution_refusal,
+  conversation_execution_refusal,
+} from '../../tickets/execution_admission.ts';
 
 export async function exercise(spec: {
   database: string;
@@ -42,11 +48,18 @@ export async function exercise(spec: {
   };
   const core = new SqliteProcessConversationSystem({
     store,
+    model_is_enabled: (backend, model) =>
+      database.read((sql) => model_is_enabled(sql, backend, model)),
+    execution_refusal: (id) =>
+      database.read((sql) =>
+        conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
+      ),
     backend_child_factories: { codex: factory, claude: factory, hermes: factory },
     message_files: new ConversationMessageFiles(spec.database),
     unix_time_now: () => now,
     monotonic_now: () => now,
   });
+  areas.startRecordReplay(core.workspace_admission);
   try {
     await core.start_conversation(
       new ConversationStartRequest({
@@ -109,7 +122,7 @@ export async function exercise(spec: {
       ),
     }));
   } finally {
-    await core.shutdown();
+    await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     for (const child of children) await child.terminate();
     await areas.closeRecord();
     database.close();

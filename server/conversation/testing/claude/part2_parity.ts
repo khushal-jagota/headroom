@@ -1,5 +1,6 @@
 /** Real TS core + real Claude SDK + one owned local scripted CLI. */
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../../../lifecycle/configuration.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { readFileSync } from 'node:fs';
 import { createDatabase } from '../../../core/database/index.ts';
@@ -11,6 +12,11 @@ import { AgentMessageDeltaFrame, UserInputAnswer } from '../../events.ts';
 import { text_message_content } from '../../message_content.ts';
 import { delivery_fate_json } from '../../http.ts';
 import { install_owned_launch_boundary, selected_node_executable } from './part2_containment.ts';
+import { model_is_enabled } from '../../backend_state.ts';
+import {
+  canonical_ticket_execution_refusal,
+  conversation_execution_refusal,
+} from '../../../tickets/execution_admission.ts';
 
 export interface Part2Spec {
   database: string;
@@ -61,6 +67,12 @@ export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
   let liveTarget: 'plain' | 'resume' | null = 'plain';
   const core = new SqliteProcessConversationSystem({
     store,
+    model_is_enabled: (backend, model) =>
+      database.read((sql) => model_is_enabled(sql, backend, model)),
+    execution_refusal: (id) =>
+      database.read((sql) =>
+        conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
+      ),
     backend_child_factories: { claude: factory, codex: factory, hermes: factory },
     message_files: new ConversationMessageFiles(spec.database),
     unix_time_now: () => 100,
@@ -306,7 +318,7 @@ export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
       else crashSeconds = (performance.now() - started) / 1000;
     }
   } finally {
-    await core.shutdown();
+    await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     database.close();
     restoreLaunchBoundary();
   }

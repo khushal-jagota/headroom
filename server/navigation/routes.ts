@@ -1,7 +1,7 @@
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
-import type { AreaServices } from '../core/authority/register.ts';
+import type { AreaServices, PreparedAreaRoutes } from '../core/authority/register.ts';
 import type {
   CurrentAuthority,
   CurrentViewSnapshot,
@@ -100,17 +100,23 @@ function capture(
     throw new NavigationUnavailable((error as Error).message);
   }
 }
-export function createRoutes(): FastifyPluginAsync<AreaServices> {
-  return async (app, services) => {
+export function createRoutes(): PreparedAreaRoutes {
+  let begin: (() => void) | undefined;
+  let started = false;
+  const routes: FastifyPluginAsync<AreaServices> = async (app, services) => {
     const delivery = new ScopedDelivery(services.database, install_request_lifetime(app));
     const fences = new SnapshotFences(app);
-    app.addHook('onReady', async () => {
+    let closed = false;
+    begin = () => {
+      if (closed) throw new Error('Navigation delivery is shut down');
       delivery.start();
-    });
+    };
     app.addHook('onClose', async () => {
+      closed = true;
       delivery.close();
     });
     app.addHook('preClose', async () => {
+      closed = true;
       delivery.close();
     });
     app.get('/snapshot', async (request, reply) => {
@@ -195,5 +201,14 @@ export function createRoutes(): FastifyPluginAsync<AreaServices> {
         .type('text/plain; charset=utf-8')
         .send(Readable.from(chunks()));
     });
+  };
+  return {
+    routes,
+    start() {
+      if (started) throw new Error('Navigation delivery already started');
+      if (!begin) throw new Error('Navigation routes are not registered');
+      started = true;
+      begin();
+    },
   };
 }

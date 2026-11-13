@@ -4,7 +4,6 @@ import { lstatSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { resolved_path } from '../paths.ts';
 import type { ChangeSignal } from '../../core/changes/index.ts';
-import { SHUTDOWN_GRACE_SECONDS } from '../../core/config.ts';
 import type { StopOptions } from '../../lifecycle/contracts.ts';
 import { observe_shutdown } from '../../lifecycle/deadline.ts';
 import { build_worker_runtime_definitions } from '../../worker_types/configuration.ts';
@@ -364,9 +363,9 @@ export class UpdateService {
   settled(): Promise<void> {
     return this.shutdown_settlement ?? Promise.allSettled([...this.work]).then(() => {});
   }
-  stop(options?: StopOptions): Promise<void> {
+  stop(options: StopOptions): Promise<void> {
     if (this.stopping) return this.stopping;
-    const deadline = options?.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
+    const deadline = options.deadline;
     this.running = false;
     this.incarnation++;
     if (this.observer !== null) clearInterval(this.observer);

@@ -43,7 +43,7 @@ export async function install_owned_launch_boundary(spec: Part2Spec): Promise<()
     fork: childProcess.fork,
   };
   const metadata = `${spec.trace}.wrapped.json`;
-  const name = 'unit18-synthetic-contained.service';
+  const name = 'panels-worker-' + '3'.repeat(32) + '.service';
   const directory = `${spec.workspace}/contained-unit`;
   const denied = (): never => {
     throw new Error('Unexpected process API in the owned CLI proof');
@@ -114,6 +114,8 @@ export async function install_owned_launch_boundary(spec: Part2Spec): Promise<()
     unit.stop = async () => {
       if (stopped) return;
       stopped = true;
+      // The fence delegates only the owned script. No real service was launched.
+      unit.launch_failed_before_spawn();
       appendFileSync(spec.trace, `${JSON.stringify({ kind: 'contained-stop', name })}\n`);
       rmSync(directory, { recursive: true, force: true });
     };

@@ -63,7 +63,7 @@ export async function run_part1_parity(spec: StartupSpec): Promise<unknown> {
         const temporary = `${item.unit_directory}/t`;
         const unit = new WorkerUnit({
           child_processes: ownership.child_processes,
-          name: 'panels-unit17-synthetic.service',
+          name: 'panels-worker-' + '1'.repeat(32) + '.service',
           directory: item.unit_directory,
           environment: { ...environment, TMPDIR: temporary, TMP: temporary, TEMP: temporary },
           working_directory,

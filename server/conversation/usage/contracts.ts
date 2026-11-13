@@ -4,6 +4,7 @@
  * The frontend projection's extensionless imports require bundler resolution.
  */
 import type { BackendStateStore } from '../backend_state.ts';
+import type { StopOptions } from '../../lifecycle/contracts.ts';
 export type NonNegativeInt = number;
 export type TrimmedNonEmptyString = string;
 export type IsoDateTime = string;
@@ -142,7 +143,7 @@ export interface UsageServiceOptions {
 export interface RecordedUsageService {
   readSummary(input: UsageSummaryInput): Promise<UsageSummary>;
   refreshRates(): Promise<UsagePricing>;
-  finish_operations(options?: { readonly deadline?: number }): Promise<void>;
+  finish_operations(options: StopOptions): Promise<void>;
   /** Actual resource completion, independent of a timed-out stop observer. */
   settled(): Promise<void>;
   /** Shared absolute monotonic deadline, in performance.now()/1000 seconds. */

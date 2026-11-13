@@ -326,7 +326,7 @@ test('poll hook, in-flight deduplication, and shutdown share one loop owner', as
   expect(loop.poll_once()).toEqual([]);
   await loop.drain();
   expect(loop.poll_once()).toEqual([]);
-  await loop.stop();
+  await loop.stop({ deadline: performance.now() / 1000 + 1 });
   expect(loop.poll_once()).toEqual([]);
 });
 test('production composition requires opt-in and dispatcher ownership; test mode never polls automatically', async () => {
@@ -365,7 +365,7 @@ test('production composition requires opt-in and dispatcher ownership; test mode
   await new Promise((resolve) => setImmediate(resolve));
   await loops.worker_step_readiness_loop!.drain();
   expect(read(db, next.id).worker_step_claim).toBe('out');
-  await loops.stop();
+  await loops.stop({ deadline: performance.now() / 1000 + 1 });
   const last = create(db);
   changes.emit();
   await new Promise((resolve) => setImmediate(resolve));
@@ -378,18 +378,26 @@ test('the readiness test route refuses a missing test conversation system', asyn
   const db = fixture();
   const ticket = create(db);
   const app = Fastify();
-  await app.register(readinessTestRoutes.routes, {
-    database: db,
-    config: loadConfig('/missing-worker-test-config', { PLAN_TEST_MODE: '1' }),
-    clock: new TestClock('2026-07-04T10:00:00+00:00'),
-    identity: () => ({ principal: OWNER, conversationId: null }),
-  });
+  let stop: { deadline: number } | undefined;
+  await app.register(
+    readinessTestRoutes(() => {
+      if (!stop) throw new Error('Isolated readiness host has not begun shutdown');
+      return stop;
+    }).routes,
+    {
+      database: db,
+      config: loadConfig('/missing-worker-test-config', { PLAN_TEST_MODE: '1' }),
+      clock: new TestClock('2026-07-04T10:00:00+00:00'),
+      identity: () => ({ principal: OWNER, conversationId: null }),
+    },
+  );
   try {
     const result = await app.inject({ method: 'POST', url: '/readiness' });
     expect(result.statusCode).toBe(400);
     expect(result.json().message).toContain('require a test conversation system');
     expect(read(db, ticket.id).worker_step_claim).toBe('none');
   } finally {
+    stop = { deadline: performance.now() / 1000 + 1 };
     await app.close();
   }
 });
@@ -438,7 +446,7 @@ test('an unanswered compaction sends one queued notice and an uncertain notice p
     ),
   );
   expect(loop.tell_every_worker_that_lost_its_memory()).toEqual([]);
-  await loop.stop();
+  await loop.stop({ deadline: performance.now() / 1000 + 1 });
 });
 
 // Gap: normal drain cases cannot prove that a stalled provider permits loop shutdown.
