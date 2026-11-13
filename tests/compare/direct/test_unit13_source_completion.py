@@ -58,27 +58,21 @@ TABLES = {
 }
 
 
-def test_unit13_source_completion(
-    tmp_path: Path, request: pytest.FixtureRequest
-) -> None:
+def test_unit13_source_completion(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     started = time.perf_counter()
     with (
         synthetic_home_environment(create_synthetic_homes(tmp_path)),
         closing(connect(str(tmp_path / "seed.sqlite"))) as conn,
     ):
         create_schema(conn)
-        manager_id, _ = _item_and_ticket(
-            conn, FakeClock(datetime.fromtimestamp(NOW, UTC))
-        )
+        manager_id, _ = _item_and_ticket(conn, FakeClock(datetime.fromtimestamp(NOW, UTC)))
         source, measure = configured_source(conn)
         item = dataset(conn, source.id)
         source = data.read_source(conn, source.id)
         assert source.active_script is not None
         metrics = RunMetrics(0, 0, 0, 1, 0)
 
-        def result(
-            value: float | None, *, gap: bool = False, invalid: bool = False
-        ) -> RunResult:
+        def result(value: float | None, *, gap: bool = False, invalid: bool = False) -> RunResult:
             scalar = CandidateObservation(
                 measure.id,
                 "2026-10-26",
@@ -101,9 +95,7 @@ def test_unit13_source_completion(
                 labels={"region": {"de": "Deutschland"}},
             )
             if invalid:
-                candidate = CandidateDatasetResult(
-                    "foreign", "2026-10-26", (), float(NOW)
-                )
+                candidate = CandidateDatasetResult("foreign", "2026-10-26", (), float(NOW))
             return RunResult((scalar,), None, metrics, (candidate,))
 
         phases: list[dict[str, Any]] = []
@@ -190,9 +182,7 @@ def test_unit13_source_completion(
                     conn,
                     source.id,
                     SourceScriptBody(
-                        expected_revision=data.read_source(
-                            conn, source.id
-                        ).source_revision,
+                        expected_revision=data.read_source(conn, source.id).source_revision,
                         text="changed script",
                     ),
                     principal=OWNER_PRINCIPAL,
@@ -203,9 +193,7 @@ def test_unit13_source_completion(
             else:
                 claimed = run_actions.claim_run(conn, phase["run_id"], now=NOW)
                 if claimed and phase.get("result_json"):
-                    value = next(
-                        value for name, value, _ in values if name == phase["name"]
-                    )
+                    value = next(value for name, value, _ in values if name == phase["name"])
                     outcome = asdict(
                         run_actions.complete_run(conn, phase["run_id"], value, now=NOW)
                     )
@@ -216,17 +204,13 @@ def test_unit13_source_completion(
                     "tables": {
                         table: [
                             dict(row)
-                            for row in conn.execute(
-                                f"SELECT * FROM {table} ORDER BY {order}"
-                            )
+                            for row in conn.execute(f"SELECT * FROM {table} ORDER BY {order}")
                         ]
                         for table, order in TABLES.items()
                     },
                     "current_notices": [
                         notice_is_current(conn, row)
-                        for row in conn.execute(
-                            "SELECT * FROM manager_wakes ORDER BY id"
-                        )
+                        for row in conn.execute("SELECT * FROM manager_wakes ORDER BY id")
                     ],
                 }
             )
@@ -267,13 +251,20 @@ def test_unit13_source_completion(
         "equal": actual == expected,
         "python": expected,
         "typescript": actual,
+        "accepted_differences": {"manager_wakes.summary": "Source names use native JSON quotes."},
         "seconds": time.perf_counter() - started,
     }
     destination = request.config.getoption("--compare-report-dir")
     if destination:
         folder = Path(destination)
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / "unit13-source-completion.json").write_text(
-            json.dumps(report, indent=2) + "\n"
-        )
-    assert actual == expected
+        (folder / "unit13-source-completion.json").write_text(json.dumps(report, indent=2) + "\n")
+    native_expected = json.loads(json.dumps(expected))
+    for phase in native_expected:
+        for wake in phase["tables"]["manager_wakes"]:
+            wake["summary"] = wake["summary"].replace(
+                f"Measure source {source.name!r} in ",
+                f"Measure source {json.dumps(source.name, ensure_ascii=False)} in ",
+                1,
+            )
+    assert actual == native_expected

@@ -51,7 +51,7 @@ it('keeps parent text order around tools while dropping thought text and nested 
   expect(JSON.stringify(events)).not.toContain('nested');
   expect(events[0].event).toMatchObject({ content: [{ text: 'before' }] });
   expect(events[2].event).toMatchObject({
-    detail: '{"todos": [{"content": "Step", "status": "pending"}]}',
+    detail: '{"todos":[{"content":"Step","status":"pending"}]}',
   });
   expect(events[4].event).toMatchObject({ content: [{ text: 'after' }] });
 });

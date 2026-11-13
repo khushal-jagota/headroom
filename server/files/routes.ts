@@ -26,7 +26,7 @@ import {
   filesRoot,
 } from './logic/paths.ts';
 import { ownerRoot, writeText, deleteFile } from './managed_files.ts';
-import { inventory, pythonJson } from './catalog/inventory.ts';
+import { inventory } from './catalog/inventory.ts';
 import { linked } from './catalog/read.ts';
 import { PAGE_SIZE, PAGE_MAX_BYTES } from './catalog/config.ts';
 const INLINE = new Set([
@@ -250,7 +250,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
       const entries = [];
       let used = 0;
       for (const row of window) {
-        const size = Buffer.byteLength(pythonJson(row));
+        const size = Buffer.byteLength(JSON.stringify(row));
         if (used + size > PAGE_MAX_BYTES) {
           if (!entries.length)
             throw new PlannerError('validation', 'artifact metadata exceeds page budget', {});

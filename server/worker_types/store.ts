@@ -9,34 +9,6 @@ import type {
 } from './contracts.ts';
 import { validate_definition, validate_workflow } from './registry.ts';
 
-/** json.dumps separators and Unicode handling are part of stored row parity. */
-export function python_json_dumps(value: unknown, sort_keys = false, ensure_ascii = false): string {
-  const encode = (item: unknown): string => {
-    if (Array.isArray(item)) return '[' + item.map(encode).join(', ') + ']';
-    if (item !== null && typeof item === 'object') {
-      const record = item as Record<string, unknown>;
-      const keys = Object.keys(record);
-      if (sort_keys)
-        keys.sort((a, b) => {
-          const left = Array.from(a, (c) => c.codePointAt(0)!),
-            right = Array.from(b, (c) => c.codePointAt(0)!);
-          for (let i = 0; i < Math.min(left.length, right.length); i++)
-            if (left[i] !== right[i]) return left[i] - right[i];
-          return left.length - right.length;
-        });
-      return '{' + keys.map((k) => encode(k) + ': ' + encode(record[k])).join(', ') + '}';
-    }
-    const result = JSON.stringify(item);
-    if (result === undefined) throw new TypeError('not JSON serializable');
-    return ensure_ascii
-      ? result.replace(
-          /[\u007f-\uffff]/g,
-          (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'),
-        )
-      : result;
-  };
-  return encode(value);
-}
 const fail = (message: string, detail: Record<string, unknown> = {}): never => {
   throw new PlannerError('validation', message, detail);
 };
@@ -116,7 +88,7 @@ function profile(raw: unknown): WorkerProfile {
   };
 }
 export function definition_to_json(definition: WorkerTypeDefinition): string {
-  return python_json_dumps({
+  return JSON.stringify({
     worker_type: definition.worker_type,
     label: definition.label,
     guidance: definition.guidance,
@@ -229,7 +201,7 @@ export function workflow_from_preset(definition: WorkerTypeDefinition): TicketWo
   };
 }
 export function workflow_to_json(definition: TicketWorkflowDefinition): string {
-  return python_json_dumps({
+  return JSON.stringify({
     label: definition.label,
     guidance: definition.guidance,
     stages: definition.stages,

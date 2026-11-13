@@ -1,7 +1,6 @@
 /** Fresh-Python direct proofs. No production module imports this driver. */
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { loadConfig, testModeFromEnvironment } from '../core/config.ts';
 import { assert_test_database_path } from '../core/test_paths.ts';
@@ -12,67 +11,11 @@ import {
 import { http_get_usage } from '../conversation/backend_usage/http.ts';
 import { production_backend_providers } from '../conversation/snapshot/production.ts';
 import type { CodexProviderContext } from '../conversation/backends/codex_app_server/providers.ts';
-import {
-  definition_from_json,
-  definition_to_json,
-  workflow_from_preset,
-  workflow_to_json,
-} from '../worker_types/store.ts';
-import {
-  values_to_json,
-  proposal_to_json,
-  approvals_to_json,
-} from '../tickets/logic/fields_codec.ts';
-import { inventory, pythonJson } from '../files/catalog/inventory.ts';
 import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
 
 const [mode, argument] = process.argv.slice(2);
 let result: unknown;
-if (mode === 'serializers') {
-  const definitions = JSON.parse(
-    readFileSync(
-      new URL('../../src/planner/worker_types/shipped_worker_types.json', import.meta.url),
-      'utf8',
-    ),
-  ) as unknown[];
-  const definition = definition_from_json(JSON.stringify(definitions[0]));
-  const directory = join(argument, 'catalog');
-  mkdirSync(directory);
-  writeFileSync(join(directory, 'résumé.txt'), 'synthetic');
-  const catalog = await inventory(directory, '/files/tickets/synthetic/');
-  const examples = [
-    { encoded: definition_to_json(definition), sorted: false },
-    { encoded: values_to_json({ brief: 'Résumé' }), sorted: false },
-    {
-      encoded: proposal_to_json({
-        field: 'brief',
-        body: 'Résumé',
-        proposed_by: 'ticket_synthetic',
-        created_at: 123,
-      })!,
-      sorted: false,
-    },
-    {
-      encoded: approvals_to_json({
-        brief: {
-          method: 'explicit_accept',
-          principal: { kind: 'owner', id: 'owner' },
-          display_label: 'Khushal',
-        },
-      }),
-      sorted: false,
-    },
-    { encoded: workflow_to_json(workflow_from_preset(definition)), sorted: false },
-    { encoded: pythonJson(catalog.directories, true), sorted: true },
-    ...Object.values(catalog.directories)
-      .flat()
-      .map((entry) => ({ encoded: pythonJson(entry), sorted: false })),
-  ];
-  result = examples.map((example) => ({
-    ...example,
-    value: JSON.parse(example.encoded) as unknown,
-  }));
-} else if (mode === 'guards') {
+if (mode === 'guards') {
   delete process.env.VITEST;
   delete process.env.PYTEST_CURRENT_TEST;
   process.env.PLAN_TEST_MODE = argument;

@@ -54,24 +54,6 @@ def _node(tmp_path: Path, mode: str, argument: str = "", payload: Any = None) ->
     return json.loads(completed.stdout)
 
 
-def test_cross_area_actual_serializer_payloads_match_python(tmp_path: Path) -> None:
-    # Real definitions and inventory projections prove the reachable payload shape.
-    examples = _node(tmp_path, "serializers", str(tmp_path))
-
-    def no_floats(value: Any) -> bool:
-        if isinstance(value, float):
-            return False
-        if isinstance(value, dict):
-            return all(no_floats(item) for item in value.values())
-        if isinstance(value, list):
-            return all(map(no_floats, value))
-        return True
-
-    for example in examples:
-        assert no_floats(example["value"])
-        assert example["encoded"] == json.dumps(
-            example["value"], ensure_ascii=False, sort_keys=example["sorted"]
-        )
 
 
 def test_cross_area_all_truthy_spellings_close_io_doors(tmp_path: Path) -> None:

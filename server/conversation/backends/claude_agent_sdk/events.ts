@@ -1,5 +1,4 @@
 /** Native Claude facts enter the unchanged backend event seam here. */
-import { stringify_python_json } from '../../../core/http/numeric_json.ts';
 import { python_truth } from '../../../core/python_truth.ts';
 export { python_truth } from '../../../core/python_truth.ts';
 import { ComposerCatalogEntry, ComposerCatalogEntryKind } from '../../contracts.ts';
@@ -92,7 +91,7 @@ function joined_text(values: readonly unknown[]): string {
 export function canonical_json(value: unknown): string | null {
   if (!python_truth(value)) return null;
   try {
-    return stringify_python_json(value, { sort_keys: true, ensure_ascii: false });
+    return JSON.stringify(value);
   } catch {
     return display_text(value);
   }
