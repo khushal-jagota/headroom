@@ -426,6 +426,12 @@ Later stops retry retained native cleanup but cannot turn that known failed join
 A combined diagnostic preserves command and cleanup messages. Each wire error detail keeps the existing Unicode character bound.
 Ordinary successful stops keep Python behavior.
 
+### Lossy live notifications
+
+The Manager requires sender failures to drop live notifications and log once, with no live delivery from retired children.
+Python forwards its sender's exception and has no retired-child check on this live path.
+TypeScript validates the live payload through the shared wire boundary before the best-effort send.
+
 ## Mac canonical skill publication ownership and durability
 
 The Manager accepted these Mac-only safety differences during PR 817 source review on November 13, 2026.
