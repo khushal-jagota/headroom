@@ -2,7 +2,8 @@
 import { createHash } from 'node:crypto';
 import { constants, createReadStream } from 'node:fs';
 import { access, lstat, readdir, readFile, readlink, stat } from 'node:fs/promises';
-import { dirname, extname, isAbsolute, join, relative, sep } from 'node:path';
+import { dirname, extname, join, relative, sep } from 'node:path';
+import { inside } from '../ticket_scratch/logic.ts';
 import type { AppManifest, AppValidationOptions, RuntimeContract } from './contracts.ts';
 import { AppValidationError } from './contracts.ts';
 import {
@@ -55,12 +56,9 @@ export async function app_tree_paths(root: string): Promise<string[]> {
   await visit(root);
   return paths;
 }
-function descendant(root: string, path: string): boolean {
-  const suffix = relative(root, path);
-  return suffix !== '' && suffix !== '..' && !suffix.startsWith('..' + sep) && !isAbsolute(suffix);
-}
 async function assert_link(root: string, path: string): Promise<void> {
-  if (!descendant(root, await resolved_path(path)))
+  const actual = await resolved_path(path);
+  if (actual === root || !inside(actual, root))
     throw new AppValidationError('app contains a symlink outside its root');
 }
 async function digest_tree(

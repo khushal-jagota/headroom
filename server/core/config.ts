@@ -4,6 +4,7 @@ import { load_apns_config } from '../notifications/config.ts';
 import { readFileSync, existsSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { PlannerError } from './contracts.ts';
 import { strip } from './whitespace.ts';
@@ -12,6 +13,49 @@ export const SSE_HEARTBEAT_MS = 15000;
 export const DB_BUSY_TIMEOUT_MS = 5000;
 export { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 export const MAX_CONVERSATION_SEND_REQUEST_BYTES = 20 * 1024 * 1024;
+/** Only these explicit host inputs cross the installed application launcher boundary. */
+export const EXTERNAL_RUNTIME_ENVIRONMENT_KEYS: ReadonlySet<string> = new Set([
+  'HOME',
+  'LOGNAME',
+  'PATH',
+  'SHELL',
+  'LANG',
+  'TERM',
+  'TMPDIR',
+  'USER',
+  'XDG_RUNTIME_DIR',
+  'DBUS_SESSION_BUS_ADDRESS',
+  'PLAN_CONFIG_PATH',
+  'PLAN_DB_PATH',
+  'PLAN_PORT',
+  'PLAN_BOUNDARY_HOUR',
+  'PLAN_TICK_SECONDS',
+  'PLAN_DISPATCH_ENABLED',
+  'PLAN_DISPATCHER_LOCK_PATH',
+  'PLAN_LOGS_DIR',
+  'PLAN_BACKUP_DIR',
+  'PLAN_TRUSTED_INGRESS_PROVIDER',
+  'PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN',
+  'PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN',
+  'PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS',
+  'PLAN_GROQ_API_KEY',
+  'PLAN_APNS_KEY_PATH',
+  'PLAN_APNS_KEY_ID',
+  'PLAN_APNS_TEAM_ID',
+  'PLAN_APNS_BUNDLE_IDS',
+  'PLAN_HERMES_HOME',
+  'PLAN_HERMES_PYTHON',
+  'PLAN_CLAUDE_EXECUTABLE',
+  'PLAN_SERVER_CONTROL_SOCKET',
+  'PLAN_UPDATE_REPOSITORY',
+  'PLAN_UPDATE_TOKEN_FILE',
+  'ANTHROPIC_API_KEY',
+  'OPENAI_API_KEY',
+  'GOOGLE_API_KEY',
+  // TS's explicit lifecycle address must survive the first launcher boundary.
+  'PLAN_SERVER_LIFECYCLE_LEASE_PATH',
+  'PLAN_SERVER_LISTENER_FD',
+]);
 export interface Config {
   apns?: APNsConfig | null;
   db_path: string;
@@ -59,9 +103,14 @@ export function parseConfigBoolean(
 export function testModeFromEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
   return parseConfigBoolean(env.PLAN_TEST_MODE ?? '0', 'test_mode');
 }
+/** Application evidence has the same environment-only selector as Python. */
+export function applicationRootFromEnvironment(env: NodeJS.ProcessEnv = process.env): string {
+  return env.PLAN_APP_ROOT ?? fileURLToPath(new URL('../../', import.meta.url));
+}
 export function loadConfig(
   path: string | undefined = undefined,
   env: NodeJS.ProcessEnv = process.env,
+  paths: { readonly home?: string; readonly admit_path?: (path: string) => string } = {},
 ): Config {
   const refusalFlag = env.PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS ?? '0';
   const refuse_unidentified_agent_calls = parseConfigBoolean(
@@ -71,6 +120,7 @@ export function loadConfig(
   );
   if (env === process.env) delete process.env.PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS;
   path ??= env.PLAN_CONFIG_PATH ?? 'config.yaml';
+  path = paths.admit_path?.(path) ?? path;
   const file: unknown = existsSync(path) ? parse(readFileSync(path, 'utf8')) : {};
   if (file !== null && (typeof file !== 'object' || Array.isArray(file)))
     throw new PlannerError('validation', `config root must be a mapping: ${path}`);
@@ -98,10 +148,17 @@ export function loadConfig(
     if (v == null) return null;
     if (typeof v !== 'string' || !v.trim())
       throw new PlannerError('validation', `invalid ${key}: ${pythonRepr(v)}`);
-    const expanded = v === '~' ? homedir() : v.startsWith('~/') ? join(homedir(), v.slice(2)) : v;
+    // Partial-env callers keep their existing ambient default unless home is explicit.
+    const directory_home = paths.home === '' ? '/' : paths.home;
+    const expanded =
+      v === '~'
+        ? (directory_home ?? homedir())
+        : v.startsWith('~/')
+          ? join(directory_home ?? homedir(), v.slice(2))
+          : v;
     try {
       if (!isAbsolute(expanded)) throw new Error('the path must be absolute');
-      const result = realpathSync(expanded);
+      const result = realpathSync(paths.admit_path?.(expanded) ?? expanded);
       if (!statSync(result).isDirectory())
         throw new Error('the path must be an existing directory');
       return result;
