@@ -194,7 +194,13 @@ export class MacOutboxSender {
         this.options.warn(
           `Outbox delivery failed for ${conversation_id}: ${error instanceof Error ? error.name : 'Error'}`,
         );
-        await sleep(delay * 1000, undefined, { signal: this.cancellation.signal });
+        await sleep(delay * 1000, undefined, { signal: this.cancellation.signal }).catch(
+          (error: unknown) => {
+            if (error instanceof Error && error.cause === this.cancellation.signal.reason)
+              throw this.cancellation.signal.reason;
+            throw error;
+          },
+        );
         delay =
           error instanceof RetryLater
             ? OUTBOX_RETRY_INITIAL_SECONDS
@@ -213,6 +219,10 @@ export class MacOutboxSender {
           this.options.warn(`Outbox scan failed: ${error instanceof Error ? error.name : 'Error'}`);
           await sleep(OUTBOX_RETRY_INITIAL_SECONDS * 1000, undefined, {
             signal: this.cancellation.signal,
+          }).catch((error: unknown) => {
+            if (error instanceof Error && error.cause === this.cancellation.signal.reason)
+              throw this.cancellation.signal.reason;
+            throw error;
           });
           continue;
         }
