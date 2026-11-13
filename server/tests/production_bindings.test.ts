@@ -213,7 +213,9 @@ test('real bindings share owners and durable memory while Hermes cleanup retains
     base_stop.mockImplementationOnce(async () => {
       throw retry_failure;
     });
-    await expect(owned_http.shutdown!(firstStop)).rejects.toMatchObject({ errors: [retry_failure] });
+    await expect(owned_http.shutdown!(firstStop)).rejects.toMatchObject({
+      errors: [retry_failure],
+    });
     let raw_settled = false;
     void owned_http.settled().then(
       () => {
