@@ -20,9 +20,6 @@ export function finished(ticket_id: string, states: TicketStates, now: number): 
   const state = states.get(ticket_id);
   return state === undefined || (state[0] === 'done' && state[1] <= now - SETTLE_SECONDS);
 }
-export function inside(path: string, root: string): boolean {
-  return path === root || path.startsWith(root.endsWith('/') ? root : root + '/');
-}
 /** Python sorts Unicode code points and compares Path components separately. */
 export function compare_strings(left: string, right: string): number {
   const a = Array.from(left, (value) => value.codePointAt(0)!);

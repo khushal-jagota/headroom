@@ -1,7 +1,8 @@
 /** Cheap local validation and metadata observations. No byte copies or full flushes. */
 import { lstatSync } from 'node:fs';
 import type { BigIntStats } from 'node:fs';
-import { isAbsolute, join, relative } from 'node:path';
+import { join } from 'node:path';
+import { path_is_within } from '../../core/path_containment.ts';
 import { resolve_path_sync } from '../../core/path_resolution.ts';
 
 /** Local inode metadata, not an executor wire type. */
@@ -42,8 +43,7 @@ export function contained_path(root: string, relative_path: string): string {
     if (is_symlink(current)) throw file_error('artifact path contains symlink');
   }
   if (current.includes('\0')) throw file_error('lstat: embedded null character in path');
-  const rel = relative(resolve_path_sync(root), resolve_path_sync(current));
-  if (rel === '..' || rel.startsWith('../') || isAbsolute(rel))
+  if (!path_is_within(resolve_path_sync(root), resolve_path_sync(current)))
     throw file_error('artifact path escapes root');
   return current;
 }

@@ -1,5 +1,6 @@
 import { readdir, rm, unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import { path_is_within } from '../../core/path_containment.ts';
 import { MERGE_TARGET, NOT_DESCENDED, STATUS_OPTIONS } from './configuration.ts';
 import type {
   ScratchLayout,
@@ -16,13 +17,7 @@ import {
   list_worktrees,
   read_ticket_states_from,
 } from './collect.ts';
-import {
-  compare_paths,
-  finished,
-  inside,
-  ticket_id_of_branch,
-  ticket_id_of_path,
-} from './logic.ts';
+import { compare_paths, finished, ticket_id_of_branch, ticket_id_of_path } from './logic.ts';
 
 async function* git_checkouts(root: string, options: ScratchPassOptions): AsyncGenerator<string> {
   options.signal?.throwIfAborted();
@@ -48,7 +43,7 @@ async function reason_to_keep(
 ): Promise<string | null> {
   const info = await entry_stat(entry);
   if (!info?.isDirectory() || info.isSymbolicLink()) return null;
-  const registered = worktrees.filter((worktree) => inside(worktree.path, entry));
+  const registered = worktrees.filter((worktree) => path_is_within(entry, worktree.path));
   for (const worktree of registered) {
     for (const owner of [ticket_id_of_path(worktree.path), ticket_id_of_branch(worktree.branch)]) {
       if (owner !== null && !finished(owner, states, now))
