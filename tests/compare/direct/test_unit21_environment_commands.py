@@ -23,6 +23,7 @@ from typing import Any
 import click
 import pytest
 from tests.compare.direct.test_unit21_status import _seed
+from tests.compare.direct.unit20_metadata import declarations
 from tests.support.synthetic_homes import create_synthetic_homes
 from tests.unit.test_database_backups import _legacy_snapshot
 from tests.unit.test_ticket_scratch import _layout
@@ -250,7 +251,7 @@ def test_unit21_environment_command_function_parity(
                 )
                 for category in ("os", "runtime", "unexpected")
             ],
-            dict(command="backup-current", args={**current, "current_app": str(denied)}),
+            dict(command="backup-current", args={**current, "current_app": denied.name}),
             *[
                 dict(command="backup-current", args=current, manifest=manifest)
                 for manifest in (
@@ -276,6 +277,7 @@ def test_unit21_environment_command_function_parity(
             ),
         ]
         with monkeypatch.context() as private:
+            private.chdir(root)
             for key in list(os.environ):
                 private.delenv(key)
             for key, value in environment.items():
@@ -288,6 +290,17 @@ def test_unit21_environment_command_function_parity(
             launcher = root / "probe.mjs"
             launcher.write_text(
                 "import{readFileSync}from'node:fs';"
+                "import{createRequire}from'node:module';"
+                "const require=createRequire(import.meta.url);"
+                "const before=new Set(Object.keys(require.cache));"
+                "const signals=['SIGINT','SIGTERM'].map(s=>process.listenerCount(s));"
+                "const began=performance.now();"
+                "await import(new URL('../commands.ts',process.argv[2]));"
+                "const table_seconds=(performance.now()-began)/1000,second=performance.now();"
+                "await import(new URL('../operator_dependencies.ts',process.argv[2]));"
+                "const cold={table_seconds,factory_seconds:(performance.now()-second)/1000,"
+                "new_require_modules:Object.keys(require.cache).filter(p=>!before.has(p)),"
+                "signals_unchanged:['SIGINT','SIGTERM'].every((s,i)=>process.listenerCount(s)===signals[i])};"
                 "const{command_probe}=await import(process.argv[2]);"
                 "const s=JSON.parse(readFileSync(process.argv[3],'utf8'));"
                 "const result=await command_probe(s.root,s.calls);"
@@ -304,7 +317,7 @@ def test_unit21_environment_command_function_parity(
                 "try{registry=await import(new URL('../registry/store.ts?eintr',process.argv[2]));}"
                 "finally{koffi.load=load;}"
                 "await registry.with_registry_lock(s.root+'/eintr-registry',async()=>{actions++;});"
-                "console.log(JSON.stringify({...result,"
+                "console.log(JSON.stringify({...result,cold,"
                 "interrupted_lock:{injected,acquire_calls,actions}}));"
             )
             completed = subprocess.run(
@@ -314,7 +327,7 @@ def test_unit21_environment_command_function_parity(
                     (ROOT / "server/environments/testing/commands.ts").as_uri(),
                     str(spec),
                 ],
-                cwd=ROOT,
+                cwd=root,
                 env=environment,
                 capture_output=True,
                 text=True,
@@ -323,6 +336,8 @@ def test_unit21_environment_command_function_parity(
             )
         assert completed.returncode == 0, completed.stderr
         actual = json.loads(completed.stdout)
+        assert actual["cold"]["new_require_modules"] == []
+        assert actual["cold"]["signals_unchanged"]
         assert actual["interrupted_lock"] == dict(injected=1, acquire_calls=2, actions=1)
 
         def stable(value: Any) -> str:
@@ -335,61 +350,73 @@ def test_unit21_environment_command_function_parity(
         assert stable(actual["results"][:-1]) == stable(expected[:-1])
         assert expected[-1] == {"thrown": "DatabaseError"}
         assert actual["results"][-1] == {"thrown": "SqliteError"}
-        assert len(actual["table"]) == 10
-        assert all(row["path"] == ["environment", name] for name, row in actual["table"].items())
-        defaults_context = click.Context(cli.environment)
-        default_mismatches = []
-        for name, row in actual["table"].items():
-            parameters = {}
-            for parameter in cli.environment.commands[name].params:
-                assert isinstance(parameter, click.Option)
-                for option_name in parameter.opts:
-                    parameters[option_name] = parameter
-            assert len(row["options"]) == len(cli.environment.commands[name].params)
-            for option in row["options"]:
-                parameter = parameters[option["name"]]
-                assert option.get("required", False) == parameter.required
-                # Click turns an unset multiple value into an empty tuple. Use
-                # that public conversion instead of its internal UNSET marker.
-                default = parameter.type_cast_value(
-                    defaults_context, parameter.to_info_dict()["default"]
+        expected_table = {
+            row["path"][-1]: row
+            for row in declarations()
+            if not row["group"]
+            and (
+                row["path"][:1] == ["environment"]
+                or row["path"] == ["stalls", "watchdog"]
+                or row["path"] in (["serve"], ["restart"], ["server-event-loop-tasks"])
+            )
+        }
+        assert len(actual["table"]) == 17 and actual["table"] == expected_table
+        operators = actual["operators"]
+        assert operators["literal_manifest_path"] == str(Path("link/../app") / "manifest.json")
+        assert operators["invocation_home"] == str(root)
+        assert operators["unsafe_paths_refused"] == 4
+        snapshot = operators["snapshot_only_refusals"]
+        assert snapshot["actual_test_mode"] is False and snapshot["snapshot_test_mode"] is True
+        assert snapshot["home"] == str(root / "snapshot-home")
+        assert snapshot["refused"] == [
+            "environment-tree",
+            "provision-home",
+            "cleanup-legacy-home",
+        ]
+        assert snapshot["admissions"]
+        assert any(
+            row["path"] == str(root / "snapshot-home/hermes") for row in snapshot["admissions"]
+        )
+        assert all(
+            row["canonical"] == str(Path(row["path"]).resolve()) for row in snapshot["admissions"]
+        )
+        assert operators["interrupted_status"]["ready"]
+        assert operators["interrupted_status"]["actual_closed"]
+        assert operators["interrupted_status"]["cleanup_failure_retained"]
+        assert operators["interrupted_status"]["later_spawns"] == 0
+        assert actual["scratch_owned"]["actual_children"] > 0
+        assert actual["scratch_owned"]["all_closed"]
+        for name in ("app-build", "run", "serve", "restart"):
+            assert operators["deferred"][name] == dict(
+                exit_code=1,
+                stdout="",
+                failure_message=f"The {name} command is not yet available in this build.",
+                stderr_prefix="",
+            )
+        message = "The TypeScript runtime cannot enumerate Promise await chains."
+        assert operators["diagnostic"] == [
+            dict(
+                exit_code=1,
+                stdout="",
+                stderr="error: "
+                + message
+                + "\nThis diagnostic is unavailable in the TypeScript server.\n",
+            ),
+            dict(
+                exit_code=1,
+                stdout="",
+                stderr=json.dumps(
+                    {"error": {"code": "unsupported", "message": message, "detail": {}}}
                 )
-                if isinstance(default, tuple):
-                    default = list(default)
-                if option.get("default") != default:
-                    default_mismatches.append(
-                        (name, option["name"], option.get("default"), default)
-                    )
-                assert option.get("multiple", False) == parameter.multiple
-                expected_type = (
-                    "choice"
-                    if isinstance(parameter.type, click.Choice)
-                    else "path"
-                    if isinstance(parameter.type, click.Path)
-                    else "boolean"
-                    if parameter.is_flag
-                    else "integer"
-                    if parameter.type is click.INT
-                    else "string"
-                )
-                assert option["type"] == expected_type
-                if isinstance(parameter.type, click.Choice):
-                    assert option["choices"] == list(parameter.type.choices)
-                if isinstance(parameter.type, click.Path):
-                    assert all(
-                        option.get("path", {}).get(key, default) == getattr(parameter.type, key)
-                        for key, default in (
-                            ("exists", False),
-                            ("file_okay", True),
-                            ("dir_okay", True),
-                        )
-                    )
-        assert not default_mismatches, default_mismatches
+                + "\n",
+            ),
+        ]
+        assert operators["watchdog"] == dict(exit_code=0, stdout="recorded watchdog\n", stderr="")
         assert actual["results"][5]["stderr"].startswith(
             "Warning: app artifact digest does not match its manifest."
         )
         assert expected[16]["stderr"] == (
-            f"Error: [Errno 13] Permission denied: {str(denied / 'manifest.json')!r}\n"
+            f"Error: [Errno 13] Permission denied: {str(Path(denied.name) / 'manifest.json')!r}\n"
         )
         assert [result.get("thrown") for result in actual["results"][-9:-1]] == [
             None,
@@ -414,6 +441,10 @@ def test_unit21_environment_command_function_parity(
                         "No parser/help, real app validator, dispatcher or host-service acceptance."
                     ),
                     "results": actual["results"],
+                    "raw_results": actual["raw_results"],
+                    "operators": actual["operators"],
+                    "scratch_owned": actual["scratch_owned"],
+                    "cold_imports": actual["cold"],
                     "interrupted_lock": actual["interrupted_lock"],
                 },
                 indent=2,

@@ -4,7 +4,8 @@ import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { expand_path } from '../paths.ts';
 import { managed_skills_home } from '../../skills/files.ts';
-import { provision_native_backend_skills } from '../../skills/sources.ts';
+import { publish_native_backend_skills } from '../../skills/native_publication.ts';
+import type { OperatorPathInputs } from '../command_contracts.ts';
 import type { EnvironmentRunOptions, ResolvedEnvironmentInstance } from './contracts.ts';
 import { validate_environment_values } from './logic.ts';
 
@@ -58,13 +59,23 @@ export function resolve_hermes_python(
     value || environment.PLAN_HERMES_PYTHON || '~/.hermes/hermes-agent/venv/bin/python',
   );
 }
-export function provision_environment_skills(options: {
-  database_parent: string;
-  hermes_home: string;
-  codex_home: string;
-  claude_home: string;
-}): void {
-  const root = managed_skills_home(options.database_parent);
+export function provision_environment_skills(
+  options: {
+    database_parent: string;
+    hermes_home: string;
+    codex_home: string;
+    claude_home: string;
+  },
+  paths: OperatorPathInputs,
+): void {
+  const parent = paths.admit_path(paths.expand_path(options.database_parent));
+  const root = paths.admit_path(managed_skills_home(parent));
+  const homes = [options.hermes_home, options.codex_home, options.claude_home].map((value) => {
+    const home = paths.admit_path(paths.expand_path(value));
+    // Python replaces this link itself, but can read its previous target first.
+    paths.admit_path(join(home, 'skills'));
+    return home;
+  });
   let exists = false;
   try {
     exists = statSync(root).isDirectory();
@@ -75,6 +86,6 @@ export function provision_environment_skills(options: {
     throw Object.assign(new Error(`managed Panels skills not found: ${root}`), {
       name: 'FileNotFoundError',
     });
-  for (const home of [options.hermes_home, options.codex_home, options.claude_home])
-    provision_native_backend_skills(home, options.database_parent);
+  for (const home of homes)
+    publish_native_backend_skills(home, root, { policy: { kind: 'server' } });
 }

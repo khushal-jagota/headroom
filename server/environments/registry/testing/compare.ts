@@ -36,6 +36,7 @@ import {
   validate_repository_roots,
 } from '../logic.ts';
 import { build_test_environment_run_env, provision_environment_skills } from '../launch.ts';
+import { create_production_operator_dependencies } from '../../operator_dependencies.ts';
 
 interface Request {
   root: string;
@@ -236,12 +237,15 @@ export async function registry_probe(request: Request): Promise<unknown> {
     runtime_port: 32123,
   });
   const homes = ['hermes', 'codex', 'claude'].map((name) => join(request.output, name));
-  provision_environment_skills({
-    database_parent: dirname(reset.db_path),
-    hermes_home: homes[0]!,
-    codex_home: homes[1]!,
-    claude_home: homes[2]!,
-  });
+  provision_environment_skills(
+    {
+      database_parent: dirname(reset.db_path),
+      hermes_home: homes[0]!,
+      codex_home: homes[1]!,
+      claude_home: homes[2]!,
+    },
+    await create_production_operator_dependencies('provision-skills', undefined, process.env),
+  );
   const provisioned = await Promise.all(
     homes.map(async (home) =>
       Object.fromEntries(

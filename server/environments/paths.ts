@@ -31,16 +31,18 @@ function account_home(username: string): string | undefined {
   }
   return named_home(username);
 }
-export function expand_path(path: string): string {
+export function expand_path(path: string, home?: string): string {
   if (!path.startsWith('~')) return path;
   const slash = path.indexOf('/');
   const username = path.slice(1, slash < 0 ? undefined : slash);
-  const home = username ? account_home(username) : homedir();
-  if (home === undefined)
+  // CPython expanduser returns root for bare '~' when HOME is explicitly empty.
+  if (!username && home === '') return slash < 0 ? '/' : path.slice(slash);
+  const selected_home = username ? account_home(username) : (home ?? homedir());
+  if (selected_home === undefined)
     throw Object.assign(new Error('Could not determine home directory.'), { name: 'RuntimeError' });
-  return home + (slash < 0 ? '' : path.slice(slash));
+  return selected_home + (slash < 0 ? '' : path.slice(slash));
 }
-export async function resolved_path(path: string): Promise<string> {
+export async function resolved_path(path: string, home?: string): Promise<string> {
   async function walk(value: string, base: string, active: Set<string>): Promise<string> {
     let current = isAbsolute(value) ? '/' : base;
     for (const part of value.split('/')) {
@@ -71,5 +73,5 @@ export async function resolved_path(path: string): Promise<string> {
     }
     return current;
   }
-  return walk(expand_path(path), process.cwd(), new Set());
+  return walk(expand_path(path, home), process.cwd(), new Set());
 }
