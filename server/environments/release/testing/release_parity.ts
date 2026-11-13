@@ -1,5 +1,15 @@
 /** Export-only identity/archive proof. Inputs are the driver's private files. */
-import { lstat, readlink, stat, readdir, readFile, mkdir, copyFile } from 'node:fs/promises';
+import {
+  lstat,
+  readlink,
+  stat,
+  readdir,
+  readFile,
+  mkdir,
+  copyFile,
+  cp,
+  writeFile,
+} from 'node:fs/promises';
 import {
   fstatSync,
   lstatSync,
@@ -9,13 +19,13 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { SpawnOptions } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { createReadAccess } from '../../../core/database/index.ts';
-import type { MigrationGraph } from '../contracts.ts';
+import type { ElfObject, MigrationGraph } from '../contracts.ts';
 import {
   APP_FORMAT,
   ARCHIVE_SPACE_RESERVE_BYTES,
@@ -25,6 +35,270 @@ import { create_app_archive, extract_app_archive, hash_archive } from '../archiv
 import { digest_app_artifact, digest_app_source, validate_app_manifest } from '../identity.ts';
 import { require_node_database_frontier, schema_change_pending } from '../migrations.ts';
 import { AppValidationError } from '../contracts.ts';
+
+import { parse_dynamic } from '../native/elf.ts';
+import { resolve_provider } from '../native/providers.ts';
+import { RuntimeContractError } from '../../updates/logic/runtime_contract.ts';
+import { complete_node_runtime } from '../native_inventory.ts';
+import { require_host_node, verify_runtime_host_facts } from '../logic/host.ts';
+import type { RuntimeHostFacts } from '../logic/host.ts';
+import { validate_node_probe_report } from '../admission.ts';
+import { run_runtime_probe } from '../admission_process.ts';
+import { NATIVE_NODE_PROBE } from '../admission_probe.ts';
+
+/** One real addon loads an allowed glibc basename from a forbidden private directory. */
+export async function hostile_native_parity(root: string): Promise<unknown> {
+  if (
+    process.platform !== 'linux' ||
+    process.arch !== 'x64' ||
+    !process.versions.node.startsWith('22.')
+  )
+    return { executed: false, reason: 'Native candidate admission requires Linux x64 Node 22' };
+  const started = performance.now(),
+    source = fileURLToPath(new URL('../../../', import.meta.url));
+  const candidate = join(root, 'hostile-native'),
+    server = join(candidate, 'server');
+  await cp(source, server, {
+    recursive: true,
+    filter: (path) =>
+      !relative(source, path)
+        .split(sep)
+        .some(
+          (part) =>
+            ['node_modules', 'tests', 'testing'].includes(part) || part.endsWith('.test.ts'),
+        ),
+  });
+  const packages = [
+    '@anthropic-ai/claude-agent-sdk',
+    'better-sqlite3',
+    'koffi',
+    '@koromix/koffi-linux-x64',
+    'yaml',
+    'https-proxy-agent',
+    'agent-base',
+    'proxy-agent-negotiate',
+    'debug',
+    'ms',
+    'ajv',
+    'ajv-formats',
+    'fast-uri',
+    'fast-deep-equal',
+    'json-schema-traverse',
+    'require-from-string',
+    'zod',
+  ];
+  for (const name of packages) {
+    const destination = join(server, 'node_modules', name);
+    await mkdir(dirname(destination), { recursive: true });
+    await cp(join(source, 'node_modules', name), destination, { recursive: true });
+  }
+  const outside = join(root, 'outside-native', 'libm.so.6');
+  await mkdir(dirname(outside));
+  await copyFile('/lib/x86_64-linux-gnu/libm.so.6', outside);
+  const loader = join(server, 'node_modules/outside-loader');
+  await mkdir(loader);
+  await writeFile(
+    join(loader, 'package.json'),
+    JSON.stringify({ type: 'module', exports: './index.mjs' }),
+  );
+  await writeFile(
+    join(loader, 'index.mjs'),
+    `import koffi from 'koffi'; export const held = koffi.load(${JSON.stringify(outside)});\n` +
+      `if (held.func('double cos(double)')(0) !== 1) throw Error('Native fixture did not execute');\n`,
+  );
+  const dependencies = Object.fromEntries(
+    [
+      '@anthropic-ai/claude-agent-sdk',
+      'better-sqlite3',
+      'koffi',
+      'yaml',
+      'https-proxy-agent',
+      'outside-loader',
+    ].map((name) => [name, 'private-fixture']),
+  );
+  await writeFile(join(server, 'package.json'), JSON.stringify({ type: 'module', dependencies }));
+  const state = join(root, 'native-probe-state');
+  for (const name of [
+    '',
+    'config',
+    'cache',
+    'codex',
+    'claude',
+    'hermes',
+    'data',
+    'logs',
+    'backups',
+    'app',
+    'workspace',
+    'scratch',
+  ])
+    await mkdir(join(state, name), { recursive: true });
+  await writeFile(join(state, 'config.yaml'), '{}\n');
+  const owner = new ChildProcesses();
+  let message: string | undefined;
+  try {
+    await run_runtime_probe(
+      [
+        process.execPath,
+        '--experimental-import-meta-resolve',
+        '--input-type=module',
+        '-e',
+        NATIVE_NODE_PROBE,
+        candidate,
+      ],
+      state,
+      performance.now() / 1000 + 15,
+      owner,
+    );
+  } catch (error) {
+    if (!(error instanceof AppValidationError)) throw error;
+    message = error.message;
+  } finally {
+    owner.force_kill(performance.now() / 1000 + 5);
+    await owner.settled();
+  }
+  if (!message?.includes('new library loaded outside candidate: ' + outside))
+    throw new Error('Real addon outside-library refusal did not occur: ' + message);
+  return {
+    executed: true,
+    refused: true,
+    outside_library: outside,
+    copied_packages: packages,
+    actual_addon: 'koffi',
+    native_operation: 'cos(0) = 1',
+    seconds: (performance.now() - started) / 1000,
+  };
+}
+
+/** Hosted-only caller pins both recorded handles before it releases this timeout callback. */
+export async function admission_group_parity(root: string): Promise<unknown> {
+  const owner = new ChildProcesses(),
+    spawn = owner.spawn.bind(owner);
+  const original_timer = globalThis.setTimeout;
+  let timeout: (() => void) | undefined, timer_delay: number | undefined;
+  let flight: Promise<string> | undefined;
+  owner.spawn = ((command: string, args: readonly string[], options: SpawnOptions) => {
+    const child = spawn(command, args, options);
+    // run_runtime_probe synchronously registers exactly one timer after this spawn returns.
+    globalThis.setTimeout = ((
+      callback: (...values: unknown[]) => void,
+      delay?: number,
+      ...values: unknown[]
+    ) => {
+      globalThis.setTimeout = original_timer;
+      timer_delay = delay;
+      timeout = () => callback(...values);
+      const handle = original_timer(() => {}, delay);
+      clearTimeout(handle);
+      return handle;
+    }) as typeof setTimeout;
+    return child;
+  }) as typeof owner.spawn;
+  const marker = join(root, 'group-identities.json');
+  const program = `const fs=require('node:fs'),{spawn}=require('node:child_process');
+    const identity=pid=>{const f=fs.readFileSync('/proc/'+pid+'/stat','utf8').split(') ').at(-1).split(' ');
+      return {pid,parent:Number(f[1]),start_time:Number(f[19])}};
+    const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
+    child.once('spawn',()=>{try{fs.writeFileSync(${JSON.stringify(marker + '.tmp')},JSON.stringify({leader:identity(process.pid),descendant:identity(child.pid)}));fs.renameSync(${JSON.stringify(marker + '.tmp')},${JSON.stringify(marker)})}catch(error){child.kill('SIGKILL');throw error}});
+    setInterval(()=>{},1000);`;
+  try {
+    flight = run_runtime_probe(
+      [process.execPath, '-e', program],
+      root,
+      performance.now() / 1000 + 120,
+      owner,
+    );
+    void flight.catch(() => {});
+    const until = performance.now() + 20_000;
+    while (true) {
+      try {
+        await stat(join(root, 'release-timeout'));
+        break;
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      }
+      if (performance.now() >= until)
+        throw new Error('Hosted parent did not release the pinned group timeout');
+      await new Promise<void>((resolve) => original_timer(resolve, 10));
+    }
+    if (!timeout) throw new Error('Admission timeout callback was not reserved');
+    timeout();
+    let message: string | undefined;
+    try {
+      await flight;
+    } catch (error) {
+      if (!(error instanceof AppValidationError)) throw error;
+      message = error.message;
+    }
+    if (message !== 'runtime probe failed: command timed out')
+      throw new Error('Admission did not reject its timeout');
+    return { message, timer_delay, timeout_callback_released_after_pin: true };
+  } finally {
+    globalThis.setTimeout = original_timer;
+    owner.force_kill(performance.now() / 1000 + 5);
+    await flight?.catch(() => {});
+    await owner.settled();
+  }
+}
+
+/** Host and report rules consume only synthetic observations from the private driver. */
+export async function admission_rules_parity(
+  root: string,
+  spec: {
+    host_cases: { version: 1 | 2; node: string; facts: RuntimeHostFacts }[];
+    reports: unknown[];
+  },
+): Promise<unknown> {
+  const v1 = (await validate_app_manifest(join(root, 'app/manifest.json'))).runtime_contract!;
+  const v2 = (await validate_app_manifest(join(root, 'v2/manifest.json'))).runtime_contract!;
+  if (v2.version !== 2) throw new Error('Node fixture must carry v2');
+  const hosts: (string | null)[] = [];
+  for (const item of spec.host_cases) {
+    const contract = item.version === 1 ? v1 : v2;
+    try {
+      verify_runtime_host_facts(contract, item.facts);
+      require_host_node(item.node, contract);
+      hosts.push(null);
+    } catch (error) {
+      if (!(error instanceof AppValidationError)) throw error;
+      hosts.push(error.message);
+    }
+  }
+  const reports: (string | null)[] = [];
+  for (const report of spec.reports) {
+    try {
+      await validate_node_probe_report(join(root, 'v2'), v2, report);
+      reports.push(null);
+    } catch (error) {
+      if (!(error instanceof AppValidationError)) throw error;
+      reports.push(error.message);
+    }
+  }
+  return { hosts, reports };
+}
+
+export async function native_loader_parity(spec: {
+  dynamic: readonly [string, string];
+  providers: readonly { name: string; requester: ElfObject; ancestors: readonly ElfObject[] }[];
+}): Promise<unknown> {
+  const providers = [];
+  for (const request of spec.providers) {
+    try {
+      providers.push({
+        provider: await resolve_provider(
+          request.name,
+          request.requester,
+          request.ancestors,
+          new Map(),
+        ),
+      });
+    } catch (error) {
+      if (!(error instanceof RuntimeContractError)) throw error;
+      providers.push({ error: error.message });
+    }
+  }
+  return { dynamic: parse_dynamic(...spec.dynamic), providers };
+}
 
 interface ArchiveVector {
   name: string;
@@ -402,7 +676,28 @@ async function compare_release(
       access.close();
     }
   }
+  let native_tree_admission: string;
+  const native_owner = new ChildProcesses();
+  native_owner.spawn = () => {
+    throw new Error('Native tree refusal must precede tools');
+  };
+  try {
+    await complete_node_runtime(join(root, 'native-link-provider'), {
+      child_processes: native_owner,
+      signal: new AbortController().signal,
+      deadline: null,
+    });
+    throw new Error('native packaging admitted an outside write target');
+  } catch (error) {
+    if (
+      !(error instanceof AppValidationError) ||
+      error.message !== 'app contains a symlink outside its root'
+    )
+      throw error;
+    native_tree_admission = error.message;
+  }
   return {
+    native_tree_admission,
     identity: {
       source: await digest_app_source(app),
       artifact: await digest_app_artifact(app),
