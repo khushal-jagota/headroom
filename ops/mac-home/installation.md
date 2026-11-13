@@ -3,7 +3,7 @@
 One command installs a home on an Apple Silicon Mac or a Linux x86_64 server.
 The host holds the record. The Mac home runs in your graphical login session.
 Logout stops the Mac home. Sleep makes it unreachable. Linux uses a systemd user service.
-Enable user lingering if the Linux home must stay available after logout.
+Linux setup requires user lingering so that the home and its backup stay available after logout.
 Tailscale supplies remote HTTPS access.
 The source path below remains available. A release home also supports updates and rollback.
 Previews, native metrics, maintenance schedules, and watchdog schedules remain separate work.
@@ -13,7 +13,8 @@ Use a separate OS account for another instance, including an executor with a dif
 ## Install with one command
 
 Install Python 3.11.8 or newer and Node.js 22 first. The Mac requires macOS 15 or newer.
-Use `/opt/homebrew/bin/node` on the Mac. Linux requires x86_64 and an active systemd user manager.
+Use `/opt/homebrew/bin/node` on the Mac. Linux requires x86_64, an active systemd user manager, and user lingering.
+If lingering is absent, setup refuses before installation. Run `loginctl enable-linger "$USER"`, then repeat the command.
 The sealed release also checks its native runtime requirements before the service starts.
 
 Authenticate the GitHub CLI for the release repository, then run this command:
@@ -31,6 +32,8 @@ The command uses the GitHub CLI login for release access. It does not persist a 
 
 The Mac default root is `~/Library/Application Support/PanelsHome`. The service name is `com.panels.home`.
 Linux uses `~/.local/share/panels-home` and the user service `com.panels.home.service`.
+Both hosts schedule the existing backup command at 02:30 each day.
+Linux uses the separate `com.panels.home.backup.service` and `com.panels.home.backup.timer` user units.
 The home binds to loopback port 8767. Select another port with `--port`.
 Use `--root` and `--service` for a separate installation.
 On the Mac, run the bootstrap with a stable external Python interpreter.
@@ -49,7 +52,8 @@ python3 "$panels_setup" home --archive /private/panels-app.tar.gz --receipt /pri
 Use the Mac home publication on Mac and the Linux home publication on Linux.
 The receipt must match the exact archive. Do not use an executor archive for a home.
 Use `--isolated-providers` for disposable checks. It prevents account skill links and uses private provider folders.
-If startup fails, preserve the new root and inspect its logs. Setup reports failure rather than success.
+If setup fails, it stops only its new jobs and removes only its created root, links, and unit files.
+Existing roots and services remain untouched. If cleanup cannot confirm a stopped job, setup retains its files and reports that job.
 No existing home is restarted or replaced. Updates still use the owner Update action.
 
 

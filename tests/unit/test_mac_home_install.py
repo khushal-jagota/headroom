@@ -29,6 +29,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         return SimpleNamespace(runtime_contract=SimpleNamespace(
             system="darwin", architecture="arm64", role="home"))
 
+    monkeypatch.setattr("planner.installation.mac_home._check_services", lambda label: None)
     monkeypatch.setenv("PATH", "/build/icu/bin:/production/executor/bin:/usr/bin:/bin")
     monkeypatch.setattr("planner.installation.mac_home.extract_app_archive", extract)
     monkeypatch.setattr("planner.environments.runtime_admission.admit_runtime", lambda *args: None)
@@ -138,14 +139,22 @@ def test_release_cli_and_application_leave_no_bytecode_in_sealed_app(
     assert not list(package.rglob("*.pyc"))
 
 
-def test_setup_refuses_an_interpreter_inside_the_installation_before_writes(
-    tmp_path: Path,
+def test_setup_refusals_leave_no_installation_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A host interpreter alias into the future app defeats independent custody.
     root = tmp_path / "home"
     with pytest.raises(ValueError, match="external Python 3.11 or newer"):
         install_home(root, tmp_path / "archive", "a" * 64, "a" * 40,
                      "com.panels.proof", 9876, root / "app/.venv/bin/python")
+    assert not root.exists()
+    # A release refusal after exclusive root creation must remove its partial state.
+    monkeypatch.setattr("planner.installation.mac_home._check_services", lambda label: None)
+    archive = tmp_path / "invalid-release"
+    archive.write_bytes(b"not the published bytes")
+    with pytest.raises(ValueError, match="hash differs"):
+        install_home(root, archive, "a" * 64, "a" * 40, "com.panels.proof",
+                     9876, Path(sys.executable), isolated_providers=True)
     assert not root.exists()
 
 

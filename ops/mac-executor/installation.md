@@ -29,12 +29,11 @@ Provider login remains a separate step. Tailscale must reach the same home's tru
 On that home, use the owner login and run:
 
 ```sh
-panels machine join-command "Studio Mac" --home https://HOME-ORIGIN \
-  --revision FULL-PUBLISHED-SHA
+panels machine join-command "Studio Mac" --home https://HOME-ORIGIN
 ```
 
-For a Linux x86_64 machine, add `--platform linux` to the owner command.
-The printed command selects the Linux executor archive and its systemd user service.
+Use the same owner command for a Linux x86_64 machine. The executor reports its host platform after credential authentication.
+On Linux, the bootstrap selects the Linux executor archive and its systemd user service.
 Linux needs Node 22 and an active systemd user manager. No native Mac tools are required.
 Enable user lingering if that service must start after reboot without a login.
 
@@ -46,6 +45,8 @@ Keep the credential private. The home stores its verifier and can revoke it thro
 The installer checks the archive identity, installs the fixed launcher, writes private data, and starts its own LaunchAgent.
 Success requires a fresh accepted lease through the new installation's private socket, with the expected release revision.
 A failed connection remains a failed join even if the service starts.
+For the combined check, the owner must also compare the home health identity with the local identity for this machine.
+A failed join removes its new service and installation so that you can retry. If shutdown remains unknown, cleanup retains them and reports the service.
 Ad-hoc designated requirements bind launcher bytes. A replacement launcher can have a different requirement.
 Strict checks of both signatures do not prove privacy permission continuity.
 The final combined Mac check must replace the launcher through an update and check the retained privacy permissions.

@@ -7,6 +7,7 @@ import os
 import platform
 import plistlib
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -80,7 +81,7 @@ def wait_for_lease(python: Path, root: Path, revision: str, *, timeout: float = 
         except (OSError, ValueError, subprocess.TimeoutExpired):
             pass
         time.sleep(0.5)
-    raise ValueError(f"Join did not complete: {detail}. Inspect {root / 'logs'}")
+    raise ValueError(f"Join did not complete: {detail}")
 
 
 def provider_environment(root: Path, isolated_providers: bool) -> dict[str, str]:
@@ -144,9 +145,13 @@ def install_executor(
     if plist_path.exists() or plist_path.is_symlink():
         raise ValueError(f"The executor service already exists: {plist_path}")
     service = f"gui/{os.getuid()}/{label}"
-    loaded = subprocess.run(["/bin/launchctl", "print", service], capture_output=True, timeout=10)
+    loaded = subprocess.run(
+        ["/bin/launchctl", "print", service], capture_output=True, text=True, timeout=10
+    )
     if loaded.returncode == 0:
         raise ValueError(f"The executor service is already loaded: {label}")
+    if "Could not find service" not in loaded.stderr:
+        raise ValueError(f"Cannot establish that the executor service is absent: {label}")
     # Validate render inputs before the first installation write.
     root = root.resolve()
     app = root / "Panels.app"
@@ -165,60 +170,82 @@ def install_executor(
     )
     render_launch_agent(configuration)
     root.mkdir(parents=True, mode=0o700)
-    runtime = extract_runtime(
-        archive,
-        root / "releases",
-        expected_sha256=archive_sha256,
-        expected_size=archive_size,
-        expected_revision=revision,
-    )
-    # Keep the permanent supervisor runtime at its extracted, versioned path.
-    configuration = ServiceConfiguration(
-        home=Path.home(),
-        executor_id=machine_id,
-        application_revision=revision,
-        panels_server_url=home_url,
-        executor_root=root / "data",
-        source_path=runtime,
-        venv_path=runtime / "python",
-        app_path=app,
-        job_label=label,
-        bundle_id=bundle_id,
-    )
-    python = runtime / "python/bin/python3"
-    build_app(Path.home(), app, revision, python=python, bundle_id=bundle_id)
-    subprocess.run(
-        ["/usr/bin/codesign", "--force", "--sign", identity, "--timestamp=none", str(app)],
-        check=True,
-        capture_output=True,
-        timeout=30,
-    )
-    verify_app(app, identity, python=python, bundle_id=bundle_id)
-    data = root / "data"
-    (data / "logs").mkdir(parents=True, mode=0o700)
-    write_credential(credential_path(data), credential)
-    service_definition = plistlib.loads(render_launch_agent(configuration))
-    service_environment = service_definition["EnvironmentVariables"]
-    service_environment.update(provider_environment(root, isolated_providers))
-    service_environment["PLAN_APP_ROOT"] = str(runtime)
-    service_environment["PLAN_APP_SHA"] = revision
-    service_environment["PATH"] = (
-        str(runtime / "agent_backends/node_modules/.bin") + os.pathsep + service_environment["PATH"]
-    )
-    plist = plistlib.dumps(service_definition)
-    (root / "agents").mkdir(mode=0o700)
-    (root / "agents" / f"{label}.plist").write_bytes(plist)
-    plist_path.parent.mkdir(parents=True, exist_ok=True)
-    with plist_path.open("xb") as stream:
-        stream.write(plist)
-    plist_path.chmod(0o600)
-    subprocess.run(
-        ["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist_path)],
-        check=True,
-        capture_output=True,
-        timeout=15,
-    )
-    wait_for_lease(python, data, revision)
+    owns_plist = False
+    load_attempted = False
+    try:
+        runtime = extract_runtime(
+            archive,
+            root / "releases",
+            expected_sha256=archive_sha256,
+            expected_size=archive_size,
+            expected_revision=revision,
+        )
+        # Keep the permanent supervisor runtime at its extracted, versioned path.
+        configuration = ServiceConfiguration(
+            home=Path.home(),
+            executor_id=machine_id,
+            application_revision=revision,
+            panels_server_url=home_url,
+            executor_root=root / "data",
+            source_path=runtime,
+            venv_path=runtime / "python",
+            app_path=app,
+            job_label=label,
+            bundle_id=bundle_id,
+        )
+        python = runtime / "python/bin/python3"
+        build_app(Path.home(), app, revision, python=python, bundle_id=bundle_id)
+        subprocess.run(
+            ["/usr/bin/codesign", "--force", "--sign", identity, "--timestamp=none", str(app)],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+        verify_app(app, identity, python=python, bundle_id=bundle_id)
+        data = root / "data"
+        (data / "logs").mkdir(parents=True, mode=0o700)
+        write_credential(credential_path(data), credential)
+        service_definition = plistlib.loads(render_launch_agent(configuration))
+        service_environment = service_definition["EnvironmentVariables"]
+        service_environment.update(provider_environment(root, isolated_providers))
+        service_environment["PLAN_APP_ROOT"] = str(runtime)
+        service_environment["PLAN_APP_SHA"] = revision
+        service_environment["PATH"] = (
+            str(runtime / "agent_backends/node_modules/.bin")
+            + os.pathsep
+            + service_environment["PATH"]
+        )
+        plist = plistlib.dumps(service_definition)
+        (root / "agents").mkdir(mode=0o700)
+        (root / "agents" / f"{label}.plist").write_bytes(plist)
+        plist_path.parent.mkdir(parents=True, exist_ok=True)
+        with plist_path.open("xb") as stream:
+            owns_plist = True
+            stream.write(plist)
+        plist_path.chmod(0o600)
+        load_attempted = True
+        subprocess.run(
+            ["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist_path)],
+            check=True,
+            capture_output=True,
+            timeout=15,
+        )
+        wait_for_lease(python, data, revision)
+    except BaseException as error:
+        try:
+            if load_attempted:
+                from planner.installation.home import _stop_mac_job
+
+                _stop_mac_job(f"gui/{os.getuid()}", label, plist_path)
+            if owns_plist:
+                plist_path.unlink()
+            shutil.rmtree(root)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as cleanup_error:
+            raise RuntimeError(
+                f"Join failed: {error}. Cleanup failed for {service}: {cleanup_error}. "
+                f"Retained installation: {root}"
+            ) from error
+        raise
     print("Machine joined. The home accepted its credential and lease.")
 
 

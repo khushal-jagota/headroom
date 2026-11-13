@@ -141,22 +141,44 @@ def preflight(args: argparse.Namespace, target: str) -> None:
             raise ValueError(
                 "Install systemd and enable a user service manager before installation."
             )
+        if args.command == "home":
+            linger = _run(
+                "loginctl",
+                "show-user",
+                str(os.getuid()),
+                "--property=Linger",
+                "--value",
+                check=False,
+            )
+            if linger.returncode != 0 or linger.stdout.strip() != "yes":
+                raise ValueError(
+                    'Enable user lingering before installation: loginctl enable-linger "$USER"'
+                )
         _run("systemctl", "--user", "show-environment")
-        service = args.service if args.command == "join" else args.service + ".service"
-        unit = Path.home() / ".config/systemd/user" / service
-        if unit.exists() or unit.is_symlink():
-            raise ValueError(f"The service file already exists: {unit}. It will not be replaced.")
-        result = _run(
-            "systemctl",
-            "--user",
-            "show",
-            service,
-            "--property=LoadState",
-            "--value",
-            check=False,
+        services = (
+            [args.service]
+            if args.command == "join"
+            else [
+                args.service + suffix for suffix in (".service", ".backup.service", ".backup.timer")
+            ]
         )
-        if result.stdout.strip() not in ("", "not-found"):
-            raise ValueError(f"The service already exists: {service}. It will not be replaced.")
+        for service in services:
+            unit = Path.home() / ".config/systemd/user" / service
+            if unit.exists() or unit.is_symlink():
+                raise ValueError(
+                    f"The service file already exists: {unit}. It will not be replaced."
+                )
+            result = _run(
+                "systemctl",
+                "--user",
+                "show",
+                service,
+                "--property=LoadState",
+                "--value",
+                check=False,
+            )
+            if result.stdout.strip() != "not-found":
+                raise ValueError(f"The service already exists or cannot be inspected: {service}.")
 
 
 def _api(path: str, destination: Path | None = None) -> Any:
@@ -368,7 +390,6 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--isolated-providers", action="store_true")
     result.add_argument("--home")
     result.add_argument("--machine-id")
-    result.add_argument("--platform", choices=("darwin", "linux"))
     return result
 
 
@@ -376,8 +397,6 @@ def main() -> None:
     args = parser().parse_args()
     try:
         target = host_target()
-        if args.platform is not None and args.platform != target:
-            raise ValueError("This machine does not match the registered --platform.")
         if args.command == "join" and target == "linux" and args.service is not None:
             raise ValueError("Linux joins use panels-executor.service. Omit --service.")
         args.service = args.service or (

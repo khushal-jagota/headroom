@@ -17,17 +17,9 @@ from planner.executor.configuration import validate_server_url
 @click.option(
     "--home", "home_url", required=True, help="Use this same home's trusted HTTPS origin."
 )
-@click.option(
-    "--platform",
-    "target_platform",
-    type=click.Choice(["darwin", "linux"]),
-    default="darwin",
-    show_default=True,
-)
 def machine_join_command(
     name: str,
     home_url: str,
-    target_platform: str,
 ) -> None:
     """Register a machine, then print its join command and private credential once."""
     try:
@@ -39,8 +31,6 @@ def machine_join_command(
     if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
         raise click.ClickException("Install a released home before you issue a join command")
     body = {"name": name}
-    if target_platform == "linux":
-        body["platform"] = target_platform
     data = http.send("POST", "/api/machines", as_json=False, json_body=body)
     # Registration remains the only issuer. This command never copies owner authority.
     machine_id = str(UUID(data["machine_id"]))
@@ -53,8 +43,6 @@ def machine_join_command(
         home_url,
         "--machine-id",
         machine_id,
-        "--platform",
-        target_platform,
     ]
     arguments += ["--revision", revision]
     route = f"repos/khushal-jagota/headroom/contents/scripts/panels_install.py?ref={revision}"

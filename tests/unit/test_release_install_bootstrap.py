@@ -143,11 +143,3 @@ def test_unsupported_loader_host_refuses_before_candidate_exec(
     with pytest.raises(SystemExit, match="supported Linux distribution"):
         bootstrap.main()
     assert not (tmp_path / "home").exists()
-
-
-def test_registered_platform_refuses_before_installation(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An owner-issued Linux command must not use its credential on a Mac runtime."""
-    monkeypatch.setattr("sys.argv", ["panels_install.py", "join", "--platform", "linux"])
-    monkeypatch.setattr(bootstrap, "host_target", lambda: "darwin")
-    with pytest.raises(SystemExit, match="registered --platform"):
-        bootstrap.main()

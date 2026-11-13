@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -93,6 +95,95 @@ def linux_unit(options: HomeInstall) -> str:
     )
 
 
+def linux_units(options: HomeInstall) -> dict[str, str]:
+    """The home and its daily backup use the same private installation paths."""
+    home = linux_unit(options)
+    # Keep the exact same environment and working directory for the backup.
+    shared = "\n".join(
+        line for line in home.splitlines() if line.startswith(("WorkingDirectory=", "Environment="))
+    )
+    command = [
+        str(options.root / "app/bin/panels"),
+        "environment",
+        "backup-current",
+        "--source-db",
+        str(options.root / "data/planner.db"),
+        "--backup-dir",
+        str(options.root / "data/backups"),
+        "--current-app",
+        str(options.root / "app"),
+    ]
+    backup = (
+        "[Unit]\nDescription=Panels home backup\n[Service]\nType=oneshot\n"
+        + shared
+        + "\nExecStart="
+        + " ".join(_unit_argument(value) for value in command)
+        + "\nKillMode=control-group\n"
+    )
+    timer = (
+        "[Unit]\nDescription=Daily Panels home backup\n[Timer]\n"
+        "OnCalendar=*-*-* 02:30:00\nPersistent=true\n"
+        f"Unit={options.service}.backup.service\n"
+        "[Install]\nWantedBy=timers.target\n"
+    )
+    return {
+        options.service + ".service": home,
+        options.service + ".backup.service": backup,
+        options.service + ".backup.timer": timer,
+    }
+
+
+def _check_linux_services(units: dict[str, str]) -> None:
+    result = subprocess.run(
+        ["loginctl", "show-user", str(os.getuid()), "--property=Linger", "--value"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0 or result.stdout.strip() != "yes":
+        raise ValueError(
+            'Enable user lingering before installation: loginctl enable-linger "$USER"'
+        )
+    _run("systemctl", "--user", "show-environment")
+    directory = Path.home() / ".config/systemd/user"
+    for name in units:
+        path = directory / name
+        if path.exists() or path.is_symlink():
+            raise ValueError(f"The service file already exists: {path}")
+        result = subprocess.run(
+            ["systemctl", "--user", "show", name, "--property=LoadState", "--value"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.stdout.strip() != "not-found":
+            raise ValueError(f"The service already exists or cannot be inspected: {name}")
+
+
+def _stop_mac_job(domain: str, label: str, plist: Path) -> None:
+    result = subprocess.run(
+        ["/bin/launchctl", "print", f"{domain}/{label}"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        if "Could not find service" in result.stderr:
+            return
+        raise RuntimeError(f"Cannot confirm whether the new LaunchAgent stopped: {label}")
+    if not any(line.strip() == f"path = {plist}" for line in result.stdout.splitlines()):
+        raise RuntimeError(f"The LaunchAgent no longer belongs to this installation: {label}")
+    _run("/bin/launchctl", "bootout", f"{domain}/{label}")
+    result = subprocess.run(
+        ["/bin/launchctl", "print", f"{domain}/{label}"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode == 0 or "Could not find service" not in result.stderr:
+        raise RuntimeError(f"Cannot confirm that the new LaunchAgent stopped: {label}")
+
+
 def _wait_health(port: int, revision: str) -> str:
     address = f"http://127.0.0.1:{port}"
     deadline = time.monotonic() + HEALTH_TIMEOUT_SECONDS
@@ -109,7 +200,7 @@ def _wait_health(port: int, revision: str) -> str:
             pass
         time.sleep(0.25)
     raise RuntimeError(
-        f"The home did not report release {revision}. Read the logs under its installation root."
+        f"The home did not report release {revision} within {HEALTH_TIMEOUT_SECONDS} seconds."
     )
 
 
@@ -119,76 +210,127 @@ def install_home(
     archive_sha256: str,
     revision: str,
 ) -> str:
-    """The standalone bootstrap performs host and collision checks before this call."""
-    root = options.root
+    """Create one home and retire only this call's resources if setup fails."""
+    root = options.root.expanduser().absolute()
     if any(ord(character) < 32 or ord(character) == 127 for character in str(root)):
         raise ValueError("The installation root must not contain control characters.")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", options.service):
+        raise ValueError("Use a valid service name")
     if root.exists() or root.is_symlink():
         raise ValueError(f"The installation root already exists: {root}")
-    if platform.system() == "Darwin":
-        from planner.installation.mac_home import install_home as install_mac
-
-        install_mac(
-            root,
-            archive,
-            archive_sha256,
-            revision,
-            options.service,
-            options.port,
-            options.installer_python,
-            isolated_providers=options.isolated_providers,
-        )
-        domain = f"gui/{os.getuid()}"
-        agents = Path.home() / "Library/LaunchAgents"
-        agents.mkdir(parents=True, exist_ok=True)
-        for suffix in ("", ".backup"):
-            label = options.service + suffix
-            plist = root / "agents" / (label + ".plist")
-            (agents / (label + ".plist")).symlink_to(plist)
-        _run(
-            "/bin/launchctl",
-            "bootstrap",
-            domain,
-            str(root / "agents" / (options.service + ".plist")),
-        )
-        address = _wait_health(options.port, revision)
-        _run(
-            "/bin/launchctl",
-            "bootstrap",
-            domain,
-            str(root / "agents" / (options.service + ".backup.plist")),
-        )
-        return address
-    # Reuse the same immutable extraction and admission as release updates.
-    # Admission occurs in temporary storage before persistent state or units exist.
-    import tempfile
-
-    with tempfile.TemporaryDirectory(prefix="panels-home-admission-") as temporary:
-        candidate = Path(temporary) / "app"
-        manifest = extract_app_archive(archive, candidate, archive_sha256, revision)
-        admit_runtime(candidate, manifest)
-        root.mkdir(parents=True, mode=0o700)
-        shutil.move(candidate, root / "app")
-    for name in ("data", "logs", "workspaces"):
-        (root / name).mkdir(mode=0o700)
-    config = root / "data/config.yaml"
-    config.write_text(
-        json.dumps(
-            {
-                "workspace_root": str(root / "workspaces"),
-                "provision_account_skills": not options.isolated_providers,
-            }
-        )
-        + "\n"
+    root = root.resolve()
+    options = HomeInstall(
+        root, options.service, options.port, options.installer_python, options.isolated_providers
     )
-    config.chmod(0o600)
-    unit = Path.home() / ".config/systemd/user" / (options.service + ".service")
-    unit.parent.mkdir(parents=True, exist_ok=True)
-    with unit.open("x") as stream:
-        stream.write(linux_unit(options))
-    _run("systemctl", "--user", "daemon-reload")
-    _run("systemctl", "--user", "enable", "--now", unit.name)
-    return _wait_health(options.port, revision)
+    is_mac = platform.system() == "Darwin"
+    units = {} if is_mac else linux_units(options)
+    if not is_mac:
+        _check_linux_services(units)
+    created_files: list[Path] = []
+    attempted_jobs: list[tuple[str, Path]] = []
+    activated_units: list[str] = []
+    owns_root = False
+    domain = f"gui/{os.getuid()}"
+    try:
+        if is_mac:
+            from planner.installation.mac_home import install_home as install_mac
+
+            install_mac(
+                root,
+                archive,
+                archive_sha256,
+                revision,
+                options.service,
+                options.port,
+                options.installer_python,
+                isolated_providers=options.isolated_providers,
+            )
+            owns_root = True
+            agents = Path.home() / "Library/LaunchAgents"
+            agents.mkdir(parents=True, exist_ok=True)
+            for suffix in ("", ".backup"):
+                label = options.service + suffix
+                plist = root / "agents" / (label + ".plist")
+                link = agents / (label + ".plist")
+                link.symlink_to(plist)
+                created_files.append(link)
+            label = options.service
+            plist = root / "agents" / (label + ".plist")
+            attempted_jobs.append((label, plist))
+            _run("/bin/launchctl", "bootstrap", domain, str(plist))
+            address = _wait_health(options.port, revision)
+            label = options.service + ".backup"
+            plist = root / "agents" / (label + ".plist")
+            attempted_jobs.append((label, plist))
+            _run("/bin/launchctl", "bootstrap", domain, str(plist))
+            return address
+        # Admit the release before persistent state exists.
+        with tempfile.TemporaryDirectory(prefix="panels-home-admission-") as temporary:
+            candidate = Path(temporary) / "app"
+            manifest = extract_app_archive(archive, candidate, archive_sha256, revision)
+            admit_runtime(candidate, manifest)
+            root.mkdir(parents=True, mode=0o700)
+            owns_root = True
+            shutil.move(candidate, root / "app")
+        for name in ("data", "logs", "workspaces"):
+            (root / name).mkdir(mode=0o700)
+        config = root / "data/config.yaml"
+        config.write_text(
+            json.dumps(
+                {
+                    "workspace_root": str(root / "workspaces"),
+                    "provision_account_skills": not options.isolated_providers,
+                }
+            )
+            + "\n"
+        )
+        config.chmod(0o600)
+        directory = Path.home() / ".config/systemd/user"
+        directory.mkdir(parents=True, exist_ok=True)
+        for name, text in units.items():
+            path = directory / name
+            with path.open("x") as stream:
+                created_files.append(path)
+                stream.write(text)
+        _run("systemctl", "--user", "daemon-reload")
+        unit = options.service + ".service"
+        activated_units.append(unit)
+        _run("systemctl", "--user", "enable", "--now", unit)
+        address = _wait_health(options.port, revision)
+        timer = options.service + ".backup.timer"
+        activated_units.append(timer)
+        _run("systemctl", "--user", "enable", "--now", timer)
+        return address
+    except BaseException as error:
+        try:
+            for label, plist in reversed(attempted_jobs):
+                _stop_mac_job(domain, label, plist)
+            if activated_units:
+                # A timer can start its backup while setup checks the new home.
+                for name in reversed(list(units)):
+                    _run("systemctl", "--user", "stop", name)
+                for name in reversed(activated_units):
+                    _run("systemctl", "--user", "disable", name)
+                for name in units:
+                    result = subprocess.run(
+                        ["systemctl", "--user", "is-active", name],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    if result.stdout.strip() not in ("inactive", "failed"):
+                        raise RuntimeError(f"Cannot confirm that the new service stopped: {name}")
+            for path in reversed(created_files):
+                path.unlink()
+            if created_files and not is_mac:
+                _run("systemctl", "--user", "daemon-reload")
+            if owns_root:
+                shutil.rmtree(root)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as cleanup_error:
+            raise RuntimeError(
+                f"{error}. Setup cleanup failed: {cleanup_error}. Retained {root}"
+            ) from error
+        raise
 
 
 def main() -> None:
