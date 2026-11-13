@@ -73,39 +73,37 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
       return signal_failed ? 1 : code;
     });
     stopping_child = flight;
-    void observe_shutdown(owned.closed, { deadline }, 'supervisor application').catch(
-      () => {
+    void observe_shutdown(owned.closed, { deadline }, 'supervisor application').catch(() => {
+      try {
+        writeSync(
+          2,
+          `Panels application exceeded the ${SUPERVISOR_APP_STOP_SECONDS}-second supervisor stop bound; forcing its owned group.\n`,
+        );
+      } catch {
+        /* Log failure cannot prevent the terminal fallback. */
+      }
+      try {
+        const current = owned.process;
+        if (
+          !owned.exited &&
+          current.pid !== undefined &&
+          current.exitCode === null &&
+          current.signalCode === null
+        ) {
+          if (process.platform === 'win32') current.kill('SIGKILL');
+          else process.kill(-current.pid, 'SIGKILL');
+        }
+      } catch (error) {
         try {
-          writeSync(
-            2,
-            `Panels application exceeded the ${SUPERVISOR_APP_STOP_SECONDS}-second supervisor stop bound; forcing its owned group.\n`,
-          );
+          writeSync(2, `Panels application force was not confirmed: ${String(error)}\n`);
         } catch {
-          /* Log failure cannot prevent the terminal fallback. */
+          /* Attempted force remains a failure even without stderr. */
         }
-        try {
-          const current = owned.process;
-          if (
-            !owned.exited &&
-            current.pid !== undefined &&
-            current.exitCode === null &&
-            current.signalCode === null
-          ) {
-            if (process.platform === 'win32') current.kill('SIGKILL');
-            else process.kill(-current.pid, 'SIGKILL');
-          }
-        } catch (error) {
-          try {
-            writeSync(2, `Panels application force was not confirmed: ${String(error)}\n`);
-          } catch {
-            /* Attempted force remains a failure even without stderr. */
-          }
-        } finally {
-          // No unbounded finally await or unconfirmed resource finalizers on this path.
-          process.exit(1);
-        }
-      },
-    );
+      } finally {
+        // No unbounded finally await or unconfirmed resource finalizers on this path.
+        process.exit(1);
+      }
+    });
     if (!owned.exited && owned.process.exitCode === null && owned.process.signalCode === null) {
       try {
         owned.process.kill('SIGTERM');

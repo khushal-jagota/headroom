@@ -16,7 +16,11 @@ test('control refuses a wider socket parent before replacing its pathname', asyn
     await chmod(parent, 0o755);
     const socket = join(parent, 'control.sock');
     await writeFile(socket, 'retained pathname');
-    const opening = open_control_server(socket, () => null, () => {}).then((opened) => {
+    const opening = open_control_server(
+      socket,
+      () => null,
+      () => {},
+    ).then((opened) => {
       server = opened;
       return opened;
     });
