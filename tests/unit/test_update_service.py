@@ -48,10 +48,14 @@ class System:
         return "unknown" if self.workspace_admission.closed else self.activity
 
     async def prepare_update(self, mode: str) -> bool:
-        self.workspace_admission.claim(lambda: None, idle=lambda: True, require_idle=False)
-        if self.workspace_admission.active:
+        self.workspace_admission.close_starts()
+        if self.workspace_admission.active or (mode == "idle" and self.activity != "idle"):
             return False
-        return mode == "now" or self.activity == "idle"
+        if not self.workspace_admission.closed:
+            return self.workspace_admission.claim(
+                lambda: None, idle=lambda: True, require_idle=True,
+            )
+        return True
 
     def cancel_update(self) -> bool:
         self.workspace_admission.reopen()
@@ -373,7 +377,8 @@ def test_idle_wait_reports_the_bound_without_forcing_or_latching_work(
     waiting = harness.service.install(SHA_B, "idle", confirm_activity=False)
     assert waiting.deadline_at is not None
     harness.advance()
-    assert harness.system.workspace_admission.closed
+    assert harness.system.workspace_admission.starts_closed
+    assert not harness.system.workspace_admission.closed
     later = time.time() + 301
     harness.service._now = lambda: later
     harness.advance()
@@ -580,7 +585,7 @@ def test_installer_restarts_only_the_unit_this_server_runs_in() -> None:
     assert own_service_unit("") is None
 
 
-def test_uncertain_retirement_keeps_update_fenced_until_recovery(
+def test_cancel_reopens_work_after_uncertain_retirement(
     harness: Harness, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An unproven child stop must not launch an installer or reopen starts."""
@@ -591,15 +596,15 @@ def test_uncertain_retirement_keeps_update_fenced_until_recovery(
         raise RuntimeError("owned child did not stop")
 
     monkeypatch.setattr(harness.system, "prepare_update", uncertain)
-    monkeypatch.setattr(harness.system, "cancel_update", lambda: False)
     attempt = harness.service.install(SHA_B, "now", confirm_activity=True)
     harness.advance()
     status = harness.service.status()
     assert status.state == "waiting" and "owned child did not stop" in (status.detail or "")
     assert harness.system.workspace_admission.closed and not harness.launched
-    with pytest.raises(UpdateConflict, match="retirement is uncertain"):
-        harness.service.cancel(attempt.attempt_id)
-    assert harness.store.read() is not None
+    harness.service.cancel(attempt.attempt_id)
+    assert harness.store.read() is None
+    assert not harness.system.workspace_admission.closed
+    assert not harness.system.workspace_admission.starts_closed
 
 
 def test_accepted_save_timeout_keeps_receipt_custody_and_blocks_snapshot(
@@ -620,10 +625,10 @@ def test_accepted_save_timeout_keeps_receipt_custody_and_blocks_snapshot(
             assert barrier.frozen and not barrier.drained and not harness.launched
             status = harness.service.status()
             assert status.state == "waiting" and "result saves" in (status.detail or "")
-            with pytest.raises(UpdateConflict, match="result saves"):
-                harness.service.cancel(attempt.attempt_id)
-        harness.service.cancel(attempt.attempt_id)
-        assert not barrier.frozen and not harness.system.workspace_admission.closed
+            harness.service.cancel(attempt.attempt_id)
+            assert not barrier.frozen and not harness.system.workspace_admission.closed
+            assert harness.store.read() is None and not harness.launched
+        assert not barrier.frozen
 
     asyncio.run(run())
 
@@ -736,3 +741,39 @@ def test_owner_controller_refusal_is_bounded_and_does_not_claim_cancellation(
         assert harness.store.read() is None and not harness.launched
         harness.service._event_loop = None
     owner.close()
+
+
+def test_cancel_invalidates_preparation_before_late_safe_point(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A canceled owned stop may finish later, but it must never snapshot or install."""
+    async def run() -> None:
+        entered, finish = asyncio.Event(), asyncio.Event()
+
+        async def owned_stop() -> bool:
+            await finish.wait()
+            return True
+
+        owned = asyncio.create_task(owned_stop())
+
+        async def pending(mode: str) -> bool:
+            harness.system.workspace_admission.close_starts()
+            entered.set()
+            return await asyncio.shield(owned)
+
+        monkeypatch.setattr(harness.system, "prepare_update", pending)
+        attempt = harness.service.install(SHA_B, "now", confirm_activity=True)
+        advance = asyncio.create_task(harness.service.advance())
+        await entered.wait()
+        harness.service.cancel(attempt.attempt_id)
+        assert harness.store.read() is None
+        assert not harness.system.workspace_admission.starts_closed
+        assert not harness.system.workspace_admission.closed
+        finish.set()
+        with pytest.raises(asyncio.CancelledError):
+            await advance
+        assert await owned
+        assert not harness.launched
+        assert harness.store.read() is None
+
+    asyncio.run(run())

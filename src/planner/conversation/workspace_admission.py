@@ -13,6 +13,7 @@ class WorkspaceAdmission:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._closed = False
+        self._starts_closed = False
         self._active = 0
         self._operations_finished: set[Callable[[], None]] = set()
 
@@ -37,10 +38,23 @@ class WorkspaceAdmission:
         with self._lock:
             return self._closed
 
-    @contextmanager
-    def operation(self) -> Iterator[bool]:
+    @property
+    def starts_closed(self) -> bool:
         with self._lock:
-            admitted = not self._closed
+            return self._starts_closed
+
+    def close_starts(self) -> bool:
+        """Pause new turns while admitted work can still save its results."""
+        with self._lock:
+            if self._closed or self._starts_closed:
+                return False
+            self._starts_closed = True
+            return True
+
+    @contextmanager
+    def operation(self, *, starts: bool = False) -> Iterator[bool]:
+        with self._lock:
+            admitted = not self._closed and not (starts and self._starts_closed)
             if admitted:
                 self._active += 1
         try:
@@ -66,12 +80,14 @@ class WorkspaceAdmission:
                 return False
             operation()
             self._closed = True
+            self._starts_closed = True
             return True
 
     def reopen(self) -> None:
         """Open work again after an update that paused it could not start its installer."""
         with self._lock:
             self._closed = False
+            self._starts_closed = False
 
 
 class RequestAdmissionLease:

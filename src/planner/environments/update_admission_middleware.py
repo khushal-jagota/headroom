@@ -62,6 +62,8 @@ class UpdateAdmissionMiddleware:
             # a result or an item is not owner work, and must not hold an update back.
             and not path.startswith(("/api/updates", "/api/executor/"))
         ):
+            # Ordinary idle waits close only start admission. The final write gate
+            # stays open so admitted agents can save results and finish their turns.
             lease = RequestAdmissionLease(system.workspace_admission)
             token = current_write_admission.set(lease)
             try:

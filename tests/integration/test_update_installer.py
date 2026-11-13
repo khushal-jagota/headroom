@@ -283,8 +283,8 @@ def test_installer_refuses_an_attempt_that_is_not_this_installing_one(
     assert json.loads((scratch.root / "app/manifest.json").read_text())["app_sha"] == FROM_SHA
 
 
-def test_failed_rollback_keeps_receipt_cut_closed(scratch: Scratch) -> None:
-    """A failed health trial and failed recovery cannot release remote output receipts."""
+def test_failed_rollback_releases_receipt_cut(scratch: Scratch) -> None:
+    """A terminal installer failure cannot leave the home permanently frozen."""
     write_app(scratch.root / f".app-next-{TO_SHA}", TO_SHA, unhealthy=True)
     (scratch.root / "app/unhealthy").touch()
     write_attempt(scratch)
@@ -292,7 +292,7 @@ def test_failed_rollback_keeps_receipt_cut_closed(scratch: Scratch) -> None:
     barrier.write_text(ATTEMPT_ID)
     result = scratch.run_installer()
     assert result.returncode == 1
-    assert barrier.exists()
+    assert not barrier.exists()
     assert "rollback_healthy" not in scratch.record()["steps"]
 
 
@@ -300,6 +300,7 @@ def test_trial_boot_holds_runtime_until_installer_releases_cut(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Only real lifespan order proves health does not admit producers during a trial."""
+    import fcntl
     import threading
     import time
     from dataclasses import asdict
@@ -353,28 +354,58 @@ def test_trial_boot_holds_runtime_until_installer_releases_cut(
         "PLAN_DISPATCHER_LOCK_PATH": str(tmp_path / "polling.lock"),
     })
     app = create_app(config, build_clock(config), lambda: connect(str(database)))
-    with TestClient(app) as client:
-        response = client.get("/api/health", params={"expected_sha": TO_SHA})
-        assert response.status_code == 200
-        assert app.state.conversation is not None
-        assert client.get("/api/conversation/conversations/missing").status_code == 404
-        assert not starts
-        assert app.state.conversation_system.workspace_admission.closed
-        assert marker_observed.wait(timeout=5)
-        # An installer crash after unlink must not leave a healthy home frozen.
-        # Deliberately omit its next attempt write to prove marker-only release.
-        barrier.release()
-        deadline = time.monotonic() + 5
-        while not starts and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert starts == [True]
-        assert not app.state.conversation_system.workspace_admission.closed
+    with (tmp_path / "update-installer.lock").open("a+") as installer:
+        fcntl.flock(installer.fileno(), fcntl.LOCK_EX)
+        installer.seek(0)
+        installer.truncate()
+        installer.write(ATTEMPT_ID + "\n")
+        installer.flush()
+        with TestClient(app) as client:
+            response = client.get("/api/health", params={"expected_sha": TO_SHA})
+            assert response.status_code == 200
+            assert app.state.conversation is not None
+            assert client.get("/api/conversation/conversations/missing").status_code == 404
+            assert not starts
+            assert app.state.conversation_system.workspace_admission.closed
+            assert marker_observed.wait(timeout=5)
+            # An installer crash after unlink must not leave a healthy home frozen.
+            # Deliberately omit its next attempt write to prove marker-only release.
+            barrier.release()
+            deadline = time.monotonic() + 5
+            while not starts and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert starts == [True]
+            assert not app.state.conversation_system.workspace_admission.closed
+
+    barrier.freeze(ATTEMPT_ID)
+    atomic_write_json(attempt_path, asdict(record))
+    starts.clear()
+    with (tmp_path / "update-installer.lock").open("a+") as installer:
+        fcntl.flock(installer.fileno(), fcntl.LOCK_EX)
+        installer.seek(0)
+        installer.truncate()
+        installer.write(ATTEMPT_ID + "\n")
+        installer.flush()
+        recovering = create_app(config, build_clock(config), lambda: connect(str(database)))
+        with TestClient(recovering) as client:
+            assert client.get("/api/health", params={"expected_sha": TO_SHA}).status_code == 200
+            assert not starts
+            # SIGKILL and reboot both release this kernel lock without a file change.
+            fcntl.flock(installer.fileno(), fcntl.LOCK_UN)
+            deadline = time.monotonic() + 5
+            while not starts and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert starts == [True]
+            assert not recovering.state.update_barrier.frozen
 
     # A crash before launch needs no trial, including a timed-out intake drain.
     # Waiting and preparing both prove that no installer can later restore data.
-    for interrupted_state in ("waiting", "preparing"):
+    for interrupted_state in ("waiting", "preparing", "installing", "failed", "unknown", None):
         barrier.freeze(ATTEMPT_ID)
-        atomic_write_json(attempt_path, {**asdict(record), "state": interrupted_state})
+        if interrupted_state is None:
+            attempt_path.unlink()
+        else:
+            atomic_write_json(attempt_path, {**asdict(record), "state": interrupted_state})
         starts.clear()
         recovered = create_app(config, build_clock(config), lambda: connect(str(database)))
         with TestClient(recovered) as client:
@@ -383,5 +414,107 @@ def test_trial_boot_holds_runtime_until_installer_releases_cut(
             assert not recovered.state.update_barrier.frozen
             assert not recovered.state.conversation_system.workspace_admission.closed
             attempt = recovered.state.updates.attempts.read()
-            assert attempt is not None and attempt.state == "failed"
-            assert attempt.detail == "Panels restarted before the update began, so nothing changed."
+            if interrupted_state is not None:
+                assert attempt is not None and attempt.state == "failed"
+                if interrupted_state in {"waiting", "preparing"}:
+                    assert attempt.detail == (
+                        "Panels restarted before the update began, so nothing changed."
+                    )
+                elif interrupted_state == "unknown":
+                    assert attempt.detail == "The previous update did not complete. Try again."
+
+
+@pytest.mark.parametrize("owner", [ATTEMPT_ID, "previous-attempt"])
+def test_busy_installer_preserves_same_trial_and_releases_foreign_attempt(
+    scratch: Scratch, owner: str,
+) -> None:
+    """Old post-health cleanup cannot leave a new refused attempt frozen."""
+    import fcntl
+
+    write_attempt(scratch)
+    marker = scratch.root / "data/update-barrier.json"
+    marker.write_text(ATTEMPT_ID)
+    with (scratch.root / "data/update-installer.lock").open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        lock.write(owner + "\n")
+        lock.flush()
+        result = scratch.run_installer()
+    assert result.returncode == 2
+    assert not scratch.calls()
+    if owner == ATTEMPT_ID:
+        assert scratch.record()["state"] == "installing"
+        assert marker.exists()
+    else:
+        assert scratch.record()["state"] == "failed"
+        assert not marker.exists()
+
+
+
+def test_restore_child_retains_lifetime_lock_after_parent_descriptor_closes(
+    scratch: Scratch, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A surviving restore writer must prevent orphan recovery after installer death."""
+    import argparse
+    import fcntl
+    import sys
+
+    from planner.platform_runtime.linux import update_installer as installer
+
+    previous = scratch.root / f".app-previous-{FROM_SHA}"
+    (scratch.root / "app").rename(previous)
+    write_app(scratch.root / "app", TO_SHA)
+    write_attempt(scratch, backup="retained-snapshot")
+    lock_path = scratch.root / "data/update-installer.lock"
+    parent = lock_path.open("a+")
+    fcntl.flock(parent.fileno(), fcntl.LOCK_EX)
+    inherited = parent.fileno()
+    installation = installer.Installation(
+        scratch.root, ATTEMPT_ID, "service", lifetime_lock_fd=inherited,
+    )
+    monkeypatch.setattr(installation, "systemctl", lambda action: None)
+    monkeypatch.setattr(installer, "healthy", lambda *args: True)
+    child_code = (
+        "import os,sys; os.fstat(int(sys.argv[1])); "
+        "print('ready',flush=True); sys.stdin.read(1)"
+    )
+    observations: list[bool] = []
+
+    def restore(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert command[1:3] == ["environment", "restore"]
+        assert kwargs["pass_fds"] == (inherited,)
+        child = subprocess.Popen(
+            [sys.executable, "-c", child_code, str(inherited)],
+            pass_fds=kwargs["pass_fds"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert child.stdout is not None and child.stdout.readline().strip() == "ready"
+            parent.close()  # SIGKILL closes the parent's descriptor in the same way.
+            with lock_path.open("a+") as probe:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                observations.append(True)
+            child.communicate("x", timeout=5)
+            assert child.returncode == 0
+            with lock_path.open("a+") as probe:
+                fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return subprocess.CompletedProcess(command, 0)
+        finally:
+            if child.poll() is None:
+                child.terminate()
+                child.wait(timeout=5)
+            if child.stdout is not None:
+                child.stdout.close()
+
+    monkeypatch.setattr(installer.subprocess, "run", restore)
+    try:
+        result = installer.roll_back(
+            installation,
+            argparse.Namespace(health_url="unused", health_timeout_seconds=1),
+            scratch.record(), "new app failed", previous_moved=True, new_app_moved=True,
+        )
+        assert result == 1
+        assert observations == [True]
+        assert "rollback_healthy" in scratch.record()["steps"]
+    finally:
+        parent.close()

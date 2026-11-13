@@ -124,6 +124,7 @@ class UpdateService:
         self._ready: PublishedUpdate | None = None
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._advancing = False
+        self._advance_task: asyncio.Task[None] | None = None
         # The attempt whose start closed this process's workspace admission.
         self._paused_attempt_id: str | None = None
         self._last_state: str | None = None
@@ -307,15 +308,35 @@ class UpdateService:
             "waiting", "preparing", "installing"
         }:
             return
-        if self._update_barrier is not None and not self._update_barrier.drained:
-            return
         system = self.conversation()
-        if system is not None and not system.cancel_update():
-            return
+        if system is not None:
+            system.cancel_update()
         self._paused_attempt_id = None
-        if self._update_barrier is not None:
-            self._update_barrier.release()
+        self._release_barrier()
         change_signal.emit()
+
+    def _release_barrier(self) -> None:
+        barrier = self._update_barrier
+        if barrier is None:
+            return
+        generation = barrier.reopen()
+        try:
+            owner = asyncio.get_running_loop()
+        except RuntimeError:
+            barrier.remove(generation)
+            return
+        future = owner.run_in_executor(None, barrier.remove, generation)
+
+        def removed(result: asyncio.Future[None]) -> None:
+            if not result.cancelled() and (error := result.exception()) is not None:
+                _LOG.error("Update marker cleanup failed", exc_info=(type(error), error,
+                                                                      error.__traceback__))
+
+        future.add_done_callback(removed)
+
+    def _owns_attempt(self, attempt_id: str, state: UpdateAttemptState) -> bool:
+        current = self.attempts.read()
+        return current is not None and current.attempt_id == attempt_id and current.state == state
 
     def _deadline(self) -> str:
         return (
@@ -377,19 +398,16 @@ class UpdateService:
         return self._on_owner(lambda: self._cancel(attempt_id))
 
     def _cancel(self, attempt_id: str) -> None:
-        attempt = self.attempts.read()
-        if attempt is None or attempt.attempt_id != attempt_id or attempt.state != "waiting":
-            raise UpdateConflict("The update already moved on.")
-        if self._update_barrier is not None and not self._update_barrier.drained:
-            raise UpdateConflict("Accepted result saves still wait. The update remains paused.")
+        # Invalidate the continuation before reopening starts or writes.
+        self.attempts.remove(attempt_id, frozenset({"waiting", "preparing"}))
         system = self.conversation()
-        if system is not None and not system.cancel_update():
-            raise UpdateConflict("Child retirement is uncertain. The update remains paused.")
-        self.attempts.remove(attempt_id, frozenset({"waiting"}))
+        if system is not None:
+            system.cancel_update()
         self._paused_attempt_id = None
-        if self._update_barrier is not None:
-            self._update_barrier.release()
+        self._release_barrier()
         self._wait_for_work(False)
+        if self._advance_task is not None:
+            self._advance_task.cancel()
 
     def update_now(self, attempt_id: str, *, confirm_activity: bool) -> UpdateAttempt:
         return self._on_owner(
@@ -543,9 +561,11 @@ class UpdateService:
         if self._advancing:
             return
         self._advancing = True
+        self._advance_task = asyncio.current_task()
         try:
             await self._advance()
         finally:
+            self._advance_task = None
             self._advancing = False
 
     async def _advance(self) -> None:
@@ -580,16 +600,21 @@ class UpdateService:
         self._paused_attempt_id = attempt_id
         self._wait_for_work(True)
         try:
-            safe = await asyncio.wait_for(
-                system.prepare_update(
+            # Enter preparation in this controller task. A separately queued coroutine
+            # could close starts after Cancel reopened them but before cancellation lands.
+            async with asyncio.timeout(self._remaining_drain(attempt)):
+                safe = await system.prepare_update(
                     "idle" if not attempt.confirm_activity else attempt.mode
-                ), self._remaining_drain(attempt)
-            )
+                )
         except TimeoutError:
+            if not self._owns_attempt(attempt_id, "waiting"):
+                return
             self.attempts.change(attempt_id, frozenset({"waiting"}),
                                  lambda current: replace(current, detail=STOP_TIMEOUT_DETAIL))
             return
         except Exception as exc:
+            if not self._owns_attempt(attempt_id, "waiting"):
+                return
             _LOG.warning("Update safe-point check stopped: %s", exc, exc_info=True)
             # Unknown retirement is not a failed install: retain the admission fence.
             detail = f"Work could not reach a safe point: {exc}. The update remains paused."
@@ -598,7 +623,7 @@ class UpdateService:
             return
         if not safe:
             return
-        if (current := self.attempts.read()) is None or current.attempt_id != attempt_id:
+        if not self._owns_attempt(attempt_id, "waiting"):
             return
 
         def pause_work() -> None:
@@ -645,10 +670,20 @@ class UpdateService:
         self._paused_attempt_id = attempt_id
         try:
             if self._update_barrier is not None:
-                self._update_barrier.freeze(attempt_id)
+                generation = self._update_barrier.close()
+                await asyncio.to_thread(self._update_barrier.persist, attempt_id, generation)
+                if not self._owns_attempt(attempt_id, "preparing"):
+                    return
                 await asyncio.wait_for(self._update_barrier.drain(), self._remaining_drain(attempt))
+            if not self._owns_attempt(attempt_id, "preparing"):
+                return
+            # This owner-loop claim is the cancellation boundary, before any snapshot.
+            self.attempts.change(attempt_id, frozenset({"preparing"}),
+                                 lambda current: replace(current, state="installing"))
             await asyncio.to_thread(self._start_installer, attempt_id)
         except TimeoutError:
+            if not self._owns_attempt(attempt_id, "preparing"):
+                return
             # An accepted detached save still owns custody. Do not reopen or snapshot.
             self.attempts.change(attempt_id, frozenset({"preparing"}), lambda current: replace(
                 current, state="waiting", detail=("Accepted result saves still wait. "
@@ -656,6 +691,10 @@ class UpdateService:
                                                  "or cancel the update."),
             ))
         except Exception as exc:
+            current = self.attempts.read()
+            if (current is None or current.attempt_id != attempt_id
+                    or current.state not in {"preparing", "installing"}):
+                return
             _LOG.exception("Update %s did not start its installer", attempt_id)
             self._fail(
                 attempt_id, frozenset({"preparing", "installing"}),
@@ -700,7 +739,7 @@ class UpdateService:
                 deadline_at=self._deadline(), steps=steps,
             )
 
-        self.attempts.change(attempt_id, frozenset({"preparing"}), installing)
+        self.attempts.change(attempt_id, frozenset({"installing"}), installing)
         self._launch(attempt_id, command)
 
     def _fail(

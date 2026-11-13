@@ -345,19 +345,34 @@ def create_app(
                 defer_view_cleanup=True,
                 startup_audit=audit_startup_tickets,
             ) as conversation:
-                interrupted_attempt = update_attempts.read()
-                if (app.state.update_barrier.frozen and interrupted_attempt is not None
-                        and interrupted_attempt.state in {"waiting", "preparing"}):
-                    # Waiting and preparing precede installer launch. Runtime ownership proves
-                    # the prior home exited, so no installer can still restore data.
-                    # Release first: a crash before the record write remains recoverable.
-                    app.state.update_barrier.release()
-                    update_attempts.change(
-                        interrupted_attempt.attempt_id, frozenset({"waiting", "preparing"}),
-                        lambda current: replace(
-                            current, state="failed", detail=RESTARTED_DETAIL,
-                        ),
-                    )
+                def recover_orphaned_cut() -> None:
+                    barrier = app.state.update_barrier
+                    if not barrier.frozen:
+                        return
+                    interrupted = update_attempts.read()
+                    identity = "" if interrupted is None else interrupted.attempt_id
+                    with barrier.installer_guard(identity) as active:
+                        if (interrupted is not None
+                                and interrupted.state in {"preparing", "installing"}
+                                and active):
+                            return
+                        if interrupted is not None and interrupted.state not in {"done", "failed"}:
+                            update_attempts.change(
+                                interrupted.attempt_id, frozenset({interrupted.state}),
+                                lambda current: replace(
+                                    current, state="failed", detail=(
+                                        RESTARTED_DETAIL
+                                        if current.state in {"waiting", "preparing"} else
+                                        "The previous update did not complete. Try again."
+                                    ),
+                                ),
+                            )
+                        barrier.release()
+
+                async def recover_orphaned_barrier() -> None:
+                    await asyncio.to_thread(recover_orphaned_cut)
+
+                await recover_orphaned_barrier()
                 startup_frozen = app.state.update_barrier.frozen
                 if startup_frozen:
                     conversation.system.workspace_admission.claim(
@@ -510,28 +525,52 @@ def create_app(
                 normal_work_released = False
 
                 async def release_after_trial() -> None:
-                    nonlocal normal_work_released
-                    app.state.update_barrier.refresh()
-                    if app.state.update_barrier.frozen or normal_work_released:
-                        return
-                    normal_work_released = True
-                    if startup_frozen:
-                        conversation.system.workspace_admission.reopen()
-                    await release_normal_work()
+                    nonlocal normal_work_released, work_release_task
+                    try:
+                        app.state.update_barrier.refresh()
+                        if startup_frozen and not normal_work_released:
+                            await recover_orphaned_barrier()
+                        if app.state.update_barrier.frozen:
+                            # Another installer event can request a check after this wait.
+                            work_release_task = None
+                            return
+                        if normal_work_released:
+                            return
+                        if startup_frozen:
+                            conversation.system.workspace_admission.reopen()
+                        await release_normal_work()
+                        normal_work_released = True
+                    except Exception:
+                        logging.getLogger(__name__).exception(
+                            "Normal work could not resume after the update trial"
+                        )
+
+                def trial_probe() -> object:
+                    if not startup_frozen or normal_work_released:
+                        return None
+                    attempt = update_attempts.read()
+                    return None if attempt is None else (
+                        attempt.attempt_id, attempt.state,
+                        app.state.update_barrier.installer_active(attempt.attempt_id),
+                    )
 
                 def attempt_changed() -> None:
                     nonlocal work_release_task
                     change_signal.emit()
-                    if work_release_task is None or work_release_task.done():
+                    # A failed release can leave partial producers. Log it once and
+                    # retain its task instead of starting those producers again.
+                    if work_release_task is None:
                         work_release_task = asyncio.create_task(release_after_trial())
 
                 if not startup_frozen:
-                    await release_after_trial()
+                    await release_normal_work()
+                    normal_work_released = True
                 # The installer writes the attempt record from outside this process.
                 attempt_observer = asyncio.create_task(
                     observe_path_changes(
                         update_attempts.path, attempt_changed,
                         additional_paths=(app.state.update_barrier.path,),
+                        additional_probe=trial_probe,
                     )
                 )
                 if startup_frozen:

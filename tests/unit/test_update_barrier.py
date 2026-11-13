@@ -19,6 +19,17 @@ def test_barrier_survives_restart_outside_database(tmp_path: Path) -> None:
     replacement.release()
     barrier.refresh()
     assert not barrier.frozen
+    # Late cancellation cleanup cannot remove a newer update's marker.
+    canceled = barrier.close()
+    released = barrier.reopen()
+    barrier.refresh()
+    assert not barrier.frozen
+    barrier.persist("canceled", canceled)
+    assert not barrier.path.exists()
+    current = barrier.close()
+    barrier.persist("current", current)
+    barrier.remove(released)
+    assert barrier.path.read_text().strip() == "current"
 
 
 def test_cut_waits_for_detached_save_and_refuses_later_receipts(tmp_path: Path) -> None:

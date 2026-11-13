@@ -38,6 +38,7 @@ async def observe_path_changes(
     *,
     poll_seconds: float = 0.25,
     additional_paths: tuple[Path, ...] = (),
+    additional_probe: Callable[[], object] | None = None,
 ) -> None:
     """Emit after create, replacement, mutation, or deletion until cancelled."""
 
@@ -45,8 +46,9 @@ async def observe_path_changes(
         raise ValueError("poll interval must be positive")
     paths = (path, *additional_paths)
 
-    def signatures() -> tuple[PathSignature, ...]:
-        return tuple(path_signature(item) for item in paths)
+    def signatures() -> tuple[object, ...]:
+        return (*tuple(path_signature(item) for item in paths),
+                None if additional_probe is None else additional_probe())
 
     previous = await asyncio.to_thread(signatures)
     while True:

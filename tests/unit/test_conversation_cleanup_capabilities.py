@@ -512,6 +512,8 @@ def test_update_barrier_drains_admitted_turn_without_new_starts(tmp_path: Path) 
             await harness.system.send("c", text_message_content("work"), sender_label="owner")
             assert harness.system.update_waiting_work() == ("hermes conversation",)
             assert not await harness.system.prepare_update("idle")
+            assert harness.system.workspace_admission.starts_closed
+            assert not harness.system.workspace_admission.closed
             with pytest.raises(RuntimeError, match="admission is closed"):
                 await _start(harness, "new")
             backend = harness.backend("c")
@@ -565,6 +567,17 @@ def test_update_now_keeps_final_stop_callback_before_snapshot(
         try:
             await _start(harness, "c")
             await harness.system.send("c", text_message_content("work"), sender_label="owner")
+            owner = asyncio.get_running_loop()
+            check = harness.system._state_has_update_work
+
+            def owner_check(state: Any) -> bool:
+                assert asyncio.get_running_loop() is owner
+                return check(state)
+
+            monkeypatch.setattr(harness.system, "_state_has_update_work", owner_check)
+            assert await asyncio.to_thread(harness.system.update_waiting_work) == (
+                "hermes conversation",
+            )
             read_started = threading.Event()
             read_release = threading.Event()
             original_read = harness.store.read_live_background_task_ids
@@ -631,10 +644,49 @@ def test_update_refuses_uncertain_stop_or_failed_result_commit(
                 await harness.settle()
             with pytest.raises(RuntimeError):
                 await harness.system.prepare_update("now")
-            assert harness.system.workspace_admission.closed
-            assert not harness.system.cancel_update()
+            assert harness.system.workspace_admission.starts_closed
+            assert harness.system.cancel_update()
+            assert not harness.system.workspace_admission.closed
+            assert not harness.system.workspace_admission.starts_closed
+            harness.backend("c").stop_raises_something_unnamed = False
+            assert await harness.system.prepare_update("now")
         finally:
             harness.backend("c").stop_raises_something_unnamed = False
+            await harness.system.shutdown()
+
+    asyncio.run(asyncio.wait_for(exercise(), 10))
+
+
+def test_cancel_during_native_stop_preserves_new_messages(tmp_path: Path) -> None:
+    """Cancel reopens starts before cleanup ends without discarding the new prompt."""
+    db_path = tmp_path / "planner.db"
+    _create_database(db_path)
+
+    async def exercise() -> None:
+        harness = _Harness(db_path)
+        update: asyncio.Task[bool] | None = None
+        backend = harness.backend("c")
+        try:
+            await _start(harness, "c")
+            await harness.system.send("c", text_message_content("old"), sender_label="owner")
+            backend.stop_has_begun = asyncio.Event()
+            backend.stops_wait_for_release = asyncio.Event()
+            update = asyncio.create_task(harness.system.prepare_update("now"))
+            await asyncio.wait_for(backend.stop_has_begun.wait(), 2)
+            assert harness.system.cancel_update()
+            assert not harness.system.workspace_admission.starts_closed
+            await _start(harness, "unrelated")
+            await harness.system.send("c", text_message_content("new"), sender_label="owner")
+            backend.stops_wait_for_release.set()
+            assert not await update
+            await harness.settle()
+            assert backend.written_texts() == ("old", "new")
+            assert not harness.system.workspace_admission.closed
+        finally:
+            if backend.stops_wait_for_release is not None:
+                backend.stops_wait_for_release.set()
+            if update is not None:
+                await update
             await harness.system.shutdown()
 
     asyncio.run(asyncio.wait_for(exercise(), 10))

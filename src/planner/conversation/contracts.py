@@ -712,7 +712,7 @@ class ConversationSystem(Protocol):
         ...
 
     async def prepare_update(self, mode: Literal["idle", "now"]) -> bool:
-        """Close admission and prove local output safe before an update snapshot."""
+        """Pause starts, settle local output, then close writes before a snapshot."""
         ...
 
     def update_waiting_work(self) -> tuple[str, ...]:
@@ -720,7 +720,7 @@ class ConversationSystem(Protocol):
         ...
 
     def cancel_update(self) -> bool:
-        """Release this update's admission only when owned cleanup is safe."""
+        """Reopen admission and invalidate this attempt's authority to snapshot."""
         ...
 
     async def run_with_workspace_admission(

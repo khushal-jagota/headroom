@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import os
+import tempfile
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -15,20 +18,50 @@ class UpdateBarrier:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.frozen = path.exists()
+        self._lock = threading.RLock()
+        self._generation = self._durable_generation = 0
         self._active = 0
         self._drained = asyncio.Event()
         self._drained.set()
 
-    def freeze(self, attempt_id: str) -> None:
+    def close(self) -> int:
+        with self._lock:
+            self._generation += 1
+            self.frozen = True
+            return self._generation
+
+    def reopen(self) -> int:
+        with self._lock:
+            self._generation += 1
+            self.frozen = False
+            return self._generation
+
+    @contextmanager
+    def _file_lock(self) -> Iterator[None]:
+        with self.path.with_suffix(".json.lock").open("a+") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            yield
+
+    def persist(self, attempt_id: str, generation: int) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(".tmp")
-        with temporary.open("w") as stream:
-            stream.write(attempt_id + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        temporary.replace(self.path)
-        self._sync_directory()
-        self.frozen = True
+        descriptor, name = tempfile.mkstemp(dir=self.path.parent, prefix=".update-barrier-")
+        temporary = Path(name)
+        try:
+            with os.fdopen(descriptor, "w") as stream:
+                stream.write(attempt_id + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            with self._lock, self._file_lock():
+                if generation != self._generation:
+                    return
+                temporary.replace(self.path)
+                self._durable_generation = generation
+            self._sync_directory()
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def freeze(self, attempt_id: str) -> None:
+        self.persist(attempt_id, self.close())
 
     def _sync_directory(self) -> None:
         descriptor = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
@@ -41,16 +74,43 @@ class UpdateBarrier:
     def drained(self) -> bool:
         return self._active == 0
 
-    def release(self) -> None:
-        if not self.drained:
-            raise RuntimeError("Output saves still hold the update barrier.")
-        self.path.unlink(missing_ok=True)
+    def remove(self, generation: int) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock, self._file_lock():
+            if generation != self._generation:
+                return
+            self.path.unlink(missing_ok=True)
+            self._durable_generation = generation
         self._sync_directory()
-        self.frozen = False
+
+    def release(self) -> None:
+        self.remove(self.reopen())
 
     def refresh(self) -> None:
-        """The shared observer calls this after an attempt or marker change."""
-        self.frozen = self.path.exists()
+        """Do not let an old disk marker override a pending local cancellation."""
+        with self._lock:
+            if self._durable_generation == self._generation:
+                self.frozen = self.path.exists()
+
+    @contextmanager
+    def installer_guard(self, attempt_id: str) -> Iterator[bool]:
+        """Keep an absent installer from a late claim until recovery marks it failed."""
+        with (self.path.parent / "update-installer.lock").open("a+") as stream:
+            try:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                stream.seek(0)
+                yield stream.read().strip() == attempt_id
+            else:
+                try:
+                    yield False
+                finally:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+    def installer_active(self, attempt_id: str) -> bool:
+        """The lifetime lock proves a matching installer can still restore data."""
+        with self.installer_guard(attempt_id) as active:
+            return active
 
     @contextmanager
     def operation(self) -> Iterator[bool]:
