@@ -145,6 +145,7 @@ async function extract_archive(
   let input: FileHandle | undefined, work: string | undefined, child: ChildProcess | undefined;
   let closed: Promise<void> | undefined,
     ended = false,
+    stop_requested = false,
     code: number | null = null;
   let ownOutput = false,
     success = false,
@@ -153,13 +154,14 @@ async function extract_archive(
   const errors: unknown[] = [];
   const cancel = (reason: unknown): void => {
     failure ??= reason;
-    if (child && !ended) {
-      child.stdin?.destroy();
+    if (child && !ended && !stop_requested) {
       try {
         stop_one_shot_child(child);
+        stop_requested = true;
       } catch (error) {
         errors.push(error);
       }
+      child.stdin?.destroy();
     }
   };
   const abort = () => cancel(execution!.signal.reason);
@@ -323,13 +325,7 @@ async function extract_archive(
         );
       success = true;
     } catch (error) {
-      failure ??= error;
-      if (child && !ended)
-        try {
-          stop_one_shot_child(child);
-        } catch (error) {
-          errors.push(error);
-        }
+      cancel(error);
     } finally {
       const clean = async (operation: () => Promise<unknown>): Promise<void> => {
         try {
