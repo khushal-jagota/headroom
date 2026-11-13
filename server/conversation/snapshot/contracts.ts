@@ -90,7 +90,7 @@ export interface BackendSnapshotServiceContract extends BackendSnapshotSource {
   ): Promise<BackendUpdateResult>;
 }
 export interface BackendHttpRuntime {
-  shutdown?(options?: Partial<StopOptions>): Promise<void>;
+  shutdown?(options: StopOptions): Promise<void>;
   /** Actual cleanup completion, independent of any shutdown deadline observer. */
   settled(): Promise<void>;
   readonly database: Database;

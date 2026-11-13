@@ -11,6 +11,11 @@ import { is_shutdown_business_cancellation } from '../../conversation/shutdown.t
 import type { StallSource } from '../../stalls/contracts.ts';
 import * as data from '../data/mailbox.ts';
 import type { WireInteger, WireTypes } from '../wire.generated.ts';
+import { MacPresenceService, no_update_check } from '../vps_presence.ts';
+import { ChangeSignal } from '../../core/changes/index.ts';
+import { UpdateConflict } from '../../environments/updates/attempts.ts';
+import { ValueError } from '../protocol.ts';
+import { read_presence } from '../vps_presence_store.ts';
 
 type Statement = { sql: string; values: SqlValue[] };
 type Action = {
@@ -30,6 +35,8 @@ type Action = {
   deadline_ms?: number;
   command: WireTypes['ChildCommand'];
   ids: string[];
+  mode?: string;
+  nested?: WireTypes['LeaseRequest'];
 };
 type Outcome =
   { ok: true; value: unknown } | { ok: false; type: string; message: string; errors?: Outcome[] };
@@ -49,6 +56,14 @@ let after_put: WireTypes['ChildCommand'] | undefined, reentered: Promise<unknown
 let trace: unknown[] = [],
   throw_on: string | null = null;
 const held = new Map<string, Held>();
+let presence: MacPresenceService | undefined,
+  presence_mode = '';
+let callback_release: (() => void) | undefined;
+let callback_gate: Promise<void> | undefined;
+let callback_trace: unknown[] = [];
+let presence_after_commit: (() => void) | undefined;
+const changes = new ChangeSignal();
+changes.subscribe(() => signals++);
 const scalar = (value: unknown): number => {
   const result = numeric_value(value);
   if (result === undefined) throw new TypeError('A control number is required');
@@ -68,6 +83,8 @@ const facade: Database = {
   },
   write(work, options) {
     writes++;
+    if (presence_mode === 'fail_contact')
+      throw Object.assign(new Error('fixture contact flush'), { code: 'EIO' });
     if (before_sql) {
       const statements = before_sql;
       before_sql = undefined;
@@ -85,6 +102,9 @@ const facade: Database = {
     } finally {
       writer_ms += performance.now() - began;
     }
+    const after = presence_after_commit;
+    presence_after_commit = undefined;
+    after?.();
     if (nested) reentered = mailbox.put_child_command(nested);
     if (abort) controller!.abort(new DOMException('fixture observer cancelled', 'AbortError'));
     return result;
@@ -225,6 +245,124 @@ async function call(method: string, args: unknown[]): Promise<unknown> {
   };
   return calls[method]!();
 }
+function callback_error(): void {
+  const kind = presence_mode;
+  if (kind === 'os') throw Object.assign(new Error('fixture callback'), { code: 'EIO' });
+  if (kind === 'value') throw new ValueError('fixture callback');
+  if (kind === 'conflict') throw new UpdateConflict('fixture callback');
+  if (kind === 'type') throw new TypeError('fixture callback');
+  if (kind === 'sqlite') database.read((sql) => sql.get('SELECT * FROM missing_fixture_table'));
+}
+function presence_owner(): void {
+  presence = new MacPresenceService(facade, mailbox, {
+    changes,
+    application_revision: 'fixture',
+    clock: () => now,
+  });
+  presence.update_check = async () => {
+    callback_trace.push(['update']);
+    if (presence_mode === 'hold_update') await callback_gate;
+    if (presence_mode !== 'sqlite') callback_error();
+    return no_update_check();
+  };
+  presence.incarnation_replaced = async (old, current) => {
+    callback_trace.push(['replace', old, current]);
+    if (presence_mode === 'hold_replace') await callback_gate;
+    callback_error();
+  };
+  presence.returned = () => {
+    callback_trace.push(['returned']);
+  };
+}
+async function presence_control(action: Action): Promise<unknown> {
+  const p = presence!;
+  switch (action.method) {
+    case 'open':
+      presence_owner();
+      callback_trace = [];
+      return null;
+    case 'mode':
+      presence_mode = action.mode!;
+      callback_gate = new Promise<void>((resolve) => {
+        callback_release = resolve;
+      });
+      return null;
+    case 'release':
+      callback_release?.();
+      return null;
+    case 'lease':
+      return p.accept_lease(action.args[0] as WireTypes['LeaseRequest']);
+    case 'contact':
+      return p.record_contact();
+    case 'refuse':
+      return p.refuse_old_websocket();
+    case 'fence':
+      return p.require_current(action.args[0] as Parameters<typeof p.require_current>[0]);
+    case 'activity':
+      return p.note_conversation_activity(action.key);
+    case 'drain':
+      return p.wait_until_drained((action.args[0] as string) ?? action.key);
+    case 'callbacks':
+      return callback_trace;
+    case 'cache_only':
+      p.incarnation_replaced = null;
+      p.returned = null;
+      return null;
+    case 'cursor_race': {
+      const before = mailbox.high_sequence();
+      const placed = database.write((tx) =>
+        data.insert_child_command(tx, action.args[1] as WireTypes['ChildCommand'], now),
+      );
+      const reply = await p.accept_lease(action.args[0] as WireTypes['LeaseRequest']);
+      return { placed, reply, cached: mailbox.high_sequence(), before };
+    }
+    case 'mailbox_stop':
+      await mailbox.stop({ deadline: performance.now() / 1000 + 5 });
+      await mailbox.settled();
+      return null;
+    case 'state':
+      return {
+        record: p.record(),
+        health: p.health(),
+        judgement: p.judgement(),
+        identity: p.current_identity(),
+        present: p.is_present(),
+        waits: database.read((sql) => p.stall_source().tracked_waits(sql, now)),
+        callbacks: callback_trace,
+      };
+    case 'cached': {
+      const before = reads + writes;
+      p.record();
+      p.health();
+      p.judgement();
+      p.current_identity();
+      p.is_present();
+      return reads + writes - before;
+    }
+    case 'stored':
+      return database.read(read_presence);
+    case 'reopen':
+      await p.stop({ deadline: performance.now() / 1000 + 5 });
+      await p.settled();
+      presence_owner();
+      return null;
+    case 'stop':
+      await p.stop({
+        deadline: performance.now() / 1000 + scalar(action.deadline_ms ?? 5000) / 1000,
+      });
+      await p.settled();
+      return null;
+    case 'arm':
+      presence_after_commit = () => {
+        if (action.mode === 'stop') void p.stop({ deadline: performance.now() / 1000 + 5 });
+        if (action.mode === 'clock') now = scalar(action.now);
+        if (action.nested) reentered = p.accept_lease(action.nested);
+      };
+      return null;
+    default:
+      throw new Error('Unknown presence control');
+  }
+}
 async function execute(action: Action): Promise<unknown> {
   switch (action.op) {
     case 'open':
@@ -241,6 +379,47 @@ async function execute(action: Action): Promise<unknown> {
     case 'clock':
       now = scalar(action.now);
       return null;
+    case 'presence':
+      return presence_control(action);
+    case 'presence_cold': {
+      const private_db = createDatabase(action.path);
+      let touched = 0;
+      const cold = new MacPresenceService(
+        {
+          read(work) {
+            touched++;
+            return private_db.read(work);
+          },
+          write(work, options) {
+            touched++;
+            return private_db.write(work, options);
+          },
+          close() {
+            throw new Error('Supplied database is not owned');
+          },
+        },
+        mailbox,
+        { changes },
+      );
+      try {
+        await cold.stop({ deadline: performance.now() / 1000 + 5 });
+        await cold.settled();
+        const read = await outcome(() => cold.health());
+        return { touched, read };
+      } finally {
+        private_db.close();
+      }
+    }
+    case 'presence_begin': {
+      const task: Held = { promise: Promise.resolve({ ok: true, value: null }), done: false };
+      task.promise = outcome(() => presence_control(action)).then((result) => {
+        task.done = true;
+        return result;
+      });
+      held.set(action.key, task);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      return { pending: !task.done };
+    }
     case 'sql':
       sql(action.statements);
       return null;

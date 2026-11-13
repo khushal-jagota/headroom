@@ -95,10 +95,13 @@ await startServer({
         });
       },
   testAreas: (context): readonly Area[] => [
-    readinessTestRoutes,
+    readinessTestRoutes(context.shutdown_options),
     sourceTestArea({ ...context, assert_database_owned: context.require_runtime_ownership }),
     notificationTestArea,
-    managerWakeTestArea({ ...context, assert_database_owned: context.require_runtime_ownership }),
+    managerWakeTestArea(
+      { ...context, assert_database_owned: context.require_runtime_ownership },
+      context.shutdown_options,
+    ),
     ...(conversationSystem
       ? inMemoryConversationRoutes(conversationSystem)
       : [

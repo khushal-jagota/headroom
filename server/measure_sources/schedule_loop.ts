@@ -4,7 +4,7 @@ import type { Clock } from '../core/clock.ts';
 import type { WorkspaceAdmission } from '../conversation/workspace_admission.ts';
 import type { SlotParticipant } from './participants.ts';
 import { observe_shutdown } from '../lifecycle/deadline.ts';
-import { SHUTDOWN_GRACE_SECONDS } from '../core/config.ts';
+import type { StopOptions } from '../lifecycle/contracts.ts';
 import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 export interface SourceScheduleLoopOptions {
   database: Database;
@@ -70,15 +70,13 @@ export class SourceScheduleLoop {
       )
     );
   }
-  stop(options: { deadline?: number } = {}): Promise<void> {
+  stop(options: StopOptions): Promise<void> {
     if (this.closing) return this.closing;
     this.stopped = true;
     if (this.timer !== undefined) clearTimeout(this.timer);
     const failures: unknown[] = [],
       observers: Promise<unknown>[] = [];
-    const stop = {
-      deadline: options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS,
-    };
+    const stop = options;
     this.shutdown_settlement = Promise.resolve().then(async () => {
       const actuals = this.options.participants.map((participant) => {
         try {

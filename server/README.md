@@ -2,7 +2,7 @@
 
 This package is the shared server shell for the backend migration. It runs `.ts` files directly on Node 22.18+ and Node 24. Python still creates and upgrades its database. The migration branch remains separate from staging and main.
 
-`server/main.ts` is the bare migration/test entry. It composes no production core or loops and is not a composed release entry. Part 4b first switches the real production entry after its required adapters land. Packaging and publication cannot claim production composition from this bare entry.
+`server/main.ts` selects the required production entry in normal mode. Until 4b supplies its real backend/environment composition, it fails clearly before startup. The existing test-mode switch preserves the bare fixture entry in that same file. It adds no provider, host, or flag. Packaging and publication cannot claim production composition from a test-mode entry.
 
 Accepted migration differences live in [DEVIATIONS.md](DEVIATIONS.md).
 
@@ -30,7 +30,7 @@ cd server
 node node_modules/vitest/vitest.mjs run
 ```
 
-Launch `node server/main.ts` from the repository root with isolated `PLAN_*` settings. The listener comes from `PLAN_SERVER_LISTENER_FD` when present. Otherwise the server binds loopback at `PLAN_PORT`. The database must exist. The process takes the same owner lock as Python before it opens the database. The dispatcher lock remains separate.
+`node server/main.ts` in normal mode requires the complete real production dependencies. Test fixtures use its existing test-mode path with isolated `PLAN_*` settings. Once admitted, the listener comes from `PLAN_SERVER_LISTENER_FD` when present, otherwise loopback `PLAN_PORT`. The database must exist. Startup takes the same owner lock as Python before it opens that database. The dispatcher lock remains separate.
 
 Startup installs signal handlers before asynchronous setup. Before a writer opens, readonly admission compares the complete existing Alembic revision set to `core/database/application_schema.json::alembicRevision`. Missing, empty, older, newer, unknown, and extra revisions fail with actual and expected values. Startup never migrates or stamps that database. Fresh test fixtures seed their own revision metadata explicitly.
 
@@ -96,7 +96,7 @@ A step receives the same transaction capability as a state transition. It must n
 
 Set `PANELS_TEST_SERVER_BACKEND=typescript` to select TypeScript in the existing server fixture. The fixture still creates the database through Python, supplies synthetic homes, and passes its bound listener. The two explicit modules `tests.e2e.rail_server` and `tests.e2e.conversation_signals_server` select `server/test_host.ts`; other explicit test-host modules stay on Python. With no explicit module, the selector uses `server/main.ts`.
 
-Registered areas supply their domain routes and projections. The conversation test host supplies a scripted backend through the real core. Python still owns schema creation/migration, and this package does not supply deployment supervision or a configured production conversation provider.
+Registered areas supply their domain routes and projections. The conversation test host supplies a scripted backend through the real core. Python still owns schema creation/migration. Real production binding and packaged supervision remain later gates. Embedded `startServer` has unavailable catalog/sign-in providers by default, while an explicit normal-mode embedding still permits generic machine probes. It is not a claim that all machine I/O is disabled.
 
 ## Known follow-ups
 
@@ -196,9 +196,9 @@ At grace expiry it logs named pending stages, closes remaining connections, and 
 Handlers, hooks, iterator operations, provider work, and native resources remain owned after a connection closes.
 Worker readiness and Manager wakes cancel at stop start. Every independent stop begins before drain waits.
 
-All service observers receive one absolute monotonic deadline. Their required `settled()` joins report actual work and cleanup.
+All service observers require the same `StopOptions` absolute monotonic deadline. No leaf creates a fallback budget. Their required `settled()` joins report actual work and cleanup. Embedded close callers supply their initial options. Comparison close hooks read the already-published options through `TestCompositionContext.shutdown_options()`.
 The application keeps waiting after grace. When every actual stage and native resource settles, it runs ordered finalizers automatically.
-Settled failures do not prevent safe finalization. Clean completion exits 0; collected failures produce a non-zero result.
+Settled failures do not prevent safe finalization. Actual entries log active resource types and deliberately exit 0 after clean completion or 1 after collected failures. Embedded `startServer` receives no exit capability unless its caller supplies one.
 There is no manual finish operation and no renewed budget on repeated signals.
 A rejected detach cannot prove a child stopped: the invocation also owns actual process close and Worker-unit confirmation.
 
@@ -208,7 +208,7 @@ That control attempt has at most the existing 10-second budget and original stop
 Then the application exits non-zero without database/record/lock finalizers under pending work.
 The 45-second value starts forced termination; it does not claim unconditional process exit at exactly 45 seconds.
 Node timers cannot interrupt synchronous JavaScript or SQLite. The separate supervisor fallback is required for a blocked application loop.
-New TypeScript packaging must consume the exported 60-second timeout; the legacy Python rehearsal's 30-second unit is not its rehearsal route.
+New TypeScript packaging must consume the exported 60-second supervisor APP fallback. Packaged policy uses an 80-second stop client and a 90-second outer unit phase. The legacy Python rehearsal's 30-second unit is not its rehearsal route. Those packaged consumers remain unmerged and unproved by this application change.
 Real new-unit/supervisor timeout proofs remain part of the later packaging work.
 
 Registry mutation and direct startup share a stable database-derived authority outside the instance tree.
@@ -341,8 +341,11 @@ the backend child, launch values, ordered ACP transport, and process ownership.
 `create_hermes_backend_child_factory` is exported from `adapter.ts`.
 `HermesModelCatalogOwner` and `hermes_model_catalog_launch` in `catalog.ts` supply
 the retained inventory script binding. The lifecycle owner must retain the catalog
-owner and call `shutdown()` when the server stops. Production selection remains
-separate work. Hermes retains Python's exact child environment,
+owner and call `shutdown()` when the server stops. The real 4b binding must retain
+that raw shutdown promise beside the HTTP runtime, observe it with the shared
+deadline, and include it in the backend `settled()` barrier. No owner is constructed
+by today's missing production table. Production selection remains separate work.
+Hermes retains Python's exact child environment,
 including the absence of an automatic `BASH_ENV` override.
 
 The adapter pins `@agentclientprotocol/sdk` to `2.6.0` and uses its ACP v1
@@ -359,3 +362,10 @@ Runtime imports resolve their files from the pinned package entrypoint. Relative
 `node_modules` imports supply those same official types without a duplicate protocol
 interface. Pin checks cover the consumed internal symbols. Any SDK upgrade requires
 a new review of `conversation/backends/hermes_acp/client.ts` before approval.
+
+`executor/vps_presence.ts` supplies the lease cache and work-route incarnation fence.
+Its constructor receives the invocation database, mailbox, and change signal.
+It owns its contact flush, presence timer, drain waits, and started callbacks.
+Composition supplies the update, replacement, and returned callbacks before requests start.
+Stop seals new work and observes the shared absolute deadline. `settled()` joins actual work and cleanup.
+The service does not close its supplied database or mailbox.

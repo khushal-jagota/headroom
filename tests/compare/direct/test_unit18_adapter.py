@@ -58,12 +58,8 @@ TABLES = (
     "conversation_view_lookups",
 )
 ROW_ORDERS = {
-    "conversation_lifecycle_facts": (
-        "conversation_id,turn_number,kind,operation,identity"
-    ),
-    "conversation_view_lookups": (
-        "conversation_id,lookup_kind,source_sequence,lookup_id"
-    ),
+    "conversation_lifecycle_facts": ("conversation_id,turn_number,kind,operation,identity"),
+    "conversation_view_lookups": ("conversation_id,lookup_kind,source_sequence,lookup_id"),
 }
 RANDOM_ID = re.compile(
     r"(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}"
@@ -112,7 +108,7 @@ def owned_launch_boundary(spec: dict[str, str]) -> Any:
     """Use real argv construction, with every manager call fenced before spawn."""
     native_open = anyio.open_process
     native_spawn = asyncio.create_subprocess_exec
-    name = "unit18-synthetic-contained.service"
+    name = "panels-worker-" + "3" * 32 + ".service"
     directory = Path(spec["workspace"]) / "contained-unit"
     metadata = Path(f"{spec['trace']}.wrapped.json")
     node = shutil.which("node")
@@ -120,11 +116,7 @@ def owned_launch_boundary(spec: dict[str, str]) -> Any:
     def script_command(command: list[str]) -> list[str]:
         allowed = command and (
             command[0] == spec["executable"]
-            or (
-                command[0] == node
-                and len(command) > 1
-                and command[1] == spec["executable"]
-            )
+            or (command[0] == node and len(command) > 1 and command[1] == spec["executable"])
         )
         if not allowed:
             raise AssertionError(f"Unexpected command in owned CLI proof: {command}")
@@ -184,18 +176,14 @@ def owned_launch_boundary(spec: dict[str, str]) -> Any:
                 return
             stopped = True
             with Path(spec["trace"]).open("a") as output:
-                output.write(
-                    json.dumps({"kind": "contained-stop", "name": name}) + "\n"
-                )
+                output.write(json.dumps({"kind": "contained-stop", "name": name}) + "\n")
             shutil.rmtree(directory)
 
         cast(Any, unit).stop = stop
         return unit
 
     async def no_manager(*arguments: Any) -> Any:
-        raise AssertionError(
-            "The paired adapter proof must not contact a service manager"
-        )
+        raise AssertionError("The paired adapter proof must not contact a service manager")
 
     with (
         patch.object(asyncio, "create_subprocess_exec", guarded_spawn),
@@ -383,8 +371,7 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
             endings = [
                 row
                 for row in snapshot(spec["database"])["conversation_events"]
-                if row["conversation_id"] == malformed_identity
-                and row["kind"] == "turn_ended"
+                if row["conversation_id"] == malformed_identity and row["kind"] == "turn_ended"
             ]
             return len(endings) == 1 and not await core.is_running(malformed_identity)
 
@@ -422,8 +409,7 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
             endings = [
                 row
                 for row in rows
-                if row["conversation_id"] == delayed_identity
-                and row["kind"] == "turn_ended"
+                if row["conversation_id"] == delayed_identity and row["kind"] == "turn_ended"
             ]
             return len(endings) == 1 and not await core.is_running(delayed_identity)
 
@@ -470,8 +456,7 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
                 endings = [
                     row
                     for row in rows
-                    if row["conversation_id"] == _identity
-                    and row["kind"] == "turn_ended"
+                    if row["conversation_id"] == _identity and row["kind"] == "turn_ended"
                 ]
                 return len(endings) == 1 and not await core.is_running(_identity)
 
@@ -543,10 +528,7 @@ def normalize(value: Any) -> Any:
                     item["turn_number"],
                     item["operation"],
                 )
-                assert (
-                    control_sources.setdefault(control_key, raw_identity)
-                    == raw_identity
-                )
+                assert control_sources.setdefault(control_key, raw_identity) == raw_identity
                 identities[raw_identity] = "control:" + ":".join(map(str, control_key))
             for key in sorted(item):
                 raw = item[key]
@@ -655,11 +637,7 @@ def observed_native_patterns(result: dict[str, Any]) -> dict[str, Any]:
             if row["kind"] == "prompt" and row["scenario"] == scenario
         )
         end = next(
-            (
-                index
-                for index in range(start + 1, len(trace))
-                if trace[index]["kind"] == "prompt"
-            ),
+            (index for index in range(start + 1, len(trace)) if trace[index]["kind"] == "prompt"),
             len(trace),
         )
         emitted = [row for row in trace[start + 1 : end] if row["kind"] == "wire-out"]
@@ -685,16 +663,12 @@ def observed_native_patterns(result: dict[str, Any]) -> dict[str, Any]:
         ]
         if label == "plain":
             expected_order.append("rate_limit_event")
-        expected_order += (
-            ["stream_event"] * before_assistant + ["assistant"] + ["stream_event"] * 3
-        )
+        expected_order += ["stream_event"] * before_assistant + ["assistant"] + ["stream_event"] * 3
         if label == "resume":
             expected_order.append("rate_limit_event")
         expected_order += ["result:success", "command_lifecycle:completed"]
         assert names == expected_order
-        initialization = next(
-            message for message in messages if message.get("subtype") == "init"
-        )
+        initialization = next(message for message in messages if message.get("subtype") == "init")
         init_types = fields(
             initialization,
             {
@@ -721,9 +695,7 @@ def observed_native_patterns(result: dict[str, Any]) -> dict[str, Any]:
             },
         )
         assert initialization["user_message_uuids"] == [uuid]
-        assistant = next(
-            message for message in messages if message["type"] == "assistant"
-        )
+        assistant = next(message for message in messages if message["type"] == "assistant")
         assistant_types = fields(
             assistant,
             {
@@ -747,12 +719,8 @@ def observed_native_patterns(result: dict[str, Any]) -> dict[str, Any]:
                 "diagnostics": "null" if label == "plain" else "object",
             },
         )
-        assert assistant["user_message_uuid"] == uuid and assistant[
-            "user_message_uuids"
-        ] == [uuid]
-        assert assistant["message"]["content"] == [
-            {"type": "text", "text": "".join(chunks)}
-        ]
+        assert assistant["user_message_uuid"] == uuid and assistant["user_message_uuids"] == [uuid]
+        assert assistant["message"]["content"] == [{"type": "text", "text": "".join(chunks)}]
         streams = [message for message in messages if message["type"] == "stream_event"]
         stream_types = fields(
             streams[0],
@@ -764,9 +732,9 @@ def observed_native_patterns(result: dict[str, Any]) -> dict[str, Any]:
                 "user_message_uuids": "array",
             },
         )
-        assert streams[0]["user_message_uuid"] == uuid and streams[0][
-            "user_message_uuids"
-        ] == [uuid]
+        assert streams[0]["user_message_uuid"] == uuid and streams[0]["user_message_uuids"] == [
+            uuid
+        ]
         assert all(isinstance(message["api_message_id"], str) for message in streams)
         deltas = [
             message["event"]["delta"]["text"]
@@ -774,17 +742,13 @@ def observed_native_patterns(result: dict[str, Any]) -> dict[str, Any]:
             if message["event"].get("type") == "content_block_delta"
         ]
         assert deltas == chunks
-        rate = next(
-            message for message in messages if message["type"] == "rate_limit_event"
-        )
+        rate = next(message for message in messages if message["type"] == "rate_limit_event")
         assert fields(
             rate,
             {"rate_limit_info": "object", "session_id": "string", "uuid": "string"},
         )
         assert rate["session_id"] == initialization["session_id"]
-        status = next(
-            message for message in messages if message.get("subtype") == "status"
-        )
+        status = next(message for message in messages if message.get("subtype") == "status")
         assert fields(
             status,
             {
@@ -822,9 +786,7 @@ def observed_native_patterns(result: dict[str, Any]) -> dict[str, Any]:
                 "user_message_uuid": "string",
             },
         )
-        assert final["user_message_uuid"] == uuid and final["user_message_uuids"] == [
-            uuid
-        ]
+        assert final["user_message_uuid"] == uuid and final["user_message_uuids"] == [uuid]
         assert all(
             isinstance(message["uuid"], str)
             for message in messages
@@ -836,9 +798,7 @@ def observed_native_patterns(result: dict[str, Any]) -> dict[str, Any]:
             if message["type"] == "command_lifecycle"
         )
         if label == "plain":
-            raw = next(
-                row["raw_json"] for row in emitted if row["message"]["type"] == "result"
-            )
+            raw = next(row["raw_json"] for row in emitted if row["message"]["type"] == "result")
             assert '"input_tokens":5.0' in raw
         evidence[label] = {
             "order": names,
@@ -853,9 +813,7 @@ def observed_native_patterns(result: dict[str, Any]) -> dict[str, Any]:
     return evidence
 
 
-def launch_environments(
-    python: dict[str, Any], typescript: dict[str, Any]
-) -> dict[str, Any]:
+def launch_environments(python: dict[str, Any], typescript: dict[str, Any]) -> dict[str, Any]:
     py = [row["environment"] for row in python["trace"] if row["kind"] == "launch"]
     ts = [row["environment"] for row in typescript["trace"] if row["kind"] == "launch"]
     python_shell = ROOT / "src/planner/conversation/tool_shell_startup.bash"
@@ -875,11 +833,7 @@ def launch_environments(
         assert left["CLAUDE_AGENT_SDK_VERSION"] == python_sdk_version
         assert right["CLAUDE_AGENT_SDK_VERSION"] == "0.3.316"
         if left["PLAN_ACTOR"] == "worker":
-            assert (
-                left["PLAN_TICKET_ID"]
-                == right["PLAN_TICKET_ID"]
-                == "unit18-synthetic-worker"
-            )
+            assert left["PLAN_TICKET_ID"] == right["PLAN_TICKET_ID"] == "unit18-synthetic-worker"
         else:
             assert "PLAN_TICKET_ID" not in left and "PLAN_TICKET_ID" not in right
         expected_typescript = {
@@ -991,9 +945,7 @@ def launch_arguments(
     return common
 
 
-def containment_evidence(
-    python: dict[str, Any], typescript: dict[str, Any]
-) -> dict[str, Any]:
+def containment_evidence(python: dict[str, Any], typescript: dict[str, Any]) -> dict[str, Any]:
     py = [
         row
         for row in python["trace"]
@@ -1009,21 +961,14 @@ def containment_evidence(
     left_separator = left["wrapped_argv"].index("--")
     right_separator = right["wrapped_argv"].index("--")
     assert (
-        left["wrapped_argv"][: left_separator + 1]
-        == right["wrapped_argv"][: right_separator + 1]
+        left["wrapped_argv"][: left_separator + 1] == right["wrapped_argv"][: right_separator + 1]
     )
-    assert left["environment_file"] == worker_unit._environment_file(
-        left["environment"]
-    )
-    assert right["environment_file"] == worker_unit._environment_file(
-        right["environment"]
-    )
+    assert left["environment_file"] == worker_unit._environment_file(left["environment"])
+    assert right["environment_file"] == worker_unit._environment_file(right["environment"])
     for result in (python, typescript):
         assert sum(row["kind"] == "contained-launch" for row in result["trace"]) == 1
         assert sum(row["kind"] == "contained-stop" for row in result["trace"]) == 1
-        matching = next(
-            row for row in result["trace"] if row["kind"] == "contained-launch"
-        )
+        matching = next(row for row in result["trace"] if row["kind"] == "contained-launch")
         launch = next(
             row
             for row in result["trace"]
@@ -1042,9 +987,7 @@ def containment_evidence(
     }
 
 
-def test_unit18_adapter_real_core_parity(
-    tmp_path: Path, request: pytest.FixtureRequest
-) -> None:
+def test_unit18_adapter_real_core_parity(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """Protect native admission, cancellation, asks, and real-core persisted outcomes."""
     started = time.perf_counter()
     selected_environment = environment(tmp_path)
@@ -1171,9 +1114,7 @@ def test_unit18_adapter_real_core_parity(
     if destination:
         path = Path(destination)
         path.mkdir(parents=True, exist_ok=True)
-        (path / "unit18-adapter-real-core.json").write_text(
-            json.dumps(report, indent=2) + "\n"
-        )
+        (path / "unit18-adapter-real-core.json").write_text(json.dumps(report, indent=2) + "\n")
     patterns = {
         "python": observed_native_patterns(python),
         "typescript": observed_native_patterns(typescript),
@@ -1227,14 +1168,12 @@ def test_unit18_adapter_real_core_parity(
             for row in result["trace"]
         )
         resumed = next(
-            item
-            for item in result["checkpoints"]
-            if item["name"] == "successful-resume"
+            item for item in result["checkpoints"] if item["name"] == "successful-resume"
         )
         assert resumed["fates"] == [{"fate": "started"}]
-        assert [
-            row["memory"] for row in result["trace"] if row["kind"] == "resume-memory"
-        ] == ["unit18-memory-token"]
+        assert [row["memory"] for row in result["trace"] if row["kind"] == "resume-memory"] == [
+            "unit18-memory-token"
+        ]
         assert sum(row["kind"] == "resume-loaded" for row in result["trace"]) == 1
         withheld = next(
             index
@@ -1251,15 +1190,12 @@ def test_unit18_adapter_real_core_parity(
             for row in result["trace"][withheld + 1 : released]
         )
         delayed_checkpoint = next(
-            item
-            for item in result["checkpoints"]
-            if item["name"] == "stop-before-system-init"
+            item for item in result["checkpoints"] if item["name"] == "stop-before-system-init"
         )
         delayed_facts = [
             row
             for row in delayed_checkpoint["rows"]["conversation_lifecycle_facts"]
-            if row["conversation_id"] == "unit18-delayed-init"
-            and row["operation"] == "cancel"
+            if row["conversation_id"] == "unit18-delayed-init" and row["operation"] == "cancel"
         ]
         assert len(delayed_facts) == 1 and delayed_facts[0]["status"] == "accepted"
         plain_usage = next(
@@ -1291,9 +1227,7 @@ def test_unit18_adapter_real_core_parity(
             if row["kind"] == "prompt" and row["scenario"] == "queued"
         )
         assert not any(
-            row["kind"] == "lifecycle"
-            and row["uuid"] == queued
-            and row["state"] == "started"
+            row["kind"] == "lifecycle" and row["uuid"] == queued and row["state"] == "started"
             for row in result["trace"]
         )
         assert any(
@@ -1304,9 +1238,7 @@ def test_unit18_adapter_real_core_parity(
             for row in result["trace"]
         )
         malformed = next(
-            item
-            for item in result["checkpoints"]
-            if item["name"] == "malformed-cancel-receipt"
+            item for item in result["checkpoints"] if item["name"] == "malformed-cancel-receipt"
         )
         cancel_facts = [
             row
@@ -1320,13 +1252,9 @@ def test_unit18_adapter_real_core_parity(
             for row in malformed_assistant["conversations"]
             if row["conversation_id"] == "unit18-malformed"
         )
-        assert (
-            conversation["vendor_session_cursor"]
-            != "ffffffff-ffff-4fff-8fff-ffffffffffff"
-        )
+        assert conversation["vendor_session_cursor"] != "ffffffff-ffff-4fff-8fff-ffffffffffff"
         assert not any(
-            row["conversation_id"] == "unit18-malformed"
-            and row["kind"] == "agent_message"
+            row["conversation_id"] == "unit18-malformed" and row["kind"] == "agent_message"
             for row in malformed_assistant["conversation_events"]
         )
     if destination:
