@@ -170,7 +170,9 @@ def _supervisor(
         "app_hashes:Object.values(process.env).map(v=>createHash('sha256').update(v).digest('hex'))}));"
         "let stopping=false;process.on('SIGTERM',()=>{stopping=true;"
         "write({kind:'term',pid:process.pid});});"
-        "setInterval(()=>{if(process.ppid!==Number(process.env.FIXTURE_EXPECTED_SUPERVISOR)||"
+        "setInterval(()=>{if(fs.existsSync(root+'/block')){"
+        "write({kind:'blocked',pid:process.pid});while(true){}}"
+        "if(process.ppid!==Number(process.env.FIXTURE_EXPECTED_SUPERVISOR)||"
         f"stopping&&!fs.existsSync(root+'/hold'))process.exit({app_exit_code});}},10);"
     )
     script = root / "supervisor.mjs"
@@ -284,6 +286,31 @@ def test_unit21_owned_supervisor_control_and_stop_protocol(
         }.items():
             env[key] = str(base / name)
         (base / "config.yaml").write_text("{}\n")
+        root = base / "blocked-app"
+        fallback_host_started = time.monotonic()
+        with _supervisor(root, env, node, managed=False) as (process, ready):
+            row = ready(1)  # Pins the actual APP before it blocks its own event loop.
+            (root / "block").write_text("block\n")
+            _wait(
+                lambda: any(
+                    event["kind"] == "blocked" and event["pid"] == row["pid"]
+                    for event in _events(root)
+                ),
+                "APP did not enter its synchronous block",
+            )
+            fallback_stop_started = time.monotonic()
+            process.send_signal(signal.SIGTERM)
+            remaining = min(75.0, fallback_host_started + 90.0 - time.monotonic())
+            assert remaining > 0, "fallback host exhausted its original budget"
+            assert process.wait(timeout=remaining) == 1
+            fallback_elapsed = time.monotonic() - fallback_stop_started
+            assert fallback_elapsed >= 60.0
+            fallback_log = (root / "output.log").read_text()
+            assert (
+                "Panels application exceeded the 60-second supervisor stop bound; "
+                "forcing its owned group."
+            ) in fallback_log
+        fallback_host_seconds = time.monotonic() - fallback_host_started
         root = base / "foreground"
         with _supervisor(root, env, node, managed=False) as (process, ready):
             ready(1)
@@ -536,6 +563,15 @@ def test_unit21_owned_supervisor_control_and_stop_protocol(
             json.dumps(
                 {
                     "seconds": time.perf_counter() - started,
+                    "real_supervisor_fallback": {
+                        "stop_seconds": fallback_elapsed,
+                        "host_seconds": fallback_host_seconds,
+                        "exit_code": 1,
+                        "app_blocked": True,
+                        "log": fallback_log,
+                        "additional_invocations": 1,
+                        "additional_node_processes": 3,
+                    },
                     "environment_scope": (
                         "Fixture APP and one inherited generic Node descendant; no vendor session"
                     ),
