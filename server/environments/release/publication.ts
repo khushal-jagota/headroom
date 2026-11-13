@@ -97,7 +97,15 @@ export async function build_linux_publication(
       throw new AppValidationError('publication archive exceeds its compressed-byte limit');
     await phase('remove_candidate', () => remove_owned_tree(candidate));
     const extracted = await phase('extract', () =>
-      extract_app_archive(archive, sealed, archive_sha256, requested, execution.child_processes),
+      extract_app_archive(
+        archive,
+        sealed,
+        archive_sha256,
+        requested,
+        execution.child_processes,
+        undefined,
+        execution,
+      ),
     );
     if (!python_json_equal(extracted, manifest))
       throw new AppValidationError('extracted publication manifest differs from its build');
