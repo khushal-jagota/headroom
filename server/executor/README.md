@@ -52,3 +52,13 @@ The JSON-mode result also passes peer validation before output. A nonfinite non-
 The facade exports the common ValueError base for ValidationError, ProtocolRefused and PydanticSerializationError. ProtocolRefused remains the single execution-identity class. Both peers share `parse_identity`, `validate_identity` and `refusal_reason_for_versions`; identity checks do not import the codec facade. UUID admission follows Python's source transformations and hexadecimal integer parser, including its accepted noncanonical forms. KeyError retains its separate source error family.
 
 The same exported schema carries minimal Python annotations for field declaration order, actual enum members, and tuple/list identity. These distinctions support source diagnostics without another schema or generated type file. Runtime schema data is embedded as WIRE_SCHEMA in the existing wire.generated.ts module. wire.schema.json remains a freshness artifact and is not a runtime packaging dependency. JsonObject is an explicit root for plain-dictionary replies such as route 7. Path fields use the shared pure Posix spelling helper, with no home expansion, parent cancellation, symlink resolution or filesystem reads.
+
+## VPS command mailbox
+
+`vps_mailbox.ts::SqliteCommandMailbox` takes the application's Database and an optional millisecond clock. The existing synchronous write door owns command admission, run custody and result persistence. Polls read durable rows, judge waiting-command expiry and mark delivery in that same writer. In-memory waits observe committed rows. A canceled put observer leaves the admitted commit and its wake intact.
+
+Replacement withdraws waiting commands in the lease transaction. Delivered commands settle from the successor's journal cursor. A successful stop result stays delivered until `finish_by_proof` supplies actual child-stop evidence. `publish_settlements` wakes one command's waiters before its listener, then advances to the next command. A listener failure leaves the whole committed batch durable.
+
+Sequence, turn and recovery counters retain exact SQL text reads and bigint bindings. Public values use the shared codec's safe-number or exact-marker rule. Command rows use Pydantic bytes. Outcome rows use validated object conversion followed by sorted standard-library JSON.
+
+`stop({ deadline })` requires the shared absolute monotonic deadline in seconds. It seals new work, wakes polls and cancels result waits immediately. Its bounded observer uses `observe_shutdown`. `settled()` retains the actual work and cleanup join, including unexpected failures pending at the first stop. The mailbox leaves database closure to its caller. Later executor composition registers this owner through the application's producer mechanism.
