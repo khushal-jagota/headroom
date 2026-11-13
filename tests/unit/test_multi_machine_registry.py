@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from planner.conversation.backends.contracts import RetainedBackendRun
 from planner.conversation.start_admission import AutomaticStartAdmission
 from planner.conversation.start_admission.contracts import StartRequest
+from planner.conversation.storage import RetainedRunEvidence, read_retained_run_evidence
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -95,9 +96,11 @@ def test_server_loads_both_retained_owners_before_adoption_and_dispatches_cleanu
     from planner.server_lifecycle import runtime as lifecycle_runtime
 
     evidence_reads: list[tuple[str, ...]] = []
-    read_evidence = lifecycle_runtime.read_retained_run_evidence
+    read_evidence = read_retained_run_evidence
 
-    def off_loop_evidence(path: str, ids: tuple[str, ...], timeout: int):
+    def off_loop_evidence(
+        path: str, ids: tuple[str, ...], timeout: int,
+    ) -> dict[str, RetainedRunEvidence]:
         with pytest.raises(RuntimeError, match="no running event loop"):
             asyncio.get_running_loop()
         evidence_reads.append(ids)

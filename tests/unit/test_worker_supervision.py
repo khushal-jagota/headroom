@@ -639,7 +639,7 @@ def test_mac_identity_cache_retries_failure_and_shares_success(
             stdout=value if "sysctl" in command[0] else f'"IOPlatformUUID" = "{value}"'
         )
 
-    monkeypatch.setattr(darwin.subprocess, "run", output)
+    monkeypatch.setattr(subprocess, "run", output)
     deadline = time.monotonic() + 1
     with pytest.raises(OSError, match="Mac host identity command failed"):
         darwin.DarwinWorkerProcesses().host_boot(deadline)
