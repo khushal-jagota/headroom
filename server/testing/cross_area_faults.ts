@@ -1,6 +1,5 @@
 /** Fresh-Python direct proofs. No production module imports this driver. */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { loadConfig, testModeFromEnvironment } from '../core/config.ts';
 import { assert_test_database_path } from '../core/test_paths.ts';

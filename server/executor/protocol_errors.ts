@@ -3,8 +3,10 @@ import { inspect } from 'node:util';
 import { ValueError } from '../core/value_error.ts';
 import { native_class_name } from './protocol_classes.ts';
 export { ValueError } from '../core/value_error.ts';
-// The Mac runner still imports this name until its diagnostic migration lands.
-export { inspect as python_repr } from 'node:util';
+// Existing Mac callers keep this name until their diagnostic migration lands.
+export function python_repr(value: unknown): string {
+  return inspect(value);
+}
 export interface Issue {
   type: string;
   loc: readonly (string | number)[];

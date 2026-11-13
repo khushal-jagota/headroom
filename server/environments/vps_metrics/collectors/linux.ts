@@ -63,15 +63,6 @@ function key_values(parts: string[]): Record<string, string> {
   }
   return result;
 }
-function ordered(a: string, b: string): number {
-  const left = [...a],
-    right = [...b];
-  for (let i = 0; i < Math.min(left.length, right.length); i++) {
-    const diff = left[i]!.codePointAt(0)! - right[i]!.codePointAt(0)!;
-    if (diff) return diff;
-  }
-  return left.length - right.length;
-}
 function group_for(text: string): [string, string] {
   for (const line of lines(text))
     if (line.startsWith('0::')) {
@@ -269,7 +260,7 @@ export class LinuxCollector implements Collector {
       if (members.length === 0 || members.some((name) => !counters.has(name))) fail('TypeError');
       for (const [index, direction] of ['read', 'write'].entries()) {
         const key = `disk.${direction}_bytes_per_second`,
-          identity = [...members].sort(ordered).join(',');
+          identity = [...members].sort().join(',');
         metrics[key] = this.rate(
           key + ':' + identity,
           members.reduce((sum, name) => sum + counters.get(name)![index]!, 0),
@@ -282,7 +273,7 @@ export class LinuxCollector implements Collector {
       for (const direction of ['read', 'write'])
         metrics[`disk.${direction}_bytes_per_second`] = measure(null, 'bytes_per_second', reason);
     }
-    return members.sort(ordered);
+    return members.sort();
   }
   private async network(metrics: Metrics): Promise<string[]> {
     const members: string[] = [];
@@ -309,7 +300,7 @@ export class LinuxCollector implements Collector {
       for (const [index, direction] of ['receive', 'transmit'].entries()) {
         const key = `network.${direction}_bytes_per_second`;
         metrics[key] = this.rate(
-          key + ':' + [...members].sort(ordered).join(','),
+          key + ':' + [...members].sort().join(','),
           totals[index]!,
           'bytes_per_second',
         );
@@ -323,7 +314,7 @@ export class LinuxCollector implements Collector {
           reason,
         );
     }
-    return members.sort(ordered);
+    return members.sort();
   }
   private async processes(
     boot: string,
@@ -487,7 +478,7 @@ export class LinuxCollector implements Collector {
       groups = new Map(source);
     for (const group of this.health_groups.keys())
       if (!groups.has(group)) groups.set(group, group.startsWith('/') ? 'service' : 'manager');
-    for (const [group, kind] of [...groups].sort(([a], [b]) => ordered(a, b))) {
+    for (const [group, kind] of [...groups].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
       const metrics: Metrics = {},
         path = join(this.paths.cgroup_root, group.replace(/^\//, ''));
       if (kind === 'unassigned' || kind === 'manager')

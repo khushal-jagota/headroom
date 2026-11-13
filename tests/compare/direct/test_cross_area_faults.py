@@ -54,8 +54,6 @@ def _node(tmp_path: Path, mode: str, argument: str = "", payload: Any = None) ->
     return json.loads(completed.stdout)
 
 
-
-
 def test_cross_area_all_truthy_spellings_close_io_doors(tmp_path: Path) -> None:
     # Existing safety proofs only set '1'; this covers the accepted alias boundary.
     from planner.core.config import _parse_bool

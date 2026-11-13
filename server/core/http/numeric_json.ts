@@ -56,11 +56,6 @@ function python_float(value: number, pydantic = false): string {
   } else if (!raw.includes('.')) raw += '.0';
   return raw;
 }
-/** Python repr(float) shares finite JSON spelling but uses Python's nonfinite names. */
-export function python_float_repr(value: number): string {
-  if (!Number.isFinite(value)) return Number.isNaN(value) ? 'nan' : value < 0 ? '-inf' : 'inf';
-  return python_float(value);
-}
 function number_token(value: JsonNumber, pydantic = false): string {
   return value.kind === 'integer' ? String(value.integer) : python_float(value.value, pydantic);
 }

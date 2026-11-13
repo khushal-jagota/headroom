@@ -560,7 +560,7 @@ function node(
       )
         problem = 'mailbox command id conflicts with its child command';
     }
-    return problem ? fail(ctx, 'value_error', '' + problem, original, loc) : result;
+    return problem ? fail(ctx, 'value_error', problem, original, loc) : result;
   }
   return scalar(schema, value, ctx, loc);
 }

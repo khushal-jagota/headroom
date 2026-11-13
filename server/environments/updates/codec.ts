@@ -1,5 +1,4 @@
-import { python_string_repr } from '../../core/python_repr.ts';
-/** Python-compatible persisted JSON decoding and canonical encoding. */
+/** Exact-number JSON decoding and canonical encoding for persisted updates. */
 import type {
   PublishedUpdate,
   UpdateAttempt,
@@ -19,50 +18,7 @@ export const is_object = (value: unknown): value is Record<string, unknown> =>
   !Array.isArray(value) &&
   !(value instanceof JsonNumber);
 
-/** Python's attempt reader also accepts its JSON encoder's non-finite constants. */
-export function parse_attempt_json(source: string): unknown {
-  const literals = [...source.matchAll(/"(?:\\[\s\S]|[^"\\])*"/g)].map(
-    (match) => JSON.parse(match[0]) as string,
-  );
-  let prefix = '__panels_update_constant__';
-  while (literals.some((literal) => literal.includes(prefix))) prefix += '_';
-  const constants = new Map<string, number>();
-  let encoded = '',
-    quoted = false,
-    previous = '';
-  for (let index = 0; index < source.length; index++) {
-    const character = source[index]!;
-    if (quoted) {
-      encoded += character;
-      if (character === '\\') encoded += source[++index] ?? '';
-      else if (character === '"') quoted = false;
-      continue;
-    }
-    if (character === '"') quoted = true;
-    const token =
-      !quoted && (!previous || '[,:'.includes(previous))
-        ? /^(NaN|-Infinity|Infinity)(?=[\s,\]}]|$)/.exec(source.slice(index))?.[0]
-        : undefined;
-    if (token !== undefined) {
-      const marker = prefix + constants.size;
-      constants.set(marker, token === 'NaN' ? NaN : token === 'Infinity' ? Infinity : -Infinity);
-      encoded += JSON.stringify(marker);
-      index += token.length - 1;
-      previous = 'v';
-    } else {
-      encoded += character;
-      if (!/\s/.test(character)) previous = character;
-    }
-  }
-  function restore(value: unknown): unknown {
-    if (typeof value === 'string' && constants.has(value)) return constants.get(value);
-    if (Array.isArray(value)) return value.map(restore);
-    if (is_object(value))
-      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, restore(item)]));
-    return value;
-  }
-  return restore(parse_numeric_json(encoded));
-}
+export const parse_attempt_json = parse_numeric_json;
 function required(value: Record<string, unknown>, key: string): unknown {
   if (!(key in value)) throw new Error(`missing update field: ${key}`);
   return value[key];
@@ -75,25 +31,12 @@ function truth(value: unknown): boolean {
   if (is_object(value)) return Object.keys(value).length !== 0;
   return true;
 }
-function repr(value: unknown): string {
-  if (value instanceof JsonNumber) return stringify_python_json(value);
-  if (value === null || value === undefined) return 'None';
-  if (value === true) return 'True';
-  if (value === false) return 'False';
-  if (typeof value === 'string') return python_string_repr(value);
-  if (Array.isArray(value)) return '[' + value.map(repr).join(', ') + ']';
-  if (is_object(value))
-    return (
-      '{' +
-      Object.entries(value)
-        .map(([key, val]) => `${repr(key)}: ${repr(val)}`)
-        .join(', ') +
-      '}'
-    );
-  return String(value);
-}
 function text(value: unknown): string {
-  return typeof value === 'string' ? value : repr(value);
+  if (value instanceof JsonNumber)
+    return value.integer === null ? String(value.value) : String(value.integer);
+  if (value === undefined || (value !== null && typeof value === 'object'))
+    throw new TypeError('Update field must be text or a scalar value');
+  return String(value);
 }
 function integer(value: unknown): number | JsonNumber {
   const raw = text(value).trim();
