@@ -106,6 +106,9 @@ export class FilesService {
       }
     });
   }
+  read_runtime_revision(path: string, expected: string): Promise<string> {
+    return this.request('read_runtime_revision', [path, expected]);
+  }
   extract_runtime(
     archive: string,
     releases: string,
@@ -192,6 +195,9 @@ export class FilesService {
   async close_directory(handle: DirectoryHandle): Promise<void> {
     await this.request('close_directory', [this.directory(handle)]);
     this.directories.delete(handle);
+  }
+  async unlink_at(handle: DirectoryHandle, name: string): Promise<void> {
+    await this.request('unlink_at', [this.directory(handle), name]);
   }
   async copy_verified_at(
     source: string,
