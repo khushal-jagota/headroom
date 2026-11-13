@@ -1,5 +1,6 @@
 /** Observe the real core's save retry through the stalls registry. */
 import { createDatabase } from '../../core/database/index.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../../lifecycle/configuration.ts';
 import { ProcessWaitRegistry } from '../../stalls/registry.ts';
 import { ConversationStore } from '../record/data/store.ts';
 import { ConversationMessageFiles } from '../record/message_files.ts';
@@ -98,7 +99,7 @@ export async function run_wait(database_path: string): Promise<unknown> {
     capture('saved');
     return { checkpoints, attempts };
   } finally {
-    await core.shutdown();
+    await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     for (const child of children) await child.terminate();
     await store.finish_writes();
     database.close();

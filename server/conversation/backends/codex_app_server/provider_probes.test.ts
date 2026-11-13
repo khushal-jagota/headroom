@@ -1,4 +1,5 @@
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../../../lifecycle/configuration.ts';
 import { expect, test, vi } from 'vitest';
 import { read_codex_rate_limits } from './usage.ts';
 import { create_codex_providers } from './providers.ts';
@@ -142,7 +143,7 @@ test('runtime shutdown joins the production catalog owner before reporting envir
     void operation.catch(() => {});
     await entered.promise;
     let settled = false;
-    stopping = runtime.shutdown!();
+    stopping = runtime.shutdown!({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     void stopping
       .finally(() => {
         settled = true;

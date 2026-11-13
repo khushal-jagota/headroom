@@ -1,5 +1,6 @@
 /** Paired uncertain receipt and concurrent attachment proof on the real core. */
 import { createDatabase } from '../../core/database/index.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../../lifecycle/configuration.ts';
 import { ConversationStore } from '../record/data/store.ts';
 import { ConversationMessageFiles } from '../record/message_files.ts';
 import { SqliteProcessConversationSystem } from '../system.ts';
@@ -146,7 +147,7 @@ export async function run_receipts(spec: { database: string }): Promise<unknown>
     await capture('attachment-conflict', attachment, []);
     return { checkpoints, attachment_bytes, stored_file_id: piece.stored_file_id, conflict };
   } finally {
-    await core.shutdown();
+    await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     await registry.close();
     database.close();
   }

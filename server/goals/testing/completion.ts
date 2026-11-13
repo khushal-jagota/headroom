@@ -78,7 +78,7 @@ export function run(spec: Spec) {
       ),
     );
     snapshot('changed-direction');
-    participant.stop();
+    participant.stop({ deadline: performance.now() / 1000 + 1 });
     replace('completion-negative', '2026-10-27', -2.75, 3);
     poll();
     snapshot('stopped-participant');
@@ -87,7 +87,7 @@ export function run(spec: Spec) {
     snapshot('restarted-participant');
     return result;
   } finally {
-    participant.stop();
+    participant.stop({ deadline: performance.now() / 1000 + 1 });
     database.close();
   }
 }

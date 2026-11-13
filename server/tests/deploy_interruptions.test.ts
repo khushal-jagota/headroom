@@ -1,5 +1,6 @@
 /** These risks are not reached by the core's no-participant recovery tests. */
 import { afterEach, expect, test } from 'vitest';
+import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -111,7 +112,7 @@ test('startup imports legacy epoch evidence before rotation and never reimports 
     ).toEqual([]);
     expect(f.database.read(select_recoveries).size).toBe(1);
   } finally {
-    await f.core.shutdown();
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }
 });
 test('recovery restores only the captured claim and refused delivery errors that restored revision', async () => {
@@ -175,7 +176,7 @@ test('recovery restores only the captured claim and refused delivery errors that
       f.database.read((sql) => sql.get('SELECT recovery_state FROM deploy_interruptions')),
     ).toEqual({ recovery_state: 'unable_to_resume' });
   } finally {
-    await f.core.shutdown();
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }
   function readClaim(sql: import('../core/database/contracts.ts').ReadSql) {
     return sql.get<{ worker_step_claim: string }>('SELECT worker_step_claim FROM tickets')!
@@ -199,7 +200,7 @@ test('lost wire intent becomes unknown at restart and cannot automatically resum
     ).toEqual({ status: 'unknown' });
     expect(f.database.read(select_recoveries).size).toBe(0);
   } finally {
-    await f.core.shutdown();
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }
 });
 test('invalid and symlink capture evidence stays unavailable rather than zero interrupted turns', () => {
@@ -230,7 +231,7 @@ test('invalid and symlink capture evidence stays unavailable rather than zero in
 test('restart reports only the task IDs captured before this process starts work', async () => {
   const f = setup();
   await f.start();
-  await f.core.shutdown();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   f.database.write((tx) =>
     tx.run("INSERT INTO conversation_background_tasks VALUES ('core','old','Old task')"),
   );
@@ -256,6 +257,6 @@ test('restart reports only the task IDs captured before this process starts work
       f.store.read_events_after('core', 0).filter((event) => event.kind === 'prompt'),
     ).toHaveLength(1);
   } finally {
-    await core.shutdown();
+    await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }
 });

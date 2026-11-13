@@ -8,13 +8,32 @@ import { PreviewService } from './service.ts';
 import { PreviewTransport } from './transport.ts';
 import { require_preview_ingress } from './ingress.ts';
 import { install_request_lifetime } from '../core/http/lifetime.ts';
+import type { StopOptions } from '../lifecycle/contracts.ts';
+import { observe_shutdown } from '../lifecycle/deadline.ts';
+import type { IncomingMessage } from 'node:http';
+import type { Duplex } from 'node:stream';
 const result = (record: PreviewRecord | null) =>
   record === null
     ? { preview: null }
     : { ...record, base_path: base_path(record), url: record.public_origin + base_path(record) };
-export function createPreviewRoutes(): PreparedAreaRoutes {
+export interface PreparedPreviewRoutes extends PreparedAreaRoutes {
+  seal(): void;
+  stop(options: StopOptions, http_actual: Promise<void>): Promise<void>;
+  settled(): Promise<void>;
+}
+export function createPreviewRoutes(): PreparedPreviewRoutes {
   let begin: (() => Promise<void>) | undefined;
   let starting: Promise<void> | undefined;
+  let producer_sealed = false;
+  let seal_registered: (() => void) | undefined;
+  let finish_registered: (() => Promise<void>) | undefined;
+  let read_registered: (() => Promise<void>) | undefined;
+  let stopping: Promise<void> | undefined;
+  let actual_stop: Promise<void> | undefined;
+  const seal = (): void => {
+    producer_sealed = true;
+    seal_registered?.();
+  };
   const routes: FastifyPluginAsync<AreaServices> = async (app, services) => {
     const lifetime = install_request_lifetime(app);
     const service = new PreviewService(
@@ -27,9 +46,50 @@ export function createPreviewRoutes(): PreparedAreaRoutes {
     let unsubscribe: (() => void) | undefined;
     let checking = false;
     let closing: Promise<void> | undefined;
+    let upgrade: ((request: IncomingMessage, socket: Duplex, head: Buffer) => void) | undefined;
+    let sealed = false;
+    seal_registered = () => {
+      if (sealed) return;
+      sealed = true;
+      service.seal_rechecks();
+      const failures: unknown[] = [];
+      for (const operation of [
+        () => clearInterval(timer),
+        () => unsubscribe?.(),
+        () => {
+          if (upgrade) app.server.off('upgrade', upgrade);
+        },
+        () => transport.close_websockets(),
+      ]) {
+        try {
+          operation();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+      if (failures.length) throw new AggregateError(failures, 'Preview producer shutdown failed');
+    };
+    finish_registered = () => {
+      if (!closing) {
+        service.seal();
+        closing = Promise.allSettled([
+          Promise.resolve().then(() => transport.close()),
+          service.settled(),
+        ]).then((results) => {
+          const failures = results.filter((item) => item.status === 'rejected');
+          if (failures.length)
+            throw new AggregateError(
+              failures.map((item) => item.reason),
+              'Preview shutdown failed',
+            );
+        });
+      }
+      return closing;
+    };
+    read_registered = () => service.settled();
     const recheck = (): Promise<void> =>
       lifetime.track(async () => {
-        if (closing || lifetime.sealed) return;
+        if (producer_sealed || lifetime.sealed) return;
         if (checking) return;
         checking = true;
         try {
@@ -41,32 +101,23 @@ export function createPreviewRoutes(): PreparedAreaRoutes {
         }
       });
     begin = async () => {
-      if (closing || lifetime.sealed) throw new Error('Preview runtime is shut down');
+      if (producer_sealed || lifetime.sealed) throw new Error('Preview runtime is shut down');
       await service.start();
-      if (closing || lifetime.sealed) throw new Error('Preview runtime is shut down');
+      if (producer_sealed || lifetime.sealed) throw new Error('Preview runtime is shut down');
       unsubscribe = services.changes?.subscribe(() => void recheck());
       timer = setInterval(() => void recheck(), LIFECYCLE_SECONDS * 1000);
       timer.unref();
     };
     app.addHook('onClose', async () => {
-      // Ordinary admitted HTTP relays finish before destructive service shutdown.
-      closing ??= Promise.allSettled([
-        Promise.resolve().then(() => transport.close()),
-        Promise.resolve().then(() => service.close()),
-      ]).then((results) => {
-        const failures = results.flatMap((result) =>
-          result.status === 'rejected' ? [result.reason] : [],
-        );
-        if (failures.length) throw new AggregateError(failures, 'Preview shutdown failed');
-      });
-      await closing;
+      if (!actual_stop)
+        throw new Error('Preview close requires the original stop deadline and HTTP settlement');
+      await actual_stop;
+      // Partial app registration can publish an inert owner after stop began.
+      await finish_registered!();
     });
     // onClose runs after listener shutdown; terminate WS first so server.close can finish.
     app.addHook('preClose', async () => {
-      clearInterval(timer);
-      unsubscribe?.();
-      app.server.off('upgrade', upgrade);
-      transport.close_websockets();
+      seal();
     });
     app.setErrorHandler((error, _request, reply) => {
       if (error instanceof PreviewError) {
@@ -131,7 +182,7 @@ export function createPreviewRoutes(): PreparedAreaRoutes {
       },
       handler: async () => {},
     });
-    const upgrade = (
+    upgrade = (
       request: import('node:http').IncomingMessage,
       socket: import('node:stream').Duplex,
       head: Buffer,
@@ -154,10 +205,41 @@ export function createPreviewRoutes(): PreparedAreaRoutes {
         socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       }
     };
-    app.server.on('upgrade', upgrade);
+    if (producer_sealed) seal_registered();
+    else app.server.on('upgrade', upgrade);
   };
   return {
     routes,
+    seal,
+    stop(options, http_actual) {
+      if (stopping) return stopping;
+      let resolve!: () => void, reject!: (error: unknown) => void;
+      actual_stop = new Promise<void>((yes, no) => {
+        resolve = yes;
+        reject = no;
+      });
+      stopping = observe_shutdown(actual_stop, options, 'preview services');
+      const failures: unknown[] = [];
+      try {
+        seal();
+      } catch (error) {
+        failures.push(error);
+      }
+      void (async () => {
+        const http = await Promise.allSettled([http_actual]);
+        for (const result of http) if (result.status === 'rejected') failures.push(result.reason);
+        try {
+          await finish_registered?.();
+        } catch (error) {
+          failures.push(error);
+        }
+        if (failures.length) throw new AggregateError(failures, 'Preview shutdown failed');
+      })().then(resolve, reject);
+      return stopping;
+    },
+    settled() {
+      return actual_stop ?? read_registered?.() ?? Promise.resolve();
+    },
     start() {
       if (starting) return starting;
       if (!begin) throw new Error('Preview routes are not registered');

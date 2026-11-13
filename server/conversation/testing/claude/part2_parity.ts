@@ -1,5 +1,6 @@
 /** Real TS core + real Claude SDK + one owned local scripted CLI. */
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../../../lifecycle/configuration.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { readFileSync } from 'node:fs';
 import { createDatabase } from '../../../core/database/index.ts';
@@ -317,7 +318,7 @@ export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
       else crashSeconds = (performance.now() - started) / 1000;
     }
   } finally {
-    await core.shutdown();
+    await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     database.close();
     restoreLaunchBoundary();
   }
