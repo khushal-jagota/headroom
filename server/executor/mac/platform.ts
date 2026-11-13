@@ -1,10 +1,15 @@
 /** The Mac executor's only bridge to operating-system-specific paths and libc calls. */
 import { constants, openSync, closeSync, fstatSync } from 'node:fs';
 import { constants as os_constants, homedir } from 'node:os';
+import { getPriority, setPriority } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { getSystemErrorName } from 'node:util';
 import { isMainThread } from 'node:worker_threads';
 import koffi from 'koffi';
+import { BackendCommands } from '../../conversation/snapshot/commands.ts';
+import { backend_io_is_test } from '../../conversation/snapshot/environment.ts';
+import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
+import { MAC_AGENT_PROCESS_PROBE_TIMEOUT_SECONDS } from '../configuration.ts';
 
 for (const name of ['O_NOFOLLOW', 'O_DIRECTORY', 'O_CREAT', 'O_EXCL', 'O_NONBLOCK'] as const) {
   if (typeof constants[name] !== 'number' || constants[name] <= 0)
@@ -350,4 +355,90 @@ export function expand_executor_path(
   if (home === undefined)
     throw Object.assign(new Error('Could not determine home directory.'), { name: 'RuntimeError' });
   return home.replace(/\/+$/, '') + (slash < 0 ? '' : value.slice(slash)) || '/';
+}
+
+export interface AgentProcessIdentity {
+  readonly process_id: number;
+  readonly started: string;
+}
+export interface AgentProcessSnapshot extends AgentProcessIdentity {
+  readonly parent_process_id: number;
+}
+export interface AgentProcessPlatform {
+  snapshot(signal: AbortSignal): Promise<readonly AgentProcessSnapshot[]>;
+  lower_priority(
+    identity: AgentProcessIdentity,
+    nice: number,
+    signal: AbortSignal,
+  ): Promise<boolean>;
+  signal(
+    identity: AgentProcessIdentity,
+    signal: 'SIGTERM' | 'SIGKILL',
+    cancellation: AbortSignal,
+  ): Promise<void>;
+}
+export function parse_agent_process_snapshot(text: string): AgentProcessSnapshot[] {
+  const result: AgentProcessSnapshot[] = [];
+  for (const line of text.split('\n')) {
+    const fields = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/.exec(line);
+    if (!fields || fields[3]!.startsWith('Z')) continue;
+    const process_id = Number(fields[1]),
+      parent_process_id = Number(fields[2]);
+    if (
+      Number.isSafeInteger(process_id) &&
+      process_id > 0 &&
+      Number.isSafeInteger(parent_process_id)
+    )
+      result.push({ process_id, parent_process_id, started: fields[4]! });
+  }
+  return result;
+}
+/** Production probes use the invocation's existing command and child ownership. */
+export function mac_agent_process_platform(children: OwnedOneShotChildren): AgentProcessPlatform {
+  if (native_platform() !== 'darwin' || backend_io_is_test())
+    throw new Error('Native Mac agent process probes require a production Darwin host.');
+  const commands = new BackendCommands(children);
+  const run = (args: readonly string[], signal: AbortSignal) =>
+    commands.run(['/bin/ps', ...args], {
+      timeout_seconds: MAC_AGENT_PROCESS_PROBE_TIMEOUT_SECONDS,
+      environment_overrides: { LC_ALL: 'C' },
+      signal,
+    });
+  const current = async (identity: AgentProcessIdentity, signal: AbortSignal) => {
+    const result = await run(['-o', 'stat=,lstart=', '-p', String(identity.process_id)], signal);
+    const fields = /^(\S+)\s+(.+)$/.exec(result.standard_output.trim());
+    return (
+      result.exit_code === 0 &&
+      fields !== null &&
+      !fields[1]!.startsWith('Z') &&
+      fields[2]!.trim() === identity.started
+    );
+  };
+  return {
+    async snapshot(signal) {
+      const result = await run(['-A', '-o', 'pid=,ppid=,stat=,lstart='], signal);
+      if (result.exit_code !== 0) throw new Error('Mac process snapshot failed.');
+      return parse_agent_process_snapshot(result.standard_output);
+    },
+    async lower_priority(identity, nice, signal) {
+      if (!(await current(identity, signal))) return false;
+      signal.throwIfAborted();
+      try {
+        if (getPriority(identity.process_id) < nice) setPriority(identity.process_id, nice);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+        throw error;
+      }
+      return true;
+    },
+    async signal(identity, signum, cancellation) {
+      if (!(await current(identity, cancellation))) return;
+      cancellation.throwIfAborted();
+      try {
+        process.kill(identity.process_id, signum);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      }
+    },
+  };
 }
