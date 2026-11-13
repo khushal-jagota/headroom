@@ -1,5 +1,12 @@
 /** Immutable evidence of turns interrupted by a deployment or process restart. */
 export const CAPTURE_VERSION = 1;
+/** The file contract's value refusals remain distinct from IO and unexpected failures. */
+export class CaptureValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ValueError';
+  }
+}
 export type CaptureState = 'captured' | 'unavailable';
 export type RecoveryState =
   'awaiting_action' | 'resumed' | 'unable_to_resume' | 'closed' | 'historical';

@@ -27,7 +27,8 @@ import { environment_restore } from '../../cli.ts';
 import { create_production_operator_dependencies } from '../../operator_dependencies.ts';
 
 interface Request {
-  action: 'backup' | 'restore' | 'fresh' | 'retention' | 'concurrent' | 'restore-command';
+  action:
+    'backup' | 'restore' | 'fresh' | 'retention' | 'concurrent' | 'restore-command' | 'ticket';
   root: string;
   source?: string;
   destination?: string;
@@ -53,6 +54,7 @@ export async function backup_probe(request: Request): Promise<unknown> {
     return rename(source, destination);
   };
   try {
+    if (request.action === 'ticket') return ticket_probe(request.destination!, request.ticket!);
     if (request.action === 'concurrent')
       return await backup_with_interleaved_commits(request.source!, request.destination!);
     if (request.action === 'restore-command')

@@ -12,6 +12,7 @@ import { spawn_codex_process } from '../codex_app_server/process.ts';
 import type { OwnedCodexProcess } from '../codex_app_server/process.ts';
 import type { AcpChildLaunch } from './launch.ts';
 import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
+import { ModelCatalogCleanupFailed } from '../catalog_cleanup.ts';
 
 export function hermes_model_catalog_launch(options: {
   hermes_python: string;
@@ -116,6 +117,7 @@ export class HermesModelCatalogOwner {
     return task;
   }
   private async run(probe: Probe, refresh: boolean): Promise<CommandOutcome> {
+    let primary: unknown;
     const argv = refresh ? [...this.launch.argv, '--refresh'] : [...this.launch.argv];
     const environment: Record<string, string> = {};
     for (const [name, value] of Object.entries(process.env))
@@ -182,15 +184,16 @@ export class HermesModelCatalogOwner {
         standard_error: Buffer.concat(error).toString('utf8'),
       };
     } catch (error) {
+      primary = error;
       if (error === timeout)
         return { exit_code: -1, standard_output: '', standard_error: timeout.message };
       throw error;
     } finally {
       clearTimeout(timer);
-      await this.stop_probe(probe);
+      await this.stop_probe(probe, primary);
     }
   }
-  private async stop_probe(probe: Probe): Promise<void> {
+  private async stop_probe(probe: Probe, primary?: unknown): Promise<void> {
     if (probe.cleaned) return;
     if (probe.stopping) return probe.stopping;
     const stopping = (async () => {
@@ -200,7 +203,12 @@ export class HermesModelCatalogOwner {
         probe.cleanup_error = null;
         if (probe.finished) this.active.delete(probe);
       } catch (cause) {
-        const error = new BackendAdapterError('the Hermes catalog process did not stop', { cause });
+        const error = new ModelCatalogCleanupFailed(
+          primary,
+          [cause],
+          () => this.stop_probe(probe, primary),
+          'the Hermes catalog process did not stop',
+        );
         probe.cleanup_error = error;
         if (!probe.cleanup_reported) {
           probe.cleanup_reported = true;
