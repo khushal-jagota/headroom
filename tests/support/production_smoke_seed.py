@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import signal
 import sys
 from contextlib import closing
 from pathlib import Path
@@ -29,6 +30,7 @@ from planner.core.db import connect, create_schema
 
 
 def main() -> None:
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, type=Path)
     args = parser.parse_args()
