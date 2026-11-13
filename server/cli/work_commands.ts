@@ -8,6 +8,7 @@ import { JsonNumber, numeric_value, parse_numeric_json } from '../core/http/nume
 import { python_text as scalar } from './python_text.ts';
 import { ticket_argument } from './parser.ts';
 import { recap_preview } from '../tickets/logic/recap.ts';
+import { strip } from '../core/whitespace.ts';
 
 type Body = Record<string, any>;
 const python_sort = (left: string, right: string): number => {
@@ -32,7 +33,7 @@ const lines = (rows: any[], format: (row: any) => string): string =>
 const raw = (stdout: string): CommandResult => ({ exit_code: 0, stdout, stderr: '' });
 function format_recap(item: Body): string {
   const recap = scalar(item.recap);
-  if (!recap.trim()) return 'no recap';
+  if (!strip(recap)) return 'no recap';
   let freshness = 'recap age unknown';
   if (item.recap_updated_at != null) {
     const age = Math.max(
