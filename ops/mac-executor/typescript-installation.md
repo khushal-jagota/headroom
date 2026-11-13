@@ -237,3 +237,24 @@ The native code follows Apple's [inode64 layout](https://raw.githubusercontent.c
 [ABI aliases](https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/bsd/sys/cdefs.h).
 Darwin arm64 uses the unsuffixed symbols. Darwin x86_64 selects the inode64 aliases.
 These are source-based ABI choices. No Darwin call or native durability check ran on this Linux VPS.
+
+## Command maintenance before storage closure
+
+The command service retains known outcomes across journal and output failures. A retry resumes settlement without another provider call.
+Planned replay seals admission. A canceled waiter does not cancel the shared gate, and replay completion does not resume admission.
+The host calls `resume_after_cancelled_update()` separately when it cancels an update.
+Update preparation stops native processes before it joins commands that can hold a child lock.
+Its synthetic stop proof uses the same outcome settlement path without a command journal record.
+The host supplies the update request ID and a cancellation signal. Retries reuse each exact child's stop proof identity.
+Quiesce also accepts cancellation. A canceled observer leaves admitted work in the runner's actual cleanup custody.
+This module does not download, install, or activate a release.
+
+The host must stop the runner before it closes the journal and outbox.
+Pass one absolute shutdown deadline, then join `settled()` for actual completion.
+A deadline error on `stop()` does not mean that the work stopped.
+Native and source failures remain visible after resource cleanup, including an actual failure whose type is a deadline error.
+A failed settlement retains its retry point. A later stop retries it before actual completion.
+
+Exact command stop follows Python when a currently joined command task fails: it returns an uncertain outcome before native cleanup.
+Permanent host shutdown separately attempts native cleanup and joins the failed work.
+The owner still decides whether exact command stop must also continue cleanup across that failed join.
