@@ -18,7 +18,7 @@ import type { AcceptedRecordEvent, RecordCommitParticipant } from '../record/con
 import type { JsonObject } from '../../executor/wire.generated.ts';
 import type { RuntimeMutation } from './contracts.ts';
 import { field_mutation, RemoteEventPrediction } from './save_attempt.ts';
-import { retry_later_wait, acquire_after_steers } from './synchronization.ts';
+import { acquire_after_steers } from './synchronization.ts';
 import { turn_is_maintenance, same_turn, set_phase } from './state.ts';
 import type { ConversationState } from './state.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
@@ -57,7 +57,7 @@ export async function take_backend_event_with_receipt(
     retry_later_at?: number;
   } = {},
 ): Promise<AcceptedRecordEvent<JsonObject>> {
-  await retry_later_wait(host.wait_for_reservation(state, token), options.retry_later_at);
+  await host.wait_for_reservation(state, token, options.retry_later_at);
   const lease = await acquire_after_steers(state, options.retry_later_at);
   let accepted: AcceptedRecordEvent<JsonObject> = {
     result: { applied: false },

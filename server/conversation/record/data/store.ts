@@ -307,6 +307,17 @@ export class ConversationStorePrimitives {
       return row === undefined ? null : stored_event(row);
     });
   }
+  /** An accepted non-steer prompt starts the current turn; a steer continues it. */
+  current_turn_start_sequence(conversation_id: string): number | null {
+    return this.database.read(
+      (sql) =>
+        sql.get<{ sequence: number }>(
+          "SELECT sequence FROM conversation_events WHERE conversation_id=? AND kind='prompt' " +
+            "AND json_extract(payload,'$.mode')<>'steer' ORDER BY sequence DESC LIMIT 1",
+          [conversation_id],
+        )?.sequence ?? null,
+    );
+  }
   sender_message_outcome(
     conversation_id: string,
     sender_message_id: string,

@@ -369,65 +369,71 @@ export async function write_replayed_prompt(
   prompt: import('../record/contracts.ts').UndeliveredTurnPrompt,
   check_owner: () => void,
 ): Promise<void> {
+  const reservation: ReservedTurn = {
+    token,
+    resolved: new Deferred<void>(),
+    automatic_compaction: prompt.automatic_compaction,
+    automatic_notice: false,
+    memory_notice_only: false,
+    prompt_accepted: false,
+    messages: [],
+    mode: prompt.mode,
+    shutdown_owned: false,
+    shutdown_fate: null,
+  };
   const release = await state.lock.acquire();
   try {
     check_owner();
+    state.reserved_turn = reservation;
+    // Its original prompt is already durable, so callbacks need no receipt barrier.
+    reservation.resolved.resolve();
   } finally {
     release();
   }
-  let child = state.child;
-  if (child === null) {
-    const message: Message = {
-      held_prompt_id: '',
-      content: prompt.sender_content,
-      sender_label: prompt.sender_label,
-      sender: null,
-      recipient: null,
-      sender_message_id: null,
-      sent_at_unix_milliseconds: null,
-      snapshot_sent_at_unix_milliseconds: 0,
-      model_change: prompt.model_change,
-      reasoning_effort_change: prompt.reasoning_effort_change,
-      reasoning_effort_is_set: prompt.reasoning_effort_is_set,
-      owner_read_through_sequence: null,
-      acknowledge_owner_on_failure: false,
-      recovery_references: [],
-      recording_receipt: null,
-      queue_reason: 'requested',
-      delivery_uncertain: false,
-      system_generated: true,
-    };
-    const reservation: ReservedTurn = {
-      token,
-      resolved: new Deferred<void>(),
-      automatic_compaction: prompt.automatic_compaction,
-      automatic_notice: false,
-      memory_notice_only: false,
-      prompt_accepted: false,
-      messages: [],
-      mode: prompt.mode,
-      shutdown_owned: false,
-      shutdown_fate: null,
-    };
-    state.reserved_turn = reservation;
-    try {
+  try {
+    let child = state.child;
+    if (child === null) {
+      const message: Message = {
+        held_prompt_id: '',
+        content: prompt.sender_content,
+        sender_label: prompt.sender_label,
+        sender: null,
+        recipient: null,
+        sender_message_id: null,
+        sent_at_unix_milliseconds: null,
+        snapshot_sent_at_unix_milliseconds: 0,
+        model_change: prompt.model_change,
+        reasoning_effort_change: prompt.reasoning_effort_change,
+        reasoning_effort_is_set: prompt.reasoning_effort_is_set,
+        owner_read_through_sequence: null,
+        acknowledge_owner_on_failure: false,
+        recovery_references: [],
+        recording_receipt: null,
+        queue_reason: 'requested',
+        delivery_uncertain: false,
+        system_generated: true,
+      };
       child = await ensure_child(host, state, reservation, message);
-    } finally {
-      if (state.reserved_turn === reservation) state.reserved_turn = null;
-      reservation.resolved.resolve();
     }
+    check_owner();
+    await host.native_operation(() =>
+      child!.write_prompt(token, prompt.content, {
+        sender_label: prompt.sender_label,
+        sender_content: prompt.sender_content,
+        sender_message_count: prompt.sender_message_count,
+        mode: prompt.mode,
+        model_change: prompt.model_change,
+        reasoning_effort_change: prompt.reasoning_effort_change,
+        reasoning_effort_is_set: prompt.reasoning_effort_is_set,
+        automatic_compaction: prompt.automatic_compaction,
+      }),
+    );
+    check_owner();
+  } catch (error) {
+    check_owner();
+    throw error;
+  } finally {
+    if (state.reserved_turn === reservation) state.reserved_turn = null;
+    reservation.resolved.resolve();
   }
-  check_owner();
-  await host.native_operation(() =>
-    child!.write_prompt(token, prompt.content, {
-      sender_label: prompt.sender_label,
-      sender_content: prompt.sender_content,
-      sender_message_count: prompt.sender_message_count,
-      mode: prompt.mode,
-      model_change: prompt.model_change,
-      reasoning_effort_change: prompt.reasoning_effort_change,
-      reasoning_effort_is_set: prompt.reasoning_effort_is_set,
-      automatic_compaction: prompt.automatic_compaction,
-    }),
-  );
 }

@@ -87,7 +87,9 @@ import type {
 import { deliver_prompt, stop_child } from './runtime/delivery.ts';
 import { MODEL_THINKING_PULSE_INTERVAL_SECONDS } from './runtime/configuration.ts';
 import { take_backend_event, take_backend_event_with_receipt } from './runtime/backend_events.ts';
+import { wait_for_item } from '../executor/item_budget.ts';
 import * as remote from './runtime/remote.ts';
+import { admit_remote_turn } from './runtime/remote_turn.ts';
 import * as controls from './runtime/controls.ts';
 import * as answers from './runtime/answers.ts';
 import {
@@ -1005,10 +1007,18 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     // Start after assignment, so a synchronous event cannot clear then overwrite the pump.
     state.backend_event_pump = Promise.resolve().then(pump);
   }
-  async wait_for_reservation(state: ConversationState, token: TurnToken | null): Promise<void> {
-    while (state.reserved_turn && same_turn(state.reserved_turn.token, token)) {
+  async wait_for_reservation(
+    state: ConversationState,
+    token: TurnToken | null,
+    retry_later_at?: number,
+  ): Promise<void> {
+    while (
+      state.reserved_turn &&
+      !state.reserved_turn.resolved.settled &&
+      same_turn(state.reserved_turn.token, token)
+    ) {
       if (this.shutting_down) return;
-      await state.reserved_turn.resolved.promise;
+      await wait_for_item(state.reserved_turn.resolved.promise, retry_later_at);
     }
   }
   async take_local_backend_event(
@@ -1030,7 +1040,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     } = {},
   ): Promise<AcceptedRecordEvent<WireValue<'JsonObject'>>> {
     this.require_runtime_ownership();
-    const token = turn === null ? null : remote.admit_remote_turn(turn);
+    const token = turn === null ? null : admit_remote_turn(turn);
     if (
       token !== null &&
       options.conversation_id !== undefined &&
@@ -1056,7 +1066,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   ): Promise<AcceptedRecordEvent<WireValue<'JsonObject'>>> {
     return remote.take_answer_application(
       this,
-      remote.admit_remote_turn(turn),
+      admit_remote_turn(turn),
       answer_id,
       provider_id,
       kind,
@@ -1113,6 +1123,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     sequence: number,
     not_delivered: Promise<boolean>,
   ): Promise<void> {
+    this.require_runtime_ownership();
     const state = this.conversation_state(conversation_id);
     if (state === null) return;
     const row = this.options.store.read_event(conversation_id, sequence);

@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { setup } from '../../tests/conversation_core_fixture.ts';
 import { SignalPublicationCoordinator } from '../publication/coordinator.ts';
 import * as persistence from '../publication/persistence.ts';
@@ -7,8 +7,17 @@ import { FileStaging } from '../../executor/vps_files.ts';
 import { add_inbox_presence_table } from '../../executor/testing/inbox_fixture.ts';
 import { PlannerError } from '../../core/contracts.ts';
 import { as_object } from '../../executor/protocol.ts';
-import { TurnEnded } from '../backends/contracts.ts';
+import {
+  BackendPermissionAsk,
+  BackendPromptAccepted,
+  BackendUserInputRequest,
+  PermissionAskRaised,
+  TurnEnded,
+  UserInputRequested,
+} from '../backends/contracts.ts';
 import type { WireValue } from '../../executor/contracts.ts';
+import { text_message_content } from '../message_content.ts';
+import { Deferred } from './state.ts';
 
 // The SQL-only inbox proof cannot detect predictions or a global Signal batch
 // that escapes before a permanent refusal receipt commits through the real core.
@@ -136,6 +145,105 @@ test('a remote event that times out behind earlier work leaves the retry its loc
       f.store.read_events_after('core', 0).filter((row) => row.kind === 'turn_ended'),
     ).toHaveLength(1);
   } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 5 });
+  }
+});
+
+// Reuse the existing real core/record/process fixture; hold only its native replay reply.
+// Earlier receipt tests do not kill an already-recorded turn during a replay write.
+test('kill during replay ends its turn and asks before a late successful reply', async () => {
+  const close_rewritten = vi.fn();
+  const f = setup({
+    core: {
+      remote_recovery: {
+        retire_replaced() {},
+        close_rewritten,
+        async recover() {},
+      },
+    },
+  });
+  const entered = new Deferred<void>(),
+    release = new Deferred<void>();
+  let replay: Promise<void> | undefined;
+  try {
+    await f.start();
+    await f.send();
+    const child = await f.child,
+      state = f.core.conversation_state('core')!,
+      token = state.running_turn!.token;
+    const reference = {
+      conversation_id: 'core',
+      executor_incarnation: 'remote',
+      child_id: 'replaying',
+    };
+    state.retained_child_reference = reference;
+    Object.defineProperty(child, 'stop_outside_lock', { value: true });
+    vi.spyOn(child, 'withdraw_delivery').mockResolvedValue(false);
+    vi.spyOn(child, 'stop').mockResolvedValue();
+    const write = vi.spyOn(child, 'write_prompt').mockImplementation(async () => {
+      entered.resolve();
+      await release.promise;
+      return new BackendPromptAccepted({ composed_content_delivered: true });
+    });
+    await f.core.take_backend_event(
+      token,
+      new PermissionAskRaised({
+        ask: new BackendPermissionAsk({
+          ask_id: 'permission',
+          title: 'Permission',
+          detail: null,
+          options: [],
+        }),
+      }),
+    );
+    await f.core.take_backend_event(
+      token,
+      new UserInputRequested({
+        request: new BackendUserInputRequest({ request_id: 'input', questions: [] }),
+      }),
+    );
+    const content = text_message_content('original');
+    replay = f.core.resume_undelivered_prompt(
+      reference,
+      {
+        turn_number: token.turn_number,
+        content,
+        sender_content: content,
+        sender_label: 'Owner',
+        sender_message_count: 1,
+        mode: 'queue',
+        model_change: null,
+        reasoning_effort_change: null,
+        reasoning_effort_is_set: false,
+        automatic_compaction: false,
+      },
+      { start_needed: false },
+    );
+    await entered.promise;
+    expect(state.reserved_turn?.token).toEqual(token);
+    const prompt_fact = f.store.lifecycle_facts('core').find((fact) => fact.operation === 'prompt');
+    await f.core.kill('core');
+    expect(state.running_turn).toBeNull();
+    const requests = f.store.lifecycle_facts('core').filter((fact) => fact.kind === 'request');
+    expect(requests.map((fact) => fact.status)).toEqual(['unavailable', 'unavailable']);
+    const endings = f.store.read_events_after('core', 0).filter((row) => row.kind === 'turn_ended');
+    expect(endings).toHaveLength(1);
+    expect(endings[0]!.payload).toMatchObject({ ending: 'interrupted' });
+    expect(f.store.lifecycle_facts('core').find((fact) => fact.operation === 'prompt')).toEqual(
+      prompt_fact,
+    );
+    release.resolve();
+    await replay;
+    expect(close_rewritten).toHaveBeenCalledExactlyOnceWith(
+      'core',
+      token.turn_number,
+      'The turn ended before its message was written again.',
+    );
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(f.children).toHaveLength(1);
+  } finally {
+    release.resolve();
+    await replay;
     await f.core.shutdown({ deadline: performance.now() / 1000 + 5 });
   }
 });

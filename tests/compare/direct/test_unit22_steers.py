@@ -68,13 +68,13 @@ async def source(path: Path) -> list[dict[str, Any]]:
             )
         )
 
-    async def send(identity: str, text: str, steer: bool = False) -> Any:
+    async def send(identity: str, text: str, steer: bool = False, anonymous: bool = False) -> Any:
         return delivery_fate_json(
             await core.send(
                 identity,
                 text_message_content(text),
                 sender_label="owner",
-                sender_message_id=f"{identity}-{text}",
+                sender_message_id=None if anonymous else f"{identity}-{text}",
                 mode=PromptDeliveryMode.steer if steer else PromptDeliveryMode.queue,
             )
         )
@@ -100,6 +100,48 @@ async def source(path: Path) -> list[dict[str, Any]]:
     async def close() -> None:
         await core.shutdown()
         await registry.close()
+
+    async def restart_case(identity: str, anonymous: bool = False, held: bool = False) -> None:
+        await start(identity)
+        await send(identity, "incumbent")
+        never: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+
+        async def abandoned(*args: Any, **kwargs: Any) -> BackendSteerUncertain:
+            return BackendSteerUncertain(None, not_delivered=never)
+
+        registry.current[identity].steer = abandoned  # type: ignore[method-assign]
+        await send(identity, "late steer", True, anonymous)
+        await finish(identity)
+        sequence = next(
+            row.sequence
+            for row in await store.read_events_after(identity, 0)
+            if isinstance(row.payload, PromptDeliveryUncertainEventPayload)
+        )
+        await capture(f"{identity}-before-restart", identity)
+        await close()
+        cycle()
+        arrived: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        arrived.set_result(True)
+        if held:
+            await send(identity, "fresh incumbent")
+        await core.await_late_steer(identity, sequence, arrived)
+        await asyncio.gather(*core._conversations[identity].late_steers)
+        await core.wait_until_quiescent()
+        if held:
+            await core.await_late_steer(identity, sequence, arrived)
+            await asyncio.gather(*core._conversations[identity].late_steers)
+            await capture(f"{identity}-held", identity)
+            await close()
+            cycle()
+            await core.await_late_steer(identity, sequence, arrived)
+            await asyncio.gather(*core._conversations[identity].late_steers)
+            await core.wait_until_quiescent()
+        await capture(f"{identity}-once", identity)
+        await close()
+        cycle()
+        await core.await_late_steer(identity, sequence, arrived)
+        await core.wait_until_quiescent()
+        await capture(f"{identity}-no-repeat", identity)
 
     cycle()
     try:
@@ -164,35 +206,9 @@ async def source(path: Path) -> list[dict[str, Any]]:
         await core.wait_until_quiescent()
         await capture("arrived-no-repeat", "arrived")
         await finish("arrived")
-        await start("restart")
-        await send("restart", "incumbent")
-        never: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
-
-        async def abandoned(*args: Any, **kwargs: Any) -> BackendSteerUncertain:
-            return BackendSteerUncertain(None, not_delivered=never)
-
-        registry.current["restart"].steer = abandoned  # type: ignore[method-assign]
-        await send("restart", "late steer", True)
-        await finish("restart")
-        sequence = next(
-            row.sequence
-            for row in await store.read_events_after("restart", 0)
-            if isinstance(row.payload, PromptDeliveryUncertainEventPayload)
-        )
-        await capture("before-restart", "restart")
-        await close()
-        cycle()
-        arrived: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
-        arrived.set_result(True)
-        await core.await_late_steer("restart", sequence, arrived)
-        await asyncio.gather(*core._conversations["restart"].late_steers)
-        await core.wait_until_quiescent()
-        await capture("restart-once", "restart")
-        await close()
-        cycle()
-        await core.await_late_steer("restart", sequence, arrived)
-        await core.wait_until_quiescent()
-        await capture("restart-no-repeat", "restart")
+        await restart_case("restart")
+        await restart_case("restart-null", anonymous=True)
+        await restart_case("restart-held", held=True)
     finally:
         await close()
     return trace
@@ -237,7 +253,15 @@ def test_deferred_steers_match_fresh_python(tmp_path: Path, request: pytest.Fixt
     )
     assert actual == expected
     final = actual[-1]["rows"]["conversation_events"]
-    restarted = [
-        row for row in final if row["conversation_id"] == "restart" and row["kind"] == "prompt"
-    ]
-    assert len(restarted) == 2
+    for identity, texts in {
+        "restart": ["incumbent", "late steer"],
+        "restart-null": ["incumbent", "late steer"],
+        "restart-held": ["incumbent", "fresh incumbent", "late steer"],
+    }.items():
+        assert [
+            row["payload"]["text"]
+            for row in final
+            if row["conversation_id"] == identity and row["kind"] == "prompt"
+        ] == texts
+    queued = next(row for row in actual if row["name"] == "restart-held-held")
+    assert queued["held"] == [{"text": "late steer", "reason": "steer_refused"}]
