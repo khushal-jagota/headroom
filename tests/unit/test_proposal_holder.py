@@ -500,7 +500,7 @@ def test_proposal_busy_deadline_returns_retryable_503_without_partial_effects(
         holder.close()
     assert isinstance(result, JSONResponse)
     assert result.status_code == 503
-    assert json.loads(result.body)["error"]["code"] == "retry_later"
+    assert json.loads(bytes(result.body))["error"]["code"] == "retry_later"
     assert not tmp_db.in_transaction
     assert data.read_ticket(tmp_db, ticket.id).pending_proposal is None
     assert tmp_db.execute("PRAGMA busy_timeout").fetchone()[0] == 5000

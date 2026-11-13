@@ -11,4 +11,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    pass
+    raise NotImplementedError("Panels migrations are forward-only")

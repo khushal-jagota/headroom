@@ -65,6 +65,9 @@ class RuntimeRequirements(Protocol):
     """Shared requirements without operating-system-specific native fields."""
 
     @property
+    def version(self) -> int: ...
+
+    @property
     def system(self) -> str: ...
     @property
     def architecture(self) -> str: ...
