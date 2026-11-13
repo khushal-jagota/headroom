@@ -1794,7 +1794,7 @@ class SleepCycles:
         return _query(
             self.db_path,
             "SELECT r.conversation_id FROM mac_runs AS r "
-            "LEFT JOIN mac_executor_presence AS p ON p.singleton=1 "
+            "LEFT JOIN mac_executor_presence AS p ON p.machine_id=r.machine_id "
             "WHERE r.stop_state<>'closed' AND r.executor_incarnation IS NOT p.executor_incarnation",
         )
 
