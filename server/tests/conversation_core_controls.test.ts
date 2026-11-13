@@ -1,5 +1,6 @@
 /** Ordered ownership risks that HTTP lists cannot pause at internal receipt barriers. */
 import { spawn } from 'node:child_process';
+import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 import { once } from 'node:events';
 import { createInterface } from 'node:readline';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -60,7 +61,7 @@ test('a send during native kill cancellation runs after the kill', async () => {
     'turn_ended',
     'prompt',
   ]);
-  await f.core.shutdown();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
 
 // Inventory #24: two controls name one held entry and only one can take it.
@@ -86,7 +87,7 @@ test('two promotions of one held id have one winner', async () => {
         (row) => row.payload.kind === 'prompt' && row.payload.sender_message_id === 'promoted',
       ),
   ).toHaveLength(1);
-  await f.core.shutdown();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
 
 // Inventory #34 backend case: only the observer leaves, not the owned native exchange.
@@ -145,7 +146,7 @@ test('observer departure during a native write retains one owned settlement', as
     (await child.inspect()).calls.filter((call) => call.command === 'write_prompt'),
   ).toHaveLength(1);
   expect(f.store.read_events_after('core', 0).map((row) => row.kind)).toEqual(['prompt']);
-  await f.core.shutdown();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
 
 // Inventories #31/#34 SQLite case/#37: accepted identity survives observer departure and a real writer lock.
@@ -217,7 +218,7 @@ connection.close()
   expect(
     (await child.inspect()).calls.filter((call) => call.command === 'write_prompt'),
   ).toHaveLength(2);
-  await f.core.shutdown();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
 
 // Inventories #32/#39: neither backend completion nor send_now replacement can overtake a steer receipt.
@@ -278,7 +279,7 @@ for (const replacement of ['backend ending', 'send_now'] as const) {
     expect(rows[1].payload.kind === 'prompt' && rows[1].payload.sender_message_id).toBe('steered');
     expect(tracked_close).toBe(1);
     if (replacement === 'send_now') expect(rows[3].kind).toBe('prompt');
-    await f.core.shutdown();
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   });
 }
 
@@ -324,7 +325,7 @@ for (const delivery of ['queued', 'promoted'] as const) {
     expect(
       f.store.read_events_after('core', 0).some((row) => row.kind === 'prompt_discarded'),
     ).toBe(false);
-    await f.core.shutdown();
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   });
 }
 
@@ -350,7 +351,7 @@ test('a post-read admission race cannot readmit one sender identity', async () =
     (await (await f.child).inspect()).calls.filter((call) => call.command === 'write_prompt'),
   ).toHaveLength(1);
   expect(f.store.read_events_after('core', 0).map((row) => row.kind)).toEqual(['prompt']);
-  await f.core.shutdown();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
 
 // New record option risk: shutdown must cancel generic backoff promptly without another
@@ -393,7 +394,7 @@ test('shutdown retains an active BUSY save and cancels generic backoff', async (
   const sent = f.send();
   const rejected = expect(sent).rejects.toMatchObject({ name: 'AbortError' });
   await failed.promise;
-  await f.core.shutdown();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   await rejected;
   expect(attempts).toBe(2);
   expect(closed).toBe(1);

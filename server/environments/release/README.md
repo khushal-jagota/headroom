@@ -1,6 +1,6 @@
 This slice supplies application identity, receipt-bound archives, database-frontier rules, static native inventory, and offline runtime admission. Python owns migrations. A TS database must already match the candidate frontier. Build, installation, and publication follow in separate reviewed slices.
 
-Unpack opens the compressed input once and passes that descriptor to a required invocation-owned Node child. Hashing and gunzip consume the same bytes once. A bounded TAR spool retains validated offsets. Extraction never reopens the archive pathname or interprets the metadata again. The parent creates the private output exclusively only after full hash and member validation. An appeared directory refuses. The API returns only after actual child close, final metadata/fsync, and spool cleanup. The installer owns the later rename.
+Unpack opens the compressed input once and passes that descriptor to a required invocation-owned Node child. A first compressed pass checks the receipt hash before format parsing. Gunzip rereads that same descriptor from offset0 and inflates once. A bounded TAR spool retains validated offsets. Extraction never reopens the archive pathname or interprets the metadata again. The parent creates the private output exclusively only after full hash and member validation. An appeared directory refuses. The API returns only after actual child close, final metadata/fsync, and spool cleanup. The installer owns the later rename.
 
 The spool is `0600` inside an exclusive `0700` directory. Output also starts and remains private at `0700`. On failure, the parent removes only its own output and spool, after actual child close. Archived directory modes cannot prevent that cleanup. The shared child owner supplies stop/force authority. No private owner, timer, or second process registry exists.
 
@@ -28,7 +28,7 @@ Space admission has three checks:
 
 The cited tree needs roughly 6.6 GiB at peak, including reserve, before filesystem overhead. Concurrent users can still exhaust a filesystem. The parent removes partial output after failure.
 
-The Manager accepted refusal of GNU sparse input and members behind any link member. [The difference registry](../../DEVIATIONS.md) records both. Other closed-reader choices remain **proposed**: unknown inert PAX keys, binary path encodings, empty effective paths, and nonzero directory/link bodies. They must not be reported as Python equality or as accepted differences. Ordinary file/directory modification times and Unix modes are restored before their final fsync.
+The Manager accepted refusal of GNU sparse input, members behind links, unknown inert PAX keys, empty effective paths, non-UTF8 names, and directory/link bodies. [The difference registry](../../DEVIATIONS.md) records these policies. The release writer can lose fractional mtimes in ordinary headers. Fractional PAX times it writes stay intact. Readers preserve Python's nanoseconds exactly for either producer. Ordinary file/directory times and Unix modes are restored before their final fsync.
 
 The child uses the existing Koffi dependency for descriptor-based `futimens` because Node's `utimes` truncates nanoseconds. Its conversion mirrors Python's split and floor operations. No timestamp tolerance or new binary is introduced. The parent protocol import does not load Koffi.
 

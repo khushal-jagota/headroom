@@ -107,8 +107,11 @@ The intent guard refuses accidental bare signals without a compiled wrapper, pla
 Prior intent replaces signal-sender identity. It does not authenticate the signal sender itself.
 Neither design protects a broad kill of the application child or same-user SIGKILL.
 
-Implementation remains pending. It will use a 30-second application shutdown budget and a 60-second new-unit stop timeout, including a 30-second margin.
-The total real-core settlement bound remains open until its proof completes.
+APP uses a 30-second shared grace, a 45-second hard trigger, and an owned-force attempt bounded by original stop plus 55 seconds.
+Packaged policy uses a separate supervisor APP fallback at 60 seconds, stop client at 80 seconds, and outer unit phase at 90 seconds.
+Supervisor/client changes remain in the unmerged release draft. The actual unit renderer and packaged hosted proofs remain open.
+An APP timer cannot preempt blocked JavaScript or native code. Independent Worker services are outside the APP unit cgroup.
+External supervisor fallback alone cannot prove those services gone if APP blocks before its owned-unit force attempt.
 No existing unit, Mac executor, or LaunchAgent changes form part of this decision.
 A managed Mac-only server requires a later decision.
 
@@ -121,6 +124,26 @@ Required proof, not yet completed:
 - Packaged supervisor: clean Node-only startup and relocation without a compiler or Python.
 
 See [the accepted design](lifecycle/SUPERVISOR_DESIGN.md) for the protocol and failure limits.
+
+## Application hard shutdown — accepted
+
+The Manager accepted a shared 30-second grace and a hard APP trigger at 45 seconds.
+APP attempts force only for still-owned, unreaped groups and retained unique Worker unit capabilities.
+The manager-command batch has an original deadline at stop plus 55 seconds. Failure remains explicit in the log.
+APP then exits 1 without destructive database finalizers while actual work remains.
+When all work settles, normal finalizers run first and the actual entry exits 0 or 1 for the recorded result.
+Embedded servers do not receive that process-completion capability.
+Timers cannot interrupt a blocked APP loop or synchronous native call. Packaged supervisor and unit fallback remain separate proof gates.
+
+## Composed local-only Ticket execution — accepted and temporary
+
+The Manager requires a temporary refusal while the production composition has no executor router.
+A Ticket whose locale differs from the current local execution locale keeps its existing conversation, claims, queue, and recovery state.
+The composed policy refuses explicit work before effects and skips unavailable background work before claims or wake batches.
+It preserves Python's canonical locale/presence checks for domain callers without that composition.
+Persisted compatible Mac presence is not authority to launch a VPS-local adapter for a Mac Ticket.
+Unit 22 replaces the single composed selection boundary when its actual executor router is bound.
+This policy does not claim that a composed release has an executor ready.
 
 ## VPS metrics integer configuration
 
@@ -457,6 +480,19 @@ The Manager accepted explicit refusal of old GNU type `S` and every `GNU.sparse.
 Python supports these sparse formats. Neither actual release producer emits them.
 The TypeScript reader returns `AppValidationError` before the destination exists.
 The existing release comparison records this accepted difference instead of Python equality.
+
+## Release archive metadata, names and writer timestamps — accepted
+
+The Manager accepted these five differences on November 13, 2026:
+
+- Unknown inert PAX keys are refused under the closed metadata-key policy.
+- An empty effective PAX file path is a typed refusal. This Python fault is not reproduced.
+- Bodies on directory or link members are refused under the closed member policy.
+- Release names must be valid UTF-8. A non-UTF-8 name is a typed refusal.
+- The TS release writer can lose the fractional part of an mtime because node-tar writes whole seconds in an ordinary header. A fractional time that it writes in a PAX header stays intact. The reader keeps Python's nanoseconds exactly for either archive. This applies to release application archives only.
+
+The four reader refusals use `AppValidationError` before output creation. Python accepts three forms and fails after destination creation for an empty path.
+The existing release comparison pins these intentional differences and retains Python's observations without claiming equality.
 
 ## Release archive members behind links — accepted
 

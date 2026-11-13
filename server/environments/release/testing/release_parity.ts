@@ -574,7 +574,7 @@ async function compare_release(
       lifetime,
       root,
       'bad-hash',
-      archive,
+      join(root, 'damaged.tar.gz'),
       '0'.repeat(64),
       manifest.app_sha,
     ),

@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { configured_worker_runtime_definitions } from '../../../worker_types/configuration.ts';
 import { acquire_server_lifecycle_lease } from '../../../lifecycle/lease.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../../../lifecycle/configuration.ts';
 import { startServer } from '../../../core/start.ts';
 import { ConversationRuntimeAlreadyOwnedError } from '../../../core/locks/index.ts';
 import { build_fake_environment_database } from '../../fixture.ts';
@@ -167,7 +168,7 @@ export async function registry_probe(request: Request): Promise<unknown> {
         remove: await error_of(() => remove_environment_instance(options)),
       };
     } finally {
-      await server.close();
+      await server.close({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     }
   } finally {
     for (const [key, value] of Object.entries(saved)) {
@@ -190,7 +191,7 @@ export async function registry_probe(request: Request): Promise<unknown> {
           throw new Error('a mutating instance reached a runtime factory');
         },
       });
-      await server.close();
+      await server.close({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     } catch (error) {
       if (!(error instanceof ConversationRuntimeAlreadyOwnedError)) throw error;
       refused = true;

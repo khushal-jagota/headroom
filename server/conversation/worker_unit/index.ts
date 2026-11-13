@@ -18,8 +18,8 @@ import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { relative } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
-import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
-import { control } from './control.ts';
+import type { OwnedChildProcesses, OwnedUnitControl } from '../../lifecycle/contracts.ts';
+import { control, control_retained } from './control.ts';
 import { SLICE_CPU_WEIGHT_MAX, WORKER_SLICE, WORKER_TEMP_ROOT } from './configuration.ts';
 import { WorkerUnitError } from './contracts.ts';
 import type { WorkerUnitValues } from './contracts.ts';
@@ -76,7 +76,8 @@ export class WorkerUnit {
   readonly slice_name: string;
   readonly finished: Promise<void>;
   private resolve_finished!: () => void;
-  private readonly child_processes: OwnedChildProcesses;
+  private confirmed_inactive = false;
+  private readonly cleanup_control: OwnedUnitControl;
   private cleanup_finished = false;
   private stop_requested = false;
   private stopping: Promise<void> | null = null;
@@ -87,15 +88,18 @@ export class WorkerUnit {
     null;
 
   constructor(values: WorkerUnitValues) {
-    this.child_processes = values.child_processes;
     this.finished = new Promise<void>((resolve) => {
-      this.resolve_finished = resolve;
+      this.resolve_finished = () => {
+        this.confirmed_inactive = true;
+        resolve();
+      };
     });
     this.name = values.name;
     this.directory = values.directory;
     this.environment = values.environment;
     this.working_directory = values.working_directory;
     this.slice_name = values.slice_name;
+    this.cleanup_control = values.child_processes.retain_worker_unit(this);
   }
 
   static async create(
@@ -172,7 +176,6 @@ export class WorkerUnit {
         working_directory,
         slice_name,
       });
-      options.child_processes.retain_worker_unit(unit);
       return unit;
     } catch (error) {
       rmSync(directory, { recursive: true });
@@ -272,12 +275,15 @@ export class WorkerUnit {
   }
   private async stop_once(): Promise<void> {
     if (this.wrapper_ready) await this.wrapper_ready;
-    let [code, text] = await control(
-      this.child_processes,
-      'show',
-      this.name,
-      '--property=LoadState',
-    );
+    if (this.confirmed_inactive) {
+      this.cleanup();
+      return;
+    }
+    let [code, text] = await control_retained(this.cleanup_control, 'show', '--property=LoadState');
+    if (this.confirmed_inactive) {
+      this.cleanup();
+      return;
+    }
     if (
       ((!code && properties(text).LoadState !== 'loaded') ||
         (code && (text.includes('not found') || text.includes('not loaded')))) &&
@@ -292,17 +298,32 @@ export class WorkerUnit {
       child.stdout?.destroy();
       child.stderr?.destroy();
       await closed;
-      [code, text] = await control(this.child_processes, 'show', this.name, '--property=LoadState');
+      if (this.confirmed_inactive) {
+        this.cleanup();
+        return;
+      }
+      [code, text] = await control_retained(this.cleanup_control, 'show', '--property=LoadState');
+    }
+    if (this.confirmed_inactive) {
+      this.cleanup();
+      return;
     }
     if (!code && properties(text).LoadState === 'loaded') {
-      const [stop_code, stop_text] = await control(this.child_processes, 'stop', this.name);
+      const [stop_code, stop_text] = await control_retained(this.cleanup_control, 'stop');
       if (stop_code)
         throw new WorkerUnitError(`Cannot stop Worker unit ${this.name}: ${stop_text}`);
+      if (this.confirmed_inactive) {
+        this.cleanup();
+        return;
+      }
       this.resolve_finished(); // Confirmed inactive, even if later bookkeeping fails.
-      await control(this.child_processes, 'reset-failed', this.name);
+      await control_retained(this.cleanup_control, 'reset-failed');
     } else if (code && !text.includes('not found') && !text.includes('not loaded')) {
       throw new WorkerUnitError(`Cannot inspect Worker unit ${this.name}: ${text}`);
     } else this.resolve_finished();
+    this.cleanup();
+  }
+  private cleanup(): void {
     try {
       rmSync(this.directory, { recursive: true, force: true });
     } catch {

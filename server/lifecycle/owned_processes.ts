@@ -5,7 +5,7 @@ import type {
   SpawnOptions,
   SpawnOptionsWithoutStdio,
 } from 'node:child_process';
-import type { OwnedChildProcesses, OwnedWorkerUnit } from './contracts.ts';
+import type { OwnedChildProcesses, OwnedWorkerUnit, OwnedUnitControl } from './contracts.ts';
 import { CONTROL_TIMEOUT_SECONDS } from '../conversation/worker_unit/configuration.ts';
 
 interface ChildRegistration {
@@ -13,12 +13,20 @@ interface ChildRegistration {
   exit_observed: boolean;
   closed: Promise<void>;
 }
+interface UnitRegistration {
+  actual: Promise<void>;
+  control: OwnedUnitControl;
+}
 /** Actual native lifetimes belong to the invocation, independently of adapter outcomes. */
 export class ChildProcesses implements OwnedChildProcesses {
   readonly #children = new Set<ChildRegistration>();
-  readonly #units = new Map<OwnedWorkerUnit, Promise<void>>();
+  readonly #units = new Map<OwnedWorkerUnit, UnitRegistration>();
   readonly #failures: unknown[] = [];
   #forcing = false;
+  #sealed = false;
+  seal(): void {
+    this.#sealed = true;
+  }
   spawn(
     command: string,
     args: readonly string[],
@@ -26,6 +34,10 @@ export class ChildProcesses implements OwnedChildProcesses {
   ): ChildProcessWithoutNullStreams;
   spawn(command: string, args: readonly string[], options: SpawnOptions): ChildProcess;
   spawn(command: string, args: readonly string[], options: SpawnOptions): ChildProcess {
+    if (this.#sealed) throw new Error('Native process admission is closed at shutdown');
+    return this.#spawn(command, args, options);
+  }
+  #spawn(command: string, args: readonly string[], options: SpawnOptions): ChildProcess {
     if (this.#forcing) throw new Error('Native process admission is closed at hard shutdown');
     let release!: () => void;
     const registration: ChildRegistration = {
@@ -59,16 +71,36 @@ export class ChildProcesses implements OwnedChildProcesses {
     if (this.#forcing) this.#kill(registration);
     return child;
   }
-  retain_worker_unit(unit: OwnedWorkerUnit): void {
+  retain_worker_unit(unit: OwnedWorkerUnit): OwnedUnitControl {
     if (!/^panels-worker-[a-f0-9]{32}\.service$/.test(unit.name))
       throw new Error('Invalid owned worker unit identity');
     if (this.#forcing) throw new Error('Worker unit admission is closed at hard shutdown');
-    if (this.#units.has(unit)) return;
+    if (this.#sealed) throw new Error('Worker unit admission is closed at shutdown');
+    const existing = this.#units.get(unit);
+    if (existing) return existing.control;
     let release!: () => void;
     const actual = new Promise<void>((resolve) => {
       release = resolve;
     });
-    this.#units.set(unit, actual);
+    const name = unit.name;
+    const control: OwnedUnitControl = {
+      spawn: (action, extra) => {
+        if (this.#units.get(unit) !== registration)
+          throw new Error('Retained Worker unit cleanup authority is no longer active');
+        if (
+          !['show', 'stop', 'reset-failed'].includes(action) ||
+          (action === 'show'
+            ? extra.length !== 1 || extra[0] !== '--property=LoadState'
+            : extra.length !== 0)
+        )
+          throw new Error('Invalid retained Worker unit cleanup command');
+        return this.#spawn('systemctl', ['--user', action, name, ...extra], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      },
+    };
+    const registration = { actual, control };
+    this.#units.set(unit, registration);
     void unit.finished.then(
       () => {
         this.#units.delete(unit);
@@ -79,11 +111,14 @@ export class ChildProcesses implements OwnedChildProcesses {
         this.#failures.push(error);
       },
     );
+    return control;
   }
   async settled(): Promise<void> {
     while (this.#children.size || this.#units.size)
       await Promise.all(
-        [...this.#children].map((child) => child.closed).concat([...this.#units.values()]),
+        [...this.#children]
+          .map((child) => child.closed)
+          .concat([...this.#units.values()].map((unit) => unit.actual)),
       );
     if (this.#failures.length)
       throw new AggregateError(this.#failures, 'Owned native resources failed');

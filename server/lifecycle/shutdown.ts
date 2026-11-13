@@ -79,13 +79,10 @@ export class ShutdownCoordinator implements ShutdownOwner, ShutdownStages {
     }
     return actual;
   }
-  close(options?: StopOptions): Promise<void> {
+  close(options: StopOptions): Promise<void> {
     if (this.#closing) return this.#closing;
     const started = performance.now() / 1000;
-    this.#soft_deadline = Math.min(
-      options?.deadline ?? Infinity,
-      started + this.#composition.grace_seconds,
-    );
+    this.#soft_deadline = Math.min(options.deadline, started + this.#composition.grace_seconds);
     this.#hard_deadline = started + this.#composition.hard_seconds;
     let resolve!: () => void, reject!: (error: unknown) => void;
     // Publish the stop flight and referenced deadline timers before user callbacks.
