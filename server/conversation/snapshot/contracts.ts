@@ -1,5 +1,6 @@
 /** Panels-owned backend cards. Provider protocols stay behind adapters. */
 import type { ConversationBackendKey } from '../contracts.ts';
+import type { JsonNumber } from '../../core/http/numeric_json.ts';
 import type { Database } from '../../core/database/contracts.ts';
 import type { BackendStateStore } from '../backend_state.ts';
 import type { BackendCommandOptions } from './commands.ts';
@@ -23,7 +24,7 @@ export interface BackendModel {
   readonly detail: string | null;
   readonly reasoning_effort_options: readonly string[] | null;
   readonly selected_variant: string | null;
-  readonly version: readonly number[];
+  readonly version: readonly (number | JsonNumber)[];
   readonly resolved_model_id: string | null;
 }
 export interface BackendUpdateAdvisory {

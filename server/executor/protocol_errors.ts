@@ -1,5 +1,9 @@
 /** Executor validation diagnostics. Representation tags never become wire properties. */
-import { JsonNumber, stringify_python_json } from '../core/http/numeric_json.ts';
+import {
+  JsonNumber,
+  stringify_python_json,
+  python_float_repr as float_repr,
+} from '../core/http/numeric_json.ts';
 import { python_string_repr } from '../core/python_repr.ts';
 import { ValueError } from '../core/value_error.ts';
 import { ordered_json_entries } from './protocol_json.ts';
@@ -63,17 +67,6 @@ export function input_type(value: unknown): string {
         object: 'dict',
       } as Record<string, string>
     )[typeof value] ?? typeof value
-  );
-}
-function float_repr(value: number): string {
-  if (!Number.isFinite(value)) return Number.isNaN(value) ? 'nan' : value < 0 ? '-inf' : 'inf';
-  const text = String(value);
-  return stringify_python_json(
-    new JsonNumber(
-      Object.is(value, -0)
-        ? '-0.0'
-        : text + (!text.includes('.') && !text.includes('e') ? '.0' : ''),
-    ),
   );
 }
 export function python_repr(value: unknown): string {
