@@ -179,8 +179,8 @@ def test_parallel_publication_binds_checked_build_and_native_mac_before_receipt(
     assert not any("app-build" in step.get("run", "") for step in suites["steps"])
     downloads = [step for step in publication["steps"]
                  if "actions/download-artifact@" in step.get("uses", "")]
-    assert len(downloads) == 8
-    assert len({step["with"]["path"] for step in downloads}) == 8
+    assert len(downloads) == 9
+    assert len({step["with"]["path"] for step in downloads}) == 9
     assert steps["Download checked native Mac publication"]["with"] == {
         "artifact-ids": "${{ needs.mac-runtime.outputs.artifact_id }}",
         "run-id": "${{ github.run_id }}",
