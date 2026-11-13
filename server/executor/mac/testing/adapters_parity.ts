@@ -38,8 +38,9 @@ const unexpected = (): never => {
   throw new Error('This composition proof must not spawn a provider.');
 };
 const children: OwnedChildProcesses = {
+  seal() {},
   spawn: unexpected,
-  retain_worker_unit() {},
+  retain_worker_unit: unexpected,
   settled: async () => {},
   force_kill: unexpected,
 };
