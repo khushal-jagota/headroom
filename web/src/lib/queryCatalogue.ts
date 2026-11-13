@@ -70,6 +70,7 @@ export const queries = {
     ...jsonQuery<UsageSummary>(["recorded-usage", input], usageSummaryPath(input)),
     // Transcript scans follow explicit window changes and Refresh, not database commits.
     meta: { resourceBody: true, followsChangeStream: false },
+    retry: false,
     staleTime: Infinity,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false

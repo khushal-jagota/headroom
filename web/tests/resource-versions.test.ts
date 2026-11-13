@@ -84,6 +84,7 @@ describe('resource version reconciliation', () => {
 
   it('refreshes a usage window once before its observer selects the fresh result', async () => {
     const qc = client(); let reads = 0;
+    qc.setDefaultOptions({ queries: { retry: 1, retryDelay: 0 } });
     vi.stubGlobal('fetch', vi.fn(async () => response({ reads: ++reads })));
     const input = { sinceDay: UsageDay.make('2026-11-07'),
       untilDay: UsageDay.make('2026-11-13'), timeZone: 'UTC', resolution: 'day' as const };
@@ -97,6 +98,10 @@ describe('resource version reconciliation', () => {
     expect(reads).toBe(2);
     await qc.fetchQuery({ ...next, staleTime: 0 });
     expect(reads).toBe(3);
+    let failedReads = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => { failedReads++; throw new Error('scan failed'); }));
+    await expect(qc.fetchQuery({ ...next, staleTime: 0 })).rejects.toThrow('network error');
+    expect(failedReads).toBe(1);
     stop();
   });
 
