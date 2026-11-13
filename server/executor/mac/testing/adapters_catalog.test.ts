@@ -34,10 +34,13 @@ afterEach(() => {
 });
 function invocation_children(): OwnedChildProcesses {
   return {
+    seal: vi.fn(),
     spawn: vi.fn(() => {
       throw new Error('No provider spawn in this proof.');
     }),
-    retain_worker_unit: vi.fn(),
+    retain_worker_unit: vi.fn(() => {
+      throw new Error('No provider unit in this proof.');
+    }),
     settled: async () => {},
     force_kill: vi.fn(),
   } as OwnedChildProcesses;
