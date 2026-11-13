@@ -18,6 +18,7 @@ from tests.compare.direct.test_unit22_mac_journal import Oracle, _command, _dige
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
 from planner.executor import mac_mailbox
+from planner.executor.configuration import OUTBOX_RETRY_INITIAL_SECONDS
 from planner.executor.contracts import MacHttpClient
 from planner.executor.mac_catalog import MacCatalog
 from planner.executor.mac_mailbox import (
@@ -358,7 +359,7 @@ async def reference(
             fifo=fifo,
             calls=calls,
             retry_delays={
-                key: times[1] - times[0] >= mac_mailbox.OUTBOX_RETRY_INITIAL_SECONDS
+                key: times[1] - times[0] >= OUTBOX_RETRY_INITIAL_SECONDS
                 for key, times in retry_times.items()
             },
             replays=replays,
