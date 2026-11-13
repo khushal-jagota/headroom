@@ -13,7 +13,8 @@ import type {
 import { ConversationRoleMaterials, ResolvedConversationStart } from '../conversation/contracts.ts';
 import type { UndeliveredTurnPrompt } from '../conversation/record/contracts.ts';
 import { close_mac_interruption_of_turn } from '../conversation/deploy_interruptions/data.ts';
-import { admit_remote_turn } from '../conversation/runtime/remote_turn.ts';
+import { same_reference } from '../conversation/logic/retained_turn.ts';
+import { admit_remote_integer, admit_remote_turn } from '../conversation/runtime/remote_turn.ts';
 import { observe_shutdown, is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
 import type { Database } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
@@ -31,8 +32,11 @@ import type { WireValue } from './contracts.ts';
 import { ExecutorStore } from './data/runs.ts';
 import { steer_never_arrived } from './data/mailbox.ts';
 import { integer_value, ValueError } from './protocol.ts';
-import { STEER_DELIVERY_LIMIT_SECONDS } from './configuration.ts';
-import { DRAIN_RETRY_INITIAL_SECONDS, DRAIN_RETRY_MAX_SECONDS } from './run_configuration.ts';
+import {
+  STEER_DELIVERY_LIMIT_SECONDS,
+  DRAIN_RETRY_INITIAL_SECONDS,
+  DRAIN_RETRY_MAX_SECONDS,
+} from './configuration.ts';
 import { ticket_id_of } from './routing.ts';
 import type { MacRunConversations } from './run_contracts.ts';
 import { read_canonical_skill_snapshot } from './data/skills.ts';
@@ -52,10 +56,6 @@ const MAILBOX_SETTLEMENTS = new Set<string>([
   CommandSettlementReason.steer_delivery_limit_passed,
   CommandSettlementReason.delivery_withdrawn,
 ]);
-const same_child = (one: ChildReference, other: ChildReference) =>
-  one.child_id === other.child_id &&
-  one.conversation_id === other.conversation_id &&
-  one.executor_incarnation === other.executor_incarnation;
 function native_start(
   value: WireValue<'ResolvedConversationStart'> | null,
 ): ResolvedConversationStart | null {
@@ -73,13 +73,15 @@ function undelivered(
   turn: RetainedBackendRun['turn'],
   prompt: WireValue<'WritePrompt'>,
 ): UndeliveredTurnPrompt {
-  // Preserve exact numeric markers instead of a lossy Number projection at the nominal core boundary.
   return {
     turn_number: admit_remote_turn(turn).turn_number,
     content: native_message_content(prompt.content),
     sender_content: native_message_content(prompt.sender_content),
     sender_label: prompt.sender_label,
-    sender_message_count: (prompt.sender_message_count ?? 1) as number,
+    sender_message_count: admit_remote_integer(
+      prompt.sender_message_count ?? 1,
+      'Remote sender message count',
+    ),
     mode: prompt.mode,
     model_change: prompt.model_change ?? null,
     reasoning_effort_change: prompt.reasoning_effort_change ?? null,
@@ -122,7 +124,7 @@ export class MacRuns {
     if (this.sealed) throw this.cancellation.signal.reason;
   }
   private own<T>(work: () => Promise<T>, background = false): Promise<T> {
-    this.admit();
+    if (this.sealed) return Promise.reject(new ServerLifecycleError('Executor runs are closed.'));
     const task = Promise.resolve().then(() => {
       this.continue_work();
       return work();
@@ -139,6 +141,11 @@ export class MacRuns {
       },
     );
     return task;
+  }
+  require_conversations(): MacRunConversations {
+    if (this.conversations === null)
+      throw new ServerLifecycleError('Executor runs require attached conversations.');
+    return this.conversations;
   }
   create(options: Parameters<BackendChildFactory>[0]): MacRemoteChild {
     this.admit();
@@ -218,7 +225,7 @@ export class MacRuns {
   }
   retire_child(reference: ChildReference): void {
     const proxy = this.children.get(reference.child_id);
-    if (proxy !== undefined && same_child(proxy.reference, reference))
+    if (proxy !== undefined && same_reference(proxy.reference, reference))
       this.children.delete(reference.child_id);
   }
   mac_is_present(): boolean {
@@ -321,9 +328,10 @@ export class MacRuns {
   }
   save_answer(command: WireValue<'ChildCommand'>): Promise<boolean> {
     return this.own(async () => {
+      const conversations = this.require_conversations();
       let inserted = false;
-      if (command.turn !== null && this.conversations !== null)
-        await this.conversations.emit_answer(admit_remote_turn(command.turn), async () => {
+      if (command.turn !== null)
+        await conversations.emit_answer(admit_remote_turn(command.turn), async () => {
           this.continue_work();
           inserted = await this.put(command);
         });
@@ -340,7 +348,7 @@ export class MacRuns {
         const row = this.mailbox.command_row(command_id);
         const command = row?.command.child_command;
         if (command == null) continue;
-        if (!same_child(command.child, child))
+        if (!same_reference(command.child, child))
           throw new ValueError('initial command belongs to another child');
         const outcome = row?.result?.child_outcome;
         if (
@@ -370,13 +378,14 @@ export class MacRuns {
     void this.own(() => this.retire_after_failed_cancel(child.child), true);
   };
   private async retire_after_failed_cancel(reference: ChildReference): Promise<void> {
+    const conversations = this.require_conversations();
     const wait = WAITS.track('mac_cancel_retirement', reference.child_id, {
       detail: 'Retiring a Mac child whose cancel failed',
       conversation_id: reference.conversation_id,
     });
     try {
       let proxy = this.children.get(reference.child_id);
-      if (proxy === undefined || !same_child(proxy.reference, reference)) {
+      if (proxy === undefined || !same_reference(proxy.reference, reference)) {
         if (this.store.child_assignment(reference) === null) return;
         proxy = this.make_child(reference);
         this.children.set(reference.child_id, proxy);
@@ -392,32 +401,32 @@ export class MacRuns {
         return;
       }
       this.continue_work();
-      await this.conversations?.confirm_remote_child_termination(reference);
+      await conversations.confirm_remote_child_termination(reference);
     } finally {
       wait.close();
     }
   }
   authority(child: ChildReference): Principal {
-    this.admit();
     const binding = this.store.child_assignment(child);
     if (binding === null)
       throw new PlannerError('agent_forbidden', 'child has no VPS assignment', {});
     return { kind: binding[0] as Principal['kind'], id: binding[1] };
   }
   owns_conversation(conversation_id: string): boolean {
-    return this.retained_runs().some(
-      (run) => run.reference.conversation_id === conversation_id && !run.retirement_confirmed,
-    );
+    return this.store
+      .retained_runs()
+      .some(
+        (run) => run.reference.conversation_id === conversation_id && !run.retirement_confirmed,
+      );
   }
   validate_stop(outcome: WireValue<'CommandOutcome'>): void {
-    this.admit();
     const row = this.mailbox.command_row(outcome.command_id);
     if (row !== null) {
       const command = row.command.child_command;
       if (
         command == null ||
         command.operation !== 'stop' ||
-        !same_child(command.child, outcome.child)
+        !same_reference(command.child, outcome.child)
       )
         throw new ValueError('child_stopped conflicts with its command');
       if (
@@ -434,6 +443,7 @@ export class MacRuns {
     receipt: WireValue<'AcceptanceReceipt'>,
   ): Promise<void> {
     return this.own(async () => {
+      const conversations = this.require_conversations();
       if (
         receipt.result.stop_command_id !== outcome.command_id ||
         !isDeepStrictEqual(receipt.result.stopped_child, outcome.child)
@@ -447,60 +457,57 @@ export class MacRuns {
       this.continue_work();
       if (!this.store.has_closed_child_assignment(outcome.child))
         this.store.close_child(outcome.child, now_ms());
-      if (!awaited && this.conversations !== null)
-        void this.own(
-          () => this.conversations!.confirm_remote_child_termination(outcome.child),
-          true,
-        );
+      if (!awaited)
+        void this.own(() => conversations.confirm_remote_child_termination(outcome.child), true);
     });
   }
   incarnation_replaced(_replaced: string, current: string): Promise<void> {
     return this.own(async () => {
+      this.require_conversations();
       for (const reference of this.store.unresolved_runs_of_replaced_incarnations())
         this.start_drain(reference, current);
     });
   }
   resume_replacement_drains(): Promise<void> {
     return this.own(async () => {
-      if (this.conversations !== null)
-        for (const [
-          conversation_id,
-          sequence,
-          command_id,
-          never_arrived,
-        ] of this.mailbox.late_steers_left_by_a_restart()) {
-          this.continue_work();
-          const verdict =
-            never_arrived === null
-              ? this.own(() => this.steer_not_delivered(command_id), true)
-              : Promise.resolve(never_arrived);
-          await this.conversations.await_late_steer(conversation_id, sequence, verdict);
-        }
+      const conversations = this.require_conversations();
+      for (const [
+        conversation_id,
+        sequence,
+        command_id,
+        never_arrived,
+      ] of this.mailbox.late_steers_left_by_a_restart()) {
+        this.continue_work();
+        const native_sequence = admit_remote_integer(sequence, 'Remote steer sequence');
+        const verdict =
+          never_arrived === null
+            ? this.own(() => this.steer_not_delivered(command_id), true)
+            : Promise.resolve(never_arrived);
+        await conversations.await_late_steer(conversation_id, native_sequence, verdict);
+      }
       this.continue_work();
       const current = this.presence.current_identity();
       if (current === null) return;
       await this.incarnation_replaced('', current.executor_incarnation);
       this.continue_work();
-      if (this.conversations !== null) {
-        this.close_rewritten_interruptions();
-        for (const [
-          child,
-          turn_number,
-          prompt,
-          written,
-          started,
-        ] of this.mailbox.prompts_written_again()) {
-          if (!written)
-            void this.own(
-              () =>
-                this.conversations!.resume_undelivered_prompt(
-                  child,
-                  undelivered({ conversation_id: child.conversation_id, turn_number }, prompt),
-                  { start_needed: !started },
-                ),
-              true,
-            );
-        }
+      this.close_rewritten_interruptions();
+      for (const [
+        child,
+        turn_number,
+        prompt,
+        written,
+        started,
+      ] of this.mailbox.prompts_written_again()) {
+        if (!written)
+          void this.own(
+            () =>
+              conversations.resume_undelivered_prompt(
+                child,
+                undelivered({ conversation_id: child.conversation_id, turn_number }, prompt),
+                { start_needed: !started },
+              ),
+            true,
+          );
       }
     });
   }
@@ -521,8 +528,9 @@ export class MacRuns {
   }
   private start_drain(reference: ChildReference, current: string): Drain {
     this.continue_work();
+    this.require_conversations();
     const existing = this.drains.get(reference.conversation_id);
-    if (existing !== undefined && same_child(existing.reference, reference)) return existing;
+    if (existing !== undefined && same_reference(existing.reference, reference)) return existing;
     let resolve!: () => void;
     const drained = new Promise<void>((done) => {
       resolve = done;
@@ -533,6 +541,7 @@ export class MacRuns {
     return drain;
   }
   private async drain(drain: Drain): Promise<void> {
+    this.require_conversations();
     const reference = drain.reference;
     try {
       await this.presence.wait_until_drained(reference.conversation_id, {
@@ -546,18 +555,16 @@ export class MacRuns {
       drain.reached = true;
       drain.resolve();
       this.retire_child(reference);
-      if (this.conversations !== null) {
-        const wait = WAITS.track('vps_replacement_retiring', reference.conversation_id, {
-          detail: "A replaced Mac process's turn is not yet interrupted and recovered",
-          conversation_id: reference.conversation_id,
-        });
-        try {
-          await this.retry('retire', reference, () =>
-            this.retire_replaced(reference, drain.replaced_by),
-          );
-        } finally {
-          wait.close();
-        }
+      const wait = WAITS.track('vps_replacement_retiring', reference.conversation_id, {
+        detail: "A replaced Mac process's turn is not yet interrupted and recovered",
+        conversation_id: reference.conversation_id,
+      });
+      try {
+        await this.retry('retire', reference, () =>
+          this.retire_replaced(reference, drain.replaced_by),
+        );
+      } finally {
+        wait.close();
       }
       await this.retry('close', reference, async () => {
         this.store.close_child(reference, now_ms());
@@ -569,13 +576,14 @@ export class MacRuns {
     }
   }
   private async retire_replaced(reference: ChildReference, replaced_by: string): Promise<void> {
+    const conversations = this.require_conversations();
     this.close_rewritten_interruptions(reference.conversation_id);
-    const run = this.store.retained_runs().find((run) => same_child(run.reference, reference));
+    const run = this.store.retained_runs().find((run) => same_reference(run.reference, reference));
     const prompt =
       run === undefined
         ? null
         : this.mailbox.prompt_withdrawn_at_replacement(reference, run.turn.turn_number);
-    await this.conversations!.retire_replaced_remote_child(reference, {
+    await conversations.retire_replaced_remote_child(reference, {
       replaced_by,
       undelivered_prompt:
         prompt === null || run === undefined ? null : undelivered(run.turn, prompt),
@@ -587,6 +595,7 @@ export class MacRuns {
     work: () => Promise<unknown>,
   ): Promise<void> {
     let delay = DRAIN_RETRY_INITIAL_SECONDS;
+    let failure_logged = false;
     while (true) {
       this.continue_work();
       try {
@@ -594,10 +603,13 @@ export class MacRuns {
         return;
       } catch (error) {
         if (is_shutdown_business_cancellation(error)) throw error;
-        console.error(
-          `The run of a replaced Mac process failed to ${step}, retrying: conversation=${reference.conversation_id}`,
-          error,
-        );
+        if (!failure_logged) {
+          failure_logged = true;
+          console.error(
+            `The run of a replaced Mac process failed to ${step}, retrying: conversation=${reference.conversation_id}`,
+            error,
+          );
+        }
       }
       try {
         await pause(delay * 1000, undefined, { signal: this.cancellation.signal });

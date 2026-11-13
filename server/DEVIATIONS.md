@@ -543,7 +543,11 @@ Root-specific encoder inputs use the generated contracts. Nullable fields withou
 
 ### Retained turn numbers
 
-Python accepts unbounded turn numbers. TypeScript refuses retained turns outside the safe integer range at core adoption. Wire and mailbox integers remain exact.
+Python accepts unbounded integers. TypeScript refuses remote turn numbers, sender message counts and late-steer sequences outside the safe integer range at their conversation-core boundary. Wire and mailbox integers remain exact.
+
+### Replaced-process retry logging
+
+Python logs every failed retirement or close attempt. The Manager accepted TypeScript logging only the first failure of each retry loop, including its cause. Both retry indefinitely with delays rising from one to sixty seconds; TypeScript shutdown cancels the retry and retains its actual settlement.
 
 ## Release archive sparse members — accepted
 

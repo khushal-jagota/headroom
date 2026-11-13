@@ -18,6 +18,10 @@ import { MacRuns } from '../vps_runs.ts';
 import { close_run_and_record_mac_process_interruption } from '../interruption_coordinator.ts';
 import { LocaleBackendChildFactory } from '../routing.ts';
 import { read_canonical_skill_snapshot } from '../data/skills.ts';
+import { ConversationStore } from '../../conversation/record/data/store.ts';
+import { ConversationMessageFiles } from '../../conversation/record/message_files.ts';
+import { SqliteProcessConversationSystem } from '../../conversation/system.ts';
+import { adopted_running_turn } from '../../conversation/logic/retained_turn.ts';
 const spec = JSON.parse(readFileSync(0, 'utf8'));
 const database = createDatabase(spec.path),
   now = spec.now as number;
@@ -34,6 +38,25 @@ const children = spec.children.map((child: unknown) =>
 ) as WireTypes['ChildReference'][];
 const trace: unknown[] = [],
   output: Record<string, unknown> = {};
+const store = new ConversationStore(database);
+const no_child: BackendChildFactory = () => {
+  throw new Error('No child belongs to the answer gate');
+};
+const core = new SqliteProcessConversationSystem({
+  store,
+  backend_child_factories: { codex: no_child, claude: no_child, hermes: no_child },
+  message_files: new ConversationMessageFiles(spec.path),
+  model_is_enabled: () => true,
+  execution_refusal: () => null,
+});
+const answer_state = core.conversation_state('drain')!;
+answer_state.running_turn = adopted_running_turn(
+  { conversation_id: 'drain', turn_number: 3 },
+  store.lifecycle_facts('drain'),
+  new Map(),
+  { executor_process_current: true },
+);
+if (answer_state.running_turn === null) throw new Error('Answer gate requires its live owner turn');
 const typed_command = (value: unknown) => decode_value(value, 'ChildCommand');
 const lease = (waiting: string[]) => ({
   identity: fresh,
@@ -74,9 +97,7 @@ function snapshot() {
 }
 function attach() {
   runs.conversations = {
-    async emit_answer(_turn, emit) {
-      await emit();
-    },
+    emit_answer: core.emit_answer.bind(core),
     async retire_replaced_remote_child(reference, options) {
       trace.push({ retire: reference, options });
       close_run_and_record_mac_process_interruption(database, reference, options.replaced_by, now, {
@@ -121,9 +142,44 @@ const original_now = Date.now;
 Date.now = () => now;
 try {
   for (const child of children) runs.store.register_child(child, 'ticket', spec.ticket, now);
+  attach();
   await mailbox.put_child_command(typed_command(spec.steer));
-  await mailbox.put_child_command(typed_command(spec.answer));
-  await mailbox.poll({ ...old, connection_generation: old.connection_generation ?? 0 }, 0, 0);
+  output.answer_gate = [
+    await runs.save_answer(
+      typed_command({
+        ...spec.answer,
+        command_id: 'wrong-turn',
+        turn: { conversation_id: 'drain', turn_number: 4 },
+      }),
+    ),
+  ];
+  answer_state.running_turn.callbacks_revoked = true;
+  (output.answer_gate as boolean[]).push(
+    await runs.save_answer(
+      typed_command({
+        ...spec.answer,
+        command_id: 'revoked-answer',
+      }),
+    ),
+  );
+  answer_state.running_turn.callbacks_revoked = false;
+  await runs.save_answer(
+    typed_command({
+      ...spec.answer,
+      command_id: 'wrong-ask',
+      arguments: { ...spec.answer.arguments, ask_id: 'closed-ask' },
+    }),
+  );
+  (output.answer_gate as boolean[]).push(await runs.save_answer(typed_command(spec.answer)));
+  const delivered = await mailbox.poll(
+    { ...old, connection_generation: old.connection_generation ?? 0 },
+    0,
+    0,
+  );
+  if (delivered.commands.some((row) => row.command_id === 'wrong-ask'))
+    throw new Error('A closed ask reached delivery');
+  const wrong_ask = mailbox.command_row('wrong-ask')!;
+  output.closed_ask = [wrong_ask.state, wrong_ask.result?.child_outcome?.result.reason];
   const recorded = await mailbox.record_results(old, {
     outcomes: [
       {
@@ -240,6 +296,7 @@ try {
     decode_value({ ...lease(['drain']), identity: third }, 'LeaseRequest'),
   );
   runs = new MacRuns(database, presence, mailbox);
+  attach();
   await runs.resume_replacement_drains();
   let unrelated_drained = false;
   const unrelated = presence.wait_until_drained('drain').then(() => {
@@ -257,9 +314,7 @@ try {
     retry_enter = resolve;
   });
   runs.conversations = {
-    async emit_answer(_turn, emit) {
-      await emit();
-    },
+    emit_answer: core.emit_answer.bind(core),
     async retire_replaced_remote_child() {
       retry_enter();
       throw new Error('fixture retirement failed');
@@ -290,6 +345,8 @@ try {
   await runs.stop({ deadline: performance.now() / 1000 + 2 });
   await presence.stop({ deadline: performance.now() / 1000 + 2 });
   await mailbox.stop({ deadline: performance.now() / 1000 + 2 });
+  await core.shutdown({ deadline: performance.now() / 1000 + 2 });
+  await core.settled();
   database.close();
 }
 process.stdout.write(JSON.stringify(output));
