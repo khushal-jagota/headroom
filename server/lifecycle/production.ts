@@ -28,7 +28,7 @@ export interface ProductionServerDependencies {
   readonly backends: Partial<ProductionBackendBindings>;
   readonly environments: {
     readonly factory: ProductionEnvironmentFactory;
-    readonly dependencies: ProductionEnvironmentDependencies;
+    readonly dependencies: Omit<ProductionEnvironmentDependencies, 'executor'>;
   };
 }
 export async function start_production_server(
@@ -38,8 +38,7 @@ export async function start_production_server(
   const bindings = require_backend_bindings(dependencies.backends);
   if (
     typeof dependencies.environments?.factory !== 'function' ||
-    !dependencies.environments.dependencies ||
-    dependencies.environments.dependencies.executor === undefined
+    !dependencies.environments.dependencies
   )
     throw new Error('Production environment and executor bindings are required');
   let backends: ReturnType<typeof compose_production_backends> | undefined;
@@ -81,15 +80,7 @@ export async function start_production_server(
         ...dependencies.environments.dependencies,
         executor: context.executor ?? null,
       });
-      const runtime = await createEnvironmentRuntime(context, operations);
-      return {
-        areas: runtime.areas,
-        resourceProviders: runtime.resourceProviders,
-        before_worker_readiness_poll: () => runtime.before_worker_readiness_poll(),
-        start: () => runtime.start(),
-        close: (options) => runtime.close(options),
-        settled: () => runtime.settled(),
-      };
+      return createEnvironmentRuntime(context, operations);
     },
   });
 }
