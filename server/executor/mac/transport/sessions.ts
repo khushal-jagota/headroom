@@ -52,13 +52,16 @@ export class HttpSessions {
     if (session) return session;
     const settings = this.connectors[loop],
       Agent = this.origin.startsWith('https:') ? https.Agent : http.Agent;
+    const agent_options: https.AgentOptions = {
+      keepAlive: !settings.force_close,
+      maxSockets: settings.limit || Infinity,
+      maxFreeSockets: settings.limit || 256,
+      ...(this.origin.startsWith('https:') ? this.options.tls : {}),
+      // Explicit true also overrides NODE_TLS_REJECT_UNAUTHORIZED=0.
+      rejectUnauthorized: true,
+    };
     session = {
-      agent: new Agent({
-        keepAlive: !settings.force_close,
-        maxSockets: settings.limit || Infinity,
-        maxFreeSockets: settings.limit || 256,
-        ...(this.origin.startsWith('https:') ? this.options.tls : {}),
-      }),
+      agent: new Agent(agent_options),
       sockets: new Map(),
       requests: new Set(),
       actual: new Set(),

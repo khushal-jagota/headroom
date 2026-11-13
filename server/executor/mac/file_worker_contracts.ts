@@ -20,7 +20,7 @@ export interface FileOperationArguments {
   read_transfer: [handle: number, limit: number];
   write_transfer: [handle: number, bytes: Uint8Array];
   finish_transfer: [handle: number, sha256: string, byte_count: bigint];
-  close_transfer: [handle: number];
+  close_transfer: [handle: number, discard?: boolean];
   capture_file: [source: string, blobs: number, checked_ns: bigint];
   sweep_directory: [directory: number, path: string, keep: readonly string[]];
   file_digest: [path: string];

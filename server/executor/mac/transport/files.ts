@@ -19,7 +19,11 @@ export class MacFileTransport {
     this.client = client;
     this.files = files;
   }
-  private async own_transfer<T>(file: TransferHandle, operation: () => Promise<T>): Promise<T> {
+  private async own_transfer<T>(
+    file: TransferHandle,
+    operation: () => Promise<T>,
+    discard_failure = false,
+  ): Promise<T> {
     let primary: unknown;
     try {
       return await operation();
@@ -28,7 +32,7 @@ export class MacFileTransport {
       throw error;
     } finally {
       try {
-        await this.files.close_transfer(file);
+        await this.files.close_transfer(file, discard_failure && primary !== undefined);
       } catch (cleanup) {
         if (primary !== undefined)
           throw new AggregateError([primary, cleanup], 'Transfer and native cleanup failed.');
@@ -113,56 +117,60 @@ export class MacFileTransport {
     signal?: AbortSignal,
   ): Promise<string> {
     const file = await this.files.open_transfer(target, 'write');
-    return this.own_transfer(file, async () => {
-      return await this.client.sessions.request(
-        {
-          loop: 'downloads',
-          method: 'GET',
-          path: `/api/executor/commands/${encodeURIComponent(command_id)}/files/${encodeURIComponent(stored_file_id)}`,
-          read_timeout: FILE_TRANSFER_STALL_SECONDS,
-          signal,
-        },
-        this.client.headers,
-        async (response) => {
-          if (response.statusCode !== 200)
-            throw http_error(
-              response.statusCode!,
-              await read_bounded(response, MAX_ENVELOPE_BYTES),
-            );
-          const digest = response.headers['x-panels-file-sha256'],
-            length = response.headers['content-length'];
-          if (
-            response.headers['content-encoding'] ||
-            typeof digest !== 'string' ||
-            !sha256.test(digest) ||
-            typeof length !== 'string' ||
-            !/^\d+$/.test(length)
-          )
-            throw new ValueError('executor download lacks its length or digest');
-          const expected = BigInt(length);
-          let count = 0n;
-          for await (const raw of response) {
-            signal?.throwIfAborted();
-            const bytes = Buffer.from(raw as Uint8Array);
-            count += BigInt(bytes.length);
-            if (count > expected) throw new ValueError('download exceeds its length');
-            for (let offset = 0; offset < bytes.length; offset += TRANSFER_CHUNK_BYTES)
-              await this.files.write_transfer(
-                file,
-                bytes.subarray(offset, offset + TRANSFER_CHUNK_BYTES),
+    return this.own_transfer(
+      file,
+      async () => {
+        return await this.client.sessions.request(
+          {
+            loop: 'downloads',
+            method: 'GET',
+            path: `/api/executor/commands/${encodeURIComponent(command_id)}/files/${encodeURIComponent(stored_file_id)}`,
+            read_timeout: FILE_TRANSFER_STALL_SECONDS,
+            signal,
+          },
+          this.client.headers,
+          async (response) => {
+            if (response.statusCode !== 200)
+              throw http_error(
+                response.statusCode!,
+                await read_bounded(response, MAX_ENVELOPE_BYTES),
               );
-          }
-          if (count !== expected) throw new ValueError('download is short or corrupt');
-          try {
-            await this.files.finish_transfer(file, digest, expected);
-          } catch (error) {
-            if (error instanceof Error && error.name === 'ValueError')
-              throw new ValueError('download is short or corrupt');
-            throw error;
-          }
-          return digest;
-        },
-      );
-    });
+            const digest = response.headers['x-panels-file-sha256'],
+              length = response.headers['content-length'];
+            if (
+              response.headers['content-encoding'] ||
+              typeof digest !== 'string' ||
+              !sha256.test(digest) ||
+              typeof length !== 'string' ||
+              !/^\d+$/.test(length)
+            )
+              throw new ValueError('executor download lacks its length or digest');
+            const expected = BigInt(length);
+            let count = 0n;
+            for await (const raw of response) {
+              signal?.throwIfAborted();
+              const bytes = Buffer.from(raw as Uint8Array);
+              count += BigInt(bytes.length);
+              if (count > expected) throw new ValueError('download exceeds its length');
+              for (let offset = 0; offset < bytes.length; offset += TRANSFER_CHUNK_BYTES)
+                await this.files.write_transfer(
+                  file,
+                  bytes.subarray(offset, offset + TRANSFER_CHUNK_BYTES),
+                );
+            }
+            if (count !== expected) throw new ValueError('download is short or corrupt');
+            try {
+              await this.files.finish_transfer(file, digest, expected);
+            } catch (error) {
+              if (error instanceof Error && error.name === 'ValueError')
+                throw new ValueError('download is short or corrupt');
+              throw error;
+            }
+            return digest;
+          },
+        );
+      },
+      true,
+    );
   }
 }

@@ -137,8 +137,8 @@ export class FilesService {
   finish_transfer(handle: TransferHandle, sha256: string, byte_count: bigint) {
     return this.request('finish_transfer', [this.transfer(handle), sha256, byte_count]);
   }
-  async close_transfer(handle: TransferHandle): Promise<void> {
-    await this.request('close_transfer', [this.transfer(handle)]);
+  async close_transfer(handle: TransferHandle, discard = false): Promise<void> {
+    await this.request('close_transfer', [this.transfer(handle), discard]);
     this.transfers.delete(handle);
   }
   verified_version(path: string, sha256: string, byte_count: number) {
