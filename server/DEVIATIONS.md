@@ -758,3 +758,5 @@ data directory, and cancellation only after the owned restore witness closes.
 The configured helpers are disclosed Node witnesses, not a real installer rehearsal.
 `test_unit21_interruption_capture.py` separately exercises the actual stopped capture and
 restore entries. Hosted service, copy, health and rollback proofs remain later gates.
+
+- Mac Node archives: the TypeScript VPS also admits a regular executable `node/bin/node` and regular `server/executor/mac/entrypoint.ts`; Python VPS acceptance of Node-only archives remains unsupported.
