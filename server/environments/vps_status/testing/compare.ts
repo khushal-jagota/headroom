@@ -49,8 +49,7 @@ async function answer(work: () => unknown): Promise<unknown> {
   try {
     return { result: await work(), error: null };
   } catch (error) {
-    if (error instanceof Error && error.name === 'RuntimeError')
-      return { result: null, error: error.message };
+    if (error instanceof TypeError) return { result: null, error: error.message };
     if (!(error instanceof Error) || !('code' in error)) throw error;
     return {
       result: null,

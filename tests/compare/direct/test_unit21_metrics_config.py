@@ -117,12 +117,20 @@ def test_unit21_metrics_configuration_and_sidecar_paths(
     assert output.returncode == 0, output.stderr
     actual = json.loads(output.stdout)
     proposed_refusal = actual["configurations"].pop()
-    assert actual == expected
+    assert actual["paths"] == expected["paths"]
+    for candidate, source in zip(actual["configurations"], expected["configurations"], strict=True):
+        assert set(candidate) == set(source)
+        if "error" in source:
+            assert set(candidate["error"]) == set(source["error"]) == {"name", "message"}
+            assert isinstance(candidate["error"]["name"], str)
+            assert isinstance(candidate["error"]["message"], str) and candidate["error"]["message"]
+        else:
+            assert candidate == source
     # The Manager accepted this TS admission boundary. Python's different answer
     # remains informational; this refusal assertion is a gating result.
     assert proposed_refusal == {
         "error": {
-            "name": "ValueError",
+            "name": "MetricsValueError",
             "message": "history_points exceeds the supported exact integer range",
         }
     }

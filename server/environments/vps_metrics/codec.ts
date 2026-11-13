@@ -12,10 +12,7 @@ export function number(value: MetricNumber): number {
   return numeric_value(value)!;
 }
 function nonfinite_error(value: number): MetricsValueError {
-  return new MetricsValueError(
-    'Out of range float values are not JSON compliant: ' +
-      (Number.isNaN(value) ? 'nan' : value < 0 ? '-inf' : 'inf'),
-  );
+  return new MetricsValueError(`Metrics JSON requires a finite number: ${value}`);
 }
 export function float(value: number): JsonNumber {
   if (!Number.isFinite(value)) throw nonfinite_error(value);

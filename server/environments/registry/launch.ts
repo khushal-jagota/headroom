@@ -86,7 +86,7 @@ export function provision_environment_skills(
   }
   if (!exists)
     throw Object.assign(new Error(`managed Panels skills not found: ${root}`), {
-      name: 'FileNotFoundError',
+      code: 'ENOENT',
     });
   for (const home of homes)
     publish_native_backend_skills(home, root, { policy: { kind: 'server' } });

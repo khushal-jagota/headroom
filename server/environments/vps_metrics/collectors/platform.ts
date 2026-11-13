@@ -15,14 +15,14 @@ export function monotonic_seconds(): number {
   if (process.platform !== 'darwin') return Number(process.hrtime.bigint()) / 1e9;
   if (!darwin_monotonic) {
     if (!['arm64', 'x64'].includes(process.arch))
-      throw evidence_error('OSError', 'unsupported native clock ABI');
+      throw evidence_error('EIO', 'unsupported native clock ABI');
     const libc = koffi.load('/usr/lib/libSystem.B.dylib');
     const timebase = koffi.struct({ numer: 'uint32_t', denom: 'uint32_t' });
     const info = libc.func('mach_timebase_info', 'int', [koffi.out(koffi.pointer(timebase))]);
     const absolute = libc.func('uint64_t mach_absolute_time()');
     const base: Record<string, number> = {};
     if (info(base) !== 0 || !(base.numer > 0 && base.denom > 0))
-      throw evidence_error('OSError', 'Mach clock time base unavailable');
+      throw evidence_error('EIO', 'Mach clock time base unavailable');
     const numerator = BigInt(base.numer),
       denominator = BigInt(base.denom);
     darwin_monotonic = () =>
@@ -39,7 +39,7 @@ function native_statistics(): NativeStatistics {
     !(darwin && ['arm64', 'x64'].includes(process.arch)) &&
     !(process.platform === 'linux' && process.arch === 'x64')
   )
-    throw evidence_error('OSError', 'unsupported native statistics ABI');
+    throw evidence_error('EIO', 'unsupported native statistics ABI');
   const libc = koffi.load(darwin ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6');
   // Linux LP64: bits/statvfs.h and bits/confname.h in glibc.
   // Darwin: apple-oss-distributions/Libc include/sys/statvfs.h and include/unistd.h.
@@ -66,7 +66,7 @@ function native_statistics(): NativeStatistics {
   const sysconf = libc.func('long sysconf(int name)');
   const system = (name: number): number => {
     const value = sysconf(name) as number;
-    if (value < 0) throw evidence_error('OSError', 'system configuration unavailable');
+    if (value < 0) throw evidence_error('EIO', 'system configuration unavailable');
     return value;
   };
   configured = {
@@ -78,12 +78,12 @@ function native_statistics(): NativeStatistics {
         const errno = koffi.errno();
         throw evidence_error(
           errno === 2
-            ? 'FileNotFoundError'
+            ? 'ENOENT'
             : errno === 13 || errno === 1
-              ? 'PermissionError'
+              ? 'EACCES'
               : errno === 20
-                ? 'NotADirectoryError'
-                : 'OSError',
+                ? 'ENOTDIR'
+                : 'EIO',
           `filesystem statistics unavailable: errno ${errno}`,
         );
       }

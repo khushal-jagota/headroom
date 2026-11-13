@@ -49,9 +49,7 @@ class FrozenDatetime(datetime):
 
 def _tree(root: Path) -> list[dict[str, Any]]:
     rows = []
-    for path in sorted(
-        root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()
-    ):
+    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
         info = path.lstat()
         row = {
             "path": path.relative_to(root).as_posix(),
@@ -105,9 +103,7 @@ def _python(scratch: Scratch, scenario: str) -> tuple[dict[str, Any], str]:
 
     def rename(path: Path, target: Any) -> Path:
         if scenario == "rename" and path == staged and Path(target) == app:
-            raise OSError(
-                errno.EIO, os.strerror(errno.EIO), str(path), None, str(target)
-            )
+            raise OSError(errno.EIO, os.strerror(errno.EIO), str(path), None, str(target))
         return original_rename(path, target)
 
     def command(argv: list[str], **options: Any) -> subprocess.CompletedProcess[str]:
@@ -183,9 +179,7 @@ def test_installer_algorithm_and_configured_paths(
         result, detail = _python(scratch, scenario)
         expected.append(result)
         _seed(root, scenario)
-        cases.append(
-            {"root": str(root), "scenario": scenario, "capture_detail": detail}
-        )
+        cases.append({"root": str(root), "scenario": scenario, "capture_detail": detail})
     homes = create_synthetic_homes(tmp_path)
     # No inherited PLAN_* values, provider homes, loader hooks, or provider credentials.
     env = {
@@ -252,7 +246,23 @@ def test_installer_algorithm_and_configured_paths(
             except subprocess.TimeoutExpired:
                 child.kill()
                 child.communicate(timeout=3)
-    assert actual["canonical"] == expected
+
+    def comparable(outcome: dict[str, Any]) -> dict[str, Any]:
+        rows = []
+        for row in outcome["tree"]:
+            if row["path"] == "data/update-attempt.json" and "bytes" in row:
+                record = json.loads(bytes.fromhex(row["bytes"]).decode())
+                if record.get("detail") is not None:
+                    assert isinstance(record["detail"], str) and record["detail"]
+                    record["detail"] = "<diagnostic>"
+                row = {**row, "bytes": record}
+            rows.append(row)
+        return {**outcome, "tree": rows}
+
+    # Native diagnostic text can differ. Swap effects and all other record fields stay exact.
+    assert [comparable(value) for value in actual["canonical"]] == [
+        comparable(value) for value in expected
+    ]
     report = {
         "complete": True,
         "canonical_scenarios": 4,
@@ -269,6 +279,4 @@ def test_installer_algorithm_and_configured_paths(
     if output:
         directory = Path(output)
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / "unit21-installer.json").write_text(
-            json.dumps(report, indent=2) + "\n"
-        )
+        (directory / "unit21-installer.json").write_text(json.dumps(report, indent=2) + "\n")

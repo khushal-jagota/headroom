@@ -1,34 +1,17 @@
-/** Python exception names are part of unavailable measurement evidence. */
-export function evidence_error(name: string, message: string): Error {
-  return Object.assign(new Error(message), { name });
+import { is_os_error } from '../../../core/system_errors.ts';
+
+/** Native error kinds retain the collector's source-local failure boundaries. */
+export function evidence_error(kind: string, message: string): Error {
+  if (kind === 'TypeError') return new TypeError(message);
+  if (kind === 'RangeError') return new RangeError(message);
+  return Object.assign(new Error(message), { code: kind });
 }
 export function evidence_reason(error: unknown): string {
-  if (error instanceof Error && 'code' in error) {
-    const names: Record<string, string> = {
-      ENOENT: 'FileNotFoundError',
-      EACCES: 'PermissionError',
-      EPERM: 'PermissionError',
-      ENOTDIR: 'NotADirectoryError',
-      EISDIR: 'IsADirectoryError',
-      EEXIST: 'FileExistsError',
-      ETIMEDOUT: 'TimeoutError',
-    };
-    return names[String(error.code)] ?? 'OSError';
-  }
-  if (error instanceof Error) return error.name;
-  throw error;
+  if (!(error instanceof Error)) throw error;
+  return 'code' in error && typeof error.code === 'string' ? error.code : error.name;
 }
 export function source_error(error: unknown, allowed: readonly string[]): string {
-  const name = evidence_reason(error);
-  const os = [
-    'OSError',
-    'FileNotFoundError',
-    'PermissionError',
-    'NotADirectoryError',
-    'IsADirectoryError',
-    'FileExistsError',
-    'TimeoutError',
-  ];
-  if (allowed.includes(name) || (allowed.includes('OSError') && os.includes(name))) return name;
+  const reason = evidence_reason(error);
+  if (allowed.includes(reason) || (allowed.includes('EIO') && is_os_error(error))) return reason;
   throw error;
 }

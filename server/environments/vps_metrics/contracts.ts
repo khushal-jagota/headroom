@@ -158,13 +158,13 @@ export class MetricsOperationalError extends Error {
   readonly code = 'SQLITE_ERROR';
   constructor(message: string) {
     super(message);
-    this.name = 'OperationalError';
+    this.name = 'MetricsOperationalError';
   }
 }
 export class MetricsValueError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'ValueError';
+    this.name = 'MetricsValueError';
   }
 }
 

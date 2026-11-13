@@ -15,6 +15,21 @@ interface Reply {
   error?: string;
   text?: string;
 }
+// Source fixtures name Python exceptions. The candidate injects native equivalents.
+const native_error: Readonly<Record<string, string>> = {
+  OSError: 'EIO',
+  FileNotFoundError: 'ENOENT',
+  PermissionError: 'EACCES',
+  NotADirectoryError: 'ENOTDIR',
+  TimeoutError: 'ETIMEDOUT',
+  TimeoutExpired: 'ETIMEDOUT',
+  CalledProcessError: 'EIO',
+  SubprocessError: 'EIO',
+  ValueError: 'TypeError',
+  IndexError: 'RangeError',
+  KeyError: 'RangeError',
+  StopIteration: 'RangeError',
+};
 interface Action {
   now: number;
   include_slow: boolean;
@@ -72,7 +87,10 @@ export async function collector_parity(request: Probe): Promise<string> {
       statvfs: () => {
         stat_calls++;
         if (filesystem_error)
-          throw evidence_error(filesystem_error, 'scripted filesystem unavailable');
+          throw evidence_error(
+            native_error[filesystem_error] ?? filesystem_error,
+            'scripted filesystem unavailable',
+          );
         return { blocks: 1000, available: 250, fragment_size: 4096 };
       },
       service_query: async (scope, timeout, output) => {
@@ -80,7 +98,11 @@ export async function collector_parity(request: Probe): Promise<string> {
           throw new Error('service command bounds changed');
         calls.push(scope);
         const reply = service[scope]!;
-        if (reply.error) throw evidence_error(reply.error, 'scripted service unavailable');
+        if (reply.error)
+          throw evidence_error(
+            native_error[reply.error] ?? reply.error,
+            'scripted service unavailable',
+          );
         return reply.text!;
       },
     },

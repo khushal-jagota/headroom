@@ -38,8 +38,7 @@ export function expand_path(path: string, home?: string): string {
   // CPython expanduser returns root for bare '~' when HOME is explicitly empty.
   if (!username && home === '') return slash < 0 ? '/' : path.slice(slash);
   const selected_home = username ? account_home(username) : (home ?? homedir());
-  if (selected_home === undefined)
-    throw Object.assign(new Error('Could not determine home directory.'), { name: 'RuntimeError' });
+  if (selected_home === undefined) throw new TypeError('Could not determine home directory.');
   return selected_home + (slash < 0 ? '' : path.slice(slash));
 }
 export async function resolved_path(path: string, home?: string): Promise<string> {

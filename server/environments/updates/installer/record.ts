@@ -25,8 +25,7 @@ export class InstallationRecord {
     const value = parse_attempt_json(
       new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(this.path)),
     );
-    if (!is_object(value))
-      throw Object.assign(new Error('update attempt must be an object'), { name: 'ValueError' });
+    if (!is_object(value)) throw new TypeError('update attempt must be an object');
     return value;
   }
   record(step: string, state?: string, detail: string | null = null): void {
