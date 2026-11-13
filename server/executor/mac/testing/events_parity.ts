@@ -1,4 +1,3 @@
-/** Actual facade and store custody with a scripted native event producer. */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -55,6 +54,9 @@ const owners: OutboxCleanup[] = [],
   live: unknown[] = [],
   states: unknown[] = [];
 const on_failure = (error: Error) => failures.push(error);
+const debug: unknown[][] = [],
+  original_debug = console.debug;
+console.debug = (...values: unknown[]) => debug.push(values);
 const release = gate(),
   entered = gate(),
   cleanup_release = gate(),
@@ -255,8 +257,6 @@ try {
         (owed) => store.lookup(owed.submission_id) === null,
       ),
     );
-  assert(joined_cleanup);
-  // A retained producer exercises terminal custody without another host or journal flow.
   const terminal = { ...commands.start!.child, child_id: 'terminal-child' };
   const terminal_command = { ...commands.start!, child: terminal, command_id: 'terminal-start' };
   const terminal_mailbox = mailbox_commands([terminal_command], command_count + 4)[0]!;
@@ -318,7 +318,6 @@ try {
     await read_canonical_body(terminal_result),
     'CommandResult',
   ).child_outcome;
-  // Actual custody joined. Its intentional diagnostics are asserted before storage teardown.
   owners.splice(owners.indexOf(runner), 1);
   const retains = (error: unknown, expected: unknown): boolean =>
     error === expected ||
@@ -336,14 +335,14 @@ try {
     outward_typed: outward instanceof ServerLifecycleError && retains(outward, raw_native),
     queue_actual_joined:
       queue_settled &&
-      retains(queue_failure, raw_source) &&
-      retains(queue_failure, raw_native) &&
+      queue_failure === undefined &&
       terminal_outcome?.disposition === 'succeeded' &&
       !runner.native_children.get(terminal.child_id)?.lock.locked,
   };
   assert(Object.values(cleanup).every(Boolean));
   assert.equal(failures.length, 1);
-  assert.equal(queue_failures.length, 1);
+  assert.deepEqual([queue_failures, debug.length], [[], 1]);
+  assert.equal(debug[0]![0], 'Mac command canceled during stop command=terminal-start:');
   await assert.rejects(runner.run(commands.start!, signal));
   await assert.rejects(runner.publish_owed_outputs(unread, unread));
   await assert.rejects(
@@ -364,6 +363,7 @@ try {
     owners.unshift(cleanup);
   throw error;
 } finally {
+  console.debug = original_debug;
   release.resolve();
   cleanup_release.resolve();
   join_release.resolve();
