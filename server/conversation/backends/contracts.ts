@@ -103,14 +103,20 @@ export class BackendUserInputRequest {
 }
 export class RetainedBackendRun {
   readonly reference: ChildReference;
-  readonly turn: TurnToken;
+  readonly turn: {
+    readonly conversation_id: string;
+    readonly turn_number: number | import('../../core/http/numeric_json.ts').JsonNumber;
+  };
   readonly delivery_uncertain: boolean;
   readonly retirement_confirmed: boolean;
   readonly stop_requested: boolean;
   readonly incarnation_current: boolean;
   constructor(values: {
     reference: ChildReference;
-    turn: TurnToken;
+    turn: {
+      readonly conversation_id: string;
+      readonly turn_number: number | import('../../core/http/numeric_json.ts').JsonNumber;
+    };
     delivery_uncertain: boolean;
     retirement_confirmed: boolean;
     stop_requested?: boolean;

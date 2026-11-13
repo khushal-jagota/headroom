@@ -671,3 +671,7 @@ The Manager reviews these implementation differences before this slice merges.
 ## Catalog cancellation withdraws waiting commands
 
 The Manager requires that TypeScript withdraw a waiting model-list command after an internal read cancellation, reconnection, or stop. Python cancellation leaves that row waiting. A caller that cancels its own observation does not cancel or withdraw the shared read. TypeScript uses its own short cleanup signal, capped by the original shared shutdown deadline, and joins withdrawal before catalog settlement. The invocation keeps the mailbox open until that cleanup settles.
+
+## Retained turn numbers
+
+Python accepts unbounded turn numbers. TypeScript refuses retained turns outside the safe integer range at core adoption. Wire and mailbox integers remain exact.
