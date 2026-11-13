@@ -72,6 +72,16 @@ export function update_repository_configuration(
 export function applicationRootFromEnvironment(env: NodeJS.ProcessEnv = process.env): string {
   return env.PLAN_APP_ROOT ?? fileURLToPath(new URL('../../', import.meta.url));
 }
+/** Capture only the environment facts consumed by real backend launch composition. */
+export function read_production_backend_environment(env: NodeJS.ProcessEnv = process.env) {
+  return {
+    hermes_python: env.PLAN_HERMES_PYTHON,
+    hermes_home: env.PLAN_HERMES_HOME,
+    claude_executable: env.PLAN_CLAUDE_EXECUTABLE,
+    app_root: env.PLAN_APP_ROOT,
+    path: env.PATH,
+  };
+}
 export function loadConfig(
   path: string | undefined = undefined,
   env: NodeJS.ProcessEnv = process.env,
