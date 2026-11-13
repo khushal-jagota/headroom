@@ -91,7 +91,9 @@ class PanelsHermesACPAgent(hermes_server.HermesACPAgent):  # type: ignore[misc]
         metadata[PANELS_METADATA_KEY] = panels_metadata
         return response.model_copy(update={"field_meta": metadata})
 
-    async def prompt(self, prompt: list[Any], session_id: str, **kwargs: Any) -> Any:
+    async def prompt(
+        self, prompt: list[Any], session_id: str, **kwargs: Any
+    ) -> Any:
         """Associate a supplied generation only with this original prompt invocation."""
         supplied = _turn_token(kwargs.pop(PANELS_TURN_TOKEN_METADATA_KEY, None))
         state = self.session_manager.get_session(session_id)

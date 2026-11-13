@@ -21,7 +21,9 @@ SCHEMA_VERSION: Final = 1
 class _HermesInventory(Protocol):
     def load_picker_context(self) -> object: ...
 
-    def build_models_payload(self, context: object, **options: object) -> dict[str, object]: ...
+    def build_models_payload(
+        self, context: object, **options: object
+    ) -> dict[str, object]: ...
 
 
 def _setter_provider_id(provider_id: str, known_provider_names: object) -> str:
@@ -45,9 +47,13 @@ def _text(value: object) -> str | None:
 
 
 def _configured_inventory(*, refresh: bool) -> dict[str, object]:
-    inventory = cast(_HermesInventory, importlib.import_module("hermes_cli.inventory"))
+    inventory = cast(
+        _HermesInventory, importlib.import_module("hermes_cli.inventory")
+    )
     models_module = importlib.import_module("hermes_cli.models")
-    known_provider_names: object = getattr(models_module, "_KNOWN_PROVIDER_NAMES", set())
+    known_provider_names: object = getattr(
+        models_module, "_KNOWN_PROVIDER_NAMES", set()
+    )
 
     # Provider helpers occasionally print status while they inspect local endpoints.
     # stdout belongs exclusively to this door's one JSON answer.
@@ -120,7 +126,9 @@ def _configured_inventory(*, refresh: bool) -> dict[str, object]:
     )
     current_model = _text(payload.get("model"))
     configured = current_provider is not None and current_model is not None
-    default_model_id = f"{current_provider}:{current_model}" if configured else None
+    default_model_id = (
+        f"{current_provider}:{current_model}" if configured else None
+    )
     runnable = default_model_id is not None and default_model_id in qualified_model_ids
     if not configured:
         status = "not_configured"

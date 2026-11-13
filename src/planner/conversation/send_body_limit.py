@@ -37,7 +37,9 @@ class ConversationSendBodyLimitMiddleware:
         self.app = app
         self.max_bytes = max_bytes
 
-    async def __call__(self, scope: dict[str, Any], receive: _Receive, send: _Send) -> None:
+    async def __call__(
+        self, scope: dict[str, Any], receive: _Receive, send: _Send
+    ) -> None:
         if not _is_conversation_send(scope):
             await self.app(scope, receive, send)
             return

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
@@ -57,6 +58,8 @@ from planner.conversation.backends.codex_app_server.model_catalog import (
 )
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core.task_settlement import run_on_worker_thread
+
+_LOGGER = logging.getLogger(__name__)
 
 # How codex and claude are asked what they can be run as. Named as parameters because
 # asking spawns a child: a test describes the answer instead of spawning one.
@@ -345,7 +348,9 @@ class SubprocessBackendProbeEnvironment:
         try:
             return await asyncio.wait_for(operation(), timeout=timeout_seconds)
         except TimeoutError:
-            return CommandOutcome(-1, "", f"{argv[0]} did not answer within {timeout_seconds:g}s")
+            return CommandOutcome(
+                -1, "", f"{argv[0]} did not answer within {timeout_seconds:g}s"
+            )
 
     async def latest_released_version(
         self, package_name: str, *, timeout_seconds: float
@@ -1408,7 +1413,11 @@ class BackendSnapshotService:
             self._snapshots[backend_key] = probed
             self._probed_at[backend_key] = reading_at
             if self._keep_complete_model_list is not None and probed.models_complete:
-                await run_on_worker_thread(self._keep_complete_model_list, probed)
+                try:
+                    await run_on_worker_thread(self._keep_complete_model_list, probed)
+                except Exception:
+                    # The card is still true. Only the copy that model checks read is late.
+                    _LOGGER.exception("the %s model list was not saved", backend_key.value)
             if backend_key is ConversationBackendKey.codex and codex_login is not None:
                 self._codex_card_was_probed_against = codex_login.everything_a_card_reads(
                     now=reading_at

@@ -45,16 +45,19 @@ def _read(
     conn = request.app.state.conn_factory()
     try:
         conn.execute("BEGIN")
-        if (
-            kind == "ticket"
-            and conn.execute("SELECT 1 FROM tickets WHERE id=?", (owner_id,)).fetchone() is None
-        ):
+        if kind == "ticket" and conn.execute(
+            "SELECT 1 FROM tickets WHERE id=?", (owner_id,)
+        ).fetchone() is None:
             raise PlannerError(ErrorCode.not_found, "ticket not found", {})
         current_row = conn.execute(
             "SELECT conversation_id FROM tickets WHERE id=?"
             if kind == "ticket"
             else "SELECT conversation_id FROM agents WHERE agent_key=?",
-            (owner_id if kind == "ticket" else manager_agent_key(owner_id, conn),),
+            (
+                owner_id
+                if kind == "ticket"
+                else manager_agent_key(owner_id, conn),
+            ),
         ).fetchone()
         current_id = current_row[0] if current_row else None
         args = (kind, owner_id, current_id)

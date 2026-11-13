@@ -119,25 +119,33 @@ def test_claude_short_names_and_long_context_forms_count_as_offered(tmp_db: Conn
     # Risk: live Tickets saved on `opus`, `fable[1m]` and `claude-fable-5[1m]` are refused,
     # because the Claude CLI accepts these names but never lists them.
     save_machine_model_list(
-        tmp_db, TicketLocale.vps, _model_list(Backend.claude, "claude-opus-5-5", "claude-fable-5")
+        tmp_db,
+        TicketLocale.vps,
+        _model_list(Backend.claude, "claude-opus-5-5", "claude-fable-5", "claude-sonnet-5-5[1m]"),
     )
-    for accepted in ("claude-opus-5-5", "opus", "opus[1m]", "fable[1m]", "claude-fable-5[1m]"):
+    for accepted in (
+        "claude-opus-5-5",
+        "opus",
+        "opus[1m]",
+        "fable[1m]",
+        "claude-fable-5[1m]",
+        "sonnet",
+        "claude-sonnet-5-5",
+    ):
         assert _create(tmp_db, "claude", accepted) == accepted
-    for refused in ("claude-opus-5-6", "sonnet", "claude-opus-5-5[2m]"):
+    for refused in ("claude-opus-5-6", "haiku", "claude-opus-5-5[2m]"):
         with pytest.raises(PlannerError, match="not offered by claude on the VPS"):
             _create(tmp_db, "claude", refused)
 
 
 def test_a_complete_list_retires_switch_offs_no_machine_still_offers(tmp_db: Connection) -> None:
-    # Risk: switch-off rows for retired models pile up and keep showing in the catalog.
-    mac_list = _model_list(Backend.codex, "gpt-5.6-sol")
-    vps_list = _model_list(Backend.codex, "gpt-6-sol")
-    save_machine_model_list(tmp_db, TicketLocale.macos, mac_list)
-    save_machine_model_list(tmp_db, TicketLocale.vps, vps_list)
+    # Risk: switch-off rows for retired models pile up in the catalog, or a row is
+    # deleted while a machine without a list would still run that model.
     for model in ("gpt-5.5", "gpt-5.6-sol", "gpt-6-sol"):
         write_model_enablement(tmp_db, Backend.codex, model, False)
+    save_machine_model_list(tmp_db, TicketLocale.vps, _model_list(Backend.codex, "gpt-6-sol"))
+    assert disabled_models(tmp_db, Backend.codex) == {"gpt-5.5", "gpt-5.6-sol", "gpt-6-sol"}
 
-    # A row stays while any machine's saved complete list still offers its model.
-    save_machine_model_list(tmp_db, TicketLocale.vps, vps_list)
+    save_machine_model_list(tmp_db, TicketLocale.macos, _model_list(Backend.codex, "gpt-5.6-sol"))
 
     assert disabled_models(tmp_db, Backend.codex) == {"gpt-5.6-sol", "gpt-6-sol"}

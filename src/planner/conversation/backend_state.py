@@ -276,9 +276,10 @@ def save_machine_model_list(
 ) -> None:
     """Keep the model list one machine reported, so a model check can read it later.
 
-    A complete list also retires switch-offs for models that no complete list offers
-    any more. Such a model is refused for not being offered, so its row says nothing.
-    The caller commits.
+    Once every machine holds a complete list for this backend, a switch-off for a model
+    none of them offers is deleted. Such a model is refused for not being offered, so
+    its row says nothing. While a machine has no list, its models are not checked, so
+    every switch-off still matters there. The caller commits.
     """
     from planner.executor.protocol import as_object
 
@@ -292,11 +293,11 @@ def save_machine_model_list(
     if not snapshot.models_complete:
         return
     offered: set[str] = set()
-    for row in conn.execute(
-        "SELECT snapshot_json FROM machine_backend_snapshots WHERE backend_key = ?",
-        (snapshot.backend_key.value,),
-    ):
-        offered.update(_complete_model_list(str(row["snapshot_json"])) or ())
+    for each_machine in TicketLocale:
+        listed = offered_model_ids(conn, each_machine, snapshot.backend_key)
+        if listed is None:
+            return
+        offered.update(listed)
     stale = [
         str(row["model_id"])
         for row in conn.execute(
@@ -344,11 +345,12 @@ def _is_offered(
     from planner.conversation.model_resolution.logic.variants import recognize_variant
 
     base = model_id.removesuffix(_CLAUDE_LONG_CONTEXT_SUFFIX)
-    if base in offered:
+    listed_bases = {listed.removesuffix(_CLAUDE_LONG_CONTEXT_SUFFIX) for listed in offered}
+    if base in listed_bases:
         return True
     if base not in _CLAUDE_SHORT_NAMES:
         return False
-    for listed in offered:
+    for listed in listed_bases:
         variant = recognize_variant(backend_key, listed)
         if variant is not None and variant.name == base:
             return True

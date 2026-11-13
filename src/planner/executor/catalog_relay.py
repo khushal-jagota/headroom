@@ -141,8 +141,13 @@ class VpsCatalogRelay:
                 models_complete=True,
             )
         with closing(connect(self.runs.db_path)) as conn:
-            save_machine_model_list(conn, TicketLocale.macos, snapshot)
-            conn.commit()
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                save_machine_model_list(conn, TicketLocale.macos, snapshot)
+                conn.execute("COMMIT")
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
         return snapshot
 
     @staticmethod

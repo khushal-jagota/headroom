@@ -32,18 +32,14 @@ class WorkerUnitError(RuntimeError):
 async def _control(*arguments: str) -> tuple[int, str]:
     try:
         process = await asyncio.create_subprocess_exec(
-            "systemctl",
-            "--user",
-            *arguments,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            "systemctl", "--user", *arguments,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
     except OSError as error:
         raise WorkerUnitError(f"Cannot contact the Worker service manager: {error}") from error
     try:
         stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
-            CONTROL_TIMEOUT_SECONDS,
+            process.communicate(), CONTROL_TIMEOUT_SECONDS,
         )
     except (TimeoutError, asyncio.CancelledError):
         if process.returncode is None:
@@ -76,9 +72,7 @@ def _disk_directory(path: Path) -> None:
     for line in Path("/proc/self/mountinfo").read_text().splitlines():
         before, after = line.split(" - ", 1)
         mount = re.sub(
-            r"\\([0-7]{3})",
-            lambda match: chr(int(match.group(1), 8)),
-            before.split()[4],
+            r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), before.split()[4],
         )
         mount_path = Path(mount)
         if resolved.is_relative_to(mount_path):
@@ -91,13 +85,8 @@ class WorkerUnit:
     """The transient service and private temporary files for one backend child."""
 
     def __init__(
-        self,
-        *,
-        name: str,
-        directory: Path,
-        environment: dict[str, str],
-        working_directory: Path,
-        slice_name: str,
+        self, *, name: str, directory: Path, environment: dict[str, str],
+        working_directory: Path, slice_name: str,
     ) -> None:
         self.name = name
         self.directory = directory
@@ -108,10 +97,7 @@ class WorkerUnit:
 
     @classmethod
     async def create(
-        cls,
-        environment: Mapping[str, str],
-        working_directory: Path,
-        *,
+        cls, environment: Mapping[str, str], working_directory: Path, *,
         slice_name: str = WORKER_SLICE,
     ) -> WorkerUnit | None:
         if sys.platform != "linux" or not environment.get("PLAN_TICKET_ID"):
@@ -119,10 +105,7 @@ class WorkerUnit:
         if not re.fullmatch(r"[A-Za-z0-9_.-]+\.slice", slice_name):
             raise WorkerUnitError("Invalid Worker slice name")
         code, text = await _control(
-            "show",
-            slice_name,
-            "--property=LoadState",
-            "--property=CPUWeight",
+            "show", slice_name, "--property=LoadState", "--property=CPUWeight",
         )
         properties = _properties(text)
         try:
@@ -130,8 +113,7 @@ class WorkerUnit:
         except ValueError:
             weight = 0
         if (
-            code
-            or properties.get("LoadState") != "loaded"
+            code or properties.get("LoadState") != "loaded"
             or not 0 < weight <= SLICE_CPU_WEIGHT_MAX
         ):
             raise WorkerUnitError(
@@ -142,10 +124,7 @@ class WorkerUnit:
         # set priority relative to app.slice, which contains the live service.
         if slice_name == WORKER_SLICE:
             code, text = await _control(
-                "show",
-                "panels.slice",
-                "--property=LoadState",
-                "--property=CPUWeight",
+                "show", "panels.slice", "--property=LoadState", "--property=CPUWeight",
             )
             parent = _properties(text)
             try:
@@ -153,8 +132,7 @@ class WorkerUnit:
             except ValueError:
                 parent_weight = 0
             if (
-                code
-                or parent.get("LoadState") != "loaded"
+                code or parent.get("LoadState") != "loaded"
                 or not 0 < parent_weight <= SLICE_CPU_WEIGHT_MAX
             ):
                 raise WorkerUnitError(
@@ -180,10 +158,8 @@ class WorkerUnit:
                 file.chmod(0o600)
                 output.write(_environment_file(child_environment))
             return cls(
-                name=f"panels-worker-{uuid.uuid4().hex}.service",
-                directory=directory,
-                environment=child_environment,
-                working_directory=working_directory,
+                name=f"panels-worker-{uuid.uuid4().hex}.service", directory=directory,
+                environment=child_environment, working_directory=working_directory,
                 slice_name=slice_name,
             )
         except BaseException:
@@ -206,7 +182,8 @@ class WorkerUnit:
         else:
             path = self.environment.get("PATH", os.defpath)
             search = os.pathsep.join(
-                str((self.working_directory / entry).absolute()) for entry in path.split(os.pathsep)
+                str((self.working_directory / entry).absolute())
+                for entry in path.split(os.pathsep)
             )
             found = shutil.which(executable, path=search)
             if found is None:
@@ -214,25 +191,16 @@ class WorkerUnit:
             executable = found
         directory = str(self.directory).replace("%", "%%")
         return (
-            "systemd-run",
-            "--user",
-            "--quiet",
-            "--wait",
-            "--pipe",
-            "--service-type=exec",
-            "--expand-environment=no",
-            f"--unit={self.name}",
+            "systemd-run", "--user", "--quiet", "--wait", "--pipe",
+            "--service-type=exec", "--expand-environment=no", f"--unit={self.name}",
             # A process killed for memory ends alone; the agent and its turn go on.
             f"--slice={self.slice_name}",
-            "--property=OOMPolicy=continue",
-            "--property=KillMode=control-group",
+            "--property=OOMPolicy=continue", "--property=KillMode=control-group",
             "--property=NoNewPrivileges=yes",
             f"--property=EnvironmentFile={directory}/environment",
             f"--property=WorkingDirectory={str(self.working_directory).replace('%', '%%')}",
             f"--property=ExecStopPost=/bin/rm -rf -- {shlex.quote(directory)}",
-            "--",
-            executable,
-            *original[1:],
+            "--", executable, *original[1:],
         )
 
     async def stop(self) -> None:

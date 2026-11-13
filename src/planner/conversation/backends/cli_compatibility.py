@@ -24,7 +24,9 @@ class _Requirement:
 
 
 _REQUIREMENTS: Final[dict[Backend, _Requirement]] = {
-    "codex": _Requirement("Codex", "0.148.0", "thread-aware app/read", r"codex-cli (\S+)"),
+    "codex": _Requirement(
+        "Codex", "0.148.0", "thread-aware app/read", r"codex-cli (\S+)"
+    ),
     "claude": _Requirement(
         "Claude", "2.1.219", "queued message cancellation on Stop", r"(\S+) \(Claude Code\)"
     ),

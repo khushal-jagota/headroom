@@ -362,7 +362,8 @@ class CodexSignInService:
             decoded = protocol.DeviceCodeLoginResponse.model_validate(result)
         except Exception as would_not_decode:  # noqa: BLE001 - reported, never swallowed
             raise CodexSignInUnavailable(
-                f"codex answered {START_METHOD} with a shape this does not read: {would_not_decode}"
+                f"codex answered {START_METHOD} with a shape this does not read: "
+                f"{would_not_decode}"
             ) from would_not_decode
         session.login_id = decoded.loginId
         session.verification_url = decoded.verificationUrl
@@ -393,7 +394,9 @@ class CodexSignInService:
                 # with nowhere to go. A child exiting and a completion arriving are
                 # independent events on independent tasks, so they genuinely arrive
                 # together.
-                self._absorb_delivered_evidence(current, self._take_what_is_delivered(current))
+                self._absorb_delivered_evidence(
+                    current, self._take_what_is_delivered(current)
+                )
                 if current.state.is_terminal:
                     await self._read_the_account_label_again(current)
                     return

@@ -22,13 +22,9 @@ def advance_pending_requests(
         permission_ids = permission_ids - {ask_id}
     elif kind == ConversationEventKind.user_input_requested and request_id is not None:
         input_ids = input_ids | {request_id}
-    elif (
-        kind
-        in (
-            ConversationEventKind.user_input_answered,
-            ConversationEventKind.user_input_failed,
-        )
-        and request_id is not None
-    ):
+    elif kind in (
+        ConversationEventKind.user_input_answered,
+        ConversationEventKind.user_input_failed,
+    ) and request_id is not None:
         input_ids = input_ids - {request_id}
     return permission_ids, input_ids

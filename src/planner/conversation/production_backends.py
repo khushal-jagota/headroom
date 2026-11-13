@@ -147,8 +147,7 @@ def _claude_launch(
     return ClaudeAgentSdkChildLaunch(
         claude_executable=(
             Path(override).expanduser()
-            if override is not None
-            else _on_path(executable_path, "claude")
+            if override is not None else _on_path(executable_path, "claude")
         ),
         environment_overrides=(("PLAN_SERVER_URL", panels_server_url),),
     )
