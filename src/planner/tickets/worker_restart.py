@@ -80,7 +80,7 @@ async def restart_worker(
     awaiting approval, the kill and unlink happen and the result says why nothing started.
 
     The configuration is already validated when it arrives: the caller checked
-    the backend name and disabled-model policy before anything was killed, so a
+    the backend name and the model check before anything was killed, so a
     bad argument costs the Ticket nothing. It runs in the same transaction as the claim,
     after it, because the launch values unfreeze only once the claim is back.
 
