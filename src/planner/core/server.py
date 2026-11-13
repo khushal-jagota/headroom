@@ -829,7 +829,13 @@ def create_app(
             if destination not in (HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID):
                 raise PlannerError(ErrorCode.not_found, "Unknown executor destination")
             return {"mode": "local", "connection_state": "disconnected"}
-        return _with_native_build_1_fields({"mode": "remote", **endpoint.health_payload()})
+        payload = {"mode": "remote", **endpoint.health_payload()}
+        if destination == ORIGINAL_MAC_MACHINE_ID:
+            return _with_native_build_1_fields(payload)
+        return {
+            **payload,
+            "connection_state": "ready" if payload.get("presence") == "present" else "disconnected",
+        }
 
     @app.get("/api/health")
     async def health(expected_sha: str | None = None) -> JSONResponse:
