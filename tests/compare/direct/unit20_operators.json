@@ -1,0 +1,299 @@
+[
+  {
+    "name": "status",
+    "path": [
+      "environment",
+      "status"
+    ],
+    "argv": [
+      "environment",
+      "status",
+      "--json"
+    ]
+  },
+  {
+    "name": "cleanup",
+    "path": [
+      "environment",
+      "cleanup"
+    ],
+    "argv": [
+      "environment",
+      "cleanup",
+      "--apply",
+      "--json"
+    ]
+  },
+  {
+    "name": "backup",
+    "path": [
+      "environment",
+      "backup"
+    ],
+    "argv": [
+      "environment",
+      "backup",
+      "--source-db",
+      "@root@/runtime/database.sqlite",
+      "--backup-dir",
+      "@root@/backups",
+      "--deployed-revision",
+      "recorded-revision"
+    ]
+  },
+  {
+    "name": "backup-current",
+    "path": [
+      "environment",
+      "backup-current"
+    ],
+    "argv": [
+      "environment",
+      "backup-current",
+      "--source-db",
+      "@root@/runtime/database.sqlite",
+      "--backup-dir",
+      "@root@/backups",
+      "--current-app",
+      "@root@/app"
+    ]
+  },
+  {
+    "name": "provision-skills",
+    "path": [
+      "environment",
+      "provision-skills"
+    ],
+    "argv": [
+      "environment",
+      "provision-skills",
+      "--database-parent",
+      "@root@",
+      "--hermes-home",
+      "@root@/hermes",
+      "--codex-home",
+      "@root@/codex",
+      "--claude-home",
+      "@root@/claude"
+    ]
+  },
+  {
+    "name": "restore",
+    "path": [
+      "environment",
+      "restore"
+    ],
+    "argv": [
+      "environment",
+      "restore",
+      "--snapshot",
+      "@root@/restore-snapshot",
+      "--destination-db",
+      "@root@/restored.sqlite",
+      "--live-stopped"
+    ]
+  },
+  {
+    "name": "prepare",
+    "path": [
+      "environment",
+      "prepare"
+    ],
+    "argv": [
+      "environment",
+      "prepare",
+      "--kind",
+      "staging",
+      "--environment-root",
+      "@root@/estate",
+      "--instance-id",
+      "recorded-instance",
+      "--port",
+      "32100",
+      "--credentials-env-file",
+      "@root@/credentials.env",
+      "--repository-root",
+      "@root@/git/panels",
+      "--repository-root",
+      "@root@/app",
+      "--json"
+    ]
+  },
+  {
+    "name": "inspect",
+    "path": [
+      "environment",
+      "inspect"
+    ],
+    "argv": [
+      "environment",
+      "inspect",
+      "--kind",
+      "staging",
+      "--environment-root",
+      "@root@/estate",
+      "--instance-id",
+      "recorded-instance",
+      "--port",
+      "32100",
+      "--credentials-env-file",
+      "@root@/credentials.env",
+      "--repository-root",
+      "@root@/git/panels",
+      "--repository-root",
+      "@root@/app",
+      "--json"
+    ]
+  },
+  {
+    "name": "reset",
+    "path": [
+      "environment",
+      "reset"
+    ],
+    "argv": [
+      "environment",
+      "reset",
+      "--kind",
+      "staging",
+      "--environment-root",
+      "@root@/estate",
+      "--instance-id",
+      "recorded-instance",
+      "--port",
+      "32100",
+      "--credentials-env-file",
+      "@root@/credentials.env",
+      "--repository-root",
+      "@root@/git/panels",
+      "--repository-root",
+      "@root@/app",
+      "--json"
+    ]
+  },
+  {
+    "name": "remove",
+    "path": [
+      "environment",
+      "remove"
+    ],
+    "argv": [
+      "environment",
+      "remove",
+      "--kind",
+      "staging",
+      "--environment-root",
+      "@root@/estate",
+      "--instance-id",
+      "recorded-instance",
+      "--port",
+      "32100",
+      "--credentials-env-file",
+      "@root@/credentials.env",
+      "--repository-root",
+      "@root@/git/panels",
+      "--repository-root",
+      "@root@/app",
+      "--json"
+    ]
+  },
+  {
+    "name": "app-build",
+    "path": [
+      "environment",
+      "app-build"
+    ],
+    "argv": [
+      "environment",
+      "app-build",
+      "--source-root",
+      "@root@/git/panels",
+      "--requested-sha",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "--candidate-app",
+      "@root@/candidate"
+    ]
+  },
+  {
+    "name": "app-identity",
+    "path": [
+      "environment",
+      "app-identity"
+    ],
+    "argv": [
+      "environment",
+      "app-identity",
+      "--app",
+      "@root@/app"
+    ]
+  },
+  {
+    "name": "run",
+    "path": [
+      "environment",
+      "run"
+    ],
+    "argv": [
+      "environment",
+      "run",
+      "--kind",
+      "staging",
+      "--environment-root",
+      "@root@/estate",
+      "--instance-id",
+      "recorded-instance",
+      "--port",
+      "32100",
+      "--credentials-env-file",
+      "@root@/credentials.env",
+      "--repository-root",
+      "@root@/git/panels",
+      "--repository-root",
+      "@root@/app",
+      "--test-mode"
+    ]
+  },
+  {
+    "name": "serve",
+    "path": [
+      "serve"
+    ],
+    "argv": [
+      "serve"
+    ]
+  },
+  {
+    "name": "restart",
+    "path": [
+      "restart"
+    ],
+    "argv": [
+      "restart"
+    ]
+  },
+  {
+    "name": "server-event-loop-tasks",
+    "path": [
+      "server-event-loop-tasks"
+    ],
+    "argv": [
+      "server-event-loop-tasks",
+      "--json"
+    ]
+  },
+  {
+    "name": "watchdog",
+    "path": [
+      "stalls",
+      "watchdog"
+    ],
+    "argv": [
+      "stalls",
+      "watchdog",
+      "--db",
+      "@root@/runtime/database.sqlite",
+      "--state-dir",
+      "@root@/watchdog"
+    ]
+  }
+]
