@@ -62,8 +62,8 @@ def parse_command(raw: dict[str, Any]) -> DecisionCommand:
     decision = raw.get("decision")
     if decision not in ("approve", "send_back"):
         raise _validation("decision must be approve or send_back")
-    allowed = {"decision", "field", "expected_proposal_revision"} | (
-        {"edited_body", "next_ceiling", "next_holder"} if decision == "approve" else {"message"}
+    allowed = {"decision", "field", "expected_proposal_revision", "message"} | (
+        {"edited_body", "next_ceiling", "next_holder"} if decision == "approve" else set()
     )
     if set(raw) - allowed:
         raise _validation("unknown decision command fields")
@@ -137,7 +137,8 @@ def lookup(
 
 def _apply(
     conn: sqlite3.Connection, ticket_id: str, command: DecisionCommand,
-    *, current_ticket: Ticket, definition: WorkflowDefinition, actor: Principal, now: int,
+    *, operation_id: str, current_ticket: Ticket, definition: WorkflowDefinition,
+    actor: Principal, now: int,
 ) -> DecisionTransition:
     field = command["field"]
     if command["decision"] == "approve":
@@ -152,6 +153,7 @@ def _apply(
             edited_body=command.get("edited_body"),
             next_ceiling=admission.parse_next_ceiling(command.get("next_ceiling"), definition),
             next_holder=holder, expected_proposal_revision=command["expected_proposal_revision"],
+            message=command.get("message"), decision_id=operation_id,
         )
     else:
         proposal = current_ticket.pending_proposal
@@ -160,6 +162,7 @@ def _apply(
         ticket = data.reject_proposal(
             conn, ticket_id, principal=actor, now=now, message=command.get("message"),
             expected_proposal_revision=command["expected_proposal_revision"],
+            decision_id=operation_id,
         )
     return DecisionTransition(
         stage=ticket.stage, ceiling=ticket.ceiling,
@@ -200,7 +203,7 @@ def apply(
             with data._txn(conn):
                 transition = _apply(
                     conn, ticket_id, command, current_ticket=current_ticket, definition=definition,
-                    actor=actor, now=now,
+                    operation_id=operation_id, actor=actor, now=now,
                 )
         except PlannerError as exc:
             if isinstance(exc, TicketIntegrityError) or exc.code not in _BUSINESS_REFUSALS:

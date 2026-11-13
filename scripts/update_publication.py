@@ -22,7 +22,10 @@ from planner.environments.mac_runtime_configuration import (
     MAC_PYTHON_VERSION,
     MAC_RUNTIME_RECEIPT_NAME,
 )
-from planner.environments.runtime_contracts import parse_optional_runtime_contract
+from planner.environments.runtime_contracts import (
+    RuntimeContract,
+    parse_optional_runtime_contract,
+)
 from planner.environments.update_artifacts import (
     APP_ARCHIVE_NAME,
     PUBLICATION_RECEIPT_NAME,
@@ -62,8 +65,9 @@ def validate_target_proof(
     )
 
     contract = manifest.runtime_contract
-    if contract is None:
-        raise ValueError("publication requires a runtime contract")
+    if not isinstance(contract, RuntimeContract):
+        # deploy.yml publishes only version 1, the private Python runtime.
+        raise ValueError("publication requires a version 1 runtime contract")
     proof = json.loads((gate / "target/target-proof.json").read_text())
     root = json.loads((gate / "target/target-root-inventory.json").read_text())
     native_operations = proof.get("native_operations") if isinstance(proof, dict) else None

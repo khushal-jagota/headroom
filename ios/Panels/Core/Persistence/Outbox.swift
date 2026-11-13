@@ -55,11 +55,16 @@ import Observation
                 guard approval.expectedProposalRevision == proposal.revision else { throw OutgoingStore.StoreError.invalidTransition }
                 command = DecisionCommand(decision: "approve", field: proposal.field, expectedProposalRevision: proposal.revision,
                     editedBody: approval.editedBody, nextCeiling: approval.nextCeiling,
-                    nextHolder: DecisionHolder(kind: approval.nextHolder.kind, id: approval.nextHolder.id))
+                    nextHolder: DecisionHolder(kind: approval.nextHolder.kind, id: approval.nextHolder.id), message: work.guidance)
             } else if work.kind == .sendBack {
                 command = DecisionCommand(decision: "send_back", field: proposal.field, expectedProposalRevision: proposal.revision, message: work.guidance)
             } else { throw OutgoingStore.StoreError.invalidTransition }
             frozen.protectedDecisionBody = try APIClient.encodeReviewDecision(command)
+            if work.kind == .sendBack, let draftID = work.draftID, let note = command.message,
+               let captured = try store.outgoing.captureDraft(server: LocalStore.server(api.baseURL), id: draftID).text,
+               captured.payload == Data(note.utf8) {
+                frozen.decisionDraftUpdatedAt = captured.updated
+            }
             frozen.protectedProposalCreatedAt = proposal.createdAt
             frozen.proposal = nil; frozen.approval = nil; frozen.guidance = nil
         }
@@ -369,7 +374,15 @@ import Observation
     }
     private func settleDecision(_ receipt: DecisionReceipt, id: String, kind: String, server: String) throws {
         if receipt.outcome == "applied" {
-            try store.outgoing.settle(server: server, id: id, state: .sent, note: kind == "approval" ? "Approved" : "Sent back")
+            var draft: (id: String, text: String, updated: Date)?
+            if let draftID = try store.outgoing.summary(server: server, id: id)?.draftID,
+               let saved = try store.outgoing.work(server: server, id: id),
+               let updated = saved.decisionDraftUpdatedAt, let body = saved.protectedDecisionBody,
+               let text = try APIClient.decoder().decode(DecisionCommand.self, from: body).message {
+                draft = (id: draftID, text: text, updated: updated)
+            }
+            try store.outgoing.settle(server: server, id: id, state: .sent,
+                note: kind == "approval" ? "Approved" : "Sent back", decisionDraft: draft)
         } else {
             try store.outgoing.settle(server: server, id: id, state: .changed,
                 note: "Not sent · " + (receipt.error?.message ?? "This decision was refused. Review again."))

@@ -9,7 +9,7 @@
     }
   },
   "send_back": {
-    "message": "Clarify the transition.",
+    "message": "  Clarify the transition.\n ",
     "expected_proposal_revision": 15
   },
   "ticket_approve": {

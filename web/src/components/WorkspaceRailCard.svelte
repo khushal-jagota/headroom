@@ -19,11 +19,11 @@
   import {worstGoal} from "../lib/goals/railPresentation";
   import {workspaceAddress} from "../lib/workspaceAddress";
   import ManagerEyebrow from "./ManagerEyebrow.svelte";
-  let { goals = [], showChiefEyebrow = true, onGoalNavigate, beforeGroups, suppressBackgroundPreview=false, scrollCoordinator=undefined, scrollPublicationId=null, navigationWindow=undefined, onWindow=()=>undefined, onVisibility=()=>undefined, id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
+  let { goals = [], showChiefEyebrow = true, onGoalNavigate, beforeGroups, suppressBackgroundPreview=false, scrollCoordinator=undefined, scrollPublicationId=null, navigationWindow=undefined, onWindow=()=>undefined, id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
     beforeGroups?: Snippet; goals?: GoalResponse[]; showChiefEyebrow?: boolean; onGoalNavigate?: () => void;
     suppressBackgroundPreview?: boolean;
     scrollCoordinator?:ScrollWindowCoordinator;scrollPublicationId?:number|null;
-    navigationWindow?:ViewWindow;onWindow?:(anchor:string,direction:'before'|'after')=>void;onVisibility?:(id:string,visible:boolean)=>void;
+    navigationWindow?:ViewWindow;onWindow?:(anchor:string,direction:'before'|'after')=>void;
     id: string; title: string; project?: string | null; chief?: boolean; signal?: Partial<ConversationSignal>; conversationId?: string | null; selected: boolean;
     selectedTicketId: string | null; groups: WorkspaceTicketGroup[]; busy?: boolean;
     onSelect: () => void; onTicket: (id: string) => void; onSettle: () => void;
@@ -35,7 +35,6 @@
     if (!node.getClientRects().length || !Number.isFinite(parseFloat(getComputedStyle(node).height))) return { duration: 0 };
     return slide(node, { duration: focusSlideMs(), easing: cubicOut });
   }
-  function visibility(node:HTMLElement){const observer=new IntersectionObserver(entries=>onVisibility(id,entries[0].isIntersecting),{root:node.closest('.active-work-scroll'),rootMargin:'200px'});observer.observe(node);return{destroy(){observer.disconnect();onVisibility(id,false);}};}
   const inputs = new Map<string, ReturnType<typeof createRailPreviewInput>>();
   function input(ticket?: WorkItemTicketFacts) {
     const key = ticket?.id ?? "head";
@@ -55,7 +54,7 @@
   onDestroy(() => { for (const controller of inputs.values()) controller.dispose(); });
 </script>
 <div class="manager-card-slot">
-<section use:visibility use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" data-rail-motion={`card:${id}`} class="manager-card" data-goal-status={tagGoal?.status} class:chief class:selected class:has-tickets={groups.length > 0} data-manager={chief ? undefined : id}>
+<section use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" data-rail-motion={`card:${id}`} class="manager-card" data-goal-status={tagGoal?.status} class:chief class:selected class:has-tickets={groups.length > 0} data-manager={chief ? undefined : id}>
   <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
   <div class="identity" onclick={(event) => { if (!(event.target as HTMLElement).closest('button, a')) { const head = event.currentTarget.querySelector<HTMLButtonElement>('.item-head'); head?.click(); } }} onpointerenter={(event) => { if (!suppressBackgroundPreview) input().pointerEnter(event); }} onpointerleave={(event) => input().leave(event)} onpointerdown={(event) => { if (!(event.target as HTMLElement).closest('button')) input().down(event); }} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()}>
     {#if !chief || showChiefEyebrow}<ManagerEyebrow {project} {title} {chief} rail {busy} {onSettle} goal={tagGoal} onGoalFocus={(event)=>onHover((event.currentTarget as HTMLElement).closest('.identity') as HTMLElement,true,event.currentTarget as HTMLElement)} onGoalBlur={(event)=>{if(!(event.relatedTarget instanceof Node)||!(event.currentTarget as HTMLElement).closest('.identity')?.contains(event.relatedTarget))onLeave();}} onGoal={()=>{if(tagGoal){onGoalNavigate?.();window.location.hash=workspaceAddress({kind:'goal',id:tagGoal.id});}}}/>{/if}

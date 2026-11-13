@@ -75,6 +75,8 @@ class Config:
     # Both unset: no Ticket scratch is ever removed.
     ticket_scratch_root: Path | None = None
     ticket_scratch_database: str | None = None
+    # Live ingress only. Consume the environment input before agent children start.
+    refuse_unidentified_agent_calls: bool = False
 
 
 def _parse_bool(raw: object, key: str) -> bool:
@@ -253,6 +255,12 @@ def _validate_trusted_ingress(
 
 def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -> Config:
     env = os.environ if env is None else env
+    refuse_unidentified_agent_calls = _parse_bool(
+        env.get("PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS", "0"),
+        "refuse_unidentified_agent_calls",
+    )
+    if env is os.environ:
+        os.environ.pop("PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS", None)
     cfg = _read_yaml(path)
 
     test_mode = _parse_bool(env.get("PLAN_TEST_MODE", "0"), "test_mode")
@@ -302,6 +310,7 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         str(Path(db_path).parent / "credential-secrets" / "key"),
     )
     return Config(
+        refuse_unidentified_agent_calls=refuse_unidentified_agent_calls,
         db_path=db_path,
         workspace_root=_workspace_root_value(cfg, env),
         ticket_scratch_root=_existing_directory_value(

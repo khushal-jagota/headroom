@@ -3,6 +3,7 @@ import SwiftUI
 struct TicketApprovalLimitSheet: View {
     let presentation: TicketPresentation
     let approval: Bool
+    let guidance: DecisionGuidance?
     let save: (String?, Principal) async throws -> Void
     @State private var busy = false
     @State private var error: String?
@@ -10,10 +11,11 @@ struct TicketApprovalLimitSheet: View {
     @State private var ceiling: String
     @State private var holder: Principal
 
-    init(presentation: TicketPresentation, approval: Bool = false, save: @escaping (String?, Principal) async throws -> Void) {
+    init(presentation: TicketPresentation, approval: Bool = false, guidance: DecisionGuidance? = nil, save: @escaping (String?, Principal) async throws -> Void) {
         self.presentation = presentation
         self.save = save
         self.approval = approval
+        self.guidance = guidance
         _ceiling = State(initialValue: approval ? (presentation.manifest.advance?[presentation.ticket.stage] ?? presentation.ticket.ceiling) : presentation.ticket.ceiling)
         _holder = State(initialValue: presentation.holders.contains(presentation.ticket.ceilingHolder) ? presentation.ticket.ceilingHolder : Principal(kind: "owner", id: "owner"))
     }
@@ -36,6 +38,12 @@ struct TicketApprovalLimitSheet: View {
                             Text(presentation.holderLabel(principal)).tag(principal)
                         }
                     }.pickerStyle(.segmented).labelsHidden()
+                }
+                if approval, let guidance {
+                    Section("Note to Worker") {
+                        Text(guidance.text).frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("ticket-approval-note")
+                    }
                 }
                 if let error { Text(error).foregroundStyle(PanelsTheme.error) }
             }.disabled(busy).panelsScreen().navigationTitle(approval ? "Approve" : "Approval limit").navigationBarTitleDisplayMode(.inline)

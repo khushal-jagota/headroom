@@ -18,7 +18,10 @@ Stage is user-owned; it does not ask the reader to fill in a field. A pending
 conversation ask is the separate Needs your answer state. Approval opens a native
 sheet; accepting sends the displayed proposal revision and defaults to the next
 gate, without advancing twice. A reviewer-only scope change omits the ceiling.
-Editors remain open on errors. Send-back requires a nonempty note and an existing
+Editors remain open on errors. If a current guidance draft exists, the approval
+sheet displays its exact text as a read-only note. Confirmation sends only that
+displayed snapshot with its proposal and server identity. A hidden or stale draft
+cannot supply the note. Send-back requires a nonempty note and an existing
 conversation, and is unavailable for Brief. Pristine tickets can edit worker setup
 using the existing backend/model catalogue. There are no backend changes.
 

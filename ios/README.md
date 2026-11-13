@@ -852,3 +852,21 @@ The existing simulator fixture host supports `PANELS_GOALS_SMOKE=1` and
 a separate task bundle ID, lane lock name and output directory through its
 `PANELS_OFFLINE_DEVICE`, `PANELS_OFFLINE_BUNDLE`, `PANELS_OFFLINE_LANE` and
 `PANELS_OFFLINE_OUTPUT` settings. It uses loopback data and no live writes.
+
+## Decision notes
+
+Ticket and Review keep Approve and Send back on the protected outbox path. Both
+carry the complete note with the exact proposal revision and stable operation
+identity. The shared server action saves the decision and attributed instruction
+together. Full history shows the actual Worker prompt as a system message.
+
+When a current guidance draft exists, the approval sheet displays its exact text
+as a read-only note. The confirmation submits that displayed snapshot. It never
+adds an undisplayed draft or reads a replacement note after the tap. This adds no
+note editor or separate chat send. Proposal edits remain separate from notes.
+
+Send back preserves whitespace, line breaks, and Unicode. A whitespace-only note
+still cannot be sent. The outbox clears a note draft only after an applied receipt,
+and only when its text and saved timestamp still match the captured draft. Offline,
+refused, stale, and uncertain decisions retain drafts. Newer edits survive an older
+receipt, including edits that restore the same text.

@@ -236,6 +236,7 @@ private struct ReviewCardView: View {
     @State private var resolvedAfterDismiss = false
     @State private var renaming = false
     @State private var titleDraft = ""
+    @State private var approvalGuidance: DecisionGuidance?
     /// Parts fading out while the rest of the card stays.
     @State private var exiting: Set<String> = []
     @State private var messageStates: [String: ReviewMessageSection.Activity] = [:]
@@ -317,8 +318,8 @@ private struct ReviewCardView: View {
             switch selected {
             case .approve:
                 if let decision {
-                    ReviewApprovalSheet(decision: decision) { ceiling, holder in
-                        if await decision.approve(api: store.client, ceiling: ceiling, holder: holder) { complete() }
+                    ReviewApprovalSheet(decision: decision, guidance: approvalGuidance) { ceiling, holder in
+                        if await decision.approve(api: store.client, ceiling: ceiling, holder: holder, guidance: approvalGuidance) { complete() }
                         else { ReviewStyle.error() }
                     }
                 }
@@ -396,7 +397,7 @@ private struct ReviewCardView: View {
             changingActions = false
         }
     }
-    private func openApproval() { guard decision?.ready == true else { return }; Haptics.light(); editorFocused = false; editing = false; sheet = .approve }
+    private func openApproval() { guard decision?.ready == true else { return }; approvalGuidance = decision?.approvalGuidance(api: store.client); Haptics.light(); editorFocused = false; editing = false; sheet = .approve }
     private func complete() {
         Haptics.light()
         if sheet != nil { resolvedAfterDismiss = true; sheet = nil }
@@ -565,6 +566,7 @@ private struct ReviewProse: View {
 
 private struct ReviewApprovalSheet: View {
     @Bindable var decision: ReviewDecision
+    let guidance: DecisionGuidance?
     let onApprove: (String, Principal) async -> Void
     @State private var ceiling = ""
     @State private var holder = Principal(kind: "owner", id: "owner")
@@ -594,6 +596,14 @@ private struct ReviewApprovalSheet: View {
                 Picker("Who reviews", selection: $holder) {
                     ForEach(holders, id: \.1) { Text($0.0).tag($0.1) }
                 }.accessibleSegmentedPicker()
+                if let guidance {
+                    VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
+                        Text("Note to Worker").reviewEyebrow()
+                        Text(guidance.text).font(.body).foregroundStyle(PanelsTheme.text)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("review.approvalNote")
+                    }
+                }
                 Button {
                     Haptics.light(); Task { await onApprove(ceiling, holder) }
                 } label: {

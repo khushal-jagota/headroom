@@ -169,12 +169,14 @@ class VideoUploadService:
     async def transfer(self, upload_id: str, chunks: AsyncIterator[bytes]) -> VideoUploadStatus:
         """Take the bytes in, one chunk at a time.
 
-        Every step that touches the database or the file runs on a worker thread. Each
-        holds the write lock, and on the event loop a wait for that lock holds up every
-        request.
+        Every step that touches the database or the file runs on a worker thread. A
+        chunk is written with no transaction open. Progress is saved in one short write
+        transaction per PROGRESS_RECORD_BYTES, and once at the end, so a large upload
+        does not hold the database's single writer chunk after chunk.
         """
         declared, filename = await run_on_worker_thread(self._begin_transfer, upload_id)
         received = 0
+        recorded = 0
         try:
             with self._temporary(upload_id).open("xb") as output:
                 async for incoming in chunks:
@@ -183,8 +185,12 @@ class VideoUploadService:
                         if received + len(chunk) > declared:
                             raise VideoUploadError("Transfer exceeds its reserved size.", 413)
                         received = await run_on_worker_thread(
-                            self._store_chunk, upload_id, output, chunk, received
+                            self._store_chunk, output, chunk, received
                         )
+                        if received - recorded >= config.PROGRESS_RECORD_BYTES:
+                            await run_on_worker_thread(self._record_progress, upload_id, received)
+                            recorded = received
+                await run_on_worker_thread(self._record_progress, upload_id, received)
                 await run_on_worker_thread(_flush_to_disk, output)
             if received != declared:
                 raise VideoUploadError("Video transfer was interrupted. Retry the attachment.")
@@ -211,22 +217,24 @@ class VideoUploadService:
             )
             return row["byte_count"], row["filename"]
 
-    def _store_chunk(
-        self, upload_id: str, output: BinaryIO, chunk: bytes, received: int
-    ) -> int:
+    def _store_chunk(self, output: BinaryIO, chunk: bytes, received: int) -> int:
+        """Write one chunk, with no transaction open, if the disk keeps its floor."""
+        if shutil.disk_usage(self.root).free - len(chunk) < config.FREE_SPACE_FLOOR_BYTES:
+            raise VideoUploadError("Video upload stopped: disk space is low.", 507)
+        output.write(chunk)
+        return received + len(chunk)
+
+    def _record_progress(self, upload_id: str, received: int) -> None:
+        """One short write: the upload is still wanted, its progress is saved, and the
+        other reserved uploads still fit on the disk."""
         with self._transaction() as conn:
             if self._row(conn, upload_id)["state"] != "transferring":
                 raise VideoUploadError("The video upload was cancelled or expired.", 409)
-            self._disk_capacity(conn)
-            if shutil.disk_usage(self.root).free - len(chunk) < config.FREE_SPACE_FLOOR_BYTES:
-                raise VideoUploadError("Video upload stopped: disk space is low.", 507)
-            output.write(chunk)
-            received += len(chunk)
             conn.execute(
                 "UPDATE conversation_video_uploads SET received_bytes=? WHERE upload_id=?",
                 (received, upload_id),
             )
-        return received
+            self._disk_capacity(conn)
 
     def _mark_ready(self, upload_id: str, media_type: str) -> VideoUploadStatus:
         with self._transaction() as conn:
@@ -243,8 +251,7 @@ class VideoUploadService:
         self._temporary(upload_id).unlink(missing_ok=True)
         with self._transaction() as conn:
             conn.execute(
-                "UPDATE conversation_video_uploads SET state='failed',error=? "
-                "WHERE upload_id=?",
+                "UPDATE conversation_video_uploads SET state='failed',error=? WHERE upload_id=?",
                 (str(exc) or "Upload interrupted.", upload_id),
             )
 
@@ -377,4 +384,3 @@ class VideoUploadService:
                         "UPDATE conversation_video_uploads SET state='cancelled' WHERE upload_id=?",
                         (row["upload_id"],),
                     )
-

@@ -1244,6 +1244,7 @@ def _approve_ticket_proposal(
         )
     field_payload: dict[str, Any] = {
         "expected_proposal_revision": revision,
+        "decision_id": f"{tid}:{revision}:accept",
         "next_ceiling": ceiling,
         "next_holder": (
             resolve_holder(holder, as_json) if holder is not None else caller_principal()
@@ -1288,7 +1289,11 @@ def _revise_ticket_proposal(
         "POST",
         f"/api/tickets/{tid}/reject",
         as_json=as_json,
-        json_body={"message": text, "expected_proposal_revision": expected_proposal_revision},
+        json_body={
+            "message": text,
+            "expected_proposal_revision": expected_proposal_revision,
+            "decision_id": f"{tid}:{expected_proposal_revision}:reject",
+        },
     )
     http.emit(data, as_json, f"{tid} proposal rejected")
 
@@ -1399,6 +1404,11 @@ def ticket_restart_worker(
         human_result = f"{ticket_id} start delivery was refused"
     else:
         human_result = f"{ticket_id} did not start: {data['not_started_because']}"
+    if data["revision_restarted_in_fresh_conversation"]:
+        human_result += (
+            "\nThe revision continues in a fresh conversation. The old working context is "
+            "gone, and only the revision feedback carries over."
+        )
     http.emit(
         data,
         as_json,
@@ -1672,9 +1682,12 @@ def manager_workspace(item_id: str, as_json: bool) -> None:
         f"{data['title']} ({item_id})\nPurpose: {data['goal']}\nRecap: {data['recap']}\n\n"
         f"{visible}\nOwn page revision: {data['page_revision']}\n"
         "Edits replace the complete document. Artifacts are supporting files.\n\n"
-        "Held goals:\n" + _lines(goals, lambda goal: f"{goal['id']} {goal['title']}")
-        + "\n\nArtifacts:\n" + _lines(data["artifacts"], lambda artifact: str(artifact["path"]))
-        + "\n\nTickets:\n" + _lines(
+        "Held goals:\n"
+        + _lines(goals, lambda goal: f"{goal['id']} {goal['title']}")
+        + "\n\nArtifacts:\n"
+        + _lines(data["artifacts"], lambda artifact: str(artifact["path"]))
+        + "\n\nTickets:\n"
+        + _lines(
             data["tickets"], lambda ticket: f"{ticket['id']} {ticket['title']} [{ticket['stage']}]"
         )
     )

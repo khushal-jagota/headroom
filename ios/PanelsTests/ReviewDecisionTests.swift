@@ -98,6 +98,59 @@ import XCTest
         try assertSharedDecisionBody(ticketBody, named: "ticket_approve")
     }
 
+    func testApprovalSendsOnlyTheDisplayedGuidanceSnapshotAndPreservesNewerDraft() async throws {
+        let (decision, api, _) = try await setupDecision()
+        let note = "  Keep the full note.\n\nInclude Unicode 🪶.  \n"
+        decision.revisionDraft = note
+        let displayed = try XCTUnwrap(decision.approvalGuidance(api: api))
+        XCTAssertEqual(displayed.text, note)
+        let draftID = try XCTUnwrap(decision.revisionDraftID)
+        decision.revisionDraft = "A newer draft behind the approval sheet"
+        let accepted = await decision.approve(api: api, ceiling: "needs_implementation",
+            holder: Principal(kind: "owner", id: "owner"), guidance: displayed)
+        XCTAssertTrue(accepted)
+        await settle(api)
+        let request = try XCTUnwrap(ReviewStub.state.protectedWrites.first)
+        let command = try APIClient.decoder().decode(DecisionCommand.self, from: XCTUnwrap(request.httpBody))
+        XCTAssertEqual(command.message, displayed.text, "Only text shown by the approval sheet enters the request")
+        XCTAssertEqual(LocalStore.shared.draft(server: displayed.server, id: draftID), "A newer draft behind the approval sheet")
+        XCTAssertTrue(ReviewStub.state.writes.isEmpty, "Approval notes never use a separate chat send")
+    }
+
+    func testApprovalDoesNotInferANoteFromHiddenGuidance() async throws {
+        let (decision, api, _) = try await setupDecision()
+        decision.revisionDraft = "A saved note that no approval sheet displays"
+        let draftID = try XCTUnwrap(decision.revisionDraftID)
+        let accepted = await decision.approve(api: api, ceiling: "needs_implementation", holder: .init(kind: "owner", id: "owner"))
+        XCTAssertTrue(accepted)
+        await settle(api)
+        let work = try XCTUnwrap(Outbox.shared.entries("https://review.invalid").last)
+        let command = try APIClient.decoder().decode(DecisionCommand.self, from: XCTUnwrap(work.protectedDecisionBody))
+        XCTAssertNil(command.message)
+        XCTAssertNil(work.draftID)
+        XCTAssertEqual(LocalStore.shared.draft(server: "https://review.invalid", id: draftID), decision.revisionDraft)
+    }
+
+    func testApprovalGuidanceCannotCrossServerOrProposalIdentity() async throws {
+        let (decision, api, item) = try await setupDecision()
+        decision.revisionDraft = "Visible guidance"
+        let displayed = try XCTUnwrap(decision.approvalGuidance(api: api))
+        let proposal = try XCTUnwrap(decision.proposal)
+        XCTAssertNil(DecisionGuidance.capture(text: displayed.text, server: displayed.server, ticketID: displayed.ticketID,
+            proposal: proposal, loadedServer: "https://other.invalid", loadedIdentity: DecisionGuidance.draftIdentity(ticketID: displayed.ticketID, proposal: proposal)))
+        XCTAssertNil(DecisionGuidance.capture(text: displayed.text, server: displayed.server, ticketID: displayed.ticketID,
+            proposal: proposal, loadedServer: displayed.server, loadedIdentity: "an old proposal"))
+        let other = APIClient(baseURL: URL(string: "https://other.invalid")!)
+        let foreign = await decision.approve(api: other, ceiling: "needs_implementation", holder: .init(kind: "owner", id: "owner"), guidance: displayed)
+        XCTAssertFalse(foreign)
+        ReviewStub.state.bumpRevision()
+        await decision.load(item: item, api: api, discardDraft: true)
+        let stale = await decision.approve(api: api, ceiling: "needs_implementation", holder: .init(kind: "owner", id: "owner"), guidance: displayed)
+        XCTAssertFalse(stale)
+        XCTAssertTrue(ReviewStub.state.protectedWrites.isEmpty)
+        XCTAssertEqual(LocalStore.shared.draft(server: displayed.server, id: displayed.draftID), displayed.text)
+    }
+
     func testChangedProposalKeepsDraftAndCannotBeSentBackOrApproved() async throws {
         let (decision, api, item) = try await setupDecision()
         decision.draft = "Keep my unsaved edit"
@@ -129,7 +182,7 @@ import XCTest
         XCTAssertTrue(ReviewStub.state.writes.isEmpty)
     }
 
-    func testSendBackTrimsGuidanceAndRefusalKeepsSavedDecision() async throws {
+    func testSendBackPreservesGuidanceAndRefusalKeepsSavedDecision() async throws {
         let (decision, api, item) = try await setupDecision()
         ReviewStub.state.failWrites = true
         decision.revisionDraft = "  Clarify the transition.\n "
@@ -143,7 +196,7 @@ import XCTest
         let work = try XCTUnwrap(Outbox.shared.entries("https://review.invalid").last)
         XCTAssertEqual(work.state, .changed)
         let command = try APIClient.decoder().decode(DecisionCommand.self, from: XCTUnwrap(work.protectedDecisionBody))
-        XCTAssertEqual(command.message, "Clarify the transition.")
+        XCTAssertEqual(command.message, "  Clarify the transition.\n ")
         XCTAssertNil(work.proposal); XCTAssertNil(work.approval); XCTAssertNil(work.guidance)
         XCTAssertEqual(work.ticketTitle, decision.ticket?.title)
         XCTAssertEqual(work.proposalFieldLabel, "Proposal")
