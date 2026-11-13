@@ -141,6 +141,16 @@ def retry_request(child: RunningChild, identity: str) -> IpcRequest:
     )
 
 
+async def settle_publication(executor: MacService, submission_id: str) -> None:
+    """Observe admitted local work independently of the caller's response deadline."""
+    publication = executor.gateway._publishing.get(submission_id)
+    if publication is not None:
+        # A post-commit error is intentional in one case. The retry proves its outcome.
+        await asyncio.wait_for(
+            asyncio.gather(asyncio.shield(publication[1]), return_exceptions=True), 5
+        )
+
+
 def short_client_socket(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ipc_client, "CLI_RESULT_TIMEOUT_SECONDS", 0.3)
 
@@ -185,7 +195,7 @@ def test_actual_caller_timeout_keeps_owner_and_original_snapshot_for_retry(
                     CliRunner().invoke, main, ["worker", "recap", "--json"], input="original"
                 )
                 monkeypatch.setattr(ipc_client, "socket", socket)
-                assert entered.is_set()
+                assert await asyncio.to_thread(entered.wait, 5)
                 assert result.exit_code == 3, result.output
                 outcome = json.loads(result.stdout)
                 identity = outcome["submission_id"]
@@ -236,6 +246,9 @@ def test_retry_preserves_acknowledged_and_unknown_uncertainty_across_restart(
     async def run() -> None:
         async with ipc_service(tmp_path, monkeypatch) as (executor, child):
             response = await executor.gateway.handle(write_request(child, "original"))
+            assert response.unconfirmed is not None
+            await settle_publication(executor, "original")
+            response = await executor.gateway.handle(retry_request(child, "original"))
             assert response.unconfirmed is not None
             assert response.unconfirmed.publication == "queued"
             envelope = executor.outbox.pending()[0]
@@ -399,6 +412,7 @@ def test_post_commit_cleanup_error_keeps_identity_and_retry_observes_original(
             response = await executor.gateway.handle(write_request(child, "original"))
             assert response.error is None and response.unconfirmed is not None
             assert response.unconfirmed.submission_id == "original"
+            await settle_publication(executor, "original")
             original = executor.outbox.pending()[0]
             retried = await executor.gateway.handle(
                 replace(retry_request(child, "original"), response_deadline=time.monotonic() + 5)
@@ -424,6 +438,9 @@ def test_failed_add_reports_unknown_and_never_proves_stop(
 
             monkeypatch.setattr(executor.outbox, "add", fail_add)
             response = await executor.gateway.handle(write_request(child, "lost-output"))
+            assert response.unconfirmed is not None
+            await settle_publication(executor, "lost-output")
+            response = await executor.gateway.handle(retry_request(child, "lost-output"))
             assert response.unconfirmed is not None
             assert response.unconfirmed.publication == "unknown"
             assert not executor.outbox.pending()
