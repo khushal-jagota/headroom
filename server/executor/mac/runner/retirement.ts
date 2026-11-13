@@ -26,8 +26,7 @@ export class MacRetirement implements MacRetirementContract {
     for (const record of records)
       if (record.command.operation !== 'stop') work.withdraw(record.command.command_id);
     try {
-      // Preserve Python's early uncertain result if a currently joined command fails.
-      // Continuing native cleanup across that failure still needs the Manager's decision.
+      // Join only unsettled commands. A failed join makes the stop uncertain.
       await Promise.all(
         records
           .filter((record) => record.command.operation !== 'stop' && record.task !== null)
