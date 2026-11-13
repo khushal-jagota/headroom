@@ -15,7 +15,8 @@ import type * as Validators from '../../../node_modules/@agentclientprotocol/sdk
 import { BackendAdapterError, BackendSpawnFailed } from '../contracts.ts';
 import { CodexChildWouldNotStart } from '../codex_app_server/errors.ts';
 import { python_repr } from '../claude_agent_sdk/failure_summary.ts';
-import { spawn_codex_process, within } from '../codex_app_server/process.ts';
+import { spawn_codex_process } from '../codex_app_server/process.ts';
+import { observe_promise } from '../../../core/promise_observer.ts';
 import type { OwnedCodexProcess } from '../codex_app_server/process.ts';
 import type { ResolvedConversationStart } from '../../contracts.ts';
 import { child_environment } from './launch.ts';
@@ -482,7 +483,10 @@ export class HermesAcpLauncher {
       // stdout can still contain a final reply when the direct child exits. Let
       // the SDK drain it in order, with a bound for pipes held by descendants.
       void owned.exited.then(async () => {
-        if (!(await within(client.closed, ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS)))
+        if (
+          !(await observe_promise(client.closed, ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS * 1000))
+            .completed
+        )
           client.close(new Error('the backend process ended'));
       });
       void owned.output_failed.then((error) => {

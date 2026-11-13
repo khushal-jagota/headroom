@@ -6,6 +6,8 @@ This package is the shared server shell for the backend migration. It runs `.ts`
 
 Accepted migration differences live in [DEVIATIONS.md](DEVIATIONS.md).
 
+`core/promise_observer.ts` limits ordinary promise waits without cancelling admitted work. Shutdown retains its absolute deadline and separate settlement path.
+
 From the repository root:
 
 ```sh

@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { afterEach, expect, test, vi } from 'vitest';
-import { OwnedCodexProcess, spawn_codex_process, within } from './process.ts';
+import { OwnedCodexProcess, spawn_codex_process } from './process.ts';
+import { observe_promise } from '../../../core/promise_observer.ts';
 
 afterEach(() => vi.restoreAllMocks());
 function fake_child() {
@@ -111,7 +112,7 @@ test.skipIf(process.platform !== 'linux')(
           if (output.includes('\n')) resolve();
         }),
       );
-      expect(await within(ready, 5)).toBe(true);
+      expect((await observe_promise(ready, 5000)).completed).toBe(true);
       descendant = Number(output.trim());
       expect(descendant).toBeGreaterThan(0);
       expect(owned.child.exitCode).toBeNull();

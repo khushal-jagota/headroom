@@ -16,7 +16,8 @@ import {
 import { WorkerUnit } from '../../worker_unit/index.ts';
 import { with_tool_shell_kill_priority } from '../../tool_shell_kill_priority.ts';
 import { CONSUMED_SERVER_NOTIFICATIONS, decode_server_request } from './protocol.ts';
-import { OwnedCodexProcess, spawn_codex_process, within } from './process.ts';
+import { OwnedCodexProcess, spawn_codex_process } from './process.ts';
+import { observe_promise } from '../../../core/promise_observer.ts';
 import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import {
   CHILD_OUTPUT_LINE_LIMIT_BYTES,
@@ -290,18 +291,18 @@ export class CodexAppServerClient {
     const output_done = new Promise<void>((resolve) => owned.child.stdout.once('end', resolve));
     try {
       if (
-        !(await within(
+        !(await observe_promise(
           Promise.race([
             owned.exited,
             owned.output_failed.then(() => {
               throw cli_version_error('codex', executable, 'check');
             }),
           ]),
-          VERSION_TIMEOUT_SECONDS,
-        ))
+          VERSION_TIMEOUT_SECONDS * 1000,
+        )).completed
       )
         throw cli_version_error('codex', executable, 'check');
-      await within(output_done, PIPE_DRAIN_SECONDS);
+      await observe_promise(output_done, PIPE_DRAIN_SECONDS * 1000);
       if (owned.output_error !== null) throw cli_version_error('codex', executable, 'check');
       validate_cli_version(
         'codex',
@@ -404,7 +405,7 @@ export class CodexAppServerClient {
     const stderr_done = owned.child.stderr.readableEnded
       ? Promise.resolve()
       : new Promise<void>((resolve) => owned.child.stderr.once('end', resolve));
-    await within(Promise.all([stdout_done, stderr_done]), PIPE_DRAIN_SECONDS);
+    await observe_promise(Promise.all([stdout_done, stderr_done]), PIPE_DRAIN_SECONDS * 1000);
     let end_reason: string | null = null;
     try {
       await owned.stop();
@@ -419,7 +420,7 @@ export class CodexAppServerClient {
       }
     }
     if (!current()) return;
-    await within(this.dispatch, PIPE_DRAIN_SECONDS);
+    await observe_promise(this.dispatch, PIPE_DRAIN_SECONDS * 1000);
     if (!current()) return;
     this.end_reason_value = end_reason;
     this.break_wire(end_reason ?? 'the codex process ended');

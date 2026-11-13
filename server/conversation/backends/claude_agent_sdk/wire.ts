@@ -131,22 +131,6 @@ export class ObservedStdout extends Transform {
   }
 }
 
-export async function bounded<T>(
-  promise: Promise<T>,
-  seconds: number,
-): Promise<{ timed_out: false; value: T } | { timed_out: true }> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise.then((value) => ({ timed_out: false as const, value })),
-      new Promise<{ timed_out: true }>((resolve) => {
-        timer = setTimeout(() => resolve({ timed_out: true }), seconds * 1000);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
 
 /** Python's stderr callback receives nonblank right-trimmed lines, not chunks. */
 export class ObservedStderr {

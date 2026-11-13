@@ -26,10 +26,10 @@ import {
   ObservedStdout,
   ObservedStderr,
   Pending,
-  bounded,
   cancellation_uuid_set,
   object,
 } from './wire.ts';
+import { observe_promise } from '../../../core/promise_observer.ts';
 
 export type {
   ClaudeSdkClient,
@@ -495,8 +495,11 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     this.permission_waiters.add(waiter);
     signal.addEventListener('abort', cancelled, { once: true });
     try {
-      const ready = await bounded(waiter.ready.promise, CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS);
-      return ready.timed_out ? !this.cleanup_started && !signal.aborted : ready.value;
+      const ready = await observe_promise(
+        waiter.ready.promise,
+        CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS * 1000,
+      );
+      return ready.completed ? ready.value : !this.cleanup_started && !signal.aborted;
     } finally {
       signal.removeEventListener('abort', cancelled);
       this.permission_waiters.delete(waiter);
@@ -634,11 +637,11 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       const result = native.interrupt({ cancelQueued: true });
       // The SDK filters malformed UUIDs. The raw correlated payload is the proof.
       const failed = result.then(() => new Promise<never>(() => {}));
-      const response = await bounded(
+      const response = await observe_promise(
         Promise.race([attempt.response.promise, failed]),
-        CLAUDE_CANCEL_QUEUED_TIMEOUT_SECONDS,
+        CLAUDE_CANCEL_QUEUED_TIMEOUT_SECONDS * 1000,
       );
-      if (response.timed_out || response.value === null)
+      if (!response.completed || response.value === null)
         throw new PromptWriteFailed('claude did not confirm queued command cancellation');
       return [
         cancellation_uuid_set(response.value.cancelled),
@@ -666,16 +669,25 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     // Startup can own a process before SDK query construction returns a handle.
     if (this.child !== null && !this.child.stdin.writableEnded) this.child.stdin.end();
     if (this.child_exit !== null) {
-      let exited = await bounded(this.child_exit.promise, CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS);
-      if (exited.timed_out && this.child !== null) {
+      let exited = await observe_promise(
+        this.child_exit.promise,
+        CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS * 1000,
+      );
+      if (!exited.completed && this.child !== null) {
         this.signal_process(this.child, 'SIGTERM');
-        exited = await bounded(this.child_exit.promise, CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS);
+        exited = await observe_promise(
+          this.child_exit.promise,
+          CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS * 1000,
+        );
       }
-      if (exited.timed_out && this.child !== null) {
+      if (!exited.completed && this.child !== null) {
         this.signal_process(this.child, 'SIGKILL');
-        exited = await bounded(this.child_exit.promise, CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS);
+        exited = await observe_promise(
+          this.child_exit.promise,
+          CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS * 1000,
+        );
       }
-      if (exited.timed_out) throw new Error('Claude process termination remains unconfirmed');
+      if (!exited.completed) throw new Error('Claude process termination remains unconfirmed');
     }
     if (close_failure !== undefined) throw close_failure;
     if (this.cli !== null) await this.cli.return(undefined);
