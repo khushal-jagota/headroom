@@ -27,9 +27,9 @@ Recorded usage comes from one local server. The browser calculates totals and ch
 
 ## Backend setup
 
-Backend cards read the tools installed on this host. Codex can sign in from the screen, while Claude and Hermes keep their own login commands. Claude supplies its model list through its CLI, and Headroom keeps no Claude model table. Each machine reads its own lists. See [Executor](executor.md).
+Backend cards read the tools installed on this host. Codex can sign in from the screen, while Claude and Hermes keep their own login commands. Claude supplies its model list through its CLI, and Headroom keeps no Claude model table. Each machine reads its own lists. See [Executor](executor.md). Panels saves each complete list it reads, one for each machine, and model checks read the saved list. Until a machine has a complete saved list for a backend, its models are not checked against it, and the backend decides.
 
-The catalog also lets models be enabled or disabled. A disabled model is refused wherever a Ticket or message would use it. [Conversations](conversations.md) describes the picker and those refusals.
+The catalog also lets models be enabled or disabled. A disabled model is refused wherever a Ticket or message would use it. When a model leaves every saved complete list, its switch-off is deleted, because the model is refused as not offered. [Conversations](conversations.md) describes the picker and those refusals.
 
 ## Where it shows up
 

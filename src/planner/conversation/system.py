@@ -2811,14 +2811,22 @@ class SqliteProcessConversationSystem:
         take, and the conversation stays readable while they do.
         """
         from planner.conversation.backend_state import BackendStateStore
+        from planner.executor.worker_identity import ticket_id_of
 
         requested_model = model_change or state.record.model
-        if requested_model is not None and not BackendStateStore(
-            self._store._db_path
-        ).model_is_enabled(state.record.backend_key, requested_model):
+        refusal = (
+            None
+            if requested_model is None
+            else BackendStateStore(self._store._db_path).delivery_model_refusal(
+                state.record.backend_key,
+                requested_model,
+                ticket_id_of(state.record.resolved_start()),
+            )
+        )
+        if refusal is not None:
             return _PromptDeliveryAttempt(
                 refusal_reason=PromptDeliveryRefusalReason.model_resolution_failed,
-                refusal_detail=f"Model {requested_model} is disabled",
+                refusal_detail=refusal,
                 record_refusal=True,
             )
         effort_is_set = messages[0].reasoning_effort_is_set if messages else reasoning_effort_is_set
