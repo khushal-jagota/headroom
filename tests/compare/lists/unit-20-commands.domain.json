@@ -108,6 +108,38 @@
     {
       "area": "cli-domain-fixture",
       "method": "POST",
+      "path": "/api/measures",
+      "status": 200,
+      "json": {
+        "project_id": "project_other",
+        "name": "CLI category manual B",
+        "unit": "units",
+        "origin": "manual",
+        "kind": "reading",
+        "timezone": "UTC"
+      },
+      "capture": {
+        "manual_b": "id"
+      }
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/measures/${manual_b}/manual-writes",
+      "status": 200,
+      "json": {
+        "request_id": "unit20-category-b",
+        "date": "2026-07-04",
+        "expected_definition_revision": 1,
+        "basis": "date",
+        "operation": "replace",
+        "value": 6.5,
+        "expected_write_revision": 0
+      }
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
       "path": "/api/measure-sources",
       "status": 200,
       "json": {
@@ -521,8 +553,8 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Creates a populated quantitative goal with a bound manual chart.",
-      "stdin": "{\"project_id\":\"project_other\",\"title\":\"CLI populated goal\",\"why\":\"Retained manual evidence.\",\"kind\":\"quantitative\",\"completion_rule\":{\"actual\":{\"op\":\"reference\",\"measure_id\":\"${manual}\",\"day_offset\":0},\"target\":{\"op\":\"constant\",\"value\":5},\"direction\":\"atleast\",\"first_date\":\"2026-07-04\"},\"primary_chart\":{\"type\":\"chart\",\"id\":\"primary\",\"kind\":\"line\",\"measure_id\":\"${manual}\",\"target\":5},\"page\":{\"kind\":\"headroom.page\",\"version\":1,\"title\":\"CLI domain page\",\"summary\":\"A populated holder document.\",\"blocks\":[{\"type\":\"section\",\"id\":\"work\",\"title\":\"Work\",\"blocks\":[{\"type\":\"checklist\",\"id\":\"steps\",\"title\":\"Next steps\",\"items\":[{\"id\":\"first\",\"label\":\"CLI real checklist\",\"state\":\"open\"}]}]}]}}",
+      "proof": "Creates a populated goal with category chart IDs20,10 and prototype-like ordinary names, backed by distinct retained manual values.",
+      "stdin": "{\"project_id\":\"project_other\",\"title\":\"CLI populated goal\",\"why\":\"Retained manual evidence.\",\"kind\":\"quantitative\",\"completion_rule\":{\"actual\":{\"op\":\"reference\",\"measure_id\":\"${manual}\",\"day_offset\":0},\"target\":{\"op\":\"constant\",\"value\":5},\"direction\":\"atleast\",\"first_date\":\"2026-07-04\"},\"primary_chart\":{\"type\":\"chart\",\"id\":\"20\",\"kind\":\"bar\",\"title\":\"CLI category 20\",\"binding\":{\"kind\":\"scalar_inputs\",\"aggregation\":\"latest\",\"inputs\":[{\"key\":\"A\",\"label\":\"A\",\"measure_id\":\"${manual}\"}]}},\"page\":{\"kind\":\"headroom.page\",\"version\":1,\"title\":\"CLI domain page\",\"summary\":\"A populated holder document.\",\"blocks\":[{\"type\":\"section\",\"id\":\"work\",\"title\":\"Work\",\"blocks\":[{\"type\":\"checklist\",\"id\":\"steps\",\"title\":\"Next steps\",\"items\":[{\"id\":\"first\",\"label\":\"CLI real checklist\",\"state\":\"open\"}]}]},{\"type\":\"chart\",\"id\":\"10\",\"kind\":\"bar\",\"title\":\"CLI category 10\",\"binding\":{\"kind\":\"scalar_inputs\",\"aggregation\":\"latest\",\"inputs\":[{\"key\":\"B\",\"label\":\"B\",\"measure_id\":\"${manual_b}\"}]}},{\"type\":\"chart\",\"id\":\"__proto__\",\"kind\":\"bar\",\"title\":\"CLI category __proto__\",\"binding\":{\"kind\":\"scalar_inputs\",\"aggregation\":\"latest\",\"inputs\":[{\"key\":\"A\",\"label\":\"A\",\"measure_id\":\"${manual}\"}]}},{\"type\":\"chart\",\"id\":\"constructor\",\"kind\":\"bar\",\"title\":\"CLI category constructor\",\"binding\":{\"kind\":\"scalar_inputs\",\"aggregation\":\"latest\",\"inputs\":[{\"key\":\"A\",\"label\":\"A\",\"measure_id\":\"${manual}\"}]}},{\"type\":\"chart\",\"id\":\"toString\",\"kind\":\"bar\",\"title\":\"CLI category toString\",\"binding\":{\"kind\":\"scalar_inputs\",\"aggregation\":\"latest\",\"inputs\":[{\"key\":\"A\",\"label\":\"A\",\"measure_id\":\"${manual}\"}]}}]}}",
       "capture": {
         "goal": "id"
       },
@@ -574,6 +606,43 @@
       "area": "cli-goal",
       "argv": [
         "goal",
+        "read",
+        "${goal}",
+        "--first-date",
+        "2026-07-04",
+        "--last-date",
+        "2026-07-04"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Category chart maps retain every ordinary key; public values follow chart declaration A then B, despite native index-key map ordering.",
+      "assert_text": [
+        "7.25",
+        "6.5",
+        "__proto__",
+        "constructor",
+        "toString"
+      ],
+      "numeric_chart_keys": true,
+      "assert_json": {
+        "charts.20.kind": "category",
+        "charts.10.kind": "category",
+        "charts.__proto__.kind": "category",
+        "charts.constructor.kind": "category",
+        "charts.toString.kind": "category",
+        "values.0.measure_id": "${manual}",
+        "values.0.value": 7.25,
+        "values.1.measure_id": "${manual_b}",
+        "values.1.value": 6.5
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
         "edit",
         "${goal}"
       ],
@@ -581,8 +650,8 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Changes a named goal field through the canonical writer.",
-      "stdin": "{\"why\":\"CLI revised goal reason.\"}",
+      "proof": "Updates goal context and replaces supporting category charts with formula charts under the same numeric and prototype-like IDs.",
+      "stdin": "{\"why\":\"CLI revised goal reason.\",\"page\":{\"kind\":\"headroom.page\",\"version\":1,\"title\":\"CLI domain page\",\"summary\":\"A populated holder document.\",\"blocks\":[{\"type\":\"section\",\"id\":\"work\",\"title\":\"Work\",\"blocks\":[{\"type\":\"checklist\",\"id\":\"steps\",\"title\":\"Next steps\",\"items\":[{\"id\":\"first\",\"label\":\"CLI real checklist\",\"state\":\"open\"}]}]},{\"type\":\"chart\",\"id\":\"10\",\"kind\":\"line\",\"title\":\"CLI formula 10\",\"measure_id\":\"${manual}\",\"expectation\":{\"op\":\"constant\",\"value\":5}},{\"type\":\"chart\",\"id\":\"__proto__\",\"kind\":\"line\",\"title\":\"CLI formula __proto__\",\"measure_id\":\"${manual}\",\"expectation\":{\"op\":\"constant\",\"value\":5}},{\"type\":\"chart\",\"id\":\"constructor\",\"kind\":\"line\",\"title\":\"CLI formula constructor\",\"measure_id\":\"${manual}\",\"expectation\":{\"op\":\"constant\",\"value\":5}},{\"type\":\"chart\",\"id\":\"toString\",\"kind\":\"line\",\"title\":\"CLI formula toString\",\"measure_id\":\"${manual}\",\"expectation\":{\"op\":\"constant\",\"value\":5}}]}}",
       "assert_text": [
         "CLI revised goal reason."
       ]
@@ -603,10 +672,23 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Reads the bound chart with a retained manual observation.",
+      "proof": "Formula chart maps retain numeric and prototype-like ordinary keys; primary category20 remains, with every projection and value byte compared.",
       "assert_text": [
-        "7.25"
-      ]
+        "7.25",
+        "__proto__",
+        "constructor",
+        "toString"
+      ],
+      "numeric_chart_keys": true,
+      "assert_json": {
+        "charts.10.kind": "scalar",
+        "charts.__proto__.kind": "scalar",
+        "charts.constructor.kind": "scalar",
+        "charts.toString.kind": "scalar",
+        "charts.20.kind": "category",
+        "values.0.measure_id": "${manual}",
+        "values.0.value": 7.25
+      }
     },
     {
       "kind": "cli",
@@ -626,7 +708,7 @@
       "exit_code": 0,
       "proof": "Writes exact BOM, CRLF and final-newline bytes to a real goal.",
       "files": {
-        "goal.txt": "\ufeffCLI goal artifact\r\nsecond line\r\n"
+        "goal.txt": "﻿CLI goal artifact\r\nsecond line\r\n"
       }
     },
     {
@@ -666,7 +748,7 @@
         "CLI goal artifact"
       ],
       "assert_json": {
-        "content": "\ufeffCLI goal artifact\r\nsecond line\r\n"
+        "content": "﻿CLI goal artifact\r\nsecond line\r\n"
       }
     },
     {
@@ -773,7 +855,7 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Renames and re-encrypts the real fixture credential using this host\u2019s private key, without revealing its secret.",
+      "proof": "Renames and re-encrypts the real fixture credential using this host’s private key, without revealing its secret.",
       "assert_text": [
         "CLI renamed credential"
       ]
@@ -1158,7 +1240,7 @@
         "actor": "owner"
       },
       "exit_code": 1,
-      "proof": "Preserves this command group\u2019s concrete input or missing-record refusal."
+      "proof": "Preserves this command group’s concrete input or missing-record refusal."
     },
     {
       "kind": "cli",
@@ -1174,7 +1256,7 @@
         "actor": "owner"
       },
       "exit_code": 1,
-      "proof": "Preserves this command group\u2019s concrete input or missing-record refusal."
+      "proof": "Preserves this command group’s concrete input or missing-record refusal."
     },
     {
       "kind": "cli",
@@ -1187,7 +1269,7 @@
         "actor": "owner"
       },
       "exit_code": 1,
-      "proof": "Preserves this command group\u2019s concrete input or missing-record refusal."
+      "proof": "Preserves this command group’s concrete input or missing-record refusal."
     },
     {
       "kind": "cli",
@@ -1249,7 +1331,7 @@
         "conversation_id": "unit20-domain-worker"
       },
       "exit_code": 2,
-      "proof": "Preserves this command group\u2019s concrete input or missing-record refusal."
+      "proof": "Preserves this command group’s concrete input or missing-record refusal."
     },
     {
       "kind": "cli",
@@ -1265,7 +1347,7 @@
         "actor": "owner"
       },
       "exit_code": 1,
-      "proof": "Preserves this command group\u2019s concrete input or missing-record refusal."
+      "proof": "Preserves this command group’s concrete input or missing-record refusal."
     },
     {
       "kind": "cli",
@@ -1282,7 +1364,7 @@
         "conversation_id": "unit20-domain-worker"
       },
       "exit_code": 2,
-      "proof": "Preserves this command group\u2019s concrete input or missing-record refusal."
+      "proof": "Preserves this command group’s concrete input or missing-record refusal."
     },
     {
       "kind": "cli",

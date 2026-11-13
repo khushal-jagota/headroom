@@ -69,3 +69,32 @@ def test_wire_spans_preserve_unapproved_lexemes() -> None:
     )
     assert year_view(years) != year_view(years.replace('"2024":3.0', '"2024":3'))
     assert year_view(years) != year_view(years.replace('"strict":1.0', '"strict":1'))
+
+    charts = (
+        '{"charts":{"20":7.25,"10":6.5,"__proto__":3.0,"constructor":4.0,'
+        '"toString":5.0},"values":[7.25,6.5]}'
+    )
+    chart_rules = {
+        "cli_direct_rules": {
+            "goal_numeric_chart_keys": {
+                "fields": ["20", "10", "__proto__", "constructor", "toString"]
+            }
+        }
+    }
+
+    def chart_view(text: str) -> str:
+        return _body(
+            text,
+            Normalizer(chart_rules, Path("/unused-wire-root")),
+            "charts",
+            None,
+            chart_keys=True,
+        )
+
+    assert chart_view(charts) == chart_view(
+        charts.replace('"20":7.25,"10":6.5', '"10":6.5,"20":7.25')
+    )
+    assert chart_view(charts) != chart_view(charts.replace("[7.25,6.5]", "[6.5,7.25]"))
+    assert chart_view(charts) != chart_view(
+        charts.replace('"constructor":4.0,"toString":5.0', '"toString":5.0,"constructor":4.0')
+    )

@@ -11,6 +11,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 from urllib.parse import unquote, urlsplit
@@ -291,6 +292,7 @@ def run_cli(
         "assert_json",
         "assert_text",
         "assert_http_status",
+        "numeric_chart_keys",
     }
     if set(step) - allowed:
         raise ValueError(f"unsupported CLI step fields: {sorted(set(step) - allowed)}")
@@ -315,7 +317,7 @@ def run_cli(
         argv.append("--json")
     elif mode not in ("text", "json"):
         raise ValueError("unsupported CLI output mode")
-    from tests.compare.direct.unit20_wire import python_capture, read_capture
+    from tests.compare.direct.unit20_wire import _body, python_capture, read_capture
 
     with tempfile.NamedTemporaryFile(dir=root, prefix="wire-", delete=False) as private:
         wire_file = Path(private.name)
@@ -372,8 +374,23 @@ def run_cli(
     elif answer["exit_code"] == 0:
         assert wire, ("successful HTTP command had no captured response", argv)
     _check_output(answer, step, argv, mode, candidate=candidate)
+    comparison: dict[str, Any] = {}
+    if step.get("numeric_chart_keys"):
+        assert step["argv"][:2] == ["goal", "read"]
+        rule = json.loads((ROOT / "tests/compare/rules/unit-20-commands.domain.json").read_text())[
+            "cli_direct_rules"
+        ]["goal_numeric_chart_keys"]
+        literal = SimpleNamespace(
+            rules={"cli_direct_rules": {"goal_numeric_chart_keys": rule}},
+            normalize=lambda value: value,
+        )
+        comparison = {
+            "numeric_chart_keys": True,
+            "comparison_stdout": _body(answer["stdout"], literal, "stdout", None, chart_keys=True),
+        }
     return {
         **answer,
+        **comparison,
         "wire": wire,
         "seconds": elapsed,
         "strategy": "CliRunner.invoke" if python_in_process else "subprocess",
@@ -389,12 +406,9 @@ def cli_capture(
     if mode == "json":
         if not step.get("capture"):
             return
-        body = json.loads(answer["stdout"])
-        for name, pointer in step["capture"].items():
-            value = body
-            for part in pointer.split(".") if pointer else []:
-                value = value[int(part)] if isinstance(value, list) else value[part]
-            captures[name] = value
+        from tests.compare.runner import capture_values
+
+        capture_values(json.loads(answer["stdout"]), step, captures)
     else:
         for name, expression in step.get("capture_text", {}).items():
             found = re.search(expression, answer["stdout"])
@@ -403,5 +417,8 @@ def cli_capture(
 
 
 def comparable(answer: dict[str, Any]) -> dict[str, Any]:
-    """Runtime is evidence, never output normalization."""
-    return {key: answer[key] for key in ("exit_code", "stdout", "stderr")}
+    """Raw streams remain evidence; only an explicit member-order view may differ."""
+    result = {key: answer[key] for key in ("exit_code", "stdout", "stderr")}
+    if "comparison_stdout" in answer:
+        result["stdout"] = answer["comparison_stdout"]
+    return result

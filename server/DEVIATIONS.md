@@ -464,6 +464,16 @@ Its named comparison rule changes only the order of those two original lexical m
 one `results.0.rows.0.values` object, in JSON, text, and HTTP evidence. Raw outputs remain available.
 All other bytes, numeric spellings, row arrays, dimension declarations, and field declarations stay strict.
 The same owned hosts compare a populated Ticket search across two numeric fields in descending order.
+A second pass follows intermediate maps through their final readers. Human Ticket sections keep an
+explicit declared or requested sequence. Skills keep SQL row order, and category reading values keep
+chart declaration order. Those are parity repairs, not cosmetic map-order exceptions.
+The Goal read fixture also contains chart IDs `20`, `10`, `__proto__`, `constructor`, and `toString`.
+Its named rule promotes only the two numeric map keys at `body.charts` and `stdout.charts`.
+Non-index key order, value spans, public arrays, and every outside byte remain strict.
+Both projection accumulators retain special names as ordinary own keys. The CLI's field-value and
+approval lookups also require own keys, as Python dictionary access does.
+The wider assignment and error-order inventory remains in
+[the audit](/files/tickets/t_jt78h9xr/artifacts/data-key-enumeration-audit.md).
 No shared JSON parser or object representation changes form part of this acceptance.
 
 ## CLI executor socket transport — accepted, temporary, owner: the executor unit

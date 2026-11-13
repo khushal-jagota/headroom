@@ -89,24 +89,31 @@ def _body(
     preview_created_at: int | None,
     catalog: bool = False,
     year_fields: bool = False,
+    chart_keys: bool = False,
 ) -> str:
-    """Keep original spans; change only declared values or the named year-member order."""
+    """Keep original spans; change only declared values or named map-member order."""
     decoder = json.JSONDecoder()
     replacements: list[tuple[int, int, str]] = []
     ignored = normalizer.rules.get("response_ignore", {})
     tokens = normalizer.rules.get("response_tokens", {})
-    year_objects = 0
+    ordered_objects = 0
     if year_fields:
         assert normalizer.rules["cli_direct_rules"]["dataset_year_fields"]["fields"] == [
             "2025",
             "2024",
         ]
+    chart_fields = ["20", "10", "__proto__", "constructor", "toString"]
+    if chart_keys:
+        assert (
+            normalizer.rules["cli_direct_rules"]["goal_numeric_chart_keys"]["fields"]
+            == chart_fields
+        )
 
     def whitespace(index: int) -> int:
         return len(text) - len(text[index:].lstrip())
 
     def walk(index: int, path: str, exact_path: str = "body") -> int:
-        nonlocal year_objects
+        nonlocal ordered_objects
         index = whitespace(index)
         value, end = decoder.raw_decode(text, index)
         kind = type(value).__name__
@@ -151,10 +158,23 @@ def _body(
                     break
                 assert text[cursor] == ","
                 cursor += 1
-            if year_fields and exact_path == "body.results.0.rows.0.values":
-                assert is_object and len(members) == 2 and set(value) == {"2025", "2024"}
-                ordered = sorted(members, key=lambda item: item[0], reverse=True)
+            if (year_fields and exact_path == "body.results.0.rows.0.values") or (
+                chart_keys and exact_path == "body.charts"
+            ):
+                expected = chart_fields if chart_keys else ["2025", "2024"]
+                assert is_object and len(members) == len(expected) and set(value) == set(expected)
+                if chart_keys:
+                    ordered = [
+                        next(item for item in members if item[0] == key) for key in ("10", "20")
+                    ]
+                    ordered += [item for item in members if item[0] not in ("10", "20")]
+                else:
+                    ordered = sorted(members, key=lambda item: item[0], reverse=True)
                 separator = text[members[0][2] : members[1][1]]
+                assert all(
+                    text[left[2] : right[1]] == separator
+                    for left, right in zip(members, members[1:], strict=False)
+                )
                 replacements.append(
                     (
                         members[0][1],
@@ -162,21 +182,21 @@ def _body(
                         separator.join(text[start:stop] for _, start, stop in ordered),
                     )
                 )
-                year_objects += 1
+                ordered_objects += 1
         return end
 
-    if ignored or tokens or preview_created_at is not None or catalog or year_fields:
+    if ignored or tokens or preview_created_at is not None or catalog or year_fields or chart_keys:
         try:
             _, end = decoder.raw_decode(text, len(text) - len(text.lstrip()))
         except json.JSONDecodeError:
-            assert not year_fields
+            assert not (year_fields or chart_keys)
             return cast(str, normalizer.normalize(text))  # Plain-text artifact response.
         if text[end:].strip():
-            assert not year_fields
+            assert not (year_fields or chart_keys)
             return cast(str, normalizer.normalize(text))
         walk(0, "body")
-    if year_fields:
-        assert year_objects == 1, "the year-key rule requires the one retained row"
+    if year_fields or chart_keys:
+        assert ordered_objects == 1, "the named member-order rule requires exactly one object"
     for start, end, replacement in sorted(replacements, reverse=True):
         text = text[:start] + replacement + text[end:]
     return cast(str, normalizer.normalize(text))
@@ -192,6 +212,10 @@ def wire_view(
     result = []
     for index, row in enumerate(answer["wire"]):
         assert row["complete"]
+        chart_keys = answer.get("numeric_chart_keys", False)
+        if chart_keys:
+            assert len(answer["wire"]) == 1 and row["method"] == "GET" and row["status"] == 200
+            assert re.fullmatch(r"/api/goals/goal_[a-z0-9]{8}/readings", urlsplit(row["path"]).path)
         if year_fields:
             assert len(answer["wire"]) == 1 and row["method"] == "POST"
             assert row["path"] == "/api/datasets/read"
@@ -218,6 +242,7 @@ def wire_view(
                         preview_created_at,
                         catalog,
                         year_fields,
+                        chart_keys,
                     )
                     if row["path"].startswith("/api/")
                     else normalizer.normalize(raw)

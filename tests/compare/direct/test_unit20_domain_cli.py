@@ -245,27 +245,58 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
             assert base64.b64decode(observed["wire"][0]["body_base64"]) == oracle.content
             evidence["wire_transparency"].append(actual)
         evidence["wire_transparency_seconds"] = time.perf_counter() - transparency_started
-        search = []
-        for handle in handles:
-            CliHost(handle, tmp_path).check()
-            with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
-                search_response = client.get(
-                    handle.base + "/api/tickets",
-                    params={"detail": "summary", "search": "unit20-left-2025\nunit20-right-2024"},
-                )
-            assert search_response.status_code == 200
-            body = search_response.json()
-            assert [ticket["id"] for ticket in body["tickets"]] == [captures["numeric_ticket"]]
-            assert body["page"]["match_count"] == 1
-            search.append(
-                {
-                    "status": search_response.status_code,
-                    "body": body,
-                    "body_base64": base64.b64encode(search_response.content).decode(),
-                }
+        ticket_started = time.perf_counter()
+        evidence["numeric_ticket_human"] = []
+        for parts in ("search", None, "2025,2024", "2024,2025"):
+            searching = parts == "search"
+            argv = (
+                ["ticket", "list", "--search", "unit20-left-2025\nunit20-right-2024"]
+                if searching
+                else ["ticket", "show", captures["numeric_ticket"], *([parts] if parts else [])]
             )
-        assert search[0]["body"] == search[1]["body"]
-        evidence["declared_field_search"] = search
+            order = parts.split(",") if parts and not searching else ["2025", "2024"]
+            step = {
+                "kind": "cli",
+                "argv": argv,
+                "identity": {"actor": "owner"},
+                "exit_code": 0,
+                "assert_http_status": 200,
+                "proof": "Search joins numeric field bodies in workflow order."
+                if searching
+                else "Human Ticket order follows the default manifest or explicit requested parts.",
+            }
+            answers = [
+                run_cli(
+                    CliHost(handle, tmp_path),
+                    step,
+                    candidate_cli,
+                    tmp_path / "numeric-ticket-input",
+                    "json" if searching else "text",
+                )
+                for handle, candidate_cli in (
+                    (reference, False),
+                    (reference, True),
+                    (candidate_host, True),
+                )
+            ]
+            for answer in answers:
+                if searching:
+                    body = json.loads(answer["stdout"])
+                    assert [ticket["id"] for ticket in body["tickets"]] == [
+                        captures["numeric_ticket"]
+                    ]
+                    assert body["page"]["match_count"] == 1
+                else:
+                    assert answer["stdout"].index("\n  " + order[0] + ":") < answer["stdout"].index(
+                        "\n  " + order[1] + ":"
+                    )
+            assert comparable(answers[0]) == comparable(answers[1]) == comparable(answers[2])
+            observed = {"argv": argv, "proof": step["proof"], "order": order, "answers": answers}
+            if searching:
+                evidence["declared_field_search"] = observed
+            else:
+                evidence["numeric_ticket_human"].append(observed)
+        evidence["numeric_ticket_proof_seconds"] = time.perf_counter() - ticket_started
         evidence["runtime_guidance"] = _runtime_proof(reference, candidate_host, tmp_path)
     finally:
         for handle in reversed(handles):

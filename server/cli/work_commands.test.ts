@@ -70,6 +70,17 @@ test('CLI validates missing native values and skips an absent optional page cont
     expect(paged).toMatchObject({ exit_code: 0, stderr: '' });
     expect(paged.stdout).toContain('Returned 0 of 0 matches.');
     expect(paged.stdout).not.toMatch(/Use --limit|undefined|\[object Object\]/);
+    // Python dict.get never returns inherited values or approval functions.
+    const names = ['__proto__', 'constructor', 'toString'];
+    request.mockResolvedValue({
+      id: 't_own_keys',
+      workflow: { fields: names.map((id) => ({ id })) },
+      field_values: {},
+      field_approvals: {},
+    });
+    const record = await run(['ticket', 'show', 't_own_keys'], environment);
+    expect(record).toMatchObject({ exit_code: 0, stderr: '' });
+    for (const name of names) expect(record.stdout).toContain(`  ${name}:\n    character_count: 0`);
   } finally {
     request.mockRestore();
   }
