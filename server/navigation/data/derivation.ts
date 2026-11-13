@@ -167,7 +167,12 @@ export function derive(
         project_id: t.diagnostic_project,
         is_backlogged: Boolean(t.is_backlogged),
         recap_preview: recapPreview(String(t.recap)),
-        ...(version >= 11 ? { recap_updated_at: t.recap_updated_at, recap_stage_changed: Boolean(t.recap_stage_changed) } : {}),
+        ...(version >= 11
+          ? {
+              recap_updated_at: t.recap_updated_at,
+              recap_stage_changed: Boolean(t.recap_stage_changed),
+            }
+          : {}),
       });
       records.push(record(kind, id, value));
       return result();
@@ -242,10 +247,11 @@ export function derive(
         recap_preview: recapPreview(String(t.recap)),
         ...(version >= 7 ? { recap: String(t.recap) } : {}),
       });
-    if (version >= 11) Object.assign(value, {
-      recap_updated_at: t.recap_updated_at,
-      recap_stage_changed: Boolean(t.recap_stage_changed),
-    });
+    if (version >= 11)
+      Object.assign(value, {
+        recap_updated_at: t.recap_updated_at,
+        recap_stage_changed: Boolean(t.recap_stage_changed),
+      });
     records.push(record(kind, id, value));
   } else if (kind === 'chief' || kind === 'manager') {
     let key: string, value: Row;

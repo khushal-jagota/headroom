@@ -612,11 +612,20 @@ export function accept_proposal(
   const o = typeof fieldOrOptions === 'string' ? options! : fieldOrOptions,
     field = typeof fieldOrOptions === 'string' ? fieldOrOptions : o.field!;
   const t = load_ticket_for_write(tx, id);
-  decision_messages.validate_request(o.message ?? null, o.expected_proposal_revision ?? null, o.decision_id ?? null);
+  decision_messages.validate_request(
+    o.message ?? null,
+    o.expected_proposal_revision ?? null,
+    o.decision_id ?? null,
+  );
   const request = decision_messages.request_json(o.principal, {
-    ticket_id: id, action: 'approved', field, message: o.message ?? null,
+    ticket_id: id,
+    action: 'approved',
+    field,
+    message: o.message ?? null,
     expected_proposal_revision: o.expected_proposal_revision ?? null,
-    edited_body: o.edited_body ?? null, next_ceiling: o.next_ceiling ?? null, next_holder: o.next_holder,
+    edited_body: o.edited_body ?? null,
+    next_ceiling: o.next_ceiling ?? null,
+    next_holder: o.next_holder,
   });
   if (decision_messages.is_replay(tx, o.decision_id ?? null, request)) return t;
   if (
@@ -637,8 +646,15 @@ export function accept_proposal(
     approval: explicit_approval(tx, o.principal),
   });
   review_holder(tx, o.next_holder, id, t.manager_kind, t.manager_id);
-  decision_messages.save(tx, t, { action: 'approved', field, principal: o.principal,
-    message: o.message ?? null, decision_id: o.decision_id ?? null, request, now: o.now });
+  decision_messages.save(tx, t, {
+    action: 'approved',
+    field,
+    principal: o.principal,
+    message: o.message ?? null,
+    decision_id: o.decision_id ?? null,
+    request,
+    now: o.now,
+  });
   const u = _apply_decision(tx, t, d, o.now);
   record_approval(tx, {
     ticket_id: id,
@@ -702,12 +718,26 @@ export function reject_proposal(
   if (o.message !== null) admission.validate_revision_guidance(o.message);
   const t = load_ticket_for_write(tx, id);
   const field = t.workflow.stages[index(t.workflow, t.stage)]!.gating_field;
-  decision_messages.validate_request(o.message, o.expected_proposal_revision ?? null, o.decision_id ?? null);
-  const request = decision_messages.request_json(o.principal, { ticket_id: id, action: 'sent back', message: o.message,
-    expected_proposal_revision: o.expected_proposal_revision ?? null });
+  decision_messages.validate_request(
+    o.message,
+    o.expected_proposal_revision ?? null,
+    o.decision_id ?? null,
+  );
+  const request = decision_messages.request_json(o.principal, {
+    ticket_id: id,
+    action: 'sent back',
+    message: o.message,
+    expected_proposal_revision: o.expected_proposal_revision ?? null,
+  });
   if (decision_messages.is_replay(tx, o.decision_id ?? null, request)) return t;
-  if (o.expected_proposal_revision != null && t.pending_proposal_revision !== o.expected_proposal_revision)
-    throw new PlannerError('validation', 'the visible proposal changed; read it again before sending back');
+  if (
+    o.expected_proposal_revision != null &&
+    t.pending_proposal_revision !== o.expected_proposal_revision
+  )
+    throw new PlannerError(
+      'validation',
+      'the visible proposal changed; read it again before sending back',
+    );
   if (o.expected_proposal && !equal(t.pending_proposal, o.expected_proposal))
     throw new PlannerError('validation', 'proposal changed before revision guidance was applied', {
       ticket_id: id,
@@ -718,8 +748,15 @@ export function reject_proposal(
     has_guidance: o.message !== null,
     worker_type_definition: t.workflow,
   });
-  decision_messages.save(tx, t, { action: 'sent back', field: field!, principal: o.principal,
-    message: o.message, decision_id: o.decision_id ?? null, request, now: o.now });
+  decision_messages.save(tx, t, {
+    action: 'sent back',
+    field: field!,
+    principal: o.principal,
+    message: o.message,
+    decision_id: o.decision_id ?? null,
+    request,
+    now: o.now,
+  });
   const u = _apply_decision(tx, t, d, o.now);
   tx.run('DELETE FROM ticket_paired_stage_openers WHERE ticket_id=? AND stage=?', [id, t.stage]);
   give_back(tx, u, o.now);

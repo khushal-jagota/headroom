@@ -151,10 +151,25 @@ def compare(
 
 
 def check_decisions(conn: sqlite3.Connection, root: Path) -> dict[str, Any]:
+    from planner.conversation.logic.conversation_start_resolution import (
+        resolve_conversation_start_request,
+    )
+    from planner.conversation.storage import ConversationStore
     from planner.core.contracts import Principal, PrincipalKind
     from planner.tickets import decision_messages
 
     ticket = new_ticket(conn)
+    asyncio.run(
+        ConversationStore(str(root / "python.sqlite"), integer_now=lambda: NOW).create_conversation(
+            resolve_conversation_start_request(
+                ConversationStartRequest(
+                    conversation_id="decision-parity-conversation",
+                    model="gpt-6.1-sol",
+                    workspace_folder=root,
+                )
+            )
+        )
+    )
     # Canonical decision writes require an existing session for attributed guidance.
     ticket = tickets.write_ticket_conversation_start(
         conn,

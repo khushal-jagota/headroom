@@ -131,7 +131,7 @@ async function owned_server(installer?: Partial<InstallerOperations>) {
   let environment!: EnvironmentRuntime;
   const source = fixture();
   source.write((tx) => {
-    tx.run("INSERT INTO navigation_meta VALUES(1,'update-core',10,'proof-epoch',0)");
+    tx.run("INSERT INTO navigation_meta VALUES(1,'update-core',11,'proof-epoch',0)");
     tx.run('INSERT INTO chief_page(singleton) VALUES(1)');
     tx.run("INSERT INTO conversation_runtime_epoch VALUES(1,'old-runtime')");
   });

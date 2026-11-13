@@ -18,6 +18,7 @@ def test_payload_differences_survive_normalization(tmp_path: Path) -> None:
     # Equivalent aliases map identically, but a changed reference must still differ.
     assert left.normalize("t_12345678") == right.normalize("t_abcdefgh")
     assert left.normalize("t_12345678") != right.normalize("t_87654321")
+    left, right = Normalizer({}, tmp_path), Normalizer({}, tmp_path)
     assert left.normalize("ticket_decision_" + "a" * 64) == right.normalize(
         "ticket_decision_" + "b" * 64
     )

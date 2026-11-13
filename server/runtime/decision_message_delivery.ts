@@ -104,9 +104,10 @@ export async function deliver_ticket_decision_messages(
         console.error(`decision delivery receipt is uncertain (ticket=${ticket_id})`);
         break;
       }
+      let delivered: Awaited<ReturnType<typeof start.send_to_ticket_conversation>>;
       try {
         ticket = database.read((sql) => tickets.read_ticket(sql, ticket_id));
-        const delivered = await start.send_to_ticket_conversation(
+        delivered = await start.send_to_ticket_conversation(
           options.conversation_system,
           database,
           ticket_id,
@@ -125,23 +126,6 @@ export async function deliver_ticket_decision_messages(
             signal: options.signal,
           },
         );
-        last_fate = delivered.fate;
-        status =
-          delivered.fate instanceof PromptDeliveryStarted ||
-          delivered.fate instanceof PromptDeliveryInjected
-            ? 'delivered'
-            : delivered.fate instanceof PromptDeliveryQueued
-              ? 'queued'
-              : delivered.fate instanceof PromptDeliveryRefused
-                ? 'refused'
-                : delivered.fate instanceof PromptDeliverySuppressed
-                  ? 'discarded'
-                  : 'uncertain';
-        set_status(identity, status, delivered.conversation_id);
-        if (!['delivered', 'queued'].includes(status)) {
-          mark_error(status);
-          break;
-        }
       } catch (error) {
         // Cancellation preserves the durable sending marker for reconciliation.
         if (error instanceof ConversationStartAborted) throw error;
@@ -156,6 +140,23 @@ export async function deliver_ticket_decision_messages(
           set_status(identity, 'uncertain', attempt.conversation_id);
           mark_error('uncertain');
         }
+        break;
+      }
+      last_fate = delivered.fate;
+      status =
+        delivered.fate instanceof PromptDeliveryStarted ||
+        delivered.fate instanceof PromptDeliveryInjected
+          ? 'delivered'
+          : delivered.fate instanceof PromptDeliveryQueued
+            ? 'queued'
+            : delivered.fate instanceof PromptDeliveryRefused
+              ? 'refused'
+              : delivered.fate instanceof PromptDeliverySuppressed
+                ? 'discarded'
+                : 'uncertain';
+      set_status(identity, status, delivered.conversation_id);
+      if (!['delivered', 'queued'].includes(status)) {
+        mark_error(status);
         break;
       }
     }
