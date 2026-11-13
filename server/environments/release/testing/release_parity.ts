@@ -15,7 +15,7 @@ import type { SpawnOptions } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { createReadAccess } from '../../../core/database/index.ts';
-import type { MigrationGraph } from '../contracts.ts';
+import type { ElfObject, MigrationGraph } from '../contracts.ts';
 import {
   APP_FORMAT,
   ARCHIVE_SPACE_RESERVE_BYTES,
@@ -25,6 +25,145 @@ import { create_app_archive, extract_app_archive, hash_archive } from '../archiv
 import { digest_app_artifact, digest_app_source, validate_app_manifest } from '../identity.ts';
 import { require_node_database_frontier, schema_change_pending } from '../migrations.ts';
 import { AppValidationError } from '../contracts.ts';
+
+import { parse_dynamic } from '../native/elf.ts';
+import { resolve_provider } from '../native/providers.ts';
+import { RuntimeContractError } from '../../updates/logic/runtime_contract.ts';
+import { complete_node_runtime } from '../native_inventory.ts';
+import { require_host_node, verify_runtime_host_facts } from '../logic/host.ts';
+import type { RuntimeHostFacts } from '../logic/host.ts';
+import { validate_node_probe_report } from '../admission.ts';
+import { run_runtime_probe } from '../admission_process.ts';
+
+/** Hosted-only caller pins both recorded handles before it releases this timeout callback. */
+export async function admission_group_parity(root: string): Promise<unknown> {
+  const owner = new ChildProcesses(),
+    spawn = owner.spawn.bind(owner);
+  const original_timer = globalThis.setTimeout;
+  let timeout: (() => void) | undefined, timer_delay: number | undefined;
+  let flight: Promise<string> | undefined;
+  owner.spawn = ((command: string, args: readonly string[], options: SpawnOptions) => {
+    const child = spawn(command, args, options);
+    // run_runtime_probe synchronously registers exactly one timer after this spawn returns.
+    globalThis.setTimeout = ((
+      callback: (...values: unknown[]) => void,
+      delay?: number,
+      ...values: unknown[]
+    ) => {
+      globalThis.setTimeout = original_timer;
+      timer_delay = delay;
+      timeout = () => callback(...values);
+      const handle = original_timer(() => {}, delay);
+      clearTimeout(handle);
+      return handle;
+    }) as typeof setTimeout;
+    return child;
+  }) as typeof owner.spawn;
+  const marker = join(root, 'group-identities.json');
+  const program = `const fs=require('node:fs'),{spawn}=require('node:child_process');
+    const identity=pid=>{const f=fs.readFileSync('/proc/'+pid+'/stat','utf8').split(') ').at(-1).split(' ');
+      return {pid,parent:Number(f[1]),start_time:Number(f[19])}};
+    const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
+    child.once('spawn',()=>{try{fs.writeFileSync(${JSON.stringify(marker + '.tmp')},JSON.stringify({leader:identity(process.pid),descendant:identity(child.pid)}));fs.renameSync(${JSON.stringify(marker + '.tmp')},${JSON.stringify(marker)})}catch(error){child.kill('SIGKILL');throw error}});
+    setInterval(()=>{},1000);`;
+  try {
+    flight = run_runtime_probe(
+      [process.execPath, '-e', program],
+      root,
+      performance.now() / 1000 + 120,
+      owner,
+    );
+    void flight.catch(() => {});
+    const until = performance.now() + 20_000;
+    while (true) {
+      try {
+        await stat(join(root, 'release-timeout'));
+        break;
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      }
+      if (performance.now() >= until)
+        throw new Error('Hosted parent did not release the pinned group timeout');
+      await new Promise<void>((resolve) => original_timer(resolve, 10));
+    }
+    if (!timeout) throw new Error('Admission timeout callback was not reserved');
+    timeout();
+    let message: string | undefined;
+    try {
+      await flight;
+    } catch (error) {
+      if (!(error instanceof AppValidationError)) throw error;
+      message = error.message;
+    }
+    if (message !== 'runtime probe failed: command timed out')
+      throw new Error('Admission did not reject its timeout');
+    return { message, timer_delay, timeout_callback_released_after_pin: true };
+  } finally {
+    globalThis.setTimeout = original_timer;
+    owner.force_kill(performance.now() / 1000 + 5);
+    await flight?.catch(() => {});
+    await owner.settled();
+  }
+}
+
+/** Host and report rules consume only synthetic observations from the private driver. */
+export async function admission_rules_parity(
+  root: string,
+  spec: {
+    host_cases: { version: 1 | 2; node: string; facts: RuntimeHostFacts }[];
+    reports: unknown[];
+  },
+): Promise<unknown> {
+  const v1 = (await validate_app_manifest(join(root, 'app/manifest.json'))).runtime_contract!;
+  const v2 = (await validate_app_manifest(join(root, 'v2/manifest.json'))).runtime_contract!;
+  if (v2.version !== 2) throw new Error('Node fixture must carry v2');
+  const hosts: (string | null)[] = [];
+  for (const item of spec.host_cases) {
+    const contract = item.version === 1 ? v1 : v2;
+    try {
+      verify_runtime_host_facts(contract, item.facts);
+      require_host_node(item.node, contract);
+      hosts.push(null);
+    } catch (error) {
+      if (!(error instanceof AppValidationError)) throw error;
+      hosts.push(error.message);
+    }
+  }
+  const reports: (string | null)[] = [];
+  for (const report of spec.reports) {
+    try {
+      await validate_node_probe_report(join(root, 'v2'), v2, report);
+      reports.push(null);
+    } catch (error) {
+      if (!(error instanceof AppValidationError)) throw error;
+      reports.push(error.message);
+    }
+  }
+  return { hosts, reports };
+}
+
+export async function native_loader_parity(spec: {
+  dynamic: readonly [string, string];
+  providers: readonly { name: string; requester: ElfObject; ancestors: readonly ElfObject[] }[];
+}): Promise<unknown> {
+  const providers = [];
+  for (const request of spec.providers) {
+    try {
+      providers.push({
+        provider: await resolve_provider(
+          request.name,
+          request.requester,
+          request.ancestors,
+          new Map(),
+        ),
+      });
+    } catch (error) {
+      if (!(error instanceof RuntimeContractError)) throw error;
+      providers.push({ error: error.message });
+    }
+  }
+  return { dynamic: parse_dynamic(...spec.dynamic), providers };
+}
 
 interface ArchiveVector {
   name: string;
@@ -402,7 +541,20 @@ async function compare_release(
       access.close();
     }
   }
+  let native_tree_admission: string;
+  try {
+    await complete_node_runtime(join(root, 'native-link-provider'));
+    throw new Error('native packaging admitted an outside write target');
+  } catch (error) {
+    if (
+      !(error instanceof AppValidationError) ||
+      error.message !== 'app contains a symlink outside its root'
+    )
+      throw error;
+    native_tree_admission = error.message;
+  }
   return {
+    native_tree_admission,
     identity: {
       source: await digest_app_source(app),
       artifact: await digest_app_artifact(app),
