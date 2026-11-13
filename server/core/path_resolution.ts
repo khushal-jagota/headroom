@@ -3,12 +3,13 @@ import { lstatSync, readlinkSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 
 /** Path.resolve(strict=False) follows links before a later '..', and permits missing tails. */
-export function resolve_path_sync(path: string): string {
+export function resolve_path_sync(path: string, options: { strict?: boolean } = {}): string {
   function walk(value: string, base: string, active: Set<string>): string {
     let current = isAbsolute(value) ? '/' : base;
     for (const part of value.split('/')) {
       if (!part || part === '.') continue;
       if (part === '..') {
+        // Python 3.12 realpath cancels '..' before lstat, including in strict mode.
         current = dirname(current);
         continue;
       }
@@ -17,6 +18,7 @@ export function resolve_path_sync(path: string): string {
       try {
         entry = lstatSync(candidate);
       } catch (error) {
+        if (options.strict) throw error;
         if (!(error instanceof Error && 'code' in error)) throw error;
         current = candidate;
         continue;

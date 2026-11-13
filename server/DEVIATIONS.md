@@ -705,3 +705,20 @@ The [first real producer proof](https://github.com/khushal-jagota/headroom/actio
 Its 597,087,278-byte archive passed unchanged, with both direct children closed. Build plus inspection took 276.07 seconds.
 Every final head must repeat this gate after source changes. Evidence stays under `mac-producer-compatibility` in the existing native ABI artifact.
 If that producer fails any accepted policy, stop and ask the Manager before further work.
+
+## Installer database and attempt paths — accepted
+
+The Manager accepted this correction to Python's copied installer on November 12, 2026.
+Python accepts configured paths at update admission but its copied installer hardcodes
+`current_root/data/planner.db` and `current_root/data/update-attempt.json`.
+TypeScript passes the admitted database to capture and rollback restore. It uses the
+admitted data directory for the attempt record and its lock. Neither path derives from
+the application root.
+
+`tests/compare/direct/test_unit21_installer.py::test_installer_algorithm_and_configured_paths`
+compares four canonical-path scenarios against fresh Python. Its configured-path lifetime
+proves actual capture/restore command arguments, record and lock placement, no canonical
+data directory, and cancellation only after the owned restore witness closes.
+The configured helpers are disclosed Node witnesses, not a real installer rehearsal.
+`test_unit21_interruption_capture.py` separately exercises the actual stopped capture and
+restore entries. Hosted service, copy, health and rollback proofs remain later gates.
