@@ -1,10 +1,11 @@
 name: TypeScript lifecycle native ABI
 
-# Runs after merge and on manual runs only; macOS runners are scarce, so pull
-# requests do not run this workflow.
+# Runs on the four-hourly schedule (against feature/typescript-backend) and on
+# manual runs only; macOS runners are scarce, so neither pull requests nor
+# pushes run this workflow.
 on:
-  push:
-    branches: [feature/typescript-backend]
+  schedule:
+    - cron: '17 */4 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -22,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event_name == 'schedule' && 'feature/typescript-backend' || github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
