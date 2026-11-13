@@ -372,6 +372,8 @@ def _row_to_ticket(
         manager_kind=str(row["manager_kind"]),
         manager_title=row["manager_title"],
         recap=row["recap"],
+        recap_updated_at=row["recap_updated_at"],
+        recap_stage_changed=bool(row["recap_stage_changed"]),
         ceiling=str(row["ceiling"]),
         ceiling_holder=_principal_from_json(str(row["ceiling_holder"])),
         ticket_status=derivation.derive_ticket_status(
@@ -415,6 +417,8 @@ _TICKET_STORED_COLUMNS = (
     "project_id",
     "manager_id",
     "recap",
+    "recap_updated_at",
+    "recap_stage_changed",
     "ceiling",
     "conversation_id",
     "field_values",
@@ -632,7 +636,8 @@ def _apply_decision(
     conn.execute(
         "UPDATE tickets SET field_values = ?, field_approvals = ?, pending_proposal = ?, "
         "pending_proposal_revision = pending_proposal_revision + ?, "
-        "stage = ?, ceiling = ?, ceiling_holder = ?, updated_at = ? WHERE id = ?",
+        "stage = ?, ceiling = ?, ceiling_holder = ?, updated_at = ?, "
+        "recap_stage_changed = ? WHERE id = ?",
         (
             _field_values_for_storage(
                 conn,
@@ -652,6 +657,10 @@ def _apply_decision(
             str(new_ceiling),
             _principal_to_json(decision.ceiling_holder),
             now,
+            int(
+                ticket.recap_stage_changed
+                or (str(new_stage) != ticket.stage and bool(ticket.recap.strip()))
+            ),
             ticket.id,
         ),
     )
@@ -1952,6 +1961,22 @@ def edit_ticket(
         # Ticket edit door as scalar fields.
         if "recap" in edit:
             changes.append(("recap", "recap", ticket.recap, edit["recap"]))
+            changes.append(
+                (
+                    "recap_updated_at",
+                    "recap_updated_at",
+                    ticket.recap_updated_at,
+                    now if edit["recap"].strip() else None,
+                )
+            )
+            changes.append(
+                (
+                    "recap_stage_changed",
+                    "recap_stage_changed",
+                    ticket.recap_stage_changed,
+                    0,
+                )
+            )
 
         settled_values = edit.get("field_values")
         edited_values = dict(ticket.field_values)

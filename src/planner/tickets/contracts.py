@@ -232,6 +232,8 @@ class Ticket:  # §3.3 — column names match exactly
     manager_kind: str = field(default="chief", kw_only=True)
     manager_title: str | None
     recap: str  # writable only past the type's first worker Stage
+    recap_updated_at: int | None = field(default=None, kw_only=True)
+    recap_stage_changed: bool = field(default=False, kw_only=True)
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     # An address, not an authority. It says which principal a parked proposal is for, so
     # that Review, attention and notifications can put it in front of them. It says
@@ -309,6 +311,9 @@ class TicketIntegrityIssue(TypedDict):
 
 
 class BrokenTicketProjection(TypedDict):
+    recap: str
+    recap_updated_at: int | None
+    recap_stage_changed: bool
     id: str
     title: str
     worker_type: str

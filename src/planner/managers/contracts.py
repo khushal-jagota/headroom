@@ -30,6 +30,7 @@ class Manager:  # §3.2
     title: str
     goal: str
     recap: str
+    recap_updated_at: int | None = field(default=None, kw_only=True)
     project_id: str
     project_name: str
     manager_launch_configuration: ManagerLaunchConfiguration
@@ -106,6 +107,9 @@ class ManagerStartupResult(TypedDict):
 
 
 class ManagerSummary(TypedDict):
+    recap: str
+    recap_preview: str
+    recap_updated_at: int | None
     settled: bool
     id: str
     title: str
