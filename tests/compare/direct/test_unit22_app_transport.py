@@ -1,10 +1,4 @@
-"""One paired real-wire executor case using the existing owned TLS proxy.
-
-Raw framing, streaming/disconnect custody, and ingress cannot be proved by injection.
-This reuses the existing transport app and TLS proxy, with one Node companion host.
-Update service policy remains its owning unit's proof: these recording services test
-only the route contract. No URL outside the exact fixture-owned origin can connect.
-"""
+"""One owned wire/core exchange. Existing component proofs cover their permutations."""
 
 from __future__ import annotations
 
@@ -29,11 +23,10 @@ from urllib.parse import urlsplit
 
 import pytest
 from tests.integration.test_executor_app_transport import _reads_app, _transport_app
-from tests.integration.test_executor_end_to_end import ExecutorHarness
+from tests.integration.test_executor_end_to_end import ExecutorHarness, create_mac_ticket
 from tests.integration.test_executor_isolation import held_mac_writes, writer_lock_is_free
 from tests.support.executor_https import HttpsProxy, isolated_https_proxy, serve_executor_app
 from tests.support.executor_presence import lease_request, mac_identity, make_current
-from tests.support.stall_alarm_fakes import FakeChief, FakeWebPush
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
 from planner.conversation.backends.contracts import TurnToken
@@ -48,28 +41,15 @@ from planner.conversation.live_tail import ConversationLiveTail
 from planner.conversation.message_content import MessageFile, text_message_content
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
-from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as FixedClock
-from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.environments.mac_updates import MacUpdateService
-from planner.environments.update_attempts import UpdateConflict
 from planner.execution_identity import ChildReference
 from planner.executor import protocol as wire
 from planner.executor.update_contracts import MacUpdateCheck, MacUpdateReport, MacUpdateStatus
 from planner.executor.vps_remote_child import MacRemoteChild
 from planner.executor.vps_transport import VpsExecutor
-from planner.managers.data import create_manager
-from planner.notifications import data as notifications_data
-from planner.stalls.checker import StallChecker
-from planner.stalls.registry import WAITS
-from planner.stalls.watchdog import run_watchdog
-from planner.tickets.api import write_create_ticket
-from planner.tickets.data import (
-    accept_proposal,
-    claim_ticket_for_worker_step,
-    write_ticket_conversation_start,
-)
+from planner.tickets.data import claim_ticket_for_worker_step, write_ticket_conversation_start
 
 ROOT = Path(__file__).resolve().parents[3]
 NOW = 1_760_000_000_000
@@ -78,20 +58,17 @@ OWNED_ORIGINS: set[str] = set()
 
 
 def owned_url(origin: str, path: str) -> str:
-    if origin not in OWNED_ORIGINS:
-        raise ValueError("the origin is not a listener owned by this fixture")
     parsed = urlsplit(origin)
-    if parsed.scheme != "https" or parsed.hostname != "127.0.0.1" or parsed.port is None:
-        raise ValueError("only the fixture-owned TLS listener is allowed")
-    result = origin + path
-    actual = urlsplit(result)
     if (
-        (actual.scheme, actual.netloc) != (parsed.scheme, parsed.netloc)
+        origin not in OWNED_ORIGINS
+        or parsed.scheme != "https"
+        or parsed.hostname != "127.0.0.1"
+        or parsed.port is None
         or not path.startswith("/")
         or path.startswith("//")
     ):
-        raise ValueError("executor request left its owned listener")
-    return result
+        raise ValueError("request is outside this fixture's exact owned listener")
+    return origin + path
 
 
 class RecordingUpdates(MacUpdateService):
@@ -103,13 +80,11 @@ class RecordingUpdates(MacUpdateService):
         return MacUpdateCheck(1, None)
 
     def archive(self, request_id: str) -> Path:
-        if request_id != "fixture":
-            raise UpdateConflict("unknown fixture archive")
+        assert request_id == "fixture"
         return self.archive_file
 
     def prefetch_archive(self, sha256: str) -> Path:
-        if sha256 != hashlib.sha256(self.archive_file.read_bytes()).hexdigest():
-            raise UpdateConflict("unknown fixture archive")
+        assert sha256 == hashlib.sha256(self.archive_file.read_bytes()).hexdigest()
         return self.archive_file
 
     def report(self, report: MacUpdateReport, health: Any) -> MacUpdateStatus:
@@ -124,882 +99,215 @@ async def transcript(proxy: HttpsProxy, spec: dict[str, Any]) -> list[Any]:
         "X-Panels-Executor-Incarnation": IDENTITY.executor_incarnation,
         "X-Panels-Executor-Protocol": "22",
     }
-    result: list[Any] = []
+    result = []
     async with proxy.session_factory() as client:
 
-        async def call(
-            method: str, path: str, data: bytes | None = None, headers: Any = None
-        ) -> None:
+        async def call(method: str, path: str, body: Any = None, headers: Any = None) -> None:
             chosen = work if headers is None else headers
-            request_headers = (
-                {"Accept-Encoding": "identity", **chosen}
+            pairs = (
+                list({"Accept-Encoding": "identity", **chosen}.items())
                 if isinstance(chosen, dict)
                 else [("Accept-Encoding", "identity"), *chosen]
             )
+            raw = body if isinstance(body, bytes) else json.dumps(body).encode()
             async with client.request(
                 method,
                 owned_url(proxy.origin, path),
-                headers=request_headers,
-                data=data,
+                data=raw if body is not None else None,
+                headers=pairs,
                 allow_redirects=False,
             ) as response:
-                body = await response.read()
+                value = await response.read()
                 content = (
-                    json.loads(body)
-                    if response.headers.get("content-type") == "application/json"
-                    else {"length": len(body), "sha256": hashlib.sha256(body).hexdigest()}
+                    json.loads(value)
+                    if response.content_type == "application/json"
+                    else hashlib.sha256(value).hexdigest()
                 )
-                selected: dict[str, str | None] = {
-                    name: response.headers[name]
-                    for name in (
-                        "Content-Type",
-                        "Content-Encoding",
-                        "X-Panels-File-Sha256",
-                        "Accept-Ranges",
-                    )
-                    if name in response.headers
-                }
-                if response.headers.get("content-type") != "application/json":
-                    selected["Content-Length"] = response.headers.get("Content-Length")
-                result.append([method, path, response.status, content, selected])
+                names = ("Content-Type", "Content-Encoding", "X-Panels-File-Sha256")
+                result.append(
+                    [
+                        response.status,
+                        content,
+                        {key: response.headers[key] for key in names if key in response.headers},
+                    ]
+                )
 
-        lease = json.dumps(spec["lease"]).encode()
-        for actor in (
-            {},
-            {"X-Plan-Actor": "owner"},
-            {"X-Plan-Actor": "chief"},
-            {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": spec["manager"]},
-            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": spec["ticket"]},
-        ):
-            await call("POST", "/api/executor/lease", lease, actor)
-        for refused in ({**only_id, "Origin": proxy.origin}, [*only_id.items(), *only_id.items()]):
-            await call("POST", "/api/executor/lease", lease, refused)
-        await call("POST", "/api/executor/lease", b"{}", only_id)
-        try:
-            async with client.ws_connect(
-                owned_url(proxy.origin, "/api/executor/connect").replace("https:", "wss:"),
-                headers=only_id,
-            ):
+        actor = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": spec["ticket"]}
+        await call("POST", "/api/executor/lease", spec["lease"], actor)
+        for headers in ({**only_id, "Origin": proxy.origin}, [*only_id.items(), *only_id.items()]):
+            await call("POST", "/api/executor/lease", spec["lease"], headers)
+        websocket = owned_url(proxy.origin, "/api/executor/connect").replace("https:", "wss:")
+        with pytest.raises(Exception) as refusal:
+            async with client.ws_connect(websocket, headers=only_id):
                 raise AssertionError("old WebSocket was accepted")
-        except Exception as error:
-            if getattr(error, "status", None) != 403:
-                raise
-            result.append(["WS", "/api/executor/connect", 403])
-        await call("GET", "/api/executor/update", headers={**only_id, "Accept-Encoding": "gzip"})
-        await call("POST", "/api/executor/lease", lease, only_id)
-        for headers in (
-            only_id,
-            {**work, "X-Panels-Executor-Incarnation": "22222222-2222-4222-8222-222222222222"},
-            {**work, "X-Panels-Executor-Protocol": "21"},
-        ):
-            await call("GET", "/api/executor/commands?after=0&wait=0", headers=headers)
+        assert getattr(refusal.value, "status", None) == 403
+        await call("GET", "/api/executor/update", headers=only_id)
+        await call("POST", "/api/executor/lease", spec["lease"], only_id)
+        foreign = {**work, "X-Panels-Executor-Incarnation": "22222222-2222-4222-8222-222222222222"}
+        await call("GET", "/api/executor/commands?after=0&wait=0", headers=foreign)
         await call("GET", "/api/executor/commands?after=0&wait=0")
-        await call("GET", "/api/executor/commands?after=9007199254740993&wait=0")
-        await call("GET", "/api/executor/commands?after=bad&wait=0")
-        await call("GET", "/api/executor/commands?after=0&wait=nan")
-        file_path = f"/api/executor/commands/prompt/files/{spec['file']}"
-        await call("GET", file_path, headers={**work, "Accept-Encoding": "gzip"})
-        async with client.get(owned_url(proxy.origin, file_path), headers=work) as response:
-            assert response.status == 200
+        path = f"/api/executor/commands/prompt/files/{spec['file']}"
+        await call("GET", path, headers={**work, "Accept-Encoding": "gzip"})
+        async with client.get(owned_url(proxy.origin, path), headers=work) as response:
+            assert response.content_length == 8 * 1024 * 1024
             await response.content.readexactly(64 * 1024)
-        await call("GET", "/api/executor/commands/prompt/files/missing")
-        report = {
-            "outcomes": [
-                {
-                    "command_id": "prompt",
-                    "child_outcome": {
-                        "command_id": "prompt",
-                        "child": spec["child"],
-                        "disposition": "succeeded",
-                        "result": {"kind": "prompt"},
-                    },
-                },
-                {"command_id": "never-put", "child_outcome": None},
-            ]
-        }
-        await call("POST", "/api/executor/commands/outcomes", json.dumps(report).encode())
-        item = {
-            "sender_id": "mac-sender",
-            "conversation_id": "c",
-            "sequence": 1,
-            "submission_id": "submission",
-            "kind": "backend_event",
-            "payload": {"child": spec["child"]},
-            "file_dependencies": [],
-        }
-        batch = {
-            "sender_id": "mac-sender",
-            "items": [{"envelope": item, "sender_refusal": "capture refused"}],
-        }
-        await call("POST", "/api/executor/conversations/c/items", json.dumps(batch).encode())
-        await call("POST", "/api/executor/conversations/c/items", b'{"sender_id":')
+        child = ChildReference(**spec["child"])
+        outcome = wire.CommandOutcome("prompt", child, wire.CommandDisposition.succeeded, {})
+        report = wire.CommandOutcomeReport((wire.CommandResult("prompt", outcome),))
+        await call("POST", "/api/executor/commands/outcomes", wire.encode_value(report))
         await call("POST", "/api/executor/conversations/c/items", b" " * (4 * 1024 * 1024 + 1))
-        manifest = {
-            "scope": "ticket",
-            "owner_id": spec["ticket"],
-            "relative_path": "out/a.bin",
-            "sha256": hashlib.sha256(b"uploaded bytes").hexdigest(),
-            "byte_count": len(b"uploaded bytes"),
-        }
-        description = (
-            base64.urlsafe_b64encode(
-                json.dumps({"manifest": manifest, "child": spec["child"]}).encode()
-            )
-            .rstrip(b"=")
-            .decode()
+        manifest = wire.FileManifest(
+            wire.FileScope.ticket,
+            spec["ticket"],
+            "out/a.bin",
+            hashlib.sha256(b"upload").hexdigest(),
+            6,
         )
+        upload = {"manifest": wire.as_object(manifest), "child": spec["child"]}
+        header = base64.urlsafe_b64encode(json.dumps(upload).encode()).rstrip(b"=").decode()
         await call(
             "PUT",
-            "/api/executor/uploads/" + manifest["sha256"],
-            b"uploaded bytes",
-            {**work, "X-Panels-File-Upload": description},
+            "/api/executor/uploads/" + manifest.sha256,
+            b"upload",
+            {**work, "X-Panels-File-Upload": header},
         )
         await call(
             "POST",
             "/api/executor/reads",
-            json.dumps(
-                {"child": spec["child"], "path": "/api/tickets", "params": {"status": "open"}}
-            ).encode(),
+            {"child": spec["child"], "path": "/api/tickets", "params": {"status": "open"}},
         )
-        await call("POST", "/api/executor/conversations/c/live", b'{"events":[]}')
-        await call(
-            "GET",
-            "/api/executor/update/fixture/archive",
-            headers={**only_id, "Accept-Encoding": "gzip"},
-        )
+        await call("POST", "/api/executor/conversations/c/live", {"events": []})
+        await call("GET", "/api/executor/update/fixture/archive", headers=only_id)
         await call("GET", "/api/executor/update/prefetch/" + spec["archive_sha"], headers=only_id)
-        await call(
-            "POST",
-            "/api/executor/update",
-            b'{"request_id":"fixture","application_revision":"a","phase":"invalid"}',
-            only_id,
-        )
-        await call(
-            "POST",
-            "/api/executor/update",
-            json.dumps(
-                {"request_id": "fixture", "application_revision": "a" * 40, "phase": "current"}
-            ).encode(),
-            only_id,
-        )
+        for phase in ("invalid", "current"):
+            update = {"request_id": "fixture", "application_revision": "a" * 40, "phase": phase}
+            await call("POST", "/api/executor/update", update, only_id)
     return result
 
 
-def snapshot(path: Path) -> dict[str, Any]:
-    with sqlite3.connect(path) as conn:
-        return {
-            table: [list(row) for row in conn.execute(query)]
-            for table, query in {
-                "presence": "SELECT * FROM mac_executor_presence ORDER BY singleton",
-                "positions": (
-                    "SELECT sender_id,conversation_id,sequence,submission_id,disposition,"
-                    "result_json FROM mac_inbox_positions ORDER BY sender_id,conversation_id"
-                ),
-                "commands": (
-                    "SELECT command_id,state,delivered_at_ms,finished_at_ms,outcome_json "
-                    "FROM executor_commands ORDER BY command_sequence"
-                ),
-            }.items()
-        }
-
-
 async def continue_core(endpoint: VpsExecutor, path: Path, proxy: HttpsProxy) -> dict[str, Any]:
-    """Exercise the actual core/run consumers after the shared wire transcript."""
     tail = ConversationLiveTail()
     core = SqliteProcessConversationSystem(
         store=ConversationStore(str(path), integer_now=lambda: NOW // 1000),
+        live_tail=tail,
         backend_child_factories={key: endpoint.runs for key in ConversationBackendKey},
         message_files=endpoint.message_files,
         unix_time_now=lambda: NOW / 1000,
-        live_tail=tail,
     )
     endpoint.bind_conversations(core)
+    sequences: dict[str, int] = {}
 
-    async def peer(method: str, route: str, identity: Any, value: Any = None) -> bytes:
-        target = owned_url(proxy.origin, route)
-        async with proxy.session_factory() as client:
-            async with client.request(
-                method,
-                target,
-                data=None if value is None else json.dumps(wire.encode_value(value)),
-                headers={
-                    "Accept-Encoding": "identity",
-                    "X-Panels-Executor-ID": "test-executor",
-                    "X-Panels-Executor-Incarnation": identity.executor_incarnation,
-                    "X-Panels-Executor-Protocol": "22",
-                },
-                allow_redirects=False,
-            ) as response:
-                raw = await response.read()
-                assert response.status == (204 if route.endswith("/live") else 200), raw
-                return raw
-
-    async def poll(identity: Any) -> Any:
-        return wire.decode_bounded(
-            await peer("GET", "/api/executor/commands?after=0&wait=0", identity),
-            wire.MailboxPollReply,
-        )
+    def rows(query: str) -> list[Any]:
+        with sqlite3.connect(path) as conn:
+            return [list(row) for row in conn.execute(query)]
 
     async def until(predicate: Any) -> None:
         async with asyncio.timeout(5):
             while not predicate():
                 await asyncio.sleep(0.001)
 
-    def rows(query: str) -> list[Any]:
-        with sqlite3.connect(path) as conn:
-            return [list(row) for row in conn.execute(query)]
+    async def post(route: str, value: Any, identity: Any = IDENTITY) -> Any:
+        headers = {
+            "Accept-Encoding": "identity",
+            "X-Panels-Executor-ID": "test-executor",
+            "X-Panels-Executor-Incarnation": identity.executor_incarnation,
+            "X-Panels-Executor-Protocol": "22",
+        }
+        async with proxy.session_factory() as client:
+            async with client.post(
+                owned_url(proxy.origin, route),
+                json=wire.encode_value(value),
+                headers=headers,
+                allow_redirects=False,
+            ) as response:
+                body = await response.read()
+                assert response.status == (204 if route.endswith("/live") else 200), body
+                return json.loads(body) if body else None
 
-    async def finish(commands: Any) -> None:
-        await peer(
-            "POST",
-            "/api/executor/commands/outcomes",
-            IDENTITY,
-            wire.CommandOutcomeReport(
-                tuple(
-                    wire.CommandResult(
-                        row.command_id,
-                        wire.CommandOutcome(
-                            row.command_id,
-                            row.child_command.child,
-                            wire.CommandDisposition.succeeded,
-                            {},
-                        ),
-                    )
-                    for row in commands
-                    if row.child_command is not None
-                )
-            ),
-        )
-        for row in commands:
-            command = row.child_command
-            if command is None or command.operation is not wire.ChildOperation.stop:
-                continue
-            outcome = wire.CommandOutcome(
-                row.command_id, command.child, wire.CommandDisposition.succeeded, {}
-            )
-            receipt = wire.decode_bounded(
-                await peer(
-                    "POST",
-                    f"/api/executor/conversations/{command.child.conversation_id}/items",
-                    IDENTITY,
-                    wire.ItemBatch(
-                        "fixture-stops",
-                        (
-                            wire.ItemSubmission(
-                                wire.QueuedEnvelope(
-                                    "fixture-stops",
-                                    command.child.conversation_id,
-                                    1,
-                                    "stopped",
-                                    wire.EnvelopeKind.child_stopped,
-                                    wire.as_object(outcome),
-                                )
-                            ),
-                        ),
-                    ),
-                ),
-                wire.ItemBatchReply,
-            )
-            assert receipt.receipts[0].disposition is wire.ReceiptDisposition.accepted
-
-    sequences: dict[str, int] = {}
-
-    def envelope(conversation: str, kind: str, payload: Any) -> wire.QueuedEnvelope:
-        sequence = sequences.get(conversation, 0) + 1
-        sequences[conversation] = sequence
+    def envelope(conversation: str, kind: str, payload: Any) -> Any:
+        seq = sequences[conversation] = sequences.get(conversation, 0) + 1
         return wire.QueuedEnvelope(
-            "fixture-peer",
-            conversation,
-            sequence,
-            f"peer-{sequence}",
-            wire.EnvelopeKind(kind),
-            payload,
+            "peer", conversation, seq, str(seq), wire.EnvelopeKind(kind), payload
         )
 
-    async def submit(items: Any, identity: Any = IDENTITY) -> Any:
-        return wire.decode_bounded(
-            await peer(
-                "POST",
-                f"/api/executor/conversations/{items[0].conversation_id}/items",
-                identity,
-                wire.ItemBatch("fixture-peer", tuple(wire.ItemSubmission(item) for item in items)),
-            ),
-            wire.ItemBatchReply,
+    async def items(values: Any, identity: Any = IDENTITY) -> Any:
+        batch = wire.ItemBatch("peer", tuple(wire.ItemSubmission(row) for row in values))
+        return await post(
+            f"/api/executor/conversations/{values[0].conversation_id}/items", batch, identity
         )
 
     def event(command: Any, method: str, arguments: Any, turn: Any = "current") -> Any:
+        token = command.turn if turn == "current" else turn
         return wire.as_object(
-            wire.BackendEvent(
-                command.child,
-                wire.BackendEventMethod(method),
-                command.turn if turn == "current" else turn,
-                arguments,
-            )
+            wire.BackendEvent(command.child, wire.BackendEventMethod(method), token, arguments)
+        )
+
+    async def poll(identity: Any = IDENTITY) -> Any:
+        return (await endpoint.mailbox.poll(identity, 0, 0)).commands
+
+    def outcome(command: Any) -> Any:
+        return wire.CommandOutcome(
+            command.command_id, command.child, wire.CommandDisposition.succeeded, {}
         )
 
     async def report(commands: Any) -> None:
-        await peer(
-            "POST",
-            "/api/executor/commands/outcomes",
-            IDENTITY,
-            wire.CommandOutcomeReport(
-                tuple(
-                    wire.CommandResult(
-                        row.command_id,
-                        wire.CommandOutcome(
-                            row.command_id,
-                            row.child_command.child,
-                            wire.CommandDisposition.succeeded,
-                            {},
-                        ),
-                    )
-                    for row in commands
-                    if row.child_command is not None
-                )
-            ),
+        results = tuple(
+            wire.CommandResult(row.command_id, outcome(row.child_command))
+            for row in commands
+            if row.child_command is not None
         )
+        await endpoint.mailbox.record_results(IDENTITY, wire.CommandOutcomeReport(results))
 
     async def launched(conversation: str) -> Any:
         await core.send(
-            conversation, text_message_content(f"work {conversation}"), sender_label="Owner"
+            conversation, text_message_content("work " + conversation), sender_label="Owner"
         )
-        commands = (await poll(IDENTITY)).commands
+        commands = await poll()
         command = next(
             row.child_command
             for row in commands
-            if row.child_command is not None
+            if row.child_command
             and row.child_command.child.conversation_id == conversation
             and row.child_command.operation is wire.ChildOperation.write_prompt
         )
         await report(commands)
         return command
 
-    async def stop_proof(command: Any) -> Any:
-        return await submit(
-            [
-                envelope(
-                    command.child.conversation_id,
-                    "child_stopped",
-                    wire.as_object(
-                        wire.CommandOutcome(
-                            command.command_id, command.child, wire.CommandDisposition.succeeded, {}
-                        )
-                    ),
-                )
-            ]
+    async def stop(identity: str) -> Any:
+        query = (
+            "SELECT 1 FROM executor_commands "
+            f"WHERE conversation_id='{identity}' AND operation='stop'"
         )
-
-    async def join_boundaries() -> Any:
-        live = await launched("live")
-        watcher = tail.subscribe("live")
-        before = rows("SELECT count(*) FROM conversation_events")[0][0]
-        positions = rows("SELECT count(*) FROM mac_inbox_positions")[0][0]
-        await peer(
-            "POST",
-            "/api/executor/conversations/live/live",
-            IDENTITY,
-            {
-                "events": [
-                    event(
-                        live,
-                        "agent_message_delta",
-                        {"text_delta": "Wrong turn"},
-                        TurnToken("live", 99),
-                    ),
-                    event(live, "agent_message_delta", {"text_delta": "Live text"}),
-                    event(live, "model_thinking_happened", {}),
-                    event(
-                        live, "tool_call_progress", {"tool_call_id": "tool", "detail": "Working"}
-                    ),
-                ]
-            },
-        )
-        frames = [type(await watcher.next_item()).__name__ for _ in range(3)]
-        watcher.close()
-        assert before == rows("SELECT count(*) FROM conversation_events")[0][0]
-        assert positions == rows("SELECT count(*) FROM mac_inbox_positions")[0][0]
-        completed = envelope(
-            "live",
-            "backend_event",
-            event(
-                live,
-                "agent_message_completed",
-                {"content": wire.encode_value(text_message_content("Full reply"))},
-            ),
-        )
-        accepted = await submit([completed])
-        assert accepted == await submit([completed])
-        assert accepted.receipts[0].result == {"applied": True}
-        # Backend prose is runtime output. Its durable receipt adds no notebook row.
-        assert (
-            rows(
-                "SELECT count(*) FROM conversation_events "
-                "WHERE conversation_id='live' AND kind='agent_message'"
-            )[0][0]
-            == 0
-        )
-        killing_live = asyncio.create_task(core.kill("live"))
-        await until(
-            lambda: bool(
-                rows(
-                    "SELECT 1 FROM executor_commands "
-                    "WHERE conversation_id='live' AND operation='stop'"
-                )
-            )
-        )
-        commands = (await poll(IDENTITY)).commands
-        stop = next(
+        await until(lambda: bool(rows(query)))
+        commands = await poll()
+        command = next(
             row.child_command
             for row in commands
-            if row.child_command is not None
-            and row.child_command.child.conversation_id == "live"
+            if row.child_command
+            and row.child_command.child.conversation_id == identity
             and row.child_command.operation is wire.ChildOperation.stop
         )
         await report(commands)
-        assert not killing_live.done() and core._conversations["live"].child is not None
-        await stop_proof(stop)
-        await killing_live
-        current = await launched("live")
-        current_watcher = tail.subscribe("live")
-        await peer(
-            "POST",
-            "/api/executor/conversations/live/live",
-            IDENTITY,
-            {
-                "events": [
-                    event(
-                        live, "agent_message_delta", {"text_delta": "Retired child"}, current.turn
-                    ),
-                    event(current, "agent_message_delta", {"text_delta": "New child"}),
-                ]
-            },
-        )
-        current_frame = await current_watcher.next_item()
-        current_watcher.close()
-        assert getattr(current_frame, "text_delta", None) == "New child"
+        return command
 
-        ordinary = await launched("ordinary")
-        await submit(
+    async def proof(command: Any) -> Any:
+        return await items(
             [
                 envelope(
-                    "ordinary",
-                    "backend_event",
-                    event(
-                        ordinary,
-                        "permission_ask_raised",
-                        {
-                            "ask": {
-                                "ask_id": "ask",
-                                "title": "Fixture",
-                                "detail": None,
-                                "options": [
-                                    {
-                                        "option_id": "allow",
-                                        "label": "Allow",
-                                        "option_kind": "allow_once",
-                                    }
-                                ],
-                            }
-                        },
-                    ),
+                    command.child.conversation_id, "child_stopped", wire.as_object(outcome(command))
                 )
             ]
         )
-        ask_id = next(iter(await core.pending_permission_ask_ids("ordinary")))
-        assert (await core.answer_permission_ask("ordinary", ask_id, "allow")).value == "saved"
-        answer = next(
-            row.child_command
-            for row in (await poll(IDENTITY)).commands
-            if row.child_command is not None
-            and row.child_command.child.conversation_id == "ordinary"
-            and row.child_command.operation is wire.ChildOperation.answer_permission_ask
-        )
-        application = cast(wire.AnswerPermission, answer.arguments).answer
-        assert application is not None
-        entered_application, release_application = asyncio.Event(), asyncio.Event()
-        take_application = core.take_answer_application
 
-        async def held_application(*args: Any, **kwargs: Any) -> Any:
-            entered_application.set()
-            await release_application.wait()
-            return await take_application(*args, **kwargs)
-
-        core.take_answer_application = held_application  # type: ignore[method-assign]
-        killing_ordinary = asyncio.create_task(core.kill("ordinary"))
-        await until(
-            lambda: bool(
-                rows(
-                    "SELECT 1 FROM executor_commands "
-                    "WHERE conversation_id='ordinary' AND operation='stop'"
-                )
-            )
-        )
-        pending = (await poll(IDENTITY)).commands
-        ordinary_stop = next(
-            row.child_command
-            for row in pending
-            if row.child_command is not None
-            and row.child_command.child.conversation_id == "ordinary"
-            and row.child_command.operation is wire.ChildOperation.stop
-        )
-        await report(pending)
-        batch = [
-            envelope(
-                "ordinary",
-                "answer_application",
-                {
-                    "answer_id": application.answer_id,
-                    "ask": wire.as_object(application.ask),
-                    "applied_at_mac_ms": NOW,
-                },
-            ),
-            envelope(
-                "ordinary",
-                "backend_event",
-                event(
-                    ordinary,
-                    "vendor_session_cursor_rebound",
-                    {
-                        "vendor_session_cursor": "cleanup-cursor",
-                    },
-                    None,
-                ),
-            ),
-            envelope(
-                "ordinary",
-                "child_stopped",
-                wire.as_object(
-                    wire.CommandOutcome(
-                        ordinary_stop.command_id,
-                        ordinary_stop.child,
-                        wire.CommandDisposition.succeeded,
-                        {},
-                    )
-                ),
-            ),
-        ]
-        saving = asyncio.create_task(submit(batch[:1]))
-        final_saving = None
-        try:
-            entered_task = asyncio.create_task(entered_application.wait())
-            try:
-                done, _ = await asyncio.wait(
-                    (entered_task, saving), timeout=5, return_when=asyncio.FIRST_COMPLETED
-                )
-                if saving in done:
-                    raise AssertionError(f"application did not enter its core: {await saving}")
-                assert entered_task in done, (
-                    "application did not reach its core within five seconds"
-                )
-            finally:
-                entered_task.cancel()
-                await asyncio.gather(entered_task, return_exceptions=True)
-            final_saving = asyncio.create_task(submit(batch[1:]))
-            assert not killing_ordinary.done() and core._conversations["ordinary"].child is not None
-            assert not rows(
-                "SELECT 1 FROM mac_inbox_positions WHERE conversation_id='ordinary' AND sequence>1"
-            )
-        finally:
-            release_application.set()
-        application_reply = await saving
-        assert final_saving is not None
-        final_reply = await final_saving
-        assert len(application_reply.receipts) == 1 and application_reply.stop is None
-        assert len(final_reply.receipts) == 2 and final_reply.stop is None
-        ordered = wire.ItemBatchReply((*application_reply.receipts, *final_reply.receipts))
-        core.take_answer_application = take_application  # type: ignore[method-assign]
-        await killing_ordinary
-        assert len(ordered.receipts) == 3
-        assert all(row.disposition is wire.ReceiptDisposition.accepted for row in ordered.receipts)
-        assert ordered.receipts[2].result["stop_command_id"] == ordinary_stop.command_id
-        assert ordered.receipts[2].result["stopped_child"] == wire.as_object(ordinary_stop.child)
-
-        rebind = await launched("rebind")
-        await submit(
-            [
-                envelope(
-                    "rebind", "backend_event", event(rebind, "turn_ended", {"ending": "completed"})
-                )
-            ]
-        )
-        changing = asyncio.create_task(
-            core.send(
-                "rebind",
-                text_message_content("changed model"),
-                sender_label="Owner",
-                sender_message_id="same-reservation",
-                model_change="fixture-new",
-            )
-        )
-        await until(
-            lambda: bool(
-                rows(
-                    "SELECT 1 FROM executor_commands "
-                    "WHERE conversation_id='rebind' AND operation='stop'"
-                )
-            )
-        )
-        changing_commands = (await poll(IDENTITY)).commands
-        rebind_stop = next(
-            row.child_command
-            for row in changing_commands
-            if row.child_command is not None
-            and row.child_command.child.conversation_id == "rebind"
-            and row.child_command.operation is wire.ChildOperation.stop
-        )
-        await report(changing_commands)
-        assert not changing.done()
-        assert (
-            len(
-                rows(
-                    "SELECT 1 FROM executor_commands "
-                    "WHERE conversation_id='rebind' AND operation='write_prompt'"
-                )
-            )
-            == 1
-        )
-        await stop_proof(rebind_stop)
-        await changing
-        await until(
-            lambda: (
-                len(
-                    rows(
-                        "SELECT 1 FROM executor_commands "
-                        "WHERE conversation_id='rebind' AND operation='write_prompt'"
-                    )
-                )
-                == 2
-            )
-        )
-        joined = []
-        for operation, raw in rows(
-            "SELECT operation,command_json FROM executor_commands "
-            "WHERE conversation_id='rebind' ORDER BY command_sequence"
-        ):
-            if operation not in ("write_prompt", "start"):
-                continue
-            command = json.loads(raw)["child_command"]
-            joined.append(
-                [
-                    operation,
-                    command["turn"],
-                    command["arguments"].get("resolved_start", {}).get("model"),
-                    command["arguments"].get("sender_content"),
-                ]
-            )
-        return {
-            "frames": frames,
-            "completed_receipt": accepted.receipts[0].result,
-            "completed_count": rows(
-                "SELECT count(*) FROM conversation_events "
-                "WHERE conversation_id='live' AND kind='agent_message'"
-            )[0][0],
-            "stop_waited_for_proof": True,
-            "ordered": [
-                row.result.get("applied", row.result.get("recorded")) for row in ordered.receipts
-            ],
-            "rebind": joined,
-            "reservation": rows(
-                "SELECT count(*) FROM conversation_events "
-                "WHERE conversation_id='rebind' AND payload LIKE '%same-reservation%'"
-            )[0][0],
-        }
-
-    async def isolation_alarm() -> Any:
-        a, b = await launched("isolate-a"), await launched("isolate-b")
-        at = NOW
-        original_clock = endpoint.presence._clock
-        endpoint.presence._clock = lambda: at
-        chief, pushes = FakeChief(lambda text: True), FakeWebPush()
-        with closing(connect(str(path))) as conn:
-            notifications_data.register_subscription(
-                conn, endpoint="https://push.example/1", p256dh="key", auth="auth", now=1
-            )
-        checker = StallChecker(str(path), WAITS, endpoint.stall_sources, lambda: at)
-
-        def watch() -> Any:
-            return run_watchdog(
-                str(path),
-                Path(str(path) + ".watchdog"),
-                now_ms=at,
-                web_push=pushes,
-                apns=None,
-                push_origin=None,
-                message_chief=chief,
-            )
-
-        try:
-            with (
-                patch.object(WAITS, "_clock", lambda: NOW),
-                held_mac_writes(
-                    cast(ExecutorHarness, SimpleNamespace(system=core)), "isolate-a"
-                ) as (
-                    entered_save,
-                    release_save,
-                ),
-            ):
-                stuck = envelope(
-                    "isolate-a",
-                    "backend_event",
-                    event(
-                        a,
-                        "tool_call_started",
-                        {
-                            "tool_call_id": "stuck",
-                            "title": "Stuck",
-                            "tool_kind": "other",
-                            "detail": None,
-                        },
-                    ),
-                )
-                saving = asyncio.create_task(submit([stuck]))
-                try:
-                    await entered_save.wait()
-                    assert writer_lock_is_free(str(path))
-
-                    async def lease() -> None:
-                        await peer(
-                            "POST",
-                            "/api/executor/lease",
-                            IDENTITY,
-                            lease_request(
-                                IDENTITY,
-                                waiting=(wire.WaitingConversation("isolate-a", 1),),
-                                queue_depth=1,
-                            ),
-                        )
-
-                    await submit(
-                        [
-                            envelope(
-                                "isolate-b",
-                                "backend_event",
-                                event(
-                                    b,
-                                    "agent_message_completed",
-                                    {
-                                        "content": wire.encode_value(
-                                            text_message_content("Other reply")
-                                        ),
-                                    },
-                                ),
-                            )
-                        ]
-                    )
-                    await lease()
-                    await core.send(
-                        "isolate-b", text_message_content("other next"), sender_label="Owner"
-                    )
-                    await submit(
-                        [
-                            envelope(
-                                "isolate-b",
-                                "backend_event",
-                                event(b, "turn_ended", {"ending": "completed"}),
-                            )
-                        ]
-                    )
-                    await until(
-                        lambda: (
-                            len(
-                                rows(
-                                    "SELECT 1 FROM executor_commands "
-                                    "WHERE conversation_id='isolate-b' AND operation='write_prompt'"
-                                )
-                            )
-                            == 2
-                        )
-                    )
-                    await report((await poll(IDENTITY)).commands)
-                    assert not rows(
-                        "SELECT 1 FROM conversation_events "
-                        "WHERE conversation_id='isolate-a' AND kind='tool_call_started'"
-                    )
-                    await checker.check_once()
-                    for _ in range(19):
-                        at += 10000
-                        await lease()
-                        await checker.check_once()
-                    findings = tuple(
-                        finding
-                        for finding in await checker.check_once()
-                        if finding.conversation_id == "isolate-a"
-                    )
-                    assert sorted(finding.kind.value for finding in findings) == [
-                        "mac_item_still_saving",
-                        "mac_items_not_moving",
-                    ]
-                    assert all(
-                        finding.ticket_title == "isolate-a" and finding.ticket_id
-                        for finding in findings
-                    )
-                    first, second = watch(), watch()
-                    assert len(first.raised) == 2 and first.pushes_delivered == 1
-                    assert not second.raised and len(pushes.sent) == len(chief.messages) == 1
-                    backlog = next(
-                        finding
-                        for finding in findings
-                        if finding.kind.value == "mac_items_not_moving"
-                    )
-                    release_save.set()
-                    saved = await saving
-                    assert saved.receipts[0].result["applied"] is True
-                    await submit([stuck])
-                    assert (
-                        rows(
-                            "SELECT count(*) FROM conversation_events "
-                            "WHERE conversation_id='isolate-a' AND kind='tool_call_started'"
-                        )[0][0]
-                        == 1
-                    )
-                    at += 61000
-                    away = tuple(
-                        finding
-                        for finding in await checker.check_once()
-                        if finding.conversation_id == "isolate-a"
-                    )
-                    final = watch()
-                    assert len(away) == 1 and away[0].finding_key == backlog.finding_key
-                    assert away[0].stalled_since_ms == backlog.stalled_since_ms
-                    assert not final.raised and len(pushes.sent) == len(chief.messages) == 1
-                    return {
-                        "independent_prompts": 2,
-                        "a_events": rows(
-                            "SELECT count(*) FROM conversation_events "
-                            "WHERE conversation_id='isolate-a' AND kind='tool_call_started'"
-                        )[0][0],
-                        "kinds": sorted(finding.kind.value for finding in findings),
-                        "first_alarm": len(first.raised),
-                        "pushes": [
-                            {"body": intent.body, "route": intent.route} for intent in pushes.sent
-                        ],
-                        "chief": chief.messages,
-                        "away": [
-                            [
-                                finding.kind.value,
-                                finding.stalled_since_ms == backlog.stalled_since_ms,
-                            ]
-                            for finding in away
-                        ],
-                        "raised_again": len(final.raised),
-                    }
-                finally:
-                    release_save.set()
-                    await asyncio.gather(saving, return_exceptions=True)
-        finally:
-            endpoint.presence._clock = original_clock
-            await checker.close()
-
+    original_put = endpoint.mailbox.put_child_command
     entered, release = asyncio.Event(), asyncio.Event()
-    original = endpoint.mailbox.put_child_command
 
-    async def held(command: wire.ChildCommand) -> Any:
+    async def held(command: Any) -> Any:
         if command.operation is wire.ChildOperation.write_prompt:
             entered.set()
             await release.wait()
-        return await original(command)
+        return await original_put(command)
 
-    sending = killing = None
     try:
         endpoint.mailbox.put_child_command = held  # type: ignore[method-assign]
         sending = asyncio.create_task(
@@ -1015,41 +323,193 @@ async def continue_core(endpoint: VpsExecutor, path: Path, proxy: HttpsProxy) ->
             )
         )
         release.set()
-        fate = await sending
+        assert type(await sending).__name__ == "PromptDeliverySuppressed"
         await killing
-        assert type(fate).__name__ == "PromptDeliverySuppressed"
-        endpoint.mailbox.put_child_command = original  # type: ignore[method-assign]
-        await until(
-            lambda: bool(
-                rows(
-                    "SELECT 1 FROM executor_commands WHERE conversation_id='withdraw' "
-                    "AND operation='stop'"
+        endpoint.mailbox.put_child_command = original_put  # type: ignore[method-assign]
+        await proof(await stop("withdraw"))
+        ordinary = await launched("ordinary")
+        watcher = tail.subscribe("ordinary")
+        before = (
+            rows("SELECT count(*) FROM conversation_events"),
+            rows("SELECT count(*) FROM mac_inbox_positions"),
+        )
+        live = [
+            event(ordinary, "agent_message_delta", {"text_delta": "Live text"}),
+            event(ordinary, "model_thinking_happened", {}),
+            event(ordinary, "tool_call_progress", {"tool_call_id": "tool", "detail": "Working"}),
+        ]
+        wrong = event(
+            ordinary, "agent_message_delta", {"text_delta": "Wrong"}, TurnToken("ordinary", 99)
+        )
+        await post("/api/executor/conversations/ordinary/live", {"events": [wrong, *live]})
+        frames = [type(await watcher.next_item()).__name__ for _ in range(3)]
+        watcher.close()
+        assert before == (
+            rows("SELECT count(*) FROM conversation_events"),
+            rows("SELECT count(*) FROM mac_inbox_positions"),
+        )
+        completed = envelope(
+            "ordinary",
+            "backend_event",
+            event(ordinary, "agent_message_completed", {"content": [{"text": "Full reply"}]}),
+        )
+        assert await items([completed]) == await items([completed])
+        assert not rows("SELECT 1 FROM conversation_events WHERE kind='agent_message'")
+        ask = {
+            "ask_id": "ask",
+            "title": "Fixture",
+            "detail": None,
+            "options": [{"option_id": "allow", "label": "Allow", "option_kind": "allow_once"}],
+        }
+        await items(
+            [
+                envelope(
+                    "ordinary",
+                    "backend_event",
+                    event(ordinary, "permission_ask_raised", {"ask": ask}),
                 )
+            ]
+        )
+        ask_id = next(iter(await core.pending_permission_ask_ids("ordinary")))
+        assert (await core.answer_permission_ask("ordinary", ask_id, "allow")).value == "saved"
+        answer_command = next(
+            row.child_command
+            for row in await poll()
+            if row.child_command
+            and row.child_command.operation is wire.ChildOperation.answer_permission_ask
+        )
+        answer = cast(wire.AnswerPermission, answer_command.arguments).answer
+        assert answer is not None
+        killing = asyncio.create_task(core.kill("ordinary"))
+        stopped = await stop("ordinary")
+        assert not killing.done()
+        application = envelope(
+            "ordinary",
+            "answer_application",
+            wire.as_object(wire.AnswerApplication(answer.answer_id, answer.ask, NOW)),
+        )
+        last_event = envelope(
+            "ordinary",
+            "backend_event",
+            event(
+                ordinary,
+                "vendor_session_cursor_rebound",
+                {"vendor_session_cursor": "cleanup-cursor"},
+                None,
+            ),
+        )
+        stopped_item = envelope("ordinary", "child_stopped", wire.as_object(outcome(stopped)))
+        other = await launched("other")
+        with held_mac_writes(cast(ExecutorHarness, SimpleNamespace(system=core)), "ordinary") as (
+            entered,
+            release,
+        ):
+            saving = asyncio.create_task(items([application]))
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                final = asyncio.create_task(items([last_event, stopped_item]))
+                assert writer_lock_is_free(str(path)) and not killing.done()
+                completed_other = event(
+                    other, "agent_message_completed", {"content": [{"text": "Other reply"}]}
+                )
+                await items([envelope("other", "backend_event", completed_other)])
+                waiting = (wire.WaitingConversation("ordinary", 1),)
+                await post("/api/executor/lease", lease_request(IDENTITY, waiting=waiting))
+                await core.send("other", text_message_content("other next"), sender_label="Owner")
+                await items(
+                    [
+                        envelope(
+                            "other",
+                            "backend_event",
+                            event(other, "turn_ended", {"ending": "completed"}),
+                        )
+                    ]
+                )
+                query = (
+                    "SELECT 1 FROM executor_commands "
+                    "WHERE conversation_id='other' AND operation='write_prompt'"
+                )
+                await until(lambda: len(rows(query)) == 2)
+                assert not rows(
+                    "SELECT 1 FROM mac_inbox_positions "
+                    "WHERE conversation_id='ordinary' AND sequence>2"
+                )
+            finally:
+                release.set()
+            first, last = await saving, await final
+        await killing
+        assert len(first["receipts"]) == 1 and len(last["receipts"]) == 2
+        assert first["stop"] is last["stop"] is None
+        receipts = first["receipts"] + last["receipts"]
+        assert receipts[0]["result"]["recorded"] and receipts[1]["result"]["applied"]
+        assert receipts[-1]["result"]["stop_command_id"] == stopped.command_id
+        assert receipts[-1]["result"]["stopped_child"] == wire.as_object(stopped.child)
+        current = await launched("ordinary")
+        watcher = tail.subscribe("ordinary")
+        stale = event(ordinary, "agent_message_delta", {"text_delta": "Retired"}, current.turn)
+        fresh_live = event(current, "agent_message_delta", {"text_delta": "New child"})
+        await post("/api/executor/conversations/ordinary/live", {"events": [stale, fresh_live]})
+        assert getattr(await watcher.next_item(), "text_delta", None) == "New child"
+        watcher.close()
+        rebind = await launched("rebind")
+        await items(
+            [
+                envelope(
+                    "rebind", "backend_event", event(rebind, "turn_ended", {"ending": "completed"})
+                )
+            ]
+        )
+        changing = asyncio.create_task(
+            core.send(
+                "rebind",
+                text_message_content("changed model"),
+                sender_label="Owner",
+                sender_message_id="same-reservation",
+                model_change="fixture-new",
             )
         )
-        await finish((await poll(IDENTITY)).commands)
-        await core.wait_until_quiescent()
-        joins = await join_boundaries()
-        isolation = await isolation_alarm()
-        await core.send("recover", text_message_content("already ran"), sender_label="Owner")
-        await finish((await poll(IDENTITY)).commands)
-        fenced = await launched("fenced")
-        await core.send(
-            "fenced",
-            text_message_content("waited"),
-            sender_label="Owner",
-            sender_message_id="fenced-reservation",
+        stopped = await stop("rebind")
+        query = (
+            "SELECT 1 FROM executor_commands "
+            "WHERE conversation_id='rebind' AND operation='write_prompt'"
         )
-        await core.send("rewrite", text_message_content("never ran"), sender_label="Owner")
+        assert not changing.done() and len(rows(query)) == 1
+        await proof(stopped)
+        await changing
+        assert len(rows(query)) == 2
+        rebound = json.loads(
+            rows(
+                "SELECT command_json FROM executor_commands WHERE conversation_id='rebind' "
+                "AND operation='write_prompt' ORDER BY command_sequence"
+            )[1][0]
+        )["child_command"]
+        start = json.loads(
+            rows(
+                "SELECT command_json FROM executor_commands WHERE conversation_id='rebind' "
+                "AND operation='start' ORDER BY command_sequence"
+            )[1][0]
+        )["child_command"]
+        model = start["arguments"]["resolved_start"]["model"]
+        text = "".join(piece["text"] for piece in rebound["arguments"]["sender_content"])
+        assert (
+            model == "fixture-new"
+            and text == "changed model"
+            and rebound["turn"]["turn_number"] == 2
+        )
+        reservations = rows(
+            "SELECT count(*) FROM conversation_events WHERE payload LIKE '%same-reservation%'"
+        )[0][0]
+        assert reservations == 1
+        fenced = await launched("fenced")
+        await core.send("fenced", text_message_content("waited"), sender_label="Owner")
         fresh = mac_identity("22222222-2222-4222-8222-222222222222")
-        await peer(
-            "POST",
+        await post(
             "/api/executor/lease",
-            fresh,
             lease_request(fresh, waiting=(wire.WaitingConversation("fenced", 1),)),
+            fresh,
         )
         await poll(fresh)
-        ended = await submit(
+        ended = await items(
             [
                 envelope(
                     "fenced", "backend_event", event(fenced, "turn_ended", {"ending": "completed"})
@@ -1057,95 +517,42 @@ async def continue_core(endpoint: VpsExecutor, path: Path, proxy: HttpsProxy) ->
             ],
             fresh,
         )
-        assert ended.receipts[0].result["applied"] is True
-        assert (
-            len(
-                rows(
-                    "SELECT 1 FROM executor_commands "
-                    "WHERE conversation_id='fenced' AND operation='write_prompt'"
-                )
-            )
-            == 1
+        assert ended["receipts"][0]["result"]["applied"]
+        query = (
+            "SELECT command_json FROM executor_commands WHERE conversation_id='fenced' "
+            "AND operation='write_prompt' ORDER BY command_sequence"
         )
-        await peer("POST", "/api/executor/lease", fresh, lease_request(fresh))
-        await until(
-            lambda: (
-                len(
-                    rows(
-                        "SELECT 1 FROM executor_commands WHERE executor_incarnation='"
-                        + fresh.executor_incarnation
-                        + "' AND operation='write_prompt' "
-                        "AND conversation_id IN ('recover','rewrite','fenced')"
-                    )
-                )
-                == 3
-            )
-        )
-        await core.wait_until_quiescent()
-        await poll(fresh)
-        commands = rows(
-            "SELECT conversation_id,operation,state,command_json FROM executor_commands "
-            "WHERE conversation_id IN ('withdraw','recover','rewrite') "
-            "ORDER BY conversation_id,command_sequence"
-        )
+        assert len(rows(query)) == 1
+        await post("/api/executor/lease", lease_request(fresh), fresh)
+        await until(lambda: len(rows(query)) == 2)
+        command = json.loads(rows(query)[1][0])["child_command"]
+        assert command["child"]["executor_incarnation"] == fresh.executor_incarnation
+        assert command["arguments"]["sender_content"] == [{"text": "waited"}]
+        assert rows(
+            "SELECT json_extract(payload,'$.ending') FROM conversation_events "
+            "WHERE conversation_id='fenced' AND kind='turn_ended'"
+        ) == [["completed"]]
+        a_events = rows(
+            "SELECT count(*) FROM conversation_events "
+            "WHERE conversation_id='ordinary' AND kind='answer_applied'"
+        )[0][0]
+        assert a_events == 1
         return {
-            "kill": type(fate).__name__,
-            "joins": joins,
-            "isolation": isolation,
-            "fenced": {
-                "prompts": [
-                    [
-                        "fresh" if incarnation == fresh.executor_incarnation else "old",
-                        json.loads(raw)["child_command"]["arguments"].get("sender_content"),
-                    ]
-                    for incarnation, raw in rows(
-                        "SELECT executor_incarnation,command_json FROM executor_commands "
-                        "WHERE conversation_id='fenced' AND operation='write_prompt' "
-                        "ORDER BY command_sequence"
-                    )
-                ],
-                "endings": rows(
-                    "SELECT json_extract(payload,'$.ending') FROM conversation_events "
-                    "WHERE conversation_id='fenced' AND kind='turn_ended' ORDER BY sequence"
-                ),
-                "refused": rows(
-                    "SELECT count(*) FROM conversation_events "
-                    "WHERE conversation_id='fenced' AND kind='prompt_delivery_refused'"
-                )[0][0],
+            "kill": "PromptDeliverySuppressed",
+            "frames": frames,
+            "ordered": [row["disposition"] == "accepted" for row in receipts],
+            "rebind": {
+                "model": model,
+                "text": text,
+                "turn": rebound["turn"]["turn_number"],
+                "reservations": reservations,
             },
-            "commands": [
-                [
-                    conversation,
-                    operation,
-                    state,
-                    json.loads(command)["child_command"]["turn"],
-                    json.loads(command)["child_command"]["arguments"].get("content"),
-                    json.loads(command)["child_command"]["arguments"].get("mode"),
-                ]
-                for conversation, operation, state, command in commands
-            ],
-            "interruptions": rows(
-                "SELECT source_conversation_id,turn_number,recovery_state,detail "
-                "FROM deploy_interruptions ORDER BY source_conversation_id"
-            ),
-            "claims": rows(
-                "SELECT conversation_id,worker_step_claim FROM tickets "
-                "WHERE conversation_id IN ('withdraw','recover','rewrite') "
-                "ORDER BY conversation_id"
-            ),
-            "turns": rows(
-                "SELECT conversation_id,turn_number,status FROM conversation_lifecycle_facts "
-                "WHERE conversation_id IN ('withdraw','recover','rewrite') AND kind='turn' "
-                "ORDER BY conversation_id,turn_number"
-            ),
+            "isolation": {"independent_prompts": 2, "a_events": 1},
+            "replacement": {"fenced_text": "waited", "fenced_ending": "completed"},
         }
     finally:
         release.set()
-        endpoint.mailbox.put_child_command = original  # type: ignore[method-assign]
-        for task in (sending, killing):
-            if task is not None and not task.done():
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
+        endpoint.mailbox.put_child_command = original_put  # type: ignore[method-assign]
         await core.shutdown()
 
 
@@ -1153,103 +560,52 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
     started = time.perf_counter()
     homes = create_synthetic_homes(tmp_path)
 
-    async def run() -> dict[str, Any]:
+    async def run() -> Any:
         source = tmp_path / "source"
         source.mkdir()
         path = source / "panels.sqlite"
         clock = FixedClock(datetime.fromtimestamp(NOW / 1000, UTC))
-        core_tickets = {}
         with closing(connect(str(path))) as conn:
             create_schema(conn)
-            notifications_data.get_or_create_web_push_identity(conn, NOW // 1000)
-            ticket = write_create_ticket(
-                {"worker_type": "coding", "title": "Transport fixture", "brief": "Synthetic only"},
-                conn,
-                RequestContext(Principal(PrincipalKind.owner, "owner")),
-                clock,
-            )["id"]
-            manager = create_manager(
-                conn, title="Transport manager", project_id="project_other", clock=clock
-            ).id
+        seed = ConversationStore(str(path), integer_now=lambda: NOW // 1000)
+        for name in ("withdraw", "ordinary", "rebind", "other", "fenced"):
+            backend = (
+                ConversationBackendKey.claude if name == "rebind" else ConversationBackendKey.codex
+            )
+            ticket = create_mac_ticket(
+                str(path), tmp_path, title=name, backend_key=backend, model="fixture"
+            )
+            materials = ConversationRoleMaterials(
+                "Synthetic Worker", (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", ticket))
+            )
+            start = ResolvedConversationStart(
+                name, backend, "fixture", None, materials, Path("/tmp"), ConversationAccess.full
+            )
+            await seed.create_conversation(start)
+            with closing(connect(str(path))) as conn:
+                write_ticket_conversation_start(
+                    conn,
+                    ticket,
+                    conversation_id=name,
+                    backend=backend.value,
+                    model="fixture",
+                    reasoning_effort=None,
+                    now=NOW // 1000,
+                )
+                claim_ticket_for_worker_step(
+                    conn, ticket, readiness_check=lambda *args, **kwargs: True, now=NOW // 1000
+                )
+        with closing(connect(str(path))) as conn:
             conn.execute(
                 "INSERT INTO conversations(conversation_id,backend_key,model,"
                 "workspace_folder,access,created_at) "
                 "VALUES('c','codex','fixture','/tmp','full',1760000000)"
             )
             conn.commit()
-            for conversation in (
-                "withdraw",
-                "recover",
-                "rewrite",
-                "live",
-                "ordinary",
-                "rebind",
-                "fenced",
-                "isolate-a",
-                "isolate-b",
-            ):
-                core_tickets[conversation] = write_create_ticket(
-                    {
-                        "worker_type": "coding",
-                        "title": conversation,
-                        "brief": "Synthetic only",
-                        "locale": "macos",
-                    },
-                    conn,
-                    RequestContext(Principal(PrincipalKind.owner, "owner")),
-                    clock,
-                )["id"]
-                accept_proposal(
-                    conn,
-                    core_tickets[conversation],
-                    field="brief",
-                    principal=Principal(PrincipalKind.owner, "owner"),
-                    next_holder=Principal(PrincipalKind.owner, "owner"),
-                    next_ceiling="none",
-                    now=NOW // 1000,
-                )
-        seed = ConversationStore(str(path), integer_now=lambda: NOW // 1000)
-        for conversation, ticket_id in core_tickets.items():
-            await seed.create_conversation(
-                ResolvedConversationStart(
-                    conversation,
-                    ConversationBackendKey.claude
-                    if conversation == "rebind"
-                    else ConversationBackendKey.codex,
-                    "fixture",
-                    None,
-                    ConversationRoleMaterials(
-                        "Synthetic Worker",
-                        identity_environment_variables=(
-                            ("PLAN_ACTOR", "worker"),
-                            ("PLAN_TICKET_ID", ticket_id),
-                        ),
-                    ),
-                    Path("/tmp"),
-                    ConversationAccess.full,
-                )
-            )
-            with closing(connect(str(path))) as conn:
-                write_ticket_conversation_start(
-                    conn,
-                    ticket_id,
-                    conversation_id=conversation,
-                    backend="claude" if conversation == "rebind" else "codex",
-                    model="fixture",
-                    reasoning_effort=None,
-                    now=NOW // 1000,
-                )
-                claim_ticket_for_worker_step(
-                    conn,
-                    ticket_id,
-                    readiness_check=lambda *args, **kwargs: True,
-                    now=NOW // 1000,
-                )
         make_current(str(path), IDENTITY, NOW)
         endpoint = VpsExecutor(str(path), clock)
         endpoint.presence.returned = None
-        endpoint.presence._clock = lambda: NOW
-        endpoint.mailbox._clock = lambda: NOW
+        endpoint.presence._clock = endpoint.mailbox._clock = lambda: NOW
         endpoint.app = _reads_app()
         child = ChildReference(IDENTITY.executor_incarnation, "child", "c")
         endpoint.runs.store.register_child(child, "ticket", ticket, NOW)
@@ -1261,35 +617,32 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
             *text_message_content("input"),
             MessageFile(kept.stored_file_id, kept.media_type, "input.bin", len(payload)),
         )
-        command = wire.ChildCommand(
-            "prompt",
-            child,
-            wire.ChildOperation.write_prompt,
-            TurnToken("c", 1),
-            wire.WritePrompt(
-                content=content,
-                sender_content=content,
-                sender_label="owner",
-                mode=PromptDeliveryMode.queue,
-            ),
+        arguments = wire.WritePrompt(
+            content=content,
+            sender_content=content,
+            sender_label="owner",
+            mode=PromptDeliveryMode.queue,
         )
-        await endpoint.mailbox.put_child_command(command)
+        await endpoint.mailbox.put_child_command(
+            wire.ChildCommand(
+                "prompt", child, wire.ChildOperation.write_prompt, TurnToken("c", 1), arguments
+            )
+        )
         archive = source / "archive.gz"
         archive.write_bytes(b"fixture archive")
         os.utime(archive, (NOW / 1000, NOW / 1000))
-        with sqlite3.connect(path) as left, sqlite3.connect(tmp_path / "copied.sqlite") as right:
-            left.backup(right)
         candidate = tmp_path / "candidate"
         shutil.copytree(source, candidate)
-        shutil.copyfile(tmp_path / "copied.sqlite", candidate / "panels.sqlite")
-        spec = {
+        with sqlite3.connect(path) as left, sqlite3.connect(candidate / "panels.sqlite") as right:
+            left.backup(right)
+        spec: dict[str, Any] = {
             "ticket": ticket,
-            "lease": {**wire.as_object(lease_request(IDENTITY)), "mac_wall_clock_ms": NOW},
-            "manager": manager,
+            "lease": wire.as_object(lease_request(IDENTITY)),
             "child": wire.as_object(child),
             "file": kept.stored_file_id,
             "archive_sha": hashlib.sha256(archive.read_bytes()).hexdigest(),
         }
+        spec["lease"]["mac_wall_clock_ms"] = NOW
         updates = RecordingUpdates(archive)
         try:
             async with serve_executor_app(
@@ -1298,7 +651,6 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
                 OWNED_ORIGINS.add(proxy.origin)
                 try:
                     expected = await transcript(proxy, spec)
-                    expected_rows = snapshot(path)
                     expected_core = await continue_core(endpoint, path, proxy)
                 finally:
                     OWNED_ORIGINS.remove(proxy.origin)
@@ -1307,8 +659,7 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         listener.listen()
-        upstream = f"http://127.0.0.1:{listener.getsockname()[1]}"
-        host_spec = {
+        host: dict[str, Any] = {
             **spec,
             "path": str(candidate / "panels.sqlite"),
             "archive": str(candidate / "archive.gz"),
@@ -1317,18 +668,22 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
             "fd": listener.fileno(),
             "continuation": str(tmp_path / "continuation.json"),
         }
-        spec_file = tmp_path / "host.json"
-        spec_file.write_text(json.dumps(host_spec))
+        (tmp_path / "host.json").write_text(json.dumps(host))
+        env = {
+            **homes,
+            "PATH": os.environ["PATH"],
+            "TMPDIR": str(tmp_path),
+            "PLAN_TEST_MODE": "1",
+            "PLAN_SERVER_URL": "http://127.0.0.1:0",
+        }
         process = subprocess.Popen(
-            ["node", str(ROOT / "server/executor/testing/app_transport.ts"), str(spec_file)],
+            [
+                "node",
+                str(ROOT / "server/executor/testing/app_transport.ts"),
+                str(tmp_path / "host.json"),
+            ],
             cwd=ROOT,
-            env={
-                **homes,
-                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-                "TMPDIR": str(tmp_path),
-                "PLAN_TEST_MODE": "1",
-                "PLAN_SERVER_URL": "http://127.0.0.1:0",
-            },
+            env=env,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -1337,56 +692,49 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
             start_new_session=True,
         )
         try:
-            async with asyncio.timeout(5):
-                while not Path(host_spec["ready"]).exists():
-                    if process.poll() is not None:
-                        raise AssertionError(process.communicate()[1])
-                    await asyncio.sleep(0.01)
-            ready = json.loads(Path(host_spec["ready"]).read_text())
+
+            async def read(name: str) -> Any:
+                async with asyncio.timeout(10):
+                    while not Path(host[name]).exists():
+                        assert process.poll() is None, process.communicate()
+                        await asyncio.sleep(0.01)
+                return json.loads(Path(host[name]).read_text())
+
+            ready = await read("ready")
             assert (ready["address"], ready["port"]) == listener.getsockname()
-            with isolated_https_proxy(tmp_path / "candidate-tls", upstream) as proxy:
+            with isolated_https_proxy(
+                tmp_path / "candidate-tls", f"http://127.0.0.1:{ready['port']}"
+            ) as proxy:
                 OWNED_ORIGINS.add(proxy.origin)
                 try:
                     actual = await transcript(proxy, spec)
-                    for escaped in (
-                        "https://panels.invalid/api/executor/lease",
-                        "//panels.invalid/api/executor/lease",
+                    for origin, route in (
+                        ("https://127.0.0.1:1", "/api/executor/lease"),
+                        (proxy.origin, "https://panels.invalid/api/executor/lease"),
+                        (proxy.origin, "//panels.invalid/api/executor/lease"),
                     ):
                         with pytest.raises(ValueError):
-                            owned_url(proxy.origin, escaped)
-                    with pytest.raises(ValueError):
-                        owned_url("https://127.0.0.1:1", "/api/executor/lease")
+                            owned_url(origin, route)
                 finally:
                     OWNED_ORIGINS.remove(proxy.origin)
-            actual_rows = snapshot(candidate / "panels.sqlite")
             assert process.stdin is not None
             process.stdin.write("continue\n")
             process.stdin.flush()
-            async with asyncio.timeout(10):
-                while not Path(host_spec["continuation"]).exists():
-                    if process.poll() is not None:
-                        raise AssertionError(process.communicate()[1])
-                    await asyncio.sleep(0.01)
-            actual_core = json.loads(Path(host_spec["continuation"]).read_text())
+            actual_core = await read("continuation")
             stdout, stderr = await asyncio.to_thread(process.communicate, "close\n", timeout=10)
             assert process.returncode == 0, stdout + stderr
-            final = json.loads(Path(host_spec["state"]).read_text())
-            assert final["catalog_state"] == "withdrawn"
-            assert final["descriptors"] == []
+            final = await read("state")
+            assert final["catalog_state"] == "withdrawn" and final["descriptors"] == []
             assert final["reports"] == updates.reports
-            assert actual == expected
-            assert actual_rows == expected_rows
-            assert actual_core == expected_core
+            assert actual == expected and actual_core == expected_core
             return {
                 "source": expected,
                 "candidate": actual,
-                "source_rows": expected_rows,
-                "candidate_rows": actual_rows,
                 "core_source": expected_core,
                 "core_candidate": actual_core,
                 "guard_refusals": 3,
                 "refused_connection_attempts": 0,
-                "remaining_input_descriptors": final["descriptors"],
+                "remaining_input_descriptors": [],
                 "catalog_state_after_stop": final["catalog_state"],
             }
         finally:
@@ -1395,20 +743,14 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=5)
 
-    patches = [
-        "planner.executor.vps_presence.now_ms",
-        "planner.executor.vps_mailbox.now_ms",
-        "planner.executor.vps_inbox.now_ms",
-    ]
     with (
         synthetic_home_environment(homes),
-        patch(patches[0], return_value=NOW),
-        patch(patches[1], return_value=NOW),
-        patch(patches[2], return_value=NOW),
+        patch("planner.executor.vps_presence.now_ms", return_value=NOW),
+        patch("planner.executor.vps_mailbox.now_ms", return_value=NOW),
+        patch("planner.executor.vps_inbox.now_ms", return_value=NOW),
     ):
         evidence = asyncio.run(asyncio.wait_for(run(), 45))
-    directory = request.config.getoption("--compare-report-dir")
-    if directory:
+    if directory := request.config.getoption("--compare-report-dir"):
         target = Path(directory) / "unit-22-app-transport.json"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(

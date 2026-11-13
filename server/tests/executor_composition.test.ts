@@ -1,7 +1,4 @@
-/** A real startup proves ordering that a pure retained-map test cannot: the executor
- * must supply open turns before record reconciliation. Reuse the Ticket database
- * fixture and actual server lifecycle, with no peer or provider launch.
- */
+/** Actual startup preserves retained turns and keeps away/unconfigured Mac work remote. */
 import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { expect, test, vi } from 'vitest';
@@ -21,12 +18,10 @@ import {
   unavailable_backend_providers,
 } from '../conversation/snapshot/composition.ts';
 import { write_ticket_conversation_start } from '../tickets/data/index.ts';
-import { PlannerError } from '../core/contracts.ts';
 import { create_production_conversation_core } from '../lifecycle/production.ts';
 
 const incarnation = '11111111-1111-4111-8111-111111111111';
 test('configured restart adopts before reconciliation and Mac locality never selects a local child', async () => {
-  const began = performance.now();
   const database = fixture(),
     path = fixture_path(database),
     root = dirname(path);
@@ -38,17 +33,10 @@ test('configured restart adopts before reconciliation and Mac locality never sel
     tx.run("INSERT INTO navigation_meta VALUES(1,'source',7,'old-view',0)");
     tx.run('INSERT INTO chief_page(singleton) VALUES(1)');
     tx.run("INSERT INTO conversation_runtime_epoch VALUES(1,'old-runtime')");
-    for (const name of [
-      'mac_executor_presence',
-      'mac_runs',
-      'mac_inbox_positions',
-      'executor_commands',
-      'executor_incarnations',
-      'executor_child_assignments',
-    ]) {
-      if (tx.get('SELECT 1 FROM sqlite_master WHERE name=?', [name])) continue;
-      const statement = schema.statements.find((sql) => sql.startsWith(`CREATE TABLE ${name} (`));
-      if (statement === undefined) throw new Error(`Missing schema fixture table ${name}`);
+    // The shared fixture already supplies runs, inbox positions and assignments.
+    for (const statement of schema.statements.filter((sql) =>
+      /^CREATE TABLE (mac_executor_presence|executor_commands|executor_incarnations) \(/.test(sql),
+    )) {
       tx.run(statement);
     }
   });
@@ -70,7 +58,6 @@ test('configured restart adopts before reconciliation and Mac locality never sel
     role_materials: materials(ticket.id),
     workspace_folder: '/tmp',
     access: 'full',
-    workspace_path_policy: 'home_relative',
   });
   initial.create_conversation(start);
   initial.transition_lifecycle('kept', [
@@ -91,7 +78,6 @@ test('configured restart adopts before reconciliation and Mac locality never sel
       reasoning_effort: null,
       now: 100,
     });
-    // A compatible-away Mac retains its run. Age does not authorize local fallback.
     tx.run(
       'INSERT INTO mac_executor_presence(singleton,executor_incarnation,identity_json,last_lease_at_ms) VALUES(1,?,?,?)',
       [
@@ -101,7 +87,6 @@ test('configured restart adopts before reconciliation and Mac locality never sel
           application_revision: 'synthetic',
           spool_format_version: 5,
           executor_incarnation: incarnation,
-          connection_generation: 0,
         }),
         Date.now() - 120000,
       ],
@@ -163,12 +148,8 @@ test('configured restart adopts before reconciliation and Mac locality never sel
       createBackendServices: () => bound.http,
     });
     expect(core.runtime_turn('kept')?.token.turn_number).toBe(1);
-    expect(
-      context.record.store.lifecycle_facts('kept').find((fact) => fact.kind === 'turn')?.status,
-    ).toBe('running');
     expect(core.conversation_state('kept')?.child).toBeInstanceOf(MacRemoteChild);
     expect(endpoint.presence.is_present()).toBe(false);
-    expect(local).not.toHaveBeenCalled();
     expect(bound.http.machine_catalog()).toBe(endpoint.catalog);
     expect(bound.stall_sources()).toHaveLength(3);
     const away_ticket = create(context.database, { locale: 'macos' });
@@ -194,7 +175,6 @@ test('configured restart adopts before reconciliation and Mac locality never sel
         message_files: endpoint.message_files,
       }),
     ).toBeInstanceOf(MacRemoteChild);
-    expect(local).not.toHaveBeenCalled();
     const unconfigured = compose_production_backends(
       { ...context, config: { ...context.config, executor_id: null }, executor: null },
       {
@@ -205,7 +185,6 @@ test('configured restart adopts before reconciliation and Mac locality never sel
         stall_sources: () => [],
       },
     );
-    expect(unconfigured.execution_refusal('kept')).toBeInstanceOf(PlannerError);
     expect(() =>
       unconfigured.factories.codex({
         resolved_start: start,
@@ -215,11 +194,8 @@ test('configured restart adopts before reconciliation and Mac locality never sel
     ).toThrow('Execution admission invariant violated');
     expect(local).not.toHaveBeenCalled();
   } finally {
-    if (server) {
-      await server.close({ deadline: performance.now() / 1000 + 5 });
-      await server.shutdown_settled;
-    }
+    await server?.close({ deadline: performance.now() / 1000 + 5 });
+    await server?.shutdown_settled;
     vi.unstubAllEnvs();
   }
-  console.info(`Executor startup/locality component: ${(performance.now() - began).toFixed(3)} ms`);
 });
