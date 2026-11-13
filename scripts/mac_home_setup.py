@@ -66,7 +66,7 @@ def write_home(
             (
                 str(source / "agent_backends/node_modules/.bin"),
                 str(interpreter.parent),
-                os.environ.get("PATH", os.defpath),
+                "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
             )
         ),
         "PLAN_CONFIG_PATH": str(config),
@@ -141,6 +141,11 @@ def write_home(
             "StandardErrorPath": str(root / "logs/backup.stderr.log"),
         },
     }
+    from planner.platform_runtime.linux.update_installer import mac_schedule_jobs
+
+    jobs.update(mac_schedule_jobs(
+        root, label, [str(interpreter), "-m", "planner"], environment, source,
+    ))
     for job_label, job in jobs.items():
         path = root / "agents" / (job_label + ".plist")
         path.write_bytes(plistlib.dumps(job))
@@ -165,7 +170,8 @@ def main() -> None:
     ).strip()
     if subprocess.check_output(["git", "-C", str(SOURCE), "status", "--porcelain"]):
         raise SystemExit("Use a clean committed source checkout")
-    for label in (args.label, args.label + ".backup"):
+    suffixes = ("", ".backup", ".maintenance", ".stall-watchdog")
+    for label in (args.label + suffix for suffix in suffixes):
         installed = Path.home() / "Library/LaunchAgents" / (label + ".plist")
         if installed.exists() or installed.is_symlink():
             raise SystemExit(f"The LaunchAgent file already exists: {installed}")
