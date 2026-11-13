@@ -34,6 +34,9 @@ while True:
   data=c.recv(1024)
  except socket.timeout:
   print('NO_BYTES',flush=True)
+  # Keep the accepted socket alive while the parent checks its native owner.
+  # The application context terminates this exact child if the parent fails.
+  c.settimeout(None)
   data=c.recv(1024)
  if data:
   c.sendall(b'ack')
