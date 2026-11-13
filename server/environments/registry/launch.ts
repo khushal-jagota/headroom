@@ -56,7 +56,10 @@ export function resolve_hermes_python(
   value?: string | null,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): string {
-  return expand_path(value || provider_launch_settings(environment).hermes_python);
+  return expand_path(
+    value || provider_launch_settings(environment).hermes_python,
+    environment.HOME,
+  );
 }
 export function provision_environment_skills(
   options: {

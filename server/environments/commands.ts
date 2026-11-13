@@ -13,17 +13,6 @@ function definition<Name extends OperatorName>(
   if (!command) throw new Error('Missing canonical operator command: ' + path.join(' '));
   return { command, handler: async (args, deps) => (await load())(args, deps) };
 }
-/** Release-side composition replaces these four refusals after its dependencies merge. */
-function unavailable<Name extends 'app-build' | 'run' | 'serve' | 'restart'>(
-  name: Name,
-): OperatorHandler<Name> {
-  return async () => ({
-    exit_code: 1,
-    stdout: '',
-    failure_message: `The ${name} command is not yet available in this build.`,
-    stderr_prefix: '',
-  });
-}
 export const operator_commands: OperatorTable = {
   status: definition(
     'status',
@@ -75,15 +64,19 @@ export const operator_commands: OperatorTable = {
     'environment',
     async () => (await import('./cli.ts')).environment_remove,
   ),
-  'app-build': definition('app-build', 'environment', async () => unavailable('app-build')),
+  'app-build': definition(
+    'app-build',
+    'environment',
+    async () => (await import('./release/cli.ts')).app_build,
+  ),
   'app-identity': definition(
     'app-identity',
     'environment',
     async () => (await import('./release/cli.ts')).app_identity,
   ),
-  run: definition('run', 'environment', async () => unavailable('run')),
-  serve: definition('serve', null, async () => unavailable('serve')),
-  restart: definition('restart', null, async () => unavailable('restart')),
+  run: definition('run', 'environment', async () => (await import('./run_cli.ts')).environment_run),
+  serve: definition('serve', null, async () => (await import('../lifecycle/cli.ts')).serve),
+  restart: definition('restart', null, async () => (await import('../lifecycle/cli.ts')).restart),
   'server-event-loop-tasks': definition(
     'server-event-loop-tasks',
     null,

@@ -640,14 +640,12 @@ Presence commits are silent at the shared write door.
 After commit succeeds, the service publishes its cache before it emits the one presence change signal.
 Synchronous signal subscribers therefore read the committed presence state, with no cache update before a possible rollback.
 
-## Operator composition unavailable leaves — accepted, temporary
+## Operator composition unavailable leaves — resolved
 
-The Manager authorized slice A while the release-side prerequisites remain unmerged.
-`environment app-build`, `environment run`, `serve`, and `restart` retain their
-canonical help but return exit 1 with `The NAME command is not yet available in this build.`
-No dependency, file, process, or network action precedes that refusal. The release-side
-Ticket owns native admission, builder, supervisor, and unit files. Slice B restores
-these four handlers after those prerequisites merge.
+`environment app-build`, `environment run`, `serve`, and `restart` now use the native
+release builder, prepared-instance launch, supervisor, and control protocol.
+The temporary unavailable-command refusal is removed. The installed wrapper remains
+unchanged until the separate cutover.
 
 ## Operator manifest path consistency
 

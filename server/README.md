@@ -6,6 +6,12 @@ This package is the shared server shell for the backend migration. It runs `.ts`
 
 Accepted migration differences live in [DEVIATIONS.md](DEVIATIONS.md).
 
+The source CLI at `server/cli/main.ts` now connects all seventeen operator commands.
+`environment app-build` uses the release builder. `environment run` replaces its process
+with the prepared repository's CLI and retains its reserved listener. `serve` uses the
+foreground supervisor, and `restart` requests replacement through its control socket.
+The installed wrapper and production deployment remain separate cutover work.
+
 From the repository root:
 
 ```sh
