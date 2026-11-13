@@ -26,6 +26,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event_name == 'schedule' && 'feature/typescript-backend' || github.sha }}
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: ${{ matrix.node }}
@@ -37,6 +38,13 @@ jobs:
         with:
           python-version: '3.12'
       - run: scripts/dev npm --prefix server ci
+      - name: Check new native-style violations
+        if: matrix.node == '22'
+        env:
+          STYLE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          scripts/dev check-node server
+          node server/tools/native_style.ts "$STYLE_BASE"
       - name: Check formatting
         if: matrix.node == '22'
         run: scripts/dev npm --prefix server run format:check
