@@ -38,31 +38,10 @@ def test_unit20_cli_native_process_boundaries(
         # Existing host state is populated with default projects. Both executions
         # exercise the physical process and the same command from a symlink path.
         for argv in (["--help"], ["project", "list", "--limit", "1"]):
-            direct = subprocess.run(
-                [*driver.TYPESCRIPT, *argv],
-                cwd=driver.ROOT,
-                env=env,
-                input=b"",
-                capture_output=True,
-                timeout=40,
-                check=False,
-            )
-            linked = subprocess.run(
-                [str(link), *argv],
-                cwd=driver.ROOT,
-                env=env,
-                input=b"",
-                capture_output=True,
-                timeout=40,
-                check=False,
-            )
+            direct = driver.raw_process([*driver.TYPESCRIPT, *argv], env)
+            linked = driver.raw_process([str(link), *argv], env)
             evidence["entry"][" ".join(argv)] = [
-                {
-                    "exit_code": result.returncode,
-                    "stdout": result.stdout.decode(),
-                    "stderr": result.stderr.decode(),
-                }
-                for result in (direct, linked)
+                driver.process_answer(result) for result in (direct, linked)
             ]
             for result in evidence["entry"][" ".join(argv)]:
                 driver._check_output(result, {"exit_code": 0}, argv, "text", candidate=True)
@@ -136,11 +115,7 @@ def test_unit20_cli_native_process_boundaries(
     finally:
         _stop_server(handle)
         evidence["seconds"] = time.perf_counter() - started
-        destination = request.config.getoption("--compare-report-dir")
-        if destination:
-            root = Path(destination)
-            root.mkdir(parents=True, exist_ok=True)
-            (root / "unit20-cli-process.json").write_text(json.dumps(evidence, indent=2) + "\n")
+        driver.write_report(request, "unit20-cli-process", evidence)
 
 
 def _transport_proof(
@@ -297,24 +272,10 @@ def _transport_proof(
                 owned.check()
                 before = httpx.get(origin + "/proxy-count", trust_env=False).json()["proxied"]
                 child_env = {**env, "PLAN_SERVER_URL": url, **settings}
-                completed = subprocess.run(
-                    [*command, "project", "list", "--json"],
-                    cwd=driver.ROOT,
-                    env=child_env,
-                    input=b"",
-                    capture_output=True,
-                    timeout=40,
-                    check=False,
-                )
+                completed = driver.raw_process([*command, "project", "list", "--json"], child_env)
                 after = httpx.get(origin + "/proxy-count", trust_env=False).json()["proxied"]
                 assert (after > before) == proxied, (name, implementation, before, after)
-                outcomes.append(
-                    {
-                        "exit_code": completed.returncode,
-                        "stdout": completed.stdout.decode(),
-                        "stderr": completed.stderr.decode(),
-                    }
-                )
+                outcomes.append(driver.process_answer(completed))
             evidence["cases"][name] = outcomes
             if name == "malformed_url":
                 # Manager accepts clean validation1 for all malformed URL syntax;
@@ -348,7 +309,7 @@ def _transport_proof(
                     root,
                 ).check()
                 oracle_started = time.perf_counter()
-                native = subprocess.run(
+                native = driver.raw_process(
                     [
                         "node",
                         "--input-type=module",
@@ -361,12 +322,7 @@ def _transport_proof(
                         "code:error.code,message:error.message}));});",
                         tls,
                     ],
-                    cwd=driver.ROOT,
-                    env=child_env,
-                    input=b"",
-                    capture_output=True,
-                    timeout=40,
-                    check=False,
+                    child_env,
                 )
                 assert native.returncode == 0, native.stderr.decode()
                 oracle = json.loads(native.stdout)
@@ -386,20 +342,12 @@ def _transport_proof(
         # Node reads extra roots at process startup; reuse this listener and CA.
         owned.check()
         extra_env = {**env, "PLAN_SERVER_URL": tls, "NODE_EXTRA_CA_CERTS": str(cert_path)}
-        extra = subprocess.run(
-            [*driver.TYPESCRIPT, "project", "list", "--json"],
-            cwd=driver.ROOT,
-            env=extra_env,
-            input=b"",
-            capture_output=True,
-            timeout=40,
-            check=False,
+        extra_answer = driver.process_answer(
+            driver.raw_process(
+                [*driver.TYPESCRIPT, "project", "list", "--json"],
+                extra_env,
+            )
         )
-        extra_answer = {
-            "exit_code": extra.returncode,
-            "stdout": extra.stdout.decode(),
-            "stderr": extra.stderr.decode(),
-        }
         evidence["node_extra_ca_certs"] = {
             "environment": {"PLAN_SERVER_URL": tls, "NODE_EXTRA_CA_CERTS": str(cert_path)},
             "result": extra_answer,
@@ -447,20 +395,10 @@ try {
             for command in commands:
                 owned.check()
                 elapsed = time.perf_counter()
-                result = subprocess.run(
-                    command,
-                    cwd=driver.ROOT,
-                    env=slow_env,
-                    input=b"",
-                    capture_output=True,
-                    timeout=40,
-                    check=False,
-                )
+                result = driver.raw_process(command, slow_env)
                 phase.append(
                     {
-                        "exit_code": result.returncode,
-                        "stdout": result.stdout.decode(),
-                        "stderr": result.stderr.decode(),
+                        **driver.process_answer(result),
                         "seconds": time.perf_counter() - elapsed,
                     }
                 )
