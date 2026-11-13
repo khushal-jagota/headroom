@@ -75,7 +75,7 @@ NOW = "2026-11-12T12:00:00Z"
 def model_admission_evidence(db_path: Path, cards: list[dict[str, Any]]) -> dict[str, Any]:
     # One retained sequence proves cross-machine retirement and exact alias admission.
     with closing(connect(str(db_path))) as conn:
-        initial = {key.value: offered_model_ids(conn, TicketLocale.vps, key) for key in Backend}
+        initial = {key.value: list(offered_model_ids(conn, TicketLocale.vps, key) or ()) for key in Backend}
         for model in ("retired-model", "mac-only"):
             conn.execute("INSERT INTO backend_model_enablement VALUES ('codex',?,0)", (model,))
         codex = card(next(value for value in cards if value["backend_key"] == "codex"))
@@ -473,8 +473,8 @@ def test_unit19_backend_route_answers_and_rows(
                 )
         asyncio.run(registry.close())
     admission = model_admission_evidence(paths[0], cards)
-    assert admission["initial"]["codex"] == ("gpt-6.1-sol",)
-    assert admission["initial"]["claude"] == ("claude-opus-5",)
+    assert admission["initial"]["codex"] == ["gpt-6.1-sol"]
+    assert admission["initial"]["claude"] == ["claude-opus-5"]
     assert admission["before"] == ["mac-only", "retired-model"]
     assert admission["after"] == ["mac-only"]
     assert all(admission["aliases"][model] is None for model in ("opus", "opus[1m]", "claude-opus-5[1m]"))
