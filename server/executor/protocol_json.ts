@@ -1,9 +1,18 @@
 /** Executor JSON lexical boundary: jiter-compatible input, before wire normalization. */
 import { JsonNumber } from '../core/http/numeric_json.ts';
-import type { JsonValue } from './wire.generated.ts';
+import type { JsonObject, JsonValue } from './wire.generated.ts';
 import { EXECUTOR_JSON_MAX_DEPTH, EXECUTOR_JSON_MAX_INTEGER_LENGTH } from './configuration.ts';
 
 export type ExecutorJSONValue = JsonValue;
+/** Arrays and exact-number markers are not JSON dictionaries. */
+export function is_json_object(value: unknown): value is JsonObject {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    !(value instanceof JsonNumber)
+  );
+}
 const object_keys = new WeakMap<object, readonly string[]>();
 const SIMPLE_ESCAPES: Readonly<Record<number, string>> = {
   34: '"',
