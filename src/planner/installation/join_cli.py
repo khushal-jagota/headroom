@@ -42,7 +42,8 @@ def machine_join_command(
         if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
             raise ValueError("Use the full lowercase published release SHA")
         if (
-            signing_identity not in (None, "-")
+            signing_identity is not None
+            and signing_identity != "-"
             and re.fullmatch(r"[0-9A-Fa-f]{40}", signing_identity) is None
         ):
             raise ValueError("Use - for ad-hoc signing or the legacy certificate fingerprint")

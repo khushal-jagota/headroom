@@ -16,7 +16,7 @@ Code review and this runbook grant no live authority.
 Linux tests establish software behavior, not installed credentials, login behavior, reboot, or pre-unlock operation.
 
 
-## Join a new Mac with one command
+## Join a new machine with one command
 
 This path installs a published runtime into a new private root. It never replaces an existing executor.
 Use macOS 15 or newer on Apple Silicon, Node 22, Xcode command-line tools, and a graphical login session.
@@ -33,6 +33,11 @@ On that home, use the owner login and run:
 panels machine join-command "Studio Mac" --home https://HOME-ORIGIN \
   --revision FULL-PUBLISHED-SHA
 ```
+
+For a Linux x86_64 machine, add `--platform linux` to the owner command.
+The printed command selects the Linux executor archive and its systemd user service.
+Linux needs Node 22 and an active systemd user manager. No native Mac tools are required.
+Enable user lingering if that service must start after reboot without a login.
 
 Use the trusted HTTPS origin of this same home. Check the address before you share the credential.
 The command prints one command for the new Mac and a private credential.

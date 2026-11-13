@@ -206,7 +206,7 @@ def install_executor(
     python = runtime / "python/bin/python3"
     build_app(Path.home(), app, revision, python=python, bundle_id=bundle_id)
     subprocess.run(
-        ["/usr/bin/codesign", "--sign", identity, "--timestamp=none", str(app)],
+        ["/usr/bin/codesign", "--force", "--sign", identity, "--timestamp=none", str(app)],
         check=True,
         capture_output=True,
         timeout=30,
