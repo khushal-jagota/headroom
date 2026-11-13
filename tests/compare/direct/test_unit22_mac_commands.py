@@ -53,7 +53,6 @@ from planner.executor.protocol import (
     CommandOutcome,
     CommandResult,
     DurableAnswer,
-    QueuedEnvelope,
     StartRun,
     Steer,
     StopRun,
@@ -607,12 +606,9 @@ def test_unit22_mac_commands(
     for _, outcome in observed["parity"]["outcomes"]:
         if isinstance(outcome, dict):
             type_adapter(CommandOutcome).validate_python(outcome)
-    for row in observed["parity"]["pending"]:
-        type_adapter(QueuedEnvelope).validate_python(row)
     assert observed["parity"] == expected
     assert expected["facts"] and all(expected["facts"].values())
     assert observed["actual_work_joined"]
-    assert observed["cleanup"] and all(observed["cleanup"].values())
     report_direct(
         request,
         "unit-22-mac-commands.json",

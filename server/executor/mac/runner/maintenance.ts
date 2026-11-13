@@ -1,56 +1,32 @@
-/** Maintenance observes actual custody. A deadline never substitutes for that join. */
+/** Cancelable maintenance exposes its actual operation join to the complete runner. */
 import { observe_conversation_operation } from '../../../runtime/abort.ts';
-import { observe_shutdown } from '../../../conversation/shutdown.ts';
-import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
-import type { StopOptions } from '../../../lifecycle/contracts.ts';
+import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import { normalize_integer } from '../../integers.ts';
 import type { ChildCommand, Quiescence, WorkingTurn } from '../../wire.generated.ts';
 import type { MacRunningChild } from './contracts.ts';
 import type {
   MacMaintenanceContract,
   MacMaintenanceDependencies,
+  MacMaintenanceOperations,
 } from './maintenance_contracts.ts';
 import { outcome, same_reference } from './logic/outcomes.ts';
 
-function cleanup_failure(error: unknown): ServerLifecycleError {
-  return error instanceof ServerLifecycleError
-    ? error
-    : Object.assign(new ServerLifecycleError('Mac runner cleanup failed.'), { cause: error });
-}
-
-export class MacMaintenance implements MacMaintenanceContract {
+export class MacMaintenance implements MacMaintenanceContract, MacMaintenanceOperations {
   private readonly dependencies: MacMaintenanceDependencies;
   private readonly operations = new Set<Promise<unknown>>();
   private readonly failures = new Set<unknown>();
-  private permanent = false;
-  private completed = false;
   private replaying = false;
   private replay_gate: Promise<void> = Promise.resolve();
   private release_replay: (() => void) | undefined;
-  private cleanup: Promise<void> | undefined;
-  private resolve_actual!: () => void;
-  private reject_actual!: (error: unknown) => void;
-  private readonly actual = new Promise<void>((resolve, reject) => {
-    this.resolve_actual = resolve;
-    this.reject_actual = reject;
-  });
-  private fault_reported = false;
   constructor(dependencies: MacMaintenanceDependencies) {
     this.dependencies = dependencies;
-    void this.actual.catch(() => {});
-  }
-  get permanently_stopped(): boolean {
-    return this.permanent;
   }
   get planned_update_replay(): boolean {
     return this.replaying;
   }
-  seal(): void {
-    this.permanent = true;
-    this.dependencies.state.seal_admission();
-  }
   private assert_open(): void {
-    if (this.permanent) throw new ServerLifecycleError('Mac runner is shutting down.');
+    if (this.dependencies.permanently_stopped())
+      throw new ServerLifecycleError('Mac runner is shutting down.');
   }
   private own<T>(work: () => Promise<T>): Promise<T> {
     const task = Promise.resolve().then(work);
@@ -157,7 +133,7 @@ export class MacMaintenance implements MacMaintenanceContract {
     this.dependencies.state.seal_admission();
   }
   planned_replay_finished(signal: AbortSignal): Promise<void> {
-    if (this.permanent)
+    if (this.dependencies.permanently_stopped())
       return Promise.reject(new ServerLifecycleError('Mac runner is shutting down.'));
     return observe_conversation_operation(() => this.replay_gate, signal);
   }
@@ -216,85 +192,18 @@ export class MacMaintenance implements MacMaintenanceContract {
     }
     return true;
   }
-  private record_failure(error: unknown): void {
-    this.failures.add(error);
-    if (!this.fault_reported) {
-      this.fault_reported = true;
-      try {
-        this.dependencies.on_failure(error instanceof Error ? error : new Error(String(error)));
-      } catch (callback) {
-        this.failures.add(callback);
-      }
-    }
-  }
-  stop(options: StopOptions): Promise<void> {
-    if (this.completed)
-      return observe_shutdown(this.actual, options, 'Mac runner cleanup remains unfinished.').catch(
-        (error: unknown) => {
-          throw cleanup_failure(error);
-        },
-      );
-    this.seal();
+  async finish_operations(): Promise<readonly unknown[]> {
+    // Capture before releasing any continuation. Lifetime calls this synchronously
+    // before it schedules native stop, which can make an owned operation reject.
+    let pending = [...this.operations];
     this.replaying = false;
     this.release_replay?.();
-    for (const child of this.dependencies.native_children.retained_children()) {
-      this.dependencies.state.begin_retirement(child.reference.child_id);
-      this.dependencies.native_children.begin_retirement(child.reference);
-    }
-    for (const record of this.dependencies.commands().records())
-      this.dependencies.commands().withdraw(record.command.command_id);
-    // Repeated calls retry native/skills close capabilities while the raw join remains pending.
-    const native = Promise.resolve().then(() => this.dependencies.native_children.stop(options));
-    void native.catch((error) => {
-      if (!(error instanceof ShutdownDeadlineExceeded)) this.record_failure(error);
-    });
-    if (!this.cleanup) {
-      const task = Promise.resolve().then(() => this.drain());
-      this.cleanup = task;
-      void task.catch((error) => {
-        this.record_failure(error);
-        if (this.cleanup === task) this.cleanup = undefined;
-      });
-    }
-    return observe_shutdown(
-      Promise.all([native, this.cleanup]),
-      options,
-      'Mac runner work remains unfinished at the shutdown deadline.',
-    ).catch((error: unknown) => {
-      throw cleanup_failure(error);
-    });
-  }
-  private async drain(): Promise<void> {
-    while (this.operations.size) {
-      const results = await Promise.allSettled([...this.operations]);
+    do {
+      const results = await Promise.allSettled(pending);
       for (const result of results)
-        if (result.status === 'rejected') this.record_failure(result.reason);
-    }
-    const commands = this.dependencies.commands();
-    while (commands.records().some((record) => record.task !== null)) {
-      const results = await Promise.allSettled(
-        commands.records().flatMap((record) => (record.task === null ? [] : [record.task])),
-      );
-      for (const result of results)
-        if (result.status === 'rejected') this.record_failure(result.reason);
-    }
-    await commands.settled_replays();
-    // A failed settlement retains a known outcome and an exact retry point. Do not
-    // certify the raw join until a later stop attempt completes that settlement.
-    await commands.settle_known();
-    const native = await Promise.allSettled([this.dependencies.native_children.settled()]);
-    for (const result of native)
-      if (result.status === 'rejected') this.record_failure(result.reason);
-    await this.dependencies.sources.finish();
-    this.dependencies.sources.seal();
-    for (const error of this.dependencies.sources.errors()) this.record_failure(error);
-    this.completed = true;
-    if (this.failures.size)
-      this.reject_actual(new AggregateError(this.failures, 'Mac runner cleanup failed.'));
-    else this.resolve_actual();
-    await this.actual;
-  }
-  settled(): Promise<void> {
-    return this.actual;
+        if (result.status === 'rejected') this.failures.add(result.reason);
+      pending = [...this.operations];
+    } while (pending.length);
+    return [...this.failures];
   }
 }

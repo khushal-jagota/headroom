@@ -28,7 +28,6 @@ import { MacChildState } from '../runner/state.ts';
 import { MacSourceWork } from '../runner/source_work.ts';
 import { MacRetirement } from '../runner/retirement.ts';
 import { MacMaintenance } from '../runner/maintenance.ts';
-import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 import { ConversationStartAborted } from '../../../runtime/abort.ts';
 import { ExecutorPaths } from '../configuration.ts';
 import type { OutboxStore } from '../storage/outbox.ts';
@@ -75,10 +74,8 @@ const source_release = gate(),
   replay_entered = gate(),
   replay_release = gate();
 const maintenance_entered = gate(),
-  maintenance_release = gate(),
-  cleanup_release = gate();
-let maintenance_blocked = false,
-  cleanup_native_failure: Error | null = null;
+  maintenance_release = gate();
+let maintenance_blocked = false;
 let store: OutboxStore, journal: AsyncCommandJournal;
 async function open() {
   ({ store, journal } = await open_fixture_stores(
@@ -150,11 +147,6 @@ const native = {
     if (maintenance_blocked) {
       maintenance_blocked = false;
       maintenance_release.resolve();
-    }
-    if (cleanup_native_failure !== null) {
-      const failure = cleanup_native_failure;
-      cleanup_native_failure = null;
-      throw failure;
     }
   },
 } as unknown as BackendChild;
@@ -262,7 +254,7 @@ const maintenance = new MacMaintenance({
   commands: () => service,
   outbox: { pending_count: () => store!.pending_count() },
   new_update_id: () => update_id,
-  on_failure,
+  permanently_stopped: () => native_children.admission_stopped,
 });
 async function run(key: string, fail = false) {
   try {
@@ -278,7 +270,6 @@ async function run(key: string, fail = false) {
 }
 let actual_work_joined = false;
 let source_failure_seconds = 0;
-let cleanup_completed = false;
 try {
   await record_commands(
     journal!,
@@ -559,77 +550,22 @@ try {
     (row, index) =>
       trace.findIndex((candidate) => JSON.stringify(candidate) === JSON.stringify(row)) === index,
   );
-  const parity = decode_json(
-    stringify_pydantic_json({
-      calls,
-      trace: unique_trace,
-      outcomes,
-      states,
-      facts,
-      unpublished_before_reopen: before,
-      pending: pending_rows,
-      results,
-    }),
-    'JsonObject',
-  );
-  // The semantic snapshot excludes fixture teardown. This raw join is terminal.
-  const raw_source = new ShutdownDeadlineExceeded(['scripted source capability']);
-  const raw_native = new ShutdownDeadlineExceeded(['scripted native capability']);
-  const cleanup_stops = calls.filter((call) => JSON.stringify(call) === '["stop"]').length;
-  cleanup_native_failure = raw_native;
-  const held_source = sources.source_work(commands.replay!.child, async () => {
-    await cleanup_release.promise;
-    throw raw_source;
-  });
-  void held_source.catch(() => {});
-  let actual_settled = false;
-  const actual = maintenance.settled().then(
-    () => {
-      actual_settled = true;
-      return null;
-    },
-    (error: unknown) => {
-      actual_settled = true;
-      return error;
-    },
-  );
-  const expired = await maintenance.stop({ deadline: performance.now() / 1000 - 1 }).then(
-    () => null,
-    (error: unknown) => error,
-  );
-  const actual_waited = !actual_settled;
-  cleanup_release.resolve();
-  await held_source.catch((error: unknown) => {
-    if (error !== raw_source) throw error;
-  });
-  const outward = await maintenance.stop(options).then(
-    () => null,
-    (error: unknown) => error,
-  );
-  const actual_failure = await actual;
-  const retains = (error: unknown, expected: unknown): boolean =>
-    error === expected ||
-    (error instanceof AggregateError &&
-      error.errors.some((cause: unknown) => retains(cause, expected))) ||
-    (error instanceof Error && error.cause !== undefined && retains(error.cause, expected));
-  const cleanup = {
-    deadline_typed:
-      expired instanceof ShutdownDeadlineExceeded && expired instanceof ServerLifecycleError,
-    actual_waited,
-    raw_source_retained: retains(actual_failure, raw_source),
-    raw_native_retained_after_retry:
-      retains(actual_failure, raw_native) &&
-      calls.filter((call) => JSON.stringify(call) === '["stop"]').length === cleanup_stops + 2,
-    outward_typed: outward instanceof ServerLifecycleError && retains(outward, raw_native),
+  const parity = {
+    calls,
+    trace: unique_trace,
+    outcomes,
+    states,
+    facts,
+    unpublished_before_reopen: before,
+    pending: pending_rows,
+    results,
   };
-  cleanup_completed = true;
   process.stdout.write(
     stringify_pydantic_json({
       parity,
       retry_attempts: trace,
       actual_work_joined,
       source_failure_seconds,
-      cleanup,
       elapsed_seconds: (performance.now() - started) / 1000,
     }),
   );
@@ -639,16 +575,24 @@ try {
   source_release.resolve();
   replay_release.resolve();
   maintenance_release.resolve();
-  cleanup_release.resolve();
   // Teardown occurs after the semantic snapshot; it is not a command stop proof.
   try {
-    if (!cleanup_completed)
-      await Promise.allSettled([maintenance.stop(options), maintenance.settled()]);
+    const native_stop = native_children.stop(options);
+    const operations = maintenance.finish_operations();
+    const joined = await Promise.allSettled([native_stop, native_children.settled(), operations]);
     await sources.finish();
     await service.settled_replays();
     await Promise.allSettled(
       original_service.records().flatMap((record) => (record.task === null ? [] : [record.task])),
     );
+    const failures = joined.flatMap((result) =>
+      result.status === 'rejected'
+        ? [result.reason]
+        : Array.isArray(result.value)
+          ? result.value
+          : [],
+    );
+    if (failures.length) throw new AggregateError(failures, 'Command fixture cleanup failed.');
   } finally {
     await close();
   }

@@ -1,5 +1,4 @@
 /** Cancelable maintenance and permanent shutdown share the command settlement owner. */
-import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import type { Quiescence, WorkingTurn } from '../../wire.generated.ts';
 import type { OutboxStore } from '../storage/outbox.ts';
 import type { MacCommandServiceContract } from './command_contracts.ts';
@@ -11,12 +10,10 @@ export interface MacMaintenanceDependencies extends MacRetirementDependencies {
   readonly outbox: Pick<OutboxStore, 'pending_count'>;
   /** UUID hex source for Python's update_stop_ identity. */
   new_update_id(): string;
-  on_failure(error: Error): void;
+  /** Permanent lifetime belongs to the final runner. The component fixture uses its actual native owner. */
+  permanently_stopped(): boolean;
 }
 export interface MacMaintenanceContract {
-  readonly permanently_stopped: boolean;
-  /** Resource faults seal admission before the host starts its owned cleanup. */
-  seal(): void;
   readonly planned_update_replay: boolean;
   working_turns(): readonly WorkingTurn[];
   quiesce(): Promise<Quiescence>;
@@ -25,6 +22,9 @@ export interface MacMaintenanceContract {
   planned_replay_finished(signal: AbortSignal): Promise<void>;
   finish_planned_replay(): void;
   prepare_update(mode: 'now' | 'idle'): Promise<boolean>;
-  stop(options: StopOptions): Promise<void>;
-  settled(): Promise<void>;
+}
+export interface MacMaintenanceOperations {
+  /** Capture actual operations synchronously before native cleanup can release their continuations.
+   * Release replay waiters, join every admitted operation, and retain raw failures in the result. */
+  finish_operations(): Promise<readonly unknown[]>;
 }
