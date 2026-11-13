@@ -225,25 +225,101 @@ def test_node_release_rechecks_the_frontier_before_the_stop(
     assert recorded.backup is None and not harness.launched
 
 
-def test_idle_poll_advances_when_transient_work_ends_before_admission(harness: Harness) -> None:
-    """A busy poll must not lose the event-loop check after reconcilers finish."""
+def test_idle_update_advances_after_reconcilers_finish_without_another_poll(
+    harness: Harness,
+) -> None:
+    """A queued check can still be busy; the operation's exit must wake it again."""
     harness.system.activity = "busy"
-    harness.service.install(SHA_B, "idle", confirm_activity=False)
+    waiting = harness.service.install(SHA_B, "idle", confirm_activity=False)
+    harness.service.cancel(waiting.attempt_id)
 
     async def run() -> None:
         harness.service.start(asyncio.get_running_loop())
         await asyncio.gather(*(
             asyncio.wrap_future(task) for task in tuple(harness.service._tasks)
         ))
-        assert not harness.launched
-        assert harness.service.poll() is False  # Busy work still permits readiness.
-        harness.system.activity = "idle"
+        with harness.system.workspace_admission.operation() as admitted:
+            assert admitted
+            harness.store.create(waiting)
+            assert not harness.launched
+            assert harness.service.poll() is False
+            await asyncio.gather(*(
+                asyncio.wrap_future(task) for task in tuple(harness.service._tasks)
+            ))
+            assert harness.store.read().state == "waiting"  # type: ignore[union-attr]
+            harness.system.activity = "idle"
+        # No additional poll, database commit, or explicit advance follows release.
+        await asyncio.sleep(0)
         await asyncio.gather(*(
             asyncio.wrap_future(task) for task in tuple(harness.service._tasks)
         ))
         assert harness.launched
+        harness.service.stop()
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("action", ["cancel", "stop"])
+def test_ended_update_ignores_copied_work_completion_callbacks(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, action: str,
+) -> None:
+    """A callback already copied by a worker cannot revive a canceled or stopped owner."""
+    harness.system.activity = "busy"
+    waiting = harness.service.install(SHA_B, "idle", confirm_activity=False)
+    callbacks: list[Callable[[], None]] = []
+    subscribe = harness.system.workspace_admission.subscribe_operations_finished
+
+    def observe(callback: Callable[[], None]) -> Callable[[], None]:
+        callbacks.append(callback)
+        return subscribe(callback)
+
+    monkeypatch.setattr(
+        harness.system.workspace_admission, "subscribe_operations_finished", observe,
+    )
+
+    async def run() -> None:
+        harness.service.start(asyncio.get_running_loop())
+        await asyncio.gather(*(
+            asyncio.wrap_future(task) for task in tuple(harness.service._tasks)
+        ))
+        harness.system.activity = "idle"
+        harness.service.schedule_advance()
+        queued = tuple(harness.service._tasks)
+        if action == "cancel":
+            harness.service.cancel(waiting.attempt_id)
+        else:
+            harness.service.stop()
+        callbacks[0]()  # Simulate delivery after unsubscribe or cancellation.
+        await asyncio.gather(*(asyncio.wrap_future(task) for task in queued))
+        await asyncio.sleep(0)
+        assert not harness.service._tasks and not harness.launched
+        harness.service.stop()
+
+    asyncio.run(run())
+
+
+def test_unexpected_background_admission_error_reaches_the_home_log(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Discarding a concurrent future must not hide the cause of a waiting attempt."""
+    harness.service.install(SHA_B, "idle", confirm_activity=False)
+
+    async def broken(operation: Callable[[], None], *, require_idle: bool) -> bool:
+        raise OSError("admission diagnostic receipt")
+
+    monkeypatch.setattr(harness.system, "run_with_workspace_admission", broken)
+
+    async def run() -> None:
+        harness.service.start(asyncio.get_running_loop())
+        await asyncio.gather(*(
+            asyncio.wrap_future(task) for task in tuple(harness.service._tasks)
+        ), return_exceptions=True)
+        harness.service.stop()
+
+    asyncio.run(run())
+    assert "Update admission check failed" in caplog.text
+    assert "admission diagnostic receipt" in caplog.text
+    assert not harness.launched
 
 
 def test_idle_wait_cancel_and_update_now(harness: Harness) -> None:

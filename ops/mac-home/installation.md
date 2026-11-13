@@ -84,6 +84,16 @@ Ticket files and provider homes stay outside app replacement and snapshot restor
 A failure after app health does not rewind the database.
 Read `data/update-attempt.json` and `logs/update.stderr.log` for the exact outcome.
 
+For a Python thread dump, use the recorded application child PID:
+
+```sh
+kill -USR1 "$PANELS_APPLICATION_PID"
+```
+
+Read `logs/home.stderr.log` for raw stacks and named Python threads.
+Raw stacks do not wait for Python's signal callback. Thread names appear when the main thread can run.
+Do not send `SIGUSR1` to the LaunchAgent supervisor. That signal can stop the home.
+
 Use the existing source procedure below for provider prerequisites, Tailscale access, and stopped restore.
 For a disposable native proof only, add `--isolated-providers` to release setup.
 That option disables account skill writes and creates empty provider folders. It creates no login.

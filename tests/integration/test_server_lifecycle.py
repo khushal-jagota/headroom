@@ -142,6 +142,22 @@ def test_operator_shutdown_removes_child_socket_and_listener(server: ServerHandl
     event_loop_tasks_socket = resolve_event_loop_tasks_socket_path(server.control_socket_path)
     assert event_loop_tasks_socket.exists()
 
+    # SIGUSR1 previously terminated the application. Exercise the real signal on
+    # this existing disposable host, then keep the ordinary shutdown proof below.
+    os.kill(application_pid, signal.SIGUSR1)
+    def snapshot_written() -> bool:
+        text = server.log_path.read_text()
+        heading = f"Python thread dump pid={application_pid}"
+        return heading in text and "End Python thread dump" in text.split(heading, 1)[1]
+
+    _wait_until(snapshot_written, "the application did not write its Python thread snapshot")
+    dump = server.log_path.read_text().split(f"Python thread dump pid={application_pid}", 1)[1]
+    assert "Thread name='MainThread'" in dump
+    assert dump.count("Thread name=") >= 2
+    assert "Current thread 0x" in server.log_path.read_text()
+    assert httpx.get(f"{server.base}/api/meta").status_code == 200
+    assert _direct_children(server.proc.pid) == [application_pid]
+
     server.proc.terminate()
     server.proc.wait(timeout=10.0)
 
