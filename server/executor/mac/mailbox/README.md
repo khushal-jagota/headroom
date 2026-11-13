@@ -30,12 +30,14 @@ It preserves Python's byte accounting and always selects a first result, even ab
 The client refuses that oversized body before HTTP. It never truncates or silently discards it.
 Main receives at most 32 IDs and one canonical body. It sends only submitted-and-settled IDs back.
 Every selection receives one accepted feedback attempt. A database failure in that attempt updates fairness and releases the selection before rejection.
-Healthy main capacity refusal carries `code: EBUSY, unadmitted: true`. Only that refusal is retried before acceptance.
-Body close uses the same unadmitted-cleanup retry. Retries observe stop through the lifetime signal.
-If cleanup remains unadmitted after stop, a journal fault preserves the worker's remaining resources for journal shutdown.
+Ordinary admission retains its 32-operation cap and `code: EBUSY, unadmitted: true` refusal.
+Feedback and reader close release already-owned selections or readers. They enter the same ordered tail without ordinary capacity refusal.
+Those existing resource owners bound cleanup. No retry loop or new coordinator admits their release.
 Real `SQLITE_BUSY` after acceptance is not retried as the same feedback.
-Request or reply-handling failure attempts null feedback before body close. Actual cleanup failures retain their primary failure too.
-No new HTTP attempt starts if stop occurs during report preparation. The selection still receives failure feedback and body close.
+Actual request or reply-handling failure attempts null feedback before body close and keeps failure fairness.
+A selection withdrawn before HTTP, or after a stopped request rejects, receives private `cancelled` feedback. It does not charge failure fairness.
+A successful response after stop still applies its recorded/rejected IDs. Stop starts no further HTTP request.
+Actual cleanup failures retain their primary failure too. Stop alone creates no journal fault or host notification.
 
 The host must stop and join the mailbox before it stops the journal/outbox.
 These services are not peer journal sidecars. Stop seals queues synchronously, then stops poll and reporter admission.
@@ -47,9 +49,10 @@ All stages receive the same absolute `StopOptions.deadline` through shared `obse
 Actual joins outlive that observation and reject only after every owned task/cleanup settles.
 The aggregate also retains every child bounded-stop result. Only bounded `ShutdownDeadlineExceeded` errors are excluded from actual failure history.
 Actual-join failures remain visible regardless of their type. A non-deadline stop failure survives even when that child's actual cleanup succeeds.
-Typed business cancellation is recognized at pause, wake, planned-waiter, and native-invocation boundaries.
+Typed business cancellation is recognized at pause, wake, and planned-waiter boundaries.
+Any runner rejection after its invocation signal aborts is cancellation. The queue records one debug message and does not report a host failure.
 An HTTP request error after stop is cancellation regardless of its class. Its separate cleanup failures remain visible.
-Reader, feedback, native-task, and catalog-owner cleanup errors remain failures, including DOM `AbortError`.
+Separate reader, feedback, and catalog-owner cleanup errors remain failures, including DOM `AbortError`.
 Known result commits survive final stream-close failure. That cleanup fault requests host shutdown and remains in actual ownership evidence.
 The actual aggregate cleanup chain continues after a deadline, so the host can retain journal/database/lock ownership until it ends.
 
