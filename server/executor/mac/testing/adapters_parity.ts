@@ -361,6 +361,8 @@ const native_wait = new Promise<void>((resolve) => {
   release_native = resolve;
 });
 let native_stops = 0;
+const native_failure = new ShutdownDeadlineExceeded(['Actual native stop failed.']);
+const native_faults: Error[] = [];
 const starting_native = new MacNativeChildren({
   ...options,
   files: {
@@ -385,11 +387,12 @@ const starting_native = new MacNativeChildren({
         await native_wait;
       },
       async stop() {
-        native_stops++;
+        if (++native_stops === 1) throw native_failure;
         release_native();
       },
     }) as unknown as BackendChild,
   record_children: async () => {},
+  on_failure: (error) => native_faults.push(error),
 });
 const native_start = starting_native.start(
   {
@@ -402,10 +405,23 @@ const native_start = starting_native.start(
 );
 void native_start.catch(() => {});
 await native_entered_promise;
-await starting_native.stop(deadline());
-await starting_native.settled();
+const native_stop_failure = await starting_native.stop(deadline()).catch((error: unknown) => error);
+await starting_native.stop(deadline()).catch(() => {});
+const native_actual_failure = await observe_shutdown(
+  starting_native.settled(),
+  deadline(),
+  'Native retry actual join stalled',
+).catch((error: unknown) => error);
 await native_start.catch(() => {});
-Object.assign(lifecycle, { native_stop_releases_blocked_start: native_stops === 1 });
+Object.assign(lifecycle, {
+  native_stop_releases_blocked_start: native_stops === 2,
+  actual_native_deadline_failure_retained:
+    native_stop_failure === native_failure &&
+    native_actual_failure instanceof AggregateError &&
+    native_actual_failure.errors.includes(native_failure) &&
+    native_faults.length === 1 &&
+    native_faults[0] === native_failure,
+});
 const catalog_calls: unknown[] = [],
   catalogs: unknown[] = [];
 const catalog = new MacCatalog({
