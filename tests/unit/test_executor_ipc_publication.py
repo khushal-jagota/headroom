@@ -242,7 +242,8 @@ def test_retry_preserves_acknowledged_and_unknown_uncertainty_across_restart(
             assert response.unconfirmed is not None
             publication = executor.gateway._publishing.get("original")
             if publication is not None:
-                await publication[1]
+                async with asyncio.timeout(5):
+                    await publication[1]
             if response.unconfirmed.publication == "preparing":
                 response = await executor.gateway.handle(retry_request(child, "original"))
             assert response.unconfirmed is not None
@@ -409,11 +410,11 @@ def test_post_commit_cleanup_error_keeps_identity_and_retry_observes_original(
             response = await executor.gateway.handle(write_request(child, "original", budget=5))
             assert response.error is None and response.unconfirmed is not None
             assert response.unconfirmed.submission_id == "original"
-            # Commit visibility does not mean the publication thread settled.
-            # Consume this injected failure before asking retry for its journal row.
             publication = executor.gateway._publishing.get("original")
             if publication is not None:
-                await asyncio.gather(publication[1], return_exceptions=True)
+                async with asyncio.timeout(5):
+                    with pytest.raises(OSError, match="snapshot cleanup failed after commit"):
+                        await publication[1]
             original = executor.outbox.pending()[0]
             # A committed row can precede the thread's fault and publication cleanup.
             # Retry reports preparing until that task settles, regardless of its deadline.
