@@ -44,7 +44,7 @@ class ExecutorSchema(GenerateJsonSchema):
 
 
 def export_wire() -> dict[str, Any]:
-    roots = {
+    roots: dict[str, Any] = {
         name: value
         for name, value in vars(protocol).items()
         if isinstance(value, type) and is_dataclass(value)
@@ -56,7 +56,11 @@ def export_wire() -> dict[str, Any]:
             if isinstance(value, type) and is_dataclass(value)
         }
     )
-    roots.update(BackendSnapshot=BackendSnapshot, ExecutorHealthRead=ExecutorHealthRead)
+    roots.update(
+        BackendSnapshot=BackendSnapshot,
+        ExecutorHealthRead=ExecutorHealthRead,
+        JsonObject=protocol.JsonObject,
+    )
     definitions: dict[str, Any] = {}
 
     def define(name: str, schema: dict[str, Any]) -> None:

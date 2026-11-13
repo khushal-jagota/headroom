@@ -1,63 +1,46 @@
 /** The Python executor's closed backend-event registry, with existing core classes. */
-import * as Backend from '../conversation/backends/contracts.ts';
-import { ComposerCatalogEntry } from '../conversation/contracts.ts';
-import {
-  PermissionAskOption,
-  PlanEntry,
-  UserInputOption,
-  UserInputQuestion,
-} from '../conversation/events.ts';
-import { MessageFile, MessageImage, MessageText } from '../conversation/message_content.ts';
-import { JsonNumber } from '../core/http/numeric_json.ts';
-import type { NumericJSON } from '../core/http/numeric_json.ts';
+import type * as Backend from '../conversation/backends/contracts.ts';
 import type {
   BackendEvent,
   BackendEventMethod,
   JsonObject,
   WireRootName,
+  WireTypes,
 } from './wire.generated.ts';
 import { decode_value, encode_value } from './protocol_values.ts';
-import { KeyError } from './protocol_errors.ts';
+import { KeyError, class_name } from './protocol_errors.ts';
+import { native_class_name, wire_classes } from './protocol_classes.ts';
 
 // Exact constructors, not constructor names or instanceof matching. Python uses type(event).
 const event_types = {
-  agent_message_delta: [Backend.AgentMessageDelta, 'AgentMessageDelta'],
-  model_thinking_happened: [Backend.ModelThinkingHappened, 'ModelThinkingHappened'],
-  agent_message_completed: [Backend.AgentMessageCompleted, 'AgentMessageCompleted'],
-  command_reply_reported: [Backend.CommandReplyReported, 'CommandReplyReported'],
-  tool_call_started: [Backend.ToolCallStarted, 'ToolCallStarted'],
-  tool_call_progress: [Backend.ToolCallProgress, 'ToolCallProgress'],
-  tool_call_finished: [Backend.ToolCallFinished, 'ToolCallFinished'],
-  plan_updated: [Backend.PlanUpdated, 'PlanUpdated'],
-  token_usage_reported: [Backend.TokenUsageReported, 'TokenUsageReported'],
-  context_compacted: [Backend.ContextCompacted, 'ContextCompacted'],
-  permission_ask_raised: [Backend.PermissionAskRaised, 'PermissionAskRaised'],
-  user_input_requested: [Backend.UserInputRequested, 'UserInputRequested'],
-  user_input_failed: [Backend.UserInputFailed, 'UserInputFailed'],
-  turn_ended: [Backend.TurnEnded, 'TurnEnded'],
-  vendor_session_cursor_rebound: [Backend.VendorSessionCursorRebound, 'VendorSessionCursorRebound'],
-  composer_catalog_reported: [Backend.ComposerCatalogReported, 'ComposerCatalogReported'],
-  background_task_started: [Backend.BackgroundTaskStarted, 'BackgroundTaskStarted'],
-  background_task_ended: [Backend.BackgroundTaskEnded, 'BackgroundTaskEnded'],
-  backend_stream_ended: [Backend.BackendStreamEnded, 'BackendStreamEnded'],
-} as const satisfies Record<BackendEventMethod, readonly [Function, WireRootName]>;
+  agent_message_delta: 'AgentMessageDelta',
+  model_thinking_happened: 'ModelThinkingHappened',
+  agent_message_completed: 'AgentMessageCompleted',
+  command_reply_reported: 'CommandReplyReported',
+  tool_call_started: 'ToolCallStarted',
+  tool_call_progress: 'ToolCallProgress',
+  tool_call_finished: 'ToolCallFinished',
+  plan_updated: 'PlanUpdated',
+  token_usage_reported: 'TokenUsageReported',
+  context_compacted: 'ContextCompacted',
+  permission_ask_raised: 'PermissionAskRaised',
+  user_input_requested: 'UserInputRequested',
+  user_input_failed: 'UserInputFailed',
+  turn_ended: 'TurnEnded',
+  vendor_session_cursor_rebound: 'VendorSessionCursorRebound',
+  composer_catalog_reported: 'ComposerCatalogReported',
+  background_task_started: 'BackgroundTaskStarted',
+  background_task_ended: 'BackgroundTaskEnded',
+  backend_stream_ended: 'BackendStreamEnded',
+} as const satisfies Record<BackendEventMethod, WireRootName>;
+const event_methods = new Map<string, BackendEventMethod>(
+  Object.entries(event_types).map(([method, root]) => [root, method as BackendEventMethod]),
+);
 
 /** Actual core classes, with exact markers retained only where their number view loses precision. */
-export type DecodedBackendEvent = NumericJSON<Backend.BackendEventValue>;
+export type DecodedBackendEvent = WireTypes[(typeof event_types)[BackendEventMethod]];
 function construct(constructor: Function, fields: unknown): object {
-  // A finite float already denotes a native double. Safe integers also project exactly.
-  // Other integer markers retain custody, under the truthful NumericJSON result type.
-  const values = Object.fromEntries(
-    Object.entries(fields as Record<string, unknown>).map(([key, value]) => {
-      if (value instanceof JsonNumber) {
-        if (value.kind === 'float' && Number.isFinite(value.value)) return [key, value.value];
-        if (value.kind === 'integer' && Number.isSafeInteger(value.value))
-          return [key, Number(value.integer)];
-      }
-      return [key, value];
-    }),
-  );
-  return Reflect.construct(constructor, [values]);
+  return Reflect.construct(constructor, [fields]);
 }
 function fields(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>; // Input already passed the selected Python-value decoder.
@@ -69,30 +52,28 @@ function message_piece(value: unknown): object {
   const piece = fields(value);
   // These dictionaries are normalized union winners, not the original ambiguous raw input.
   return construct(
-    Object.hasOwn(piece, 'text')
-      ? MessageText
-      : Object.hasOwn(piece, 'byte_count')
-        ? MessageFile
-        : MessageImage,
+    wire_classes[class_name(value) as 'MessageText' | 'MessageFile' | 'MessageImage'],
     piece,
   );
 }
 function permission_ask(value: unknown): object {
   const ask = fields(value);
-  return construct(Backend.BackendPermissionAsk, {
+  return construct(wire_classes.BackendPermissionAsk, {
     ...ask,
-    options: objects(ask.options, (option) => construct(PermissionAskOption, option)),
+    options: objects(ask.options, (option) => construct(wire_classes.PermissionAskOption, option)),
   });
 }
 function user_input(value: unknown): object {
   const request = fields(value);
-  return construct(Backend.BackendUserInputRequest, {
+  return construct(wire_classes.BackendUserInputRequest, {
     ...request,
     questions: objects(request.questions, (value) => {
       const question = fields(value);
-      return construct(UserInputQuestion, {
+      return construct(wire_classes.UserInputQuestion, {
         ...question,
-        options: objects(question.options, (option) => construct(UserInputOption, option)),
+        options: objects(question.options, (option) =>
+          construct(wire_classes.UserInputOption, option),
+        ),
       });
     }),
   });
@@ -100,19 +81,20 @@ function user_input(value: unknown): object {
 
 export function encode_backend_event(
   event: Backend.BackendEventValue | DecodedBackendEvent,
-): readonly [BackendEventMethod, NumericJSON<JsonObject>] {
+): readonly [BackendEventMethod, JsonObject] {
   const actual = Object.getPrototypeOf(event)?.constructor;
-  const entry = Object.entries(event_types).find(([, [constructor]]) => actual === constructor);
-  if (!entry) throw new KeyError(actual);
-  const [method, [, root]] = entry;
-  return [method as BackendEventMethod, encode_value(event, root) as NumericJSON<JsonObject>];
+  const root_name = native_class_name(event);
+  const method = root_name === undefined ? undefined : event_methods.get(root_name);
+  if (method === undefined) throw new KeyError(actual);
+  return [method, encode_value(event, event_types[method]) as JsonObject];
 }
 
 export function decode_event_arguments(
-  event: Pick<NumericJSON<BackendEvent>, 'method' | 'arguments'>,
+  event: Pick<BackendEvent, 'method' | 'arguments'>,
 ): DecodedBackendEvent {
   if (!Object.hasOwn(event_types, event.method)) throw new KeyError(event.method);
-  const [constructor, root] = event_types[event.method];
+  const root = event_types[event.method];
+  const constructor = wire_classes[root];
   const value = fields(decode_value(event.arguments, root));
   let converted = value;
   switch (event.method) {
@@ -122,7 +104,7 @@ export function decode_event_arguments(
     case 'plan_updated':
       converted = {
         ...value,
-        entries: objects(value.entries, (entry) => construct(PlanEntry, entry)),
+        entries: objects(value.entries, (entry) => construct(wire_classes.PlanEntry, entry)),
       };
       break;
     case 'permission_ask_raised':
@@ -135,7 +117,7 @@ export function decode_event_arguments(
       converted = {
         ...value,
         composer_catalog: objects(value.composer_catalog, (entry) =>
-          construct(ComposerCatalogEntry, entry),
+          construct(wire_classes.ComposerCatalogEntry, entry),
         ),
       };
       break;

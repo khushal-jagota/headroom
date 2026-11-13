@@ -1,6 +1,5 @@
 /** Known contents of open wire dictionaries. Generic envelopes never validate these eagerly. */
 import type { Principal } from '../core/contracts.ts';
-import type { NumericJSON } from '../core/http/numeric_json.ts';
 import type { TicketEdit } from '../tickets/contracts.ts';
 import type * as Wire from './wire.generated.ts';
 import { decode_value } from './protocol_values.ts';
@@ -33,7 +32,7 @@ export interface EventArgumentPayloads {
   backend_stream_ended: Wire.BackendStreamEnded;
 }
 /** Python accepts additional keys and extensible error/reason text in these dictionaries. */
-export type OpenPayload<T> = NumericJSON<T> & NumericJSON<Wire.JsonObject>;
+export type OpenPayload<T> = T & Wire.JsonObject;
 export interface CommandResultPayloads {
   prompt_accepted: { kind: 'prompt_accepted'; composed_content_delivered: boolean };
   steer_accepted: { kind: 'steer_accepted'; composed_content_delivered: boolean };
@@ -44,7 +43,7 @@ export interface CommandResultPayloads {
   settlement: { reason: string };
 }
 export type CommandResultPayload =
-  OpenPayload<CommandResultPayloads[keyof CommandResultPayloads]> | NumericJSON<Wire.JsonObject>; // Start, stop and cancel can return an empty dictionary.
+  OpenPayload<CommandResultPayloads[keyof CommandResultPayloads]> | Wire.JsonObject; // Start, stop and cancel can return an empty dictionary.
 export interface ReceiptResultPayloads {
   error: { error: { code: string; message: string; detail: Wire.JsonObject } };
   delivery: {
@@ -68,7 +67,7 @@ export interface CliArgumentPayloads {
     body: { message: string; recipient?: Principal | null };
   };
 }
-export type ModelListPayload = NumericJSON<Wire.BackendSnapshot>;
+export type ModelListPayload = Wire.BackendSnapshot;
 const envelope_roots = {
   backend_event: 'BackendEvent',
   cli_write: 'CliWrite',
@@ -79,6 +78,6 @@ const envelope_roots = {
 export function decode_envelope_payload<K extends Wire.EnvelopeKind>(
   kind: K,
   payload: unknown,
-): NumericJSON<EnvelopePayloads[K]> {
-  return decode_value(payload, envelope_roots[kind]) as NumericJSON<EnvelopePayloads[K]>;
+): EnvelopePayloads[K] {
+  return decode_value(payload, envelope_roots[kind]) as EnvelopePayloads[K];
 }

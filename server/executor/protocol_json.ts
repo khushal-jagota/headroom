@@ -1,11 +1,20 @@
 /** Executor JSON lexical boundary: jiter-compatible input, before wire normalization. */
 import { JsonNumber } from '../core/http/numeric_json.ts';
-import type { NumericJSON } from '../core/http/numeric_json.ts';
 import type { JsonValue } from './wire.generated.ts';
 import { EXECUTOR_JSON_MAX_DEPTH, EXECUTOR_JSON_MAX_INTEGER_LENGTH } from './configuration.ts';
 
-export type ExecutorJSONValue = NumericJSON<JsonValue>;
+export type ExecutorJSONValue = JsonValue;
 const object_keys = new WeakMap<object, readonly string[]>();
+const SIMPLE_ESCAPES: Readonly<Record<number, string>> = {
+  34: '"',
+  92: '\\',
+  47: '/',
+  98: '\b',
+  102: '\f',
+  110: '\n',
+  114: '\r',
+  116: '\t',
+};
 
 /** Source order survives integer-looking keys. Repeated keys keep their original position. */
 export function ordered_json_entries(
@@ -82,14 +91,25 @@ export function parse_executor_json(body: Uint8Array): ExecutorJSONValue {
     throw new ExecutorJSONSyntaxError(reason, bytes, at);
   };
   const whitespace = (): void => {
-    while ([32, 9, 10, 13].includes(bytes[position]!)) position++;
+    while (
+      bytes[position] === 32 ||
+      bytes[position] === 9 ||
+      bytes[position] === 10 ||
+      bytes[position] === 13
+    )
+      position++;
   };
   const digit = (byte: number | undefined): boolean =>
     byte !== undefined && byte >= 48 && byte <= 57;
+  const digits = (): void => {
+    if (position === bytes.length) fail('EOF while parsing a value');
+    if (!digit(bytes[position])) fail('invalid number');
+    while (digit(bytes[position])) position++;
+  };
   const literal = (text: string, value: ExecutorJSONValue): ExecutorJSONValue => {
-    for (const expected of Buffer.from(text)) {
+    for (let index = 0; index < text.length; index++) {
       if (position === bytes.length) fail('EOF while parsing a value');
-      if (bytes[position] !== expected) fail('expected ident');
+      if (bytes[position] !== text.charCodeAt(index)) fail('expected ident');
       position++;
     }
     return value;
@@ -111,14 +131,14 @@ export function parse_executor_json(body: Uint8Array): ExecutorJSONValue {
         if (position - start > EXECUTOR_JSON_MAX_INTEGER_LENGTH) fail('number out of range');
       }
     }
-    for (const marker of [46, 101]) {
-      const byte = bytes[position];
-      if (marker === 46 ? byte !== 46 : byte !== 101 && byte !== 69) continue;
+    if (bytes[position] === 46) {
       position++;
-      if (marker === 101 && (bytes[position] === 43 || bytes[position] === 45)) position++;
-      if (position === bytes.length) fail('EOF while parsing a value');
-      if (!digit(bytes[position])) fail('invalid number');
-      while (digit(bytes[position])) position++;
+      digits();
+    }
+    if (bytes[position] === 101 || bytes[position] === 69) {
+      position++;
+      if (bytes[position] === 43 || bytes[position] === 45) position++;
+      digits();
     }
     const result = new JsonNumber(bytes.toString('ascii', start, position));
     return result.kind === 'integer' || Number.isFinite(result.value) ? result : result.value;
@@ -128,11 +148,9 @@ export function parse_executor_json(body: Uint8Array): ExecutorJSONValue {
     const pieces: string[] = [];
     let invalid_utf8: number | undefined;
     const raw = (start: number, end: number): string => {
-      let result = '';
       for (let index = start; index < end;) {
         const lead = bytes[index]!;
         if (lead < 128) {
-          result += String.fromCharCode(lead);
           index++;
           continue;
         }
@@ -157,12 +175,11 @@ export function parse_executor_json(body: Uint8Array): ExecutorJSONValue {
           !(code >= 0xd800 && code <= 0xdfff);
         if (!valid) {
           invalid_utf8 ??= index + 2;
-          return result;
+          return bytes.toString('utf8', start, index);
         }
-        result += String.fromCodePoint(code);
         index += length;
       }
-      return result;
+      return bytes.toString('utf8', start, end);
     };
     const hex = (): number => {
       if (bytes.length - position < 4) fail('EOF while parsing a string', bytes.length);
@@ -203,18 +220,8 @@ export function parse_executor_json(body: Uint8Array): ExecutorJSONValue {
       }
       if (position === bytes.length) fail('EOF while parsing a string');
       const escaped = bytes[position]!;
-      const simple: Record<number, string> = {
-        34: '"',
-        92: '\\',
-        47: '/',
-        98: '\b',
-        102: '\f',
-        110: '\n',
-        114: '\r',
-        116: '\t',
-      };
-      if (Object.hasOwn(simple, escaped)) {
-        pieces.push(simple[escaped]!);
+      if (Object.hasOwn(SIMPLE_ESCAPES, escaped)) {
+        pieces.push(SIMPLE_ESCAPES[escaped]!);
         position++;
       } else if (escaped === 117) {
         position++;

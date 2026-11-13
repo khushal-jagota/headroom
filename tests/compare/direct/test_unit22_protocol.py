@@ -22,8 +22,8 @@ from typing import Any
 import pytest
 from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 from tests.compare.direct.export_unit22_wire import export_wire
-from tests.compare.direct.unit22_protocol_fixtures import wire_fixtures
 
+from planner import execution_identity as identity_contract
 from planner.conversation.snapshot import BackendSnapshot
 from planner.execution_identity import ProtocolRefused
 from planner.executor import protocol as wire
@@ -35,7 +35,11 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def _root(name: str) -> Any:
     return (
-        {"BackendSnapshot": BackendSnapshot, "ExecutorHealthRead": ExecutorHealthRead}.get(name)
+        {
+            "BackendSnapshot": BackendSnapshot,
+            "ExecutorHealthRead": ExecutorHealthRead,
+            "JsonObject": dict,
+        }.get(name)
         or getattr(wire, name, None)
         or getattr(update_contracts, name)
     )
@@ -45,20 +49,18 @@ def _body(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
 
 
-def _snapshot(value: Any) -> Any:
-    if isinstance(value, float):
-        return ["float", struct.pack(">d", value).hex()]
-    if isinstance(value, int) and not isinstance(value, bool):
-        return ["int", str(value)]
-    if isinstance(value, list):
-        return [_snapshot(item) for item in value]
-    if isinstance(value, dict):
-        return {key: _snapshot(item) for key, item in value.items()}
-    return value
-
-
-def _canonical(body: bytes) -> Any:
-    return _snapshot(json.loads(body))
+def _fixture_value(tree: list[Any]) -> Any:
+    tag, value = tree
+    if tag == "primitive":
+        return value
+    if tag == "int":
+        return int(value)
+    if tag == "float":
+        return struct.unpack(">d", bytes.fromhex(value))[0]
+    if tag == "array":
+        return [_fixture_value(item) for item in value]
+    assert tag == "object", tag
+    return {key: _fixture_value(item) for key, item in value}
 
 
 class _Reader:
@@ -123,6 +125,38 @@ def _cases(fixtures: dict[str, Any]) -> list[dict[str, Any]]:
         ),
         case("lax-float", "LeaseReply", {**fixtures["LeaseReply"], "away_after_seconds": "1_2.5"}),
         case(
+            "long-space-number", "TokenUsageReported", {"cost_usd": "1" + " " * (500 * 1024) + "1"}
+        ),
+        case(
+            "lax-int-float-overflow",
+            "WaitingConversation",
+            {"conversation_id": "conversation", "oldest_sequence": 1e19},
+        ),
+        case(
+            "int-positive-bound",
+            "WaitingConversation",
+            {"conversation_id": "conversation", "oldest_sequence": float(2**63)},
+        ),
+        case(
+            "int-negative-bound",
+            "WaitingConversation",
+            {"conversation_id": "conversation", "oldest_sequence": -float(2**63)},
+        ),
+        case(
+            "structured-unsafe-int",
+            "WaitingConversation",
+            {"conversation_id": "conversation", "oldest_sequence": 10000000000000000000},
+        ),
+        case("tuple-wrong-input", "LiveEventBatch", {"events": 1}),
+        case("live-read-reply-not-object", "JsonObject", []),
+        case("path-wrong-input", "FileSnapshot", {**fixtures["FileSnapshot"], "local_path": 7}),
+        case("dataclass-wrong-input", "ChildReference", []),
+        case(
+            "enum-and-literal-errors",
+            "WritePrompt",
+            {**fixtures["WritePrompt"], "kind": "future", "mode": "future"},
+        ),
+        case(
             "lax-float-negative-zero-string",
             "LeaseReply",
             {**fixtures["LeaseReply"], "away_after_seconds": "-0.0"},
@@ -180,8 +214,32 @@ def _cases(fixtures: dict[str, Any]) -> list[dict[str, Any]]:
             {key: value for key, value in command.items() if key != "arguments"},
         ),
         case("command-conflicting-kind", "ChildCommand", changed),
+        case(
+            "command-null-arguments",
+            "ChildCommand",
+            {**fixtures["ChildCommand"], "arguments": None},
+        ),
+        case(
+            "command-list-arguments", "ChildCommand", {**fixtures["ChildCommand"], "arguments": []}
+        ),
+        case(
+            "command-text-arguments",
+            "ChildCommand",
+            {**fixtures["ChildCommand"], "arguments": "bad"},
+        ),
         case("command-missing-turn", "ChildCommand", {**fixtures["ChildCommand"], "turn": None}),
         case("durable-answer-conflict", "ChildCommand", answer_command),
+        case(
+            "durable-user-answer-command",
+            "ChildCommand",
+            {
+                "command_id": "answer",
+                "child": fixtures["ChildReference"],
+                "turn": fixtures["TurnToken"],
+                "operation": "answer_user_input",
+                "arguments": fixtures["AnswerUserInput"],
+            },
+        ),
         case(
             "mailbox-no-payload",
             "MailboxCommand",
@@ -229,6 +287,63 @@ def _cases(fixtures: dict[str, Any]) -> list[dict[str, Any]]:
             operation="encode",
             limit=1,
         ),
+        case(
+            "encode-missing-required",
+            "LeaseRequest",
+            {
+                key: value
+                for key, value in fixtures["LeaseRequest"].items()
+                if key != "oldest_item_age_ms"
+            },
+            operation="encode",
+        ),
+        case(
+            "encode-mailbox-semantic",
+            "MailboxCommand",
+            {"command_sequence": 1, "command_id": "prompt", "created_at_vps_ms": 100},
+            operation="encode",
+        ),
+        case(
+            "encode-command-semantic",
+            "ChildCommand",
+            {**fixtures["ChildCommand"], "turn": None},
+            operation="encode",
+        ),
+        case(
+            "native-default-undefined",
+            "ExecutorIdentity",
+            {
+                key: value
+                for key, value in fixtures["ExecutorIdentity"].items()
+                if key != "connection_generation"
+            },
+            operation="native-default",
+        ),
+        case(
+            "native-surrogate",
+            "CanonicalSkillSource",
+            fixtures["CanonicalSkillSource"],
+            operation="native-surrogate",
+        ),
+        case(
+            "native-int-overflow",
+            "WaitingConversation",
+            {"conversation_id": "conversation", "oldest_sequence": 1e19},
+            operation="native-int-overflow",
+        ),
+        case(
+            "encode-nonnullable-nonfinite",
+            "LeaseReply",
+            {**fixtures["LeaseReply"], "away_after_seconds": float("nan")},
+            operation="encode",
+        ),
+        case("native-deep-output", "JsonObject", {}, operation="native-deep-output"),
+        case(
+            "encode-frame-peer-refusal",
+            "ChildCommand",
+            fixtures["ChildCommand"],
+            operation="native-frame",
+        ),
     ]
     for entry in cases:
         body = _body(entry["dto"])
@@ -258,15 +373,28 @@ def _reference_case(case: dict[str, Any]) -> dict[str, Any]:
     try:
         if operation == "frame":
             value = asyncio.run(wire.read_typed_frame(_Reader(body), cls))
-        elif operation in ("value", "encode"):
-            value = wire.type_adapter(cls).validate_python(case["dto"])
+        elif operation == "value" or operation == "encode" or operation.startswith("native-"):
+            dto = case["dto"]
+            if operation == "native-surrogate":
+                dto = {**dto, "source_text": "\ud800"}
+            if operation == "native-deep-output":
+                nested: Any = None
+                for _ in range(201):
+                    nested = [nested]
+                dto = {"nested": nested}
+            value = wire.type_adapter(cls).validate_python(dto)
         else:
             if not body or len(body) > case.get("limit", 1024 * 1024):
                 raise ProtocolRefused("body exceeds its size limit")
             value = wire.type_adapter(cls).validate_json(body, strict=case.get("strict", False))
+        if operation == "native-frame":
+            value = asyncio.run(wire.read_typed_frame(_Reader(wire.encode_frame(value)), cls))
         encoded = wire.encode_bounded(
             value, limit=case.get("limit", 1024 * 1024) if operation == "encode" else 1024 * 1024
         )
+        if operation == "encode" or operation.startswith("native-"):
+            # Manager admission: a sender never emits a value that its peer refuses.
+            wire.decode_bounded(encoded, cls)
         return {"name": case["name"], "ok": True, "body": base64.b64encode(encoded).decode()}
     except Exception as error:
         return {
@@ -274,38 +402,105 @@ def _reference_case(case: dict[str, Any]) -> dict[str, Any]:
             "ok": False,
             "type": type(error).__name__,
             "message": str(error),
+            "value_error": isinstance(error, ValueError),
+        }
+
+
+def _identity_cases(identity: dict[str, Any]) -> list[dict[str, Any]]:
+    identity = {key: value for key, value in identity.items() if key != "connection_generation"}
+    native = {**identity, "connection_generation": 0}
+    return [
+        {"name": "parse-valid", "operation": "parse", "value": identity},
+        {"name": "parse-extra", "operation": "parse", "value": {**identity, "future": 7}},
+        {"name": "parse-missing", "operation": "parse", "value": {}},
+        {
+            "name": "parse-integer-first",
+            "operation": "parse",
+            "value": {**identity, "protocol_version": True, "executor_incarnation": "bad"},
+        },
+        {
+            "name": "uuid-prefix-underscore",
+            "operation": "parse",
+            "value": {**identity, "executor_incarnation": "0x_45678123442348234123456789abc"},
+        },
+        {
+            "name": "uuid-invalid-control",
+            "operation": "parse",
+            "value": {**identity, "executor_incarnation": "\x1c2345678123442348234123456789abc"},
+        },
+        {
+            "name": "validation-uuid-first",
+            "operation": "validate",
+            "value": {**native, "protocol_version": True, "executor_incarnation": "bad"},
+        },
+        {
+            "name": "revision-python-space",
+            "operation": "validate",
+            "value": {**native, "application_revision": "\u0085"},
+        },
+        {
+            "name": "revision-bom",
+            "operation": "validate",
+            "value": {**native, "application_revision": "\ufeff"},
+        },
+        {
+            "name": "old-version",
+            "operation": "validate",
+            "value": {**native, "protocol_version": 21},
+        },
+        {
+            "name": "old-version-shape-only",
+            "operation": "validate",
+            "value": {**native, "protocol_version": 21},
+            "check_versions": False,
+        },
+        {"name": "supports-safe", "operation": "supports", "versions": [22, 5]},
+        {"name": "supports-bool", "operation": "supports", "versions": [True, 5]},
+        {"name": "supports-float-token", "operation": "supports", "versions": [22.0, 5]},
+        {"name": "reason-old-version", "operation": "reason", "versions": [21, 5]},
+        {"name": "reason-old-spool", "operation": "reason", "versions": [22, 4]},
+        {"name": "reason-future", "operation": "reason", "versions": [23, 5]},
+        {
+            "name": "identity-long-braces",
+            "operation": "validate",
+            "value": {**native, "executor_incarnation": "1" + "{" * 500000 + "1"},
+        },
+        {
+            "name": "identity-long-interior-space",
+            "operation": "validate",
+            "value": {**native, "application_revision": "1" + " " * 500000 + "1"},
+        },
+    ]
+
+
+def _reference_identity(case: dict[str, Any]) -> dict[str, Any]:
+    try:
+        operation = case["operation"]
+        if operation == "parse":
+            result: Any = identity_contract.parse_identity(case["value"])
+        elif operation == "validate":
+            identity_contract.validate_identity(
+                identity_contract.ExecutorIdentity(**case["value"]),
+                check_versions=case.get("check_versions", True),
+            )
+            result = None
+        elif operation == "supports":
+            result = identity_contract.supports_executor_versions(*case["versions"])
+        else:
+            result = identity_contract.refusal_reason_for_versions(*case["versions"])
+        return {"name": case["name"], "ok": True, "value": wire.encode_value(result)}
+    except Exception as error:
+        return {
+            "name": case["name"],
+            "ok": False,
+            "type": type(error).__name__,
+            "message": str(error),
+            "value_error": isinstance(error, ValueError),
         }
 
 
 def test_unit22_shared_protocol_exchange(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     started = time.perf_counter()
-    fixtures, events = wire_fixtures()
-    schema = export_wire()
-    assert set(fixtures) == set(schema["roots"])
-    reference = {}
-    payload = []
-    for root, dto in fixtures.items():
-        value = wire.type_adapter(_root(root)).validate_json(_body(dto))
-        encoded = wire.encode_bounded(value)
-        reference[root] = encoded
-        payload.append({"root": root, "dto": dto, "python": base64.b64encode(encoded).decode()})
-    cases = _cases(fixtures)
-    expected_cases = [_reference_case(case) for case in cases]
-    assert {case["name"] for case in expected_cases if case["ok"]} == {
-        "lax-http-bool-extra",
-        "lax-journal-int",
-        "lax-float",
-        "lax-float-negative-zero-string",
-        "integer-negative-zero-float",
-        "strict-frame-lax-arguments",
-        "explicit-null",
-        "smart-piece",
-        "enum-literal-success",
-        "deferred-open-payload",
-        "python-value-path",
-        "nonfinite-json",
-        "nonfinite-lax-string",
-    }
     home = tmp_path / "home"
     home.mkdir()
     environment = {
@@ -319,16 +514,72 @@ def test_unit22_shared_protocol_exchange(tmp_path: Path, request: pytest.Fixture
         "PLAN_SERVER_URL": "http://127.0.0.1:0",
         "PLAN_TEST_MODE": "1",
     }
+    export_started = time.perf_counter()
+    exported = subprocess.run(
+        ["node", str(ROOT / "server/executor/testing/native_protocol_fixtures.ts"), "--export"],
+        env=environment,
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=5,
+        check=True,
+    )
+    fixture_export_seconds = time.perf_counter() - export_started
+    raw_fixtures = _fixture_value(json.loads(exported.stdout))
+    # These independent anchors refuse a bridge that loses key order or numeric kinds.
+    document = raw_fixtures["IpcResponse"]["result"]
+    assert list(document)[:2] == ["2", "1"]
+    counts = document["counts"]
+    assert type(counts[1]) is float and counts[1] == 1.0
+    assert type(counts[3]) is int and counts[3] == 9007199254740993
+    assert type(counts[5]) is float and struct.pack(">d", counts[5]).hex() == "8000000000000000"
+    schema = export_wire()
+    assert set(raw_fixtures) == set(schema["roots"])
+    events = {
+        qualified.rsplit(".", 1)[-1]: method for method, qualified in schema["event_codecs"].items()
+    }
+    fixtures = {}
+    reference = {}
+    payload = []
+    for root, dto in raw_fixtures.items():
+        value = wire.type_adapter(_root(root)).validate_json(_body(dto))
+        encoded = wire.encode_bounded(value)
+        fixtures[root] = json.loads(encoded)
+        reference[root] = encoded
+        payload.append({"root": root, "python": base64.b64encode(encoded).decode()})
+    cases = _cases(fixtures)
+    expected_cases = [_reference_case(case) for case in cases]
+    assert {case["name"] for case in expected_cases if case["ok"]} == {
+        "lax-http-bool-extra",
+        "lax-journal-int",
+        "lax-float",
+        "structured-unsafe-int",
+        "lax-float-negative-zero-string",
+        "integer-negative-zero-float",
+        "strict-frame-lax-arguments",
+        "explicit-null",
+        "smart-piece",
+        "enum-literal-success",
+        "deferred-open-payload",
+        "python-value-path",
+        "nonfinite-json",
+        "nonfinite-lax-string",
+        "native-default-undefined",
+        "durable-user-answer-command",
+    }
+    identities = _identity_cases(fixtures["ExecutorIdentity"])
+    expected_identities = [_reference_identity(case) for case in identities]
     run = subprocess.run(
         ["node", str(ROOT / "server/executor/testing/protocol.ts")],
         input=json.dumps(
-            {"fixtures": payload, "cases": cases, "events": events}, ensure_ascii=False
+            {"fixtures": payload, "cases": cases, "events": events, "identities": identities},
+            ensure_ascii=False,
         ),
         env=environment,
         cwd=ROOT,
         text=True,
         capture_output=True,
-        timeout=30,
+        timeout=15,
         check=True,
     )
     candidate = json.loads(run.stdout)
@@ -337,22 +588,25 @@ def test_unit22_shared_protocol_exchange(tmp_path: Path, request: pytest.Fixture
         # Journal messages retain compact spelling, field order, and opaque key order.
         assert base64.b64decode(result["read"]) == reference[root], root
         assert result["value_bytes"].encode() == reference[root], root
-        expected_value = json.loads(reference[root])
-        assert _snapshot(result["object"]) == _snapshot(expected_value), root
-        assert _snapshot(result["value"]) == _snapshot(expected_value), root
         written = base64.b64decode(result["write"])
-        if root == "CanonicalSkillSource":
-            # Independent DTO encoding also proves exact compact UTF-8 output.
-            assert written == reference[root]
+        assert written == reference[root], root
         Draft202012Validator({"$ref": f"#/$defs/{root}", "$defs": schema["$defs"]}).validate(
             json.loads(written)
         )
-        reread = wire.decode_bounded(written, _root(root))
-        assert _canonical(wire.encode_bounded(reread)) == _canonical(reference[root]), root
+        wire.decode_bounded(written, _root(root))
+    assert candidate["object_bytes"].encode() == reference["JsonObject"]
     assert len(candidate["cases"]) == len(expected_cases)
+    sender_depth = None
     for actual, expected in zip(candidate["cases"], expected_cases, strict=True):
+        elapsed = actual.pop("elapsed_ms", None)
+        if actual["name"] == "long-space-number":
+            assert elapsed is not None and elapsed < 2000
         assert actual["name"] == expected["name"]
         assert actual["ok"] == expected["ok"], (actual, expected)
+        if actual["name"] == "native-deep-output":
+            assert not actual["ok"] and actual["value_error"] is expected["value_error"] is True
+            sender_depth = {"source_peer": expected, "sender": actual}
+            continue
         if expected["ok"]:
             assert base64.b64decode(actual["body"]) == base64.b64decode(expected["body"]), actual[
                 "name"
@@ -361,11 +615,13 @@ def test_unit22_shared_protocol_exchange(tmp_path: Path, request: pytest.Fixture
             assert actual == expected
     assert set(candidate["events"]) == set(events)
     for root, result in candidate["events"].items():
-        assert result["class"] == root and result["instance"] is True
+        assert result["instance"] is True and result["exact_constructor"] is True
         event = wire.type_adapter(_root(root)).validate_json(_body(fixtures[root]))
         method, arguments = wire.encode_backend_event(event)
         assert result["method"] == method.value == events[root]
-        assert _snapshot(result["arguments"]) == _snapshot(arguments), root
+        assert result["argument_bytes"].encode() == wire.type_adapter(object).dump_json(
+            arguments
+        ), root
         if root == "AgentMessageCompleted":
             assert result["pieces"] == ["MessageText", "MessageImage", "MessageFile"]
         else:
@@ -374,7 +630,31 @@ def test_unit22_shared_protocol_exchange(tmp_path: Path, request: pytest.Fixture
     framed = base64.b64decode(candidate["frame"])
     assert struct.unpack("!I", framed[:4])[0] == len(framed) - 4
     value = asyncio.run(wire.read_typed_frame(_Reader(framed), _root("IpcResponse")))
-    assert _canonical(wire.encode_bounded(value)) == _canonical(reference["IpcResponse"])
+    assert wire.encode_bounded(value) == reference["IpcResponse"]
+    for actual, expected in zip(candidate["identities"], expected_identities, strict=True):
+        elapsed = actual.pop("elapsed_ms", None)
+        if actual["name"].startswith("identity-long-"):
+            assert elapsed is not None and elapsed < 2000
+        assert _body(actual) == _body(expected)
+    assert candidate["numbers"] == {
+        "safe_integer": True,
+        "float": True,
+        "supports_decoded_identity": True,
+        "unsafe_exact": "10000000000000000000",
+    }
+    # The timed hot-path message uses the exact configured batch byte budget.
+    large = deepcopy(fixtures["LiveEventBatch"])
+    limit = 4 * 1024 * 1024
+    initial = wire.encode_bounded(
+        wire.type_adapter(wire.LiveEventBatch).validate_python(large), limit=limit
+    )
+    large["events"][0]["arguments"]["text_delta"] += "x" * (limit - len(initial))
+    expected_large = wire.encode_bounded(
+        wire.type_adapter(wire.LiveEventBatch).validate_python(large), limit=limit
+    )
+    performance = candidate["performance"]
+    assert performance.pop("body") == base64.b64encode(expected_large).decode()
+    assert performance["bytes"] == len(expected_large) == limit and performance["exact"] is True
     directory = request.config.getoption("--compare-report-dir")
     if directory:
         report = Path(directory) / "unit-22-protocol.json"
@@ -385,6 +665,22 @@ def test_unit22_shared_protocol_exchange(tmp_path: Path, request: pytest.Fixture
                     "roots": sorted(fixtures),
                     "events": sorted(events),
                     "cases": expected_cases,
+                    "identity_cases": expected_identities,
+                    "sender_depth": sender_depth,
+                    "hot_path": performance,
+                    "fixture_export_seconds": fixture_export_seconds,
+                    "field_kinds": {
+                        "boolean": ["lax-http-bool-extra", "ordered-scalar-errors"],
+                        "integer": ["lax-journal-int", "lax-int-float-overflow"],
+                        "float": ["lax-float", "long-space-number"],
+                        "string": ["root/CanonicalSkillSource", "ordered-scalar-errors"],
+                        "enum": ["root/WritePrompt", "enum-and-literal-errors"],
+                        "literal": ["root/WritePrompt", "enum-and-literal-errors"],
+                        "tuple": ["root/LiveEventBatch", "tuple-wrong-input"],
+                        "dataclass": ["root/ChildReference", "dataclass-wrong-input"],
+                        "dictionary": ["root/JsonObject", "live-read-reply-not-object"],
+                        "path": ["root/FileSnapshot", "path-wrong-input"],
+                    },
                     "elapsed_seconds": time.perf_counter() - started,
                     "differences": [],
                 },
