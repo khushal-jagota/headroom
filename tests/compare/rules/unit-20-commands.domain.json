@@ -1,0 +1,169 @@
+{
+  "ignore": {
+    "attention_history_metadata.started_at": "Schema initialization reads real wall time.",
+    "conversation_events.created_at": "Event storage reads real wall time, independent of the test clock.",
+    "conversations.created_at": "ConversationStore creates records with integer_now backed by real time, independent of the test clock.",
+    "conversation_history_catalog.created_at": "Conversation history stores the real creation timestamp of the conversation record."
+  },
+  "response_ignore": {
+    "body.status.runtime_epoch": "Conversation view status has a process-specific live epoch.",
+    "body.coverage.scope": "Navigation continuity scope is specific to each installation.",
+    "body.coverage.epoch": "Navigation continuity epoch is specific to each process.",
+    "body.events.*.created_at": "Event storage reads real wall time, independent of the test clock.",
+    "body.page.items.*.started_at_unix_milliseconds": "Conversation view projects the event timestamp from real wall time, independent of the test clock.",
+    "body.status.rest.latest_turn.started_at_unix_milliseconds": "Conversation view projects the event timestamp from real wall time, independent of the test clock.",
+    "body.conversation_history.*.created_at": "Ticket history exposes the real creation timestamp of each conversation record."
+  },
+  "tokens": {
+    "resource_source_versions.revision": "Trigger counters count SQL updates, so compare change rather than magnitude."
+  },
+  "response_tokens": {
+    "body.record_sha256": "Ticket record digest includes its stored JSON representation, so compare changes.",
+    "body.tickets.*.record_sha256": "Ticket record digests include stored JSON representation, so compare changes.",
+    "body.pending_proposal.revision": "Proposal revision is an opaque approval token, so compare changes.",
+    "body.tickets.*.pending_proposal.revision": "Proposal revisions are opaque approval tokens, so compare changes.",
+    "body.coverage.revision": "Navigation continuity revisions count source commits, so compare changes.",
+    "body.status.revision": "Conversation view revisions count status publications, so compare changes.",
+    "body.content_version": "Navigation content digest covers opaque installation continuity, so compare changes."
+  },
+  "derived_tables": {
+    "navigation_meta": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_records": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_dependencies": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_root_records": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_dirty": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_journal": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_delivery_retention": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_signal_installation": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_signal_publications": "Derived projection, compared through navigation and conversation read routes.",
+    "signal_publication_meta": "Derived projection, compared through navigation and conversation read routes.",
+    "signal_publication_values": "Derived projection, compared through navigation and conversation read routes.",
+    "signal_publication_dirty": "Derived projection, compared through navigation and conversation read routes.",
+    "signal_publication_associations": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_meta": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_index": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_memberships": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_counts": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_current_conversations": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_unread_conversations": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_globals": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_changes": "Derived projection, compared through navigation and conversation read routes.",
+    "conversation_view_state": "Derived projection, compared through navigation and conversation read routes.",
+    "conversation_view_rows": "Derived projection, compared through navigation and conversation read routes.",
+    "conversation_view_turns": "Derived projection, compared through navigation and conversation read routes.",
+    "conversation_view_groups": "Derived projection, compared through navigation and conversation read routes.",
+    "conversation_view_lookups": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_ordered": "TS-only Intl order index; ordered IDs and paging are compared through navigation routes (Unit 4)."
+  },
+  "cli_direct_rules": {
+    "runtime_guidance": {
+      "paths": [
+        "context.dataset_outputs",
+        "context.frozen_at",
+        "context.history",
+        "context.required_outputs",
+        "examples.scalar_request",
+        "helpers.latest.notes",
+        "helpers.latest.signature",
+        "helpers.record.notes",
+        "helpers.record.signature",
+        "helpers.record_dataset.notes",
+        "helpers.record_dataset.signature",
+        "helpers.request.notes",
+        "helpers.request.signature",
+        "notes"
+      ],
+      "cause": "The accepted JavaScript source contract changes these helper declarations; each CLI must equal its own fresh shared export.",
+      "deviation": "server/DEVIATIONS.md#javascript-source-execution-limits"
+    },
+    "attention_scripts": {
+      "paths": [
+        "measure_sources.active_script",
+        "measure_sources.active_script_sha256"
+      ],
+      "scope": {
+        "account": "panels-attention-history",
+        "rows": 1
+      },
+      "cause": "The accepted JavaScript source contract uses a JavaScript attention collector; verify exact factory bytes and SHA-256 for the single attention source.",
+      "deviation": "server/DEVIATIONS.md#accepted-script-contract-differences-after-source-review",
+      "wire_aliases": [
+        "fresh-json[11].PUT /api/measure-sources/${source}/script.body.active_script.sha256",
+        "fresh-json[12].PUT /api/measure-sources/${source}/schedule.body.active_script.sha256"
+      ],
+      "wire_cause": "Only these fresh setup replies alias the accepted single attention source SHA; verify each against the exact factory script and stored SQL digest first. Human repeat traces retain independent ID order without a cross-host array claim."
+    },
+    "preview_creation": {
+      "paths": [
+        "json.created_at",
+        "text.created_at",
+        "ticket_application_previews.created_at"
+      ],
+      "cause": "Preview creation uses real wall time; verify the call interval, generation retention and exact stored timestamp before one named substitution."
+    },
+    "source_schemas": {
+      "paths": [
+        "schema-script.examples.scalar_script.text",
+        "schema-script.notes.0",
+        "schema-script.notes.1",
+        "schema-run.notes.1"
+      ],
+      "cause": "The accepted JavaScript source contract replaces only the shared script example, two script notes and the history note; every CLI byte must equal its fresh canonical shared export.",
+      "deviation": "server/DEVIATIONS.md#javascript-source-execution-limits"
+    },
+    "dataset_year_fields": {
+      "paths": [
+        "json.results.0.rows.0.values",
+        "text.results.0.rows.0.values",
+        "wire.body.results.0.rows.0.values"
+      ],
+      "fields": [
+        "2025",
+        "2024"
+      ],
+      "scope": {
+        "method": "POST",
+        "route": "/api/datasets/read",
+        "results": 1,
+        "rows": 1
+      },
+      "cause": "Manager accepts native ascending index-key display only where dictionary order has no meaning. This single retained row keeps both exact numeric member spans; compare every outside byte and all declaration arrays exactly. Ticket search follows declared workflow fields, and the preexisting unbound browser composition sum remains outside this server/CLI difference.",
+      "deviation": "server/DEVIATIONS.md#integer-like-json-map-keys"
+    },
+    "goal_numeric_chart_keys": {
+      "paths": [
+        "body.charts",
+        "stdout.charts"
+      ],
+      "fields": [
+        "20",
+        "10",
+        "__proto__",
+        "constructor",
+        "toString"
+      ],
+      "scope": {
+        "method": "GET",
+        "route": "/api/goals/${goal}/readings"
+      },
+      "cause": "Manager accepts only native index-member order for this exact chart map; preserve every member value lexeme, non-index member order, public values array and every outside byte.",
+      "deviation": "server/DEVIATIONS.md#integer-like-json-map-keys"
+    }
+  },
+  "cli_wire_rules": {
+    "goal_catalog_revision": {
+      "method": "GET",
+      "routes": [
+        "/api/artifact-catalog/goal/${goal}"
+      ],
+      "paths": [
+        "body.revision"
+      ],
+      "cause": "Inventory SHA256 includes independent goal IDs in artifact hrefs; inherit the same catalog revision value from Unit11, tokenizing only the hash and retaining the literal link counter.",
+      "inherited_from": [
+        "tests/compare/rules/unit-11.foundation.json:response_ignore.body.revision",
+        "tests/compare/rules/unit-11.ranges.json:response_ignore.body.revision"
+      ]
+    }
+  }
+}

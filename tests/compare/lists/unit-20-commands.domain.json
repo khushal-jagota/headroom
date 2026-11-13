@@ -1,0 +1,1684 @@
+{
+  "candidate": "typescript",
+  "source_roots": [
+    "src/planner/goals/",
+    "src/planner/managers/page_cli.py",
+    "src/planner/credentials/",
+    "src/planner/measures/",
+    "src/planner/datasets/",
+    "src/planner/measure_sources/",
+    "src/planner/attention/",
+    "src/planner/previews/"
+  ],
+  "open_commands": [],
+  "seed_requests": [
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/projects",
+      "status": 200,
+      "json": {
+        "name": "CLI source project",
+        "summary": "Isolated populated source-list scope."
+      },
+      "capture": {
+        "source_project": "id"
+      }
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "CLI domain Manager",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "manager": "id"
+      }
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "PATCH",
+      "path": "/api/managers/${manager}/page",
+      "status": 200,
+      "json": {
+        "page": {
+          "kind": "headroom.page",
+          "version": 1,
+          "title": "CLI domain page",
+          "summary": "A populated holder document.",
+          "blocks": [
+            {
+              "type": "section",
+              "id": "work",
+              "title": "Work",
+              "blocks": [
+                {
+                  "type": "checklist",
+                  "id": "steps",
+                  "title": "Next steps",
+                  "items": [
+                    {
+                      "id": "first",
+                      "label": "CLI real checklist",
+                      "state": "open"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/measures",
+      "status": 200,
+      "json": {
+        "project_id": "project_other",
+        "name": "CLI seeded manual",
+        "unit": "units",
+        "origin": "manual",
+        "kind": "reading",
+        "timezone": "UTC"
+      },
+      "capture": {
+        "manual": "id"
+      }
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/measures/${manual}/manual-writes",
+      "status": 200,
+      "json": {
+        "request_id": "unit20-domain-seed",
+        "date": "2026-07-04",
+        "expected_definition_revision": 1,
+        "basis": "date",
+        "operation": "replace",
+        "value": 4.5,
+        "expected_write_revision": 0
+      }
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/measures",
+      "status": 200,
+      "json": {
+        "project_id": "project_other",
+        "name": "CLI category manual B",
+        "unit": "units",
+        "origin": "manual",
+        "kind": "reading",
+        "timezone": "UTC"
+      },
+      "capture": {
+        "manual_b": "id"
+      }
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/measures/${manual_b}/manual-writes",
+      "status": 200,
+      "json": {
+        "request_id": "unit20-category-b",
+        "date": "2026-07-04",
+        "expected_definition_revision": 1,
+        "basis": "date",
+        "operation": "replace",
+        "value": 6.5,
+        "expected_write_revision": 0
+      }
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/measure-sources",
+      "status": 200,
+      "json": {
+        "name": "CLI dataset source",
+        "project_id": "project_other",
+        "account": "unit20-domain",
+        "responsible": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "dataset_source": "id"
+      }
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "CLI request worker",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "manager": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "worker": "id"
+      }
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "unit20-domain-worker",
+        "model": "gpt-6.1-sol",
+        "backend_key": "codex",
+        "workspace_folder": "/tmp",
+        "role_text": "Synthetic CLI credential requester.",
+        "identity_environment_variables": {
+          "PLAN_ACTOR": "worker",
+          "PLAN_TICKET_ID": "${worker}"
+        }
+      }
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/test/connected/bind",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "${worker}",
+        "conversation_id": "unit20-domain-worker"
+      }
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/tickets/${worker}/propose",
+      "status": 200,
+      "json": {
+        "body": "A synthetic owner approval for attention history."
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${worker}",
+        "X-Plan-Conversation-ID": "unit20-domain-worker"
+      }
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/tickets/${worker}/accept/brief",
+      "status": 200,
+      "json": {
+        "next_ceiling": "needs_what_changes",
+        "next_holder": {
+          "kind": "owner",
+          "id": "owner"
+        }
+      }
+    }
+  ],
+  "requests": [
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "schema",
+        "create"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Prints the offline create schema, examples and notes.",
+      "assert_text": [
+        "schema",
+        "examples"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "schema",
+        "edit"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Prints the complete offline goal edit declaration, examples and notes.",
+      "assert_text": [
+        "schema",
+        "examples",
+        "primary_chart"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "schema",
+        "primary-chart"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Prints the complete offline goal primary-chart declaration, examples and notes.",
+      "assert_text": [
+        "schema",
+        "examples",
+        "primary_line_chart"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure",
+      "argv": [
+        "measure",
+        "schema"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Prints the offline measure declaration.",
+      "assert_text": [
+        "schema",
+        "manual"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure-source",
+      "argv": [
+        "measure-source",
+        "schema",
+        "create"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Prints the offline source declaration without runtime-language examples.",
+      "assert_text": [
+        "schema",
+        "responsible"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-page",
+      "argv": [
+        "page",
+        "schema"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Prints the offline page edit declaration.",
+      "assert_text": [
+        "page",
+        "headroom.page"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-page",
+      "argv": [
+        "page",
+        "show",
+        "--manager",
+        "${manager}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Shows the populated holder page and revision.",
+      "assert_text": [
+        "CLI domain page",
+        "CLI real checklist"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-page",
+      "argv": [
+        "page",
+        "edit",
+        "--manager",
+        "${manager}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Replaces the complete page from stdin with retained component IDs.",
+      "stdin": "{\"page\":{\"kind\":\"headroom.page\",\"version\":1,\"title\":\"CLI edited holder page\",\"summary\":\"A populated holder document.\",\"blocks\":[{\"type\":\"section\",\"id\":\"work\",\"title\":\"Work\",\"blocks\":[{\"type\":\"checklist\",\"id\":\"steps\",\"title\":\"Next steps\",\"items\":[{\"id\":\"first\",\"label\":\"CLI real checklist\",\"state\":\"open\"}]}]}]}}",
+      "assert_text": [
+        "CLI edited holder page"
+      ]
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:01"
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure",
+      "argv": [
+        "measure",
+        "create"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Creates a disposable manual definition from stdin.",
+      "stdin": "{\"project_id\":\"${source_project}\",\"name\":\"CLI disposable manual\",\"unit\":\"units\",\"origin\":\"manual\",\"kind\":\"reading\",\"timezone\":\"UTC\"}",
+      "capture": {
+        "created_measure": "id"
+      },
+      "capture_text": {
+        "created_measure": "\"id\":\\s*\"([^\"\\n]+)\""
+      },
+      "assert_text": [
+        "CLI disposable manual"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure",
+      "argv": [
+        "measure",
+        "list",
+        "--project-id",
+        "${source_project}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Lists the real CLI-created disposable manual definition in its dedicated project; the retained seeded manual measure belongs to a different project.",
+      "assert_text": [
+        "CLI disposable manual"
+      ],
+      "assert_json": {
+        "page.match_count": 1,
+        "page.return_count": 1
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure",
+      "argv": [
+        "measure",
+        "show",
+        "${manual}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Shows the seeded definition before its revision changes.",
+      "assert_text": [
+        "CLI seeded manual"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure",
+      "argv": [
+        "measure",
+        "edit",
+        "${manual}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Writes a renamed definition with its current expected revision.",
+      "stdin": "{\"expected_revision\":1,\"name\":\"CLI edited manual\"}",
+      "assert_text": [
+        "CLI edited manual"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure",
+      "argv": [
+        "measure",
+        "manual-write",
+        "${manual}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Replaces a retained dated value using definition and write revisions.",
+      "stdin": "{\"request_id\":\"unit20-domain-write\",\"date\":\"2026-07-04\",\"expected_definition_revision\":2,\"basis\":\"date\",\"operation\":\"replace\",\"value\":7.25,\"expected_write_revision\":1}",
+      "assert_text": [
+        "7.25"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure",
+      "argv": [
+        "measure",
+        "manual-state",
+        "${manual}",
+        "--date",
+        "2026-07-04"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Shows the real retained manual value after its write.",
+      "assert_text": [
+        "7.25"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure",
+      "argv": [
+        "measure",
+        "read"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Reads a populated date window through the measure batch API.",
+      "stdin": "{\"measure_ids\":[\"${manual}\"],\"first_date\":\"2026-07-04\",\"last_date\":\"2026-07-04\"}",
+      "assert_text": [
+        "7.25"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure",
+      "argv": [
+        "measure",
+        "delete",
+        "${created_measure}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Deletes the disposable definition with no goal references."
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:02"
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "create"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Creates a populated goal with category chart IDs20,10 and prototype-like ordinary names, backed by distinct retained manual values.",
+      "stdin": "{\"project_id\":\"project_other\",\"title\":\"CLI populated goal\",\"why\":\"Retained manual evidence.\",\"kind\":\"quantitative\",\"completion_rule\":{\"actual\":{\"op\":\"reference\",\"measure_id\":\"${manual}\",\"day_offset\":0},\"target\":{\"op\":\"constant\",\"value\":5},\"direction\":\"atleast\",\"first_date\":\"2026-07-04\"},\"primary_chart\":{\"type\":\"chart\",\"id\":\"20\",\"kind\":\"bar\",\"title\":\"CLI category 20\",\"binding\":{\"kind\":\"scalar_inputs\",\"aggregation\":\"latest\",\"inputs\":[{\"key\":\"A\",\"label\":\"A\",\"measure_id\":\"${manual}\"}]}},\"page\":{\"kind\":\"headroom.page\",\"version\":1,\"title\":\"CLI domain page\",\"summary\":\"A populated holder document.\",\"blocks\":[{\"type\":\"section\",\"id\":\"work\",\"title\":\"Work\",\"blocks\":[{\"type\":\"checklist\",\"id\":\"steps\",\"title\":\"Next steps\",\"items\":[{\"id\":\"first\",\"label\":\"CLI real checklist\",\"state\":\"open\"}]}]},{\"type\":\"chart\",\"id\":\"10\",\"kind\":\"bar\",\"title\":\"CLI category 10\",\"binding\":{\"kind\":\"scalar_inputs\",\"aggregation\":\"latest\",\"inputs\":[{\"key\":\"B\",\"label\":\"B\",\"measure_id\":\"${manual_b}\"}]}},{\"type\":\"chart\",\"id\":\"__proto__\",\"kind\":\"bar\",\"title\":\"CLI category __proto__\",\"binding\":{\"kind\":\"scalar_inputs\",\"aggregation\":\"latest\",\"inputs\":[{\"key\":\"A\",\"label\":\"A\",\"measure_id\":\"${manual}\"}]}},{\"type\":\"chart\",\"id\":\"constructor\",\"kind\":\"bar\",\"title\":\"CLI category constructor\",\"binding\":{\"kind\":\"scalar_inputs\",\"aggregation\":\"latest\",\"inputs\":[{\"key\":\"A\",\"label\":\"A\",\"measure_id\":\"${manual}\"}]}},{\"type\":\"chart\",\"id\":\"toString\",\"kind\":\"bar\",\"title\":\"CLI category toString\",\"binding\":{\"kind\":\"scalar_inputs\",\"aggregation\":\"latest\",\"inputs\":[{\"key\":\"A\",\"label\":\"A\",\"measure_id\":\"${manual}\"}]}}]}}",
+      "capture": {
+        "goal": "id"
+      },
+      "capture_text": {
+        "goal": "\"id\":\\s*\"([^\"\\n]+)\""
+      },
+      "assert_text": [
+        "CLI populated goal"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "list",
+        "--project-id",
+        "project_other"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Lists the real quantitative goal and its current status.",
+      "assert_text": [
+        "CLI populated goal"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "show",
+        "${goal}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Shows the complete quantitative goal, page and chart.",
+      "assert_text": [
+        "CLI populated goal",
+        "CLI real checklist"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "read",
+        "${goal}",
+        "--first-date",
+        "2026-07-04",
+        "--last-date",
+        "2026-07-04"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Category chart maps retain every ordinary key; public values follow chart declaration A then B, despite native index-key map ordering.",
+      "assert_text": [
+        "7.25",
+        "6.5",
+        "__proto__",
+        "constructor",
+        "toString"
+      ],
+      "numeric_chart_keys": true,
+      "assert_json": {
+        "charts.20.kind": "category",
+        "charts.10.kind": "category",
+        "charts.__proto__.kind": "category",
+        "charts.constructor.kind": "category",
+        "charts.toString.kind": "category",
+        "values.0.measure_id": "${manual}",
+        "values.0.value": 7.25,
+        "values.1.measure_id": "${manual_b}",
+        "values.1.value": 6.5
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "edit",
+        "${goal}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Updates goal context and replaces supporting category charts with formula charts under the same numeric and prototype-like IDs.",
+      "stdin": "{\"why\":\"CLI revised goal reason.\",\"page\":{\"kind\":\"headroom.page\",\"version\":1,\"title\":\"CLI domain page\",\"summary\":\"A populated holder document.\",\"blocks\":[{\"type\":\"section\",\"id\":\"work\",\"title\":\"Work\",\"blocks\":[{\"type\":\"checklist\",\"id\":\"steps\",\"title\":\"Next steps\",\"items\":[{\"id\":\"first\",\"label\":\"CLI real checklist\",\"state\":\"open\"}]}]},{\"type\":\"chart\",\"id\":\"10\",\"kind\":\"line\",\"title\":\"CLI formula 10\",\"measure_id\":\"${manual}\",\"expectation\":{\"op\":\"constant\",\"value\":5}},{\"type\":\"chart\",\"id\":\"__proto__\",\"kind\":\"line\",\"title\":\"CLI formula __proto__\",\"measure_id\":\"${manual}\",\"expectation\":{\"op\":\"constant\",\"value\":5}},{\"type\":\"chart\",\"id\":\"constructor\",\"kind\":\"line\",\"title\":\"CLI formula constructor\",\"measure_id\":\"${manual}\",\"expectation\":{\"op\":\"constant\",\"value\":5}},{\"type\":\"chart\",\"id\":\"toString\",\"kind\":\"line\",\"title\":\"CLI formula toString\",\"measure_id\":\"${manual}\",\"expectation\":{\"op\":\"constant\",\"value\":5}}]}}",
+      "assert_text": [
+        "CLI revised goal reason."
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "read",
+        "${goal}",
+        "--first-date",
+        "2026-07-04",
+        "--last-date",
+        "2026-07-04"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Formula chart maps retain numeric and prototype-like ordinary keys; primary category20 remains, with every projection and value byte compared.",
+      "assert_text": [
+        "7.25",
+        "__proto__",
+        "constructor",
+        "toString"
+      ],
+      "numeric_chart_keys": true,
+      "assert_json": {
+        "charts.10.kind": "scalar",
+        "charts.__proto__.kind": "scalar",
+        "charts.constructor.kind": "scalar",
+        "charts.toString.kind": "scalar",
+        "charts.20.kind": "category",
+        "values.0.measure_id": "${manual}",
+        "values.0.value": 7.25
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "artifact",
+        "write",
+        "${goal}",
+        "report.txt",
+        "--body-file",
+        "@file:goal.txt"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Writes exact BOM, CRLF and final-newline bytes to a real goal.",
+      "files": {
+        "goal.txt": "﻿CLI goal artifact\r\nsecond line\r\n"
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "artifact",
+        "list",
+        "${goal}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Lists the real goal artifact through the paged catalog.",
+      "assert_text": [
+        "report.txt"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "artifact",
+        "read",
+        "${goal}",
+        "report.txt"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Reads the artifact with exact BOM and CRLF bytes.",
+      "assert_text": [
+        "CLI goal artifact"
+      ],
+      "assert_json": {
+        "content": "﻿CLI goal artifact\r\nsecond line\r\n"
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "artifact",
+        "delete",
+        "${goal}",
+        "report.txt"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Deletes the artifact created and read above."
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:03"
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "make-manager",
+        "${goal}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Promotes the Chief-held goal to a real Manager.",
+      "stdin": "{}"
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "delete",
+        "${goal}",
+        "--yes"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Deletes the real promoted goal through the holder authority chain."
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/credentials",
+      "status": 200,
+      "json": {
+        "scheme": "local",
+        "name": "CLI seeded credential",
+        "auth_kind": "bearer",
+        "secret": {
+          "token": "synthetic-unit20-domain-only"
+        }
+      },
+      "capture": {
+        "credential": "id"
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-credential",
+      "argv": [
+        "credential",
+        "list"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Lists names-only metadata of a real credential canonically created on this fixture-owned host.",
+      "assert_text": [
+        "CLI seeded credential"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-credential",
+      "argv": [
+        "credential",
+        "rename",
+        "${credential}",
+        "--name",
+        "CLI renamed credential",
+        "--expected-revision",
+        "1"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Renames and re-encrypts the real fixture credential using this host’s private key, without revealing its secret.",
+      "assert_text": [
+        "CLI renamed credential"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-credential",
+      "argv": [
+        "credential",
+        "request",
+        "--request-id",
+        "{20000000-0000-4000-8000-000000000002}",
+        "--name",
+        "CLI requested credential",
+        "--provider",
+        "Synthetic Metrics",
+        "--use",
+        "Read synthetic counters",
+        "--auth-kind",
+        "bearer"
+      ],
+      "identity": {
+        "actor": "worker",
+        "ticket_id": "${worker}",
+        "conversation_id": "unit20-domain-worker"
+      },
+      "exit_code": 0,
+      "proof": "Canonicalizes a valid wrapped UUID and creates a request card in the assigned Worker conversation.",
+      "assert_text": [
+        "CLI requested credential"
+      ],
+      "assert_json": {
+        "request_id": "20000000-0000-4000-8000-000000000002"
+      }
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "DELETE",
+      "path": "/api/credentials/${credential}",
+      "status": 200
+    },
+    {
+      "kind": "cli",
+      "area": "cli-attention",
+      "argv": [
+        "attention",
+        "summary",
+        "--first-date",
+        "2026-07-04",
+        "--last-date",
+        "2026-07-04",
+        "--group-by",
+        "ticket",
+        "--ticket",
+        "${worker}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Shows the seeded approval destination with explicit historical coverage limitations.",
+      "assert_text": [
+        "CLI request worker"
+      ],
+      "assert_json": {
+        "totals.current.active_ticket_count.value": 1
+      }
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:04"
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure-source",
+      "argv": [
+        "measure-source",
+        "create"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Creates a separate source with no retained-output dependencies.",
+      "stdin": "{\"name\":\"CLI test source\",\"project_id\":\"${source_project}\",\"account\":\"unit20-test\",\"responsible\":{\"kind\":\"chief\",\"id\":\"chief\"}}",
+      "capture": {
+        "source": "id"
+      },
+      "capture_text": {
+        "source": "\"id\":\\s*\"([^\"\\n]+)\""
+      },
+      "assert_text": [
+        "CLI test source"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure-source",
+      "argv": [
+        "measure-source",
+        "submit-script",
+        "${source}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Stores exact script text and its revision without executing it.",
+      "stdin": "{\"expected_revision\":1,\"text\":\"// Unit 20 stored declaration only; never executed.\\n\"}",
+      "assert_text": [
+        "Unit 20 stored declaration only"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure-source",
+      "argv": [
+        "measure-source",
+        "set-schedule",
+        "${source}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Writes a daily local schedule after a script exists.",
+      "stdin": "{\"expected_revision\":2,\"enabled\":true,\"local_time\":\"08:30\"}",
+      "assert_text": [
+        "08:30"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure-source",
+      "argv": [
+        "measure-source",
+        "set-responsible",
+        "${source}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Transfers responsibility to the existing Manager using its current revision.",
+      "stdin": "{\"expected_responsibility_revision\":1,\"responsible\":{\"kind\":\"manager\",\"id\":\"${manager}\"}}",
+      "assert_text": [
+        "CLI test source"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure-source",
+      "argv": [
+        "measure-source",
+        "list",
+        "--project-id",
+        "${source_project}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Lists the real scripted source in its dedicated project and collection-health metadata; the retained dataset source belongs to a different project.",
+      "assert_text": [
+        "CLI test source"
+      ],
+      "assert_json": {
+        "page.match_count": 1,
+        "page.return_count": 1
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure-source",
+      "argv": [
+        "measure-source",
+        "show",
+        "${source}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Shows the saved script, schedule and responsibility revisions.",
+      "assert_text": [
+        "Unit 20 stored declaration only",
+        "08:30"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure-source",
+      "argv": [
+        "measure-source",
+        "request-run",
+        "${source}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Queues a test receipt with a selected script and explicit history window.",
+      "stdin": "{\"mode\":\"test\",\"history\":{\"first_date\":\"2026-07-03\",\"last_date\":\"2026-07-04\"},\"expected_script_revision\":1}",
+      "capture": {
+        "run": "id"
+      },
+      "capture_text": {
+        "run": "\"id\":\\s*\"([^\"\\n]+)\""
+      },
+      "assert_text": [
+        "pending"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure-source",
+      "argv": [
+        "measure-source",
+        "runs",
+        "${source}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Lists the real queued test receipt.",
+      "assert_text": [
+        "pending"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure-source",
+      "argv": [
+        "measure-source",
+        "run-show",
+        "${run}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Shows the real queued receipt, selected script and requested history.",
+      "assert_text": [
+        "pending",
+        "2026-07-03"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure-source",
+      "argv": [
+        "measure-source",
+        "status",
+        "${source}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Shows source health with its real latest queued run.",
+      "assert_text": [
+        "pending"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure-source",
+      "argv": [
+        "measure-source",
+        "delete",
+        "${source}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Deletes the output-free source and its test-only receipt."
+    },
+    {
+      "area": "cli-domain-fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:05"
+      }
+    },
+    {
+      "kind": "cli",
+      "area": "cli-dataset",
+      "argv": [
+        "dataset",
+        "create"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Creates a declared dataset under the seeded source.",
+      "stdin": "{\"project_id\":\"project_other\",\"source_id\":\"${dataset_source}\",\"name\":\"CLI declared dataset\",\"timezone\":\"UTC\",\"dimensions\":[{\"name\":\"region\",\"label\":\"Region\"}],\"fields\":[{\"name\":\"value\",\"label\":\"Value\",\"unit\":\"units\",\"kind\":\"amount\"}]}",
+      "capture": {
+        "dataset": "id"
+      },
+      "capture_text": {
+        "dataset": "\"id\":\\s*\"([^\"\\n]+)\""
+      },
+      "assert_text": [
+        "CLI declared dataset",
+        "region"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-dataset",
+      "argv": [
+        "dataset",
+        "list",
+        "--source-id",
+        "${dataset_source}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Lists the real dataset definition and declared columns.",
+      "assert_text": [
+        "CLI declared dataset",
+        "region"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-dataset",
+      "argv": [
+        "dataset",
+        "show",
+        "${dataset}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Shows a populated definition with dimensions and numeric fields.",
+      "assert_text": [
+        "CLI declared dataset",
+        "region"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-dataset",
+      "argv": [
+        "dataset",
+        "edit",
+        "${dataset}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Updates the dataset name under its expected revision.",
+      "stdin": "{\"expected_revision\":1,\"name\":\"CLI edited dataset\"}",
+      "assert_text": [
+        "CLI edited dataset"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "delete",
+        "${goal}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "proof": "Preserves this command group’s concrete input or missing-record refusal."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "artifact",
+        "read",
+        "${goal}",
+        "missing.txt"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "proof": "Preserves this command group’s concrete input or missing-record refusal."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-page",
+      "argv": [
+        "page",
+        "show"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "proof": "Preserves this command group’s concrete input or missing-record refusal."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure",
+      "argv": [
+        "measure",
+        "show",
+        "measure_00000000"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "proof": "The real measure HTTP endpoint refuses a missing record with404, preserving its server error envelope.",
+      "assert_http_status": 404
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure-source",
+      "argv": [
+        "measure-source",
+        "show",
+        "source_00000000"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "proof": "The real measure-source HTTP endpoint refuses a missing record with404, preserving its server error envelope.",
+      "assert_http_status": 404
+    },
+    {
+      "kind": "cli",
+      "area": "cli-dataset",
+      "argv": [
+        "dataset",
+        "show",
+        "dataset_00000000"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "proof": "The real dataset HTTP endpoint refuses a missing record with404, preserving its server error envelope.",
+      "assert_http_status": 404
+    },
+    {
+      "kind": "cli",
+      "area": "cli-credential",
+      "argv": [
+        "credential",
+        "request",
+        "--request-id",
+        "not-a-uuid"
+      ],
+      "identity": {
+        "actor": "worker",
+        "ticket_id": "${worker}",
+        "conversation_id": "unit20-domain-worker"
+      },
+      "exit_code": 2,
+      "proof": "Preserves this command group’s concrete input or missing-record refusal."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-attention",
+      "argv": [
+        "attention",
+        "summary",
+        "--chief",
+        "--ticket",
+        "${worker}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "proof": "Preserves this command group’s concrete input or missing-record refusal."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-preview",
+      "argv": [
+        "preview",
+        "register",
+        "--port",
+        "80"
+      ],
+      "identity": {
+        "actor": "worker",
+        "ticket_id": "${worker}",
+        "conversation_id": "unit20-domain-worker"
+      },
+      "exit_code": 2,
+      "proof": "Preserves this command group’s concrete input or missing-record refusal."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-page",
+      "argv": [
+        "page",
+        "show",
+        "--manager",
+        "si_00000000"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "assert_http_status": 404,
+      "proof": "The actual page HTTP endpoint returns404; both clients preserve its response bytes and error rendering."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-credential",
+      "argv": [
+        "credential",
+        "rename",
+        "credential_00000000",
+        "--name",
+        "CLI absent credential",
+        "--expected-revision",
+        "1"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "assert_http_status": 404,
+      "proof": "The actual credential HTTP endpoint returns404; both clients preserve its response bytes and error rendering."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-attention",
+      "argv": [
+        "attention",
+        "summary",
+        "--first-date",
+        "not-a-date"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "assert_http_status": 422,
+      "proof": "The actual attention HTTP endpoint returns422; both clients preserve its response bytes and error rendering."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "list",
+        "extra"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 2,
+      "proof": "Rejects an extra goal argument before HTTP or handler execution."
+    }
+  ],
+  "probes": [],
+  "direct_requests": [
+    {
+      "kind": "cli",
+      "area": "cli-dataset-retained",
+      "argv": [
+        "dataset",
+        "read"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "stdin": "{\"dataset_ids\":[\"${retained_dataset}\"],\"first_date\":\"2026-10-26\",\"last_date\":\"2026-10-26\"}",
+      "proof": "Reads one retained row with declared fields 2025 then 2024, exact year values, and a category label after canonical source completion. The same hosts prove Ticket search across two descending numeric field IDs.",
+      "assert_json": {
+        "returned_rows": 1,
+        "matching_rows": 1,
+        "results.0.rows.0.dimensions.region": "de",
+        "results.0.rows.0.values.2025": 7.25,
+        "results.0.rows.0.values.2024": 3.0
+      },
+      "assert_text": [
+        "7.25",
+        "Deutschland"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure-source",
+      "argv": [
+        "measure-source",
+        "runtime"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Each CLI equals its own fresh shared runtime export; all undeclared differing paths fail.",
+      "assert_text": [
+        "helpers",
+        "scalar_request"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-attention",
+      "argv": [
+        "attention",
+        "setup-collection",
+        "--project",
+        "project_other",
+        "--database-path",
+        "${server_database}",
+        "--local-time",
+        "00:05"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Creates the exact shared collector script and checks all other source/output columns and CLI responses.",
+      "assert_text": [
+        "source_id",
+        "owner_approvals"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-preview",
+      "argv": [
+        "preview",
+        "prepare"
+      ],
+      "identity": {
+        "actor": "worker",
+        "ticket_id": "${preview_ticket}"
+      },
+      "exit_code": 0,
+      "proof": "Uses a real owned listener and Git worktree; creation time is bounded and retained across this generation.",
+      "assert_json": {
+        "state": "prepared"
+      },
+      "assert_text": [
+        "prepared"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-preview",
+      "argv": [
+        "preview",
+        "register",
+        "--port",
+        "${preview_port}"
+      ],
+      "identity": {
+        "actor": "worker",
+        "ticket_id": "${preview_ticket}"
+      },
+      "exit_code": 0,
+      "proof": "Uses a real owned listener and Git worktree; creation time is bounded and retained across this generation.",
+      "assert_json": {
+        "state": "active"
+      },
+      "assert_text": [
+        "active"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-preview",
+      "argv": [
+        "preview",
+        "show"
+      ],
+      "identity": {
+        "actor": "worker",
+        "ticket_id": "${preview_ticket}"
+      },
+      "exit_code": 0,
+      "proof": "Uses a real owned listener and Git worktree; creation time is bounded and retained across this generation.",
+      "assert_json": {
+        "state": "active"
+      },
+      "assert_text": [
+        "active"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-preview",
+      "argv": [
+        "preview",
+        "stop"
+      ],
+      "identity": {
+        "actor": "worker",
+        "ticket_id": "${preview_ticket}"
+      },
+      "exit_code": 0,
+      "proof": "Uses a real owned listener and Git worktree; creation time is bounded and retained across this generation.",
+      "assert_json": {
+        "state": "ended"
+      },
+      "assert_text": [
+        "ended"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure-source",
+      "argv": [
+        "measure-source",
+        "schema",
+        "script"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Prints the exact fresh shared script declaration in both output modes; every language difference must name one accepted path.",
+      "assert_text": [
+        "schema",
+        "examples"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-measure-source",
+      "argv": [
+        "measure-source",
+        "schema",
+        "run"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Prints the exact fresh shared run declaration in both output modes; every language difference must name one accepted path.",
+      "assert_text": [
+        "schema",
+        "examples"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-preview",
+      "argv": [
+        "preview",
+        "register",
+        "--port",
+        "${preview_port}"
+      ],
+      "identity": {
+        "actor": "worker",
+        "ticket_id": "${preview_ticket}"
+      },
+      "exit_code": 1,
+      "assert_http_status": 409,
+      "proof": "With trusted ingress and a valid owned listener, the server rejects registration before preparation with409."
+    }
+  ],
+  "direct_proofs": [
+    {
+      "commands": [
+        "dataset read"
+      ],
+      "driver": "tests/compare/direct/test_unit20_domain_cli.py::test_unit20_retained_dataset_cli",
+      "status": "Implemented, not yet verified.",
+      "fixture": "Existing configured_source and dataset helpers, then canonical request_run, claim_run and complete_run before host startup. No raw SQL seed writes."
+    },
+    {
+      "commands": [
+        "measure-source runtime"
+      ],
+      "driver": "tests/compare/direct/test_unit20_domain_cli.py::_runtime_proof",
+      "status": "Implemented, not yet verified.",
+      "rule": "runtime_guidance"
+    },
+    {
+      "commands": [
+        "attention setup-collection"
+      ],
+      "driver": "tests/compare/direct/test_unit20_domain_cli.py::test_unit20_attention_setup_cli",
+      "status": "Implemented, not yet verified.",
+      "rule": "attention_scripts"
+    },
+    {
+      "commands": [
+        "preview prepare",
+        "preview register",
+        "preview show",
+        "preview stop"
+      ],
+      "driver": "tests/compare/direct/test_unit20_domain_cli.py::test_unit20_real_preview_cli",
+      "status": "Implemented, not yet verified.",
+      "rule": "preview_creation"
+    },
+    {
+      "commands": [
+        "measure-source schema script",
+        "measure-source schema run"
+      ],
+      "driver": "tests/compare/direct/test_unit20_domain_cli.py::_runtime_proof",
+      "status": "Implemented, not yet verified.",
+      "rule": "source_schemas"
+    }
+  ]
+}

@@ -19,19 +19,12 @@ from typing import Any, cast
 import httpx
 import pytest
 from tests.compare.direct import unit20_cli as driver
+from tests.compare.direct.unit20_wire import wire_view
 from tests.compare.runner import Normalizer, backup_database, capture_values, substitute
 from tests.support.server import ServerHandle
 from tests.support.server_fixtures import _start_server, _stop_server
 
 LIST = driver.ROOT / "tests/compare/lists/unit-20-commands.work.json"
-
-
-def _report(request: pytest.FixtureRequest, name: str, evidence: Any) -> None:
-    destination = request.config.getoption("--compare-report-dir")
-    if destination:
-        root = Path(destination)
-        root.mkdir(parents=True, exist_ok=True)
-        (root / (name + ".json")).write_text(json.dumps(evidence, indent=2) + "\n")
 
 
 def _step(argv: list[str], code: int = 0) -> dict[str, Any]:
@@ -102,36 +95,9 @@ def test_unit20_parser_smoke_and_startup(tmp_path: Path, request: pytest.Fixture
     """One existing host proves real subprocess output and startup without browser cost."""
     started = time.perf_counter()
     handle = _start_server(tmp_path / "host", server_module="tests.compare.host")
-    evidence: dict[str, Any] = {"parser": [], "timings": {}}
+    evidence: dict[str, Any] = {"timings": {}, "reference_crosschecks": []}
     try:
         host = driver.CliHost(handle, tmp_path)
-        for argv, code in (
-            (["--help"], 0),
-            (["--", "project", "--help"], 0),
-            (["manager", "set", "--help"], 0),
-            (["stalls", "--help=no"], 2),
-            (["project", "list", "--help=no"], 2),
-            (["project", "list", "--limit"], 2),
-            (["project", "list", "--json=no"], 2),
-            (["project", "create"], 2),
-            (["goal", "schema"], 2),
-            (["project", "list", "--limit", "bad"], 2),
-            (["project", "list", "--limit", "a'b"], 2),
-            (["project", "list", "-xy"], 2),
-        ):
-            answers = [
-                driver.run_cli(
-                    host,
-                    _step(argv, code),
-                    bool(side),
-                    tmp_path / f"input-{side}",
-                    "text",
-                )
-                for side in (0, 1)
-            ]
-            evidence["parser"].append({"argv": argv, "answers": answers})
-            assert driver.comparable(answers[0]) == driver.comparable(answers[1]), evidence
-        physical_python: dict[str, dict[str, Any]] = {}
         for argv in (["--help"], ["project", "list", "--limit", "1"]):
             label = " ".join(argv)
             evidence["timings"][label] = {}
@@ -151,28 +117,20 @@ def test_unit20_parser_smoke_and_startup(tmp_path: Path, request: pytest.Fixture
                     "median_seconds": median(answer["seconds"] for answer in answers),
                 }
                 if side == 0:
-                    physical_python[label] = answers[0]
-        evidence["reference_crosschecks"] = []
-        for argv in (["--help"], ["project", "list", "--limit", "1"]):
-            library = driver.run_cli(
-                host,
-                _step(argv),
-                False,
-                tmp_path / "library-input",
-                "text",
-                python_in_process=True,
-            )
-            physical = physical_python[" ".join(argv)]
-            evidence["reference_crosschecks"].append(
-                {
-                    "argv": argv,
-                    "subprocess": physical,
-                    "library": library,
-                }
-            )
-            assert driver.comparable(library) == driver.comparable(physical)
+                    library = driver.run_cli(
+                        host,
+                        _step(argv),
+                        False,
+                        tmp_path / "library-input",
+                        "text",
+                        python_in_process=True,
+                    )
+                    evidence["reference_crosschecks"].append(
+                        {"argv": argv, "subprocess": answers[0], "library": library}
+                    )
+                    assert driver.comparable(library) == driver.comparable(answers[0])
         evidence["seconds"] = time.perf_counter() - started
-        _report(request, "unit20-startup", evidence)
+        driver.write_report(request, "unit20-startup", evidence)
     finally:
         _stop_server(handle)
 
@@ -185,9 +143,9 @@ def _replay(
     candidate: bool,
     mode: str,
     rules: dict[str, Any],
-) -> list[Any]:
+    result: dict[str, Any],
+) -> None:
     normalizer = Normalizer(rules, handle.db_path.parent)
-    evidence = []
     with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
         for index, step in enumerate(requests):
             resolved = substitute(step, saved)
@@ -201,11 +159,15 @@ def _replay(
                     python_in_process=not candidate,
                 )
                 driver.cli_capture(answer, resolved, saved, mode)
-                evidence.append(
+                result["raw"].append(
+                    {"argv": resolved["argv"], "proof": step["proof"], "outcome": answer}
+                )
+                result["normalized"].append(
                     {
                         "step": index,
                         "proof": step["proof"],
                         "answer": normalizer.normalize(driver.comparable(answer)),
+                        "wire": wire_view(answer, normalizer),
                     }
                 )
             else:
@@ -219,18 +181,25 @@ def _replay(
                     resolved,
                     response.text,
                 )
+                result["controls"].append(
+                    {
+                        "step": index,
+                        "method": resolved["method"],
+                        "path": resolved["path"],
+                        "status": response.status_code,
+                    }
+                )
                 if step.get("capture"):
                     capture_values(response.json(), resolved, saved)
-    return evidence
 
 
-def test_unit20_same_python_host_populated_sequence(
-    tmp_path: Path, request: pytest.FixtureRequest
+def compare_cli_sequence(
+    list_path: Path, backend: str, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
-    """Fresh database/files and process state make both CLI write sequences comparable."""
+    """One reset route proves CLI isolation and actual TS-backend human/JSON bytes."""
     started = time.perf_counter()
-    spec = json.loads(LIST.read_text())
-    rules = json.loads((LIST.parent.parent / "rules" / LIST.name).read_text())
+    spec = json.loads(list_path.read_text())
+    rules = json.loads((list_path.parent.parent / "rules" / list_path.name).read_text())
     root = tmp_path / "same-host"
     handle = _start_server(root, server_module="tests.compare.host")
     captures: dict[str, Any] = {}
@@ -253,12 +222,29 @@ def test_unit20_same_python_host_populated_sequence(
     backup_database(handle.db_path, snapshot)
     seed_files = tmp_path / "seed-files"
     seed_files.mkdir()
-    for directory in ("skills", "files"):
-        if (root / directory).is_dir():
-            shutil.copytree(root / directory, seed_files / directory)
-    proof: dict[str, Any] = {}
-    for mode in ("json", "text"):
-        answers = []
+    for name in ("skills", "files", "credential-key"):
+        source = root / name
+        if source.is_dir():
+            shutil.copytree(source, seed_files / name)
+        elif source.is_file():
+            shutil.copy2(source, seed_files / name)
+    report_name = list_path.stem + (
+        ".same-python" if backend == "tests.compare.host" else ".typescript-backend"
+    )
+    proof: dict[str, Any] = {
+        "list": list_path.name,
+        "candidate_backend": backend,
+        "boundary": (
+            "Python baseline vs TS CLI: both modes on Python; human text on TS"
+        ),
+        "strategy": {"python": "CliRunner.invoke", "typescript": "subprocess"},
+        "seed_capture_names": sorted(captures),
+        "comparisons": {},
+    }
+    # The ordinary list already compares JSON CLI text and HTTP bytes on both backends.
+    modes = ("text",) if backend == "tests.compare.ts_launcher" else ("json", "text")
+    for mode in modes:
+        answers: list[dict[str, Any]] = []
         for candidate in (False, True):
             # Never replace a database beneath a running server. The exact owned
             # process stopped above, so schema, caches and files all start fresh.
@@ -266,38 +252,43 @@ def test_unit20_same_python_host_populated_sequence(
 
             def restore(target: Path) -> None:
                 backup_database(snapshot, target)
-                for directory in seed_files.iterdir():
-                    shutil.copytree(directory, target.parent / directory.name, dirs_exist_ok=True)
+                for source in seed_files.iterdir():
+                    if source.is_dir():
+                        shutil.copytree(source, target.parent / source.name, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(source, target.parent / source.name)
 
             handle = _start_server(
-                root, port=port, server_module="tests.compare.host", seed_db=restore
+                root,
+                port=port,
+                server_module=backend if candidate else "tests.compare.host",
+                seed_db=restore,
             )
+            saved = dict(captures)
+            result: dict[str, Any] = {
+                "raw": [],
+                "normalized": [],
+                "controls": [],
+                "captures": saved,
+            }
             try:
-                answers.append(
-                    _replay(
-                        handle,
-                        tmp_path,
-                        spec["requests"],
-                        dict(captures),
-                        candidate,
-                        mode,
-                        rules,
-                    )
-                )
+                _replay(handle, tmp_path, spec["requests"], saved, candidate, mode, rules, result)
             finally:
                 _stop_server(handle)
-        proof[mode] = answers
-        _report(
-            request,
-            "unit20-same-host",
-            {
-                "seconds": time.perf_counter() - started,
-                "modes_completed": list(proof),
-                "strategy": {"python": "CliRunner.invoke", "typescript": "subprocess"},
-                "comparisons": proof,
-            },
-        )
-        assert answers[0] == answers[1], proof
+                answers.append(result)
+                proof["comparisons"][mode] = answers
+                proof["seconds"] = time.perf_counter() - started
+                driver.write_report(request, report_name, proof)
+        assert answers[0]["normalized"] == answers[1]["normalized"], proof
+
+
+@pytest.mark.parametrize(
+    "backend", ["tests.compare.host", "tests.compare.ts_launcher"], ids=["python", "typescript"]
+)
+def test_unit20_same_python_host_populated_sequence(
+    tmp_path: Path, request: pytest.FixtureRequest, backend: str
+) -> None:
+    compare_cli_sequence(LIST, backend, tmp_path, request)
 
 
 def test_unit20_every_help_and_group_usage(tmp_path: Path, request: pytest.FixtureRequest) -> None:
@@ -319,6 +310,13 @@ def test_unit20_every_help_and_group_usage(tmp_path: Path, request: pytest.Fixtu
     cases = [(path + ["--help"], 0) for path, _ in declarations]
     cases.extend(
         (
+            (["--", "project", "--help"], 0),
+            (["project", "list", "--help=no"], 2),
+            (["project", "list", "--limit"], 2),
+            (["project", "list", "--json=no"], 2),
+            (["project", "list", "--limit", "bad"], 2),
+            (["project", "list", "--limit", "a'b"], 2),
+            (["project", "list", "-xy"], 2),
             (["project", "list", "--limit", "bad", "--bogus"], 2),
             (["project", "list", "--limit", "bad", "--help"], 0),
             (["ticket", "show", "--help", "--bogus"], 2),
@@ -377,7 +375,7 @@ def test_unit20_every_help_and_group_usage(tmp_path: Path, request: pytest.Fixtu
             evidence.append({"argv": argv, "answers": answers})
             if driver.comparable(left) != driver.comparable(right):
                 differences.append(evidence[-1])
-        _report(
+        driver.write_report(
             request,
             "unit20-help-and-usage",
             {
@@ -410,22 +408,17 @@ def test_unit20_declarations_match_fresh_python(
         name: value for name, value in environment.items() if not name.startswith("PLAN_")
     }
     environment["PYTHONPATH"] = str(driver.ROOT / "src")
-    python = subprocess.run(
+    python = driver.raw_process(
         [
             sys.executable,
             "-c",
             "import json; from tests.compare.direct.unit20_metadata import declarations; "
             "print(json.dumps(declarations(), ensure_ascii=False))",
         ],
-        cwd=driver.ROOT,
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=40,
-        check=False,
+        environment,
     )
     assert python.returncode == 0, python.stderr
-    typescript = subprocess.run(
+    typescript = driver.raw_process(
         [
             "node",
             "--input-type=module",
@@ -433,16 +426,11 @@ def test_unit20_declarations_match_fresh_python(
             "import {commands} from './server/cli/commands.ts'; "
             "process.stdout.write(JSON.stringify(commands));",
         ],
-        cwd=driver.ROOT,
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=40,
-        check=False,
+        environment,
     )
     assert typescript.returncode == 0, typescript.stderr
     left, right = json.loads(python.stdout), json.loads(typescript.stdout)
-    _report(
+    driver.write_report(
         request,
         "unit20-declaration-drift",
         {

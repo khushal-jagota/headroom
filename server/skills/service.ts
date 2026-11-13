@@ -7,6 +7,7 @@ import {
   delete_skill_source,
   has_skill,
   read_all_skill_sources,
+  read_skill_source_rows,
   read_skill_source,
   write_skill_source,
   capture_skill_version,
@@ -25,8 +26,8 @@ export function read_skill(sql: ReadSql, name: string): ManagedSkill {
 }
 export function read_skills_home(sql: ReadSql): { skills: ManagedSkill[] } {
   return {
-    skills: Object.entries(read_all_skill_sources(sql)).map(([name, source]) =>
-      parse_skill(source, name),
+    skills: read_skill_source_rows(sql).map(({ skill_name, source_text }) =>
+      parse_skill(source_text, skill_name),
     ),
   };
 }

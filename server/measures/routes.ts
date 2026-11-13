@@ -51,9 +51,16 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, s) => {
       }
     }
     if (failures.length) return reply.code(422).send({ detail: failures });
-    return s.database.read((sql) =>
-      data.list_measures(sql, q.project_id ?? null, q.source_id ?? null, limit, offset),
-    );
+    return s.database.read((sql) => {
+      const result = data.list_measures(
+        sql,
+        q.project_id ?? null,
+        q.source_id ?? null,
+        limit,
+        offset,
+      );
+      return result;
+    });
   });
   app.get<{ Params: { measure_id: string } }>('/measures/:measure_id', async (req) =>
     s.database.read((sql) => data.read_measure(sql, req.params.measure_id)),
