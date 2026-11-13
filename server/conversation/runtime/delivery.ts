@@ -18,7 +18,7 @@ import type { MessageContent } from '../message_content.ts';
 import type { DeliveryAttempt, DeliveryServices, Message, ReservedTurn } from './contracts.ts';
 import type { ConversationState } from './state.ts';
 import { ROLE_TEXT_PROMPT_SEPARATOR } from './configuration.ts';
-import { same_turn } from './state.ts';
+import { Deferred, same_turn } from './state.ts';
 
 function result(values: Partial<DeliveryAttempt> = {}): DeliveryAttempt {
   return {
@@ -369,7 +369,12 @@ export async function write_replayed_prompt(
   prompt: import('../record/contracts.ts').UndeliveredTurnPrompt,
   check_owner: () => void,
 ): Promise<void> {
-  check_owner();
+  const release = await state.lock.acquire();
+  try {
+    check_owner();
+  } finally {
+    release();
+  }
   let child = state.child;
   if (child === null) {
     const message: Message = {
@@ -392,7 +397,6 @@ export async function write_replayed_prompt(
       delivery_uncertain: false,
       system_generated: true,
     };
-    const { Deferred } = await import('./state.ts');
     const reservation: ReservedTurn = {
       token,
       resolved: new Deferred<void>(),
