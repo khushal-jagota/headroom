@@ -758,3 +758,8 @@ data directory, and cancellation only after the owned restore witness closes.
 The configured helpers are disclosed Node witnesses, not a real installer rehearsal.
 `test_unit21_interruption_capture.py` separately exercises the actual stopped capture and
 restore entries. Hosted service, copy, health and rollback proofs remain later gates.
+
+## Mac Unix CLI trust and transport failures — Manager directed
+
+The TypeScript client refuses linked run/socket entries and sockets owned by another user before capability emission; Python follows those links.
+The ordinary CLI socket read/write/retry seam returns exit 2 for non-ValueError transport failures that Python can expose as a traceback.

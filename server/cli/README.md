@@ -98,5 +98,8 @@ operator returns only after its factory joins actual cleanup. SIGINT uses Python
 caller-stopped transcript. SIGTERM writes any retained prefix and then retains
 native signal termination. App-build, run, serve, and restart retain their accepted
 temporary refusals until the release-side prerequisites merge in a later Ticket.
-Executor transport and its second command table remain with the executor unit.
+Executor socket transport binds the same command handlers when `PLAN_EXECUTOR_ROOT`
+is set. Reads and registered mutations use the Unix client, including lookup-only
+retry and exit 3 for unconfirmed acceptance. `executor health` and `quiesce` use that
+client too. `executor run` and `permissions` still await the host/platform slices.
 This package does not switch the installed wrapper or deploy an application.

@@ -1,5 +1,25 @@
 # Mac executor file foundation
 
+## Unix CLI client
+
+`ipc/gateway.ts` owns the private Unix listener and admitted CLI publications.
+`ipc/outbox.ts` captures files through the real spool and retains receipt waiters.
+The sender calls `notify_confirmed` after its durable acknowledgement callback.
+`storage/envelopes.ts` supplies the shared row-to-envelope and receipt projections.
+The host supplies runner admission, catalog settlement, presence, reads, and exit.
+It joins gateway and runner cleanup before storage. A response timeout never cancels publication.
+The runner facade's `seal_admission` binding and complete host wiring remain later work.
+
+`ipc_client.ts` connects only to the configured root's Unix socket. It validates
+and frames each request through the shared wire codec before emission. It sends
+the OS monotonic deadline, so a service in another process can compare that clock.
+One absolute timeout covers connect, write, and response, including the transport reserve.
+The client joins socket closure before it returns. It never retries a write.
+After possible emission, a transport or response-validation failure means unknown
+acceptance for write/retry. A valid reply retains its original submission identity.
+The existing CLI owns output and exit codes. `run` and `permissions` remain open
+host/platform bindings. No host or gateway is introduced by this client slice.
+
 The Mac executor uses `FilesService` for byte copies, hashes, directory creation, and durable flushes.
 Each caller owns its service instance and must pass the shared absolute shutdown deadline to `stop()`.
 The later host can retain separate instances for independent conversation transfers. This slice adds no worker pool.

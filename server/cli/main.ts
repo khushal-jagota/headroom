@@ -25,6 +25,8 @@ export async function run(
       return { exit_code: 0, stdout: render_help(parsed.command, commands), stderr: '' };
     invocation = { ...parsed, environment, stdin, write_stderr };
     switch (parsed.command.path[0]) {
+      case 'executor':
+        return await (await import('../executor/mac/cli.ts')).run_executor_command(invocation);
       case 'environment':
       case 'stalls':
       case 'serve':
