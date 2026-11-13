@@ -1,5 +1,5 @@
 import { readdir, rm, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { MERGE_TARGET, NOT_DESCENDED, STATUS_OPTIONS } from './configuration.ts';
 import type {
   ScratchLayout,
@@ -94,17 +94,22 @@ export async function remove_ticket_scratch(
     if (!finished(scratch.ticket_id, states, now)) continue;
     for (const entry of scratch.entries) {
       options.signal?.throwIfAborted();
-      const info = await entry_stat(entry);
+      const admitted = options.admit_path?.(entry) ?? entry;
+      // Unlink the entry itself, never its symlink target. Admit both its parent and target.
+      const path = options.admit_path
+        ? join(options.admit_path(dirname(entry)), basename(entry))
+        : entry;
+      const info = await entry_stat(path);
       if (info === null) continue;
-      const reason = await reason_to_keep(entry, worktrees, states, now, options);
+      const reason = await reason_to_keep(path, worktrees, states, now, options);
       if (reason !== null) {
         result.skipped.push({ path: entry, reason });
         continue;
       }
       options.signal?.throwIfAborted();
       try {
-        if (info.isDirectory() && !info.isSymbolicLink()) await rm(entry, { recursive: true });
-        else await unlink(entry);
+        if (info.isDirectory() && !info.isSymbolicLink()) await rm(admitted, { recursive: true });
+        else await unlink(path);
       } catch (error) {
         if (!(error instanceof Error) || !('code' in error)) throw error;
         result.skipped.push({ path: entry, reason: `removal failed: ${error.message}` });
