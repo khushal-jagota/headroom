@@ -23,15 +23,37 @@ GRAPH_ARTIFACT = ROOT / "server/environments/release/migration_graph.json"
 
 def build_migration_graph() -> dict[str, Any]:
     directory = ROOT / "src/planner/core/migrations/versions"
+    revisions = migration_graph(ROOT)
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(revision: str) -> None:
+        if revision in visiting:
+            raise ValueError("invalid generated migration graph: cycle")
+        if revision in visited:
+            return
+        visiting.add(revision)
+        for parent in revisions[revision]:
+            if parent == revision:
+                raise ValueError("invalid generated migration graph: self-parent")
+            if parent not in revisions:
+                raise ValueError("invalid generated migration graph: dangling parent")
+            visit(parent)
+        visiting.remove(revision)
+        visited.add(revision)
+
+    for revision in revisions:
+        visit(revision)
+    heads = set(revisions) - {parent for parents in revisions.values() for parent in parents}
+    if len(heads) != 1:
+        raise ValueError("invalid generated migration graph: expected exactly one head")
     digest = hashlib.sha256()
     for path in sorted(directory.glob("*.py")):
         digest.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
     return {
         "version": 1,
         "source_digest": digest.hexdigest(),
-        "revisions": {
-            revision: list(parents) for revision, parents in migration_graph(ROOT).items()
-        },
+        "revisions": {revision: list(parents) for revision, parents in revisions.items()},
     }
 
 
@@ -69,9 +91,9 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=ARTIFACT)
     parser.add_argument("--graph-output", type=Path, default=GRAPH_ARTIFACT)
     args = parser.parse_args()
+    graph = build_migration_graph()
     with tempfile.TemporaryDirectory(prefix="unit21-schema-") as temporary:
         seed, inventory = build_seed(Path(temporary))
-    graph = build_migration_graph()
     heads = set(graph["revisions"]) - {
         parent for parents in graph["revisions"].values() for parent in parents
     }

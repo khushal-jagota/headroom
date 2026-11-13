@@ -6,6 +6,32 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+function validate_migration_topology(revisions: MigrationGraph['revisions']): void {
+  const visiting = new Set<string>(),
+    visited = new Set<string>();
+  const visit = (revision: string): void => {
+    if (visiting.has(revision))
+      throw new AppValidationError('invalid generated migration graph: cycle');
+    if (visited.has(revision)) return;
+    visiting.add(revision);
+    for (const parent of revisions[revision]!) {
+      if (parent === revision)
+        throw new AppValidationError('invalid generated migration graph: self-parent');
+      if (!Object.hasOwn(revisions, parent))
+        throw new AppValidationError('invalid generated migration graph: dangling parent');
+      visit(parent);
+    }
+    visiting.delete(revision);
+    visited.add(revision);
+  };
+  for (const revision of Object.keys(revisions)) visit(revision);
+  const heads = new Set(Object.keys(revisions));
+  for (const parents of Object.values(revisions))
+    for (const parent of parents) heads.delete(parent);
+  if (heads.size !== 1)
+    throw new AppValidationError('invalid generated migration graph: expected exactly one head');
+}
+
 /** Build input, bound to raw migration bytes without a runtime Python parser. */
 export async function read_migration_graph(root: string): Promise<MigrationGraph> {
   let graph: unknown;
@@ -52,6 +78,7 @@ export async function read_migration_graph(root: string): Promise<MigrationGraph
     throw new AppValidationError(
       'migration graph differs from the current Python migration source',
     );
+  validate_migration_topology((graph as MigrationGraph).revisions);
   return graph as MigrationGraph;
 }
 

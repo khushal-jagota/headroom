@@ -62,6 +62,7 @@ jobs:
       - name: Compare direct runtime checks against Python
         if: matrix.part == 'direct'
         run: |
+          .venv/bin/python tests/compare/direct/unit21_schema_seed.py --check
           scripts/dev pytest tests/compare/direct --compare-report-dir "$RUNNER_TEMP/comparison"
           .venv/bin/python tests/compare/tools/generate_fixture_oracle.py --check
       - name: Check shared comparison oracles and stalls
