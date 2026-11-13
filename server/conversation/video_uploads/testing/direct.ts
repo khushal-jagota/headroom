@@ -44,9 +44,10 @@ export async function run(spec: Spec): Promise<unknown> {
     close: database.close.bind(database),
     write: (work, options) =>
       database.write((tx) => {
-        const recording: TransactionSql = {
-          get: tx.get.bind(tx),
-          all: tx.all.bind(tx),
+        const recording = (current: TransactionSql): TransactionSql => ({
+          savepoint: (nested) => current.savepoint((tx) => nested(recording(tx))),
+          get: current.get.bind(current),
+          all: current.all.bind(current),
           run: (query, parameters) => {
             if (query.includes('SET received_bytes=')) {
               const values = parameters as readonly SqlValue[];
@@ -55,10 +56,10 @@ export async function run(spec: Spec): Promise<unknown> {
                 received_bytes: values[0],
               });
             }
-            return tx.run(query, parameters);
+            return current.run(query, parameters);
           },
-        };
-        return work(recording);
+        });
+        return work(recording(tx));
       }, options),
   };
   const service = new VideoUploadService(recording_database, spec.db_path, {

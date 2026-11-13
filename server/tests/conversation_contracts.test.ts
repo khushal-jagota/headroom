@@ -35,6 +35,9 @@ describe('conversation contract boundaries outside the comparison host', () => {
   it('publishes independent idle values on the source transaction', () => {
     // The comparison fake has no rows. This proves the commit-step consumer boundary.
     const tx: TransactionSql = {
+      savepoint: () => {
+        throw new Error('the source must not write or commit');
+      },
       all: <Row>() => [{ conversation_id: 'first' }, { conversation_id: 'second' }] as Row[],
       get: () => undefined,
       run: () => {

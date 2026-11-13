@@ -41,9 +41,9 @@ core interface and domain seams. Attention, Manager notices, credentials,
 deployment recovery, and runtime publication stay with their owning units.
 An isolated record instance does not prove those integrations.
 
-The executor participant can refuse before it takes a writer. If it refuses after
-a take, this store rolls back the whole transaction. The Python savepoint outcome
-requires Unit 22 integration. No rejected event batch commits silently.
+The executor participant owns a write-door savepoint around its domain writer.
+A refusal after take rolls back the event and commits its refusal receipt outside
+that savepoint. The store publishes no written events for that refused outcome.
 
 The startup method reconciles lifecycle facts without a synthetic closing event.
 The record runtime reuses the server's existing ownership lock and starts background
