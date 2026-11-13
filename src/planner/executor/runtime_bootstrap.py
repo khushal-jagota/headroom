@@ -28,6 +28,7 @@ from planner.executor.update_configuration import (
     MAC_UPDATE_POLL_SECONDS,
     MAC_UPDATE_TERMINATE_SECONDS,
 )
+from planner.worker_supervision.config import STOP_SECONDS
 
 
 def atomic_record(path: Path, value: dict[str, Any]) -> None:
@@ -142,7 +143,9 @@ def _signal_child(process: subprocess.Popen[bytes], signum: int) -> None:
 def _stop_child(process: subprocess.Popen[bytes]) -> None:
     _signal_child(process, signal.SIGTERM)
     try:
-        process.wait(timeout=MAC_UPDATE_TERMINATE_SECONDS)
+        process.wait(
+            timeout=STOP_SECONDS + 10 if _linux_runtime() else MAC_UPDATE_TERMINATE_SECONDS
+        )
     except subprocess.TimeoutExpired:
         _signal_child(process, signal.SIGKILL)
         process.wait()

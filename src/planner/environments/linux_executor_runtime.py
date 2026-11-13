@@ -11,6 +11,7 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
+from planner.environments.runtime_admission import admit_runtime
 from planner.environments.update_artifacts import extract_app_archive
 from planner.executor.update_configuration import (
     MAC_RUNTIME_MANIFEST_NAME,
@@ -76,10 +77,11 @@ def extract_runtime(
     temporary = Path(tempfile.mkdtemp(prefix=".install-", dir=releases))
     payload = temporary / "runtime"
     try:
-        extract_app_archive(
+        manifest = extract_app_archive(
             archive, payload, expected_sha256, expected_revision, expected_target=LINUX_EXECUTOR
         )
         read_runtime_revision(payload, expected_revision)
+        admit_runtime(payload, manifest)
         payload.rename(destination)
         return destination
     finally:
