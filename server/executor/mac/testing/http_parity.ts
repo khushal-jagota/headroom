@@ -217,18 +217,22 @@ export async function run(spec: Spec): Promise<unknown> {
     {
       loop: 'outcomes',
       method: 'POST',
-      path: '/custody',
-      timeout: 0.02,
+      path: '/early-response',
+      timeout: 0.1,
       body: {
         async *[Symbol.asyncIterator]() {
-          ready();
+          yield Buffer.from('prefix');
           await late;
           yield Buffer.from('late');
         },
       },
     },
     {},
-    async () => null,
+    async (response) => {
+      await read_bounded(response, 1024);
+      ready();
+      return null;
+    },
   );
   void owned.catch(() => {});
   await begin;
