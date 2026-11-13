@@ -22,9 +22,10 @@ The direct comparison owns a numeric-loopback TLS listener, private certificate 
 It compares populated requests and replies against fresh Python, including unsafe integers,
 redirect and size refusals, transfer bytes, and reset. The same fixture proves channel isolation
 and actual producer ownership. The containment check precedes client construction and network I/O.
-No host, provider, lease loop, outbox sender or update controller starts in this module.
+Imports start no loops or providers. The host explicitly starts `MacLeaseLoop`.
+Its lease reports backlog and working turns, offers updates, and fences a replaced incarnation.
+It captures the journal cursor before the request so a restore cannot erase a concurrent poll advance.
+`MacLiveSender` sends each conversation independently and drops failed batches and excess waiting events.
+Both owners use the host's shared stop deadline and expose their actual loop settlement.
 
-An inherited native cleanup gap remains in `platform.open_directory_descriptor()`:
-intermediate ancestor closes have no retained retry owner. This slice retains the final
-parent and file capabilities, but it does not repair that ancestor walk.
-The whole unit must close this gap before a complete native cleanup pass claim.
+Known limit: the inherited directory walk lacks a retry owner if an intermediate ancestor close fails.
