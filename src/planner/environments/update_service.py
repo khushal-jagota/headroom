@@ -363,11 +363,14 @@ class UpdateService:
             return True
         if attempt.state != "waiting":
             return False
-        system = self.conversation()
-        if attempt.mode == "idle" and (system is None or system.workspace_activity() != "idle"):
-            return False
+        # Background reconcilers share this wake and can briefly hold admission.
+        # Let the event-loop owner check idle and claim admission, even when this
+        # thread samples that temporary work. Keep the readiness hold unchanged.
         self.schedule_advance()
-        return True
+        system = self.conversation()
+        return attempt.mode != "idle" or (
+            system is not None and system.workspace_activity() == "idle"
+        )
 
     async def advance(self) -> None:
         """Begin the waiting attempt when it may begin. Runs on the server's event loop."""

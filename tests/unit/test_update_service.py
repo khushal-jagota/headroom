@@ -225,6 +225,27 @@ def test_node_release_rechecks_the_frontier_before_the_stop(
     assert recorded.backup is None and not harness.launched
 
 
+def test_idle_poll_advances_when_transient_work_ends_before_admission(harness: Harness) -> None:
+    """A busy poll must not lose the event-loop check after reconcilers finish."""
+    harness.system.activity = "busy"
+    harness.service.install(SHA_B, "idle", confirm_activity=False)
+
+    async def run() -> None:
+        harness.service.start(asyncio.get_running_loop())
+        await asyncio.gather(*(
+            asyncio.wrap_future(task) for task in tuple(harness.service._tasks)
+        ))
+        assert not harness.launched
+        assert harness.service.poll() is False  # Busy work still permits readiness.
+        harness.system.activity = "idle"
+        await asyncio.gather(*(
+            asyncio.wrap_future(task) for task in tuple(harness.service._tasks)
+        ))
+        assert harness.launched
+
+    asyncio.run(run())
+
+
 def test_idle_wait_cancel_and_update_now(harness: Harness) -> None:
     """Waiting holds until idle; cancel removes it; Update now needs confirmation."""
     harness.system.activity = "busy"

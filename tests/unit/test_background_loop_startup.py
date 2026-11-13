@@ -361,3 +361,75 @@ def test_legacy_failure_returns_inert_owner_and_releases_every_candidate(
         _assert_lock(cfg.dispatcher_lock_path, held=False)
 
     asyncio.run(run())
+
+
+def test_darwin_home_startup_polls_an_external_waiting_update(
+    tmp_path: Path, cfg: object, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production lifespan must own the thread that advances an external attempt."""
+    from dataclasses import replace
+
+    from fastapi.testclient import TestClient
+    from tests.support.update_apps import SHA_A
+    from tests.unit.test_update_service import Harness
+
+    from planner.core.config import Config
+    from planner.core.server import create_app
+    from planner.environments.update_attempts import atomic_write_json, attempt_to_dict, utc_now
+    from planner.environments.update_contracts import UpdateAttempt
+    from planner.environments.update_service import UpdateService
+    from planner.platform_runtime.darwin.adapter import DarwinPlatformAdapter
+    from planner.platform_runtime.linux.adapter import LinuxPlatformAdapter
+
+    # Reuse the existing update fixture and ASGI host. Native process operations
+    # remain separate Mac proof; this case exercises actual production loop startup.
+    harness = Harness(tmp_path / "home")
+    (harness.root / "workspaces").mkdir()
+    isolated = replace(
+        cast(Config, cfg), db_path=str(harness.database), test_mode=False,
+        dispatch_enabled=True, tick_seconds=1, app_sha=SHA_A,
+        dispatcher_lock_path=str(harness.root / "data/dispatcher.lock"),
+        logs_dir=str(harness.root / "logs"), backup_dir=str(harness.root / "data/backups"),
+        workspace_root=harness.root / "workspaces", provision_account_skills=False,
+    )
+    adapter = DarwinPlatformAdapter()
+    if sys.platform != "darwin":
+        monkeypatch.setattr(adapter, "worker_processes", LinuxPlatformAdapter().worker_processes)
+    monkeypatch.setattr(adapter, "own_service_unit", lambda *args: "gui/proof/com.panels.home")
+    monkeypatch.setattr(adapter, "installer_python", lambda root: Path(sys.executable))
+    monkeypatch.setattr(
+        "planner.platform_runtime.selection.get_platform_adapter", lambda *args: adapter,
+    )
+    monkeypatch.setattr("planner.environments.update_service.get_platform_adapter", lambda: adapter)
+    monkeypatch.setattr("planner.environments.update_install.get_platform_adapter", lambda: adapter)
+    monkeypatch.setattr("planner.core.server._REPO_ROOT", harness.root / "app")
+    monkeypatch.delenv("PLAN_UPDATE_REPOSITORY", raising=False)
+    monkeypatch.delenv("PLAN_UPDATE_TOKEN_FILE", raising=False)
+    app = create_app(isolated, build_clock(isolated), lambda: connect(str(harness.database)))
+    launched = threading.Event()
+    with TestClient(app):
+        updater = cast(UpdateService, app.state.updates)
+        owner = loops._active
+        assert owner is not None and owner.worker_step_readiness_loop is not None
+        thread = owner.worker_step_readiness_loop._thread
+        assert thread is not None and thread.is_alive()
+        assert getattr(owner.worker_step_readiness_loop._before_poll, "__self__", None) is (
+            updater
+        )
+        assert updater._event_loop.is_running()
+        updater._launch = lambda *args: launched.set()
+        deadline = monotonic() + 5
+        while updater.status().activity != "idle" and monotonic() < deadline:
+            threading.Event().wait(0.01)
+        assert updater.status().activity == "idle"
+        now = utc_now()
+        # Write the other process's bytes without its process-local change signal.
+        atomic_write_json(harness.store.path, attempt_to_dict(UpdateAttempt(
+            attempt_id="external-native-proof", from_sha=SHA_A,
+            to_sha=harness.release.manifest.app_sha, mode="idle", confirm_activity=False,
+            state="waiting", created_at=now, updated_at=now, release=harness.release,
+        )))
+        assert launched.wait(10), updater.status()
+        attempt = harness.store.read()
+        assert attempt is not None and attempt.state == "installing"
+        assert "work_paused" in attempt.steps and attempt.backup is not None
