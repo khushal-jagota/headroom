@@ -458,6 +458,47 @@ One comparison per failure class retains both raw outcomes.
 The migration Manager accepted a clean validation error at exit 1 for invalid UTF-8 in a body file.
 Python's file decoder instead prints an uncaught traceback. Both commands fail before an HTTP request.
 
+## Integer-like JSON map keys
+
+The migration Manager accepted native JavaScript index-key order for cosmetic JSON maps in Unit 20.
+Keys such as `2025` and `2024` appear in ascending numeric order in TypeScript maps.
+Python dictionaries retain their insertion order. Every key, value, and numeric token remains exact.
+Declaration arrays retain their original order and supply dataset dimension and field order.
+
+The audit checked dataset validation, retained SQL writes and reads, canonical row identity,
+source runtime conversions and repository scripts, dataset chart projections, CLI output,
+web chart adapters, tables, and export paths. Canonical `dimension_key` sorts an entries array,
+so object enumeration does not change row identity or deduplication. Charts select values by name.
+Tables and chart series use explicit arrays. The dataset CLI prints the complete response.
+
+The audit found one server meaning dependency. Ticket search now reads present values in the
+declared workflow field order, with Python's title, recap, newline separators, and proposal body.
+This repair changes only `list_ticket_summaries` in `server/tickets/views.ts` in the second CLI PR.
+Other consumers of the reconstructed Ticket field map use named access, declaration arrays,
+per-value validation, storage copies, or opaque record digests. Incoming edit requests and their
+first-error order are outside this cosmetic response-map acceptance.
+
+The preexisting web `compositionTotal` derives an unbound chart sum from object keys.
+That browser code uses the same JavaScript order with either backend and remains outside this PR.
+Dataset-bound charts use the backend summary instead. No web code changes form part of this acceptance.
+
+The existing retained dataset case declares `2025` then `2024` and keeps values `7.25` and `3.0`.
+Its named comparison rule changes only the order of those two original lexical member spans in
+one `results.0.rows.0.values` object, in JSON, text, and HTTP evidence. Raw outputs remain available.
+All other bytes, numeric spellings, row arrays, dimension declarations, and field declarations stay strict.
+The same owned hosts compare a populated Ticket search across two numeric fields in descending order.
+A second pass follows intermediate maps through their final readers. Human Ticket sections keep an
+explicit declared or requested sequence. Skills keep SQL row order, and category reading values keep
+chart declaration order. Those are parity repairs, not cosmetic map-order exceptions.
+The Goal read fixture also contains chart IDs `20`, `10`, `__proto__`, `constructor`, and `toString`.
+Its named rule promotes only the two numeric map keys at `body.charts` and `stdout.charts`.
+Non-index key order, value spans, public arrays, and every outside byte remain strict.
+Both projection accumulators retain special names as ordinary own keys. The CLI's field-value and
+approval lookups also require own keys, as Python dictionary access does.
+The wider assignment and error-order inventory remains in
+[the audit](/files/tickets/t_jt78h9xr/artifacts/data-key-enumeration-audit.md).
+No shared JSON parser or object representation changes form part of this acceptance.
+
 ## CLI executor socket transport — accepted, temporary, owner: the executor unit
 
 HTTP-client commands currently refuse `PLAN_EXECUTOR_ROOT` with a validation error while Unit 22 supplies the executor socket route.
@@ -501,10 +542,21 @@ During a command commit before its announcement, this cursor can lead Python's c
 Mailbox rows never delete. The leading cursor therefore names existing rows that the next poll returns.
 This uses no new flag on the mailbox.
 
+The presence seal rejects new leases, WebSocket refusals, and drain waits.
+Cached reads, header fences, contact observations, and memory-only activity observations continue after stop.
+A cold read returns the empty cached state without lazy SQL.
+Contact observations update only memory after stop and start no timer.
+
 A presence stop before lazy initialization performs no presence SQL read or write.
 Python close can initialize its record before its final flush and logs and swallows OS or SQLite failures.
 TypeScript final flush failures remain visible through actual settlement, as the lifecycle contract requires.
+Normal-running contact flush failures log and remain retryable, as in Python.
+They do not become shutdown failures when a later flush succeeds.
 The bounded stop observer uses the shared absolute deadline. Actual settlement remains separate.
+
+Presence commits are silent at the shared write door.
+After commit succeeds, the service publishes its cache before it emits the one presence change signal.
+Synchronous signal subscribers therefore read the committed presence state, with no cache update before a possible rollback.
 
 ## VPS file descriptor custody
 

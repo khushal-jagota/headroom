@@ -186,7 +186,7 @@ export function category_projections(
     retained.set(identifier, reading);
     for (const item of reading.sources) health.set(item.source_id, item);
   }
-  const projections: Record<string, CategoryChartProjection> = {};
+  const projections: Record<string, CategoryChartProjection> = Object.create(null);
   for (const [chart, earliest] of selected) {
     const binding = chart.binding!;
     if (binding.kind === 'dataset')

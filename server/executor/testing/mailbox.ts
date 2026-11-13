@@ -14,7 +14,7 @@ import type { WireInteger, WireTypes } from '../wire.generated.ts';
 import { MacPresenceService, no_update_check } from '../vps_presence.ts';
 import { ChangeSignal } from '../../core/changes/index.ts';
 import { UpdateConflict } from '../../environments/updates/attempts.ts';
-import { ValueError } from '../protocol.ts';
+import { ValueError, decode_value } from '../protocol.ts';
 import { read_presence } from '../vps_presence_store.ts';
 
 type Statement = { sql: string; values: SqlValue[] };
@@ -61,9 +61,19 @@ let presence: MacPresenceService | undefined,
 let callback_release: (() => void) | undefined;
 let callback_gate: Promise<void> | undefined;
 let callback_trace: unknown[] = [];
+let change_reads: unknown[] = [];
 let presence_after_commit: (() => void) | undefined;
 const changes = new ChangeSignal();
-changes.subscribe(() => signals++);
+changes.subscribe(() => {
+  signals++;
+  if (presence)
+    change_reads.push({
+      health: presence.health(),
+      present: presence.is_present(),
+      record: presence.record(),
+      sql: database.read(read_presence),
+    });
+});
 const scalar = (value: unknown): number => {
   const result = numeric_value(value);
   if (result === undefined) throw new TypeError('A control number is required');
@@ -83,8 +93,10 @@ const facade: Database = {
   },
   write(work, options) {
     writes++;
-    if (presence_mode === 'fail_contact')
+    if (presence_mode === 'fail_contact') {
+      callback_trace.push(['contact_failure']);
       throw Object.assign(new Error('fixture contact flush'), { code: 'EIO' });
+    }
     if (before_sql) {
       const statements = before_sql;
       before_sql = undefined;
@@ -128,7 +140,7 @@ function owner(): void {
 function wake_count(): number {
   return (mailbox as unknown as { poll_waits: Set<unknown> }).poll_waits.size;
 }
-async function timed_poll(args: unknown[]): Promise<unknown> {
+async function timed_poll(args: unknown[], lease = false): Promise<unknown> {
   await new Promise<void>((resolve) => setImmediate(resolve));
   let active = true,
     previous = performance.now(),
@@ -144,15 +156,19 @@ async function timed_poll(args: unknown[]): Promise<unknown> {
   const start = performance.now(),
     writer_start = writer_ms;
   try {
-    const reply = await mailbox.poll(
-      args[0] as WireTypes['ExecutorIdentity'],
-      args[1] as WireInteger,
-      scalar(args[2]),
-    );
+    const reply = lease
+      ? await presence!.accept_lease(args[0] as WireTypes['LeaseRequest'])
+      : await mailbox.poll(
+          args[0] as WireTypes['ExecutorIdentity'],
+          args[1] as WireInteger,
+          scalar(args[2]),
+        );
     const polled_at = performance.now();
-    const wire_bytes = encode_bounded(reply, 'MailboxPollReply', {
-      limit: 4 * 1024 * 1024,
-    }).byteLength;
+    const wire_bytes = lease
+      ? encode_bounded(reply as WireTypes['LeaseReply'], 'LeaseReply').byteLength
+      : encode_bounded(reply as WireTypes['MailboxPollReply'], 'MailboxPollReply', {
+          limit: 4 * 1024 * 1024,
+        }).byteLength;
     const encoded_at = performance.now();
     await new Promise<void>((resolve) => setImmediate(resolve));
     return {
@@ -164,7 +180,7 @@ async function timed_poll(args: unknown[]): Promise<unknown> {
         blocked_ms,
         writer_ms: writer_ms - writer_start,
         wire_bytes,
-        commands: reply.commands.length,
+        commands: lease ? 0 : (reply as WireTypes['MailboxPollReply']).commands.length,
       },
     };
   } finally {
@@ -251,6 +267,8 @@ function callback_error(): void {
   if (kind === 'value') throw new ValueError('fixture callback');
   if (kind === 'conflict') throw new UpdateConflict('fixture callback');
   if (kind === 'type') throw new TypeError('fixture callback');
+  if (kind === 'syntax') throw new SyntaxError('fixture callback');
+  if (kind === 'validation') decode_value({}, 'MacUpdateCheck');
   if (kind === 'sqlite') database.read((sql) => sql.get('SELECT * FROM missing_fixture_table'));
 }
 function presence_owner(): void {
@@ -261,7 +279,6 @@ function presence_owner(): void {
   });
   presence.update_check = async () => {
     callback_trace.push(['update']);
-    if (presence_mode === 'hold_update') await callback_gate;
     if (presence_mode !== 'sqlite') callback_error();
     return no_update_check();
   };
@@ -304,6 +321,10 @@ async function presence_control(action: Action): Promise<unknown> {
       return p.wait_until_drained((action.args[0] as string) ?? action.key);
     case 'callbacks':
       return callback_trace;
+    case 'changes':
+      return change_reads;
+    case 'timed_lease':
+      return timed_poll(action.args, true);
     case 'cache_only':
       p.incarnation_replaced = null;
       p.returned = null;
@@ -404,8 +425,10 @@ async function execute(action: Action): Promise<unknown> {
       try {
         await cold.stop({ deadline: performance.now() / 1000 + 5 });
         await cold.settled();
-        const read = await outcome(() => cold.health());
-        return { touched, read };
+        const read = cold.health();
+        cold.record_contact();
+        cold.note_conversation_activity('cold');
+        return { touched, read, record: cold.record(), present: cold.is_present() };
       } finally {
         private_db.close();
       }

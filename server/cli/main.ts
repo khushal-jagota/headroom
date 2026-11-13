@@ -3,8 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { realpathSync } from 'node:fs';
 import type { Writable } from 'node:stream';
 import { commands } from './commands.ts';
-import type { CommandResult } from './contracts.ts';
-import { CliFailure } from './errors.ts';
+import type { CommandResult, Invocation } from './contracts.ts';
+import { CliFailure, MissingResponseValue } from './errors.ts';
 import { render_help } from './help.ts';
 import { parse } from './parser.ts';
 
@@ -17,13 +17,46 @@ export async function run(
     return Buffer.concat(chunks);
   },
 ): Promise<CommandResult> {
+  let invocation: Invocation | undefined;
   try {
     const parsed = parse(argv, commands, environment);
     if (parsed.help)
       return { exit_code: 0, stdout: render_help(parsed.command, commands), stderr: '' };
+    invocation = { ...parsed, environment, stdin };
+    switch (parsed.command.path[0]) {
+      case 'goal':
+        return await (await import('../goals/cli/index.ts')).run_goal_command(invocation);
+      case 'page':
+        return await (await import('../managers/page_cli/index.ts')).run_page_command(invocation);
+      case 'credential':
+        return await (
+          await import('../credentials/cli/index.ts')
+        ).run_credential_command(invocation);
+      case 'measure':
+        return await (await import('../measures/cli/index.ts')).run_measure_command(invocation);
+      case 'attention':
+        return await (await import('../attention/cli/index.ts')).run_attention_command(invocation);
+      case 'measure-source':
+        return await (
+          await import('../measure_sources/cli/index.ts')
+        ).run_measure_source_command(invocation);
+      case 'preview':
+        return await (await import('../previews/cli/index.ts')).run_preview_command(invocation);
+      case 'dataset':
+        return await (await import('../datasets/cli/index.ts')).run_dataset_command(invocation);
+    }
     const { run_work_command } = await import('./work_commands.ts');
-    return await run_work_command({ ...parsed, environment, stdin });
+    return await run_work_command(invocation);
   } catch (error) {
+    if (error instanceof MissingResponseValue && invocation) {
+      const { fail_validation } = await import('./http.ts');
+      try {
+        fail_validation(invocation, error.message);
+      } catch (failure) {
+        if (failure instanceof CliFailure) return failure.result;
+        throw failure;
+      }
+    }
     if (error instanceof CliFailure) return error.result;
     throw error;
   }

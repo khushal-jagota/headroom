@@ -11,9 +11,10 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import httpx
 from tests.support.server import ServerHandle
@@ -28,6 +29,42 @@ PYTHON = [
 TYPESCRIPT = ["node", str(ROOT / "server/cli/main.ts")]
 LIVE_URL = os.environ.get("PLAN_SERVER_URL", "http://127.0.0.1:8767")
 ACTORS = {"owner", "chief", "worker", "manager", "unidentified"}
+
+
+def raw_process(
+    argv: list[str],
+    env: dict[str, str],
+    input: bytes = b"",
+    timeout: int = 40,
+    *,
+    check: bool = False,
+    cwd: Path | None = ROOT,
+) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        argv,
+        cwd=cwd,
+        env=env,
+        input=input,
+        capture_output=True,
+        timeout=timeout,
+        check=check,
+    )
+
+
+def process_answer(result: subprocess.CompletedProcess[bytes]) -> dict[str, Any]:
+    return {
+        "exit_code": result.returncode,
+        "stdout": result.stdout.decode(),
+        "stderr": result.stderr.decode(),
+    }
+
+
+def write_report(request: Any, name: str, evidence: Any) -> None:
+    destination = request.config.getoption("--compare-report-dir")
+    if destination:
+        root = Path(destination)
+        root.mkdir(parents=True, exist_ok=True)
+        (root / (name + ".json")).write_text(json.dumps(evidence, indent=2) + "\n")
 
 
 @dataclass(frozen=True)
@@ -211,14 +248,11 @@ def help_batch(host: CliHost, cases: list[tuple[list[str], int]], root: Path) ->
     _admit(host, root)
     env = environment(host, {"actor": "owner"}, root)
     python = [_python_library(argv, b"", env) for argv, _ in cases]
-    completed = subprocess.run(
+    completed = raw_process(
         ["node", str(ROOT / "server/cli/testing/help_batch.ts")],
-        cwd=ROOT,
-        env=env,
-        input=json.dumps([argv for argv, _ in cases]).encode("utf-8"),
-        capture_output=True,
+        env,
+        json.dumps([argv for argv, _ in cases]).encode("utf-8"),
         timeout=60,
-        check=False,
     )
     if completed.returncode != 0:
         raise AssertionError(completed.stderr.decode("utf-8"))
@@ -257,6 +291,8 @@ def run_cli(
         "proof",
         "assert_json",
         "assert_text",
+        "assert_http_status",
+        "numeric_chart_keys",
     }
     if set(step) - allowed:
         raise ValueError(f"unsupported CLI step fields: {sorted(set(step) - allowed)}")
@@ -281,28 +317,81 @@ def run_cli(
         argv.append("--json")
     elif mode not in ("text", "json"):
         raise ValueError("unsupported CLI output mode")
+    from tests.compare.direct.unit20_wire import _body, python_capture, read_capture
+
+    with tempfile.NamedTemporaryFile(dir=root, prefix="wire-", delete=False) as private:
+        wire_file = Path(private.name)
     started = time.perf_counter()
     if python_in_process:
-        answer = _python_library(argv, step.get("stdin", "").encode("utf-8"), env)
+        with python_capture(wire_file, host.handle.base):
+            answer = _python_library(argv, step.get("stdin", "").encode("utf-8"), env)
     else:
-        completed = subprocess.run(
-            [*(TYPESCRIPT if candidate else PYTHON), *argv],
-            cwd=ROOT,
-            env=env,
-            input=step.get("stdin", "").encode("utf-8"),
-            capture_output=True,
-            timeout=40,
-            check=False,
+        command = (
+            [
+                "node",
+                "--import",
+                str(ROOT / "tests/compare/direct/unit20_wire.mjs"),
+                str(ROOT / "server/cli/main.ts"),
+                str(wire_file),
+            ]
+            if candidate
+            else [sys.executable, str(ROOT / "tests/compare/direct/unit20_wire.py"), str(wire_file)]
         )
-        answer = {
-            "exit_code": completed.returncode,
-            "stdout": completed.stdout.decode("utf-8"),
-            "stderr": completed.stderr.decode("utf-8"),
-        }
+        answer = process_answer(
+            raw_process([*command, *argv], env, step.get("stdin", "").encode("utf-8"))
+        )
     elapsed = time.perf_counter() - started
+    wire = read_capture(wire_file)
+    # Fix the actual fixture file's input time before a later workspace read.
+    for row in wire:
+        url_path = urlsplit(row["path"]).path
+        if row["method"] == "PUT" and 200 <= row["status"] < 300 and url_path.startswith("/files/"):
+            host.check()
+            files = host.handle.db_path.parent / "files"
+            relative = Path(unquote(url_path)[len("/files/") :])
+            assert not relative.is_absolute() and ".." not in relative.parts
+            if relative.parts[0] == "managers":
+                relative = Path("sprint-items", *relative.parts[1:])
+            target = files / relative
+            assert target.resolve(strict=True).is_relative_to(files.resolve(strict=True))
+            for component in (target, *target.parents):
+                if component == files.parent:
+                    break
+                assert not component.is_symlink()
+            assert target.is_file()
+            os.utime(target, (0, 0), follow_symlinks=False)
+    if "assert_http_status" in step:
+        assert [row["status"] for row in wire] == [step["assert_http_status"]], (argv, wire)
+    offline = tuple(argv[:2]) in {
+        ("goal", "schema"),
+        ("page", "schema"),
+        ("measure", "schema"),
+        ("measure-source", "schema"),
+        ("measure-source", "runtime"),
+    }
+    if offline or "--help" in argv:
+        assert not wire, (argv, wire)
+    elif answer["exit_code"] == 0:
+        assert wire, ("successful HTTP command had no captured response", argv)
     _check_output(answer, step, argv, mode, candidate=candidate)
+    comparison: dict[str, Any] = {}
+    if step.get("numeric_chart_keys"):
+        assert step["argv"][:2] == ["goal", "read"]
+        rule = json.loads((ROOT / "tests/compare/rules/unit-20-commands.domain.json").read_text())[
+            "cli_direct_rules"
+        ]["goal_numeric_chart_keys"]
+        literal = SimpleNamespace(
+            rules={"cli_direct_rules": {"goal_numeric_chart_keys": rule}},
+            normalize=lambda value: value,
+        )
+        comparison = {
+            "numeric_chart_keys": True,
+            "comparison_stdout": _body(answer["stdout"], literal, "stdout", None, chart_keys=True),
+        }
     return {
         **answer,
+        **comparison,
+        "wire": wire,
         "seconds": elapsed,
         "strategy": "CliRunner.invoke" if python_in_process else "subprocess",
     }
@@ -317,12 +406,9 @@ def cli_capture(
     if mode == "json":
         if not step.get("capture"):
             return
-        body = json.loads(answer["stdout"])
-        for name, pointer in step["capture"].items():
-            value = body
-            for part in pointer.split(".") if pointer else []:
-                value = value[int(part)] if isinstance(value, list) else value[part]
-            captures[name] = value
+        from tests.compare.runner import capture_values
+
+        capture_values(json.loads(answer["stdout"]), step, captures)
     else:
         for name, expression in step.get("capture_text", {}).items():
             found = re.search(expression, answer["stdout"])
@@ -331,5 +417,8 @@ def cli_capture(
 
 
 def comparable(answer: dict[str, Any]) -> dict[str, Any]:
-    """Runtime is evidence, never output normalization."""
-    return {key: answer[key] for key in ("exit_code", "stdout", "stderr")}
+    """Raw streams remain evidence; only an explicit member-order view may differ."""
+    result = {key: answer[key] for key in ("exit_code", "stdout", "stderr")}
+    if "comparison_stdout" in answer:
+        result["stdout"] = answer["comparison_stdout"]
+    return result
