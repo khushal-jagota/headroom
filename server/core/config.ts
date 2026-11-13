@@ -111,6 +111,13 @@ export function executor_client_settings(env: Readonly<NodeJS.ProcessEnv> = proc
     capability: env.PLAN_EXECUTOR_CAPABILITY ?? null,
   };
 }
+export function mac_runtime_settings(env: Readonly<NodeJS.ProcessEnv> = process.env) {
+  return {
+    child: env.PLAN_EXECUTOR_RUNTIME_CHILD === '1',
+    ready_path: env.PLAN_EXECUTOR_RUNTIME_READY ?? null,
+    handoff_path: env.PLAN_EXECUTOR_RUNTIME_HANDOFF ?? null,
+  };
+}
 /** Account launch inputs are environment-only, shared by native hosts and discovery. */
 export function provider_launch_settings(env: Readonly<NodeJS.ProcessEnv> = process.env) {
   return {

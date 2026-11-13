@@ -186,7 +186,16 @@ export class MacLeaseLoop {
           Math.max(0, started + LEASE_INTERVAL_SECONDS * 1000 - performance.now()),
           undefined,
           { signal: this.cancellation.signal },
-        );
+        ).catch((error: unknown) => {
+          if (
+            this.cancellation.signal.aborted &&
+            error instanceof Error &&
+            error.name === 'AbortError' &&
+            error.cause === this.cancellation.signal.reason
+          )
+            throw this.cancellation.signal.reason;
+          throw error;
+        });
       }
     } catch (error) {
       if (!this.cancellation.signal.aborted || !is_shutdown_business_cancellation(error))

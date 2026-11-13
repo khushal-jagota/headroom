@@ -1,5 +1,12 @@
 # Mac executor file foundation
 
+`host/service.ts` composes the standalone Mac invocation, including its shared child owners,
+runner, mailbox, gateway, HTTP, lease, live sender, durable sender, skills, catalog, and storage.
+It reads a planned handoff before the journal and HTTP identity, then fences commands until replay completes.
+Each producer receives the original absolute stop deadline. Actual joins precede file workers, journal, and the spool lock.
+`inputs.ts` downloads verified prompt files and removes temporary entries through a retained directory capability.
+Production update/process bindings and the CLI process entry remain the next composition step.
+
 ## Unix CLI client
 
 `ipc/gateway.ts` owns the private Unix listener and admitted CLI publications.

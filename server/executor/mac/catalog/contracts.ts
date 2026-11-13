@@ -3,6 +3,8 @@ import type { pack } from '../storage/journal_worker_contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 export interface MacCatalogDependencies {
   readonly snapshots: BackendSnapshotSource;
+  /** Cancel current provider probes without sealing later reads. */
+  cancel_sources?(reason: unknown): Promise<void>;
   /** Seal and join actual provider probes; retry a failed native close on a later call. */
   stop_sources(options: StopOptions): Promise<void>;
   on_failure(error: Error): void;
