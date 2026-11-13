@@ -365,7 +365,7 @@ def test_unit21_mac_updates_retained_archive_and_leased_report_sequence(
     )
     for mode in ("ebadf", "unexpected", "eof"):
         inspect(mode, valid, mode=mode)
-    # These are observations, not accepted refusal/equality gates.
+    # The Manager accepted these refusals, conditional on unchanged hosted producer compatibility.
     inspect(
         "global-size",
         gzip.compress(
@@ -466,8 +466,13 @@ process.stdout.write(codec.canonical_json(result));"""
             observed[name] = {
                 "python": reference,
                 "typescript": outcome,
-                "accepted": False,
+                "accepted": True,
             }
+            if name != "json":
+                assert outcome == {
+                    "error": "UpdateConflict",
+                    "message": "The Mac runtime archive is invalid.",
+                }, name
         else:
             assert outcome == reference, name
     assert actual["inspections"]["json"]["outcome"]["error"] == "SyntaxError"
@@ -511,4 +516,5 @@ process.stdout.write(codec.canonical_json(result));"""
         operation_count=len(operations),
         actual_children=actual["children"],
         proposed_differences=observed,
+        hosted_producer_compatibility="pending",
     )

@@ -1,4 +1,4 @@
-/** Bounded manifest decoding; broader Python byte encodings remain a proposed restriction. */
+/** Bounded UTF8 manifest decoding follows the conditionally accepted Mac inspection policy. */
 import { AppValidationError, MacArchiveJsonError } from '../../release/contracts.ts';
 import { parse_attempt_json } from '../codec.ts';
 export function decode_mac_manifest(bytes: Buffer): unknown {
