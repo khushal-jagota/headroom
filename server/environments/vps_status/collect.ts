@@ -18,7 +18,6 @@ import {
 } from './configuration.ts';
 import { bounded_children, characters, DEFAULT_DEPENDENCIES, safe_under } from './probes.ts';
 import {
-  decimal_integer,
   instant,
   overall_state,
   recognised_panels_workload_role,
@@ -164,13 +163,12 @@ async function workloads_section(dependencies: VpsStatusDependencies): Promise<S
   const items: unknown[] = [];
   for (const line of lines) {
     const fields = /^\s*(\S+)\s+(\S+)\s+(\S+)\s+(.*\S)\s*$/.exec(line);
-    if (!fields || !/^\p{Decimal_Number}+$/u.test(fields[1]) || Array.from(fields[3]).length > 32)
-      continue;
+    if (!fields || !/^[0-9]+$/.test(fields[1]) || Array.from(fields[3]).length > 32) continue;
     const role = recognised_panels_workload_role(fields[4]);
     if (role !== null)
       items.push({
         role,
-        pid: exact_integer(decimal_integer(fields[1])),
+        pid: exact_integer(BigInt(fields[1])),
         state: 'running',
         age: fields[3],
       });

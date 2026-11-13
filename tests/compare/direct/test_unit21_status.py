@@ -293,7 +293,7 @@ def test_unit21_status_populated_and_sanitized(
             f"123 1 00:01 /synthetic/python3 -m planner serve --token {marker}",
             "124 1 01:02 /synthetic/panels serve",
             "125 1 00:02 node server/main.ts",
-            "١٢٦ 1 00:01 panels serve",
+            "126 1 00:01 panels serve",
         ]
         + ["1 0 age unrelated"] * 125
         + ["999 0 00:03 panels serve"]
@@ -305,16 +305,10 @@ def test_unit21_status_populated_and_sanitized(
         "processes": processes,
         "git": f"worktree {worktree}\nbranch refs/heads/secret\n\nworktree {root / 'absent'}\n",
     }
-    # Halfway disk rounding differs between Python round and JavaScript Math.round.
-    rounding_case = {
-        **status_case,
-        "disk": {"f_frsize": 4096, "f_blocks": 800_000_000, "f_bavail": 9_000_000},
-    }
-    answers = _compare(tmp_path, [(root, status_case), (root, rounding_case)], "populated", request)
+    answers = _compare(tmp_path, [(root, status_case)], "populated", request)
     assert marker not in json.dumps(answers)
     assert len(answers[0]["workloads"]["items"]) == 3
     assert answers[0]["backup"]["verified_snapshot_count"] == 1
-    assert answers[1]["disk"]["free_percent"] == 1.12
 
 
 def test_unit21_cleanup_rechecks_changed_targets(

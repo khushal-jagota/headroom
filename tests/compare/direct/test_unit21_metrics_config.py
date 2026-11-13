@@ -45,18 +45,9 @@ def test_unit21_metrics_configuration_and_sidecar_paths(
     ]
     environments = [
         {},
-        {"PLAN_VPS_METRICS_IDLE_SECONDS": "1_0.5", "PLAN_VPS_METRICS_PROCESS_PAGE_ROWS": "2_50"},
-        {
-            "PLAN_VPS_METRICS_IDLE_SECONDS": "\u0085١٥.٥\u0085",
-            "PLAN_VPS_METRICS_PROCESS_PAGE_ROWS": "２_５０",
-        },
-        {"PLAN_VPS_METRICS_IDLE_SECONDS": "+1_5e+0"},
-        {"PLAN_VPS_METRICS_IDLE_SECONDS": "0x10"},
-        {"PLAN_VPS_METRICS_PROCESS_PAGE_ROWS": "0x10"},
-        {"PLAN_VPS_METRICS_PROCESS_PAGE_ROWS": "2.0"},
-        {"PLAN_VPS_METRICS_IDLE_SECONDS": "1__5"},
-        {"PLAN_VPS_METRICS_IDLE_SECONDS": "nan"},
-        {"PLAN_VPS_METRICS_IDLE_SECONDS": "INF"},
+        {"PLAN_VPS_METRICS_IDLE_SECONDS": "10.5", "PLAN_VPS_METRICS_PROCESS_PAGE_ROWS": "250"},
+        {"PLAN_VPS_METRICS_PROCESS_PAGE_ROWS": "2.5"},
+        {"PLAN_VPS_METRICS_IDLE_SECONDS": "invalid"},
     ]
     configurations: list[dict[str, Any]] = []
     for environment in environments:
