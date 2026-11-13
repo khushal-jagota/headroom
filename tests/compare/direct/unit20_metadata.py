@@ -126,8 +126,44 @@ def render_declarations(records: list[dict[str, Any]]) -> str:
     )
 
 
+SCHEMA_FILES = {
+    "goal": ("server/goals/cli/guidance.ts", "goal_guidance"),
+    "page": ("server/managers/page_cli/guidance.ts", "page_guidance"),
+    "measure": ("server/measures/cli/schema.ts", "CREATE"),
+}
+
+
+def schema_declarations() -> dict[str, Any]:
+    from planner.goals.guidance import CREATE, EDIT, PRIMARY_CHART
+    from planner.managers.page_guidance import EDIT as PAGE
+    from planner.measures.guidance import CREATE as MEASURE
+
+    return {
+        "goal": {
+            "create": CREATE.reference(),
+            "edit": EDIT.reference(),
+            "primary-chart": PRIMARY_CHART.reference(),
+        },
+        "page": PAGE.reference(),
+        "measure": MEASURE.reference(),
+    }
+
+
+def render_schema(value: Any, export: str) -> str:
+    document = json.dumps(value, ensure_ascii=False, indent=2)
+    document = document.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+    return (
+        "/** Offline declarations: generated from fresh Python during migration. */\n"
+        "import { parse_numeric_json } from '../../core/http/numeric_json.ts';\n"
+        f"export const {export} = parse_numeric_json(`{document}`) as Record<string, any>;\n"
+    )
+
+
 if __name__ == "__main__":
     # This is an import-only exporter, but still refuses ambient worker identity.
     assert not any(name.startswith("PLAN_") for name in os.environ), "clean environment required"
     target = Path(__file__).resolve().parents[3] / "server/cli/commands.ts"
     target.write_text(render_declarations(declarations()))
+    for name, value in schema_declarations().items():
+        relative, export = SCHEMA_FILES[name]
+        (target.parents[2] / relative).write_text(render_schema(value, export))

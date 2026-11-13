@@ -130,6 +130,7 @@ jobs:
                   "unit-15.wire.json",
                   "unit-19.backends.json",
                   "unit-19.credentials.json",
+                  "unit-20-commands.domain.json",
                   "unit-21.http.json",
               ),
           )
