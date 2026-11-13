@@ -108,7 +108,7 @@ def _launch_probe(
     companion: str,
     function: str,
     specification: dict[str, Any],
-) -> tuple[subprocess.Popen[str], int | None]:
+) -> tuple[subprocess.Popen[bytes], int | None]:
     request = root / "request.json"
     request.write_text(json.dumps(specification, ensure_ascii=False))
     launcher = root / "probe.mjs"
@@ -128,7 +128,8 @@ def _launch_probe(
         env=_environment(root),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
+        text=False,
+        bufsize=0,
     )
     try:
         return process, _owned_pidfd(process.pid, os.getpid())
@@ -635,7 +636,7 @@ def _runtime(
     root: Path,
     mode: str,
     config: dict[str, Any] | None = None,
-) -> tuple[subprocess.Popen[str], int | None]:
+) -> tuple[subprocess.Popen[bytes], int | None]:
     return _launch_probe(
         root,
         "runtime",
@@ -650,17 +651,25 @@ def _runtime(
     )
 
 
-def _line(process: subprocess.Popen[str], seconds: float = 10) -> dict[str, Any]:
+def _line(process: subprocess.Popen[bytes], seconds: float = 30) -> dict[str, Any]:
     assert process.stdout
+    deadline = time.monotonic() + seconds
+    line = bytearray()
     with selectors.DefaultSelector() as selector:
         selector.register(process.stdout, selectors.EVENT_READ)
-        assert selector.select(seconds), "owned runtime did not emit its next state"
-        line = process.stdout.readline()
-    assert line, "owned runtime exited without its state"
+        while not line.endswith(b"\n"):
+            remaining = deadline - time.monotonic()
+            assert remaining > 0 and selector.select(remaining) and time.monotonic() < deadline, (
+                "owned runtime did not emit its next state"
+            )
+            # No text/read-ahead buffer can hide the next complete state from select.
+            value = os.read(process.stdout.fileno(), 1)
+            assert value, "owned runtime exited without its state"
+            line.extend(value)
     return cast(dict[str, Any], json.loads(line))
 
 
-def _finish(process: subprocess.Popen[str], seconds: float = 10) -> dict[str, Any]:
+def _finish(process: subprocess.Popen[bytes], seconds: float = 10) -> dict[str, Any]:
     process.wait(timeout=seconds)
     assert process.stdout and process.stderr
     output, errors = process.stdout.read(), process.stderr.read()
@@ -668,14 +677,14 @@ def _finish(process: subprocess.Popen[str], seconds: float = 10) -> dict[str, An
     return cast(dict[str, Any], json.loads(output.splitlines()[-1]))
 
 
-def _children(process: subprocess.Popen[str]) -> list[int]:
+def _children(process: subprocess.Popen[bytes]) -> list[int]:
     return [
         int(pid)
         for pid in Path(f"/proc/{process.pid}/task/{process.pid}/children").read_text().split()
     ]
 
 
-def _cleanup(process: subprocess.Popen[str], descriptor: int | None) -> None:
+def _cleanup(process: subprocess.Popen[bytes], descriptor: int | None) -> None:
     try:
         if process.poll() is None:
             if descriptor is not None:
