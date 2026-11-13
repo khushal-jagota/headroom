@@ -400,7 +400,8 @@ def test_unit21_restore_refusals_and_failed_swaps_preserve_owned_files(
     assert unknown_result == {
         "exit_code": 1,
         "stdout": "",
-        "stderr": "Error: unknown managed root: mystery\n",
+        "failure_message": "unknown managed root: mystery",
+        "stderr_prefix": "",
     }
     destination = tmp_path / "destination/database.sqlite"
     _seed_database(destination)
