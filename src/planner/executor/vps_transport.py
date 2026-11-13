@@ -441,9 +441,16 @@ class VpsExecutor:
                     transport=httpx.ASGITransport(app=self.app),
                     base_url="http://executor",
                 ) as client:
-                    response = await client.get(
-                        read.path, params=cast(Any, read.params), headers=headers
+                    request = client.build_request(
+                        "GET", read.path, params=cast(Any, read.params), headers=headers
                     )
+                    path = request.url.path
+                    if any(part in (".", "..") for part in path.split("/")) or not any(
+                        path == root.rstrip("/") or path.startswith(root.rstrip("/") + "/")
+                        for root in _READABLE_PATHS
+                    ):
+                        raise PlannerError(ErrorCode.validation, "unsupported executor read")
+                    response = await client.send(request)
         except TimeoutError as error:
             raise PlannerError(
                 ErrorCode.retry_later, "the read took too long"

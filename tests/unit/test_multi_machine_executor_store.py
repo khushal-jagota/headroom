@@ -13,6 +13,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from fastapi import FastAPI, Request
 from tests.support.executor_presence import lease_request, mac_identity
 
 from planner.core.clock import RealClock
@@ -149,6 +150,46 @@ def test_machine_owner_checks_precede_live_reads(
     )
     with pytest.raises(PlannerError, match="another machine"):
         asyncio.run(foreign.read(other, request))
+
+    # A valid child must not turn an allowed raw prefix into a private file URL.
+    canary = tmp_path / "foreign-canary.txt"
+    canary.write_text("private command-file bytes")
+    app = FastAPI()
+    reached: list[str] = []
+
+    @app.get("/api/tickets")
+    @app.get("/api/tickets/shared-ticket")
+    async def permitted(request: Request) -> dict[str, bool]:
+        reached.append(request.url.path)
+        return {"shared_record": True}
+
+    @app.get("/files/tickets/foreign/canary.txt")
+    @app.get("/api/tickets-unsafe")
+    async def private(request: Request) -> dict[str, str]:
+        reached.append(request.url.path)
+        return {"canary": canary.read_text()}
+
+    foreign.app = app
+    child = ChildReference(other.executor_incarnation, "own-child", "own-conversation")
+    foreign.runs.store.register_child(child, "ticket", "own-ticket", 1)
+
+    async def check_reads() -> None:
+        for forbidden in (
+            "/api/tickets/../../files/tickets/foreign/canary.txt",
+            "/api/tickets%2f%2e%2e%2f%2e%2e%2ffiles%2ftickets%2fforeign%2fcanary.txt",
+            "/api/tickets-unsafe",
+        ):
+            with pytest.raises(PlannerError, match="unsupported executor read"):
+                await foreign.read(other, LiveReadRequest(child, forbidden, {}))
+        assert reached == []
+        for permitted_path in ("/api/tickets", "/api/tickets/shared-ticket"):
+            assert await foreign.read(other, LiveReadRequest(child, permitted_path, {})) == {
+                "shared_record": True
+            }
+        assert reached == ["/api/tickets", "/api/tickets/shared-ticket"]
+        await foreign.close()
+
+    asyncio.run(check_reads())
 
 
 def test_populated_migration_preserves_command_and_receipt_identity(
