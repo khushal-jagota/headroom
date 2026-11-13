@@ -180,184 +180,189 @@ async function extract_archive(
     if (typeof free !== 'bigint' || free < bytes) throw new AppValidationError(message);
   };
   async function unpack(): Promise<AppManifest | string> {
-  try {
-    require_live();
-    input = await open(archive, constants.O_RDONLY | constants.O_NONBLOCK);
-    require_live();
-    const info = await input.stat();
-    require_live();
-    if (!info.isFile()) throw new AppValidationError('app archive must be a regular file');
-    if (info.size > ARCHIVE_MAX_COMPRESSED_BYTES)
-      throw new AppValidationError('app archive exceeds compressed size limit');
-    const parent = await resolved_path(dirname(target));
-    require_live();
-    target = join(parent, basename(target));
-    const ancestor = await existing_parent(parent);
-    await capacity(
-      ancestor,
-      BigInt(info.size) * 2n + BigInt(ARCHIVE_SPACE_RESERVE_BYTES),
-      'app archive has insufficient free space before spooling',
-    );
-    work = await mkdtemp(join(ancestor, '.app-unpack-'));
-    require_live();
-    await chmod(work, 0o700);
-    require_live();
-    let release!: () => void;
-    closed = new Promise<void>((resolve) => {
-      release = resolve;
-    });
     try {
-      child = child_processes.spawn(
-        process.execPath,
-        [
-          fileURLToPath(new URL('./archive_unpack_main.ts', import.meta.url)),
-          JSON.stringify({ spool_root: work, destination: target, ...purpose }),
-        ],
-        {
-          cwd: work,
-          env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: work, TMPDIR: work, LANG: 'C.UTF-8' },
-          stdio: ['pipe', 'pipe', 'pipe', input.fd],
-        },
-      );
-    } catch (error) {
-      release();
-      throw error;
-    }
-    child.once('close', (status) => {
-      ended = true;
-      code = status;
-      release();
-    });
-    child.once('exit', () => {
-      ended = true;
-    });
-    child.on('error', (error) => {
-      failure ??= error;
-    });
-    child.stdin!.on('error', (error) => {
-      failure ??= error;
-    });
-    let diagnostic = '';
-    child.stderr!.on('data', (bytes: Buffer) => {
-      diagnostic = (diagnostic + bytes.toString('utf8')).slice(-2000);
-    });
-    require_live();
-    let validated = false;
-    for await (const message of read_archive_messages(child.stdout!)) {
-      if (failure !== undefined) throw failure;
-      if (execution) assert_release_execution(execution);
-      if (message.type === 'error') throw new AppValidationError(String(message.message));
-      if (
-        message.type === 'space' &&
-        !validated &&
-        Number.isSafeInteger(message.bytes) &&
-        Number(message.bytes) > 0 &&
-        Number(message.bytes) <= ARCHIVE_SPOOL_BATCH_BYTES
-      ) {
-        await capacity(
-          work,
-          BigInt(ARCHIVE_SPACE_RESERVE_BYTES) + BigInt(Number(message.bytes)),
-          'app archive exhausted free-space reserve while spooling',
-        );
-      } else if (
-        message.type === 'validated' &&
-        !validated &&
-        Number.isSafeInteger(message.expanded_bytes) &&
-        Number(message.expanded_bytes) >= 0 &&
-        Number(message.expanded_bytes) <= ARCHIVE_MAX_EXPANDED_BYTES
-      ) {
-        await capacity(
-          work,
-          BigInt(ARCHIVE_SPACE_RESERVE_BYTES) + BigInt(Number(message.expanded_bytes)),
-          'app archive has insufficient free space for output',
-        );
-        require_live();
-        await mkdir(parent, { recursive: true, mode: 0o700 });
-        require_live();
-        try {
-          await mkdir(target, { mode: 0o700 });
-          ownOutput = true;
-        } catch (error) {
-          if (error instanceof Error && 'code' in error && error.code === 'EEXIST')
-            throw new AppValidationError('archive destination must not exist');
-          throw error;
-        }
-        require_live();
-        await chmod(target, 0o700);
-        validated = true;
-      } else if (
-        purpose.purpose === 'application' &&
-        message.type === 'result' &&
-        validated &&
-        result === undefined &&
-        message.manifest &&
-        typeof message.manifest === 'object'
-      ) {
-        result = message.manifest as AppManifest;
-        continue;
-      } else if (
-        purpose.purpose === 'source-export' &&
-        message.type === 'source-export-result' &&
-        validated &&
-        result === undefined &&
-        typeof message.source_sha256 === 'string' &&
-        /^[0-9a-f]{64}$/.test(message.source_sha256)
-      ) {
-        result = message.source_sha256;
-        continue;
-      } else throw new AppValidationError('app archive child protocol is invalid');
       require_live();
-      await write_archive_message(child.stdin!, { ok: true });
-    }
-    await closed;
-    if (execution) assert_release_execution(execution);
-    if (failure !== undefined) throw failure;
-    if (code !== 0 || !result)
-      throw new AppValidationError(
-        `app archive child failed${diagnostic ? ': ' + diagnostic : ''}`,
+      input = await open(archive, constants.O_RDONLY | constants.O_NONBLOCK);
+      require_live();
+      const info = await input.stat();
+      require_live();
+      if (!info.isFile()) throw new AppValidationError('app archive must be a regular file');
+      if (info.size > ARCHIVE_MAX_COMPRESSED_BYTES)
+        throw new AppValidationError('app archive exceeds compressed size limit');
+      const parent = await resolved_path(dirname(target));
+      require_live();
+      target = join(parent, basename(target));
+      const ancestor = await existing_parent(parent);
+      await capacity(
+        ancestor,
+        BigInt(info.size) * 2n + BigInt(ARCHIVE_SPACE_RESERVE_BYTES),
+        'app archive has insufficient free space before spooling',
       );
-    success = true;
-  } catch (error) {
-    failure = error;
-    if (child && !ended)
+      work = await mkdtemp(join(ancestor, '.app-unpack-'));
+      require_live();
+      await chmod(work, 0o700);
+      require_live();
+      let release!: () => void;
+      closed = new Promise<void>((resolve) => {
+        release = resolve;
+      });
       try {
-        stop_one_shot_child(child);
-      } catch (error) {
-        errors.push(error);
-      }
-  } finally {
-    const clean = async (operation: () => Promise<unknown>): Promise<void> => {
-      try {
-        await operation();
-      } catch (error) {
-        errors.push(error);
-      }
-    };
-    if (closed) await clean(() => closed!);
-    if (input) await clean(() => input!.close());
-    if (!success && ownOutput) await clean(() => remove_owned_tree(target));
-    if (work) await clean(() => remove_owned_tree(work!));
-    if (success && execution && failure === undefined) {
-      try {
-        assert_release_execution(execution);
-      } catch (error) {
-        cancel(error);
-      }
-    }
-    if (success && ownOutput && (errors.length || failure !== undefined))
-      await clean(() => remove_owned_tree(target));
-  }
-  if (errors.length)
-    throw new AppValidationError(
-      `app archive cleanup failed; owned paths: ${work ?? ''} ${ownOutput ? target : ''}; ${errors.map(String).join('; ')}`,
-    );
-  if (failure !== undefined)
-    throw failure instanceof AppValidationError
-      ? failure
-      : new AppValidationError(
-          `app archive unpack failed: ${failure instanceof Error ? failure.message : String(failure)}`,
+        child = child_processes.spawn(
+          process.execPath,
+          [
+            fileURLToPath(new URL('./archive_unpack_main.ts', import.meta.url)),
+            JSON.stringify({ spool_root: work, destination: target, ...purpose }),
+          ],
+          {
+            cwd: work,
+            env: {
+              PATH: '/usr/local/bin:/usr/bin:/bin',
+              HOME: work,
+              TMPDIR: work,
+              LANG: 'C.UTF-8',
+            },
+            stdio: ['pipe', 'pipe', 'pipe', input.fd],
+          },
         );
-  return result!;
+      } catch (error) {
+        release();
+        throw error;
+      }
+      child.once('close', (status) => {
+        ended = true;
+        code = status;
+        release();
+      });
+      child.once('exit', () => {
+        ended = true;
+      });
+      child.on('error', (error) => {
+        failure ??= error;
+      });
+      child.stdin!.on('error', (error) => {
+        failure ??= error;
+      });
+      let diagnostic = '';
+      child.stderr!.on('data', (bytes: Buffer) => {
+        diagnostic = (diagnostic + bytes.toString('utf8')).slice(-2000);
+      });
+      require_live();
+      let validated = false;
+      for await (const message of read_archive_messages(child.stdout!)) {
+        if (failure !== undefined) throw failure;
+        if (execution) assert_release_execution(execution);
+        if (message.type === 'error') throw new AppValidationError(String(message.message));
+        if (
+          message.type === 'space' &&
+          !validated &&
+          Number.isSafeInteger(message.bytes) &&
+          Number(message.bytes) > 0 &&
+          Number(message.bytes) <= ARCHIVE_SPOOL_BATCH_BYTES
+        ) {
+          await capacity(
+            work,
+            BigInt(ARCHIVE_SPACE_RESERVE_BYTES) + BigInt(Number(message.bytes)),
+            'app archive exhausted free-space reserve while spooling',
+          );
+        } else if (
+          message.type === 'validated' &&
+          !validated &&
+          Number.isSafeInteger(message.expanded_bytes) &&
+          Number(message.expanded_bytes) >= 0 &&
+          Number(message.expanded_bytes) <= ARCHIVE_MAX_EXPANDED_BYTES
+        ) {
+          await capacity(
+            work,
+            BigInt(ARCHIVE_SPACE_RESERVE_BYTES) + BigInt(Number(message.expanded_bytes)),
+            'app archive has insufficient free space for output',
+          );
+          require_live();
+          await mkdir(parent, { recursive: true, mode: 0o700 });
+          require_live();
+          try {
+            await mkdir(target, { mode: 0o700 });
+            ownOutput = true;
+          } catch (error) {
+            if (error instanceof Error && 'code' in error && error.code === 'EEXIST')
+              throw new AppValidationError('archive destination must not exist');
+            throw error;
+          }
+          require_live();
+          await chmod(target, 0o700);
+          validated = true;
+        } else if (
+          purpose.purpose === 'application' &&
+          message.type === 'result' &&
+          validated &&
+          result === undefined &&
+          message.manifest &&
+          typeof message.manifest === 'object'
+        ) {
+          result = message.manifest as AppManifest;
+          continue;
+        } else if (
+          purpose.purpose === 'source-export' &&
+          message.type === 'source-export-result' &&
+          validated &&
+          result === undefined &&
+          typeof message.source_sha256 === 'string' &&
+          /^[0-9a-f]{64}$/.test(message.source_sha256)
+        ) {
+          result = message.source_sha256;
+          continue;
+        } else throw new AppValidationError('app archive child protocol is invalid');
+        require_live();
+        await write_archive_message(child.stdin!, { ok: true });
+      }
+      await closed;
+      if (execution) assert_release_execution(execution);
+      if (failure !== undefined) throw failure;
+      if (code !== 0 || !result)
+        throw new AppValidationError(
+          `app archive child failed${diagnostic ? ': ' + diagnostic : ''}`,
+        );
+      success = true;
+    } catch (error) {
+      failure = error;
+      if (child && !ended)
+        try {
+          stop_one_shot_child(child);
+        } catch (error) {
+          errors.push(error);
+        }
+    } finally {
+      const clean = async (operation: () => Promise<unknown>): Promise<void> => {
+        try {
+          await operation();
+        } catch (error) {
+          errors.push(error);
+        }
+      };
+      if (closed) await clean(() => closed!);
+      if (input) await clean(() => input!.close());
+      if (!success && ownOutput) await clean(() => remove_owned_tree(target));
+      if (work) await clean(() => remove_owned_tree(work!));
+      if (success && execution && failure === undefined) {
+        try {
+          assert_release_execution(execution);
+        } catch (error) {
+          cancel(error);
+        }
+      }
+      if (success && ownOutput && (errors.length || failure !== undefined))
+        await clean(() => remove_owned_tree(target));
+    }
+    if (errors.length)
+      throw new AppValidationError(
+        `app archive cleanup failed; owned paths: ${work ?? ''} ${ownOutput ? target : ''}; ${errors.map(String).join('; ')}`,
+      );
+    if (failure !== undefined)
+      throw failure instanceof AppValidationError
+        ? failure
+        : new AppValidationError(
+            `app archive unpack failed: ${failure instanceof Error ? failure.message : String(failure)}`,
+          );
+    return result!;
   }
   execution?.signal.addEventListener('abort', abort);
   const actual = unpack();
