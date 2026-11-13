@@ -156,7 +156,7 @@ try {
   async function snapshot() {
     states.push({
       working: runner.working_turns().map((turn) => as_object(turn, 'WorkingTurn')),
-      quiescence: as_object(await runner.quiesce(), 'Quiescence'),
+      quiescence: as_object(await runner.quiesce(signal), 'Quiescence'),
       background: [...runner.native_children.get('child')!.background_task_ids].sort(),
     });
     runner.resume_after_cancelled_update();
@@ -294,7 +294,7 @@ try {
   store.pending_count = () => {
     throw operation_error;
   };
-  const failed_operation = observed_error(runner.quiesce());
+  const failed_operation = observed_error(runner.quiesce(signal));
   const expired = await observed_error(queues.stop({ deadline: performance.now() / 1000 - 1 }));
   try {
     assert.equal(await failed_operation, operation_error);

@@ -2,6 +2,7 @@
 import type { ChildCommand, ChildReference, CommandOutcome } from '../../wire.generated.ts';
 import type { MacChildStateContract, MacCommandWork } from './command_contracts.ts';
 import type { MacNativeChildrenContract } from './contracts.ts';
+import type { StopOptions } from '../../../lifecycle/contracts.ts';
 
 export interface MacSourceWorkContract {
   source_work<T>(
@@ -23,6 +24,11 @@ export interface MacRetirementDependencies {
   readonly sources: MacSourceWorkContract;
 }
 export interface MacRetirementContract {
+  /** Publish the first permanent stop deadline to work that already owns a join. */
+  begin_shutdown(options: StopOptions): void;
+  observe_work<T>(actual: Promise<T>): Promise<T>;
+  /** Actual exact-stop work, independently of deadline observers. */
+  settled(): Promise<void>;
   stop_exact(
     command: ChildCommand,
     work: MacCommandWork,

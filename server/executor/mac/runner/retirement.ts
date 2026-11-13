@@ -3,14 +3,70 @@ import type { ChildCommand, ChildReference, CommandOutcome } from '../../wire.ge
 import type { MacCommandWork } from './command_contracts.ts';
 import type { MacRetirementContract, MacRetirementDependencies } from './retirement_contracts.ts';
 import { error_message, error_outcome, outcome, same_reference } from './logic/outcomes.ts';
+import { observe_shutdown } from '../../../conversation/shutdown.ts';
+import type { StopOptions } from '../../../lifecycle/contracts.ts';
+import { remember_model_catalog_failure } from '../../../conversation/backends/catalog_cleanup.ts';
 
 export class MacRetirement implements MacRetirementContract {
   private readonly dependencies: MacRetirementDependencies;
   private readonly joined_failures: { reference: ChildReference; errors: Set<unknown> }[] = [];
+  private shutdown_options: StopOptions | undefined;
+  private readonly shutdown = new AbortController();
+  private readonly operations = new Set<Promise<CommandOutcome>>();
+  private readonly failures = new Set<unknown>();
+  private actual_join: Promise<void> | undefined;
   constructor(dependencies: MacRetirementDependencies) {
     this.dependencies = dependencies;
   }
-  async stop_exact(
+  begin_shutdown(options: StopOptions): void {
+    if (this.shutdown_options) return;
+    this.shutdown_options = options;
+    this.shutdown.abort();
+  }
+  async observe_work<T>(actual: Promise<T>): Promise<T> {
+    let started!: () => void;
+    const stopped = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    this.shutdown.signal.addEventListener('abort', started, { once: true });
+    try {
+      if (!this.shutdown_options) await Promise.race([actual, stopped]);
+      if (this.shutdown_options)
+        await observe_shutdown(
+          actual,
+          this.shutdown_options,
+          'Mac runner work remains unfinished.',
+        );
+      return await actual;
+    } finally {
+      this.shutdown.signal.removeEventListener('abort', started);
+    }
+  }
+  settled(): Promise<void> {
+    this.actual_join ??= (async () => {
+      while (this.operations.size) await Promise.allSettled([...this.operations]);
+      if (this.failures.size)
+        throw new AggregateError(this.failures, 'Mac exact-stop work failed.');
+    })();
+    return this.actual_join;
+  }
+  stop_exact(
+    command: ChildCommand,
+    work: MacCommandWork,
+    invoking: () => void,
+  ): Promise<CommandOutcome> {
+    const actual = Promise.resolve().then(() => this.retire(command, work, invoking));
+    this.operations.add(actual);
+    void actual.then(
+      () => this.operations.delete(actual),
+      (error) => {
+        remember_model_catalog_failure(this.failures, error);
+        this.operations.delete(actual);
+      },
+    );
+    return this.observe_work(actual);
+  }
+  private async retire(
     command: ChildCommand,
     work: MacCommandWork,
     invoking: () => void,
@@ -36,13 +92,14 @@ export class MacRetirement implements MacRetirementContract {
         .filter((record) => record.command.operation !== 'stop' && record.task !== null)
         .map((record) => record.task!),
     );
-    for (const result of joined) if (result.status === 'rejected') errors.add(result.reason);
+    for (const result of joined)
+      if (result.status === 'rejected') remember_model_catalog_failure(errors, result.reason);
     if (!previous && errors.size) this.joined_failures.push({ reference, errors });
     const collect = async (operation: () => Promise<void>) => {
       try {
         await operation();
       } catch (error) {
-        errors.add(error);
+        remember_model_catalog_failure(errors, error);
       }
     };
     await collect(() => this.dependencies.sources.finish(reference));
@@ -50,8 +107,10 @@ export class MacRetirement implements MacRetirementContract {
     await collect(() => this.dependencies.sources.finish(reference));
     const failures = [...errors];
     if (
-      this.dependencies.sources.failed(reference) ||
-      work.records(reference).some((record) => record.has_outputs && !record.outputs_published)
+      errors.size === 0 && (this.dependencies.sources.failed(reference) ||
+      work.records(reference).some(
+        (record) => record.command.command_id !== command.command_id && record.outcome !== null && !record.settled,
+      ))
     )
       failures.push(
         Object.assign(new Error('required source publication failed'), {
@@ -67,6 +126,7 @@ export class MacRetirement implements MacRetirementContract {
     }
     this.dependencies.state.mark_retired(reference);
     this.dependencies.native_children.retire(reference);
+    work.prune(reference);
     return outcome(command, 'succeeded', {});
   }
 }

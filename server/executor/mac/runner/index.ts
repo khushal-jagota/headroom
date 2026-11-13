@@ -85,6 +85,7 @@ export class MacRunner implements MacRunnerContract {
       state,
       sources,
       commands: () => commands,
+      retirement,
       outbox: options.outbox,
       new_update_id: options.new_update_id,
       permanently_stopped: () => lifetime.permanently_stopped,
@@ -95,6 +96,7 @@ export class MacRunner implements MacRunnerContract {
       sources,
       commands: () => commands,
       maintenance,
+      retirement,
       on_failure: failure,
     });
     this.state = state;
@@ -204,8 +206,8 @@ export class MacRunner implements MacRunnerContract {
   working_turns() {
     return this.maintenance.working_turns();
   }
-  quiesce() {
-    return this.maintenance.quiesce();
+  quiesce(signal: AbortSignal) {
+    return this.maintenance.quiesce(signal);
   }
   resume_after_cancelled_update(): void {
     this.maintenance.resume_after_cancelled_update();
@@ -219,8 +221,8 @@ export class MacRunner implements MacRunnerContract {
   finish_planned_replay(): void {
     this.maintenance.finish_planned_replay();
   }
-  prepare_update(mode: 'now' | 'idle'): Promise<boolean> {
-    return this.maintenance.prepare_update(mode);
+  prepare_update(mode: 'now' | 'idle', request_id: string, signal: AbortSignal): Promise<boolean> {
+    return this.maintenance.prepare_update(mode, request_id, signal);
   }
   seal(): void {
     this.lifetime.seal();

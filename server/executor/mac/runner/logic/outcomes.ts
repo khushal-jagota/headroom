@@ -1,10 +1,8 @@
 /** Command consequences are deterministic across live settlement and journal replay. */
 import { createHash } from 'node:crypto';
-import {
-  JsonNumber,
-  numeric_value,
-  stringify_python_json,
-} from '../../../../core/http/numeric_json.ts';
+import { stringify_python_json } from '../../../../core/http/numeric_json.ts';
+import { python_truth } from '../../../../core/python_truth.ts';
+import { is_json_object } from '../../../protocol_json.ts';
 import {
   BackendPromptRejected,
   BackendSpawnFailed,
@@ -24,7 +22,6 @@ import type {
   CommandResult,
   JsonObject,
   MailboxCommand,
-  TurnToken,
   WireRootName,
 } from '../../../wire.generated.ts';
 import { MAX_TOOL_DETAIL_CHARACTERS } from '../../configuration.ts';
@@ -57,9 +54,6 @@ export function same_wire<K extends WireRootName>(
   const canonical = (value: WireInput<K>) =>
     stringify_python_json(encode_value(value, root), { sort_keys: true, compact: true });
   return canonical(left) === canonical(right);
-}
-export function same_turn(left: TurnToken, right: TurnToken): boolean {
-  return same_wire(left, right, 'TurnToken');
 }
 export function bounded_detail(value: string): string {
   let end = 0;
@@ -97,16 +91,8 @@ export function error_outcome(command: ChildCommand, error: unknown): CommandOut
     error_message: bounded_detail(error_message(error)),
   });
 }
-function truthy(value: unknown): boolean {
-  if (value === null || value === undefined || value === false || value === '') return false;
-  const number = numeric_value(value);
-  if (number !== undefined) return number !== 0;
-  if (Array.isArray(value)) return value.length !== 0;
-  if (typeof value === 'object') return Object.keys(value).length !== 0;
-  return true;
-}
 export function outcome_detail(value: CommandOutcome, fallback: string): string {
-  const detail = [value.result.error_message, value.result.reason, fallback].find(truthy);
+  const detail = [value.result.error_message, value.result.reason, fallback].find(python_truth);
   return typeof detail === 'string' ? detail : python_repr(detail);
 }
 function digest(value: string): string {
@@ -128,10 +114,7 @@ export function owed_outputs(command: ChildCommand, value: CommandOutcome): read
     if (
       (command.operation === 'answer_permission_ask' ||
         command.operation === 'answer_user_input') &&
-      application !== null &&
-      typeof application === 'object' &&
-      !Array.isArray(application) &&
-      !(application instanceof JsonNumber)
+      is_json_object(application)
     ) {
       const answer = decode_value(application, 'AnswerApplication');
       return [

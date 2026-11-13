@@ -2,6 +2,7 @@
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
+import { remember_model_catalog_failure } from '../../../conversation/backends/catalog_cleanup.ts';
 import type {
   MacRunnerLifetimeContract,
   MacRunnerLifetimeDependencies,
@@ -38,13 +39,13 @@ export class MacRunnerLifetime implements MacRunnerLifetimeContract {
     this.dependencies.state.seal_admission();
   }
   private record_failure(error: unknown): void {
-    this.failures.add(error);
+    remember_model_catalog_failure(this.failures, error);
     if (!this.fault_reported) {
       this.fault_reported = true;
       try {
         this.dependencies.on_failure(error instanceof Error ? error : new Error(String(error)));
       } catch (callback) {
-        this.failures.add(callback);
+        remember_model_catalog_failure(this.failures, callback);
       }
     }
   }
@@ -56,9 +57,11 @@ export class MacRunnerLifetime implements MacRunnerLifetimeContract {
         },
       );
     this.seal();
+    this.dependencies.retirement.begin_shutdown(options);
     // Reserve actual maintenance operations before native cleanup can release
     // their continuations and remove rejected operations from its active set.
-    const maintenance = this.dependencies.maintenance.finish_operations();
+    const maintenance_observed = this.dependencies.maintenance.finish_operations(options);
+    const maintenance = this.dependencies.maintenance.settled_operations();
     for (const child of this.dependencies.native_children.retained_children()) {
       this.dependencies.state.begin_retirement(child.reference.child_id);
       this.dependencies.native_children.begin_retirement(child.reference);
@@ -79,7 +82,7 @@ export class MacRunnerLifetime implements MacRunnerLifetimeContract {
       });
     }
     return observe_shutdown(
-      Promise.all([native, maintenance, this.cleanup]),
+      Promise.all([native, maintenance_observed, this.cleanup]),
       options,
       'Mac runner work remains unfinished at the shutdown deadline.',
     ).catch((error: unknown) => {
@@ -99,7 +102,10 @@ export class MacRunnerLifetime implements MacRunnerLifetimeContract {
     await commands.settled_replays();
     // A known outcome keeps its exact settlement retry until durable work succeeds.
     await commands.settle_known();
-    const native = await Promise.allSettled([this.dependencies.native_children.settled()]);
+    const native = await Promise.allSettled([
+      this.dependencies.retirement.settled(),
+      this.dependencies.native_children.settled(),
+    ]);
     for (const result of native)
       if (result.status === 'rejected') this.record_failure(result.reason);
     await this.dependencies.sources.finish();

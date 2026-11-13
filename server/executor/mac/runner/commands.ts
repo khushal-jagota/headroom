@@ -16,6 +16,7 @@ import { wire_classes } from '../../protocol_classes.ts';
 import type {
   AskReference,
   ChildCommand,
+  CommandOutcome,
   DurableAnswer,
   JsonObject,
   MessageContent,
@@ -28,8 +29,8 @@ import type { MacCommandDependencies, MacCommandWork } from './command_contracts
 import {
   CHILD_START_FAILED,
   outcome,
+  outcome_detail,
   same_reference,
-  same_turn,
   same_wire,
 } from './logic/outcomes.ts';
 
@@ -46,7 +47,9 @@ function native_turn(child: MacRunningChild, token: TurnToken): NativeTurn {
   // Native adapters retain this accepted token and compare its integer with ===.
   // Reuse that exact marker for a semantically equal steer, without a numeric conversion.
   return (
-    child.active_turn !== null && same_turn(child.active_turn, token) ? child.active_turn : token
+    child.active_turn !== null && same_wire(child.active_turn, token, 'TurnToken')
+      ? child.active_turn
+      : token
   ) as NativeTurn;
 }
 function check_answer(
@@ -55,7 +58,7 @@ function check_answer(
   answer: DurableAnswer | null | undefined,
 ): void {
   if (answer == null) return;
-  if (child.active_turn !== null && !same_turn(child.active_turn, answer.ask.turn))
+  if (child.active_turn !== null && !same_wire(child.active_turn, answer.ask.turn, 'TurnToken'))
     throw new MacChildAdmissionRefused('answer turn is no longer active');
   const current = dependencies.asks.get(child.reference, answer.ask.ask_id);
   if (current === null || !same_wire(current, answer.ask, 'AskReference'))
@@ -101,8 +104,8 @@ async function invoke(
           : (args.reasoning_effort_change ?? null);
       const previous = child.active_turn;
       const turn = command.turn!;
-      child.active_turn = turn;
       invoking();
+      child.active_turn = turn;
       try {
         const result = await child.native.write_prompt(
           turn as NativeTurn,
@@ -181,7 +184,7 @@ async function invoke(
 export async function dispatch_command(
   dependencies: MacCommandDependencies,
   command: ChildCommand,
-  start_failed: ReadonlyMap<string, string>,
+  start_failed: ReadonlyMap<string, CommandOutcome>,
   work: MacCommandWork,
   invoking: () => void,
 ) {
@@ -201,12 +204,16 @@ export async function dispatch_command(
     result = {};
   } else {
     const child = dependencies.native_children.get(command.child.child_id);
-    if (child === null)
+    if (child === null) {
+      const failed = start_failed.get(command.child.child_id);
       return outcome(command, 'refused', {
         reason: CHILD_START_FAILED,
         error_message:
-          start_failed.get(command.child.child_id) ?? 'the Mac has no agent for this conversation',
+          failed && same_reference(failed.child, command.child)
+            ? outcome_detail(failed, 'unknown')
+            : 'the Mac has no agent for this conversation',
       });
+    }
     if (!same_reference(child.reference, command.child))
       return outcome(command, 'uncertain', { reason: 'child_gone' });
     result = await child.lock.run(async () => {

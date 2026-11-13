@@ -2,11 +2,12 @@
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import type { MacCommandServiceContract } from './command_contracts.ts';
 import type { MacMaintenanceOperations } from './maintenance_contracts.ts';
-import type { MacRetirementDependencies } from './retirement_contracts.ts';
+import type { MacRetirementContract, MacRetirementDependencies } from './retirement_contracts.ts';
 
 export interface MacRunnerLifetimeDependencies extends MacRetirementDependencies {
   readonly commands: () => MacCommandServiceContract;
   readonly maintenance: MacMaintenanceOperations;
+  readonly retirement: MacRetirementContract;
   on_failure(error: Error): void;
 }
 export interface MacRunnerLifetimeContract {
