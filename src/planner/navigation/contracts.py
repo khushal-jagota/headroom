@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import Final, Literal, TypedDict
 
 PREPARED_SCHEMA_VERSION = 7
-SCHEMA_VERSION = 10
-SUPPORTED_SEMANTICS = "attention-knowledge-v10-ticket-workflows"
+SCHEMA_VERSION = 11
+SUPPORTED_SEMANTICS: Final = "attention-knowledge-v11-recap-freshness"
 RecordKind = Literal[
     "ticket", "manager", "chief", "goal", "conversation", "address", "totals", "project"
 ]
@@ -26,6 +26,8 @@ class TicketValue(TypedDict):
     title: str
     recap: str
     recap_preview: str
+    recap_updated_at: int | None
+    recap_stage_changed: bool
     worker_type: str | None
     stage_label: str
     workflow_label: str
@@ -61,6 +63,8 @@ class BrokenTicketValue(TypedDict):
     title: str
     recap: str
     recap_preview: str
+    recap_updated_at: int | None
+    recap_stage_changed: bool
     worker_type: str | None
     stage: str
     ticket_status: Literal["errored"]
@@ -82,6 +86,7 @@ class ManagerValue(TypedDict):
     title: str
     recap: str
     recap_preview: str
+    recap_updated_at: int | None
     created_at: int
     project_id: str
     settled: bool
@@ -247,7 +252,7 @@ type NavigationRecord = (
 class Continuity(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["attention-knowledge-v10-ticket-workflows"]
+    semantics: Literal["attention-knowledge-v11-recap-freshness"]
     epoch: str
     revision: str
 
@@ -259,7 +264,7 @@ class Snapshot(Continuity):
 class RevisionBatch(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["attention-knowledge-v10-ticket-workflows"]
+    semantics: Literal["attention-knowledge-v11-recap-freshness"]
     epoch: str
     base_revision: str
     revision: str

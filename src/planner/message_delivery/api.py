@@ -5,7 +5,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from planner.conversation.api import delivery_fate_json
-from planner.core.authctx import require_owner
 from planner.core.contracts import JsonDict, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.message_delivery import recap_request, service
@@ -124,12 +123,7 @@ async def request_recap(
     clock: Clk,
     conversations: Conversations,
 ) -> JsonDict:
-    """Ask one Ticket or manager for a fresh recap.
-
-    Only the owner asks. An agent that wants another agent's recap is sending an ordinary
-    message, and Send Message is already that door.
-    """
-    require_owner(ctx)
+    """Ask an agent below the caller for a fresh recap."""
     recipient = _principal(body.get("target"))
     async with connection_off_the_loop(request) as conn:
         result = await recap_request.request_recap(conversations, conn, clock, ctx, recipient)

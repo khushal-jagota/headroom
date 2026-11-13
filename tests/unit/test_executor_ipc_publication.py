@@ -185,7 +185,9 @@ def test_actual_caller_timeout_keeps_owner_and_original_snapshot_for_retry(
                     CliRunner().invoke, main, ["worker", "recap", "--json"], input="original"
                 )
                 monkeypatch.setattr(ipc_client, "socket", socket)
-                assert entered.is_set()
+                # Socket timeout can precede the background thread's first turn.
+                # Wait for the original snapshot before changing its source file.
+                assert await asyncio.to_thread(entered.wait, 5)
                 assert result.exit_code == 3, result.output
                 outcome = json.loads(result.stdout)
                 identity = outcome["submission_id"]
@@ -236,6 +238,12 @@ def test_retry_preserves_acknowledged_and_unknown_uncertainty_across_restart(
     async def run() -> None:
         async with ipc_service(tmp_path, monkeypatch) as (executor, child):
             response = await executor.gateway.handle(write_request(child, "original"))
+            assert response.unconfirmed is not None
+            publication = executor.gateway._publishing.get("original")
+            if publication is not None:
+                await publication[1]
+            if response.unconfirmed.publication == "preparing":
+                response = await executor.gateway.handle(retry_request(child, "original"))
             assert response.unconfirmed is not None
             assert response.unconfirmed.publication == "queued"
             envelope = executor.outbox.pending()[0]
@@ -399,6 +407,11 @@ def test_post_commit_cleanup_error_keeps_identity_and_retry_observes_original(
             response = await executor.gateway.handle(write_request(child, "original"))
             assert response.error is None and response.unconfirmed is not None
             assert response.unconfirmed.submission_id == "original"
+            # Commit visibility does not mean the publication thread settled.
+            # Consume this injected failure before asking retry for its journal row.
+            publication = executor.gateway._publishing.get("original")
+            if publication is not None:
+                await asyncio.gather(publication[1], return_exceptions=True)
             original = executor.outbox.pending()[0]
             retried = await executor.gateway.handle(
                 replace(retry_request(child, "original"), response_deadline=time.monotonic() + 5)
