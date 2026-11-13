@@ -49,7 +49,9 @@ class FrozenDatetime(datetime):
 
 def _tree(root: Path) -> list[dict[str, Any]]:
     rows = []
-    for path in sorted(root.rglob("*")):
+    for path in sorted(
+        root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()
+    ):
         info = path.lstat()
         row = {
             "path": path.relative_to(root).as_posix(),
