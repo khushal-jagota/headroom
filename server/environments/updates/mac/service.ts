@@ -202,14 +202,14 @@ export class MacUpdateService implements MacUpdateServiceContract {
       }
       throw error.cause;
     }
-    const { manifest, python } = inspected;
+    const { manifest, python, node, entrypoint } = inspected;
     if (
       !is_object(manifest) ||
       !python_json_equal(manifest.schema_version, 1) ||
       manifest.application_revision !== release.manifest.app_sha ||
       manifest.platform !== 'darwin' ||
       manifest.architecture !== 'arm64' ||
-      !python
+      !(python || (node && entrypoint))
     )
       throw new UpdateConflict('The Mac runtime does not match its source and platform.');
   }

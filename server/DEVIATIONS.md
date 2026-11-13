@@ -763,3 +763,5 @@ restore entries. Hosted service, copy, health and rollback proofs remain later g
 
 The TypeScript client refuses linked run/socket entries and sockets owned by another user before capability emission; Python follows those links.
 The ordinary CLI socket read/write/retry seam returns exit 2 for non-ValueError transport failures that Python can expose as a traceback.
+
+- Mac Node archives: the TypeScript VPS also admits a regular executable `node/bin/node` and regular `server/executor/mac/entrypoint.ts`; Python VPS acceptance of Node-only archives remains unsupported.
