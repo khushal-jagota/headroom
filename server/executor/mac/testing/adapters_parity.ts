@@ -408,7 +408,7 @@ void native_start.catch(() => {});
 await native_entered.promise;
 const native_stop_failure = await starting_native.stop(deadline()).catch((error: unknown) => error);
 await starting_native.stop(deadline()).catch(() => {});
-const native_actual_failure = await observe_shutdown(
+const native_retry_actual = await observe_shutdown(
   starting_native.settled(),
   deadline(),
   'Native retry actual join stalled',
@@ -416,10 +416,9 @@ const native_actual_failure = await observe_shutdown(
 await native_start.catch(() => {});
 Object.assign(lifecycle, {
   native_stop_releases_blocked_start: native_stops === 2,
-  actual_native_deadline_failure_retained:
+  native_retry_succeeds_with_failure_history:
     native_stop_failure === native_failure &&
-    native_actual_failure instanceof AggregateError &&
-    native_actual_failure.errors.includes(native_failure) &&
+    native_retry_actual === undefined &&
     native_faults.length === 1 &&
     native_faults[0] === native_failure,
 });
