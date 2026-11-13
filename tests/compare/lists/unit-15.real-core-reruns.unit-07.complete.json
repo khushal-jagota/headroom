@@ -446,6 +446,9 @@
       },
       "json": {
         "body": "Review this proposal"
+      },
+      "capture": {
+        "decision_revision": "pending_proposal.revision"
       }
     },
     {
@@ -454,7 +457,9 @@
       "path": "/api/tickets/${ticket}/reject",
       "status": 200,
       "json": {
-        "message": "Revise the concrete evidence."
+        "message": "Revise the concrete evidence.",
+        "expected_proposal_revision": "${decision_revision}",
+        "decision_id": "complete-send-back"
       }
     },
     {

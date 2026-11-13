@@ -12,7 +12,6 @@ from typing import Final
 
 from planner.tickets.contracts import StageOwnershipMode, Ticket
 from planner.tickets.logic import machine
-from planner.tickets.revision_feedback import PendingRevisionFeedback
 from planner.worker_types.contracts import WorkflowDefinition
 from planner.worker_types.guidance import render_workflow_guide
 
@@ -59,7 +58,6 @@ def compose_worker_step_prompt(
     ticket: Ticket,
     *,
     worker_type_definition: WorkflowDefinition,
-    revision_feedback: PendingRevisionFeedback | None,
     memory_was_lost: bool,
 ) -> WorkerStepPrompt:
     """Compose every Panels-owned input for one Ticket worker step.
@@ -109,8 +107,6 @@ def compose_worker_step_prompt(
             WorkerStepInput("Ticket workflow guidance", render_workflow_guide(ticket.workflow))
         )
     inputs.append(WorkerStepInput("stage instruction", step_instruction, quoted=False))
-    if revision_feedback is not None:
-        inputs.append(WorkerStepInput("Ticket revision feedback", revision_feedback.text))
     return WorkerStepPrompt(inputs=tuple(inputs))
 
 

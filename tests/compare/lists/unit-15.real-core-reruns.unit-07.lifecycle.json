@@ -154,7 +154,10 @@
       "method": "POST",
       "path": "/api/tickets/${ticket}/reject",
       "status": 200,
-      "json": {}
+      "json": {
+        "expected_proposal_revision": "${rev}",
+        "decision_id": "lifecycle-send-back"
+      }
     },
     {
       "area": "tickets",
@@ -197,7 +200,9 @@
         "next_holder": {
           "kind": "owner",
           "id": "owner"
-        }
+        },
+        "message": "Proceed with the reviewed scope.",
+        "decision_id": "lifecycle-accept"
       }
     },
     {

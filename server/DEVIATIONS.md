@@ -2,6 +2,10 @@
 
 This file records intentional differences that the migration Manager accepted. No new difference enters this file without that acceptance. Close an entry when Python adopts the same behavior.
 
+## Staging merge 12: decision notes and recap freshness
+
+The Manager accepts that decision routes admit revision `1.0` as `1`, because Fastify’s native JSON parser does not retain numeric token kinds.
+
 ## Unidentified callers from the TypeScript service
 
 The migration Manager accepted the exact cgroup component `panels-typescript.service`
