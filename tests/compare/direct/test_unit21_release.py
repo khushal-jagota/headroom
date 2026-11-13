@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import gzip
+import hashlib
 import json
 import os
 import shutil
@@ -21,6 +22,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from scripts import check_ios_compatibility as ios_checks
 from tests.compare.direct import unit21_schema_seed
 from tests.support.synthetic_homes import create_synthetic_homes
 from tests.support.update_apps import build_app, rewrite_artifact_digest
@@ -44,6 +46,7 @@ from planner.environments.update_artifacts import (
     hash_archive,
 )
 from planner.environments.update_install import require_exact_schema_frontier, schema_change_pending
+from planner.ios_compatibility.policy import MINIMUM_SUPPORTED_BUILD
 
 ROOT = Path(__file__).resolve().parents[3]
 SHA = "a" * 40
@@ -582,6 +585,111 @@ def _python_archive_result(archive: Path, destination: Path, expected_sha: str) 
                         path.chmod(0o700)
 
 
+def _ios_fixture(root: Path) -> dict[str, Any]:
+    began = time.perf_counter()
+    source = root / "ios-source"
+    included = sorted(
+        Path(name)
+        for name in (
+            "server/package.json",
+            "server/package-lock.json",
+            "server/core/database/application_schema.json",
+            "server/skills/cli_commands.json",
+            "server/environments/release/migration_graph.json",
+            "src/planner/conversation/backends/hermes_acp_extension.py",
+            "src/planner/conversation/backends/hermes_model_catalog.py",
+            "server/ios_compatibility/check.ts",
+            "server/ios_compatibility/policy.ts",
+            "server/skills/example.ts",
+            "server/executor/wire.generated.ts",
+            "server/a/x.ts",
+            "server/a-z.ts",
+            "server/\ue000.ts",
+            "server/\U00010000.ts",
+        )
+    )
+    excluded = (
+        "server/nested/node_modules/ignored.ts",
+        "server/nested/tests/ignored.ts",
+        "server/nested/testing/ignored.ts",
+        "server/example.test.ts",
+        "server/test_host.ts",
+        "server/vitest.config.ts",
+        "server/executor/tools/ignored.ts",
+    )
+    for name in [*included, *(Path(name) for name in excluded)]:
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"{}\n" if path.suffix == ".json" else b"# inert hash fixture\n")
+    policy = source / "src/planner/ios_compatibility/policy.py"
+    policy.parent.mkdir(parents=True)
+    policy.write_text(f"MINIMUM_SUPPORTED_BUILD = {MINIMUM_SUPPORTED_BUILD}\n")
+    python_contract = source / "src/planner/core/contract.py"
+    python_contract.parent.mkdir(parents=True)
+    wire = source / "server/executor/wire.generated.ts"
+    wire_sources = [
+        "export interface Wire { body: string }\n",
+        "export interface Wire { body: string; kind: string }\n",
+        "export interface Wire { body: string; kind: string }\n// comment only\n",
+    ]
+    digests, python_digests = [], []
+    for index, content in enumerate(wire_sources):
+        wire.write_text(content)
+        python_contract.write_text(
+            "FIELDS = ('body',)\n"
+            if index == 0
+            else "FIELDS = ('body', 'kind')\n" + ("# comment only\n" if index == 2 else "")
+        )
+        digest = hashlib.sha256()
+        for path in included:
+            digest.update(path.as_posix().encode() + b"\0" + (source / path).read_bytes() + b"\0")
+        digests.append(digest.hexdigest())
+        python_digests.append(ios_checks.contract_digest(source))
+    assert len(set(digests)) == len(set(python_digests)) == 3
+    minimum = ios_checks.minimum_build(source)
+    review = dict(
+        contract_sha256=digests[-1],
+        oldest_supported_build=minimum,
+        decision="compatible",
+        evidence="Synthetic private checker fixture; no device or publication approval.",
+    )
+    (root / "ios-fixture.json").write_text(
+        json.dumps(dict(wire_sources=wire_sources, review=review))
+    )
+    review_file = source / ios_checks.REVIEW
+    review_file.parent.mkdir()
+    outcomes: list[str | None] = []
+    for digest_value, floor in (
+        (python_digests[-1], minimum),
+        ("0" * 64, minimum),
+        (python_digests[-1], minimum + 1),
+    ):
+        review_file.write_text(
+            json.dumps(
+                {
+                    **review,
+                    "contract_sha256": digest_value,
+                    "oldest_supported_build": floor,
+                }
+            )
+        )
+        try:
+            ios_checks.check(source)
+        except ValueError as error:
+            outcomes.append(str(error))
+        else:
+            outcomes.append(None)
+    wire.write_text(wire_sources[0])
+    return dict(
+        paths=[path.as_posix() for path in included],
+        digests=digests,
+        python_digests=python_digests,
+        checks=outcomes,
+        minimum=minimum,
+        seconds=time.perf_counter() - began,
+    )
+
+
 def test_unit21_release_identity_archive_and_frontier(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
@@ -727,6 +835,7 @@ def test_unit21_release_identity_archive_and_frontier(
     else:
         raise AssertionError("the combined invalid contract/tree must refuse")
     assert invalid_order.startswith("invalid runtime contract:")
+    ios_expected = _ios_fixture(tmp_path)
     native_sentinel = tmp_path / "native-outside-sentinel"
     native_sentinel.write_bytes(b"outside native write sentinel\n")
     native_root = tmp_path / "native-link-provider"
@@ -869,6 +978,20 @@ def test_unit21_release_identity_archive_and_frontier(
     node_seconds = time.perf_counter() - node_started
     assert process.returncode == 0, stderr
     actual: dict[str, Any] = json.loads(stdout)
+    ios_actual = actual["ios"]
+    assert ios_actual["paths"] == ios_expected["paths"]
+    assert ios_actual["digests"] == ios_expected["digests"]
+    assert ios_actual["minimum"] == ios_expected["minimum"]
+    assert (
+        ios_actual["checks"]
+        == ios_expected["checks"]
+        == [
+            None,
+            "Native-facing contracts changed. Review iOS compatibility "
+            "and refresh the source-bound review.",
+            "Review must name the policy's oldest supported build.",
+        ]
+    )
     assert actual["native_tree_admission"] == "app contains a symlink outside its root"
     assert native_sentinel.read_bytes() == b"outside native write sentinel\n"
     assert (
@@ -1075,6 +1198,12 @@ def test_unit21_release_identity_archive_and_frontier(
                     "producer_trees": actual["producer_trees"],
                     "node_v2_protocol": actual["node_protocol"],
                     "frontier": actual["frontier"],
+                    "ios_compatibility": {
+                        **ios_actual,
+                        "python_seconds": ios_expected["seconds"],
+                        "python_scoped_digests": ios_expected["python_digests"],
+                        "review_fixture_only": True,
+                    },
                     "native_static": {
                         "loader_equal": True,
                         "outside_target": actual["native_tree_admission"],

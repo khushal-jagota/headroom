@@ -591,6 +591,12 @@ Python can extract through safe internal links. Neither actual release producer 
 TypeScript validates the complete member graph before it creates the output directory.
 The existing release comparison records this accepted difference instead of Python equality.
 
+## TypeScript iOS compatibility inventory — accepted
+
+The Manager accepted the TypeScript source inventory on November 13, 2026.
+It replaces Python source paths with production TypeScript, five fixed JSON inputs, and two retained Hermes Python helpers.
+The digest retains raw bytes, NUL framing, and Python path ordering. Publication still requires a source-bound human review.
+
 ## VPS mailbox shutdown admission
 
 The Manager's VPS executor Brief requires that shutdown seal new work immediately.

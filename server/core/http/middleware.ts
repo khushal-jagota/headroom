@@ -3,6 +3,7 @@ import { Transform, Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Config } from '../config.ts';
 import { MAX_CONVERSATION_SEND_REQUEST_BYTES } from '../config.ts';
+import { MINIMUM_SUPPORTED_BUILD } from '../../ios_compatibility/policy.ts';
 import { admit_unidentified_call, http_refusal } from '../unidentified_agent_calls/admission.ts';
 import type { Endpoint, PeerLookup } from '../unidentified_agent_calls/contracts.ts';
 import { resolve_loopback_peer } from '../unidentified_agent_calls/peer.ts';
@@ -86,7 +87,7 @@ export function installMiddleware(
         (builds.length !== 1 ||
           builds[0]!.length > 10 ||
           !/^\d+$/.test(builds[0]!) ||
-          Number(builds[0]) < 1)
+          Number(builds[0]) < MINIMUM_SUPPORTED_BUILD)
       ) {
         reply
           .code(426)
@@ -95,7 +96,7 @@ export function installMiddleware(
             error: {
               code: 'ios_update_required',
               message: 'Update Panels from TestFlight',
-              details: { minimum_build: 1 },
+              details: { minimum_build: MINIMUM_SUPPORTED_BUILD },
             },
           });
         return;
