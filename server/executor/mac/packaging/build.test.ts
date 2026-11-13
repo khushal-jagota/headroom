@@ -3,7 +3,8 @@ import { expect, test } from 'vitest';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { list } from 'tar';
+import { gunzipSync } from 'node:zlib';
+import { ArchiveMembers } from '../../../environments/release/logic/archive_members.ts';
 import { build_mac_package } from './build.ts';
 import { MAC_REQUIRED_FILES } from './configuration.ts';
 
@@ -74,13 +75,10 @@ test('Mac package keeps its runtime/CLI assets separate and refuses a non-Darwin
       architecture: 'arm64',
       platform: 'darwin',
     });
-    const members: string[] = [];
-    await list({
-      file: join(options.output, 'panels-mac-runtime.tar.gz'),
-      onReadEntry(entry) {
-        members.push(entry.path);
-      },
-    });
+    const reader = new ArchiveMembers('extraction');
+    reader.feed(gunzipSync(await readFile(join(options.output, 'panels-mac-runtime.tar.gz'))));
+    reader.finish();
+    const members = reader.members.map((entry) => entry.path);
     expect(members).toEqual(
       expect.arrayContaining([
         'bin/panels',

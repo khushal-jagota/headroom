@@ -141,7 +141,7 @@ chmod 700 "$TS_ROOT" "$TS_ROOT/logs"
 install -m 600 "$PACKAGE/assets/com.panels.executor.typescript.plist" "$TS_PLIST"
 launchctl bootstrap "gui/$(id -u)" "$TS_PLIST"
 launchctl print "gui/$(id -u)/com.panels.executor.typescript"
-"$TS_INSTALL/bin/panels" executor status
+"$TS_INSTALL/bin/panels" executor health
 ```
 
 Check the selected revision, socket path, health response, and launch logs before real work.
@@ -269,7 +269,7 @@ for suffix in '' '-wal' '-shm'; do
 done
 ```
 
-Use the later reviewed TypeScript start procedure only after this recovery review.
+Use the reviewed TypeScript start procedure above only after this recovery review.
 Do not restart or change the Python installation. Preserve the evidence and moved files until the owner closes recovery.
 
 ## Native checks that Linux cannot prove

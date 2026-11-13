@@ -174,6 +174,8 @@ export async function build_mac_package(options: MacPackageOptions) {
   await macho_arm64(koffi_binary);
   let expanded = 0;
   for (const path of await paths(runtime)) {
+    if (relative(runtime, path).includes('\\'))
+      throw new Error(`Unsupported runtime name: ${path}`);
     const info = await lstat(path);
     if (info.isSymbolicLink()) {
       if (isAbsolute(await readlink(path)) || !inside(await realpath(path), runtime))
