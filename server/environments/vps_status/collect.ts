@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { applicationRootFromEnvironment } from '../../core/config.ts';
 import { JsonNumber } from '../../core/http/numeric_json.ts';
 import {
   expand_path,
@@ -36,10 +36,11 @@ import type {
 } from './contracts.ts';
 export async function resolve_status_application_root(
   environment: Record<string, string | undefined> = process.env,
+  home?: string,
+  admit_path?: (path: string) => string,
 ): Promise<string> {
-  return resolved_path(
-    environment.PLAN_APP_ROOT ?? fileURLToPath(new URL('../../../', import.meta.url)),
-  );
+  const path = expand_path(applicationRootFromEnvironment(environment), home);
+  return resolved_path(admit_path?.(path) ?? path, home);
 }
 export async function backup_section(
   root: string,

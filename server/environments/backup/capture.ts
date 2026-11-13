@@ -140,7 +140,9 @@ export async function apply_verified_snapshot_retention(
     throw new Error('backup retention root is no longer a regular directory');
   const root = await resolved_path(configured);
   const plan = new Set(
-    await Promise.all((await verified_snapshot_retention_plan(configured)).map(resolved_path)),
+    await Promise.all(
+      (await verified_snapshot_retention_plan(configured)).map((path) => resolved_path(path)),
+    ),
   );
   for (const candidate of candidates) {
     const path = await resolved_path(candidate);
