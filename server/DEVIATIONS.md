@@ -644,20 +644,33 @@ The Manager reviews these implementation differences before this slice merges.
 
 ## Mac archive inspection policies and JSON diagnostics — accepted conditionally
 
-The Manager accepted these four inspection policies on November 13, 2026:
+The Manager accepted these four groups on November 13, 2026:
 
-- Refuse global PAX size overrides. Python accepts the recorded global-size archive.
-- Refuse NUL text in names or PAX values. Python accepts the recorded NUL PAX comment.
-- Refuse UTF16/32 and non-scalar manifest encodings. Python accepts the recorded UTF16 manifest.
-- Refuse an extension metadata body above 1 MiB before allocation. The recorded tiny over-limit archive is also truncated, so Python refuses it too.
+- Refuse global PAX size overrides and NUL text in names or PAX values.
+- Refuse UTF16/32 and non-scalar UTF8 manifest encodings.
+- Preserve malformed JSON refusal, with Node `SyntaxError` diagnostics instead of Python `JSONDecodeError` diagnostics.
+- Apply the bounded TAR reader and its closed numeric, PAX, and end-framing rules to Mac inspection.
 
-Each recorded refusal returns `UpdateConflict` with `The Mac runtime archive is invalid.`
-The metadata observation does not establish a different Python answer for a complete oversized extension.
-Other unmeasured Mac inspection restrictions remain outside this acceptance.
+The fourth group includes GNU sparse entries and metadata, unknown PAX keys, unsupported header layouts or path encodings, and invalid UTF8 text.
+Header numbers must fit safe integers and use the supported octal or base-256 forms. PAX lengths, sizes, and terminators retain their closed grammar.
+These physical limits match the accepted application reader:
 
-The Manager also accepted the diagnostic difference for malformed manifest JSON.
-Both implementations refuse that manifest. Node reports `SyntaxError`; Python reports `JSONDecodeError`, with different parser text.
-This diagnostic difference adds no accepted malformed input and no false claim of equal error bytes.
+| Resource | Limit |
+| --- | --- |
+| Physical expanded TAR | 8 GiB |
+| Headers | 250,000 |
+| One extension metadata body | 1 MiB |
+| Cumulative metadata, path, and link bytes | 64 MiB |
+| Trailing zero padding | 1–20 KiB, in whole 512-byte blocks |
+
+The existing Mac limits stay at 2 GiB compressed, 4 GiB logical member bytes, and 16 KiB for the manifest.
+Inspection still permits the source's unrelated duplicate names, link targets, and special modes. Extraction-only graph and mode restrictions do not apply.
+
+The direct case measures global PAX size, a NUL PAX comment, a UTF16 manifest, one oversized metadata declaration, and malformed JSON diagnostics.
+Python accepts the first three archives. The metadata fixture is also truncated, so both implementations refuse it.
+The four archive refusals return `UpdateConflict` with `The Mac runtime archive is invalid.`
+Other accepted limits and framing rules have source review here, without a measured boundary claim.
+Both implementations refuse malformed JSON, with different parser error types and text. This adds no accepted malformed input or claim of equal error bytes.
 
 The direct proof is `tests/compare/direct/test_unit21_mac_updates.py::test_unit21_mac_updates_retained_archive_and_leased_report_sequence`.
 Its `unit21-mac-updates.json` report retains both outcomes and marks the accepted observations explicitly.
