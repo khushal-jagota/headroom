@@ -28,4 +28,10 @@ It captures the journal cursor before the request so a restore cannot erase a co
 `MacLiveSender` sends each conversation independently and drops failed batches and excess waiting events.
 Both owners use the host's shared stop deadline and expose their actual loop settlement.
 
+`MacOutboxSender` uses the existing store for ordered batches and durable receipts.
+It listens for committed appends before its first scan and remains idle without a scan timer.
+Each conversation owns its file negotiation and retry delay. Confirmed notifications run after acknowledgment commits.
+The sender scans every pending conversation; only lease reports retain their bounded conversation list.
+The host stops the sender before it closes the store and file transport.
+
 Known limit: the inherited directory walk lacks a retry owner if an intermediate ancestor close fails.
