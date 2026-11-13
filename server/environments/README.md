@@ -196,3 +196,32 @@ Part 4's hosted rehearsal supplies the real process, installer, supervisor, and 
 Scratch cleanup starts only for a matching database outside test mode, with a ten-minute initial wait independent of dispatcher admission.
 Its close fences new work at the shared deadline. An already dispatched filesystem removal or a Git child that ignores TERM can outlive that join.
 Production environment activation remains off until Part 4 supplies the real adapters.
+
+## Operator factory slice A
+
+`commands.ts::operator_commands` reuses the canonical CLI catalog for all seventeen
+operator leaves. Each handler loads only when selected. The executable owns argv,
+help, stream output, and the final error renderer.
+`operator_dependencies.ts::create_production_operator_dependencies` takes the
+selected name, explicit `undefined` facts, and an immutable invocation environment
+snapshot. It assembles only that command's production adapters. Status and cleanup
+share one invocation child owner, join actual closes, and preserve the first signal
+through cleanup failures. Path expansion uses that invocation's home.
+
+Test admission combines the invocation snapshot with the actual process test markers.
+Mutation builders use the returned checked paths before filesystem access. Link removal
+retains the checked parent and link name, so it removes the entry itself. Configuration
+selectors come from `core/config.ts`; both languages keep `data/planning.db` relative to cwd.
+
+Thirteen leaves are available: status, cleanup, backup, backup-current,
+provision-skills, restore, prepare, inspect, reset, remove, app-identity,
+server-event-loop-tasks, and stalls watchdog. App-build, run, serve, and restart
+retain their metadata and refuse before effects until the release-side Ticket
+supplies the native admission, builder, supervisor, and unit composition. The
+factory imports none of those unmerged modules. Slice B replaces those four
+refusals after their prerequisites merge.
+
+Operational failures carry raw `failure_message` and `stderr_prefix` fields.
+Success and warning streams stay separate. The accepted hidden diagnostic retains
+its literal unsupported transcript. The public executable binding remains Unit
+20's next slice. No release, exec, or service acceptance follows from this factory.

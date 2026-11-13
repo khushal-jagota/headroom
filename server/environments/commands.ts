@@ -1,131 +1,97 @@
-/** Python option declarations as data. No parsing or dispatcher registration. */
-import type { EnvironmentCommandOption, EnvironmentCommandTable } from './command_contracts.ts';
-import {
-  environment_status,
-  environment_cleanup,
-  environment_backup,
-  environment_backup_current,
-  environment_provision_skills,
-  environment_restore,
-  environment_prepare,
-  environment_inspect,
-  environment_reset,
-  environment_remove,
-} from './cli.ts';
+/** Operator handlers select lazily; metadata belongs to the public CLI catalog. */
+import { commands } from '../cli/commands.ts';
+import type { CommandDefinition } from '../cli/contracts.ts';
+import type { OperatorHandler, OperatorName, OperatorTable } from './command_contracts.ts';
 
-const registry: readonly EnvironmentCommandOption[] = [
-  { name: '--instance-id', type: 'string', default: null },
-  { name: '--environment-root', type: 'path', required: true },
-  { name: '--port', type: 'integer', default: null },
-  { name: '--credentials-env-file', type: 'path', default: null },
-  {
-    name: '--repository-root',
-    destination: 'repository_roots',
-    type: 'path',
-    multiple: true,
-    default: [],
-    path: { exists: true, file_okay: false },
-  },
-  { name: '--json', destination: 'json', type: 'boolean', default: false },
-];
-const source: readonly EnvironmentCommandOption[] = [
-  { name: '--source-db', type: 'path', required: true, path: { exists: true, dir_okay: false } },
-  { name: '--backup-dir', type: 'path', required: true, path: { file_okay: false } },
-];
-export const environment_commands: EnvironmentCommandTable = {
-  status: {
-    path: ['environment', 'status'],
-    options: [{ name: '--json', destination: 'json', type: 'boolean', default: false }],
-    handler: environment_status,
-  },
-  cleanup: {
-    path: ['environment', 'cleanup'],
-    options: [
-      { name: '--apply', type: 'boolean', default: false },
-      { name: '--json', destination: 'json', type: 'boolean', default: false },
-    ],
-    handler: environment_cleanup,
-  },
-  backup: {
-    path: ['environment', 'backup'],
-    options: [...source, { name: '--deployed-revision', type: 'string', required: true }],
-    handler: environment_backup,
-  },
-  'backup-current': {
-    path: ['environment', 'backup-current'],
-    options: [
-      ...source,
-      {
-        name: '--current-app',
-        type: 'path',
-        required: true,
-        path: { exists: true, file_okay: false },
-      },
-    ],
-    handler: environment_backup_current,
-  },
-  'provision-skills': {
-    path: ['environment', 'provision-skills'],
-    options: [
-      {
-        name: '--database-parent',
-        type: 'path',
-        required: true,
-        path: { exists: true, file_okay: false },
-      },
-      ...['hermes', 'codex', 'claude'].map((name) => ({
-        name: `--${name}-home`,
-        type: 'path' as const,
-        required: true,
-        path: { file_okay: false },
-      })),
-    ],
-    handler: environment_provision_skills,
-  },
-  restore: {
-    path: ['environment', 'restore'],
-    options: [
-      {
-        name: '--snapshot',
-        type: 'path',
-        required: true,
-        path: { exists: true, file_okay: false },
-      },
-      { name: '--destination-db', type: 'path', required: true, path: { dir_okay: false } },
-      { name: '--live-stopped', type: 'boolean', required: true },
-    ],
-    handler: environment_restore,
-  },
-  prepare: {
-    path: ['environment', 'prepare'],
-    options: [
-      { name: '--kind', type: 'choice', choices: ['live', 'staging'], required: true },
-      ...registry,
-    ],
-    handler: environment_prepare,
-  },
-  inspect: {
-    path: ['environment', 'inspect'],
-    options: [
-      { name: '--kind', type: 'choice', choices: ['live', 'staging'], required: true },
-      ...registry,
-    ],
-    handler: environment_inspect,
-  },
-  reset: {
-    path: ['environment', 'reset'],
-    options: [
-      { name: '--kind', type: 'choice', choices: ['staging'], required: true },
-      ...registry,
-    ],
-    handler: environment_reset,
-  },
-  remove: {
-    path: ['environment', 'remove'],
-    options: [
-      { name: '--kind', type: 'choice', choices: ['staging'], required: true },
-      ...registry,
-    ],
-    handler: environment_remove,
-  },
+function definition<Name extends OperatorName>(
+  name: Name,
+  group: 'environment' | 'stalls' | null,
+  load: () => Promise<OperatorHandler<Name>>,
+): { readonly command: CommandDefinition; readonly handler: OperatorHandler<Name> } {
+  const path = group === null ? [name] : [group, name];
+  const command = commands.find((item) => !item.group && item.path.join('/') === path.join('/'));
+  if (!command) throw new Error('Missing canonical operator command: ' + path.join(' '));
+  return { command, handler: async (args, deps) => (await load())(args, deps) };
+}
+/** Release-side composition replaces these four refusals after its dependencies merge. */
+function unavailable<Name extends 'app-build' | 'run' | 'serve' | 'restart'>(
+  name: Name,
+): OperatorHandler<Name> {
+  return async () => ({
+    exit_code: 1,
+    stdout: '',
+    failure_message: `The ${name} command is not yet available in this build.`,
+    stderr_prefix: '',
+  });
+}
+export const operator_commands: OperatorTable = {
+  status: definition(
+    'status',
+    'environment',
+    async () => (await import('./cli.ts')).environment_status,
+  ),
+  cleanup: definition(
+    'cleanup',
+    'environment',
+    async () => (await import('./cli.ts')).environment_cleanup,
+  ),
+  backup: definition(
+    'backup',
+    'environment',
+    async () => (await import('./cli.ts')).environment_backup,
+  ),
+  'backup-current': definition(
+    'backup-current',
+    'environment',
+    async () => (await import('./cli.ts')).environment_backup_current,
+  ),
+  'provision-skills': definition(
+    'provision-skills',
+    'environment',
+    async () => (await import('./cli.ts')).environment_provision_skills,
+  ),
+  restore: definition(
+    'restore',
+    'environment',
+    async () => (await import('./cli.ts')).environment_restore,
+  ),
+  prepare: definition(
+    'prepare',
+    'environment',
+    async () => (await import('./cli.ts')).environment_prepare,
+  ),
+  inspect: definition(
+    'inspect',
+    'environment',
+    async () => (await import('./cli.ts')).environment_inspect,
+  ),
+  reset: definition(
+    'reset',
+    'environment',
+    async () => (await import('./cli.ts')).environment_reset,
+  ),
+  remove: definition(
+    'remove',
+    'environment',
+    async () => (await import('./cli.ts')).environment_remove,
+  ),
+  'app-build': definition('app-build', 'environment', async () => unavailable('app-build')),
+  'app-identity': definition(
+    'app-identity',
+    'environment',
+    async () => (await import('./release/cli.ts')).app_identity,
+  ),
+  run: definition('run', 'environment', async () => unavailable('run')),
+  serve: definition('serve', null, async () => unavailable('serve')),
+  restart: definition('restart', null, async () => unavailable('restart')),
+  'server-event-loop-tasks': definition(
+    'server-event-loop-tasks',
+    null,
+    async () => (await import('../lifecycle/cli.ts')).server_event_loop_tasks,
+  ),
+  watchdog: definition(
+    'watchdog',
+    'stalls',
+    async () => (await import('../lifecycle/cli.ts')).watchdog,
+  ),
 };

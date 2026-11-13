@@ -66,7 +66,6 @@ function fail_response(inv: Invocation, status: number, data: any, text: string)
   throw new CliFailure(human_error(inv.command, String(error.message), 1, { no_route }));
 }
 /** System errors use the complete platform errno map, not a fixed error shortlist. */
-let native_strerror: ((number: number) => string) | undefined;
 export async function connection_message(error: unknown): Promise<string> {
   const native =
     error instanceof Error && 'cause' in error && error.cause instanceof Error
@@ -83,13 +82,8 @@ export async function connection_message(error: unknown): Promise<string> {
       ? undefined
       : constants.errno[detail.code as keyof typeof constants.errno];
   if (number !== undefined) {
-    if (native_strerror === undefined) {
-      const { default: koffi } = await import('koffi');
-      native_strerror = koffi
-        .load(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6')
-        .func('const char *strerror(int error)');
-    }
-    return `[Errno ${number}] ${native_strerror(number)}`;
+    const { python_os_error_message } = await import('../core/os_errors.ts');
+    return python_os_error_message(detail as Error, { include_paths: false });
   }
   // TLS/protocol diagnostics retain the native cause. They must not claim a guessed
   // CPython/OpenSSL source filename or version-dependent line number.

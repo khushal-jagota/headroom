@@ -11,6 +11,8 @@ export interface ReadSql {
 }
 export interface TransactionSql extends ReadSql {
   run(sql: string, parameters?: SqlParameters): RunResult;
+  /** A synchronous nested write scope. A failure rolls back only this scope. */
+  savepoint<T>(work: (tx: TransactionSql) => T): T;
 }
 export type CommitStep = (tx: TransactionSql) => void;
 export interface WriteOptions {
