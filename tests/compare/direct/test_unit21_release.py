@@ -325,6 +325,12 @@ def test_unit21_release_identity_archive_and_frontier(
 ) -> None:
     started = time.perf_counter()
     tmp_path = tmp_path.resolve()
+    damaged = tmp_path / "damaged.tar.gz"
+    damaged.write_bytes(b"not a gzip archive\n")
+    with pytest.raises(ValueError) as hash_first:
+        extract_app_archive(damaged, tmp_path / "python-bad-hash", "0" * 64, SHA)
+    assert str(hash_first.value) == "app archive hash differs from publication receipt"
+    assert not (tmp_path / "python-bad-hash").exists()
     app = build_app(tmp_path / "app", SHA, "sentinel")
     (app / "bin/alias").symlink_to("panels")
     (app / "sentinel").chmod(0o640)
@@ -525,6 +531,7 @@ def test_unit21_release_identity_archive_and_frontier(
     assert actual["exclusive_refused"]
     bad_hash = actual["hash_refusal"]
     assert bad_hash["status"] == "refused" and bad_hash["error_type"] == "AppValidationError"
+    assert bad_hash["message"] == str(hash_first.value)
     assert bad_hash["spools_absent"] and not bad_hash["destination_exists"]
     assert not (tmp_path / "outside").exists()
     assert actual["node_protocol"] == dict(

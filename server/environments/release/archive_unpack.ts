@@ -168,24 +168,54 @@ export async function unpack_archive_child(
   input.once('close', lost);
   input.once('error', lost);
   const replies = read_archive_messages(input);
+  let watching: Promise<void> | undefined;
+  let expecting_ack = false;
+  const reserve_reply = () => {
+    const pending = replies.next();
+    watching = pending.then((response) => {
+      if (response.done || !expecting_ack) lost();
+    }, lost);
+    return pending;
+  };
+  let pending_reply = reserve_reply();
   const acknowledge = async (message: unknown): Promise<void> => {
     fence();
+    expecting_ack = true;
     await write_archive_message(output, message);
-    const response = await replies.next();
+    const response = await pending_reply;
+    expecting_ack = false;
     if (response.done || response.value.ok !== true)
       throw new AppValidationError('app archive parent acknowledgement is unavailable');
+    pending_reply = reserve_reply();
     fence();
   };
-  const spool = await open(join(request.spool_root, 'expanded.tar'), 'wx+', 0o600);
-  let watching: Promise<void> | undefined;
+  let spool: FileHandle | undefined;
   try {
-    const digest = createHash('sha256'),
-      reader = new ArchiveMembers();
+    spool = await open(join(request.spool_root, 'expanded.tar'), 'wx+', 0o600);
+    const digest = createHash('sha256');
+    let bytes = 0;
+    for await (const chunk of createReadStream('', {
+      fd: 3,
+      start: 0,
+      autoClose: false,
+      highWaterMark: ARCHIVE_STREAM_CHUNK_BYTES,
+      signal: controller.signal,
+    })) {
+      fence();
+      bytes += chunk.length;
+      if (bytes > ARCHIVE_MAX_COMPRESSED_BYTES)
+        throw new AppValidationError('app archive exceeds compressed size limit');
+      digest.update(chunk);
+    }
+    fence();
+    if (digest.digest('hex') !== request.archive_sha256)
+      throw new AppValidationError('app archive hash differs from publication receipt');
+    const reader = new ArchiveMembers();
     let compressed = 0,
       expanded = 0,
       credit = 0,
       magic = Buffer.alloc(0);
-    const hashing = new Transform({
+    const compressed_input = new Transform({
       transform(chunk: Buffer, _encoding, callback) {
         try {
           compressed += chunk.length;
@@ -196,7 +226,6 @@ export async function unpack_archive_child(
             if (magic.length === 2 && (magic[0] !== 0x1f || magic[1] !== 0x8b))
               throw new AppValidationError('app archive is not gzip data');
           }
-          digest.update(chunk);
           callback(null, chunk);
         } catch (error) {
           callback(error instanceof Error ? error : new Error(String(error)));
@@ -205,8 +234,13 @@ export async function unpack_archive_child(
     });
     const gunzip = createGunzip({ chunkSize: ARCHIVE_STREAM_CHUNK_BYTES });
     await pipeline(
-      createReadStream('', { fd: 3, autoClose: false, highWaterMark: ARCHIVE_STREAM_CHUNK_BYTES }),
-      hashing,
+      createReadStream('', {
+        fd: 3,
+        start: 0,
+        autoClose: false,
+        highWaterMark: ARCHIVE_STREAM_CHUNK_BYTES,
+      }),
+      compressed_input,
       gunzip,
       async (source) => {
         for await (const value of source) {
@@ -221,7 +255,7 @@ export async function unpack_archive_child(
               credit = ARCHIVE_SPOOL_BATCH_BYTES;
             }
             const count = Math.min(credit, bytes.length - start);
-            await write_all(spool, bytes.subarray(start, start + count), expanded);
+            await write_all(spool!, bytes.subarray(start, start + count), expanded);
             expanded += count;
             credit -= count;
             start += count;
@@ -231,12 +265,8 @@ export async function unpack_archive_child(
       { signal: controller.signal },
     );
     reader.finish();
-    if (digest.digest('hex') !== request.archive_sha256)
-      throw new AppValidationError('app archive hash differs from publication receipt');
     await spool.sync();
     await acknowledge({ type: 'validated', expanded_bytes: expanded });
-    // Keep the same reader consuming after its last ACK, so EOF cannot sit buffered.
-    watching = replies.next().then(lost, lost);
     await extract_members(spool, request.destination, reader, fence);
     fence();
     const manifest = await validate_app_manifest(join(request.destination, 'manifest.json'), {
@@ -255,6 +285,6 @@ export async function unpack_archive_child(
     input.off('end', lost);
     input.off('close', lost);
     input.off('error', lost);
-    await spool.close();
+    await spool?.close();
   }
 }
