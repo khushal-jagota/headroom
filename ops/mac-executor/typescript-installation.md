@@ -145,7 +145,7 @@ Missing symbols or failed calls must refuse the operation. A path-based fallback
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `openat(int,const char*,int,...)`                                  | Variadic mode passed as explicit promoted `int`, created-file mode 0600, directory/no-follow and Darwin close-on-exec flags, FIFO refusal, and ancestor-swap containment |
 | `mkdirat(int,const char*,uint16_t)`                                | Darwin 16-bit `mode_t`, 0700 creation, existing-directory behavior, and parent-relative placement                                                                        |
-| `unlinkat(int,const char*,int)`                                    | Correct zero flags, retained-parent cleanup, and missing-entry/error behavior                                                                                            |
+| `unlinkat(int,const char*,int)`                                    | Correct zero flags for files and Darwin `AT_REMOVEDIR=0x80` for empty directories, retained-parent cleanup, nonempty-directory refusal, and missing-entry/error behavior |
 | `renameat(int,const char*,int,const char*)`                        | Retained source/target parents, atomic publication, and failure cleanup                                                                                                  |
 | `fsync(int)`                                                       | Directory flushes, error propagation, and successful commits on the selected native filesystem                                                                           |
 | `fcntl(int,int,...)` with `F_FULLFSYNC=51` and explicit `int` zero | Variadic Darwin ABI and defined third slot, strict full-flush success, and refusal without a weaker fallback                                                             |
@@ -161,6 +161,23 @@ Missing symbols or failed calls must refuse the operation. A path-based fallback
 
 Physical power-loss durability and permission persistence remain native evidence limits.
 Synthetic Linux checks prove neither Darwin ABI nor native disk behavior.
+
+## Canonical skills in the native session
+
+Run these steps with synthetic snapshots, a private TypeScript state root, and a private provider home before any real provider starts.
+The later package must supply the exact launcher for `MacSkillsPublisher` from `server/executor/mac/skills/index.ts`.
+
+1. Publish a snapshot with non-ASCII text and CRLF bytes. Compare its generation digest, `SKILL.md` bytes, and account links with Python.
+2. Publish the same snapshot again, then replace one source. Check generation reuse, legacy `skills` symlink conversion, retired entries, and stale generation links.
+3. Corrupt one existing generation. Check refusal without replacement. Check duplicate names, unsafe names, and unpaired-surrogate diagnostics against Python.
+4. Hold the private `.install.lock` from another owner. Stop the publisher with one absolute deadline. Check its actual worker exit and lock cleanup separately.
+5. Exercise empty-directory cleanup through `unlinkat` with Darwin `AT_REMOVEDIR=0x80`. Check refusal for a nonempty directory and for a substituted symlink.
+
+Linux covers the synthetic publication flow and a failed descriptor close with successful retry. It does not prove Darwin flags or native filesystem behavior.
+The shared server publisher retains its API. Its workspace `openat` now uses a variadic declaration and an explicit promoted `int` argument.
+The Mac publisher imports the neutral account module and uses native operations only through the Mac platform module.
+The root-local lock does not serialize a second installation's writes into the same account home.
+The owner must choose that policy before concurrent real use. Never snapshot or restore provider credentials or databases.
 
 ## Measure the main-thread database budget
 

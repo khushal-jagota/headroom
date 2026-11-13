@@ -71,6 +71,13 @@ export function unlink_relative(parent: number, name: string, missing_ok = false
     if (!missing_ok || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
 }
+/** Remove only a directory entry under its retained parent, without path traversal. */
+export function rmdir_relative(parent: number, name: string): void {
+  require_relative_component(name);
+  const unlinkat = native('int unlinkat(int dirfd, const char *path, int flags)');
+  const remove_directory = native_platform() === 'darwin' ? 0x80 : 0x200;
+  checked('unlinkat', () => unlinkat(parent, name, remove_directory));
+}
 export function rename_relative(
   source_parent: number,
   source: string,
