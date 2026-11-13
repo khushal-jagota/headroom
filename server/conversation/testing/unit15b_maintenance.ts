@@ -1,5 +1,6 @@
 /** Actual production record composition plus the shared scripted child, without a server. */
 import { dirname, join } from 'node:path';
+import { SHUTDOWN_GRACE_SECONDS } from '../../lifecycle/configuration.ts';
 import { createDatabase } from '../../core/database/index.ts';
 import { loadConfig } from '../../core/config.ts';
 import { createAreasRuntime } from '../../areas.ts';
@@ -225,7 +226,7 @@ export async function run(spec: Spec): Promise<unknown> {
     }
     return { case: spec.case, checkpoints };
   } finally {
-    await core.shutdown();
+    await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     await registry.close();
     await areas.closeRecord();
     database.close();

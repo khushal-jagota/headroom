@@ -14,6 +14,7 @@ import { write_held_ticket_configuration } from '../runtime/conversation_start.t
 import { WAITS } from '../stalls/registry.ts';
 import { compose_production_backends, require_backend_bindings } from './production_bindings.ts';
 import type { ProductionBackendBindings } from './production_bindings.ts';
+import type { ShutdownCompletion } from './contracts.ts';
 
 export interface ProductionServerDependencies {
   readonly backends: Partial<ProductionBackendBindings>;
@@ -24,6 +25,7 @@ export interface ProductionServerDependencies {
 }
 export async function start_production_server(
   dependencies: ProductionServerDependencies,
+  onShutdownComplete?: ShutdownCompletion,
 ): Promise<StartedServer> {
   const bindings = require_backend_bindings(dependencies.backends);
   if (
@@ -49,6 +51,7 @@ export async function start_production_server(
     return backends;
   };
   return startServer({
+    onShutdownComplete,
     enableWorkerReadiness: true,
     areaLoops: { managerWakes: true, measureSources: true },
     notificationDelivery: production_notification_delivery,

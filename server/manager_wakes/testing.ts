@@ -1,17 +1,21 @@
 import type { Area, OwnedAreaContext } from '../core/authority/register.ts';
 import { ConversationLinkLock } from '../runtime/conversation_start.ts';
 import { ManagerWakeLoop } from './runtime.ts';
+import type { StopOptions } from '../lifecycle/contracts.ts';
 
 /** One entry in the shared comparison host, composed only after database ownership. */
 export type OwnedWakeContext = OwnedAreaContext;
-export function managerWakeTestArea(context: OwnedWakeContext): Area {
+export function managerWakeTestArea(
+  context: OwnedWakeContext,
+  getStopOptions: () => StopOptions,
+): Area {
   let loop: ManagerWakeLoop | undefined;
   const passes = new ConversationLinkLock();
   return {
     prefix: '/api/test/poll',
     routes: async (app) => {
       app.addHook('onClose', async () => {
-        await loop?.stop();
+        await loop?.stop(getStopOptions());
       });
       app.post('/manager-wakes', async () =>
         passes.run(async () => {

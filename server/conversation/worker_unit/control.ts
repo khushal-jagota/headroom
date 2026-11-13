@@ -1,4 +1,5 @@
-import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
+import type { OwnedChildProcesses, OwnedUnitControl } from '../../lifecycle/contracts.ts';
+import type { ChildProcess } from 'node:child_process';
 import { getSystemErrorMessage } from 'node:util';
 import { CONTROL_TIMEOUT_SECONDS } from './configuration.ts';
 import { WorkerUnitError } from './contracts.ts';
@@ -13,13 +14,25 @@ function native_failure(error: Error): string {
 
 /** One exact manager command. Timeout kills only the process this call starts. */
 export async function control(
-  children: OwnedChildProcesses,
+  children: Pick<OwnedChildProcesses, 'spawn'>,
   ...arguments_: string[]
 ): Promise<readonly [number, string]> {
-  return new Promise((resolve, reject) => {
-    const child = children.spawn('systemctl', ['--user', ...arguments_], {
+  return capture(() =>
+    children.spawn('systemctl', ['--user', ...arguments_], {
       stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    }),
+  );
+}
+export async function control_retained(
+  unit: OwnedUnitControl,
+  action: 'show' | 'stop' | 'reset-failed',
+  ...extra: string[]
+): Promise<readonly [number, string]> {
+  return capture(() => unit.spawn(action, extra));
+}
+function capture(spawn: () => ChildProcess): Promise<readonly [number, string]> {
+  return new Promise((resolve, reject) => {
+    const child = spawn();
     const output: Buffer[] = [];
     const errors: Buffer[] = [];
     let timed_out = false;

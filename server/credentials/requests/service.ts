@@ -48,7 +48,7 @@ export class CredentialRequestOperations {
     return await task;
   }
 
-  finish_operations(options: Partial<StopOptions> = {}): Promise<void> {
+  finish_operations(options: StopOptions): Promise<void> {
     return observe_shutdown(
       this.settled(),
       options,

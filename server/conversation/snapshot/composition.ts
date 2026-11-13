@@ -52,7 +52,7 @@ export function create_backend_runtime(options: {
   });
   let shutdown_result: Promise<void> | undefined;
   return {
-    shutdown(options = {}) {
+    shutdown(options) {
       if (shutdown_result === undefined) {
         // Publish the raw join before either cleanup can reenter shutdown.
         shutdown_result = resource_join;

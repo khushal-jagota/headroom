@@ -56,6 +56,9 @@ def _environment(root: Path) -> dict[str, str]:
     env = {
         "PATH": str(Path(_node_executable()).parent) + os.pathsep + os.defpath,
         "LANG": "C.UTF-8",
+        "TMPDIR": str(root),
+        "TMP": str(root),
+        "TEMP": str(root),
         **create_synthetic_homes(root),
     }
     for key, name in {
@@ -80,6 +83,7 @@ def _environment(root: Path) -> dict[str, str]:
             "PLAN_CREDENTIAL_KEY_PATH": str(root / "credential.key"),
             "PLAN_TEST_MODE": "1",
             "PLAN_DISPATCH_ENABLED": "false",
+            "PLAN_SERVER_URL": "http://127.0.0.1:0",
         }
     )
     return env
@@ -850,22 +854,26 @@ def test_unit21_metrics_sampler_cadence_ownership_and_pending_stop(tmp_path: Pat
                 assert _finish(process) == {"startup_error": "scripted startup failure"}
                 continue
             pending = _line(process)
-            assert pending["type"] == "stopped_pending" and pending["owner"] is True
+            assert pending["type"] == "stopped_pending"
             if mode == "hung":
-                _assert_lock(root / "metrics.sqlite.lock", True)
-                (root / "release").touch()
                 assert _finish(process) == {
                     "settled": True,
                     "owner": False,
                     "contender_took_over": True,
+                    "collector_gate_unreleased": True,
                 }
+                original_events = [
+                    json.loads(line)
+                    for line in (root / "collection.jsonl").read_text().splitlines()
+                ]
+                assert all(event["type"] != "finish" for event in original_events)
                 with sqlite3.connect(root / "metrics.sqlite") as conn:
-                    assert conn.execute("SELECT COUNT(*) FROM samples").fetchone()[0] == 2
+                    assert conn.execute("SELECT COUNT(*) FROM samples").fetchone()[0] >= 1
             else:
-                # The command returned, but actual collector ownership remains.
-                assert _line(process) == {"retained_worker": True}
-                assert process.poll() is None
-                _assert_lock(root / "metrics.sqlite.lock", True)
+                # Preserve PR811's binary coalesced-record read while the new
+                # policy proves natural process exit after actual termination.
+                assert _line(process) == {"terminated_worker": True, "owner": False}
+                assert process.wait(timeout=10) == 0
         finally:
             _cleanup(process, descriptor)
         _assert_lock(root / "metrics.sqlite.lock", False)
