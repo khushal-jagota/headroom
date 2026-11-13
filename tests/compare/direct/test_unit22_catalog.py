@@ -152,6 +152,8 @@ def test_catalog_retention_refresh_and_owned_cancellation(
     assert run.returncode == 0, run.stderr
     actual = json.loads(run.stdout)
     assert actual.pop("sealed") == "ServerLifecycleError"
+    assert actual.pop("aborted_waiting_rows") == [{"state": "withdrawn"}] * 4
+    assert actual.pop("after_abort_poll") == 0
     assert actual == expected
     assert actual["flags"] == [False, False, True, True]
     assert actual["values"][-1]["available_models"][0]["version"] == [9007199254740993]

@@ -20,17 +20,15 @@ import type { UserInputAnswer } from '../conversation/events.ts';
 import type { MessageContent } from '../conversation/message_content.ts';
 import { resolve_path_sync } from '../core/path_resolution.ts';
 import { pure_posix_path } from '../core/python_path.ts';
-import { JsonNumber } from '../core/http/numeric_json.ts';
+import type { StopOptions } from '../lifecycle/contracts.ts';
+import { observe_shutdown } from '../conversation/shutdown.ts';
+import { python_str } from '../conversation/backends/claude_agent_sdk/failure_summary.ts';
+import { python_truth } from '../conversation/backends/claude_agent_sdk/events.ts';
 import { now_ms } from './clock.ts';
 import { ProtocolRefused, KeyError, ValueError } from './protocol.ts';
 import { python_repr } from './protocol_errors.ts';
 import { validate_skill_snapshot } from './skills.ts';
-import type {
-  WireTypes,
-  ChildCommandArguments,
-  ChildOperation,
-  JsonValue,
-} from './wire.generated.ts';
+import type { WireTypes, ChildCommandArguments, ChildOperation } from './wire.generated.ts';
 
 export type SkillSnapshotSupplier = (
   start: ResolvedConversationStart,
@@ -53,27 +51,17 @@ export interface RemoteChildCommands {
   cancel_initial_delivery(child: ChildReference, command_ids: readonly string[]): Promise<boolean>;
   retire_child(child: ChildReference): void;
 }
-function source_string(value: JsonValue | undefined): string {
-  return typeof value === 'string' ? value : python_repr(value);
-}
-function source_truth(value: JsonValue | undefined): boolean {
-  if (value instanceof JsonNumber) return value.value !== 0;
-  if (typeof value === 'number') return value !== 0;
-  if (Array.isArray(value)) return value.length !== 0;
-  if (value !== null && typeof value === 'object') return Object.keys(value).length !== 0;
-  return Boolean(value);
-}
 function raise_for(outcome: WireTypes['CommandOutcome']): void {
   if (outcome.disposition === 'uncertain')
     throw new backend.RemoteCommandUncertain(outcome.command_id);
   if (outcome.disposition !== 'refused') return;
   const result = outcome.result;
-  const error_name = source_string(
+  const error_name = python_str(
     Object.hasOwn(result, 'error_type') ? result.error_type : 'BackendSpawnFailed',
   );
   if (error_name === 'BackendPromptRejected')
     throw new backend.BackendPromptRejected(
-      source_string(
+      python_str(
         Object.hasOwn(result, 'error_message') ? result.error_message : 'provider rejected prompt',
       ),
     );
@@ -90,7 +78,7 @@ function raise_for(outcome: WireTypes['CommandOutcome']): void {
     ? errors[error_name]!
     : backend.BackendSpawnFailed;
   throw new ErrorType(
-    source_string(
+    python_str(
       Object.hasOwn(result, 'error_message') ? result.error_message : 'remote operation refused',
     ),
   );
@@ -107,6 +95,8 @@ export class MacRemoteChild implements BackendChild {
   private delivery_commands: WireTypes['ChildCommand'][] = [];
   private readonly initial_puts = new Set<Promise<boolean>>();
   private claude_started_on: readonly [string, string | null] | null = null;
+  private stop_task: Promise<void> | null = null;
+  private stop_settlement: Promise<void> = Promise.resolve();
   constructor(
     reference: ChildReference,
     commands: RemoteChildCommands,
@@ -128,8 +118,9 @@ export class MacRemoteChild implements BackendChild {
     if (start.backend_key === ConversationBackendKey.claude)
       this.claude_started_on = [start.model, start.reasoning_effort];
   }
-  async detach(): Promise<void> {
+  async detach(options?: StopOptions): Promise<void> {
     this.commands.retire_child(this.reference);
+    if (this.stop_task !== null) await this.observe_stop(this.stop_task, options);
   }
   async withdraw_delivery(): Promise<boolean> {
     this.initial_delivery_cancelled = true;
@@ -308,7 +299,7 @@ export class MacRemoteChild implements BackendChild {
     if (!Object.hasOwn(result, 'kind')) throw new KeyError('kind');
     if (result.kind === 'steer_refused') {
       if (!Object.hasOwn(result, 'refusal_reason')) throw new KeyError('refusal_reason');
-      const reason = source_string(result.refusal_reason);
+      const reason = python_str(result.refusal_reason);
       if (
         !Object.values(PromptDeliveryRefusalReason).includes(reason as PromptDeliveryRefusalReason)
       )
@@ -323,7 +314,7 @@ export class MacRemoteChild implements BackendChild {
       });
     return new backend.BackendSteerAccepted({
       composed_content_delivered: Object.hasOwn(result, 'composed_content_delivered')
-        ? source_truth(delivered)
+        ? python_truth(delivered)
         : true,
     });
   }
@@ -398,7 +389,23 @@ export class MacRemoteChild implements BackendChild {
       })),
     });
   }
-  async stop(): Promise<void> {
-    raise_for(await this.commands.stop(this.command({ kind: 'stop' })));
+  settled(): Promise<void> {
+    return this.stop_settlement;
+  }
+  private observe_stop(task: Promise<void>, options?: StopOptions): Promise<void> {
+    return options === undefined ? task : observe_shutdown(task, options, 'remote child stop');
+  }
+  stop(options?: StopOptions): Promise<void> {
+    if (this.stop_task === null) {
+      const task = (async () => {
+        raise_for(await this.commands.stop(this.command({ kind: 'stop' })));
+      })();
+      this.stop_task = task;
+      this.stop_settlement = task;
+      void task.catch(() => {
+        if (this.stop_task === task) this.stop_task = null;
+      });
+    }
+    return this.observe_stop(this.stop_task, options);
   }
 }

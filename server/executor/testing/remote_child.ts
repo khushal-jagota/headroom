@@ -1,5 +1,6 @@
 /** One paired consumer exchange. No database, network, or provider process. */
 import { readFileSync } from 'node:fs';
+import { JsonNumber } from '../../core/http/numeric_json.ts';
 import {
   ResolvedConversationStart,
   ConversationRoleMaterials,
@@ -141,7 +142,7 @@ try {
   await observe(steer);
   result = { kind: 'steer_accepted', composed_content_delivered: {} };
   await observe(steer);
-  result = {};
+  result = { kind: 'steer_refused', refusal_reason: new JsonNumber('9007199254740993') };
   await observe(steer);
   disposition = 'refused';
   result = { error_type: 'NeedsRebind', error_message: 'fresh child' };

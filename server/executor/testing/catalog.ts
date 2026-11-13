@@ -91,6 +91,28 @@ try {
   } catch (error) {
     output.sealed = (error as Error).name;
   }
+  const before_closed_contact = mailbox.high_sequence();
+  relay.connected();
+  if (mailbox.high_sequence() !== before_closed_contact)
+    throw new Error('Closed catalog started work');
+  await presence.accept_lease(
+    decode_value({ ...spec.lease, going_to_sleep: false }, 'LeaseRequest'),
+  );
+  relay = new VpsCatalogRelay(database, runs, presence, mailbox);
+  const internal_abort = relay.snapshot('codex', { refresh: true });
+  relay.connected();
+  await internal_abort;
+  await relay.stop({ deadline: performance.now() / 1000 + 2 });
+  await relay.settled();
+  output.aborted_waiting_rows = database.read((sql) =>
+    sql.all<{ state: string }>(
+      'SELECT state FROM executor_commands WHERE command_sequence>? ORDER BY command_sequence',
+      [integer_value(before_closed_contact)],
+    ),
+  );
+  output.after_abort_poll = (
+    await mailbox.poll(parse_identity(spec.identity), cursor, 0)
+  ).commands.length;
 } finally {
   await relay.stop({ deadline: performance.now() / 1000 + 2 });
   await presence.stop({ deadline: performance.now() / 1000 + 2 });
