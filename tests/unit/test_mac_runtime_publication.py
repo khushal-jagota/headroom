@@ -123,11 +123,18 @@ def test_runtime_roots_use_exact_canonical_pins_without_development_tools(tmp_pa
         '[project]\ndependencies=["aiohttp", "httpx[http2]", "PyICU==2.16.2"]\n'
     )
     requirements = tmp_path / "requirements.txt"
-    requirements.write_text("aiohttp==3.14.3\nhttpx==0.28.1\nPyICU==2.16.2\npytest==9.1.1\n")
+    requirements.write_text(
+        "aiohttp==3.14.3\nhttpx==0.28.1\nPyICU==2.16.2\npytest==9.1.1\n"
+        "greenlet==3.5.3\nmarkdown-it-py==4.0.0\nwebsockets==16.0\nlinkify-it-py==2.0.3\n"
+    )
     assert runtime_requirements(tmp_path) == [
         "aiohttp==3.14.3",
         "httpx[http2]==0.28.1",
         "PyICU==2.16.2",
+        "greenlet==3.5.3",
+        "markdown-it-py==4.0.0",
+        "websockets==16.0",
+        "linkify-it-py==2.0.3",
     ]
     build_mac_runtime.validate_installed_pins(
         {"aiohttp": "3.14.3", "bootstrap": "1"}, {"aiohttp": "aiohttp==3.14.3"}, {"bootstrap": "1"}

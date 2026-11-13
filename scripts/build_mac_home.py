@@ -115,6 +115,7 @@ def build(source: Path, executor: Path, output: Path, revision: str, run_id: int
             cwd=source,
             environment=environment,
         )
+        shutil.rmtree(app / "web/dist")
         shutil.copytree(source / "web/dist", app / "web/dist")
         native = audit_native_dependencies(app, environment, python_relative=".venv/bin/python3")
         runtime = app / "runtime"

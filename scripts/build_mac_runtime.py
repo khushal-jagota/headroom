@@ -90,6 +90,10 @@ def runtime_requirements(source: Path) -> list[str]:
             raise ValueError(f"Runtime dependency lacks a canonical pin: {name}")
         pinned_name, version = pins[name].split("==", 1)
         result.append(f"{pinned_name}{match.group(2) or ''}=={version}")
+    # Include native proof and server imports beyond the declared project roots.
+    result.extend(
+        pins[name] for name in ("greenlet", "markdown-it-py", "websockets", "linkify-it-py")
+    )
     return result
 
 
@@ -660,6 +664,17 @@ def build(
             environment=environment,
         )
         build_icu_wheel(builder, tools, environment, icu_pin, wheels)
+        # Keep setuptools output outside the clean publication checkout.
+        package_archive = builder / "planner-source.tar"
+        run(
+            ["git", "-C", str(source), "archive", "--format=tar",
+             "--output", str(package_archive), revision],
+            cwd=builder,
+            environment=environment,
+        )
+        package_source = builder / "planner-source"
+        with tarfile.open(package_archive) as packed:
+            packed.extractall(package_source, filter="data")
         run(
             [
                 tool_python,
@@ -670,7 +685,7 @@ def build(
                 "--no-build-isolation",
                 "--wheel-dir",
                 str(wheels),
-                str(source),
+                str(package_source),
             ],
             cwd=builder,
             environment=environment,
