@@ -273,11 +273,11 @@ export async function admit_runtime(
   } catch (error) {
     if (error instanceof RuntimeProbeUnsettled) {
       deferred_cleanup = true;
-      void error.settled
-        .finally(() => rm(state, { recursive: true, force: true }))
-        .catch((failure) => {
-          console.error(`Runtime probe deferred cleanup failed for ${state}: ${String(failure)}`);
-        });
+      const settled = error.settled.finally(() => rm(state, { recursive: true, force: true }));
+      void settled.catch((failure) => {
+        console.error(`Runtime probe deferred cleanup failed for ${state}: ${String(failure)}`);
+      });
+      throw new RuntimeProbeUnsettled(settled, error.cause);
     }
     throw error;
   } finally {

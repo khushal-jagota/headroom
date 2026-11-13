@@ -119,3 +119,96 @@ export class ServerLifecycleAlreadyOwnedError extends ServerLifecycleError {
     this.name = 'ServerLifecycleAlreadyOwnedError';
   }
 }
+
+export type SupervisorMode =
+  | { readonly kind: 'foreground' }
+  | {
+      readonly kind: 'managed-linux';
+      readonly runtime_directory: string;
+      readonly application_root: string;
+      readonly database_path: string;
+      readonly backup_root: string;
+    };
+export interface ApplicationLaunch {
+  readonly node_executable: string;
+  readonly entrypoint: string;
+  readonly launch_root: string;
+  readonly environment: Readonly<Record<string, string>>;
+  readonly listener?: { readonly fd: number; close(): void };
+}
+export interface SupervisorOptions {
+  readonly mode: SupervisorMode;
+  readonly application: ApplicationLaunch;
+  readonly control_socket_path: string;
+  readonly lease_path: string;
+  readonly port: number;
+}
+export interface RestartRequest {
+  readonly version: 1;
+  readonly operation: 'restart';
+}
+export interface RestartResponse {
+  readonly version: 1;
+  readonly status: 'accepted';
+}
+export interface StopCapabilityRecord {
+  readonly version: 2;
+  readonly incarnation: string;
+  readonly capability: string;
+  readonly supervisor_pid: number;
+}
+export interface StopIntentRequest {
+  readonly version: 2;
+  readonly operation: 'stop_intent';
+  readonly incarnation: string;
+  readonly capability: string;
+}
+export interface StopIntentResponse {
+  readonly version: 2;
+  readonly status: 'accepted';
+  readonly incarnation: string;
+  readonly supervisor_pid: number;
+}
+export type ControlRequest = RestartRequest | StopIntentRequest;
+export type ControlResponse = RestartResponse | StopIntentResponse;
+export interface StopIntent {
+  readonly incarnation: string;
+  readonly expires_at: number;
+}
+export interface PinnedSupervisor {
+  readonly pid: number;
+  signal_term(): void;
+  wait_for_exit(deadline: number): Promise<void>;
+  close(): void;
+}
+export interface ManagedStopArguments {
+  readonly runtime_directory: string;
+  readonly control_socket_path: string;
+}
+export interface ManagedStopContext {
+  readonly deadline: number;
+}
+export interface CapabilityCaptureRoots {
+  readonly application_root: string;
+  readonly database_parent: string;
+  readonly managed_roots: Readonly<Record<'files' | 'skills' | 'worker-settings', string>>;
+  readonly snapshot_destination: string;
+}
+export class ServerRestartConnectionError extends ServerLifecycleError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ServerRestartConnectionError';
+  }
+}
+export class ServerRestartProtocolError extends ServerLifecycleError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ServerRestartProtocolError';
+  }
+}
+export class ManagedStopError extends ServerLifecycleError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ManagedStopError';
+  }
+}
