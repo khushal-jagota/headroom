@@ -57,6 +57,8 @@ jobs:
         run: |
           scripts/dev pytest tests/compare/direct --compare-report-dir "$RUNNER_TEMP/comparison"
           .venv/bin/python tests/compare/tools/generate_fixture_oracle.py --check
+      - name: Check shared comparison oracles and stalls
+        run: scripts/dev pytest tests/compare --ignore=tests/compare/direct --ignore=tests/compare/test_compare.py
       - name: Compare affected areas or every area after branch updates
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -68,28 +70,111 @@ jobs:
             selection=(--base "$BASE_SHA")
           fi
           .venv/bin/python tests/compare/select_lists.py "${selection[@]}" > "$RUNNER_TEMP/comparison-lists"
-          mapfile -t lists < "$RUNNER_TEMP/comparison-lists"
-          if [[ ${#lists[@]} -eq 0 ]]; then
-            echo 'No comparison areas affected.'
-            exit 0
-          fi
-          python_arguments=()
-          typescript_arguments=()
-          for list in "${lists[@]}"; do
-            candidate=$(.venv/bin/python -c 'import json, sys; print(json.load(open(sys.argv[1])).get("candidate", "python"))' "$list")
-            if [[ "$candidate" == typescript ]]; then
-              typescript_arguments+=(--compare-list "$list")
-            else
-              python_arguments+=(--compare-list "$list")
+          .venv/bin/python - <<'PYTHON'
+          from collections import Counter
+          import os
+          from pathlib import Path
+
+          shards = (
+              (
+                  "unit-04.authority.json",
+                  "unit-04.json",
+                  "unit-04.populated.json",
+                  "unit-08.starts.json",
+                  "unit-12.measures-datasets.json",
+                  "unit-15.notices.json",
+                  "unit-15.queue.json",
+                  "unit-15.real-core-reruns.unit-07.complete.json",
+                  "unit-15.real-core-reruns.unit-07.links-accepted.json",
+                  "unit-15.real-core-reruns.unit-07.links-edited.json",
+                  "unit-15.real-core-reruns.unit-08.wakes.json",
+                  "unit-15.real-core-reruns.unit-09.disabled.json",
+                  "unit-15.real-core-reruns.unit-10.notifications.json",
+                  "unit-15.real-core-reruns.unit-11.credential-metadata.json",
+                  "unit-15.real-core-reruns.unit-11.files.json",
+                  "unit-15.real-core-reruns.unit-11.foundation.json",
+                  "unit-15.real-core-reruns.unit-11.manager-lifecycle.json",
+                  "unit-15.real-core-reruns.unit-11.origin.json",
+                  "unit-15.real-core-reruns.unit-11.ranges.json",
+                  "unit-15.real-core-reruns.unit-12.goals.json",
+                  "unit-15.routes.json",
+                  "unit-15b.receipts.json",
+                  "unit-15b.review.json",
+                  "unit-19.uploads.json",
+                  "unit-20-commands.work.json",
+              ),
+              (
+                  "unit-01.json",
+                  "unit-05.json",
+                  "unit-06.json",
+                  "unit-13.schedule.json",
+                  "unit-13.sources.json",
+                  "unit-14.json",
+                  "unit-15.asks.json",
+                  "unit-15.closures.json",
+                  "unit-15.models.json",
+                  "unit-15.publication.json",
+                  "unit-15.real-core-reruns.unit-07.lifecycle.json",
+                  "unit-15.real-core-reruns.unit-07.links-pending.json",
+                  "unit-15.real-core-reruns.unit-07.links-rejected.json",
+                  "unit-15.real-core-reruns.unit-08.delivery.json",
+                  "unit-15.real-core-reruns.unit-08.managers.json",
+                  "unit-15.real-core-reruns.unit-08.starts.json",
+                  "unit-15.real-core-reruns.unit-09.json",
+                  "unit-15.real-core-reruns.unit-11.credentials.json",
+                  "unit-15.real-core-reruns.unit-11.preview-ingress.json",
+                  "unit-15.real-core-reruns.unit-11.previews.json",
+                  "unit-15.real-core-reruns.unit-12.measures-datasets.json",
+                  "unit-15.retry.json",
+                  "unit-15.sessions.json",
+                  "unit-15.wire.json",
+                  "unit-19.backends.json",
+                  "unit-19.credentials.json",
+                  "unit-21.http.json",
+              ),
+          )
+
+          inventory = {path.name for path in Path("tests/compare/lists").glob("unit-*.json")}
+          counts = Counter(name for shard in shards for name in shard)
+          missing = sorted(inventory - counts.keys())
+          duplicate = sorted(name for name, count in counts.items() if count > 1)
+          unknown = sorted(counts.keys() - inventory)
+          if missing or duplicate or unknown:
+              raise SystemExit(
+                  f"Invalid comparison shards: missing={missing}, duplicate={duplicate}, unknown={unknown}"
+              )
+
+          output = Path(os.environ["RUNNER_TEMP"])
+          selected = (output / "comparison-lists").read_text().splitlines()
+          known_paths = {f"tests/compare/lists/{name}" for name in inventory}
+          if set(selected) - known_paths:
+              raise SystemExit(f"Unknown selected lists: {sorted(set(selected) - known_paths)}")
+          for number, names in enumerate(shards, start=1):
+              paths = [path for path in selected if Path(path).name in names]
+              (output / f"comparison-lists-{number}").write_text("".join(f"{path}\n" for path in paths))
+          PYTHON
+          run_shard() {
+            local shard="$1"
+            local lists=() arguments=()
+            mapfile -t lists < "$RUNNER_TEMP/comparison-lists-$shard"
+            if [[ ${#lists[@]} -eq 0 ]]; then
+              echo "Comparison shard $shard has no selected lists."
+              return 0
             fi
-          done
+            for list in "${lists[@]}"; do
+              arguments+=(--compare-list "$list")
+            done
+            scripts/dev pytest tests/compare/test_compare.py "${arguments[@]}" \
+              --basetemp "$RUNNER_TEMP/comparison-shard-$shard-tmp" \
+              --compare-report-dir "$RUNNER_TEMP/comparison"
+          }
+          run_shard 1 &
+          first_pid=$!
+          run_shard 2 &
+          second_pid=$!
           status=0
-          if [[ ${#python_arguments[@]} -gt 0 ]]; then
-            scripts/dev pytest tests/compare --ignore=tests/compare/direct "${python_arguments[@]}" --compare-right-module tests.compare.host --compare-report-dir "$RUNNER_TEMP/comparison" || status=$?
-          fi
-          if [[ ${#typescript_arguments[@]} -gt 0 ]]; then
-            scripts/dev pytest tests/compare --ignore=tests/compare/direct "${typescript_arguments[@]}" --compare-right-module tests.compare.ts_launcher --compare-report-dir "$RUNNER_TEMP/comparison" || status=$?
-          fi
+          wait "$first_pid" || status=$?
+          wait "$second_pid" || status=$?
           exit "$status"
       - name: Preserve comparison evidence
         if: always()

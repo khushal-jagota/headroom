@@ -91,6 +91,15 @@ In particular, `unit-08.starts.json` retains its fake-only error cases, and
 `unit-06.json` retains the in-memory conversation contract. The in-memory system
 and its test routes remain available to these and other retained lists.
 
+## CI list assignments
+
+The comparison workflow assigns every `unit-*.json` list to one of two fixed
+shards. When you add or remove a list, update the explicit filename tuples in
+`.github/workflows/typescript-backend.yml`. CI rejects missing, duplicate, or
+unknown assignments before it applies pull request selection. Each selected list
+runs once. Empty shards run no lists. Direct checks and shared oracle checks run
+once per Node version, and both shards keep the existing report artifact layout.
+
 ## Run a list
 
 A list can set `"compare_skill_files": true` to compare the files beneath each
