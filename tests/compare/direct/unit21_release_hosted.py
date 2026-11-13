@@ -449,7 +449,10 @@ def main(root: Path, report: Path, sha: str) -> None:
 
         # This factory boundary previously had recorded argv and syntax proof only.
         # Reuse the genuine built candidate, not host Python or the structural fixture.
-        from planner.environments.update_install import migration_graph
+        from planner.environments.update_install import (
+            migration_graph,
+            schema_change_pending,
+        )
 
         graph = migration_graph(app)
         heads = set(graph) - {
@@ -478,6 +481,20 @@ def main(root: Path, report: Path, sha: str) -> None:
                     [(value,) for value in revisions],
                 )
             schema_cases.append(dict(database=str(database), expected=expected))
+        database = root / "schema-no-version-table.sqlite"
+        with closing(sqlite3.connect(database)) as connection, connection:
+            connection.execute("PRAGMA user_version=0")
+        try:
+            schema_change_pending(database, app)
+        except sqlite3.Error as error:
+            expected = str(error)
+            if not isinstance(error, sqlite3.OperationalError):
+                raise
+            if expected != "no such table: alembic_version":
+                raise
+            schema_cases.append(dict(database=str(database), expected=expected))
+        else:
+            raise AssertionError("Python accepted a database without alembic_version")
         schema_report = root / "v1-schema.json"
         phase(
             "candidate-v1-schema-wrapper",
@@ -499,7 +516,7 @@ def main(root: Path, report: Path, sha: str) -> None:
                 ),
             ],
             root / "v1-schema.log",
-            timeout_seconds=145,
+            timeout_seconds=195,
             graceful=True,
         )
         receipt["candidate_v1_schema"] = json.loads(schema_report.read_text())

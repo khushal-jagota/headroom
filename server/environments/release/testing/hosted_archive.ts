@@ -64,6 +64,7 @@ export async function hosted_archive(request: HostedRequest): Promise<void> {
     minimum_available: bigint | undefined;
   let schema_case: SchemaObservation | undefined,
     candidate_root: string | undefined,
+    candidate_python: string | undefined,
     candidate_python_version: string | undefined;
   let probe_state: string | undefined;
   let probe_argv: readonly string[] | undefined;
@@ -95,7 +96,7 @@ export async function hosted_archive(request: HostedRequest): Promise<void> {
         throw new Error('Runtime admission state escaped the hosted private root');
       admission_state = state;
     } else if (request.operation === 'schema') {
-      if (!schema_case || !candidate_root || !candidate_python_version)
+      if (!schema_case || !candidate_root || !candidate_python || !candidate_python_version)
         throw new Error('Schema observation was not published before spawn');
       const expected = [
         '-I',
@@ -107,7 +108,7 @@ export async function hosted_archive(request: HostedRequest): Promise<void> {
         schema_case.database,
       ];
       if (
-        command !== join(candidate_root, '.venv/bin/python') ||
+        command !== candidate_python ||
         args.length !== expected.length ||
         args.some((value, index) => value !== expected[index])
       )
@@ -240,10 +241,13 @@ export async function hosted_archive(request: HostedRequest): Promise<void> {
         require_runtime: true,
         verify_artifact_digest: false,
       });
-      if (manifest.runtime_contract?.version !== 1 || request.cases.length !== 3)
+      if (manifest.runtime_contract?.version !== 1 || request.cases.length !== 4)
         throw new Error(
-          'Hosted schema proof requires a genuine v1 candidate and three observations',
+          'Hosted schema proof requires a genuine v1 candidate and four observations',
         );
+      candidate_python = await realpath(join(candidate_root, '.venv/bin/python'));
+      if (!inside(candidate_python, candidate_root))
+        throw new Error('Hosted schema Python resolves outside the candidate');
       candidate_python_version = manifest.runtime_contract.python_version;
       const migration = create_migration_status(owner),
         rows = [];
