@@ -68,14 +68,19 @@ def repository_root(folder: Path | None) -> Path | None:
     return None
 
 
-def workspace_identity(ticket_root: Path) -> WorkspaceIdentity:
+def workspace_identity(ticket_root: Path, *, create: bool = True) -> WorkspaceIdentity:
     """Allocate one physical token even when cleanup and startup arrive together."""
     if ticket_root.is_symlink() or ticket_root.parent.is_symlink():
         raise RuntimeError("Ticket workspace must not be a symlink")
-    ticket_root.mkdir(parents=True, exist_ok=True)
+    if create:
+        ticket_root.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(ticket_root, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
+        opened = os.fstat(descriptor)
+        attached = ticket_root.stat(follow_symlinks=False)
+        if (opened.st_dev, opened.st_ino) != (attached.st_dev, attached.st_ino):
+            raise RuntimeError("Ticket workspace changed before ownership inspection")
         return _allocate_workspace_identity(ticket_root)
     finally:
         os.close(descriptor)
@@ -575,7 +580,7 @@ def _cleanup_local_workspaces(
             match = _TICKET_ID.match(path.name)
             assert match is not None
             state = states[match.group(1)]
-            identity = read_workspace_identity(path)
+            identity = workspace_identity(path, create=False)
             if before_remove is not None:
                 reason = before_remove(path)
                 if reason:
