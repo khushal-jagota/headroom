@@ -1,4 +1,3 @@
-import { python_string_repr as shared_string_repr } from '../../core/python_repr.ts';
 import { WorkerUnitError } from './contracts.ts';
 
 export function properties(text: string): Record<string, string> {
@@ -10,16 +9,12 @@ export function properties(text: string): Record<string, string> {
   return result;
 }
 
-const python_string_repr = shared_string_repr;
-
 /** Quote EnvironmentFile values without shell or systemd variable expansion. */
 export function environment_file(environment: Readonly<Record<string, string>>): string {
   const lines: string[] = [];
   for (const [name, value] of Object.entries(environment)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*(?![\s\S])/.test(name) || value.includes('\0')) {
-      throw new WorkerUnitError(
-        `Invalid environment entry for Worker: ${python_string_repr(name)}`,
-      );
+      throw new WorkerUnitError(`Invalid environment entry for Worker: ${JSON.stringify(name)}`);
     }
     const escaped = value
       .replaceAll('\\', '\\\\')

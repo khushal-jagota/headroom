@@ -24,7 +24,7 @@ function owned_child() {
 beforeEach(() => fake.spawn.mockReset());
 afterEach(() => vi.useRealTimers());
 
-it('reports missing systemctl with the Python native error text', async () => {
+it('reports the native missing systemctl error', async () => {
   const child = owned_child();
   fake.spawn.mockImplementation(() => child);
   const pending = control(
@@ -34,7 +34,7 @@ it('reports missing systemctl with the Python native error text', async () => {
     '--property=LoadState',
   );
   const checked = expect(pending).rejects.toThrow(
-    "Cannot contact the Worker service manager: [Errno 2] No such file or directory: 'systemctl'",
+    'Cannot contact the Worker service manager: spawn systemctl ENOENT',
   );
   child.emit(
     'error',

@@ -58,5 +58,6 @@ export interface MacNativeChildrenContract {
   /** Called only after the runner's required source work and stop proof settle. */
   retire(reference: ChildReference): void;
   stop(options: StopOptions): Promise<void>;
+  /** Current actual close attempt. A failed attempt retains native capabilities for a later stop. */
   settled(): Promise<void>;
 }

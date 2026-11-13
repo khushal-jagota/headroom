@@ -1,14 +1,15 @@
 /** A stop certificate follows the exact child's command and source publications. */
-import type { ChildCommand, CommandOutcome } from '../../wire.generated.ts';
+import type { ChildCommand, ChildReference, CommandOutcome } from '../../wire.generated.ts';
 import type { MacCommandWork } from './command_contracts.ts';
 import type { MacRetirementContract, MacRetirementDependencies } from './retirement_contracts.ts';
-import { error_outcome, outcome } from './logic/outcomes.ts';
+import { error_message, error_outcome, outcome, same_reference } from './logic/outcomes.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import { remember_model_catalog_failure } from '../../../conversation/backends/catalog_cleanup.ts';
 
 export class MacRetirement implements MacRetirementContract {
   private readonly dependencies: MacRetirementDependencies;
+  private readonly joined_failures: { reference: ChildReference; errors: Set<unknown> }[] = [];
   private shutdown_options: StopOptions | undefined;
   private readonly shutdown = new AbortController();
   private readonly operations = new Set<Promise<CommandOutcome>>();
@@ -49,6 +50,11 @@ export class MacRetirement implements MacRetirementContract {
     })();
     return this.actual_join;
   }
+  prune(reference: ChildReference): void {
+    for (let index = this.joined_failures.length - 1; index >= 0; index--)
+      if (same_reference(this.joined_failures[index]!.reference, reference))
+        this.joined_failures.splice(index, 1);
+  }
   stop_exact(
     command: ChildCommand,
     work: MacCommandWork,
@@ -81,25 +87,33 @@ export class MacRetirement implements MacRetirementContract {
     this.dependencies.native_children.begin_retirement(reference);
     for (const record of records)
       if (record.command.operation !== 'stop') work.withdraw(record.command.command_id);
-    try {
-      // Join only unsettled commands. A failed join makes the stop uncertain.
-      const joined = await Promise.allSettled(
-        records
-          .filter((record) => record.command.operation !== 'stop' && record.task !== null)
-          .map((record) => record.task!),
-      );
-      const failed = joined.filter((result) => result.status === 'rejected');
-      if (failed.length === 1) throw failed[0]!.reason;
-      if (failed.length)
-        throw new AggregateError(
-          failed.map((result) => result.reason),
-          'Exact-stop command joins failed.',
-        );
-      await this.dependencies.sources.finish(reference);
-      await this.dependencies.native_children.stop_child(reference, invoking);
-      await this.dependencies.sources.finish(reference);
-      if (
-        this.dependencies.sources.failed(reference) ||
+    const previous = this.joined_failures.find((failure) =>
+      same_reference(failure.reference, reference),
+    );
+    const errors = previous?.errors ?? new Set<unknown>();
+    // A rejection must not let another actual command escape the native-stop barrier.
+    const joined = await Promise.allSettled(
+      records
+        .filter((record) => record.command.operation !== 'stop' && record.task !== null)
+        .map((record) => record.task!),
+    );
+    for (const result of joined)
+      if (result.status === 'rejected') remember_model_catalog_failure(errors, result.reason);
+    if (!previous && errors.size) this.joined_failures.push({ reference, errors });
+    const collect = async (operation: () => Promise<void>) => {
+      try {
+        await operation();
+      } catch (error) {
+        remember_model_catalog_failure(errors, error);
+      }
+    };
+    await collect(() => this.dependencies.sources.finish(reference));
+    await collect(() => this.dependencies.native_children.stop_child(reference, invoking));
+    await collect(() => this.dependencies.sources.finish(reference));
+    const failures = [...errors];
+    if (
+      errors.size === 0 &&
+      (this.dependencies.sources.failed(reference) ||
         work
           .records(reference)
           .some(
@@ -107,16 +121,23 @@ export class MacRetirement implements MacRetirementContract {
               record.command.command_id !== command.command_id &&
               record.outcome !== null &&
               !record.settled,
-          )
-      )
-        throw Object.assign(new Error('required source publication failed'), {
+          ))
+    )
+      failures.push(
+        Object.assign(new Error('required source publication failed'), {
           name: 'RuntimeError',
-        });
-    } catch (error) {
+        }),
+      );
+    if (failures.length) {
+      const error =
+        failures.length === 1
+          ? failures[0]
+          : new AggregateError(failures, failures.map(error_message).join('; '));
       return outcome(command, 'uncertain', error_outcome(command, error).result);
     }
     this.dependencies.state.mark_retired(reference);
     this.dependencies.native_children.retire(reference);
+    this.prune(reference);
     work.prune(reference);
     return outcome(command, 'succeeded', {});
   }

@@ -5,6 +5,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 **PRINCIPLES.md** holds the standing engineering and design rules; they bind unless a live owner decision overrides them.
 
 ## Stack and system map
+- For TypeScript server work, read [server/STYLE.md](server/STYLE.md) before changes.
 - Python ≥ 3.12 backend in `src/planner/`, with FastAPI wiring in `src/planner/core/server.py` and SQLite schema/migrations in `src/planner/core/db.py`.
 - Domain code is grouped by system: `tickets/`, `managers/`, `ideas/`, and `projects/`. Contracts live in each domain's `contracts.py`; framework-free rules live in `logic/`; HTTP routes live in `api.py`.
 - `panels` is the CLI entry point (`planner.cli.main:main`); `python -m planner` delegates to it. Important command groups are `serve`, `project`, `ticket`, `manager`, `worker`, and `worker-type`. The Chief is a recipient of `send-message`, not a command group.

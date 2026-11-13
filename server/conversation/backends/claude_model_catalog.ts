@@ -48,13 +48,7 @@ function listed_efforts(value: unknown): string[] {
   if (Array.isArray(value))
     return value.filter((effort): effort is string => typeof effort === 'string');
   if (object(value)) return Object.keys(value);
-  const kind =
-    typeof value === 'boolean'
-      ? 'bool'
-      : typeof value === 'number' && Number.isInteger(value)
-        ? 'int'
-        : 'float';
-  throw new TypeError(`'${kind}' object is not iterable`);
+  throw new TypeError('Supported effort levels must be a string, array, or object');
 }
 
 export function claude_model_catalog_from_init(info: unknown): ClaudeModelCatalog {

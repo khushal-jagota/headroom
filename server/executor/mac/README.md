@@ -1,5 +1,13 @@
 # Mac executor file foundation
 
+`host/service.ts` composes the standalone Mac invocation, including its shared child owners,
+runner, mailbox, gateway, HTTP, lease, live sender, durable sender, skills, catalog, and storage.
+It reads a planned handoff before the journal and HTTP identity, then fences commands until replay completes.
+Each producer receives the original absolute stop deadline. Actual joins precede file workers, journal, and the spool lock.
+`inputs.ts` downloads verified prompt files and removes temporary entries through a retained directory capability.
+`host/entry.ts` supplies the production update, provider, catalog, and Darwin process bindings plus signal ownership.
+The packaged `entrypoint.ts` reuses the ordinary CLI. Its runtime supervisor routing remains the next step.
+
 `AgentProcesses` records descendant identities in `run/agent-processes.json` and retains reparented tools.
 The Darwin host supplies its existing files and one-shot child owners. Native `ps`, priority and individual-PID signals stay in `platform.ts`.
 Startup checks start times before orphan signals and preserves discovered identities across cancellation.
@@ -13,7 +21,7 @@ The sender calls `notify_confirmed` after its durable acknowledgement callback.
 `storage/envelopes.ts` supplies the shared row-to-envelope and receipt projections.
 The host supplies runner admission, catalog settlement, presence, reads, and exit.
 It joins gateway and runner cleanup before storage. A response timeout never cancels publication.
-The runner facade's `seal_admission` binding and complete host wiring remain later work.
+The runner facade seals admission before reversible catalog settlement and quiescence.
 
 `ipc_client.ts` connects only to the configured root's Unix socket. It validates
 and frames each request through the shared wire codec before emission. It sends

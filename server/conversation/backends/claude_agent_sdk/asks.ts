@@ -6,7 +6,7 @@ import * as B from '../contracts.ts';
 import { Pending } from './turn.ts';
 import type { TurnInFlight, UserQuestion, ParkedPermission, ParkedUserInput } from './turn.ts';
 import { canonical_json, record } from './events.ts';
-import { error_text, python_repr } from './failure_summary.ts';
+import { error_text } from './failure_summary.ts';
 
 const PERMISSION_OPTIONS = [
   new PermissionAskOption({
@@ -167,7 +167,7 @@ export class ClaudeAsks {
       answer = { behavior: 'deny', message: 'User declined tool execution.' };
     else
       throw new B.PermissionAnswerWriteFailed(
-        `${ask_id} was not offered ${python_repr(option_id)}`,
+        `${ask_id} was not offered ${JSON.stringify(option_id)}`,
       );
     turn!.parked_asks.delete(ask_id);
     parked.answer.resolve(answer);

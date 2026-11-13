@@ -19,3 +19,19 @@ export const app_identity: OperatorHandler<'app-identity'> = async (args, deps) 
     return failure(error);
   }
 };
+
+export const app_build: OperatorHandler<'app-build'> = async (args, deps) => {
+  try {
+    const { stringify_python_json } = await import('../../core/http/numeric_json.ts');
+    return {
+      exit_code: 0,
+      stdout:
+        stringify_python_json(await deps.build_app(args), { sort_keys: true, ensure_ascii: true }) +
+        '\n',
+      stderr: '',
+    };
+  } catch (error) {
+    if (!domain_error(error, { runtime: true, plain: false })) throw error;
+    return failure(error);
+  }
+};

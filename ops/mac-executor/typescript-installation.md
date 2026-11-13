@@ -388,11 +388,29 @@ Quiesce also accepts cancellation. A canceled observer leaves admitted work in t
 This module does not download, install, or activate a release.
 
 The host must stop the runner before it closes the journal and outbox.
-Pass one absolute shutdown deadline, then join `settled()` for actual completion.
+Pass one absolute shutdown deadline, then capture that attempt's `settled()` promise.
+Only a successful actual attempt certifies completion. A rejected attempt retains work for a later stop retry.
 A deadline error on `stop()` does not mean that the work stopped.
-Native and source failures remain visible after resource cleanup, including an actual failure whose type is a deadline error.
-A failed settlement retains its retry point. A later stop retries it before actual completion.
+A successful retry clears the failures that it resolves. Earlier diagnostics remain in the log.
+Unresolved source and settlement failures still reject actual completion. Keep storage open while required settlement remains unfinished.
 
-Exact command stop follows Python when a currently joined command task fails: it returns an uncertain outcome before native cleanup.
-Permanent host shutdown separately attempts native cleanup and joins the failed work.
-The owner still decides whether exact command stop must also continue cleanup across that failed join.
+Exact command stop joins every selected actual command before native cleanup.
+The Manager accepted continued native cleanup after a failed command join. The outcome remains uncertain and has no successful stop certificate.
+The exact child's command and cleanup errors remain retained across retries. A later stop retries cleanup without erasing that history.
+Final retirement discards that child's in-memory join history. Its durable command outcomes remain unchanged.
+
+Mailbox command calls require an `AbortSignal`. Queue shutdown supplies its original absolute deadline in `MailboxRunCancelled`.
+Cancellation withdraws preparation and starts permanent cleanup with that same deadline. A failed drain rejects its actual attempt and returns the canceled call.
+An already-aborted signal refuses before command effects. Each call removes its abort listener when it finishes.
+Other aborts reject only the observer and supply no shutdown deadline. The command service retains the admitted work.
+The host supplies its real deadline for later cleanup. An observer timeout never certifies that resources closed.
+
+## Local event composition
+
+`MacRunner` in `server/executor/mac/runner/index.ts` connects command, native, source, event, maintenance, and lifetime owners before admission opens.
+Its live port carries text deltas, thinking, and tool progress. The later host supplies the lossy sender.
+Live payloads validate before send. Retired children do not send; a failed sender drops the notification and logs once.
+Other native events enter durable source custody. Completed messages, finished tools, and ended turns capture Ticket artifacts through the outbox.
+Exact stop joins admitted sources and final native events before it publishes the stop certificate.
+Permanent stop refuses new command, replay, and ordinary source work, and drops late live events.
+The host still owns transport, the Unix socket, update installation, and storage closure after the runner's actual join.

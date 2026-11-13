@@ -36,7 +36,7 @@ function current(deadline: number): void {
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-async function candidate_tool_path(
+export async function candidate_tool_path(
   root: string,
   path: string,
   executable: boolean,

@@ -1,3 +1,5 @@
+import { require_usable_model } from '../conversation/backend_state.ts';
+import { require_conversation_backend_key } from '../conversation/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { Database, ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { validate_launch_defaults } from './logic/launch_defaults.ts';
@@ -34,15 +36,12 @@ const fail = (message: string, detail: Record<string, unknown> = {}): never => {
 };
 export function resolve_launch_defaults(sql: ReadSql, raw: unknown): ManagedWorkerLaunchDefaults {
   const defaults = validate_launch_defaults(raw);
-  const row = sql.get<{ enabled: number }>(
-    'SELECT enabled FROM backend_model_enablement WHERE backend_key = ? AND model_id = ?',
-    [defaults.employee_backend, defaults.employee_launch_model],
+  require_usable_model(
+    sql,
+    require_conversation_backend_key(defaults.employee_backend),
+    defaults.employee_launch_model,
+    'vps',
   );
-  if (row && !row.enabled)
-    fail(`Model "${defaults.employee_launch_model}" is disabled. Choose an enabled model.`, {
-      employee_backend: defaults.employee_backend,
-      employee_launch_model: defaults.employee_launch_model,
-    });
   return defaults;
 }
 export function launch_defaults(profile: WorkerProfile): ManagedWorkerLaunchDefaults {

@@ -1,11 +1,8 @@
 import { PlannerError } from '../../core/contracts.ts';
 
-// Python str.strip includes the four ASCII information separators, unlike JS trim.
-export function strip(value: string): string {
-  return value.replace(/^[\p{White_Space}\u001c-\u001f]+|[\p{White_Space}\u001c-\u001f]+$/gu, '');
-}
 export function projectIdForName(name: string): string {
-  const slug = strip(name)
+  const slug = name
+    .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');

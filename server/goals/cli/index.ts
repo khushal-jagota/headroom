@@ -3,7 +3,7 @@ import type { CommandResult, Invocation } from '../../cli/contracts.ts';
 import { emit, fail_validation, json, send, send_text } from '../../cli/http.ts';
 import { read_source, stdin_object } from '../../cli/input.ts';
 import { numeric_value } from '../../core/http/numeric_json.ts';
-import { python_text } from '../../cli/python_text.ts';
+import { scalar_text } from '../../cli/text.ts';
 import { response_field } from '../../cli/response_field.ts';
 
 const quote = (value: string, slash = false): string => {
@@ -17,14 +17,6 @@ const artifact_url = (goal_id: string, path: string): string =>
   `/files/goals/${quote(goal_id)}/artifacts/${quote(path, true)}`;
 const goal_response = (data: unknown, as_json: boolean): CommandResult =>
   emit(data, as_json, json(data, { ensure_ascii: false, indent: 2 }));
-function path_order(left: string, right: string): number {
-  const a = Array.from(left, (character) => character.codePointAt(0)!);
-  const b = Array.from(right, (character) => character.codePointAt(0)!);
-  for (let index = 0; index < Math.min(a.length, b.length); index++) {
-    if (a[index] !== b[index]) return a[index] - b[index];
-  }
-  return a.length - b.length;
-}
 async function list_artifacts(invocation: Invocation): Promise<CommandResult> {
   const goal_id = invocation.values.goal_id;
   const directories = [''];
@@ -52,7 +44,7 @@ async function list_artifacts(invocation: Invocation): Promise<CommandResult> {
         break;
     }
   }
-  const artifacts = [...paths].sort(path_order);
+  const artifacts = [...paths].sort();
   return emit({ goal_id, artifacts }, invocation.values.as_json, artifacts.join('\n'));
 }
 
@@ -120,7 +112,7 @@ export async function run_goal_command(invocation: Invocation): Promise<CommandR
           json_body: { content: await read_source(invocation, values.body_file, true) },
         },
       );
-      return emit(data, as_json, python_text(response_field(invocation, data, 'url')));
+      return emit(data, as_json, scalar_text(response_field(invocation, data, 'url')));
     }
     case 'goal artifact delete': {
       const data = await send(
@@ -128,7 +120,7 @@ export async function run_goal_command(invocation: Invocation): Promise<CommandR
         'DELETE',
         artifact_url(values.goal_id, values.artifact_path),
       );
-      return emit(data, as_json, `${python_text(values.artifact_path)} deleted`);
+      return emit(data, as_json, `${scalar_text(values.artifact_path)} deleted`);
     }
     case 'goal make-manager':
       return goal_response(
@@ -140,7 +132,7 @@ export async function run_goal_command(invocation: Invocation): Promise<CommandR
     case 'goal delete': {
       if (!values.yes) fail_validation(invocation, 'permanent deletion requires --yes');
       const data = await send(invocation, 'DELETE', `/api/goals/${quote(values.goal_id)}`);
-      return emit(data, as_json, `${python_text(values.goal_id)} permanently deleted`);
+      return emit(data, as_json, `${scalar_text(values.goal_id)} permanently deleted`);
     }
     default:
       throw new Error(`No goal command handler for ${path}`);

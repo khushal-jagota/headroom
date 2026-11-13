@@ -46,7 +46,7 @@ const core = new SqliteProcessConversationSystem({
   store,
   backend_child_factories: { codex: no_child, claude: no_child, hermes: no_child },
   message_files: new ConversationMessageFiles(spec.path),
-  model_is_enabled: () => true,
+  delivery_model_refusal: () => null,
   execution_refusal: () => null,
 });
 const answer_state = core.conversation_state('drain')!;
