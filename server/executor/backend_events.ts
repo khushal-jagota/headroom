@@ -1,5 +1,6 @@
 /** The Python executor's closed backend-event registry, with existing core classes. */
 import type * as Backend from '../conversation/backends/contracts.ts';
+import type { MessageContent } from '../conversation/message_content.ts';
 import type {
   BackendEvent,
   BackendEventMethod,
@@ -56,6 +57,10 @@ function message_piece(value: unknown): object {
     piece,
   );
 }
+/** Input already passed its selected wire root. Preserve that root's union winners and exact markers. */
+export function native_message_content(value: unknown): MessageContent {
+  return objects(value, message_piece) as MessageContent;
+}
 function permission_ask(value: unknown): object {
   const ask = fields(value);
   return construct(wire_classes.BackendPermissionAsk, {
@@ -99,7 +104,7 @@ export function decode_event_arguments(
   let converted = value;
   switch (event.method) {
     case 'agent_message_completed':
-      converted = { ...value, content: objects(value.content, message_piece) };
+      converted = { ...value, content: native_message_content(value.content) };
       break;
     case 'plan_updated':
       converted = {

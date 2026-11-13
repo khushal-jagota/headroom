@@ -17,6 +17,7 @@ import type {
 import type { MessageContent } from '../message_content.ts';
 import type { ConversationMessageFiles } from '../message_files.ts';
 import type { StopOptions } from '../../lifecycle/contracts.ts';
+import type { TurnToken as WireTurnToken } from '../../executor/wire.generated.ts';
 export interface TurnToken {
   readonly conversation_id: string;
   readonly turn_number: number;
@@ -103,14 +104,14 @@ export class BackendUserInputRequest {
 }
 export class RetainedBackendRun {
   readonly reference: ChildReference;
-  readonly turn: TurnToken;
+  readonly turn: WireTurnToken;
   readonly delivery_uncertain: boolean;
   readonly retirement_confirmed: boolean;
   readonly stop_requested: boolean;
   readonly incarnation_current: boolean;
   constructor(values: {
     reference: ChildReference;
-    turn: TurnToken;
+    turn: WireTurnToken;
     delivery_uncertain: boolean;
     retirement_confirmed: boolean;
     stop_requested?: boolean;
