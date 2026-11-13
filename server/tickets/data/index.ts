@@ -328,7 +328,12 @@ export function resolve_ticket_draft_context(
   }
   const launch_configuration = requested_ticket_launch_configuration(o.worker_type, o);
   const locale = resolve_ticket_locale(o.locale ?? null);
-  require_usable_model(sql, require_conversation_backend_key(launch_configuration.employee_backend), launch_configuration.employee_launch_model!, locale);
+  require_usable_model(
+    sql,
+    require_conversation_backend_key(launch_configuration.employee_backend),
+    launch_configuration.employee_launch_model!,
+    locale,
+  );
   let p = o.project_id ?? null;
   const m = o.manager_id ?? null;
   if (m !== null && p === null)
@@ -992,8 +997,7 @@ export function write_employee_configuration(
   const backend = require_conversation_backend_key(o.employee_backend);
   const t = load_ticket_for_write(tx, id);
   require_usable_model(tx, backend, o.employee_launch_model!, t.locale);
-  const
-    current = employee_launch_configuration(t),
+  const current = employee_launch_configuration(t),
     d = employee.normalize_employee_launch_configuration(current, o);
   if (equal(current, d)) return t;
   if (!employee_configuration_editable(t))
