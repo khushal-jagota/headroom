@@ -92,7 +92,7 @@ it('joins failing siblings once and retains all history across a failed native c
     'Claude close',
     'Environment stop',
     'Retry close',
-  ].map((value) => new Error(value));
+  ].map((value, index) => (index === 4 ? new AggregateError([], value) : new Error(value)));
   const invocation = invocation_children();
   const stop = vi
     .fn()
@@ -151,9 +151,7 @@ it('joins failing siblings once and retains all history across a failed native c
   await expect(first).rejects.toBeInstanceOf(AggregateError);
   await expect(runtime.shutdown!(options)).rejects.toBeInstanceOf(AggregateError);
   const actual = await runtime.settled().catch((error: unknown) => error);
-  const leaves = (error: unknown): unknown[] =>
-    error instanceof AggregateError ? error.errors.flatMap(leaves) : [error];
-  expect(leaves(actual)).toEqual(expect.arrayContaining(errors));
+  expect((actual as AggregateError).errors).toEqual(expect.arrayContaining(errors));
   expect(stop).toHaveBeenCalledTimes(3);
   expect(retry).toHaveBeenCalledOnce();
   expect(invocation.spawn).not.toHaveBeenCalled();
@@ -260,7 +258,7 @@ it('distinguishes an unavailable handshake from failed query cleanup and retains
   await expect(catalog.stop({ deadline: performance.now() / 1000 + 1 })).rejects.toBeInstanceOf(
     AggregateError,
   );
-  await expect(catalog.settled()).rejects.toBeInstanceOf(AggregateError);
+  await expect(catalog.settled()).rejects.toMatchObject({ errors: [primary, cleanup] });
   expect(close).toHaveBeenCalledTimes(2);
   expect(notify).toHaveBeenCalledExactlyOnceWith(failed);
   expect(child_processes.spawn).not.toHaveBeenCalled();

@@ -42,7 +42,7 @@ export class ModelCatalogCleanupFailed extends AggregateError {
 
 /** Keep each failed native close capability until a later attempt actually succeeds. */
 export function remember_model_catalog_failure(history: Set<unknown>, error: unknown): void {
-  if (error instanceof AggregateError)
+  if (error instanceof AggregateError && error.errors.length)
     error.errors.forEach((nested) => remember_model_catalog_failure(history, nested));
   else history.add(error);
 }

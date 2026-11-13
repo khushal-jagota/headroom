@@ -8,7 +8,10 @@ import {
 } from '../../../conversation/shutdown.ts';
 import type { BackendSnapshot } from '../../../conversation/snapshot/contracts.ts';
 import { ValueError, KeyError } from '../../protocol.ts';
-import { model_catalog_cleanup_pending } from '../../../conversation/backends/catalog_cleanup.ts';
+import {
+  model_catalog_cleanup_pending,
+  remember_model_catalog_failure,
+} from '../../../conversation/backends/catalog_cleanup.ts';
 import type { ModelListRequest } from '../../wire.generated.ts';
 import type { CanonicalReader } from '../storage/journal_contracts.ts';
 import type { CanonicalCatalogResult } from '../mailbox/contracts.ts';
@@ -147,7 +150,7 @@ export class MacCatalog {
   }
   /** Sources invoke this before optional-read fallback can hide native cleanup failure. */
   resource_failure(error: unknown): ServerLifecycleError {
-    this.failures.add(error);
+    remember_model_catalog_failure(this.failures, error);
     if (!this.failure) {
       this.failure = Object.assign(
         new ServerLifecycleError('Mac catalog resource cleanup failed.'),
@@ -160,7 +163,7 @@ export class MacCatalog {
       try {
         this.dependencies.on_failure(this.failure);
       } catch (callback) {
-        this.failures.add(callback);
+        remember_model_catalog_failure(this.failures, callback);
       }
     }
     return this.failure;
