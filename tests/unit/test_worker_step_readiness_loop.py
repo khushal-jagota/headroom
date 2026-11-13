@@ -1198,7 +1198,7 @@ def test_a_saved_model_the_machine_no_longer_offers_errors_once_with_its_choices
     # with a misleading error or is refused and re-claimed on every poll. The dispatch
     # refusal must reach the Ticket's own conversation, and the claim must stay errored.
     from tests.unit.test_admission_model_policy import _model_list
-    from tests.unit.test_conversation_system import _Harness
+    from tests.unit.test_conversation_system import _Harness, _run
 
     from planner.conversation.backend_state import save_machine_model_list
     from planner.conversation.contracts import ConversationBackendKey
@@ -1232,6 +1232,8 @@ def test_a_saved_model_the_machine_no_longer_offers_errors_once_with_its_choices
             assert (await start()).delivery_fate == "refused"
             failed = world.ticket(ticket_id)
             assert failed.ticket_status is TicketStatus.errored
+            # The Ticket keeps the conversation that holds the refusal, so it can be read.
+            assert failed.conversation_id == "retired-model"
             rows = await harness.events("retired-model")
             refusals = [
                 r.payload for r in rows if isinstance(r.payload, PromptDeliveryRefusedEventPayload)
@@ -1246,7 +1248,7 @@ def test_a_saved_model_the_machine_no_longer_offers_errors_once_with_its_choices
         finally:
             await harness.system.shutdown()
 
-    asyncio.run(exercise())
+    _run(exercise)
 
 
 def test_definite_start_failure_stays_failed_until_one_explicit_retry(

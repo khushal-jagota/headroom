@@ -384,6 +384,13 @@ def post_worker_type(
     record = dict(raw)
     skill = record.pop("skill", None)
     definition = store.definition_from_json(json.dumps(record))
+    profile = definition.worker_profile
+    require_usable_model(
+        conn,
+        require_conversation_backend_key(profile.default_backend),
+        profile.default_model,
+        TicketLocale.vps,
+    )
     if skill is not None and not isinstance(skill, dict):
         raise PlannerError(ErrorCode.validation, "skill must be an object", {})
     service.save_worker_type_definition(
