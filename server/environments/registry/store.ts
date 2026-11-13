@@ -28,6 +28,7 @@ import type {
   EnvironmentManifest,
   EnvironmentManifestPayload,
   EnvironmentPortPolicy,
+  PathAdmission,
   ResolvedEnvironmentInstance,
 } from './contracts.ts';
 import {
@@ -51,11 +52,17 @@ function registry_flock(descriptor: number, operation: number): number {
   return result;
 }
 
-export async function with_registry_lock<T>(root: string, action: () => Promise<T>): Promise<T> {
-  const resolved = await validate_absolute_environment_root(root);
+export async function with_registry_lock<T>(
+  root: string,
+  action: () => Promise<T>,
+  admit_path?: PathAdmission,
+): Promise<T> {
+  const canonical = await validate_absolute_environment_root(root, admit_path);
+  const resolved = admit_path?.(canonical) ?? canonical;
   mkdirSync(resolved, { recursive: true });
+  const marker = join(resolved, '.registry.lock');
   const descriptor = openSync(
-    join(resolved, '.registry.lock'),
+    admit_path?.(marker) ?? marker,
     constants.O_RDWR | constants.O_CREAT,
     0o600,
   );
@@ -95,10 +102,16 @@ export function manifest_payload(manifest: EnvironmentManifest): EnvironmentMani
   const { port_policy, ...fields } = manifest;
   return { ...fields, runtime_port: port_policy };
 }
-export async function write_manifest(manifest: EnvironmentManifest): Promise<void> {
-  await mkdir(manifest.instance_root, { recursive: true });
-  const target = join(manifest.instance_root, MANIFEST_FILENAME);
-  const temporary = join(manifest.instance_root, `.${MANIFEST_FILENAME}-${randomUUID()}`);
+export async function write_manifest(
+  manifest: EnvironmentManifest,
+  admit_path?: PathAdmission,
+): Promise<void> {
+  const root = admit_path?.(manifest.instance_root) ?? manifest.instance_root;
+  await mkdir(root, { recursive: true });
+  const destination = join(root, MANIFEST_FILENAME);
+  const target = admit_path?.(destination) ?? destination;
+  const staged = join(root, `.${MANIFEST_FILENAME}-${randomUUID()}`);
+  const temporary = admit_path?.(staged) ?? staged;
   const sorted = (value: unknown): unknown =>
     Array.isArray(value)
       ? value.map(sorted)
@@ -144,7 +157,9 @@ function port_from_payload(payload: Record<string, unknown>): EnvironmentPortPol
 export async function read_manifest(
   path: string,
   caller_environment_root: string,
+  admit_path?: PathAdmission,
 ): Promise<EnvironmentManifest> {
+  path = admit_path?.(path) ?? path;
   let manifest: EnvironmentManifest;
   try {
     const raw: unknown = JSON.parse(
@@ -207,15 +222,16 @@ export async function read_manifest(
       throw new EnvironmentValidationError(`invalid environment manifest: ${path}`);
     throw error;
   }
-  await validate_manifest_location(manifest, path, caller_environment_root);
+  await validate_manifest_location(manifest, path, caller_environment_root, admit_path);
   return manifest;
 }
 async function validate_manifest_location(
   manifest: EnvironmentManifest,
   path: string,
   root: string,
+  admit_path?: PathAdmission,
 ): Promise<void> {
-  const environment_root = await validate_absolute_environment_root(root);
+  const environment_root = await validate_absolute_environment_root(root, admit_path);
   const location = relative(environment_root, await canonical_path(path));
   const kind =
     location === MANIFEST_FILENAME
@@ -246,10 +262,8 @@ async function validate_manifest_location(
       );
   let repositories: readonly string[];
   try {
-    repositories = await validate_repository_roots(
-      manifest.repository_roots,
-      manifest.repository_roots,
-    );
+    const roots = manifest.repository_roots.map((path) => admit_path?.(path) ?? path);
+    repositories = await validate_repository_roots(roots, roots);
   } catch (error) {
     if (error instanceof EnvironmentValidationError)
       throw new EnvironmentValidationError(`invalid environment manifest: ${error.message}`);
@@ -261,7 +275,9 @@ async function validate_manifest_location(
     );
   if (
     manifest.credentials_env_file !== null &&
-    (await canonical_path(manifest.credentials_env_file)) !== manifest.credentials_env_file
+    (await canonical_path(
+      admit_path?.(manifest.credentials_env_file) ?? manifest.credentials_env_file,
+    )) !== manifest.credentials_env_file
   )
     throw new EnvironmentValidationError(
       'invalid environment manifest: credentials_env_file must be canonical',
@@ -305,11 +321,15 @@ export function environment_lifecycle_lease_path(manifest: EnvironmentManifest):
     ? resolve_server_lifecycle_lease_path(manifest.port_policy.port)
     : join(manifest.instance_root, 'run/server-lifecycle.lock');
 }
-export function acquire_stopped_environment_lease(manifest: EnvironmentManifest): LifecycleLease {
+export function acquire_stopped_environment_lease(
+  manifest: EnvironmentManifest,
+  admit_path?: PathAdmission,
+): LifecycleLease {
   let lifecycle: LifecycleLease;
   try {
+    const path = environment_lifecycle_lease_path(manifest);
     lifecycle = acquire_server_lifecycle_lease(
-      environment_lifecycle_lease_path(manifest),
+      admit_path?.(path) ?? path,
       manifest.port_policy.kind === 'fixed' ? manifest.port_policy.port : 0,
     );
   } catch (error) {
@@ -324,7 +344,7 @@ export function acquire_stopped_environment_lease(manifest: EnvironmentManifest)
   try {
     // A supervisor holds the port lease between incarnations. A directly started
     // application holds this canonical DB lock. Both must remain free throughout mutation.
-    const database = acquireRuntimeOwnership(manifest.db_path);
+    const database = acquireRuntimeOwnership(admit_path?.(manifest.db_path) ?? manifest.db_path);
     return {
       close() {
         try {

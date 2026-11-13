@@ -22,7 +22,7 @@ export interface EnvironmentCommandFailure {
 export type EnvironmentCommandResult = EnvironmentCommandTranscript | EnvironmentCommandFailure;
 export interface OperatorPathInputs {
   expand_path(path: string): string;
-  admit_path(path: string): void;
+  admit_path(path: string): string;
 }
 export interface EnvironmentCommandArguments {
   status: { readonly json: boolean };
@@ -85,7 +85,7 @@ export type EnvironmentCommandDependencies<Name extends EnvironmentCommandName> 
   ? HostEnvironmentCommandDependencies
   : Name extends 'backup-current'
     ? CurrentAppCommandDependencies
-    : Name extends 'backup' | 'restore' | 'prepare' | 'reset'
+    : Name extends 'backup' | 'restore' | 'prepare' | 'reset' | 'remove' | 'provision-skills'
       ? OperatorPathInputs
       : undefined;
 export type EnvironmentCommandHandler<Name extends EnvironmentCommandName> = (

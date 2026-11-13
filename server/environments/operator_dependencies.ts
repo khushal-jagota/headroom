@@ -129,9 +129,7 @@ export async function create_production_operator_dependencies(
 ): Promise<OperatorDependencies<OperatorName>> {
   const snapshot = { ...environment };
   if (
-    name === 'provision-skills' ||
     name === 'inspect' ||
-    name === 'remove' ||
     name === 'server-event-loop-tasks' ||
     name === 'app-build' ||
     name === 'run' ||
@@ -142,21 +140,13 @@ export async function create_production_operator_dependencies(
   const home = snapshot.HOME ?? userInfo().homedir;
   // Even path adapters load only for the selected callback, never for help/table imports.
   const path_inputs = async (): Promise<OperatorPathInputs> => {
-    const [
-      { expand_path },
-      { assert_test_database_path, assert_temporary_path },
-      { testModeFromEnvironment },
-    ] = await Promise.all([
+    const [{ expand_path }, { assert_test_database_path }] = await Promise.all([
       import('./paths.ts'),
       import('../core/test_paths.ts'),
-      import('../core/config.ts'),
     ]);
     return {
       expand_path: (path) => expand_path(path, home),
-      admit_path(path) {
-        assert_test_database_path(path);
-        if (testModeFromEnvironment(snapshot)) assert_temporary_path(path);
-      },
+      admit_path: (path) => assert_test_database_path(path, snapshot),
     };
   };
   switch (name) {
@@ -169,10 +159,13 @@ export async function create_production_operator_dependencies(
         home,
         now_unix: () => Date.now() / 1000,
         load_config() {
-          const config = loadConfig(snapshot.PLAN_CONFIG_PATH, { ...snapshot }, { home });
+          const config = loadConfig(
+            undefined,
+            { ...snapshot },
+            { home, admit_path: paths.admit_path },
+          );
           for (const key of ['db_path', 'logs_dir', 'backup_dir'] as const) {
-            config[key] = paths.expand_path(config[key]);
-            paths.admit_path(config[key]);
+            config[key] = paths.admit_path(paths.expand_path(config[key]));
           }
           return config;
         },
@@ -186,7 +179,11 @@ export async function create_production_operator_dependencies(
             operation.require_active();
             const children = operation.children!;
             const probes = create_vps_status_dependencies(children);
-            const application_root = await resolve_status_application_root(snapshot, home);
+            const application_root = await resolve_status_application_root(
+              snapshot,
+              home,
+              paths.admit_path,
+            );
             operation.require_active();
             return action({
               signal: operation.signal,
@@ -207,6 +204,7 @@ export async function create_production_operator_dependencies(
               },
               scratch_options: {
                 signal: operation.signal,
+                admit_path: paths.admit_path,
                 git_execution: { children, environment: snapshot },
               },
             });
@@ -218,6 +216,8 @@ export async function create_production_operator_dependencies(
     case 'restore':
     case 'prepare':
     case 'reset':
+    case 'remove':
+    case 'provision-skills':
       return path_inputs();
     case 'backup-current': {
       const paths = await path_inputs();
@@ -225,7 +225,7 @@ export async function create_production_operator_dependencies(
         ...paths,
         async validate_app_manifest(path: string) {
           const { validate_app_manifest } = await import('./release/identity.ts');
-          await validate_app_manifest(paths.expand_path(path));
+          await validate_app_manifest(paths.admit_path(paths.expand_path(path)));
         },
       };
     }
@@ -236,8 +236,7 @@ export async function create_production_operator_dependencies(
             import('./release/identity.ts'),
             path_inputs(),
           ]);
-          const manifest = paths.expand_path(path);
-          paths.admit_path(manifest);
+          const manifest = paths.admit_path(paths.expand_path(path));
           return validate_app_manifest(manifest, options);
         },
       };
@@ -246,9 +245,6 @@ export async function create_production_operator_dependencies(
     case 'watchdog':
       return {
         async run_watchdog(args) {
-          const paths = await path_inputs();
-          paths.admit_path(args.db);
-          paths.admit_path(args.state_dir);
           const { watchdog_handler } = await import('../stalls/cli.ts');
           return watchdog_handler(args, { ...snapshot }, home);
         },

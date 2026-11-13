@@ -6,7 +6,7 @@ import { isAbsolute, join } from 'node:path';
 import { createReadAccess } from '../../core/database/index.ts';
 import { stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
 import type { ReadSql } from '../../core/database/contracts.ts';
-import { resolved_path } from '../paths.ts';
+import { expand_path, resolved_path } from '../paths.ts';
 import { LEGACY_HOME_FOLDERS, SCRATCH_FOLDERS } from './configuration.ts';
 import type {
   GitResult,
@@ -46,6 +46,7 @@ export function git(
   options: ScratchPassOptions = {},
 ): Promise<GitResult> {
   options.signal?.throwIfAborted();
+  directory = options.admit_path?.(directory) ?? directory;
   return new Promise((resolve, reject) => {
     const launch_options: SpawnOptions = {
       env: Object.fromEntries(
@@ -102,10 +103,16 @@ export function git(
     if (options.signal?.aborted) abort();
   });
 }
-export async function layout_under(root: string, home = homedir()): Promise<ScratchLayout> {
+export async function layout_under(
+  root: string,
+  home = homedir(),
+  admit_path?: ScratchPassOptions['admit_path'],
+): Promise<ScratchLayout> {
   // Path.resolve does not expand '~' here. Only the database admission gate does.
-  const literal = (path: string) =>
-    resolved_path(isAbsolute(path) ? path : process.cwd() + '/' + path);
+  const literal = (path: string) => {
+    const absolute = isAbsolute(path) ? path : process.cwd() + '/' + path;
+    return resolved_path(admit_path?.(absolute) ?? absolute);
+  };
   [root, home] = await Promise.all([literal(root), literal(home)]);
   return {
     repository: join(root, 'repository'),
@@ -120,13 +127,18 @@ export async function layout_for(
   database: string | null,
   db_path: string,
   home?: string,
+  admit_path?: ScratchPassOptions['admit_path'],
 ): Promise<ScratchLayout | null> {
   if (root === null || database === null) return null;
+  const admitted_database = (path: string) => {
+    const expanded = expand_path(path, home);
+    return resolved_path(admit_path?.(expanded) ?? expanded);
+  };
   const [configured, actual] = await Promise.all([
-    resolved_path(database, home),
-    resolved_path(db_path, home),
+    admitted_database(database),
+    admitted_database(db_path),
   ]);
-  return configured === actual ? layout_under(root, home) : null;
+  return configured === actual ? layout_under(root, home, admit_path) : null;
 }
 export function read_ticket_states(sql: ReadSql): TicketStates {
   return new Map(
@@ -173,6 +185,11 @@ export async function collect_ticket_scratch(
   options: ScratchPassOptions = {},
 ): Promise<TicketScratch[]> {
   options.signal?.throwIfAborted();
+  if (options.admit_path)
+    layout = {
+      repository: options.admit_path(layout.repository),
+      folders: layout.folders.map((path) => options.admit_path!(path)),
+    };
   if ((await entry_stat(join(layout.repository, '.git'), true)) === null) return [];
   const entries = new Map<string, Set<string>>(),
     branches = new Map<string, Set<string>>();

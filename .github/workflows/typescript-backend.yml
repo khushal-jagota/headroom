@@ -12,12 +12,14 @@ permissions:
 
 jobs:
   comparison:
+    name: comparison (${{ matrix.node }}, ${{ matrix.part }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         node: ['22', '24']
+        part: [direct, areas]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -42,24 +44,31 @@ jobs:
           scripts/dev check-node web
           (cd web && node node_modules/vite/bin/vite.js build)
       - name: Python comparison lint
+        if: matrix.part == 'direct'
         run: .venv/bin/ruff check tests/compare
       - name: Python type check
+        if: matrix.part == 'direct'
         run: scripts/dev mypy
       - name: Check conversation contracts
+        if: matrix.part == 'direct'
         run: .venv/bin/python scripts/generate_conversation_view_contracts.py --check
       - name: Check remaining generated contracts
+        if: matrix.part == 'direct'
         run: |
           .venv/bin/python scripts/generate_resource_browser_contracts.py --check
           .venv/bin/python scripts/generate_navigation_browser_contracts.py --check
           .venv/bin/python scripts/generate_ticket_workspace_contracts.py --check
           .venv/bin/python scripts/generate_goal_browser_contracts.py --check
       - name: Compare direct runtime checks against Python
+        if: matrix.part == 'direct'
         run: |
           scripts/dev pytest tests/compare/direct --compare-report-dir "$RUNNER_TEMP/comparison"
           .venv/bin/python tests/compare/tools/generate_fixture_oracle.py --check
       - name: Check shared comparison oracles and stalls
+        if: matrix.part == 'direct'
         run: scripts/dev pytest tests/compare --ignore=tests/compare/direct --ignore=tests/compare/test_compare.py
       - name: Compare affected areas or every area after branch updates
+        if: matrix.part == 'areas'
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -185,7 +194,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: comparison-evidence-node-${{ matrix.node }}
+          name: comparison-evidence-node-${{ matrix.node }}-${{ matrix.part }}
           path: ${{ runner.temp }}/comparison
           if-no-files-found: ignore
 

@@ -619,6 +619,14 @@ No dependency, file, process, or network action precedes that refusal. The relea
 Ticket owns native admission, builder, supervisor, and unit files. Slice B restores
 these four handlers after those prerequisites merge.
 
+## Operator manifest path consistency
+
+The Manager requires one admitted path for backup-current's manifest read and validation.
+Python reads the literal Click path, but its validator independently expands a leading `~`.
+If the current directory contains a directory named `~`, Python can validate a different file.
+TypeScript uses one absolute literal path for both operations and retains the literal error filename.
+App-identity retains Python's explicit validator expansion of `~`.
+
 ## Server event-loop task inspection — accepted, deferred
 
 The Manager accepted explicit refusal because the TypeScript runtime cannot enumerate Promise await chains.

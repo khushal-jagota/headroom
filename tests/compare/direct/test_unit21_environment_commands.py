@@ -252,7 +252,7 @@ def test_unit21_environment_command_function_parity(
                 )
                 for category in ("os", "runtime", "unexpected")
             ],
-            dict(command="backup-current", args={**current, "current_app": str(denied)}),
+            dict(command="backup-current", args={**current, "current_app": denied.name}),
             *[
                 dict(command="backup-current", args=current, manifest=manifest)
                 for manifest in (
@@ -278,6 +278,7 @@ def test_unit21_environment_command_function_parity(
             ),
         ]
         with monkeypatch.context() as private:
+            private.chdir(root)
             for key in list(os.environ):
                 private.delenv(key)
             for key, value in environment.items():
@@ -350,7 +351,7 @@ def test_unit21_environment_command_function_parity(
                     (ROOT / "server/environments/testing/commands.ts").as_uri(),
                     str(spec),
                 ],
-                cwd=ROOT,
+                cwd=root,
                 env=environment,
                 capture_output=True,
                 text=True,
@@ -375,8 +376,24 @@ def test_unit21_environment_command_function_parity(
         assert actual["results"][-1] == {"thrown": "SqliteError"}
         assert actual["routing"] == json.loads(json.dumps(routing, default=str))
         operators = actual["operators"]
+        assert operators["literal_manifest_path"] == str(Path("link/../app") / "manifest.json")
         assert operators["invocation_home"] == str(root)
-        assert operators["unsafe_paths_refused"] == 8
+        assert operators["unsafe_paths_refused"] == 4
+        snapshot = operators["snapshot_only_refusals"]
+        assert snapshot["actual_test_mode"] is False and snapshot["snapshot_test_mode"] is True
+        assert snapshot["home"] == str(root / "snapshot-home")
+        assert snapshot["refused"] == [
+            "environment-tree",
+            "provision-home",
+            "cleanup-legacy-home",
+        ]
+        assert snapshot["admissions"]
+        assert any(
+            row["path"] == str(root / "snapshot-home/hermes") for row in snapshot["admissions"]
+        )
+        assert all(
+            row["canonical"] == str(Path(row["path"]).resolve()) for row in snapshot["admissions"]
+        )
         assert operators["interrupted_status"]["ready"]
         assert operators["interrupted_status"]["actual_closed"]
         assert operators["interrupted_status"]["cleanup_failure_retained"]
@@ -413,7 +430,7 @@ def test_unit21_environment_command_function_parity(
             "Warning: app artifact digest does not match its manifest."
         )
         assert expected[16]["stderr"] == (
-            f"Error: [Errno 13] Permission denied: {str(denied / 'manifest.json')!r}\n"
+            f"Error: [Errno 13] Permission denied: {str(Path(denied.name) / 'manifest.json')!r}\n"
         )
         assert [result.get("thrown") for result in actual["results"][-9:-1]] == [
             None,

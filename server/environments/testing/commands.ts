@@ -9,11 +9,13 @@ import type {
   SpawnOptionsWithoutStdio,
 } from 'node:child_process';
 import { loadConfig } from '../../core/config.ts';
+import { posix_child_path } from '../../core/python_path.ts';
 import { operator_commands } from '../commands.ts';
 import { AppManifestValidationFailure, OperatorInterrupted } from '../command_contracts.ts';
 import { create_production_operator_dependencies } from '../operator_dependencies.ts';
 import { OneShotChildren } from '../../lifecycle/one_shot_children.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
+import { remove_ticket_scratch } from '../ticket_scratch/apply.ts';
 import type {
   EnvironmentCommandArguments,
   EnvironmentCommandName,
@@ -26,6 +28,96 @@ interface Call {
   args: unknown;
   manifest?: string;
   validator_failure?: 'os' | 'value' | 'runtime' | 'unexpected';
+}
+async function snapshot_only_refusals(root: string): Promise<unknown> {
+  const keys = ['PLAN_TEST_MODE', 'VITEST', 'PYTEST_CURRENT_TEST'] as const;
+  const original = keys.map((key) => process.env[key]);
+  const outside = '/refused-operator-snapshot-path';
+  const home = join(root, 'snapshot-home'),
+    estate = join(root, 'snapshot-estate');
+  await mkdir(home);
+  await mkdir(estate);
+  await symlink(outside, join(estate, 'staging'));
+  await symlink(outside, join(home, 'pct'));
+  const admissions: { path: string; canonical: string }[] = [];
+  const record = (admit: (path: string) => string) => (path: string) => {
+    const canonical = admit(path);
+    admissions.push({ path, canonical });
+    return canonical;
+  };
+  try {
+    process.env.PLAN_TEST_MODE = '0';
+    delete process.env.VITEST;
+    delete process.env.PYTEST_CURRENT_TEST;
+    assert.deepEqual(
+      keys.map((key) => process.env[key]),
+      ['0', undefined, undefined],
+    );
+    const snapshot = { ...process.env, HOME: home, PLAN_TEST_MODE: '1' };
+    const remove = await create_production_operator_dependencies('remove', undefined, snapshot);
+    remove.admit_path = record(remove.admit_path);
+    await assert.rejects(
+      operator_commands.remove.handler(
+        {
+          kind: 'staging',
+          environment_root: estate,
+          repository_roots: [],
+          json: false,
+        },
+        remove,
+      ),
+      /OS temp folder/,
+    );
+    const provision = await create_production_operator_dependencies(
+      'provision-skills',
+      undefined,
+      snapshot,
+    );
+    assert.equal(provision.expand_path('~'), home);
+    provision.admit_path = record(provision.admit_path);
+    const refused = await operator_commands['provision-skills'].handler(
+      {
+        database_parent: join(root, 'runtime'),
+        hermes_home: join(home, 'hermes'),
+        codex_home: join(home, 'codex'),
+        claude_home: outside,
+      },
+      provision,
+    );
+    assert('failure_message' in refused && refused.failure_message.includes('OS temp folder'));
+    const cleanup = await create_production_operator_dependencies('cleanup', undefined, snapshot);
+    assert.equal(cleanup.home, home);
+    await assert.rejects(
+      cleanup.with_resources((resources) =>
+        remove_ticket_scratch(
+          {
+            repository: join(root, 'git/panels/repository'),
+            folders: [join(home, 'pct')],
+          },
+          [{ ticket_id: 't_12345678', entries: [join(home, 'pct/t_12345678')], branches: [] }],
+          new Map([['t_12345678', ['done', 0] as const]]),
+          1_800_000_000,
+          {
+            ...resources.scratch_options,
+            admit_path: record(resources.scratch_options.admit_path!),
+          },
+        ),
+      ),
+      /OS temp folder/,
+    );
+    return {
+      actual_test_mode: false,
+      snapshot_test_mode: true,
+      home,
+      refused: ['environment-tree', 'provision-home', 'cleanup-legacy-home'],
+      admissions,
+    };
+  } finally {
+    keys.forEach((key, index) => {
+      if (original[index] === undefined) delete process.env[key];
+      else process.env[key] = original[index];
+    });
+  }
 }
 async function interrupted_status(root: string): Promise<unknown> {
   const began = performance.now(),
@@ -146,7 +238,7 @@ async function operator_probe(root: string): Promise<unknown> {
     assert.equal(dependencies, undefined);
     deferred[name] = await operator_commands[name].handler({} as never, dependencies);
   }
-  for (const name of ['provision-skills', 'inspect', 'remove', 'server-event-loop-tasks'] as const)
+  for (const name of ['inspect', 'server-event-loop-tasks'] as const)
     assert.equal(
       await create_production_operator_dependencies(name, undefined, environment),
       undefined,
@@ -184,19 +276,17 @@ async function operator_probe(root: string): Promise<unknown> {
     codex_home: join(root, 'test-codex'),
     claude_home: join(root, 'test-claude'),
   };
-  for (const field of ['database_parent', 'hermes_home', 'codex_home', 'claude_home'] as const) {
-    const result = await operator_commands['provision-skills'].handler(
-      { ...provision, [field]: outside },
-      undefined,
-    );
-    assert('failure_message' in result && result.failure_message.includes('OS temp folder'));
-  }
+  const provisioning = await create_production_operator_dependencies(
+    'provision-skills',
+    undefined,
+    environment,
+  );
   const linked_parent = join(root, 'linked-skill-source');
   await mkdir(linked_parent);
   await symlink(outside, join(linked_parent, 'skills'));
   const linked = await operator_commands['provision-skills'].handler(
     { ...provision, database_parent: linked_parent },
-    undefined,
+    provisioning,
   );
   assert('failure_message' in linked && linked.failure_message.includes('OS temp folder'));
   const linked_home = join(root, 'linked-skill-home');
@@ -204,7 +294,7 @@ async function operator_probe(root: string): Promise<unknown> {
   await symlink(outside, join(linked_home, 'skills'));
   const destination = await operator_commands['provision-skills'].handler(
     { ...provision, hermes_home: linked_home },
-    undefined,
+    provisioning,
   );
   assert(
     'failure_message' in destination && destination.failure_message.includes('OS temp folder'),
@@ -222,6 +312,7 @@ async function operator_probe(root: string): Promise<unknown> {
     /watchdog provider command is unavailable in test mode/,
   );
   return {
+    literal_manifest_path: posix_child_path('link/../app', 'manifest.json'),
     deferred,
     diagnostic: await Promise.all(
       [false, true].map((json) =>
@@ -231,7 +322,8 @@ async function operator_probe(root: string): Promise<unknown> {
     watchdog: await operator_commands.watchdog.handler(watchdog_args, {
       run_watchdog: async () => 'recorded watchdog',
     }),
-    unsafe_paths_refused: 8,
+    unsafe_paths_refused: 4,
+    snapshot_only_refusals: await snapshot_only_refusals(root),
     invocation_home: paths.expand_path('~'),
     interrupted_status: await interrupted_status(root),
   };
@@ -354,7 +446,11 @@ export async function command_probe(
           ) => Promise<EnvironmentCommandResult>;
           result = await handler(
             call.args,
-            ['backup', 'restore', 'prepare', 'reset'].includes(call.command) ? paths : undefined,
+            ['backup', 'restore', 'prepare', 'reset', 'remove', 'provision-skills'].includes(
+              call.command,
+            )
+              ? paths
+              : undefined,
           );
         }
         results.push(result);
