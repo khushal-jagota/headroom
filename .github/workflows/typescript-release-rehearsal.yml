@@ -1,0 +1,79 @@
+name: TypeScript archive release-scale proof
+
+on:
+  push:
+    branches: [ticket/t_3ud37ykx-release-native]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-rehearsal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Build one private Python payload and compare both archive producers
+        shell: bash
+        env:
+          PROOF_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          umask 077
+          proof_root=$(mktemp -d "$RUNNER_TEMP/panels-archive.XXXXXX")
+          evidence="$RUNNER_TEMP/typescript-archive-evidence"
+          mkdir -p "$evidence" "$proof_root"/{home/.codex,home/.claude,home/.hermes,config,cache,data,state,runtime,logs,backups,workspace,files,scratch,tmp}
+          trap 'status=$?; set +e; if [ -f "$proof_root/proof.json" ]; then cp "$proof_root/proof.json" "$evidence/proof.json"; else printf "{\"completed\":false,\"phase\":\"before-proof-receipt\",\"exit_code\":%s}\n" "$status" > "$evidence/setup.json"; fi; rm -rf -- "$proof_root"; cleanup=$?; if [ "$cleanup" -ne 0 ]; then status=1; fi; exit "$status"' EXIT
+          sudo apt-get update
+          sudo apt-get install -y patchelf binutils libicu-dev pkg-config
+          # Scrub before any dependency lifecycle or application import.
+          env -i PATH="$PATH" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+            GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            PROOF_SHA="$PROOF_SHA" PROOF_ROOT="$proof_root" PROOF_EVIDENCE="$evidence" \
+            PROOF_RUN_ID="$GITHUB_RUN_ID" PROOF_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            PROOF_IMAGE="${ImageOS:-unknown}/${ImageVersion:-unknown}" \
+            HOME="$proof_root/home" CODEX_HOME="$proof_root/home/.codex" \
+            CLAUDE_CONFIG_DIR="$proof_root/home/.claude" HERMES_HOME="$proof_root/home/.hermes" \
+            PLAN_HERMES_HOME="$proof_root/home/.hermes" \
+            XDG_CONFIG_HOME="$proof_root/config" XDG_CACHE_HOME="$proof_root/cache" \
+            XDG_DATA_HOME="$proof_root/data" XDG_STATE_HOME="$proof_root/state" \
+            XDG_RUNTIME_DIR="$proof_root/runtime" TMPDIR="$proof_root" TMP="$proof_root" TEMP="$proof_root" \
+            PIP_CONFIG_FILE=/dev/null PIP_CACHE_DIR="$proof_root/cache/pip" npm_config_cache="$proof_root/cache/npm" \
+            PLAN_CONFIG_PATH="$proof_root/config.yaml" PLAN_DB_PATH="$proof_root/data/planner.db" \
+            PLAN_DATA_DIR="$proof_root/data" PLAN_APP_ROOT="$proof_root/corpus/app" \
+            PLAN_LOGS_DIR="$proof_root/logs" PLAN_BACKUP_DIR="$proof_root/backups" \
+            PLAN_WORKSPACE_ROOT="$proof_root/workspace" PLAN_TICKET_FILES_DIR="$proof_root/files" \
+            PLAN_TICKET_SCRATCH_ROOT="$proof_root/scratch" PLAN_TICKET_SCRATCH_DATABASE="$proof_root/data/planner.db" \
+            PLAN_CREDENTIAL_KEY_PATH="$proof_root/data/key" PLAN_KEY_PATH="$proof_root/data/key" \
+            PLAN_DISPATCHER_LOCK_PATH="$proof_root/runtime/dispatcher.lock" \
+            PLAN_SERVER_CONTROL_SOCKET="$proof_root/runtime/control.sock" \
+            PLAN_SERVER_LIFECYCLE_LEASE_PATH="$proof_root/runtime/lifecycle.lock" \
+            PLAN_SERVER_URL=http://127.0.0.1:0 PLAN_PORT=0 PLAN_TEST_MODE=1 PLAN_DISPATCH_ENABLED=false \
+            bash --noprofile --norc -euo pipefail <<'PROOF'
+          printf '{}\n' > "$PLAN_CONFIG_PATH"
+          python -m venv .venv
+          .venv/bin/python -c 'import json,os,platform,sys; from pathlib import Path; Path(os.environ["PROOF_EVIDENCE"],"platform.json").write_text(json.dumps(dict(sha=os.environ["PROOF_SHA"],run_id=os.environ["PROOF_RUN_ID"],attempt=os.environ["PROOF_RUN_ATTEMPT"],image=os.environ["PROOF_IMAGE"],os=platform.platform(),architecture=platform.machine(),python=sys.version,executable=sys.executable,workflow=".github/workflows/typescript-release-rehearsal.yml"),indent=2))'
+          node -e 'require("node:fs").writeFileSync(process.env.PROOF_EVIDENCE+"/node.json",JSON.stringify({version:process.version,executable:process.execPath,architecture:process.arch}));if(process.platform!=="linux"||process.arch!=="x64"||!process.version.startsWith("v22."))throw Error("Linux x64 Node22 proof required")'
+          .venv/bin/python -m pip install -r requirements.txt
+          .venv/bin/python -m pip install --editable . --config-settings editable_mode=compat
+          python -I -S -B scripts/development_safety/bootstrap.py npm --prefix server ci
+          .venv/bin/python tests/compare/direct/unit21_release_hosted.py \
+            "$PROOF_ROOT" "$PROOF_ROOT/proof.json" "$PROOF_SHA"
+          PROOF
+      - name: Preserve JSON proof evidence only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: typescript-archive-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/typescript-archive-evidence/*.json
+          if-no-files-found: warn

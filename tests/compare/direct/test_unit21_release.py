@@ -11,8 +11,11 @@ import stat
 import subprocess
 import tarfile
 import time
+from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from tests.support.synthetic_homes import create_synthetic_homes
@@ -20,6 +23,8 @@ from tests.support.update_apps import build_app, rewrite_artifact_digest
 from tests.unit.test_app import _legacy_cached_app
 
 from planner.environments.app import digest_app_artifact, digest_app_source, validate_app_manifest
+from planner.environments.runtime_contracts import RuntimeContractError
+from planner.environments.runtime_elf import ElfDynamic, ElfObject, read_dynamic, resolve_provider
 from planner.environments.update_artifacts import (
     create_app_archive,
     extract_app_archive,
@@ -30,6 +35,60 @@ from planner.environments.update_install import require_exact_schema_frontier, s
 ROOT = Path(__file__).resolve().parents[3]
 SHA = "a" * 40
 FIXTURE_TIME_NS = 1_700_000_000_125_000_000
+
+
+def _native_loader_fixture(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    library = "libpanels_fixture_leaf.so"
+    for name in ("bin", "extensions", "ancestor", "private"):
+        (root / name).mkdir(parents=True)
+    for name in ("ancestor", "private"):
+        (root / name / library).write_text(name + " ABI")
+    caller = ElfObject(root / "bin/node", ElfDynamic((), ("$ORIGIN/../ancestor",), None, None))
+    extension = root / "extensions/addon.node"
+    requester = ElfObject(extension, ElfDynamic((), (), None, None))
+    private = ("$ORIGIN/../private",)
+    scenarios = [
+        (library, requester, (caller,)),
+        (library, ElfObject(extension, ElfDynamic((), (), ("$ORIGIN/absent",), None)), (caller,)),
+        (
+            library,
+            requester,
+            (
+                ElfObject(
+                    caller.path, ElfDynamic((), caller.dynamic.rpath, caller.dynamic.rpath, None)
+                ),
+            ),
+        ),
+        (library, ElfObject(extension, ElfDynamic((), private, None, None)), (caller,)),
+        (library, ElfObject(extension, ElfDynamic((), (), private, None)), (caller,)),
+        ("../unsafe.so", requester, (caller,)),
+    ]
+    providers, requests = [], []
+
+    def wire(value: ElfObject) -> dict[str, Any]:
+        return dict(path=str(value.path), dynamic=asdict(value.dynamic))
+
+    for name, owner, ancestors in scenarios:
+        requests.append(
+            dict(name=name, requester=wire(owner), ancestors=[wire(value) for value in ancestors])
+        )
+        try:
+            providers.append(dict(provider=str(resolve_provider(name, owner, ancestors, {}))))
+        except RuntimeContractError as error:
+            providers.append(dict(error=str(error)))
+    dynamic = (
+        "(NEEDED) [libfirst.so]\n(NEEDED) [libsecond.so]\n"
+        "(RPATH) [$ORIGIN/../private:${ORIGIN}/../ancestor]\n(RUNPATH) []\n"
+    )
+    header = "[Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]\n"
+
+    def fake_read(arguments: list[str], **_kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(stdout=dynamic if arguments[1] == "-dW" else header)
+
+    with patch("planner.environments.runtime_elf.subprocess.run", fake_read):
+        parsed = asdict(read_dynamic(extension))
+    expected: dict[str, Any] = json.loads(json.dumps(dict(dynamic=parsed, providers=providers)))
+    return dict(dynamic=[dynamic, header], providers=requests), expected
 
 
 def _tree(root: Path) -> list[dict[str, Any]]:
@@ -443,12 +502,21 @@ def test_unit21_release_identity_archive_and_frontier(
     else:
         raise AssertionError("the combined invalid contract/tree must refuse")
     assert invalid_order.startswith("invalid runtime contract:")
+    native_sentinel = tmp_path / "native-outside-sentinel"
+    native_sentinel.write_bytes(b"outside native write sentinel\n")
+    native_root = tmp_path / "native-link-provider"
+    native_library = native_root / "runtime/lib/libfixture.so"
+    native_library.parent.mkdir(parents=True)
+    native_library.symlink_to(native_sentinel)
+    native_paths = sorted(str(item.relative_to(native_root)) for item in native_root.rglob("*"))
     node = shutil.which("node")
     assert node is not None
+    loader_input, expected_loader = _native_loader_fixture(tmp_path / "loader")
     launcher = tmp_path / "probe.mjs"
     launcher.write_text(
-        "const{release_parity}=await import(process.argv[2]);"
+        "const{release_parity,native_loader_parity}=await import(process.argv[2]);"
         "const result=await release_parity(process.argv[3],JSON.parse(process.argv[4]));"
+        "result.native_loader=await native_loader_parity(JSON.parse(process.argv[5]));"
         "console.log(JSON.stringify(result));"
     )
     env = {
@@ -482,6 +550,7 @@ def test_unit21_release_identity_archive_and_frontier(
             (ROOT / "server/environments/release/testing/release_parity.ts").as_uri(),
             str(tmp_path),
             json.dumps(vectors),
+            json.dumps(loader_input),
         ],
         cwd=ROOT,
         env=env,
@@ -508,6 +577,13 @@ def test_unit21_release_identity_archive_and_frontier(
     node_seconds = time.perf_counter() - node_started
     assert process.returncode == 0, stderr
     actual: dict[str, Any] = json.loads(stdout)
+    assert actual["native_tree_admission"] == "app contains a symlink outside its root"
+    assert native_sentinel.read_bytes() == b"outside native write sentinel\n"
+    assert (
+        sorted(str(item.relative_to(native_root)) for item in native_root.rglob("*"))
+        == native_paths
+    )
+    assert actual["native_loader"] == expected_loader
     assert actual["identity"] == {
         "source": digest_app_source(app),
         "artifact": digest_app_artifact(app),
@@ -651,6 +727,11 @@ def test_unit21_release_identity_archive_and_frontier(
                     "producer_trees": actual["producer_trees"],
                     "node_v2_protocol": actual["node_protocol"],
                     "frontier": actual["frontier"],
+                    "native_static": {
+                        "loader_equal": True,
+                        "outside_target": actual["native_tree_admission"],
+                        "full_native_closure": "OPEN; static synthetic paths only",
+                    },
                     "accepted_restrictions": ["GNU sparse", "PAX sparse", "member behind link"],
                     "limits": {
                         "oversized_header": "metadata entry bytes",

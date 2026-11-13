@@ -15,7 +15,7 @@ import type { SpawnOptions } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { createReadAccess } from '../../../core/database/index.ts';
-import type { MigrationGraph } from '../contracts.ts';
+import type { ElfObject, MigrationGraph } from '../contracts.ts';
 import {
   APP_FORMAT,
   ARCHIVE_SPACE_RESERVE_BYTES,
@@ -25,6 +25,34 @@ import { create_app_archive, extract_app_archive, hash_archive } from '../archiv
 import { digest_app_artifact, digest_app_source, validate_app_manifest } from '../identity.ts';
 import { require_node_database_frontier, schema_change_pending } from '../migrations.ts';
 import { AppValidationError } from '../contracts.ts';
+
+import { parse_dynamic } from '../native/elf.ts';
+import { resolve_provider } from '../native/providers.ts';
+import { RuntimeContractError } from '../../updates/logic/runtime_contract.ts';
+import { complete_node_runtime } from '../native_inventory.ts';
+
+export async function native_loader_parity(spec: {
+  dynamic: readonly [string, string];
+  providers: readonly { name: string; requester: ElfObject; ancestors: readonly ElfObject[] }[];
+}): Promise<unknown> {
+  const providers = [];
+  for (const request of spec.providers) {
+    try {
+      providers.push({
+        provider: await resolve_provider(
+          request.name,
+          request.requester,
+          request.ancestors,
+          new Map(),
+        ),
+      });
+    } catch (error) {
+      if (!(error instanceof RuntimeContractError)) throw error;
+      providers.push({ error: error.message });
+    }
+  }
+  return { dynamic: parse_dynamic(...spec.dynamic), providers };
+}
 
 interface ArchiveVector {
   name: string;
@@ -402,7 +430,20 @@ async function compare_release(
       access.close();
     }
   }
+  let native_tree_admission: string;
+  try {
+    await complete_node_runtime(join(root, 'native-link-provider'));
+    throw new Error('native packaging admitted an outside write target');
+  } catch (error) {
+    if (
+      !(error instanceof AppValidationError) ||
+      error.message !== 'app contains a symlink outside its root'
+    )
+      throw error;
+    native_tree_admission = error.message;
+  }
   return {
+    native_tree_admission,
     identity: {
       source: await digest_app_source(app),
       artifact: await digest_app_artifact(app),
