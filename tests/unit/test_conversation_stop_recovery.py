@@ -419,3 +419,59 @@ def test_retained_evidence_keeps_open_questions_and_memory_notice_origin(
         )
 
     _run(exercise)
+
+
+def test_constructor_prefetch_does_not_revive_intent_with_unknown_prompt(
+    stopped: tuple[_Harness, _StopFactory],
+) -> None:
+    from unittest.mock import MagicMock
+
+    from planner.conversation.contracts import ConversationBackendKey
+    from planner.conversation.lifecycle import (
+        LifecycleFact,
+        LifecycleKind,
+        LifecycleOperation,
+        LifecycleStatus,
+    )
+    from planner.conversation.storage import ConversationStore, RetainedRunEvidence
+    from planner.conversation.system import SqliteProcessConversationSystem
+
+    harness, factory = stopped
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        record = harness.system._conversations["c"].record
+        run = RetainedBackendRun(
+            ChildReference("inc", "child", "c"), TurnToken("c", 1), False, False
+        )
+        factory.runs["c"] = run
+        facts = (
+            LifecycleFact(
+                LifecycleKind.turn, "1", 1, LifecycleOperation.turn, LifecycleStatus.intent
+            ),
+            LifecycleFact(
+                LifecycleKind.attempt,
+                "prompt:1",
+                1,
+                LifecycleOperation.prompt,
+                LifecycleStatus.unknown,
+            ),
+        )
+        store = MagicMock(spec=ConversationStore)
+        store.signal_coordinator = None
+        store.read_conversation_records.return_value = (record,)
+        store.read_live_background_task_ids.return_value = {}
+        system = SqliteProcessConversationSystem(
+            store=store,
+            message_files=harness.message_files,
+            backend_child_factories={key: factory for key in ConversationBackendKey},
+            retained_runs=(run,),
+            retained_run_evidence={"c": RetainedRunEvidence(facts, (), False)},
+        )
+        assert system._conversations["c"].running_turn is None
+        assert system._retained_run_evidence is None
+        store._read_events_after_sync.assert_not_called()
+        store._open_turn_holds_only_memory_notices_sync.assert_not_called()
+        system._runtime_ownership.close()
+
+    _run(exercise)
