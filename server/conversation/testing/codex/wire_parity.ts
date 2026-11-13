@@ -1,4 +1,5 @@
 /** Export-only direct proof companion. It starts only the supplied scripted executable. */
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { readFileSync } from 'node:fs';
 import {
   CodexAppServerClient,
@@ -23,6 +24,7 @@ export async function run_wire_parity(spec: WireParitySpec): Promise<unknown> {
     ended = resolve;
   });
   const client = new CodexAppServerClient({
+    child_processes: new ChildProcesses(),
     description: 'unit17-wire',
     warning(message) {
       warnings.push(

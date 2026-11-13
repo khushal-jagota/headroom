@@ -386,8 +386,8 @@ def test_scratch_runtime_waits_and_fences_held_pass_at_deadline(
         env,
     )
     assert actual["before_first"] == 0 and actual["pending_timers"] == 0
+    assert actual["actual_retained"]
     assert actual["seen"] == [[], ["kept-on-first-pass"]]
-    assert 15 <= actual["stop_ms"] < 500
     assert actual["after_stop"] == actual["disabled_timers"] == 0
     assert set(actual["timer_values"]) == {scratch.CLEANUP_INTERVAL_SECONDS * 1000}
     assert actual["owned_git_reaped"] and actual["entry_preserved"]

@@ -1,3 +1,4 @@
+import { writeSync } from 'node:fs';
 import { assert_test_database_path } from './test_paths.ts';
 import type { FastifyInstance, FastifyListenOptions } from 'fastify';
 import { createAreasRuntime } from '../areas.ts';
@@ -35,6 +36,19 @@ import { createVoiceRoutes } from '../conversation/voice_transcription/routes.ts
 import { CLEANUP_INTERVAL_SECONDS } from '../conversation/video_uploads/configuration.ts';
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 import type { EnvironmentRuntime } from '../environments/contracts.ts';
+import { HttpRequestScope } from './http/lifetime.ts';
+import { ChildProcesses } from '../lifecycle/owned_processes.ts';
+import { SHUTDOWN_HARD_SECONDS } from '../lifecycle/configuration.ts';
+import { is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
+import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
+import { ShutdownCoordinator } from '../lifecycle/shutdown.ts';
+import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
+import type {
+  OwnedChildProcesses,
+  OwnedOneShotChildren,
+  ShutdownOwner,
+  StopOptions,
+} from '../lifecycle/contracts.ts';
 
 import {
   compose_background_services,
@@ -61,6 +75,8 @@ export interface ConversationCompositionContext extends Omit<
   publication: SignalPublicationCoordinator;
   require_runtime_ownership(): void;
   revoke_signal(): void;
+  one_shot_children: OwnedOneShotChildren;
+  child_processes: OwnedChildProcesses;
 }
 export interface TestCompositionContext extends ConversationCompositionContext {
   backendServices?: BackendHttpRuntime;
@@ -92,12 +108,14 @@ export interface ServerOptions {
   /** Test-host projection bootstrap, after reconciliation and before publication. */
   beforePublication?: (database: Database) => void;
 }
-export interface StartedServer {
+export interface StartedServer extends ShutdownOwner {
   readonly address: string;
-  close(): Promise<void>;
 }
 export async function startServer(options: ServerOptions = {}): Promise<StartedServer> {
   const media_lifetime = new AbortController();
+  const request_lifetime = new HttpRequestScope();
+  const child_processes = new ChildProcesses();
+  const one_shot_children = new OneShotChildren(child_processes);
   let video_cleanup_timer: ReturnType<typeof setInterval> | undefined;
   let video_cleanup_work: Promise<unknown> | undefined;
   const config = loadConfig();
@@ -119,7 +137,6 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   let app: FastifyInstance | undefined;
   let ownership_current = true;
   let signalRevoked = false;
-  let closing: Promise<void> | undefined;
   let recovery: Promise<void> | undefined;
   const requireOwnership = () => {
     if (!ownership_current) throw new Error('the conversation runtime is shut down');
@@ -130,71 +147,180 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     publication?.invalidate('shutdown');
   };
   const onSignal = () => {
-    void close().catch((error) => {
-      console.error(error);
+    void close().catch(() => {
       process.exitCode = 1;
     });
   };
-  const close = (): Promise<void> => {
-    if (closing) return closing;
-    conversationWrites.seal();
-    video_uploads?.seal();
-    // Stop new connections without destroying active request bodies.
-    app?.server.close(() => {});
-    clearInterval(video_cleanup_timer);
-    revokeSignal();
-    areas.closeSubscriptions();
-    const deadline = performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
-    const failures: unknown[] = [];
-    const attempt = async (operation: () => unknown) => {
+  const shutdown = new ShutdownCoordinator({
+    grace_seconds: SHUTDOWN_GRACE_SECONDS,
+    hard_seconds: SHUTDOWN_HARD_SECONDS,
+    grace_expired(stages) {
+      const state = shutdown.shutdown_state;
       try {
-        await operation();
-      } catch (error) {
-        failures.push(error);
+        writeSync(
+          2,
+          `Shutdown grace expired; pending: ${state.pending.join(', ')}; failed: ${state.failures.map((failure) => failure.name).join(', ')}\n`,
+        );
+      } catch {
+        /* A closed log sink must not skip cancellation. */
       }
-    };
-    closing = (async () => {
-      // Fence every producer before awaiting either drain. Ownership also covers
-      // environment setup that was already pending when shutdown began.
-      const producers = Promise.all([
-        attempt(() => recorded_usage?.stop?.({ deadline })),
-        attempt(() => background?.close({ deadline })),
-        attempt(() => environments?.close({ deadline })),
-        attempt(() => environmentsStarting?.catch(() => {})),
-        attempt(() =>
-          backendServices?.shutdown
-            ? backendServices.shutdown()
-            : backendServices?.codex_sign_in?.shutdown(),
-        ),
-      ]);
-      // On deadline failure retain the database and ownership beneath active transfers.
-      await video_uploads?.drain({ deadline });
-      media_lifetime.abort(new Error('Media processing stopped at shutdown'));
-      await attempt(() => video_cleanup_work);
-      await producers;
-      await attempt(() => conversationWrites.drain());
-      await attempt(() => credential_requests?.finish_operations());
-      // Concrete usage shutdown already joins its resources by the shared deadline.
-      // Do not await its retained cleanup again after a deadline failure.
-      if (!recorded_usage?.stop) await attempt(() => recorded_usage?.finish_operations());
-      // Loop cancellation shares one deadline. Core and record settlement have
-      // no deadline contract, so retain ownership through their final writes.
-      await attempt(() => core?.shutdown());
-      await attempt(() => recovery);
-      await attempt(() => areas.closeRecord());
-      await attempt(() => app?.close());
-      await attempt(() => areas.detachNavigation());
-      if (failures.length)
-        throw new AggregateError(failures, 'Server shutdown failed; ownership retained');
-      ownership_current = false;
-      database?.close();
-      dispatcher?.close();
-      ownership.close();
-      process.off('SIGTERM', onSignal);
-      process.off('SIGINT', onSignal);
-    })();
-    return closing;
-  };
+      stages.own('HTTP connection cutoff', () => request_lifetime.force_close_connections());
+      stages.own('media cancellation', () =>
+        media_lifetime.abort(new Error('Media processing stopped after shutdown grace')),
+      );
+    },
+    hard_stop(state, force_deadline) {
+      // This path never awaits adapter cleanup or runs database/record finalizers.
+      try {
+        try {
+          writeSync(
+            2,
+            `Shutdown hard bound; pending: ${state.pending.join(', ')}; failed: ${state.failures.map((failure) => failure.name).join(', ')}\n`,
+          );
+        } catch {
+          /* Attempt force even when stderr is closed. */
+        }
+        try {
+          child_processes.force_kill(force_deadline);
+        } catch (error) {
+          try {
+            writeSync(2, `Shutdown force was not fully confirmed: ${String(error)}\n`);
+          } catch {
+            /* Logging cannot prevent the terminal exit. */
+          }
+        }
+      } finally {
+        process.exit(1);
+      }
+    },
+    begin(stages, stop) {
+      // Independent fences all run, even if one throws. The coordinator publishes
+      // its latch/deadlines and referenced hard timer before entering this callback.
+      stages.own('HTTP admission', () => request_lifetime.seal());
+      stages.own('conversation write admission', () => conversationWrites.seal());
+      stages.own('video admission', () => video_uploads?.seal());
+      stages.own('workspace admission', () => core?.workspace_admission.seal());
+      stages.own('one-shot admission', () => one_shot_children.seal());
+      stages.own('HTTP listener', () => {
+        app?.server.close(() => {});
+      });
+      stages.own('video timer', () => clearInterval(video_cleanup_timer));
+      stages.own('publication', revokeSignal);
+      stages.own('record admission and subscriptions', () => areas.sealRecord());
+      const producer = (
+        name: string,
+        begin: () => void | Promise<void>,
+        actual: () => Promise<void>,
+      ) => {
+        stages.own(name, () => {
+          const flights: Promise<unknown>[] = [];
+          for (const operation of [begin, actual]) {
+            try {
+              flights.push(Promise.resolve(operation()));
+            } catch (error) {
+              flights.push(Promise.reject(error));
+            }
+          }
+          // The bounded observer is NEVER the proof of actual settlement.
+          return Promise.allSettled(flights).then((results) => {
+            const failures = results.flatMap((result, index) =>
+              result.status === 'rejected' &&
+              !(index === 0 && result.reason instanceof ShutdownDeadlineExceeded)
+                ? [result.reason]
+                : [],
+            );
+            if (failures.length) throw new AggregateError(failures, `${name} shutdown failed`);
+          });
+        });
+      };
+      producer(
+        'recorded usage',
+        () => recorded_usage?.stop?.(stop),
+        () => recorded_usage?.settled() ?? Promise.resolve(),
+      );
+      producer(
+        'background services',
+        () => background?.close(stop),
+        () => background?.settled() ?? Promise.resolve(),
+      );
+      producer(
+        'environment services',
+        () => environments?.close(stop),
+        () => environments?.settled() ?? Promise.resolve(),
+      );
+      stages.own('environment setup', () => environmentsStarting?.catch(() => {}));
+      producer(
+        'backend services',
+        () => backendServices?.shutdown?.(stop),
+        () => backendServices?.settled() ?? Promise.resolve(),
+      );
+      // Core cancellation/detach begins before any HTTP/raw-provider wait.
+      producer(
+        'conversation core',
+        () => core?.shutdown(stop),
+        () => core?.settled() ?? Promise.resolve(),
+      );
+      producer(
+        'video transfers',
+        () => video_uploads?.drain(stop),
+        () => video_uploads?.settled() ?? Promise.resolve(),
+      );
+      stages.own('one-shot children', () => one_shot_children.settled());
+      stages.own('HTTP server', () => app?.close());
+      stages.own('HTTP work', () => request_lifetime.settled());
+      stages.own('media cleanup', () => video_cleanup_work);
+      stages.own('HTTP writes', () => conversationWrites.drain());
+      producer(
+        'credential requests',
+        () => credential_requests?.finish_operations(stop),
+        () => credential_requests?.settled() ?? Promise.resolve(),
+      );
+      stages.own('startup recovery', () =>
+        recovery?.catch((error: unknown) => {
+          if (!is_shutdown_business_cancellation(error)) throw error;
+        }),
+      );
+      // Producer cleanup can publish additional native control children. Take this
+      // snapshot only AFTER every producer begins, then make a FRESH native join.
+      const producer_actual = shutdown.shutdown_settled;
+      stages.own('native processes and worker units', async () => {
+        await producer_actual.catch(() => {}); // Individual stages retain their failures.
+        await child_processes.settled();
+      });
+    },
+    finalize: [
+      { name: 'conversation record', run: () => areas.closeRecord() },
+      { name: 'navigation detach', run: () => areas.detachNavigation() },
+      {
+        name: 'database',
+        run: () => {
+          database?.close();
+          ownership_current = false;
+        },
+      },
+      { name: 'dispatcher ownership', run: () => dispatcher?.close() },
+      { name: 'runtime ownership', run: () => ownership.close() },
+      {
+        name: 'signal handlers',
+        run: () => {
+          process.off('SIGTERM', onSignal);
+          process.off('SIGINT', onSignal);
+        },
+      },
+    ],
+  });
+  const close = (stop?: StopOptions): Promise<void> => shutdown.close(stop);
+  const isClosing = () => shutdown.shutdown_state.kind !== 'running';
+  const started = (address: string): StartedServer => ({
+    address,
+    close,
+    get shutdown_state() {
+      return shutdown.shutdown_state;
+    },
+    get shutdown_settled() {
+      return shutdown.shutdown_settled;
+    },
+  });
   try {
     const changes = new ChangeSignal();
     const clock = buildClock(config);
@@ -225,6 +351,8 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       publication,
       require_runtime_ownership: requireOwnership,
       revoke_signal: revokeSignal,
+      one_shot_children,
+      child_processes,
     };
     core = options.createConversationCore?.(context);
     if (core)
@@ -256,7 +384,10 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
           database,
           now: () => clock.now(),
           read_codex_snapshot: () => backendServices!.backend_snapshots.snapshot('codex'),
+          one_shot_children,
+          child_processes,
         }),
+        one_shot_children,
       });
     const conversationSystem = options.conversationSystem ?? core;
     const usage =
@@ -309,6 +440,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       stallChecker: options.stallChecker,
     });
     app = await createApp(config, {
+      request_lifetime,
       database,
       changes,
       areas: [
@@ -361,13 +493,13 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       workspaceAdmission: conversationSystem?.workspace_admission,
     });
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-      process.once(signal, onSignal);
+      process.on(signal, onSignal);
     }
     if (core) {
       const current = core;
       uploads.recover_and_cleanup();
       video_cleanup_timer = setInterval(() => {
-        if (closing !== undefined || video_cleanup_work !== undefined) return;
+        if (isClosing() || video_cleanup_work !== undefined) return;
         video_cleanup_work = current.workspace_admission.operation(async (admitted) => {
           if (admitted) uploads.recover_and_cleanup();
         });
@@ -390,20 +522,29 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         }),
       );
 
-      void recovery.catch((error) => console.error('Conversation startup recovery failed', error));
+      const active_recovery = recovery;
+      void active_recovery.then(
+        () => {
+          if (recovery === active_recovery) recovery = undefined;
+        },
+        (error) => {
+          console.error('Conversation startup recovery failed', error);
+          if (recovery === active_recovery) recovery = undefined;
+        },
+      );
     }
     // Publish the owned flight before setup can synchronously request shutdown.
     environmentsStarting = Promise.resolve().then(() => {
-      if (!closing) return environments?.start();
+      if (!isClosing()) return environments?.start();
     });
     await environmentsStarting;
-    if (closing) {
-      await closing;
+    if (isClosing()) {
+      await close();
       throw new Error('Server closed during startup');
     }
     await background.start();
-    if (closing) {
-      await closing;
+    if (isClosing()) {
+      await close();
       throw new Error('Server closed during startup');
     }
     const inherited = process.env.PLAN_SERVER_LISTENER_FD;
@@ -411,10 +552,10 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       const fd = Number(inherited);
       if (!Number.isInteger(fd) || fd < 0) throw new Error('invalid PLAN_SERVER_LISTENER_FD');
       const address = await app.listen({ fd } as FastifyListenOptions & { fd: number });
-      return { address, close };
+      return started(address);
     } else {
       const address = await app.listen({ host: '127.0.0.1', port: config.port });
-      return { address, close };
+      return started(address);
     }
   } catch (error) {
     try {

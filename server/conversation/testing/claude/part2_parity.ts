@@ -1,4 +1,6 @@
 /** Real TS core + real Claude SDK + one owned local scripted CLI. */
+import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { readFileSync } from 'node:fs';
 import { createDatabase } from '../../../core/database/index.ts';
 import { ConversationStore } from '../../record/data/store.ts';
@@ -43,13 +45,17 @@ export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
     ),
   );
   const store = new ConversationStore(database, { integer_now: () => 100 });
-  const factory = create_claude_backend_child_factory({
-    claude_executable: spec.executable,
-    environment_overrides: [
-      ['UNIT18_TRACE', spec.trace],
-      ['UNIT18_WRAPPED_FILE', `${spec.trace}.wrapped.json`],
-    ],
-  });
+  const child_processes = new ChildProcesses();
+  const factory = create_claude_backend_child_factory(
+    {
+      claude_executable: spec.executable,
+      environment_overrides: [
+        ['UNIT18_TRACE', spec.trace],
+        ['UNIT18_WRAPPED_FILE', `${spec.trace}.wrapped.json`],
+      ],
+    },
+    { child_processes, one_shot_children: new OneShotChildren(child_processes) },
+  );
   const plainLiveText: { type: string; text_delta: string }[] = [];
   const resumeLiveText: { type: string; text_delta: string }[] = [];
   let liveTarget: 'plain' | 'resume' | null = 'plain';

@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import { getSystemErrorMessage } from 'node:util';
 import { CONTROL_TIMEOUT_SECONDS } from './configuration.ts';
 import { WorkerUnitError } from './contracts.ts';
@@ -12,16 +12,19 @@ function native_failure(error: Error): string {
 }
 
 /** One exact manager command. Timeout kills only the process this call starts. */
-export async function control(...arguments_: string[]): Promise<readonly [number, string]> {
+export async function control(
+  children: OwnedChildProcesses,
+  ...arguments_: string[]
+): Promise<readonly [number, string]> {
   return new Promise((resolve, reject) => {
-    const child = spawn('systemctl', ['--user', ...arguments_], {
+    const child = children.spawn('systemctl', ['--user', ...arguments_], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const output: Buffer[] = [];
     const errors: Buffer[] = [];
     let timed_out = false;
-    child.stdout.on('data', (chunk: Buffer) => output.push(chunk));
-    child.stderr.on('data', (chunk: Buffer) => errors.push(chunk));
+    child.stdout!.on('data', (chunk: Buffer) => output.push(chunk));
+    child.stderr!.on('data', (chunk: Buffer) => errors.push(chunk));
     const timer = setTimeout(() => {
       timed_out = true;
       child.kill('SIGKILL');

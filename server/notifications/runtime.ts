@@ -5,6 +5,7 @@ import type { WorkspaceAdmission } from '../conversation/workspace_admission.ts'
 import type { APNsAdapter, WebPushAdapter } from './contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../core/config.ts';
+import { observe_shutdown } from '../lifecycle/deadline.ts';
 import { canonical_server_origin } from './apns.ts';
 import * as data from './data.ts';
 import * as apns_data from './apns_data.ts';
@@ -26,6 +27,7 @@ export class NotificationLoop {
   private expired = false;
   private readonly pending = new Set<Promise<number>>();
   private closing: Promise<void> | undefined;
+  private shutdown_settlement: Promise<void> | undefined;
   private wake_pending = false;
   constructor(options: NotificationLoopOptions) {
     this.options = options;
@@ -35,7 +37,8 @@ export class NotificationLoop {
   }
   poll_once(): Promise<number> {
     if (this.stop_requested) return Promise.resolve(0);
-    const task = this.deliver_once();
+    // Publish ownership before a queue write or adapter can synchronously request stop.
+    const task = Promise.resolve().then(() => (this.stop_requested ? 0 : this.deliver_once()));
     this.pending.add(task);
     return task.finally(() => this.pending.delete(task));
   }
@@ -111,6 +114,12 @@ export class NotificationLoop {
         }
       });
   }
+  settled(): Promise<void> {
+    return (
+      this.shutdown_settlement ??
+      Promise.allSettled([...this.pending, ...(this.active ? [this.active] : [])]).then(() => {})
+    );
+  }
   stop(options: Partial<StopOptions> = {}): Promise<void> {
     if (this.closing) return this.closing;
     this.stop_requested = true;
@@ -118,29 +127,20 @@ export class NotificationLoop {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     const deadline = options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
-    this.closing = (async () => {
-      try {
-        await until_deadline(Promise.allSettled([...this.pending]), deadline);
-      } finally {
-        // A late transport result can finish, but it cannot use the database again.
-        this.expired = true;
-        const close = Promise.resolve().then(() => this.options.apns_adapter?.close());
-        await until_deadline(close, deadline);
-      }
-    })();
+    const sends = Promise.allSettled([...this.pending, ...(this.active ? [this.active] : [])]);
+    this.shutdown_settlement = Promise.resolve().then(async () => {
+      await sends;
+      // A live send still owns the adapter. Close only after every send actually ended.
+      await this.options.apns_adapter?.close();
+    });
+    this.closing = observe_shutdown(
+      this.shutdown_settlement,
+      { deadline },
+      'notifications',
+    ).finally(() => {
+      // A late transport result remains owned, but cannot use the database again.
+      this.expired = true;
+    });
     return this.closing;
-  }
-}
-async function until_deadline(operation: Promise<unknown>, deadline: number): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      operation,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, Math.max(0, deadline * 1000 - performance.now()));
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
   }
 }

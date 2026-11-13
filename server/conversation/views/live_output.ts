@@ -417,12 +417,15 @@ export class ConversationViewLiveOutput {
     const fd = openSync(this.#content_path(conversation_id, reference), 'r');
     return { fd, close: () => closeSync(fd) };
   }
-  close(): void {
+  close_subscriptions(): void {
     for (const watchers of [...this.#subscriptions.values()]) {
       for (const watcher of [...watchers]) {
         watcher.close();
       }
     }
+  }
+  close(): void {
+    this.close_subscriptions();
     for (const id of [...this.#conversations.keys()]) {
       this.#reset_turn(id, null);
     }

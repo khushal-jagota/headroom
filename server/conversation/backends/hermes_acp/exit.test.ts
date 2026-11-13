@@ -1,3 +1,4 @@
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { expect, test } from 'vitest';
 import {
   ConversationAccess,
@@ -9,7 +10,7 @@ import { HermesAcpLauncher } from './client.ts';
 // A real child exit and a buffered reply are separate OS facts. Memory streams
 // cannot prove that the launcher preserves the latter after the former.
 test('request timeout and cancellation keep the same child until its ordered final exit', async () => {
-  const launcher = new HermesAcpLauncher();
+  const launcher = new HermesAcpLauncher(new ChildProcesses());
   const order: string[] = [];
   const program = `
     const readline = require('node:readline');

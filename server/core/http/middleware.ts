@@ -6,6 +6,7 @@ import { MAX_CONVERSATION_SEND_REQUEST_BYTES } from '../config.ts';
 import { admit_unidentified_call, http_refusal } from '../unidentified_agent_calls/admission.ts';
 import type { Endpoint, PeerLookup } from '../unidentified_agent_calls/contracts.ts';
 import { resolve_loopback_peer } from '../unidentified_agent_calls/peer.ts';
+import type { HttpRequestScope } from './lifetime.ts';
 export interface WorkspaceAdmission {
   operation(): {
     admitted: boolean;
@@ -37,133 +38,140 @@ export function installMiddleware(
   config: Config,
   workspace?: WorkspaceAdmission,
   unidentifiedLookup: PeerLookup = resolve_loopback_peer,
+  lifetime?: HttpRequestScope,
 ): void {
   app.addHook('onRequest', async (request, reply) => {
-    const path = new URL(request.url, 'http://localhost').pathname;
-    if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
-      const sha = request.headers['x-panels-app-sha'];
-      if (sha !== undefined && sha !== config.app_sha) {
-        reply.code(409).send({
-          error: {
-            code: 'validation',
-            message: 'Refresh page before making changes.',
-            detail: {},
-          },
-        });
-        return;
-      }
-      if (workspace && !path.startsWith('/api/updates') && !path.startsWith('/api/executor/')) {
-        const lease = workspace.operation();
-        if (!lease.admitted) {
-          lease.release();
-          reply.code(503).send({ detail: 'Owner update in progress.' });
+    const operation = async () => {
+      const path = new URL(request.url, 'http://localhost').pathname;
+      if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
+        const sha = request.headers['x-panels-app-sha'];
+        if (sha !== undefined && sha !== config.app_sha) {
+          reply.code(409).send({
+            error: {
+              code: 'validation',
+              message: 'Refresh page before making changes.',
+              detail: {},
+            },
+          });
           return;
         }
-        let released = false;
-        const release = (): void => {
-          if (!released) {
-            released = true;
+        if (workspace && !path.startsWith('/api/updates') && !path.startsWith('/api/executor/')) {
+          const lease = workspace.operation();
+          if (!lease.admitted) {
             lease.release();
+            reply.code(503).send({ detail: 'Owner update in progress.' });
+            return;
           }
-        };
-        // Headers end the admission lease, not the response body.
-        (
-          request as FastifyRequest & {
-            releaseWorkspace?: () => void;
-          }
-        ).releaseWorkspace = release;
-        request.raw.once('aborted', release);
-        reply.raw.once('close', release);
+          let released = false;
+          const release = (): void => {
+            if (!released) {
+              released = true;
+              lease.release();
+            }
+          };
+          // Headers end the admission lease, not the response body.
+          (
+            request as FastifyRequest & {
+              releaseWorkspace?: () => void;
+            }
+          ).releaseWorkspace = release;
+          request.raw.once('aborted', release);
+          reply.raw.once('close', release);
+        }
       }
-    }
-    const raw = rawHeaders(request);
-    const builds = raw.get('x-panels-ios-build');
-    if (
-      builds &&
-      (builds.length !== 1 ||
-        builds[0]!.length > 10 ||
-        !/^\d+$/.test(builds[0]!) ||
-        Number(builds[0]) < 1)
-    ) {
-      reply
-        .code(426)
-        .header('cache-control', 'no-store')
-        .send({
-          error: {
-            code: 'ios_update_required',
-            message: 'Update Panels from TestFlight',
-            details: { minimum_build: 1 },
-          },
-        });
-      return;
-    }
-    if (config.trusted_ingress_provider) {
-      if ([...securityHeaders].some((name) => (raw.get(name)?.length ?? 0) > 1)) {
-        reject(reply, 'duplicate security header is not allowed');
-        return;
-      }
-      const origin = raw.get('origin')?.[0];
+      const raw = rawHeaders(request);
+      const builds = raw.get('x-panels-ios-build');
       if (
-        origin !== undefined &&
-        !safe.has(request.method) &&
-        origin !== config.trusted_ingress_canonical_origin
+        builds &&
+        (builds.length !== 1 ||
+          builds[0]!.length > 10 ||
+          !/^\d+$/.test(builds[0]!) ||
+          Number(builds[0]) < 1)
       ) {
-        reject(reply, 'request origin is not allowed');
+        reply
+          .code(426)
+          .header('cache-control', 'no-store')
+          .send({
+            error: {
+              code: 'ios_update_required',
+              message: 'Update Panels from TestFlight',
+              details: { minimum_build: 1 },
+            },
+          });
         return;
       }
-      const login = raw.get('tailscale-user-login')?.[0];
-      if (login !== undefined) {
-        if (login !== config.trusted_ingress_allowed_login) {
-          reject(reply, 'Tailscale user is not allowed');
+      if (config.trusted_ingress_provider) {
+        if ([...securityHeaders].some((name) => (raw.get(name)?.length ?? 0) > 1)) {
+          reject(reply, 'duplicate security header is not allowed');
           return;
         }
-        Object.assign(request, { authenticatedOwner: true, trustedLogin: login });
-        if (!path.startsWith('/api/updates')) {
-          for (const name of [
-            'x-plan-conversation-id',
-            'x-plan-actor',
-            'x-plan-ticket-id',
-            'x-plan-manager-id',
-          ])
-            delete request.headers[name];
+        const origin = raw.get('origin')?.[0];
+        if (
+          origin !== undefined &&
+          !safe.has(request.method) &&
+          origin !== config.trusted_ingress_canonical_origin
+        ) {
+          reject(reply, 'request origin is not allowed');
+          return;
+        }
+        const login = raw.get('tailscale-user-login')?.[0];
+        if (login !== undefined) {
+          if (login !== config.trusted_ingress_allowed_login) {
+            reject(reply, 'Tailscale user is not allowed');
+            return;
+          }
+          Object.assign(request, { authenticatedOwner: true, trustedLogin: login });
+          if (!path.startsWith('/api/updates')) {
+            for (const name of [
+              'x-plan-conversation-id',
+              'x-plan-actor',
+              'x-plan-ticket-id',
+              'x-plan-manager-id',
+            ])
+              delete request.headers[name];
+          }
         }
       }
-    }
-    const socket = request.raw.socket;
-    const endpoint = (host: string | undefined, port: number | undefined): Endpoint | null =>
-      typeof host === 'string' && typeof port === 'number' ? [host, port] : null;
-    const admission = await admit_unidentified_call(
-      config.refuse_unidentified_agent_calls,
-      {
-        kind: 'http',
-        authenticated_owner:
-          (request as FastifyRequest & { authenticatedOwner?: boolean }).authenticatedOwner ===
-          true,
-        headers: Array.from(
-          { length: request.raw.rawHeaders.length / 2 },
-          (_, index) =>
-            [request.raw.rawHeaders[index * 2]!, request.raw.rawHeaders[index * 2 + 1]!] as const,
-        ),
-        client: endpoint(socket.remoteAddress, socket.remotePort),
-        server: endpoint(socket.localAddress, socket.localPort),
-      },
-      unidentifiedLookup,
-    );
-    if (admission.peer_lookup !== null)
-      request.log.debug({ ...admission.peer_lookup }, 'Unidentified loopback caller');
-    if (!admission.admitted) {
-      const refused = http_refusal(admission.peer_lookup!.skipped_unreadable_processes);
-      reply
-        .code(refused.status)
-        .header('content-type', 'application/json')
-        .send(Buffer.from(JSON.stringify(refused.body), 'utf8'));
-      return;
-    }
-    if (request.method === 'POST' && SEND_PATHS.some((pattern) => pattern.test(path))) {
-      const length = request.headers['content-length'];
-      if (typeof length === 'string' && Number(length) > MAX_CONVERSATION_SEND_REQUEST_BYTES)
-        reply.code(413).send({ detail: 'a conversation send request is too large' });
-    }
+      const socket = request.raw.socket;
+      const endpoint = (host: string | undefined, port: number | undefined): Endpoint | null =>
+        typeof host === 'string' && typeof port === 'number' ? [host, port] : null;
+      const admission = await admit_unidentified_call(
+        config.refuse_unidentified_agent_calls,
+        {
+          kind: 'http',
+          authenticated_owner:
+            (request as FastifyRequest & { authenticatedOwner?: boolean }).authenticatedOwner ===
+            true,
+          headers: Array.from(
+            { length: request.raw.rawHeaders.length / 2 },
+            (_, index) =>
+              [request.raw.rawHeaders[index * 2]!, request.raw.rawHeaders[index * 2 + 1]!] as const,
+          ),
+          client: endpoint(socket.remoteAddress, socket.remotePort),
+          server: endpoint(socket.localAddress, socket.localPort),
+        },
+        unidentifiedLookup,
+      );
+      if (admission.peer_lookup !== null)
+        request.log.debug({ ...admission.peer_lookup }, 'Unidentified loopback caller');
+      if (!admission.admitted) {
+        const refused = http_refusal(admission.peer_lookup!.skipped_unreadable_processes);
+        reply
+          .code(refused.status)
+          .header('content-type', 'application/json')
+          .send(Buffer.from(JSON.stringify(refused.body), 'utf8'));
+        return;
+      }
+      if (request.method === 'POST' && SEND_PATHS.some((pattern) => pattern.test(path))) {
+        const length = request.headers['content-length'];
+        if (typeof length === 'string' && Number(length) > MAX_CONVERSATION_SEND_REQUEST_BYTES)
+          reply.code(413).send({ detail: 'a conversation send request is too large' });
+      }
+    };
+    if (!lifetime) return operation();
+    return request.request_lifetime === lifetime
+      ? lifetime.track(operation)
+      : lifetime.run(operation);
   });
   app.addHook('preParsing', async (request, _reply, payload) => {
     const path = new URL(request.url, 'http://localhost').pathname;

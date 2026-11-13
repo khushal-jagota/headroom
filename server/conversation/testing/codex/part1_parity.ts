@@ -1,4 +1,5 @@
 /** Export-only direct proof. All process and service-manager calls stop at a fence. */
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 
@@ -57,10 +58,11 @@ export async function run_part1_parity(spec: StartupSpec): Promise<unknown> {
       const calls: unknown[] = [];
       let unit_stops = 0;
       const original_create = WorkerUnit.create;
-      WorkerUnit.create = async (environment, working_directory) => {
+      WorkerUnit.create = async (environment, working_directory, ownership) => {
         calls.push({ operation: 'unit-create', environment, working_directory });
         const temporary = `${item.unit_directory}/t`;
         const unit = new WorkerUnit({
+          child_processes: ownership.child_processes,
           name: 'panels-unit17-synthetic.service',
           directory: item.unit_directory,
           environment: { ...environment, TMPDIR: temporary, TMP: temporary, TEMP: temporary },
@@ -92,6 +94,7 @@ export async function run_part1_parity(spec: StartupSpec): Promise<unknown> {
       }) as unknown as typeof childProcess.spawn;
       syncBuiltinESMExports();
       const client = new CodexAppServerClient({
+        child_processes: new ChildProcesses(),
         description: 'startup-parity',
         handler: {
           async on_notification() {},

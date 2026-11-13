@@ -79,6 +79,7 @@ def environment(root: Path) -> dict[str, str]:
     return {
         "PATH": os.environ.get("PATH", "/bin:/usr/bin"),
         "LANG": "C.UTF-8",
+        "PLAN_SERVER_URL": "http://127.0.0.1:0",
         "HOME": str(home),
         "CODEX_HOME": str(home / "codex"),
         "CLAUDE_CONFIG_DIR": str(home / "claude"),

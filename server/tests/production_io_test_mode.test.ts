@@ -31,6 +31,7 @@ import { http_get_usage } from '../conversation/backend_usage/http.ts';
 import { trim_surrounding_silence } from '../conversation/voice_transcription/production.ts';
 import { post_voice_http } from '../conversation/voice_transcription/http.ts';
 import { fetchRates } from '../conversation/usage/http.ts';
+import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
 
 // Gap: ordinary Vitest/Pytest markers previously hid the PLAN_TEST_MODE=true guard mismatch.
 test('parsed test mode blocks production subprocess and HTTP doors without runner markers', async () => {
@@ -40,10 +41,11 @@ test('parsed test mode blocks production subprocess and HTTP doors without runne
   const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
     throw new Error('Unexpected recorded fetch call');
   });
-  const environment = new SubprocessBackendProbeEnvironment();
+  const children = new OneShotChildren();
+  const environment = new SubprocessBackendProbeEnvironment(children);
   vi.stubEnv('PLAN_TEST_MODE', 'true');
   try {
-    expect(() => new SubprocessBackendProbeEnvironment()).toThrow(
+    expect(() => new SubprocessBackendProbeEnvironment(children)).toThrow(
       'Production backend I/O is unavailable in tests',
     );
     await expect(environment.run(['recorded-provider'], { timeout_seconds: 1 })).rejects.toThrow(

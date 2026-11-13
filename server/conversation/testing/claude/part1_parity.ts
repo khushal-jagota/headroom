@@ -1,4 +1,5 @@
 /** Export-only companion. No service manager or provider child may start here. */
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 
@@ -93,6 +94,7 @@ export async function run_part1_parity(
     }
     const { WorkerUnit, environment_file } = await import('../../worker_unit/index.ts');
     const unit = new WorkerUnit({
+      child_processes: new ChildProcesses(),
       name: spec.name,
       directory: spec.directory,
       environment: spec.environment,
