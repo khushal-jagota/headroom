@@ -59,6 +59,7 @@ export async function measure_record_rebuild(
     }, HEARTBEAT_INTERVAL_MS);
     const started = performance.now();
     runtime.initialize(database, config, { integer_now: () => 1_800_000_000 });
+    runtime.start_rebuild();
     const initialized = performance.now();
     while (out_of_date_conversation_ids(database).length > 0) {
       if (performance.now() - started > MEASUREMENT_TIMEOUT_MS) {

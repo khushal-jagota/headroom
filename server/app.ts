@@ -19,6 +19,8 @@ import type { Area } from './core/authority/register.ts';
 import type { ConversationSystem } from './conversation/contracts.ts';
 import type { SignalNavigationAuthority } from './conversation/publication/authority.ts';
 export interface AppServices {
+  /** Publish the real instance before registration can fail or await. */
+  own_app?(app: FastifyInstance): void;
   request_lifetime?: HttpRequestScope;
   conversationSystem?: ConversationSystem;
   signalAuthority?: SignalNavigationAuthority;
@@ -35,6 +37,7 @@ export async function createApp(config: Config, services: AppServices): Promise<
     bodyLimit: Number.MAX_SAFE_INTEGER,
     forceCloseConnections: false,
   });
+  services.own_app?.(app);
   const clock = services.clock ?? buildClock(config);
   const request_lifetime = install_request_lifetime(app, services.request_lifetime);
   const changes = services.changes ?? new ChangeSignal();

@@ -193,6 +193,7 @@ test('shutdown during environment setup retains ownership and prevents later pro
   const entered = deferred();
   const finish = deferred();
   const closed = deferred();
+  let close_count = 0;
   const priorHandlers = process.listeners('SIGTERM');
   const background = vi.fn(() => {
     throw new Error('a producer must not start after shutdown');
@@ -205,9 +206,18 @@ test('shutdown during environment setup retains ownership and prevents later pro
   });
   const layout = vi.spyOn(scratchLayout, 'layout_for');
   const updatesStart = vi.spyOn(UpdateService.prototype, 'start');
+  const metricsStart = vi.spyOn(MetricsRuntime.prototype, 'start');
   const starting = startServer({
     notificationDelivery: background,
     async createEnvironments(context) {
+      const stop = process.listeners('SIGTERM').find((handler) => !priorHandlers.includes(handler));
+      expect(stop).toBeDefined();
+      // Stop while the asynchronous constructor has not returned any runtime yet.
+      stop!('SIGTERM');
+      entered.resolve();
+      await finish.promise;
+      context.require_runtime_ownership();
+      context.database.read((sql) => sql.get('SELECT 1'));
       const inert = await create_test_environment_runtime({
         ...context,
         config: { ...context.config, test_mode: true },
@@ -219,23 +229,11 @@ test('shutdown during environment setup retains ownership and prevents later pro
         await inert.close({ deadline: performance.now() / 1000 + 1 });
         await inert.settled();
       }
-      vi.spyOn(MetricsRuntime.prototype, 'start').mockImplementationOnce(() => {
-        const stop = process
-          .listeners('SIGTERM')
-          .find((handler) => !priorHandlers.includes(handler));
-        expect(stop).toBeDefined();
-        // Reenter shutdown before this start call even returns its pending promise.
-        stop!('SIGTERM');
-        entered.resolve();
-        return finish.promise.then(() => {
-          context.require_runtime_ownership();
-          context.database.read((sql) => sql.get('SELECT 1'));
-        });
-      });
       const environment = await create_test_environment_runtime(context);
       return {
         ...environment,
         close(options) {
+          close_count++;
           const flight = environment.close(options);
           closed.resolve();
           return flight;
@@ -256,18 +254,20 @@ test('shutdown during environment setup retains ownership and prevents later pro
         throw new Error('the listener started before environment setup settled');
       }),
     ]);
-    await closed.promise;
     expect(() => acquireRuntimeOwnership(path)).toThrow('ConversationRuntimeAlreadyOwned');
     expect(background).not.toHaveBeenCalled();
   } finally {
     finish.resolve();
     const result = await outcome;
+    await closed.promise;
     if ('server' in result) await result.server.close();
     expect(result).toMatchObject({ error: { message: 'Server closed during startup' } });
   }
   expect(background).not.toHaveBeenCalled();
   expect(updatesStart).not.toHaveBeenCalled();
+  expect(metricsStart).not.toHaveBeenCalled();
   expect(scratchFactory).toHaveBeenCalledTimes(1);
   expect(scratchStart).not.toHaveBeenCalled();
+  expect(close_count).toBe(1);
   acquireRuntimeOwnership(path).close();
 });
