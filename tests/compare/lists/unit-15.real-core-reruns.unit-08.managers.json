@@ -38,16 +38,15 @@
       }
     },
     {
-      "area": "managers",
+      "area": "unoffered-model-admission",
       "method": "PUT",
       "path": "/api/managers/launch-defaults",
-      "status": 200,
+      "status": 400,
       "json": {
         "employee_backend": "codex",
-        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_model": "unoffered-model",
         "employee_launch_reasoning_effort": "high"
-      },
-      "note": "Change the reasoning choice, rather than rewrite the existing defaults unchanged."
+      }
     },
     {
       "area": "navigation",
@@ -106,13 +105,13 @@
       }
     },
     {
-      "area": "managers",
+      "area": "unoffered-model-admission",
       "method": "PUT",
       "path": "/api/managers/${manager}/launch-defaults",
-      "status": 200,
+      "status": 400,
       "json": {
         "employee_backend": "codex",
-        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_model": "unoffered-model",
         "employee_launch_reasoning_effort": "high"
       },
       "note": "Change the reasoning choice, rather than rewrite the existing defaults unchanged."
@@ -839,6 +838,18 @@
       "method": "POST",
       "path": "/api/conversation/conversations/${conversation}/kill",
       "status": 204
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/model-list",
+      "status": 200,
+      "json": {
+        "machine": "vps",
+        "backend": "codex",
+        "models": [
+          "gpt-6.1-sol"
+        ]
+      }
     }
   ],
   "candidate": "typescript"

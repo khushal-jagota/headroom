@@ -140,7 +140,7 @@ async def deliver_ticket_decision_messages(
                         sender_label="system",
                         sender_message_id=sender_message_id,
                         worker_type_registry=worker_type_registry,
-                        retain_backend_start_failure=True,
+                        retain_definite_start_refusal=True,
                         now=now(),
                     )
                 except Exception:

@@ -1,6 +1,6 @@
 {
   "oldest_supported_build": 1,
   "decision": "compatible",
-  "contract_sha256": "1d4a5f5e73783f2808568bf37b702adeb318b6f806b444c533198d534eccf47d",
-  "evidence": "Source review against native build 1: recap JSON fields are additive and the existing recap request target/fate contract remains unchanged. Navigation continuity moves from schema 10 to 11, while wire 3 and projection 7 remain unchanged. APIClient.supported checks wire/projection/mode, not a fixed source schema. ViewContinuity decodes schemaVersion as Int and semantics as String. Native ViewTicketValue and ViewManagerValue ignore added JSON keys. AppStore admits a fresh snapshot for each stream, so a new snapshot replaces the cached continuity domain. Request prompts retain the existing Panels system sender/event shape. No native code changed. This is source review only; no signed-device, TestFlight, or native reconnect checks ran."
+  "contract_sha256": "93ee85a76d7c7967d2b817c842f607108212e2ea1ae4c178af54c96d461d405f",
+  "evidence": "Source review against native build 1 for the offered-model check: no route, request or response shape changed. Ticket employee-configuration, which TicketAPI.setTicketWorkerConfiguration sends, can now return the existing 400 validation envelope for a model the Ticket's machine does not list. APIClient.validate decodes error.message and APIError shows it, as it already did for disabled models. Dispatch refusals reuse the existing model_resolution_failed reason, which ConversationDelivery.refusalText and TicketRecapDelivery.note already map. No native code changed. This is source review only; no signed-device, TestFlight, or native reconnect checks ran."
 }
