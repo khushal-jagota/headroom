@@ -62,7 +62,9 @@ export function create_backend_runtime(options: {
   const invoke_shutdown = (operation: () => void | Promise<void>) => {
     invoking_shutdown = true;
     try {
-      return operation();
+      return Promise.resolve(operation());
+    } catch (error) {
+      return Promise.reject(error);
     } finally {
       invoking_shutdown = false;
     }
@@ -72,14 +74,18 @@ export function create_backend_runtime(options: {
       if (!finished && !invoking_shutdown) {
         // Keep the original environment join. Each later stop can retry a native
         // close that prevents that join, without restarting the environment.
-        shutdown_result = Promise.resolve().then(async () => {
+        let resolve_attempt!: () => void, reject_attempt!: (error: unknown) => void;
+        // Reserve the observer before synchronous owner callbacks can reenter.
+        shutdown_result = new Promise<void>((resolve, reject) => {
+          resolve_attempt = resolve;
+          reject_attempt = reject;
+        });
+        void (async () => {
           environment_stop ??= Promise.allSettled([
-            Promise.resolve().then(() => invoke_shutdown(() => environment.shutdown?.())),
+            invoke_shutdown(() => environment.shutdown?.()),
           ]);
           const results = await Promise.allSettled([
-            Promise.resolve().then(() =>
-              invoke_shutdown(() => providers.codex_sign_in?.shutdown(options)),
-            ),
+            invoke_shutdown(() => providers.codex_sign_in?.shutdown(options)),
             environment_stop.then((results) => {
               const failures = results.filter((result) => result.status === 'rejected');
               if (failures.length)
@@ -100,7 +106,7 @@ export function create_backend_runtime(options: {
             reject_resource_join(new AggregateError(cleanup_history, 'Backend shutdown failed'));
           else resolve_resource_join();
           await resource_join;
-        });
+        })().then(resolve_attempt, reject_attempt);
       }
       return observe_shutdown(
         shutdown_result ?? resource_join,
