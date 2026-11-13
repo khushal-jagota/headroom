@@ -23,6 +23,7 @@ import {
   AgentMessageDelta,
   AgentMessageCompleted,
   ModelThinkingHappened,
+  VendorSessionCursorRebound,
   PermissionAskRaised,
   UserInputRequested,
   TurnEnded,
@@ -35,6 +36,8 @@ import {
 import type { TurnToken } from '../../../conversation/backends/contracts.ts';
 import type { AcceptanceReceipt, QueuedEnvelope } from '../../wire.generated.ts';
 import { text_message_content } from '../../../conversation/message_content.ts';
+import { create_claude_backend_child_factory } from '../../../conversation/backends/claude_agent_sdk/adapter.ts';
+import { create_claude_cleanup_fixture } from './claude_cleanup.ts';
 
 const input = JSON.parse(await readFile(process.argv[2], 'utf8'));
 // These values come from the parent's bound fixture, before MacService can open a root or HTTP session.
@@ -57,17 +60,26 @@ const configuration = {
   http: { tls: { ca: await readFile(input.ca_path) } },
 };
 const concrete = production_bindings(configuration, input.environment);
+const claude_cleanup = input.claude_cleanup ? create_claude_cleanup_fixture() : null;
 let expected_input: { id: string; base64: string } | null = null;
 let early_event = input.early_event === true;
 let catalog_blocked = false,
-  catalog_model = input.catalog_model ?? 'scripted',
+  catalog_model = input.catalog_model ?? (claude_cleanup ? 'claude-old' : 'scripted'),
   catalog_complete = input.catalog_complete ?? true;
+let catalog_models: string[] | undefined = claude_cleanup
+  ? ['claude-old', 'claude-new']
+  : undefined;
+let held_steer: Promise<void> | undefined, release_steer: (() => void) | undefined;
+let final_event_on_stop = false;
 const catalog_observed = { calls: 0, cancelled: 0 };
 const calls = {
   starts: 0,
   prompts: 0,
   stops: 0,
   cancels: 0,
+  steers: 0,
+  starts_details: [] as unknown[],
+  deliveries: [] as unknown[],
   answers: [] as unknown[],
   user_answers: [] as unknown[],
 };
@@ -85,60 +97,89 @@ const bindings: MacHostBindings = {
     });
     return {
       ...host,
-      factory: () => (values) => {
-        const owned_sink = values.event_sink;
-        retired_sink = active_sink;
-        active_sink = values.event_sink;
-        const unsupported = async (): Promise<never> => {
-          throw new Error('Unscripted provider operation');
+      factory: (resolved) => {
+        if (claude_cleanup && resolved.backend_key === 'claude')
+          return create_claude_backend_child_factory(host.launches.claude, {
+            ...owners,
+            client_factory: claude_cleanup.client_factory,
+          });
+        return (values) => {
+          const owned_sink = values.event_sink;
+          retired_sink = active_sink;
+          active_sink = values.event_sink;
+          let stopped = false;
+          const unsupported = async (): Promise<never> => {
+            throw new Error('Unscripted provider operation');
+          };
+          return {
+            stop_outside_lock: false,
+            withdraw_delivery: unsupported,
+            detach: unsupported,
+            async start(resolved, start_options) {
+              calls.starts++;
+              calls.starts_details.push({
+                conversation_id: resolved.conversation_id,
+                model: resolved.model,
+                reasoning_effort: resolved.reasoning_effort,
+                ...start_options,
+              });
+            },
+            async write_prompt(current, content, prompt_options) {
+              if (expected_input)
+                assert.equal(
+                  Buffer.from(
+                    await values.message_files.read(current.conversation_id, expected_input.id),
+                  ).toString('base64'),
+                  expected_input.base64,
+                );
+              calls.prompts++;
+              calls.deliveries.push({
+                turn: current,
+                text: content.flatMap((piece) => ('text' in piece ? [piece.text] : [])).join('\n'),
+                options: prompt_options,
+              });
+              turn = current;
+              if (early_event)
+                await owned_sink.report(
+                  current,
+                  new ToolCallStarted({
+                    tool_call_id: `early-${calls.prompts}`,
+                    title: 'Before prompt returns',
+                    tool_kind: 'other',
+                    detail: null,
+                  }),
+                );
+              return new BackendPromptAccepted({ composed_content_delivered: true });
+            },
+            async steer() {
+              calls.steers++;
+              if (held_steer) await held_steer;
+              if (stopped) throw new Error('Native stopped after the steer invocation.');
+              return new BackendSteerAccepted({ composed_content_delivered: true });
+            },
+            async cancel_running_turn() {
+              calls.cancels++;
+            },
+            async stop() {
+              stopped = true;
+              release_steer?.();
+              if (final_event_on_stop)
+                await owned_sink.report(
+                  null,
+                  new VendorSessionCursorRebound({ vendor_session_cursor: 'cleanup-cursor' }),
+                );
+              calls.stops++;
+            },
+            async answer_permission_ask(id, option) {
+              calls.answers.push([id, option]);
+              return 'applied';
+            },
+            async answer_user_input(id, answers) {
+              calls.user_answers.push([id, answers]);
+              return 'applied';
+            },
+          } as BackendChild;
         };
-        return {
-          stop_outside_lock: false,
-          withdraw_delivery: unsupported,
-          detach: unsupported,
-          async start() {
-            calls.starts++;
-          },
-          async write_prompt(current) {
-            if (expected_input)
-              assert.equal(
-                Buffer.from(
-                  await values.message_files.read(current.conversation_id, expected_input.id),
-                ).toString('base64'),
-                expected_input.base64,
-              );
-            calls.prompts++;
-            turn = current;
-            if (early_event)
-              await owned_sink.report(
-                current,
-                new ToolCallStarted({
-                  tool_call_id: `early-${calls.prompts}`,
-                  title: 'Before prompt returns',
-                  tool_kind: 'other',
-                  detail: null,
-                }),
-              );
-            return new BackendPromptAccepted({ composed_content_delivered: true });
-          },
-          async steer() {
-            return new BackendSteerAccepted({ composed_content_delivered: true });
-          },
-          async cancel_running_turn() {
-            calls.cancels++;
-          },
-          async stop() {
-            calls.stops++;
-          },
-          async answer_permission_ask(id, option) {
-            calls.answers.push([id, option]);
-            return 'applied';
-          },
-          async answer_user_input(id, answers) {
-            calls.user_answers.push([id, answers]);
-            return 'applied';
-          },
-        } as BackendChild;
       },
     };
   },
@@ -170,17 +211,15 @@ const bindings: MacHostBindings = {
             executable_path: '/scripted',
             version: '1.0.0',
             identity: null,
-            available_models: [
-              {
-                model_id: catalog_model,
-                display_name: null,
-                detail: null,
-                reasoning_effort_options: ['low', 'medium', 'high', 'xhigh', 'max'],
-                selected_variant: null,
-                version: [],
-                resolved_model_id: null,
-              },
-            ],
+            available_models: (catalog_models ?? [catalog_model]).map((model_id) => ({
+              model_id,
+              display_name: null,
+              detail: null,
+              reasoning_effort_options: ['low', 'medium', 'high', 'xhigh', 'max'],
+              selected_variant: null,
+              version: [],
+              resolved_model_id: null,
+            })),
             reasoning_effort_options: ['low', 'medium', 'high', 'xhigh', 'max'],
             default_model_id: catalog_model,
             default_reasoning_effort: 'medium',
@@ -226,6 +265,7 @@ async function state() {
     leased: service.presence.leased(),
     admission_stopped: service.runner.admission_stopped,
     planned_update_replay: service.runner.planned_update_replay,
+    claude: claude_cleanup?.state(),
     catalog: catalog_observed,
     minted: published.length,
     receipts: receipts.map((receipt) => as_object(receipt, 'AcceptanceReceipt')),
@@ -437,13 +477,28 @@ try {
         write({ id: command.id, result: { prepared, ...(await state()) } });
         continue;
       }
-      if (command.operation === 'emit') await emit(command.kind, command.native_id, command);
+      if (command.operation === 'claude_finish_turn') claude_cleanup!.finish_turn();
+      else if (command.operation === 'claude_hold_cleanup') claude_cleanup!.hold_cleanup();
+      else if (command.operation === 'claude_release_cleanup') claude_cleanup!.release_cleanup();
+      else if (command.operation === 'emit') await emit(command.kind, command.native_id, command);
       else if (command.operation === 'configure') {
         if ('expected_input' in command) expected_input = command.expected_input;
         if ('early_event' in command) early_event = command.early_event;
         if ('catalog_blocked' in command) catalog_blocked = command.catalog_blocked;
         if ('catalog_model' in command) catalog_model = command.catalog_model;
+        if ('catalog_models' in command) catalog_models = command.catalog_models;
         if ('catalog_complete' in command) catalog_complete = command.catalog_complete;
+        if ('final_event_on_stop' in command) final_event_on_stop = command.final_event_on_stop;
+        if ('hold_steer' in command) {
+          if (command.hold_steer)
+            held_steer = new Promise((resolve) => {
+              release_steer = resolve;
+            });
+          else {
+            release_steer?.();
+            held_steer = undefined;
+          }
+        }
       } else assert.equal(command.operation, 'state');
       write({ id: command.id, result: await state() });
     } catch (error) {

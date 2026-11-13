@@ -10,21 +10,21 @@ import signal
 import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI
 from tests.integration.test_executor_end_to_end import (
     CutReceiptEndpoint,
+    ExecutorHarness,
     create_mac_ticket,
     make_core,
-    public_ask_id,
     start_ticket_conversation,
 )
 from tests.support.executor_https import HttpsProxy, serve_executor_app, short_transport_root
 from tests.support.synthetic_homes import create_synthetic_homes
 
-from planner.conversation.events import UserInputAnswer
+from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.message_content import MessageFile, MessageText
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.db import connect, create_schema
@@ -146,10 +146,11 @@ async def start_peer(
     sequence: int,
     revision: str,
     early_event: bool = False,
-    ready_path: Path | None = None,
-    handoff_path: Path | None = None,
-    catalog_model: str = "scripted",
+    ready_path: str | Path | None = None,
+    handoff_path: str | Path | None = None,
+    catalog_model: str | None = None,
     catalog_complete: bool = True,
+    claude_cleanup: bool = False,
 ) -> NodePeer:
     source = root / f"node-{sequence}.json"
     source.write_text(
@@ -165,6 +166,7 @@ async def start_peer(
                 early_event=early_event,
                 catalog_model=catalog_model,
                 catalog_complete=catalog_complete,
+                claude_cleanup=claude_cleanup,
                 runtime=dict(
                     child=True,
                     ready_path=None if ready_path is None else str(ready_path),
@@ -209,6 +211,7 @@ class Harness:
         app: FastAPI,
         ticket_id: str,
         environment: dict[str, str],
+        claude_cleanup: bool = False,
     ) -> None:
         self.root, self.mac_root, self.endpoint, self.proxy, self.peer = (
             root,
@@ -224,6 +227,7 @@ class Harness:
         self.environment = environment
         self.revision = "a" * 40
         self.mac_sequence = 0
+        self.claude_cleanup = claude_cleanup
 
     async def stop_mac(self) -> dict[str, Any]:
         return await self.peer.close()
@@ -232,9 +236,9 @@ class Harness:
         self,
         *,
         revision: str | None = None,
-        ready_path: Path | None = None,
-        handoff_path: Path | None = None,
-        catalog_model: str = "scripted",
+        ready_path: str | Path | None = None,
+        handoff_path: str | Path | None = None,
+        catalog_model: str | None = None,
         catalog_complete: bool = True,
     ) -> None:
         self.mac_sequence += 1
@@ -250,6 +254,7 @@ class Harness:
             handoff_path=handoff_path,
             catalog_model=catalog_model,
             catalog_complete=catalog_complete,
+            claude_cleanup=self.claude_cleanup,
         )
 
         async def leased() -> bool:
@@ -275,26 +280,11 @@ class Harness:
         self.transport_app.state.executor_endpoint = self.endpoint
         await self.endpoint.start()
 
-    def events(self, kind: str) -> int:
-        with contextlib.closing(connect(self.endpoint.db_path)) as connection:
-            return int(
-                connection.execute(
-                    "SELECT count(*) FROM conversation_events "
-                    "WHERE conversation_id='c_scripted' AND kind=?",
-                    (kind,),
-                ).fetchone()[0]
-            )
+    def events(self, kind: str, conversation_id: str = "c_scripted") -> int:
+        return ExecutorHarness.events(cast(ExecutorHarness, self), kind, conversation_id)
 
     def commands(self, operation: str) -> list[tuple[str, str]]:
-        with contextlib.closing(connect(self.endpoint.db_path)) as connection:
-            return [
-                (str(row[0]), str(row[1]))
-                for row in connection.execute(
-                    "SELECT command_id,state FROM executor_commands WHERE operation=? "
-                    "ORDER BY command_sequence",
-                    (operation,),
-                )
-            ]
+        return ExecutorHarness.mailbox_commands(cast(ExecutorHarness, self), operation)
 
     def journal_rows(self, command_id: str) -> int:
         with contextlib.closing(
@@ -383,55 +373,31 @@ class Harness:
         )
 
     def saved_answer(self, ask: AskReference) -> DurableAnswer | None:
-        with contextlib.closing(connect(self.endpoint.db_path)) as connection:
-            key = "ask_id" if ask.kind is AskKind.permission else "request_id"
-            row = connection.execute(
-                "SELECT payload,created_at FROM conversation_events WHERE conversation_id=? "
-                "AND kind=? AND json_extract(payload,?)=? ORDER BY sequence DESC LIMIT 1",
-                (
-                    ask.child.conversation_id,
-                    "permission_answered"
-                    if ask.kind is AskKind.permission
-                    else "user_input_answered",
-                    f"$.{key}",
-                    public_ask_id(ask),
-                ),
-            ).fetchone()
-            if row is None:
-                return None
-            value = json.loads(row[0])
-            answers = (
-                tuple(
-                    UserInputAnswer(key, tuple(answer["answers"]))
-                    for key, answer in value["answers"].items()
-                )
-                if "answers" in value
-                else None
-            )
-            return DurableAnswer(value["answer_id"], ask, value.get("option_id"), row[1], answers)
+        return ExecutorHarness.saved_answer(cast(ExecutorHarness, self), ask)
 
     def answer_applied(self, ask: AskReference) -> bool:
-        answer = self.saved_answer(ask)
-        if answer is None:
-            return False
-        with contextlib.closing(connect(self.endpoint.db_path)) as connection:
-            return (
-                connection.execute(
-                    "SELECT 1 FROM conversation_events WHERE conversation_id=? "
-                    "AND kind='answer_applied' AND json_extract(payload,'$.answer_id')=?",
-                    (ask.child.conversation_id, answer.answer_id),
-                ).fetchone()
-                is not None
-            )
+        return ExecutorHarness.answer_applied(cast(ExecutorHarness, self), ask)
 
 
 @contextlib.asynccontextmanager
-async def boot(root: Path, *, early_event: bool = False) -> AsyncIterator[Harness]:
+async def boot(
+    root: Path, *, early_event: bool = False, claude_cleanup: bool = False
+) -> AsyncIterator[Harness]:
     homes = create_synthetic_homes(root)
     database = root / "vps.sqlite"
     with contextlib.closing(connect(str(database))) as connection:
         create_schema(connection)
-    ticket = create_mac_ticket(str(database), root, title="TypeScript transport worker")
+    backend = ConversationBackendKey.claude if claude_cleanup else ConversationBackendKey.codex
+    model = "claude-old" if claude_cleanup else "scripted"
+    effort = "low" if claude_cleanup else None
+    ticket = create_mac_ticket(
+        str(database),
+        root,
+        title="TypeScript transport worker",
+        backend_key=backend,
+        model=model,
+        reasoning_effort=effort,
+    )
     endpoint = Endpoint(str(database))
     system = make_core(endpoint)
     endpoint.bind_conversations(system)
@@ -476,9 +442,19 @@ async def boot(root: Path, *, early_event: bool = False) -> AsyncIterator[Harnes
                     sequence=0,
                     revision="a" * 40,
                     early_event=early_event,
+                    claude_cleanup=claude_cleanup,
                 )
                 harness = Harness(
-                    root, mac_root, endpoint, proxy, peer, system, app, ticket, environment
+                    root,
+                    mac_root,
+                    endpoint,
+                    proxy,
+                    peer,
+                    system,
+                    app,
+                    ticket,
+                    environment,
+                    claude_cleanup,
                 )
 
                 async def leased() -> bool:
@@ -488,12 +464,27 @@ async def boot(root: Path, *, early_event: bool = False) -> AsyncIterator[Harnes
 
                 await eventually(leased, "Node Mac was not leased")
                 fate = await start_ticket_conversation(
-                    harness.system, str(database), root, ticket, "c_scripted"
+                    harness.system,
+                    str(database),
+                    root,
+                    ticket,
+                    "c_scripted",
+                    backend_key=backend,
+                    model=model,
+                    reasoning_effort=effort,
                 )
                 from planner.conversation.contracts import PromptDeliveryStarted
 
                 assert isinstance(fate, PromptDeliveryStarted), fate
-                await harness.wait_calls(starts=1, prompts=1)
+                if claude_cleanup:
+
+                    async def prompted() -> bool:
+                        clients = (await harness.state())["claude"]["clients"]
+                        return len(clients) == 1 and len(clients[0]["prompts"]) == 1
+
+                    await eventually(prompted, "the real Claude adapter did not receive its prompt")
+                else:
+                    await harness.wait_calls(starts=1, prompts=1)
                 await harness.wait_settled()
                 yield harness
             finally:
