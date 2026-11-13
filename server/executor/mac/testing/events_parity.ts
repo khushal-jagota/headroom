@@ -332,14 +332,15 @@ try {
     raw_operation_retained: retains(actual_failure, operation_error),
     raw_native_retained_after_retry:
       retains(actual_failure, raw_native) && native_stops === cleanup_stops + 2,
-    outward_typed: outward instanceof ServerLifecycleError && retains(outward, raw_native),
+    outward_typed:
+      outward instanceof ServerLifecycleError && outward instanceof ShutdownDeadlineExceeded,
     queue_actual_joined:
       queue_settled &&
       queue_failure === undefined &&
       terminal_outcome?.disposition === 'succeeded' &&
       !runner.native_children.get(terminal.child_id)?.lock.locked,
   };
-  assert(Object.values(cleanup).every(Boolean));
+  assert(Object.values(cleanup).every(Boolean), JSON.stringify(cleanup));
   assert.equal(failures.length, 1);
   assert.deepEqual([queue_failures, debug.length], [[], 1]);
   assert.equal(debug[0]![0], 'Mac command canceled during stop command=terminal-start:');
@@ -358,6 +359,7 @@ try {
     late_live_dropped: live.length === 3,
   };
 } catch (error) {
+  console.error('Event proof primary failure:', error);
   const cleanup = (error as { cleanup?: OutboxCleanup }).cleanup;
   if (cleanup && ![stores?.store, stores?.journal, ...owners].includes(cleanup))
     owners.unshift(cleanup);
