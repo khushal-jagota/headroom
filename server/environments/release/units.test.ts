@@ -53,6 +53,8 @@ test('installed classifier checks exact identity and runtime version before iner
       'server/lifecycle/stop_main.ts',
       'server/environments/updates/interruption_capture_main.ts',
       'server/environments/updates/restore_main.ts',
+      'runtime/installer-files.json',
+      'server/environments/updates/installer/main.ts',
     ])
       await file(name, 'throw Error("Candidate code must never run");\n');
     await identity();

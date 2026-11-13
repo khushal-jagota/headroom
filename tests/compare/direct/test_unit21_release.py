@@ -811,6 +811,8 @@ def test_unit21_release_identity_archive_and_frontier(
         "server/environments/release/archive_unpack_main.ts",
         "server/environments/updates/interruption_capture_main.ts",
         "server/environments/updates/restore_main.ts",
+        "runtime/installer-files.json",
+        "server/environments/updates/installer/main.ts",
         "server/package.json",
         "server/package-lock.json",
         "server/node_modules/fastify/package.json",

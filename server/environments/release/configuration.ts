@@ -8,6 +8,7 @@ export const FILE_CHUNK_BYTES = 1024 * 1024;
 export const ARCHIVE_GZIP_LEVEL = 1;
 export const NODE_RUNTIME_EXECUTABLES = ['bin/panels', 'bin/panels-launcher'] as const;
 export const NODE_RUNTIME_FILES = [
+  'runtime/installer-files.json',
   'server/lifecycle/foreground_main.ts',
   'server/lifecycle/managed_main.ts',
   'server/lifecycle/application.ts',
@@ -20,6 +21,7 @@ export const NODE_RUNTIME_FILES = [
   'server/environments/release/archive_unpack_main.ts',
   'server/environments/updates/interruption_capture_main.ts',
   'server/environments/updates/restore_main.ts',
+  'server/environments/updates/installer/main.ts',
   'server/package.json',
   'server/package-lock.json',
   'server/node_modules/fastify/package.json',
