@@ -14,7 +14,7 @@ from planner.server_lifecycle.contracts import ServerLifecycleError
 
 def test_socket_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Model the fixed short native runtime root, not pytest's nested worker path.
-    with TemporaryDirectory(prefix="pm-", dir="/tmp") as short_root:
+    with TemporaryDirectory(prefix="pm-", dir="/var/tmp") as short_root:
         tmp_path = Path(short_root)
         monkeypatch.setattr(paths, "_RUNTIME_PARENT", tmp_path)
         adapter = DarwinPlatformAdapter()
