@@ -4,6 +4,8 @@ on:
     branches: [feature/typescript-backend]
   push:
     branches: [feature/typescript-backend]
+  schedule:
+    - cron: '17 */4 * * *'
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -14,13 +16,16 @@ jobs:
   server:
     runs-on: ubuntu-24.04
     strategy:
-      # Pull requests run only Node 22. Pushes to the branch and manual runs
-      # run both versions. The matrix itself shrinks, so no skipped entries
+      # Pull requests and pushes to the branch run only Node 22. The scheduled
+      # run (against feature/typescript-backend) and manual runs run both
+      # versions. The matrix itself shrinks, so no skipped entries
       # are left pending.
       matrix:
-        node: ${{ fromJSON(github.event_name == 'pull_request' && '["22"]' || '["22", "24"]') }}
+        node: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'push') && '["22"]' || '["22", "24"]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'feature/typescript-backend' || github.sha }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: ${{ matrix.node }}
