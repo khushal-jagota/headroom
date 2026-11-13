@@ -18,7 +18,7 @@ import {
 } from './logic/host.ts';
 import { RUNTIME_ADMISSION_TIMEOUT_SECONDS } from './process_configuration.ts';
 import { find_release_executable } from './process.ts';
-import { run_runtime_json_probe, run_runtime_probe } from './admission_process.ts';
+import { RuntimeProbeUnsettled, run_runtime_json_probe, run_runtime_probe } from './admission_process.ts';
 import { NATIVE_NODE_PROBE } from './admission_probe.ts';
 import { NATIVE_PYTHON_PROBE } from './python_admission_probe.ts';
 import { resolved_path } from '../paths.ts';
@@ -200,6 +200,7 @@ export async function admit_runtime(
     throw new AppValidationError('candidate manifest differs from the admitted receipt');
   current(deadline);
   const state = await mkdtemp(join(tmpdir(), 'panels-runtime-probe-'));
+  let deferred_cleanup = false;
   try {
     for (const name of [
       'config',
@@ -258,7 +259,15 @@ export async function admit_runtime(
       await run_runtime_probe(command, state, deadline, child_processes);
       current(deadline);
     }
+  } catch (error) {
+    if (error instanceof RuntimeProbeUnsettled) {
+      deferred_cleanup = true;
+      void error.settled.finally(() => rm(state, { recursive: true, force: true })).catch((failure) => {
+        console.error(`Runtime probe deferred cleanup failed for ${state}: ${String(failure)}`);
+      });
+    }
+    throw error;
   } finally {
-    await rm(state, { recursive: true, force: true });
+    if (!deferred_cleanup) await rm(state, { recursive: true, force: true });
   }
 }
