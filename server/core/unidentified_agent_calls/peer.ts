@@ -2,21 +2,12 @@
 import { opendir, readFile, readlink, stat } from 'node:fs/promises';
 import { endianness } from 'node:os';
 import { join } from 'node:path';
-import { getSystemErrorMap } from 'node:util';
 import { testModeFromEnvironment } from '../config.ts';
+import { is_os_error } from '../system_errors.ts';
 import { InvalidPeerEvidence } from './contracts.ts';
 import type { Endpoint, PeerLookupContext, PeerLookupResult, ProcReader } from './contracts.ts';
 import { address_bytes, agent_cgroup, integer, proc_address, splitlines, words } from './logic.ts';
 
-const ERROR_CODES = new Set([...getSystemErrorMap().values()].map(([name]) => name));
-function io_error(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    'code' in error &&
-    typeof error.code === 'string' &&
-    ERROR_CODES.has(error.code)
-  );
-}
 function disappeared(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
@@ -123,7 +114,7 @@ export async function resolve_loopback_peer(
         descriptors = await files.list(join(path, 'fd'));
       } catch (error) {
         if (disappeared(error)) continue;
-        if (!io_error(error)) throw error;
+        if (!is_os_error(error)) throw error;
         if (agent_cgroup(await files.readText(join(path, 'cgroup')))) return result(false);
         skipped++;
         continue;
@@ -137,7 +128,7 @@ export async function resolve_loopback_peer(
           link = await files.readlink(fd);
         } catch (error) {
           if (disappeared(error)) continue;
-          if (!io_error(error)) throw error;
+          if (!is_os_error(error)) throw error;
           if (agent_cgroup(await files.readText(join(path, 'cgroup')))) return result(false);
           skipped++;
           complete = false;
@@ -152,7 +143,7 @@ export async function resolve_loopback_peer(
     }
     return result(holders > 0);
   } catch (error) {
-    if (!io_error(error) && !(error instanceof InvalidPeerEvidence)) throw error;
+    if (!is_os_error(error) && !(error instanceof InvalidPeerEvidence)) throw error;
     return result(false);
   }
 }
