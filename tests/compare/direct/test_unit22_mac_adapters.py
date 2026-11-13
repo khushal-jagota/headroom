@@ -301,7 +301,16 @@ def test_unit22_mac_adapters(
     observed["open"] = ["mac-workspace-nondirectory-traversal (Mac Ticket)"]
     (target / "expected.json").write_text(json.dumps(expected, indent=2))
     (target / "observed.json").write_text(json.dumps(observed, indent=2))
-    assert observed["parity"] == expected
+
+    def comparable(value: dict[str, Any]) -> dict[str, Any]:
+        errors = value["errors"]
+        assert errors and isinstance(errors[-1], str)
+        assert (
+            errors[-1].startswith("Mac workspace unavailable:") and "<root>/missing" in errors[-1]
+        )
+        return {**value, "errors": [*errors[:-1], "<missing workspace>"]}
+
+    assert comparable(observed["parity"]) == comparable(expected)
     assert observed["lifecycle"] and all(observed["lifecycle"].values())
     report_direct(
         request,

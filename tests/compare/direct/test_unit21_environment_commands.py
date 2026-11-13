@@ -410,13 +410,12 @@ def test_unit21_environment_command_function_parity(
         assert operators["interrupted_status"]["later_spawns"] == 0
         assert actual["scratch_owned"]["actual_children"] > 0
         assert actual["scratch_owned"]["all_closed"]
-        for name in ("app-build", "run", "serve", "restart"):
-            assert operators["deferred"][name] == dict(
-                exit_code=1,
-                stdout="",
-                failure_message=f"The {name} command is not yet available in this build.",
-                stderr_prefix="",
-            )
+        assert operators["composed_callbacks"] == {
+            "app-build": ["build_app"],
+            "run": ["prepare_run"],
+            "serve": ["run_supervisor"],
+            "restart": ["request_restart"],
+        }
         message = "The TypeScript runtime cannot enumerate Promise await chains."
         assert operators["diagnostic"] == [
             dict(
