@@ -1,5 +1,6 @@
 /** Real-core companion for the fresh Python review-start comparison. */
 import { configure_conversation_start } from '../../runtime/conversation_start.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../../lifecycle/configuration.ts';
 import { createDatabase } from '../../core/database/index.ts';
 import { load_worker_runtime_definitions } from '../../worker_types/configuration.ts';
 import { ConversationStore } from '../record/data/store.ts';
@@ -222,7 +223,7 @@ export async function run(spec: Spec) {
       await Promise.all(['c', 'current'].map(async (id) => [id, await registry.inspect(id)])),
     );
     if (spec.case === 'prepare') {
-      await core.shutdown();
+      await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
       await registry.close();
       registry = new ScriptedBackendRegistry();
       core = new SqliteProcessConversationSystem({
@@ -257,7 +258,7 @@ export async function run(spec: Spec) {
       running: await core.is_running('c'),
     };
   } finally {
-    await core.shutdown();
+    await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     await registry.close();
     database.close();
   }

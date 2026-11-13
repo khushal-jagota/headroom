@@ -75,8 +75,14 @@ Do not describe this as equal authentication of the signal sender.
 Only a separately named TS unit receives the new `ExecStop`. Existing units remain untouched.
 A normal `systemctl stop` runs that command before systemd's remaining termination steps.
 The command must finish only after the supervisor exits.
-The new unit will use a 60-second stop timeout: a 30-second application shutdown budget plus a 30-second margin.
-The loop deadline is 30 seconds today. The total real-core settlement bound remains an open proof.
+APP uses one 30-second grace, a hard trigger at 45 seconds, and an owned-force attempt bounded by original stop plus 55 seconds.
+Packaged policy sets the independent supervisor APP fallback to 60 seconds, the stop client to 80 seconds, and the outer unit phase to 90 seconds.
+The supervisor/client implementation remains in an unmerged release draft. The new unit renderer and actual hosted unit proof remain open.
+These phase limits do not imply a 90-second total systemd stop. APP timers cannot preempt a blocked loop or native call.
+Independent Worker services have no BindsTo/PartOf relation to the APP unit and remain outside its cgroup.
+If APP blocks before its owned-unit force attempt, supervisor/cgroup fallback alone does not prove those Worker services gone.
+One shared deadline bounds the APP observers. It does not guarantee settlement of arbitrary provider work.
+Hard termination does not run database, record, or ownership finalizers beneath pending work.
 The installer still stops its own identified unit through systemd.
 
 If the supervisor socket or stop command fails, systemd can reach its timeout and SIGKILL fallback.
@@ -106,8 +112,7 @@ The Manager must accept that policy before any Mac service adopts this guard.
 - Prove that the capability path is outside every snapshot and backup root.
 - Start and relocate the packaged supervisor on the Node-only target root. No compiler or Python can be required there.
 
-The real-core hung-provider shutdown proof remains open until the conversation routes pull request merges.
-The design does not claim that an in-memory stop proves that boundary.
+The conversation core and routes are merged. Their isolated proofs do not replace actual packaged-unit, vendor-provider, and cutover evidence.
 
 ## Source evidence
 

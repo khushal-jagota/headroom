@@ -233,6 +233,8 @@ def test_unit21_stop_retains_disconnected_work_and_failed_cleanup(
                 server.proc.send_signal(signal.SIGTERM)
                 assert server.proc.wait(timeout=20) == 0
                 assert _state(runtime, "exit")["state"]["kind"] == "closed"
+                completion = _state(runtime, "completion")
+                assert completion["code"] == 0 and "Timeout" in completion["resources"]
             elif mode == "failure":
                 assert httpx.post(server.base + "/proof/stop", timeout=20).json() == {
                     "accepted": True
@@ -244,9 +246,12 @@ def test_unit21_stop_retains_disconnected_work_and_failed_cleanup(
                 _owner(owner, True)
                 assert not (runtime / "failed.json").exists()
                 (runtime / "release-backend").touch()
-                failed = _state(runtime, "failed")
+                failed = _state(runtime, "completion")
                 assert failed["state"]["kind"] == "closed"
-                assert "video transfers" in failed["error"]
+                assert failed["code"] == 1 and "Timeout" in failed["resources"]
+                assert any(
+                    failure["name"] == "video transfers" for failure in failed["state"]["failures"]
+                )
                 assert server.proc.wait(timeout=20) == 1
                 assert "closed" in _state(runtime, "exit")["database"]
             else:

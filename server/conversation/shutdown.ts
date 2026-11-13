@@ -1,5 +1,4 @@
 /** A deadline observes owned cleanup. It never replaces the actual settlement promise. */
-import { SHUTDOWN_GRACE_SECONDS } from '../core/config.ts';
 import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import { ConversationStartAborted } from '../runtime/abort.ts';
@@ -16,11 +15,11 @@ export function is_shutdown_business_cancellation(error: unknown): boolean {
 
 export async function observe_shutdown(
   settlement: Promise<unknown>,
-  options: Partial<StopOptions>,
+  options: StopOptions,
   message: string,
   pending: readonly string[] = [],
 ): Promise<void> {
-  const deadline = options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
+  const deadline = options.deadline;
   // A zero-budget observer still owns the original promise's rejection.
   void settlement.catch(() => {});
   const remaining = deadline * 1000 - performance.now();

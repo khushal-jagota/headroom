@@ -24,8 +24,10 @@ import { createConversationRoutes } from '../conversation/routes.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
 import { createBackendRoutes } from '../conversation/snapshot/routes.ts';
 import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
-import { create_backend_runtime } from '../conversation/snapshot/composition.ts';
-import { production_backend_providers } from '../conversation/snapshot/production.ts';
+import {
+  create_backend_runtime,
+  unavailable_backend_providers,
+} from '../conversation/snapshot/composition.ts';
 import { CredentialRequestOperations } from '../credentials/requests/service.ts';
 import { createCredentialRequestRoutes } from '../credentials/requests/routes.ts';
 import { makeUsageService } from '../conversation/usage/composition.ts';
@@ -50,6 +52,7 @@ import type {
   OwnedOneShotChildren,
   ShutdownOwner,
   StopOptions,
+  ShutdownCompletion,
 } from '../lifecycle/contracts.ts';
 
 import {
@@ -81,12 +84,16 @@ export interface ConversationCompositionContext extends Omit<
   child_processes: OwnedChildProcesses;
 }
 export interface TestCompositionContext extends ConversationCompositionContext {
+  /** Existing original stop only. Test close hooks must never create another budget. */
+  shutdown_options(): StopOptions;
   backendServices?: BackendHttpRuntime;
   core?: SqliteProcessConversationSystem;
   conversationSystem?: ConversationSystem;
 }
 /** Shared process lifecycle for the normal entry point and comparison host. */
 export interface ServerOptions {
+  /** Actual process entries supply this. Embedded servers never terminate their host. */
+  onShutdownComplete?: ShutdownCompletion;
   createUsageService?: (context: ConversationCompositionContext) => RecordedUsageService;
   createBackendServices?: (context: ConversationCompositionContext) => BackendHttpRuntime;
   /** Off until Unit 21 explicitly composes the production lifecycle. */
@@ -131,21 +138,33 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   let dispatcher: ReturnType<typeof acquireLock> = null;
   let database: ReturnType<typeof createDatabase> | undefined;
   let background: ComposedBackgroundService | undefined;
+  let stopped_background: ComposedBackgroundService | undefined;
   let publication: SignalPublicationCoordinator | undefined;
   let core: SqliteProcessConversationSystem | undefined;
   let backendServices: BackendHttpRuntime | undefined;
   let stopped_core: SqliteProcessConversationSystem | undefined;
   let stopped_backend: BackendHttpRuntime | undefined;
   let credential_requests: CredentialRequestOperations | null = null;
+  let stopped_credentials: CredentialRequestOperations | null = null;
   let recorded_usage: RecordedUsageService | undefined;
   let stopped_usage: RecordedUsageService | undefined;
   let video_uploads: VideoUploadService | undefined;
+  let stopped_video: VideoUploadService | undefined;
   let app: FastifyInstance | undefined;
   let stopped_app: FastifyInstance | undefined;
   let ownership_current = true;
   let signalRevoked = false;
   let recovery: Promise<void> | undefined;
   let stop_options: StopOptions | undefined;
+  let initial_stop: StopOptions | undefined;
+  let returned = false,
+    signal_requested = false,
+    completion_notified = false;
+  let closing: Promise<void> | undefined;
+  const initialStop = (): StopOptions =>
+    (initial_stop ??= {
+      deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS,
+    });
   let setup_cleanup_failure: unknown;
   let setup_cleanup_failed = false;
   let settle_setup!: () => void;
@@ -165,8 +184,10 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     publication?.invalidate('shutdown');
   };
   const onSignal = () => {
-    void close().catch(() => {
-      process.exitCode = 1;
+    signal_requested = true;
+    void close(initialStop()).catch((error) => {
+      if (!options.onShutdownComplete) process.exitCode = 1;
+      console.error('Server shutdown failed', error);
     });
   };
   const shutdown = new ShutdownCoordinator({
@@ -213,12 +234,17 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     },
     begin(stages, stop) {
       stop_options = stop;
+      stages.own('native process admission', () => child_processes.seal());
       stages.own('startup setup', () => setup_actual);
       // Independent fences all run, even if one throws. The coordinator publishes
       // its latch/deadlines and referenced hard timer before entering this callback.
       stages.own('HTTP admission', () => request_lifetime.seal());
       stages.own('conversation write admission', () => conversationWrites.seal());
-      stages.own('video admission', () => video_uploads?.seal());
+      stages.own('video admission', () => {
+        stopped_video = video_uploads;
+        stopped_video?.seal();
+      });
+      stages.own('preview producer admission', () => areas.sealPreviews());
       stages.own('workspace admission', () => core?.workspace_admission.seal());
       stages.own('one-shot admission', () => one_shot_children.seal());
       stages.own('HTTP listener', () => {
@@ -263,8 +289,11 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       );
       producer(
         'background services',
-        () => background?.close(stop),
-        () => background?.settled() ?? Promise.resolve(),
+        () => {
+          stopped_background = background;
+          return stopped_background?.close(stop);
+        },
+        () => stopped_background?.settled() ?? Promise.resolve(),
       );
       producer(
         'environment services',
@@ -294,21 +323,30 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       );
       producer(
         'video transfers',
-        () => video_uploads?.drain(stop),
-        () => video_uploads?.settled() ?? Promise.resolve(),
+        () => stopped_video?.drain(stop),
+        () => stopped_video?.settled() ?? Promise.resolve(),
+      );
+      const http_actual = request_lifetime.settled();
+      producer(
+        'preview services',
+        () => areas.stopPreviews(stop, http_actual),
+        () => areas.previewsSettled(),
       );
       stages.own('one-shot children', () => one_shot_children.settled());
       stages.own('HTTP server', () => {
         stopped_app = app;
         return app?.close();
       });
-      stages.own('HTTP work', () => request_lifetime.settled());
+      stages.own('HTTP work', () => http_actual);
       stages.own('media cleanup', () => video_cleanup_work);
       stages.own('HTTP writes', () => conversationWrites.drain());
       producer(
         'credential requests',
-        () => credential_requests?.finish_operations(stop),
-        () => credential_requests?.settled() ?? Promise.resolve(),
+        () => {
+          stopped_credentials = credential_requests;
+          return stopped_credentials?.finish_operations(stop);
+        },
+        () => stopped_credentials?.settled() ?? Promise.resolve(),
       );
       stages.own('startup recovery', () =>
         recovery?.catch((error: unknown) => {
@@ -344,12 +382,72 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       },
     ],
   });
-  const close = (stop?: StopOptions): Promise<void> => shutdown.close(stop);
+  const close = (stop: StopOptions): Promise<void> => {
+    if (closing) return closing;
+    initial_stop ??= stop;
+    let resolve!: () => void, reject!: (error: unknown) => void;
+    closing = new Promise<void>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    void closing.catch(() => {});
+    const notify = (code: 0 | 1): void => {
+      if (!options.onShutdownComplete || (!returned && !signal_requested) || completion_notified)
+        return;
+      completion_notified = true;
+      try {
+        const state = shutdown.shutdown_state;
+        writeSync(
+          2,
+          `Shutdown complete; code: ${code}; pending: ${state.pending.join(', ')}; failed: ${state.failures.map((item) => item.name).join(', ')}\n`,
+        );
+      } finally {
+        options.onShutdownComplete(code);
+      }
+    };
+    try {
+      void shutdown.close(initial_stop).then(
+        () => {
+          try {
+            notify(0);
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        },
+        (error) => {
+          try {
+            notify(1);
+          } catch (callbackError) {
+            reject(callbackError);
+            return;
+          }
+          reject(error);
+        },
+      );
+    } catch (error) {
+      reject(error);
+    }
+    return closing;
+  };
   const isClosing = () => shutdown.shutdown_state.kind !== 'running';
   const assert_startup_open = () => {
     if (isClosing()) throw new Error('Server closed during startup');
   };
   const abort_late_setup = async (): Promise<never> => {
+    // These constructors start no asynchronous work and cannot reenter stop.
+    // Background factories are deferred until their already-owned start flight.
+    if (
+      background !== stopped_background ||
+      video_uploads !== stopped_video ||
+      credential_requests !== stopped_credentials
+    ) {
+      setup_cleanup_failed = true;
+      setup_cleanup_failure = new Error(
+        'Late startup owner escaped the background/video/credential shutdown stages',
+      );
+      throw setup_cleanup_failure;
+    }
     const actuals: Promise<unknown>[] = [];
     // Shutdown can run before either asynchronous factory assigns its result.
     // Retain those late resources inside setup rather than restarting close().
@@ -441,16 +539,19 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     }
     throw new Error('Server closed during startup');
   };
-  const started = (address: string): StartedServer => ({
-    address,
-    close,
-    get shutdown_state() {
-      return shutdown.shutdown_state;
-    },
-    get shutdown_settled() {
-      return shutdown.shutdown_settled;
-    },
-  });
+  const started = (address: string): StartedServer => {
+    returned = true;
+    return {
+      address,
+      close,
+      get shutdown_state() {
+        return shutdown.shutdown_state;
+      },
+      get shutdown_settled() {
+        return shutdown.shutdown_settled;
+      },
+    };
+  };
   for (const signal of ['SIGTERM', 'SIGINT'] as const) process.on(signal, onSignal);
   const setup = async (): Promise<string> => {
     assert_startup_open();
@@ -515,13 +616,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         database,
         config,
         now: () => clock.now(),
-        providers: production_backend_providers(config.test_mode, {
-          database,
-          now: () => clock.now(),
-          read_codex_snapshot: () => backendServices!.backend_snapshots.snapshot('codex'),
-          one_shot_children,
-          child_processes,
-        }),
+        providers: unavailable_backend_providers(),
         one_shot_children,
       });
     if (isClosing()) return abort_late_setup();
@@ -548,6 +643,11 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     areas.attachNavigation();
     const testContext: TestCompositionContext = {
       ...context,
+      shutdown_options() {
+        if (!stop_options)
+          throw new Error('Server shutdown options are unavailable before stop begins');
+        return stop_options;
+      },
       core,
       conversationSystem,
       backendServices,
@@ -602,7 +702,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
               readSummary: async (input) =>
                 await conversationWrites.run(() => usage.readSummary(input)),
               refreshRates: async () => await conversationWrites.run(() => usage.refreshRates()),
-              finish_operations: () => usage.finish_operations(),
+              finish_operations: (stop) => usage.finish_operations(stop),
               settled: () => usage.settled(),
             },
             backend_state: backendServices.backend_state,
@@ -727,7 +827,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     return started(await setting_up);
   } catch (error) {
     try {
-      await close();
+      await close(initialStop());
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], 'Startup and cleanup failed');
     }

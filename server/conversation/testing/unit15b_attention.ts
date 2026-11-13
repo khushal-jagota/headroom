@@ -1,5 +1,6 @@
 /** Attention provenance through the real area composition and scripted core. */
 import { createDatabase } from '../../core/database/index.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../../lifecycle/configuration.ts';
 import { loadConfig } from '../../core/config.ts';
 import { createAreasRuntime } from '../../areas.ts';
 import { SqliteProcessConversationSystem } from '../system.ts';
@@ -121,7 +122,7 @@ export async function exercise(spec: {
       ),
     }));
   } finally {
-    await core.shutdown();
+    await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     for (const child of children) await child.terminate();
     await areas.closeRecord();
     database.close();
