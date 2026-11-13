@@ -1,3 +1,4 @@
+import { is_record as object } from '../../../core/records.ts';
 import { StringDecoder } from 'node:string_decoder';
 import { Transform } from 'node:stream';
 import { parse_numeric_json, numeric_kind } from '../../../core/http/numeric_json.ts';
@@ -31,9 +32,6 @@ export class Pending<T> {
   }
 }
 
-export function object(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 export interface CommandLifecycle {
   type: 'command_lifecycle';
   command_uuid: string;
@@ -202,3 +200,5 @@ export class ObservedStderr {
     this.length = 0;
   }
 }
+
+export { is_record as object } from '../../../core/records.ts';

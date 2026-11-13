@@ -1,4 +1,5 @@
 /** Native starts and stops retain custody independently of command/result retries. */
+import { same_reference } from '../../child_reference.ts';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { BackendSpawnFailed } from '../../../conversation/backends/contracts.ts';
 import { FifoLock } from '../../../conversation/runtime/state.ts';
@@ -13,7 +14,6 @@ import type {
   MacRunningChild,
 } from './contracts.ts';
 import { MacChildAdmissionRefused } from './contracts.ts';
-import { same_reference } from './logic/outcomes.ts';
 interface Entry {
   reference: ChildReference;
   ticket_id: string;

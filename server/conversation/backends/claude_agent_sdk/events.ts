@@ -1,5 +1,6 @@
 /** Native Claude facts enter the unchanged backend event seam here. */
 import { stringify_python_json } from '../../../core/http/numeric_json.ts';
+import { is_record } from '../../../core/records.ts';
 import { python_truth } from '../../../core/python_truth.ts';
 export { python_truth } from '../../../core/python_truth.ts';
 import { ComposerCatalogEntry, ComposerCatalogEntryKind } from '../../contracts.ts';
@@ -11,9 +12,7 @@ import type { TurnInFlight } from './turn.ts';
 import { python_str } from './failure_summary.ts';
 
 export function record(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  return is_record(value) ? value : null;
 }
 function python_type(value: unknown): string {
   if (value === null || value === undefined) return 'NoneType';

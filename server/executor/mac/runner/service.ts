@@ -1,4 +1,5 @@
 /** Command identity survives failed durable steps. Actual work ends independently of dedupe. */
+import { same_reference } from '../../child_reference.ts';
 import { stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
 import {
   BackendSpawnFailed,
@@ -21,7 +22,6 @@ import {
   error_message,
   error_outcome,
   owed_outputs,
-  same_reference,
   same_wire,
 } from './logic/outcomes.ts';
 

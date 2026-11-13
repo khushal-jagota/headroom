@@ -1,4 +1,5 @@
 /** Model choices come from the selected CLI's startup handshake, without a prompt. */
+import { is_record as object } from '../../core/records.ts';
 import type { OwnedOneShotChildren, StopOptions } from '../../lifecycle/contracts.ts';
 import { copy_environment } from '../../core/environment.ts';
 import { OneShotChildren, stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
@@ -37,10 +38,6 @@ export function versioned_display_name(resolved_model_id: string): string {
   if (!version_parts.every((part) => /^\d+$/.test(part))) return resolved_model_id;
   const shown = version_parts.length === 0 ? family : `${family} ${version_parts.join('.')}`;
   return large_context ? `${shown} (1M)` : shown;
-}
-
-function object(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function listed_efforts(value: unknown): string[] {

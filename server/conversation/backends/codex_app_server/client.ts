@@ -2,7 +2,7 @@
 import { Buffer } from 'node:buffer';
 import { copy_environment } from '../../../core/environment.ts';
 import {
-  JsonNumber,
+  is_json_record as object,
   parse_numeric_json,
   numeric_kind,
   numeric_value,
@@ -120,14 +120,6 @@ export function raw_json_result(line: string): string | null {
     if (line[index++] !== ',') break;
   }
   return result;
-}
-function object(value: unknown): value is WireObject {
-  return (
-    value !== null &&
-    typeof value === 'object' &&
-    !Array.isArray(value) &&
-    !(value instanceof JsonNumber)
-  );
 }
 function error_text(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

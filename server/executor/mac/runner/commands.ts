@@ -1,4 +1,5 @@
 /** Native effects stay under the retained child lock. Exact retirement belongs to its owner. */
+import { same_reference } from '../../child_reference.ts';
 import {
   BackendPromptRejected,
   BackendSpawnFailed,
@@ -30,7 +31,6 @@ import {
   CHILD_START_FAILED,
   outcome,
   outcome_detail,
-  same_reference,
   same_wire,
 } from './logic/outcomes.ts';
 

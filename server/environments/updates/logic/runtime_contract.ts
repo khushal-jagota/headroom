@@ -1,4 +1,5 @@
 /** Closed Python/Node release metadata validation, not a runtime admission probe. */
+import { is_record as object } from '../../../core/records.ts';
 import type { RuntimeContract, RuntimePlatform } from '../contracts.ts';
 import { numeric_value, numeric_kind } from '../../../core/http/numeric_json.ts';
 export const SUPPORTED_PLATFORMS: readonly RuntimePlatform[] = [
@@ -41,8 +42,6 @@ function fail(message: string): never {
 function fullmatch(pattern: RegExp, value: string): boolean {
   return pattern.exec(value)?.[0] === value;
 }
-const object = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
 function equal(a: unknown, b: unknown): boolean {
   if (Array.isArray(a) || Array.isArray(b))
     return (

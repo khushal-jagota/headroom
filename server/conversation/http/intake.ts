@@ -1,4 +1,5 @@
 /** FastAPI-compatible validation for the conversation route bodies. */
+import { is_record as object } from '../../core/records.ts';
 import { HttpError } from '../../core/http/errors.ts';
 export interface Issue {
   type: string;
@@ -6,9 +7,6 @@ export interface Issue {
   msg: string;
   input: unknown;
   ctx?: Record<string, unknown>;
-}
-export function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 // Match the record routes: underscores belong only between integer-part digits.
 function integer_text(raw: string): string {
@@ -129,3 +127,5 @@ export function body_fields(value: unknown): Fields {
   fields.finish();
   return fields;
 }
+
+export { is_record as object } from '../../core/records.ts';
