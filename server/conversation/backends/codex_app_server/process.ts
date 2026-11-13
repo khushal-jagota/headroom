@@ -64,7 +64,7 @@ export class OwnedCodexProcess {
     });
     return task;
   }
-  private signal_group(signal: NodeJS.Signals): void {
+  signal_group(signal: NodeJS.Signals): void {
     const pid = this.child.pid;
     // After the leader is reaped, its numeric PID/PGID can belong to another process.
     if (

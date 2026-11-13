@@ -12,3 +12,7 @@ Python places these records under the executor's `updates/` directory, beside `u
 The update controller and fixed supervisor will supply their deterministic local record paths.
 Linux synthetic checks prove byte parity, staged-write failure, retained-parent publication, and close retry.
 Darwin ABI and power-loss durability remain later native checks.
+
+`supervisor.ts` keeps the original installation fixed and launches the selected runtime with the same CLI arguments.
+It checks the ready request and revision before promotion. An unconfirmed trial restores the previous selection and handoff.
+The selected runtime's `bin` leads the child PATH. Callers retain the invocation owners and close files after supervision settles.
