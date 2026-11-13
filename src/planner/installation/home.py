@@ -21,7 +21,11 @@ HEALTH_TIMEOUT_SECONDS = 60
 
 
 def _run(*arguments: str) -> None:
-    subprocess.run(arguments, check=True, capture_output=True, text=True, timeout=30)
+    try:
+        subprocess.run(arguments, check=True, capture_output=True, text=True, timeout=30)
+    except subprocess.CalledProcessError as error:
+        detail = error.stderr.strip() or error.stdout.strip() or str(error)
+        raise ValueError(f"The new home service refused the command: {detail}") from error
 
 
 def _unit_argument(value: str) -> str:
@@ -32,6 +36,9 @@ def _unit_argument(value: str) -> str:
 def linux_unit(options: HomeInstall) -> str:
     """Use the ordinary sealed launcher with private paths and a user service."""
     root = options.root
+    if any(ord(character) < 32 or ord(character) == 127 for character in str(root)):
+        raise ValueError("The installation root must not contain control characters.")
+    working_directory = str(root).replace("%", "%%")
     environment = {
         "HOME": str(Path.home()),
         "PATH": os.pathsep.join(
@@ -75,7 +82,7 @@ def linux_unit(options: HomeInstall) -> str:
     return (
         "[Unit]\nDescription=Panels home\nAfter=network-online.target\n"
         "[Service]\nType=simple\n"
-        f"WorkingDirectory={_unit_argument(str(root))}\n"
+        f"WorkingDirectory={working_directory}\n"
         f"ExecStart={_unit_argument(str(root / 'app/bin/panels-launcher'))} serve\n"
         + "".join(
             f"Environment={_unit_argument(key + '=' + value)}\n"
@@ -114,6 +121,8 @@ def install_home(
 ) -> str:
     """The standalone bootstrap performs host and collision checks before this call."""
     root = options.root
+    if any(ord(character) < 32 or ord(character) == 127 for character in str(root)):
+        raise ValueError("The installation root must not contain control characters.")
     if root.exists() or root.is_symlink():
         raise ValueError(f"The installation root already exists: {root}")
     if platform.system() == "Darwin":
@@ -191,9 +200,12 @@ def main() -> None:
         Path(value["installer_python"]),
         value["isolated_providers"],
     )
-    address = install_home(
-        options, Path(value["archive"]), value["archive_sha256"], value["revision"]
-    )
+    try:
+        address = install_home(
+            options, Path(value["archive"]), value["archive_sha256"], value["revision"]
+        )
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        raise SystemExit(f"Home setup refused: {error}") from None
     print(f"Installed Panels at {options.root}. Open {address} on this machine.")
     print("For another device, configure HTTPS through Tailscale Serve with the owner login.")
     print("Authenticate your agent provider before the first Worker starts.")

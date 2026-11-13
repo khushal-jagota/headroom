@@ -241,7 +241,15 @@ def main() -> None:
         raise ValueError("Join inputs must be an object")
     values["archive"] = Path(values["archive"])
     values["root"] = Path(values["root"])
-    install_executor(**values)
+    try:
+        install_executor(**values)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        detail = (
+            error.stderr
+            if isinstance(error, subprocess.CalledProcessError) and error.stderr
+            else str(error)
+        )
+        raise SystemExit(f"Join refused: {detail}") from None
 
 
 if __name__ == "__main__":

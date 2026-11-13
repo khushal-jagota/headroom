@@ -67,6 +67,8 @@ def preflight(args: argparse.Namespace, target: str) -> None:
             "Install Python 3.11.8 or newer, then run this command with that interpreter."
         )
     root = args.root
+    if any(ord(character) < 32 or ord(character) == 127 for character in str(root)):
+        raise ValueError("The installation root must not contain control characters.")
     if root.exists() or root.is_symlink():
         raise ValueError(f"The installation root already exists: {root}. Select a new --root.")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.service):
