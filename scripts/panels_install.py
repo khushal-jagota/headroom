@@ -145,7 +145,7 @@ def preflight(args: argparse.Namespace, target: str) -> None:
         service = args.service if args.command == "join" else args.service + ".service"
         unit = Path.home() / ".config/systemd/user" / service
         if unit.exists() or unit.is_symlink():
-            raise ValueError(f"The service file already exists: {unit}. Select another --service.")
+            raise ValueError(f"The service file already exists: {unit}. It will not be replaced.")
         result = _run(
             "systemctl",
             "--user",
@@ -156,7 +156,7 @@ def preflight(args: argparse.Namespace, target: str) -> None:
             check=False,
         )
         if result.stdout.strip() not in ("", "not-found"):
-            raise ValueError("The service already exists. Select another --service.")
+            raise ValueError(f"The service already exists: {service}. It will not be replaced.")
 
 
 def _api(path: str, destination: Path | None = None) -> Any:
