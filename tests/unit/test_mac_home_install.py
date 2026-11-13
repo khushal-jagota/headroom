@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import plistlib
+import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -65,10 +68,13 @@ def test_release_jobs_read_the_current_app_and_keep_provider_guard(
     assert config["provision_account_skills"] is False
     assert main["EnvironmentVariables"]["CODEX_HOME"] == str(home / "providers/codex")
 
-    guards = []
-    monkeypatch.setattr("scripts.mac_home_install.account_skill_provisioning_conflict",
-                        lambda authority, *args, **kwargs: (
-                            guards.append(authority) or "occupied account skills"))
+    guards: list[Path] = []
+
+    def occupied(authority: Path, *args: object, **kwargs: object) -> str:
+        guards.append(authority)
+        return "occupied account skills"
+
+    monkeypatch.setattr("scripts.mac_home_install.account_skill_provisioning_conflict", occupied)
     codex = tmp_path / "canonical codex"
     monkeypatch.setenv("CODEX_HOME", str(codex))
     normal = tmp_path / "normal home"
@@ -101,7 +107,7 @@ def test_foreign_loaded_job_is_refused_before_any_bootout(
     monkeypatch.setattr(installer, "mac_processes", lambda *args: {})
     monkeypatch.setattr(identity, "job", lambda label, **kwargs: loaded(home, label, 123).replace(
         str(home / "app/bin/panels"), "/another/home/bin/panels"))
-    monkeypatch.setattr(installer.subprocess, "run", lambda *args, **kwargs: calls.append(args))
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: calls.append(args))
     with pytest.raises(ValueError, match="different program"):
         identity.stop()
     assert calls == []
@@ -127,9 +133,9 @@ def test_stop_waits_for_birth_identity_even_when_a_child_gets_a_new_parent(
         calls.append(command)
         jobs.pop(command[-1].split("/")[-1])
 
-    monkeypatch.setattr(installer.subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "run", run)
     sleeps = []
-    monkeypatch.setattr(installer.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(time, "sleep", lambda seconds: sleeps.append(seconds))
     monkeypatch.setattr(installer, "mac_process_identity", lambda pid: (
         (1, os.getuid() + 1, 11, 21) if pid == 124 and not sleeps else None))
     identity.stop()
@@ -166,7 +172,7 @@ def test_loaded_foreign_record_is_refused_even_when_the_plist_matches(
         identity.authenticate(identity.label, required=True)
 
 
-def prepared_attempt(home: Path) -> SimpleNamespace:
+def prepared_attempt(home: Path) -> argparse.Namespace:
     (home / "app/manifest.json").write_text(json.dumps({"app_sha": "a" * 40}))
     staged = home / (".app-next-" + "b" * 40)
     staged.mkdir()
@@ -175,7 +181,7 @@ def prepared_attempt(home: Path) -> SimpleNamespace:
         "attempt_id": "proof", "state": "installing", "from_sha": "a" * 40,
         "to_sha": "b" * 40, "backup": str(home / "data/backups/snapshot"),
     }))
-    return SimpleNamespace(current_root=home, attempt_id="proof",
+    return argparse.Namespace(current_root=home, attempt_id="proof",
                            service=f"gui/{os.getuid()}/com.panels.proof",
                            health_url="unused", health_timeout_seconds=1)
 
@@ -233,13 +239,13 @@ def test_partial_home_stop_refusal_restores_the_backup_without_another_home(
             if command[-1].endswith(".backup"):
                 jobs.pop(label + ".backup")
             else:
-                raise installer.subprocess.CalledProcessError(1, command)
+                raise subprocess.CalledProcessError(1, command)
         else:
             assert command[1] == "bootstrap"
             assert command[-1] == str(home / "agents" / (label + ".backup.plist"))
             jobs[label + ".backup"] = loaded(home, label + ".backup", 125)
 
-    monkeypatch.setattr(installer.subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "run", run)
     assert installer.install(arguments) == 1
     assert label + ".backup" in jobs
     assert len(calls) == 3
