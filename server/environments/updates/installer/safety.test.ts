@@ -116,3 +116,37 @@ it('keeps actual-test boundaries and stops before rename after a warning abort',
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+it('refuses non-loopback health URLs despite a supplied normal-mode environment', async () => {
+  // Existing path/service guards do not protect the health URL boundary. No network call runs.
+  const root = mkdtempSync(join(tmpdir(), 'panels-installer-health-guard-'));
+  const owner = new ChildProcesses(),
+    controller = new AbortController();
+  const value: InstallerRequest = {
+    current_root: root,
+    database: join(root, 'database.sqlite'),
+    data_directory: root,
+    attempt_id: 'health-guard',
+    node_executable: process.execPath,
+    service_unit: 'never-start.service',
+    health_url: 'https://example.com/health',
+    health_timeout_seconds: 1,
+    admitted_legacy_null_sha: null,
+  };
+  const execution = {
+    child_processes: owner,
+    signal: controller.signal,
+    environment: { PLAN_TEST_MODE: '0' },
+  };
+  try {
+    assert.throws(() => create_installer_effects(value, execution), /loopback host in tests/);
+    assert.doesNotThrow(() =>
+      create_installer_effects({ ...value, health_url: 'http://127.0.0.1:0/health' }, execution),
+    );
+  } finally {
+    owner.seal();
+    controller.abort();
+    await owner.settled();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

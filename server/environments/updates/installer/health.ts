@@ -2,12 +2,25 @@ import * as http from 'node:http';
 import * as https from 'node:https';
 import { setTimeout as delay } from 'node:timers/promises';
 import { is_object, parse_attempt_json } from '../codec.ts';
-import { HEALTH_INACTIVITY_SECONDS, HEALTH_POLL_SECONDS } from './configuration.ts';
+import {
+  assert_installer_health_url,
+  HEALTH_INACTIVITY_SECONDS,
+  HEALTH_POLL_SECONDS,
+  HEALTH_MAX_REDIRECT_REPEATS,
+  HEALTH_MAX_REDIRECT_URLS,
+} from './configuration.ts';
 
-async function observation(
+interface HealthResponse {
+  status: number;
+  body: unknown;
+  location: string | undefined;
+}
+const REDIRECT_STATUSES = [301, 302, 303, 307, 308];
+
+async function request_observation(
   url: string,
   signal: AbortSignal,
-): Promise<{ status: number; body: unknown } | null> {
+): Promise<HealthResponse | null> {
   signal.throwIfAborted();
   const target = new URL(url);
   let request: http.ClientRequest | undefined, release!: () => void;
@@ -21,7 +34,7 @@ async function observation(
   let connecting: ReturnType<typeof setTimeout> | undefined;
   signal.addEventListener('abort', abort);
   try {
-    const result = new Promise<{ status: number; body: unknown } | null>((resolve) => {
+    const result = new Promise<HealthResponse | null>((resolve) => {
       request = (target.protocol === 'https:' ? https : http).get(
         target,
         { agent: false, headers: { Connection: 'close' } },
@@ -32,9 +45,14 @@ async function observation(
           response.once('aborted', () => resolve(null));
           response.once('end', () => {
             try {
+              const status = response.statusCode ?? 0;
+              const location = response.headers.location ?? response.headers.uri;
               resolve({
-                status: response.statusCode ?? 0,
-                body: parse_attempt_json(Buffer.concat(chunks).toString('utf8')),
+                status,
+                body: REDIRECT_STATUSES.includes(status)
+                  ? null
+                  : parse_attempt_json(Buffer.concat(chunks).toString('utf8')),
+                location: typeof location === 'string' ? location : undefined,
               });
             } catch {
               resolve(null);
@@ -73,19 +91,43 @@ async function observation(
     signal.removeEventListener('abort', abort);
   }
 }
+async function observation(
+  url: string,
+  signal: AbortSignal,
+  environment: NodeJS.ProcessEnv,
+): Promise<HealthResponse | null> {
+  const visited = new Map<string, number>();
+  for (;;) {
+    assert_installer_health_url(url, environment);
+    const result = await request_observation(url, signal);
+    if (
+      result === null ||
+      !REDIRECT_STATUSES.includes(result.status) ||
+      result.location === undefined
+    )
+      return result;
+    const next = new URL(result.location, url).href;
+    const repeats = visited.get(next) ?? 0;
+    if (repeats >= HEALTH_MAX_REDIRECT_REPEATS || visited.size >= HEALTH_MAX_REDIRECT_URLS)
+      return null;
+    visited.set(next, repeats + 1);
+    url = next;
+  }
+}
 /** Python checks its overall anchor only after a failed/nonmatching observation. */
 export async function healthy(
   health_url: string,
   sha: string,
   timeout_seconds: number,
   signal: AbortSignal,
+  environment: NodeJS.ProcessEnv = process.env,
 ): Promise<boolean> {
   const deadline = performance.now() / 1000 + timeout_seconds;
   for (;;) {
     signal.throwIfAborted();
     let result: Awaited<ReturnType<typeof observation>> = null;
     try {
-      result = await observation(`${health_url}?expected_sha=${sha}`, signal);
+      result = await observation(`${health_url}?expected_sha=${sha}`, signal, environment);
     } catch {
       signal.throwIfAborted();
     }
