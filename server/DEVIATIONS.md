@@ -396,6 +396,20 @@ A FIFO therefore refuses instead of blocking the event loop before that check, a
 Large copy, hash, and strict flush operations run in an owned worker with the shared shutdown deadline.
 The file formats, hashes, and successful publication behavior retain the Python contract.
 
+### Command settlement and update stop proof identity
+
+The Manager requires withdrawal before invocation to preserve the active turn.
+Python changes that turn before its withdrawal check. TypeScript changes it only after invocation admission succeeds.
+
+The Manager requires completed journal and output settlement before idle or a successful stop certificate.
+Python checks only for derived output that remains unpublished, so a failed journal write for a command without output can escape that check.
+TypeScript also blocks on the retained command's unsettled state.
+
+The Manager requires one stop proof for each update request and exact child across retries.
+TypeScript retains that proof's command identity until its required output settles.
+Python allocates a fresh `update_stop_` identity on each preparation attempt.
+The caller supplies the real update request ID. A retry cannot publish a second `child_stopped` entry for the same request and child.
+
 ## Mac canonical skill publication ownership and durability
 
 The Manager accepted these Mac-only safety differences during PR 817 source review on November 13, 2026.
@@ -634,7 +648,9 @@ The typed `server-event-loop-tasks` callback returns exit 1 and empty stdout.
 Human stderr is exactly `error: The TypeScript runtime cannot enumerate Promise await chains.\nThis diagnostic is unavailable in the TypeScript server.\n`.
 JSON stderr is the existing error envelope with code `unsupported`, the first sentence as its message, empty detail, and a newline.
 Await-chain inspection remains deferred. Resource counts do not replace this diagnostic.
-The public CLI binding remains open. Node's built-in diagnostic report is the operator alternative.
+The public CLI prints that callback's literal result. Node's built-in diagnostic report is the operator alternative.
+
+Unexpected operator failures, including cleanup AggregateErrors, print the error text at exit 1 instead of Python's traceback, as accepted by the Manager.
 
 ## VPS file descriptor custody
 
@@ -667,6 +683,10 @@ NUL artifact paths retain Python's exact `lstat: embedded null character in path
 Ancestor symlink loops produce the clean `artifact path contains symlink` validation refusal, without raw Node errors.
 Python raises a raw `RuntimeError` for the same ancestor loop. The Manager accepts this clean TypeScript refusal.
 The Manager reviews these implementation differences before this slice merges.
+
+## Catalog cancellation withdraws waiting commands
+
+The Manager requires that TypeScript withdraw a waiting model-list command after an internal read cancellation, reconnection, or stop. Python cancellation leaves that row waiting. A caller that cancels its own observation does not cancel or withdraw the shared read. TypeScript uses its own short cleanup signal, capped by the original shared shutdown deadline, and joins withdrawal before catalog settlement. The invocation keeps the mailbox open until that cleanup settles.
 
 ## Mac archive inspection policies and JSON diagnostics — accepted conditionally
 
@@ -703,7 +723,7 @@ Its `unit21-mac-updates.json` report retains both outcomes and marks the accepte
 Acceptance requires that the unchanged real Mac producer passes the hosted gate in `.github/workflows/typescript-lifecycle-native.yml`.
 The [first real producer proof](https://github.com/khushal-jagota/headroom/actions/runs/43466927540/job/132028428389) passed on the PR merge tree for head `37333bd6e`.
 Its 597,087,278-byte archive passed unchanged, with both direct children closed. Build plus inspection took 276.07 seconds.
-The final-head repeat after review repairs is **pending**. Evidence stays under `mac-producer-compatibility` in the existing native ABI artifact.
+Every final head must repeat this gate after source changes. Evidence stays under `mac-producer-compatibility` in the existing native ABI artifact.
 If that producer fails any accepted policy, stop and ask the Manager before further work.
 
 ## Installer database and attempt paths — accepted

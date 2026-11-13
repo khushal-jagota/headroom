@@ -12,6 +12,16 @@ export function missing(error: unknown): boolean {
     error instanceof Error && 'code' in error && ['ENOENT', 'ENOTDIR'].includes(String(error.code))
   );
 }
+/** Existence includes every object that stat follows, not only files and directories. */
+export async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (missing(error)) return false;
+    throw error;
+  }
+}
 export async function is_symlink(path: string): Promise<boolean> {
   try {
     return (await lstat(path)).isSymbolicLink();

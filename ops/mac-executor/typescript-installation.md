@@ -189,6 +189,29 @@ They do not coordinate same-user programs that change entries concurrently. Ther
 The root-local lock does not serialize a second installation's writes into the same account home.
 The owner must choose that policy before concurrent real use. Never snapshot or restore provider credentials or databases.
 
+## Adapter and catalog handover
+
+The Mac host reuses the Claude, Codex, and Hermes factories with the invocation's shared `child_processes` and `one_shot_children` owners.
+Canonical skills publish before factory creation. The trusted host supplies the real account paths under the restrictions above.
+
+Each Codex native-start factory receives an explicit fresh `RememberedCodexLoginRejection`.
+This matches Python Mac `MacRunner._factory`: rejection memory belongs to that factory and disappears with it.
+The VPS uses durable database memory across factories. The independent machine catalog reads saved login standing without that local rejection memory.
+
+The existing snapshot API materializes the SDK snapshot on the main thread.
+Canonical serialization, retained result bodies, and bounded readers belong to the catalog worker.
+This slice does not put all catalog bulk work off the main thread.
+
+Failed catalog cleanup faults the invocation and retains the native close capability for retry.
+Shutdown retries that close before it joins a dependent process-close barrier.
+The actual join remains incomplete until resource closure. After closure, it still reports the retained failure.
+
+Real Darwin and provider checks remain part of the later separate native Ticket:
+
+1. Check the real account homes, canonical skills, selected model and effort, and fresh provider sessions.
+2. Stop a provider during startup. Check direct-child exit, pipe cleanup, and the shared owners' actual joins.
+3. Exercise a failed catalog close and its retry. Check that neither an optional catalog answer nor a shutdown deadline certifies resource closure.
+
 ## Measure the main-thread database budget
 
 The export-only `spool_burst(parent)` helper in `server/executor/mac/storage/testing/parity.ts` writes 256 near-1 MiB items.
@@ -214,3 +237,24 @@ The native code follows Apple's [inode64 layout](https://raw.githubusercontent.c
 [ABI aliases](https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/bsd/sys/cdefs.h).
 Darwin arm64 uses the unsuffixed symbols. Darwin x86_64 selects the inode64 aliases.
 These are source-based ABI choices. No Darwin call or native durability check ran on this Linux VPS.
+
+## Command maintenance before storage closure
+
+The command service retains known outcomes across journal and output failures. A retry resumes settlement without another provider call.
+Planned replay seals admission. A canceled waiter does not cancel the shared gate, and replay completion does not resume admission.
+The host calls `resume_after_cancelled_update()` separately when it cancels an update.
+Update preparation stops native processes before it joins commands that can hold a child lock.
+Its synthetic stop proof uses the same outcome settlement path without a command journal record.
+The host supplies the update request ID and a cancellation signal. Retries reuse each exact child's stop proof identity.
+Quiesce also accepts cancellation. A canceled observer leaves admitted work in the runner's actual cleanup custody.
+This module does not download, install, or activate a release.
+
+The host must stop the runner before it closes the journal and outbox.
+Pass one absolute shutdown deadline, then join `settled()` for actual completion.
+A deadline error on `stop()` does not mean that the work stopped.
+Native and source failures remain visible after resource cleanup, including an actual failure whose type is a deadline error.
+A failed settlement retains its retry point. A later stop retries it before actual completion.
+
+Exact command stop follows Python when a currently joined command task fails: it returns an uncertain outcome before native cleanup.
+Permanent host shutdown separately attempts native cleanup and joins the failed work.
+The owner still decides whether exact command stop must also continue cleanup across that failed join.

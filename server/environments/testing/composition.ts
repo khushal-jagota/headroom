@@ -23,7 +23,19 @@ export function create_test_environment_runtime(context: TestCompositionContext)
       launch: async () => unavailable(),
     },
     create_mac: (mac_context) => ({
-      service: create_mac_update_composition(mac_context, null).service,
+      // Late setup still returns an inert test runtime after its invocation stops.
+      service: mac_context.signal.aborted
+        ? {
+            prepare: async () => unavailable(),
+            check: unavailable,
+            status: () => null,
+            phase: () => null,
+            reported_at: () => null,
+            report: unavailable,
+            archive: unavailable,
+            prefetch_archive: unavailable,
+          }
+        : create_mac_update_composition(mac_context, null).service,
       operations: {
         prepare: async () => unavailable(),
         phase: () => null,

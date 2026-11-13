@@ -59,6 +59,27 @@ jobs:
           .venv/bin/python scripts/generate_navigation_browser_contracts.py --check
           .venv/bin/python scripts/generate_ticket_workspace_contracts.py --check
           .venv/bin/python scripts/generate_goal_browser_contracts.py --check
+      - name: Check real migration graph and schema drift
+        if: matrix.part == 'direct'
+        run: |
+          schema_root=$(mktemp -d "$RUNNER_TEMP/panels-schema.XXXXXX")
+          trap 'rm -rf -- "$schema_root"' EXIT
+          mkdir -p "$schema_root"/{home,codex,claude,hermes,app,logs,backups,workspace,scratch,run}
+          printf '{}\n' > "$schema_root/config.yaml"
+          env -i PATH="$PATH" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+            HOME="$schema_root/home" CODEX_HOME="$schema_root/codex" \
+            CLAUDE_CONFIG_DIR="$schema_root/claude" HERMES_HOME="$schema_root/hermes" \
+            PLAN_HERMES_HOME="$schema_root/hermes" TMPDIR="$schema_root" \
+            PLAN_CONFIG_PATH="$schema_root/config.yaml" PLAN_DB_PATH="$schema_root/private.sqlite" \
+            PLAN_APP_ROOT="$schema_root/app" PLAN_TICKET_SCRATCH_ROOT="$schema_root/scratch" \
+            PLAN_TICKET_SCRATCH_DATABASE="$schema_root/private.sqlite" \
+            PLAN_LOGS_DIR="$schema_root/logs" PLAN_BACKUP_DIR="$schema_root/backups" \
+            PLAN_WORKSPACE_ROOT="$schema_root/workspace" PLAN_CREDENTIAL_KEY_PATH="$schema_root/key" \
+            PLAN_DISPATCHER_LOCK_PATH="$schema_root/dispatcher.lock" \
+            PLAN_SERVER_CONTROL_SOCKET="$schema_root/control.sock" \
+            PLAN_SERVER_LIFECYCLE_LEASE_PATH="$schema_root/run/lifecycle.lock" \
+            PLAN_SERVER_URL=http://127.0.0.1:0 PLAN_TEST_MODE=1 PLAN_DISPATCH_ENABLED=false \
+            .venv/bin/python tests/compare/direct/unit21_schema_seed.py --check
       - name: Compare direct runtime checks against Python
         if: matrix.part == 'direct'
         run: |
@@ -273,8 +294,15 @@ jobs:
             'tests/e2e/test_goals_browser.py::test_goal_page_persistence_external_refresh_and_owned_conversation[chromium]'
             'tests/e2e/test_goal_holders_browser.py::test_goal_promotion_and_stable_url_share_manager_name[chromium]'
             'tests/e2e/test_goal_holders_browser.py::test_leaving_a_goal_manager_with_text_blocks_opens_each_next_page[chromium]'
+            'tests/e2e/test_live_update.py::test_composing_survives_a_change_to_the_same_ticket'
+            'tests/e2e/test_ticket_file_previews.py::test_a_video_preview_shows_a_poster_then_plays_and_seeks'
+            'tests/e2e/test_goals_browser.py::test_formula_expectation_projection_and_correction_reach_mounted_chart'
           )
-          scripts/dev pytest "${browser_cases[@]}" --browser chromium \
+          cli_plugin=()
+          if [[ "$PANELS_TEST_SERVER_BACKEND" == typescript ]]; then
+            cli_plugin=(-p tests.compare.direct.unit20_e2e_cli)
+          fi
+          scripts/dev pytest "${cli_plugin[@]}" "${browser_cases[@]}" --browser chromium \
             --basetemp "$TMPDIR/pytest" --junitxml "$BROWSER_EVIDENCE_DIR/results.xml"
           BROWSER
       - name: Preserve browser evidence

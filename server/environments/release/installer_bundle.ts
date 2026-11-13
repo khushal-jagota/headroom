@@ -1,11 +1,12 @@
 /** Select sealed installer bytes and publish one exclusive, durable attempt copy. */
-import { createHash } from 'node:crypto';
+import { sha256 } from '../../conversation/record/message_files.ts';
 import {
   accessSync,
   chmodSync,
   closeSync,
   constants,
-  copyFileSync,
+  fchmodSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
@@ -13,12 +14,17 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  readSync,
   realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
+  writeSync,
 } from 'node:fs';
-import { dirname, isAbsolute, join, posix, relative, sep } from 'node:path';
+import type { Stats } from 'node:fs';
+import { dirname, isAbsolute, join, posix } from 'node:path';
+import { inside } from '../../files/logic/paths.ts';
+import { is_os_error } from '../../core/system_errors.ts';
 import { assert_installer_path } from '../updates/installer/configuration.ts';
 import type { InstallerRequest } from '../updates/installer/contracts.ts';
 import { replace_existing_json } from '../updates/attempts.ts';
@@ -41,10 +47,13 @@ import {
   INSTALLER_PACKAGE_ROOTS,
   INSTALLER_KOFFI_OPTIONAL_ROOT,
 } from './installer_bundle_configuration.ts';
-import { RUNTIME_CONTRACT_PATH, RUNTIME_INVENTORY_PATH } from './configuration.ts';
+import {
+  FILE_CHUNK_BYTES,
+  RUNTIME_CONTRACT_PATH,
+  RUNTIME_INVENTORY_PATH,
+} from './configuration.ts';
 import { STAGED_APP_PREFIX, PREVIOUS_APP_PREFIX } from '../updates/configuration.ts';
 
-const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 const ordered = (a: string, b: string): number => Buffer.compare(Buffer.from(a), Buffer.from(b));
 function fail(message: string): never {
   throw new AppValidationError(message);
@@ -59,10 +68,6 @@ function path_name(value: unknown): string {
   )
     fail('invalid installer recipe path');
   return value;
-}
-function inside(path: string, root: string): boolean {
-  const suffix = relative(root, path);
-  return suffix !== '..' && !suffix.startsWith('..' + sep) && !isAbsolute(suffix);
 }
 function fields(value: Record<string, unknown>, names: readonly string[]): boolean {
   return (
@@ -99,6 +104,7 @@ function source_path(root: string, name: string, missing_final = false): string 
       if (
         missing_final &&
         index === parts.length - 1 &&
+        is_os_error(error) &&
         error instanceof Error &&
         'code' in error &&
         error.code === 'ENOENT'
@@ -116,11 +122,31 @@ function root_path(input: string): string {
   if (!lstatSync(root).isDirectory()) fail('installer application root must be a directory');
   return root;
 }
+function regular_source(path: string): { descriptor: number; info: Stats } {
+  const descriptor = openSync(
+    path,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
+  try {
+    const info = fstatSync(descriptor);
+    if (!info.isFile()) fail('installer source must be a regular file');
+    return { descriptor, info };
+  } catch (error) {
+    closeSync(descriptor);
+    throw error;
+  }
+}
+function read_regular(root: string, name: string): Buffer {
+  const { descriptor } = regular_source(source_path(root, name));
+  try {
+    return readFileSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
 function read_json(root: string, name: string): unknown {
-  const path = source_path(root, name);
-  if (!lstatSync(path).isFile()) fail('installer metadata must be a regular file');
   return JSON.parse(
-    new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(path)),
+    new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(read_regular(root, name)),
   );
 }
 /** Resolve recipe links using only the selected names, never a host filesystem target. */
@@ -214,9 +240,7 @@ function native_metadata(root: string): {
 } {
   const contract = parse_optional_runtime_contract(read_json(root, RUNTIME_CONTRACT_PATH));
   if (contract?.version !== 2) fail('installer recipe requires a Node runtime contract');
-  const inventory_path = source_path(root, RUNTIME_INVENTORY_PATH);
-  if (!lstatSync(inventory_path).isFile()) fail('native inventory must be a regular file');
-  const bytes = readFileSync(inventory_path),
+  const bytes = read_regular(root, RUNTIME_INVENTORY_PATH),
     hash = sha256(bytes);
   if (hash !== contract.inventory_sha256) fail('installer native inventory hash mismatch');
   const inventory: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
@@ -239,13 +263,19 @@ function entry_for(root: string, name: string): InstallerRecipeEntry {
     info = lstatSync(path);
   if (info.isSymbolicLink()) return { kind: 'symlink', path: name, target: readlinkSync(path) };
   if (info.isDirectory()) return { kind: 'directory', path: name, mode: info.mode & 0o777 };
-  if (info.isFile())
-    return {
-      kind: 'file',
-      path: name,
-      mode: info.mode & 0o777,
-      sha256: sha256(readFileSync(path)),
-    };
+  if (info.isFile()) {
+    const source = regular_source(path);
+    try {
+      return {
+        kind: 'file',
+        path: name,
+        mode: source.info.mode & 0o777,
+        sha256: sha256(readFileSync(source.descriptor)),
+      };
+    } finally {
+      closeSync(source.descriptor);
+    }
+  }
   return fail('installer recipe contains an unsupported filesystem entry');
 }
 function selected_recipe(
@@ -275,7 +305,13 @@ function selected_recipe(
     source_path(root, INSTALLER_KOFFI_OPTIONAL_ROOT);
     packages.push(INSTALLER_KOFFI_OPTIONAL_ROOT);
   } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    if (!(
+      is_os_error(error) &&
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'ENOENT'
+    ))
+      throw error;
   }
   for (const name of packages) tree(name);
   const records = new Map(
@@ -340,7 +376,13 @@ export async function write_installer_file_manifest(
   try {
     if (!lstatSync(path).isFile()) fail('installer recipe target must be regular');
   } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    if (!(
+      is_os_error(error) &&
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'ENOENT'
+    ))
+      throw error;
   }
   fence();
   replace_existing_json(path, recipe as unknown as Record<string, unknown>);
@@ -362,6 +404,37 @@ function sync_directory(path: string): void {
     closeSync(fd);
   }
 }
+function copy_regular(source: string, destination: string, mode: number): void {
+  const incoming = regular_source(source);
+  try {
+    if ((incoming.info.mode & 0o777) !== mode) fail('installer source mode changed');
+    const outgoing = openSync(
+      destination,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o600,
+    );
+    try {
+      const buffer = Buffer.allocUnsafe(FILE_CHUNK_BYTES);
+      let position = 0;
+      for (;;) {
+        const count = readSync(incoming.descriptor, buffer, 0, buffer.length, position);
+        if (count === 0) break;
+        for (let written = 0; written < count;) {
+          const accepted = writeSync(outgoing, buffer, written, count - written, null);
+          if (accepted === 0) fail('installer destination did not accept bytes');
+          written += accepted;
+        }
+        position += count;
+      }
+      fchmodSync(outgoing, mode);
+      fsyncSync(outgoing);
+    } finally {
+      closeSync(outgoing);
+    }
+  } finally {
+    closeSync(incoming.descriptor);
+  }
+}
 function remove_copy(path: string): void {
   const info = lstatSync(path);
   if (info.isDirectory()) {
@@ -370,12 +443,9 @@ function remove_copy(path: string): void {
   }
   rmSync(path, { recursive: true, force: true });
 }
-function external_node(request: InstallerRequest): string {
-  if (!isAbsolute(request.node_executable)) fail('installer Node must be absolute');
-  const node = realpathSync(request.node_executable);
-  if (!lstatSync(node).isFile()) fail('installer Node must be a file');
-  accessSync(node, constants.X_OK);
-  const current = root_path(request.current_root);
+function replaceable_applications(current_root: string): readonly string[] {
+  const current = root_path(current_root),
+    roots: string[] = [];
   for (const name of readdirSync(current)) {
     if (
       name !== 'app' &&
@@ -386,8 +456,22 @@ function external_node(request: InstallerRequest): string {
       continue;
     const path = join(current, name);
     assert_installer_path(path);
-    if (inside(node, realpathSync(path)))
-      fail('installer Node resolves inside a replaceable application');
+    roots.push(realpathSync(path));
+  }
+  return roots;
+}
+function external_node(request: InstallerRequest): string {
+  if (!isAbsolute(request.node_executable)) fail('installer Node must be absolute');
+  const node = realpathSync(request.node_executable);
+  if (!lstatSync(node).isFile()) fail('installer Node must be a file');
+  accessSync(node, constants.X_OK);
+  for (const app of replaceable_applications(request.current_root)) {
+    try {
+      inside(app, node);
+    } catch {
+      continue;
+    }
+    fail('installer Node resolves inside a replaceable application');
   }
   return node;
 }
@@ -418,6 +502,14 @@ export function copy_installer_runtime(
   const data = root_path(request.data_directory),
     attempt = join(data, 'update-installer-' + request.attempt_id);
   assert_installer_path(attempt);
+  for (const app of replaceable_applications(request.current_root)) {
+    try {
+      inside(app, attempt);
+    } catch {
+      continue;
+    }
+    fail('installer attempt is inside a replaceable application');
+  }
   fence();
   mkdirSync(attempt, { mode: 0o700 });
   const work = join(attempt, 'work'),
@@ -432,14 +524,7 @@ export function copy_installer_runtime(
       if (entry.kind === 'directory') mkdirSync(destination, { mode: 0o700 });
       else if (entry.kind === 'symlink') symlinkSync(entry.target, destination);
       else {
-        copyFileSync(source, destination, constants.COPYFILE_EXCL);
-        chmodSync(destination, entry.mode);
-        const fd = openSync(destination, constants.O_RDONLY);
-        try {
-          fsyncSync(fd);
-        } finally {
-          closeSync(fd);
-        }
+        copy_regular(source, destination, entry.mode);
       }
     }
     for (const entry of [...recipe.files].reverse())

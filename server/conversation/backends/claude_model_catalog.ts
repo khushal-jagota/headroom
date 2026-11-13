@@ -1,10 +1,15 @@
 /** Model choices come from the selected CLI's startup handshake, without a prompt. */
-import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
+import type { OwnedOneShotChildren, StopOptions } from '../../lifecycle/contracts.ts';
 import { OneShotChildren, stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
-import type { ChildProcess } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { load_claude_sdk, CLAUDE_AGENT_SDK_VERSION } from './claude_sdk.ts';
 import type { Query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { ensure_cli_compatible } from './cli_compatibility.ts';
+import { ModelCatalogCleanupFailed } from './catalog_cleanup.ts';
+import { OwnedCodexProcess } from './codex_app_server/process.ts';
+import { CHILD_KILL_WAIT_SECONDS } from './codex_app_server/configuration.ts';
+import { observe_shutdown } from '../shutdown.ts';
+import { python_truth } from '../../core/python_truth.ts';
 
 export const MODEL_CATALOG_TIMEOUT_SECONDS = 30;
 export class ClaudeModelCatalogUnavailable extends Error {}
@@ -37,14 +42,8 @@ function object(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function truthy(value: unknown): boolean {
-  if (Array.isArray(value)) return value.length !== 0;
-  if (object(value)) return Object.keys(value).length !== 0;
-  return Boolean(value);
-}
-
 function listed_efforts(value: unknown): string[] {
-  if (!truthy(value)) return [];
+  if (!python_truth(value)) return [];
   if (typeof value === 'string') return [...value];
   if (Array.isArray(value))
     return value.filter((effort): effort is string => typeof effort === 'string');
@@ -86,7 +85,7 @@ export function claude_model_catalog_from_init(info: unknown): ClaudeModelCatalo
     models.push({
       model_id: resolved,
       // Python preserves a truthy displayName unchanged, even when malformed.
-      display_name: (truthy(entry.displayName)
+      display_name: (python_truth(entry.displayName)
         ? entry.displayName
         : versioned_display_name(resolved)) as string,
       resolved_model_id: resolved,
@@ -106,14 +105,26 @@ export function claude_model_catalog_from_init(info: unknown): ClaudeModelCatalo
 export async function probe_claude_model_catalog(
   claude_executable: string,
   children: OwnedOneShotChildren = new OneShotChildren(),
+  options: {
+    signal?: AbortSignal;
+    stop_options?: () => StopOptions | undefined;
+    environment?: Readonly<NodeJS.ProcessEnv>;
+  } = {},
 ): Promise<ClaudeModelCatalog> {
+  const signal = options.signal
+    ? AbortSignal.any([children.signal, options.signal])
+    : children.signal;
+  signal.throwIfAborted();
+  const environment: Record<string, string> = {};
+  for (const [name, value] of Object.entries(options.environment ?? process.env))
+    if (value !== undefined) environment[name] = value;
   const state: {
-    child: ChildProcess | null;
-    child_exit: Promise<void> | null;
+    owned: OwnedCodexProcess | null;
     cli: Query | null;
     expired: boolean;
     child_error: Error | null;
-  } = { child: null, child_exit: null, cli: null, expired: false, child_error: null };
+    child_exited: boolean;
+  } = { owned: null, cli: null, expired: false, child_error: null, child_exited: false };
   let release_input: () => void = () => {};
   const input_closed = new Promise<void>((resolve) => {
     release_input = resolve;
@@ -126,27 +137,81 @@ export async function probe_claude_model_catalog(
   let failure: unknown;
   let failed = false;
   let actual: Promise<unknown> | undefined;
+  let primary: unknown;
+  let cleanup_deadline: number | undefined;
+  let reject_cancelled!: (error: unknown) => void;
+  const cancelled = new Promise<never>((_, reject) => {
+    reject_cancelled = reject;
+  });
+  const cancellation_observed = cancelled.catch(() => {});
+  const abort = () => reject_cancelled(signal.reason);
+  signal.addEventListener('abort', abort, { once: true });
+  if (signal.aborted) abort();
   const close_query = () => {
     if (state.cli === null) return;
     state.cli.close();
     state.cli = null;
   };
+  const cleanup = async (): Promise<void> => {
+    const errors: unknown[] = [];
+    try {
+      close_query();
+    } catch (error) {
+      errors.push(error);
+    }
+    release_input();
+    try {
+      if (state.owned) {
+        stop_one_shot_child(state.owned.child);
+        cleanup_deadline ??= performance.now() / 1000 + CHILD_KILL_WAIT_SECONDS;
+        if (!state.child_exited) {
+          await observe_shutdown(
+            Promise.race([state.owned.exited, cancellation_observed]),
+            {
+              deadline: Math.min(cleanup_deadline, options.stop_options?.()?.deadline ?? Infinity),
+            },
+            'the Claude catalog process did not exit after SIGKILL',
+          );
+        }
+        if (!state.child_exited)
+          await observe_shutdown(
+            state.owned.exited,
+            {
+              deadline: Math.min(cleanup_deadline, options.stop_options?.()?.deadline ?? Infinity),
+            },
+            'the Claude catalog process did not exit after SIGKILL',
+          );
+        // The leader is reaped. The shared owner now closes pipes without another signal.
+        await state.owned.stop();
+      }
+    } catch (error) {
+      errors.push(error);
+    }
+    // A rejected probe retains this closure, its native owner, and the SDK operation.
+    if (errors.length) throw new ModelCatalogCleanupFailed(primary, errors, cleanup);
+    await actual?.catch(() => {});
+    signal.removeEventListener('abort', abort);
+  };
   try {
     const operation = async () => {
-      await ensure_cli_compatible('claude', claude_executable, { children });
-      children.signal.throwIfAborted();
+      await ensure_cli_compatible('claude', claude_executable, {
+        children,
+        ...(options.signal ? { signal } : {}),
+        ...(options.environment ? { environment } : {}),
+      });
+      signal.throwIfAborted();
       if (state.expired)
         throw new ClaudeModelCatalogUnavailable(
           'claude did not finish its startup handshake in time',
         );
       const child_environment: NodeJS.ProcessEnv = {
-        ...process.env,
+        ...environment,
         CLAUDE_CODE_ENTRYPOINT: 'sdk-ts',
         CLAUDE_AGENT_SDK_VERSION,
       };
       delete child_environment.CLAUDECODE;
       const { query } = await load_claude_sdk();
-      children.signal.throwIfAborted();
+      signal.throwIfAborted();
       if (state.expired)
         throw new ClaudeModelCatalogUnavailable(
           'claude did not finish its startup handshake in time',
@@ -164,21 +229,18 @@ export async function probe_claude_model_catalog(
               env: child_environment,
               stdio: ['pipe', 'pipe', 'pipe'],
             });
-            state.child = started;
-            state.child_exit = new Promise<void>((resolve) => {
-              started.once('close', () => resolve());
-              started.once('error', (error) => {
-                state.child_error = error;
-              });
+            state.owned = new OwnedCodexProcess(started as ChildProcessWithoutNullStreams);
+            void state.owned.exited.then(() => {
+              state.child_exited = true;
+            });
+            started.once('error', (error) => {
+              state.child_error = error;
             });
             return started;
           },
         },
       });
       const info: unknown = await state.cli.initializationResult();
-      close_query();
-      release_input();
-      if (state.child_exit !== null) await state.child_exit;
       if (state.child_error !== null) throw state.child_error;
       return info;
     };
@@ -191,8 +253,9 @@ export async function probe_claude_model_catalog(
       }, MODEL_CATALOG_TIMEOUT_SECONDS * 1000);
     });
     actual = operation();
-    info = await Promise.race([actual, timeout]);
+    info = await Promise.race([actual, timeout, cancelled]);
   } catch (cause) {
+    primary = cause;
     failed = true;
     failure =
       cause instanceof ClaudeModelCatalogUnavailable
@@ -203,34 +266,7 @@ export async function probe_claude_model_catalog(
           );
   } finally {
     if (timer !== undefined) clearTimeout(timer);
-    try {
-      close_query();
-    } catch (cause) {
-      if (!failed) {
-        failed = true;
-        failure = new ClaudeModelCatalogUnavailable(
-          cause instanceof Error ? cause.message : String(cause),
-          { cause },
-        );
-      }
-    }
-    release_input();
-    if (state.child !== null && state.child.exitCode === null && state.child.signalCode === null) {
-      try {
-        stop_one_shot_child(state.child);
-      } catch (cause) {
-        if (!failed) {
-          failed = true;
-          failure = new ClaudeModelCatalogUnavailable(
-            cause instanceof Error ? cause.message : String(cause),
-            { cause },
-          );
-        }
-      }
-    }
-    if (state.child_exit !== null) await state.child_exit;
-    // The timeout/abort observer cannot discard a still-running SDK operation.
-    await actual?.catch(() => {});
+    await cleanup();
   }
   if (failed) throw failure;
   // Python wraps startup failures, but transformation failures remain their own type.
