@@ -31,24 +31,41 @@
       }
     },
     {
-      "method": "PUT",
-      "path": "/api/conversation/backends/codex/models/gpt-6.1-sol/enablement",
+      "method": "POST",
+      "path": "/api/test/model-list",
       "status": 200,
       "json": {
-        "enabled": false
+        "machine": "vps",
+        "backend": "codex",
+        "models": [
+          "offered-model"
+        ]
       }
     }
   ],
   "requests": [
     {
-      "area": "disabled-model",
+      "area": "unoffered-model-worker",
       "method": "POST",
       "path": "/api/test/poll/readiness",
       "status": 200,
       "json": {}
     },
     {
-      "area": "disabled-model",
+      "area": "unoffered-model-worker",
+      "method": "GET",
+      "path": "/api/tickets?id=${worker}&detail=full",
+      "status": 200
+    },
+    {
+      "area": "unoffered-model-worker",
+      "method": "POST",
+      "path": "/api/test/poll/readiness",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "unoffered-model-worker",
       "method": "GET",
       "path": "/api/tickets?id=${worker}&detail=full",
       "status": 200

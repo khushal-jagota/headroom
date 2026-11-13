@@ -183,7 +183,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     }
     if (typeof options.execution_refusal !== 'function')
       throw new Error('Conversation execution admission is required');
-    if (typeof options.model_is_enabled !== 'function')
+    if (typeof options.delivery_model_refusal !== 'function')
       throw new Error('Conversation model admission is required');
     this.options = options;
     const adopted = remote.initialize_retained_runs(this);

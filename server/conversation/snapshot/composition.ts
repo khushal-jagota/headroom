@@ -49,6 +49,7 @@ export function create_backend_runtime(options: {
       ? new RecordingBackendProbeEnvironment()
       : new SubprocessBackendProbeEnvironment(require_children(options.one_shot_children)));
   const rejection = create_durable_codex_login_rejection(database, now);
+  const backend_state = new BackendStateStore(database);
   let resolve_resource_join!: () => void, reject_resource_join!: (error: unknown) => void;
   const resource_join = new Promise<void>((resolve, reject) => {
     resolve_resource_join = resolve;
@@ -119,13 +120,14 @@ export function create_backend_runtime(options: {
     },
     database,
     backend_snapshots: new BackendSnapshotService({
+      keep_complete_model_list: (snapshot) => backend_state.keep_vps_model_list(snapshot),
       environment,
       now,
       read_codex_login_standing: () =>
         providers.saved_codex_login?.read_codex_login_standing(rejection) ?? null,
       probe: create_backend_probe(create_catalog_readers(providers)),
     }),
-    backend_state: new BackendStateStore(database),
+    backend_state,
     backend_usage: new BackendUsageService(providers.usage),
     codex_sign_in: providers.codex_sign_in,
     machine_catalog: providers.machine_catalog,
