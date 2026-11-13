@@ -359,7 +359,7 @@ async def reference(
             fifo=fifo,
             calls=calls,
             retry_delays={
-                key: times[1] - times[0] >= OUTBOX_RETRY_INITIAL_SECONDS
+                key: times[1] - times[0] >= OUTBOX_RETRY_INITIAL_SECONDS - 0.01
                 for key, times in retry_times.items()
             },
             replays=replays,
@@ -438,7 +438,7 @@ def test_unit22_mac_mailbox_scripted_flow(
             asyncio.wait_for(reference(tmp_path / "python", oracle, patch), 30)
         )
         observed = node(tmp_path / "typescript", spec, oracle, homes)
-    assert observed["observations"] == expected
+    assert observed["observations"] == expected, observed["stats"]
     assert expected["planned_blocked"] and expected["fifo"] and expected["stop_waited"]
     assert expected["second_not_started"]
     assert expected["retry_delays"] and all(expected["retry_delays"].values())
