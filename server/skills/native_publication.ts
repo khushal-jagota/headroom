@@ -10,7 +10,6 @@ import {
   symlinkSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { casefold } from '../core/casefold.ts';
 import { randomUUID } from 'node:crypto';
 export const RETIRED_PANELS_SKILL_NAMES = new Set([
   'panels-rollover',
@@ -169,7 +168,7 @@ export function prepare_native_skill_publication(
     ...[...WORKER_ONLY_SKILL_NAMES].filter((name) => !options.required_skill_names?.includes(name)),
   ]);
   const wanted = new Set(policy.source_names.filter((name) => !hidden.has(name)));
-  const reserved = new Map([...hidden, ...wanted].map((name) => [casefold(name), name]));
+  const reserved = new Map([...hidden, ...wanted].map((name) => [name.toLowerCase(), name]));
   const conflict = (name: string): never => {
     throw new Error(`native skill publication refuses entry: ${name}`);
   };
@@ -182,7 +181,7 @@ export function prepare_native_skill_publication(
       .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     const remove: { name: string; target: string }[] = [];
     for (const entry of entries) {
-      const name = reserved.get(casefold(entry.name));
+      const name = reserved.get(entry.name.toLowerCase());
       const ours = entry.target !== null && owned(entry.target); // Resolve every link, including unrelated loops, before mutation.
       if (name !== undefined && (entry.name !== name || !ours)) conflict(entry.name);
       if (ours && (!wanted.has(entry.name) || TEMPORARY_SKILL_LINK.test(entry.name)))

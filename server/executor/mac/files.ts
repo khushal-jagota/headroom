@@ -3,17 +3,29 @@ import { Worker } from 'node:worker_threads';
 import { observe_shutdown } from '../../conversation/shutdown.ts';
 import { ServerLifecycleError } from '../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../lifecycle/contracts.ts';
+import { TRANSFER_CHUNK_BYTES } from './configuration.ts';
 import type {
   DirectoryHandle,
+  TransferHandle,
   FileOperation,
   FileOperationArguments,
   FileOperationResults,
   FileWorkerRequest,
   FileWorkerResponse,
+  FileWorkerError,
 } from './file_worker_contracts.ts';
 export { contained_path, file_version, safe_component } from './file_metadata.ts';
 export type { FileVersion } from './file_metadata.ts';
 export type { DirectoryHandle } from './file_worker_contracts.ts';
+function worker_error(value: FileWorkerError): Error {
+  const error = value.errors
+    ? new AggregateError(value.errors.map(worker_error), value.message)
+    : new Error(value.message);
+  Object.assign(error, value);
+  if (value.errors) Object.assign(error, { errors: value.errors.map(worker_error) });
+  if (value.cause) error.cause = worker_error(value.cause);
+  return error;
+}
 
 export class FilesService {
   private worker: Worker | undefined;
@@ -24,6 +36,7 @@ export class FilesService {
   private stop_requested = false;
   private readonly failures = new Set<(error: Error) => void>();
   private readonly directories = new WeakSet<DirectoryHandle>();
+  private readonly transfers = new WeakSet<TransferHandle>();
   private readonly pending = new Map<
     number,
     { resolve(value: unknown): void; reject(error: Error): void }
@@ -49,10 +62,15 @@ export class FilesService {
     this.worker = worker;
     this.exit = new Promise<void>((resolve) => worker.once('exit', () => resolve()));
     worker.on('message', (message: FileWorkerResponse) => {
+      if ('cleanup_failed' in message) {
+        // Publish retry permission before a fault callback can reenter stop().
+        this.stop_requested = false;
+        this.seal(worker_error(message.cleanup_failed));
+        return;
+      }
       const request = this.pending.get(message.id);
       this.pending.delete(message.id);
-      if ('error' in message)
-        request?.reject(Object.assign(new Error(message.error.message), message.error));
+      if ('error' in message) request?.reject(worker_error(message.error));
       else request?.resolve(message.value);
     });
     worker.on('error', (error) => this.seal(error));
@@ -90,6 +108,29 @@ export class FilesService {
   }
   file_digest(path: string) {
     return this.request('file_digest', [path]);
+  }
+  async open_transfer(path: string, mode: 'read' | 'write'): Promise<TransferHandle> {
+    const handle = Object.freeze({ id: await this.request('open_transfer', [path, mode]) });
+    this.transfers.add(handle);
+    return handle;
+  }
+  private transfer(handle: TransferHandle): number {
+    if (!this.transfers.has(handle))
+      throw new Error('Executor transfer belongs to another files service or is closed.');
+    return handle.id;
+  }
+  read_transfer(handle: TransferHandle, limit = TRANSFER_CHUNK_BYTES) {
+    return this.request('read_transfer', [this.transfer(handle), limit]);
+  }
+  write_transfer(handle: TransferHandle, bytes: Uint8Array) {
+    return this.request('write_transfer', [this.transfer(handle), bytes]);
+  }
+  finish_transfer(handle: TransferHandle, sha256: string, byte_count: bigint) {
+    return this.request('finish_transfer', [this.transfer(handle), sha256, byte_count]);
+  }
+  async close_transfer(handle: TransferHandle, discard = false): Promise<void> {
+    await this.request('close_transfer', [this.transfer(handle), discard]);
+    this.transfers.delete(handle);
   }
   verified_version(path: string, sha256: string, byte_count: number) {
     return this.request('verified_version', [path, sha256, byte_count]);

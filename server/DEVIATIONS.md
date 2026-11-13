@@ -2,6 +2,13 @@
 
 This file records intentional differences that the migration Manager accepted. No new difference enters this file without that acceptance. Close an entry when Python adopts the same behavior.
 
+## Native TypeScript presentation
+
+The owner accepts native diagnostics, CLI human text and help layout, and HTTP JSON number spelling.
+HTTP shapes, names, types, and statuses remain unchanged. CLI commands, options, JSON fields and types, and exit codes remain unchanged.
+Executor wire behavior and exact integers required by the wire or database remain protected.
+Comparisons check fields, values, and exit codes instead of Python presentation bytes.
+
 ## Staging merge 12: decision notes and recap freshness
 
 The Manager accepts that decision routes admit revision `1.0` as `1`, because Fastify’s native JSON parser does not retain numeric token kinds.
@@ -344,14 +351,6 @@ Node fetch sets Host from the URL and ignores a caller-supplied Host, which Pyth
 `tests/compare/direct/test_cross_area_http.py` pins same-origin delivery, cross-origin refusal,
 and Python's contrasting header behavior with synthetic loopback servers.
 
-## Python string printability reference
-
-The migration Manager fixed the repr reference to installed Python 3.12.16 and Unicode 15.0.0, also used by CI.
-`core/python_repr_unicode.ts` contains generated ranges assigned in Node's Unicode 17.0.0 but absent from Unicode 15.0.0.
-The shared string repr escapes those code points. The direct repr proof checks the Node Unicode version so that upgrades require regeneration.
-Local Python 3.13 uses Unicode 15.1.0 and prints U+2EBF0. This documented local exception does not change the CI reference.
-Regenerate the ranges with `tests/compare/direct/generate_repr_unicode.py` and the two official UnicodeData files named in its header.
-
 ## Conversation history locale data
 
 The migration Manager accepted Node's bundled locale data for history labels in
@@ -415,6 +414,26 @@ The Manager requires one stop proof for each update request and exact child acro
 TypeScript retains that proof's command identity until its required output settles.
 Python allocates a fresh `update_stop_` identity on each preparation attempt.
 The caller supplies the real update request ID. A retry cannot publish a second `child_stopped` entry for the same request and child.
+
+The Manager also requires lossless native projection of `sender_message_count`.
+TypeScript raises `ValueError` for counts outside JavaScript's safe integer range before native invocation. Python's integer count has no corresponding bound.
+
+### Exact Mac stop after a failed command join
+
+The migration Manager accepted this difference on November 13, 2026, for the final Mac executor slice.
+Python joins only command tasks that remain pending. If one rejects during that join, Python returns an uncertain outcome before native cleanup.
+TypeScript joins every selected actual command with `allSettled`, drains source work, attempts native cleanup, and drains final source work.
+It still returns uncertain and issues no successful stop certificate for that failed join.
+The exact child's joined-command errors and accompanying cleanup errors remain retained across retries, including after the failed tasks leave the active view.
+Later stops retry retained native cleanup but cannot turn that known failed join into a success certificate.
+A combined diagnostic preserves command and cleanup messages. Each wire error detail keeps the existing Unicode character bound.
+Ordinary successful stops keep Python behavior.
+
+### Lossy live notifications
+
+The Manager requires sender failures to drop live notifications and log once, with no live delivery from retired children.
+Python forwards its sender's exception and has no retired-child check on this live path.
+TypeScript validates the live payload through the shared wire boundary before the best-effort send.
 
 ## Mac canonical skill publication ownership and durability
 
@@ -552,6 +571,8 @@ The migration Manager accepted this temporary refusal. It remains until the exec
 
 ## Executor message and core admission
 
+The Manager requires the TypeScript command route to forward response disconnects into mailbox poll cancellation; Python's route has no explicit disconnect observer.
+
 ### Encoding validation
 
 The Manager required this admission rule in the shared codec review of PR 806.
@@ -568,6 +589,11 @@ Python accepts unbounded integers. TypeScript refuses remote turn numbers, sende
 ### Replaced-process retry logging
 
 Python logs every failed retirement or close attempt. The Manager accepted TypeScript logging only the first failure of each retry loop, including its cause. Both retry indefinitely with delays rising from one to sixty seconds; TypeScript shutdown cancels the retry and retains its actual settlement.
+
+### Canonical Mac Worker identity
+
+The Manager accepts refusal before child creation when canonical Mac ownership disagrees with absent or different Worker identity hints.
+Python selects a local child in that case. TypeScript refuses so a Mac Ticket never selects a local child.
 
 ## Release archive sparse members — accepted
 
@@ -596,6 +622,12 @@ This includes symbolic links and hard links, even when the link appears later.
 Python can extract through safe internal links. Neither actual release producer requires that behavior.
 TypeScript validates the complete member graph before it creates the output directory.
 The existing release comparison records this accepted difference instead of Python equality.
+
+## TypeScript iOS compatibility inventory — accepted
+
+The Manager accepted the TypeScript source inventory on November 13, 2026.
+It replaces Python source paths with production TypeScript, five fixed JSON inputs, and two retained Hermes Python helpers.
+The digest retains raw bytes, NUL framing, and Python path ordering. Publication still requires a source-bound human review.
 
 ## VPS mailbox shutdown admission
 
@@ -640,14 +672,12 @@ Presence commits are silent at the shared write door.
 After commit succeeds, the service publishes its cache before it emits the one presence change signal.
 Synchronous signal subscribers therefore read the committed presence state, with no cache update before a possible rollback.
 
-## Operator composition unavailable leaves — accepted, temporary
+## Operator composition unavailable leaves — resolved
 
-The Manager authorized slice A while the release-side prerequisites remain unmerged.
-`environment app-build`, `environment run`, `serve`, and `restart` retain their
-canonical help but return exit 1 with `The NAME command is not yet available in this build.`
-No dependency, file, process, or network action precedes that refusal. The release-side
-Ticket owns native admission, builder, supervisor, and unit files. Slice B restores
-these four handlers after those prerequisites merge.
+`environment app-build`, `environment run`, `serve`, and `restart` now use the native
+release builder, prepared-instance launch, supervisor, and control protocol.
+The temporary unavailable-command refusal is removed. The installed wrapper remains
+unchanged until the separate cutover.
 
 ## Operator manifest path consistency
 

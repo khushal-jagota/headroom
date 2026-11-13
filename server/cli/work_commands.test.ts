@@ -38,7 +38,7 @@ test('workspace renders each top-level artifact opens value and retains the JSON
     const human = await run(['manager', 'workspace', 'si_artifacts'], environment);
     expect(human).toMatchObject({ exit_code: 0, stderr: '' });
     expect(human.stdout.split('\n\nArtifacts:\n')[1].split('\n\nTickets:\n')[0]).toBe(
-      'artifacts/note.md\nartifacts/report/index.html\nNone',
+      'artifacts/note.md\nartifacts/report/index.html\nnull',
     );
     const machine = await run(['manager', 'workspace', 'si_artifacts', '--json'], environment);
     expect(machine).toMatchObject({ exit_code: 0, stderr: '' });

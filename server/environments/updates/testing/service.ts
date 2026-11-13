@@ -39,6 +39,7 @@ interface Hooks {
   backup?: () => Promise<void>;
   launch?: () => Promise<void>;
   migrate?: boolean;
+  schema?: () => Promise<boolean>;
   commit_fault?: boolean;
 }
 function deferred() {
@@ -148,7 +149,7 @@ function harness(request: ServiceProbeRequest, hooks: Hooks = {}) {
               'Install the Python release that carries the same migrations first.',
           );
       },
-      schema_change_pending: () => hooks.migrate ?? false,
+      schema_change_pending: () => hooks.schema?.() ?? hooks.migrate ?? false,
       create_backup: async () => {
         counts.backup++;
         trace.push('backup');
@@ -405,6 +406,52 @@ export async function probe_continuations(request: ServiceProbeRequest) {
     stage.release();
     restarted_stage.release();
     await h.close();
+  }
+  const schema = deferred(),
+    schema_entered = deferred();
+  const s = harness(
+    { ...request, root: join(request.root, 'schema-case') },
+    {
+      schema: async () => {
+        schema_entered.release();
+        await schema.promise;
+        return true;
+      },
+    },
+  );
+  let schema_advance: Promise<void> | undefined;
+  try {
+    s.service.start();
+    await s.service.prefetch();
+    s.service.install(s.release.manifest.app_sha, 'now', { confirm_activity: false });
+    schema_advance = s.service.advance();
+    await Promise.race([
+      schema_entered.promise,
+      schema_advance.then(() => {
+        throw new Error('Schema gate was not reached');
+      }),
+    ]);
+    await expires(s.service.stop({ deadline: performance.now() / 1000 }));
+    let settled = false;
+    const actual = s.service.settled().then(() => {
+      settled = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (settled) throw new Error('Actual settlement discarded held schema work');
+    const before = readFileSync(s.attempts.path, 'utf8');
+    schema.release();
+    await Promise.all([schema_advance, actual]);
+    await s.close();
+    result.schema_fence = {
+      backup: s.counts.backup,
+      prepare: s.counts.prepare,
+      launch: s.counts.launch,
+      unchanged_after_ownership: readFileSync(s.attempts.path, 'utf8') === before,
+    };
+  } finally {
+    schema.release();
+    await Promise.allSettled([schema_advance]);
+    await s.close();
   }
   const backup = deferred(),
     backup_entered = deferred(),

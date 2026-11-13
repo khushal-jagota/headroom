@@ -1,9 +1,7 @@
 import { EFFECTIVELY_SILENT_BYTES, WHISPER_HALLUCINATION_PHRASES } from './configuration.ts';
-const WHITESPACE =
-  /^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/gu;
 const SURROUNDING_PUNCTUATION = new Set(Array.from(' \t\n\r.,!?…"\'“”‘’-—'));
 export function without_whisper_hallucination(transcript: string): string {
-  const stripped = transcript.replace(WHITESPACE, '');
+  const stripped = transcript.trim();
   const characters = Array.from(stripped);
   let start = 0;
   let end = characters.length;

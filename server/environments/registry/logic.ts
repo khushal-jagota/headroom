@@ -1,7 +1,6 @@
 import { isAbsolute, dirname, join, relative } from 'node:path';
 import { readFile, stat } from 'node:fs/promises';
 import { resolved_path } from '../paths.ts';
-import { strip } from '../../projects/logic/index.ts';
 import { EnvironmentValidationError } from './contracts.ts';
 import type {
   EnvironmentCredentialPolicy,
@@ -91,12 +90,12 @@ export async function validate_repository_roots(
       valid = (await exists(join(marker, 'HEAD'))) && (await exists(join(marker, 'objects'), true));
     else if (await exists(marker)) {
       try {
-        const text = strip(
-          new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await readFile(marker)),
-        );
+        const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+          .decode(await readFile(marker))
+          .trim();
         const colon = text.indexOf(':');
         if (colon >= 0 && text.slice(0, colon) === 'gitdir') {
-          const target = strip(text.slice(colon + 1));
+          const target = text.slice(colon + 1).trim();
           const directory = await canonical_path(
             isAbsolute(target) ? target : dirname(marker) + '/' + target,
           );
@@ -281,16 +280,16 @@ export async function parse_environment_file(
   );
   const values: Record<string, string> = {};
   for (const [index, raw] of text.split(/\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/).entries()) {
-    const line = strip(raw);
+    const line = raw.trim();
     if (!line || line.startsWith('#')) continue;
     const equals = line.indexOf('='),
-      key = equals < 0 ? '' : strip(line.slice(0, equals));
+      key = equals < 0 ? '' : line.slice(0, equals).trim();
     if (!/^[A-Z_][A-Z0-9_]*$/.test(key))
       throw new EnvironmentValidationError(`malformed environment line ${index + 1}`);
     if (Object.hasOwn(values, key))
       throw new EnvironmentValidationError(`duplicate environment key: ${key}`);
     validate_environment_key(key, kind, policy);
-    let value = strip(line.slice(equals + 1));
+    let value = line.slice(equals + 1).trim();
     if (value.length >= 2 && value[0] === value.at(-1) && ["'", '"'].includes(value[0]))
       value = value.slice(1, -1);
     values[key] = value;

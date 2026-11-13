@@ -128,15 +128,7 @@ export async function create_production_operator_dependencies(
   environment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<OperatorDependencies<OperatorName>> {
   const snapshot = { ...environment };
-  if (
-    name === 'inspect' ||
-    name === 'server-event-loop-tasks' ||
-    name === 'app-build' ||
-    name === 'run' ||
-    name === 'serve' ||
-    name === 'restart'
-  )
-    return undefined;
+  if (name === 'inspect' || name === 'server-event-loop-tasks') return undefined;
   const home = snapshot.HOME ?? userInfo().homedir;
   // Even path adapters load only for the selected callback, never for help/table imports.
   const path_inputs = async (): Promise<OperatorPathInputs> => {
@@ -150,6 +142,97 @@ export async function create_production_operator_dependencies(
     };
   };
   switch (name) {
+    case 'app-build': {
+      const paths = await path_inputs();
+      return {
+        build_app: (args: import('./command_contracts.ts').OperatorArguments['app-build']) =>
+          with_operation(snapshot, false, async (operation) => {
+            const { build_exported_app } = await import('./release/build.ts');
+            operation.require_active();
+            return build_exported_app(
+              paths.admit_path(paths.expand_path(args.source_root)),
+              {
+                requested_sha: args.requested_sha,
+                candidate_app: paths.admit_path(paths.expand_path(args.candidate_app)),
+                install_dependencies: true,
+              },
+              { public_cli_entrypoint: 'server/cli/main.ts' },
+              {
+                child_processes: operation.child_processes,
+                signal: operation.signal,
+                deadline: null,
+              },
+            );
+          }),
+      };
+    }
+    case 'run': {
+      const paths = await path_inputs();
+      return {
+        async prepare_run(args: import('./command_contracts.ts').OperatorArguments['run']) {
+          const { prepare_environment_run } = await import('./registry/run.ts');
+          return prepare_environment_run(args, snapshot, paths);
+        },
+      };
+    }
+    case 'serve':
+    case 'restart': {
+      const paths = await path_inputs();
+      const context = async () => {
+        const { lifecycle_launch_root, resolve_unit_lifecycle_context } =
+          await import('../lifecycle/context.ts');
+        const inputs = { ...snapshot };
+        if (inputs.PLAN_CONFIG_PATH !== undefined)
+          inputs.PLAN_CONFIG_PATH = paths.admit_path(paths.expand_path(inputs.PLAN_CONFIG_PATH));
+        if (inputs.PLAN_SERVER_CONTROL_SOCKET !== undefined)
+          inputs.PLAN_SERVER_CONTROL_SOCKET = paths.admit_path(
+            paths.expand_path(inputs.PLAN_SERVER_CONTROL_SOCKET),
+          );
+        const root = await lifecycle_launch_root();
+        const resolved = await resolve_unit_lifecycle_context(
+          { runtime_directory: '' },
+          inputs,
+          root,
+          paths,
+        );
+        for (const path of [
+          resolved.control_socket_path,
+          resolved.lease_path,
+          resolved.config.db_path,
+          resolved.config.logs_dir,
+          resolved.config.backup_dir,
+        ])
+          paths.admit_path(paths.expand_path(path));
+        return { root, resolved, inputs };
+      };
+      if (name === 'restart')
+        return {
+          async request_restart() {
+            const { resolved } = await context();
+            const { request_control } = await import('../lifecycle/control.ts');
+            await request_control(resolved.control_socket_path, {
+              version: 1,
+              operation: 'restart',
+            });
+          },
+        };
+      return {
+        async run_supervisor() {
+          const { root, resolved, inputs } = await context();
+          const [{ application_launch }, { run_server_supervisor }] = await Promise.all([
+            import('../lifecycle/context.ts'),
+            import('../lifecycle/supervisor.ts'),
+          ]);
+          return run_server_supervisor({
+            mode: { kind: 'foreground' },
+            application: application_launch(root, inputs),
+            control_socket_path: resolved.control_socket_path,
+            lease_path: resolved.lease_path,
+            port: resolved.port,
+          });
+        },
+      };
+    }
     case 'status':
     case 'cleanup': {
       const paths = await path_inputs();

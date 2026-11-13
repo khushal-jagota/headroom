@@ -15,7 +15,7 @@ import { read_ticket } from '../../tickets/data/index.ts';
 import { CHIEF_SETTINGS_KEY } from '../../worker_settings/service.ts';
 import * as data from './data.ts';
 import type { CredentialRequestRowBody, RequestCredential } from './contracts.ts';
-import { strip, validate_request } from './logic/validation.ts';
+import { validate_request } from './logic/validation.ts';
 
 type Result = EventMutation<readonly [CredentialRequestRowBody, string | null]>;
 interface OwnerOptions {
@@ -197,7 +197,7 @@ export function save(
   credential_actions.require_plaintext_owner(options.principal);
   const body = data.read(tx, request_id);
   if (body.state !== 'pending') return { value: [body, null], payloads: [] };
-  const name = strip(text(options.name, 200));
+  const name = text(options.name, 200).trim();
   const value = text(options.value);
   const replacement = body.replacement;
   const expected_revision = numeric_value(options.expected_revision);

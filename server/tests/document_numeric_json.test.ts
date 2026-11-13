@@ -6,12 +6,13 @@ import {
   parse_numeric_json,
   stringify_python_json,
 } from '../core/http/numeric_json.ts';
+import { stringify_numeric_response } from '../core/http/numeric_intake.ts';
 import { prepare_plain_document } from '../managers/logic/documents.ts';
 
 // JSON.parse normally erases float token kinds and rounds large integers. Existing
 // HTTP comparisons construct JSON from ordinary objects and cannot prove raw tokens.
-// One stdlib Python process is the byte oracle for this table; no server or DB starts.
-test('native numeric-kind intake matches Python bytes and never exposes marker objects', () => {
+// Persisted numeric kinds still use the Python encoding.
+test('stored documents retain numeric kinds and their compatible encoding', () => {
   const documents = [
     '0',
     '900719925474099312345',
@@ -31,21 +32,19 @@ test('native numeric-kind intake matches Python bytes and never exposes marker o
     [
       '-c',
       `import json,sys
-print(json.dumps([{'spaced':json.dumps(json.loads(raw),ensure_ascii=False),'compact':json.dumps(json.loads(raw),ensure_ascii=False,separators=(',',':')),'length':len(json.dumps(json.loads(raw),ensure_ascii=False))} for raw in json.load(sys.stdin)],ensure_ascii=False))`,
+print(json.dumps([{'spaced':json.dumps(json.loads(raw),ensure_ascii=False),'length':len(json.dumps(json.loads(raw),ensure_ascii=False))} for raw in json.load(sys.stdin)],ensure_ascii=False))`,
     ],
     { input: JSON.stringify(documents), encoding: 'utf8' },
   );
   expect(oracle.status, oracle.stderr).toBe(0);
   const answers = JSON.parse(oracle.stdout) as {
     spaced: string;
-    compact: string;
     length: number;
   }[];
   for (const [index, raw] of documents.entries()) {
     const value = parse_numeric_json(raw);
     expect(stringify_python_json(value), raw).toBe(answers[index]!.spaced);
     expect(Array.from(stringify_python_json(value)).length, raw).toBe(answers[index]!.length);
-    expect(JSON.stringify(value), raw).toBe(answers[index]!.compact);
     expect(stringify_python_json(clone_numeric_json(value)), raw).toBe(answers[index]!.spaced);
     expect(stringify_python_json(parse_numeric_json(stringify_python_json(value))), raw).toBe(
       answers[index]!.spaced,
@@ -61,4 +60,17 @@ print(json.dumps([{'spaced':json.dumps(json.loads(raw),ensure_ascii=False),'comp
       () => 'unused',
     ),
   ).toThrow('unsupported value');
+});
+
+// HTTP output must keep exact integers without exposing internal markers. Python
+// float spelling is cosmetic, while validation must still distinguish 1 from 1.0.
+test('HTTP JSON uses native float spelling and retains exact integer tokens', () => {
+  const value = parse_numeric_json('{"integer":900719925474099312345,"float":50.0,"zero":-0.0}');
+  expect(stringify_numeric_response(value)).toBe(
+    '{"integer":900719925474099312345,"float":50,"zero":0}',
+  );
+  const cloned = clone_numeric_json(value) as Record<string, JsonNumber>;
+  expect(cloned.float!.kind).toBe('float');
+  expect(cloned.integer!.integer).toBe(900719925474099312345n);
+  expect(() => JSON.stringify(new JsonNumber('1e999'))).toThrow('JSON numbers must be finite');
 });

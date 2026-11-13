@@ -11,7 +11,6 @@
  * @module usagePricing
  */
 import type { UsageCostSource, UsageModelPriceOverride, UsageTokenTotals } from './contracts.ts';
-import { strip } from './usageTranscripts.ts';
 
 /**
  * The subset of a LiteLLM entry we price against. All values are USD per token.
@@ -36,7 +35,7 @@ export function createOverrideRateTable(
 ): RateTable {
   return new Map(
     Object.entries(overrides).map(([model, prices]) => [
-      strip(model),
+      model.trim(),
       {
         inputCostPerToken: prices.inputCostPerMillionTokens / 1_000_000,
         outputCostPerToken: prices.outputCostPerMillionTokens / 1_000_000,
@@ -124,7 +123,7 @@ function sameRate(a: ModelRate, b: ModelRate): boolean {
 }
 
 function normalizeRateKey(model: string): string {
-  return strip(model).toLowerCase();
+  return model.trim().toLowerCase();
 }
 
 function bareModelName(key: string): string {
@@ -183,7 +182,7 @@ export function priceUsage(
   reportedCostUsd: number | null,
   overrides?: RateTable,
 ): PricedUsage {
-  const override = overrides?.get(strip(model));
+  const override = overrides?.get(model.trim());
   if (override === undefined && reportedCostUsd !== null && Number.isFinite(reportedCostUsd)) {
     return { costUsd: reportedCostUsd, costSource: 'providerReported' };
   }
@@ -210,7 +209,7 @@ export function cacheSavingsUsd(
   totals: UsageTokenTotals,
   overrides?: RateTable,
 ): number {
-  const rate = overrides?.get(strip(model)) ?? lookupRate(table, model);
+  const rate = overrides?.get(model.trim()) ?? lookupRate(table, model);
   if (rate === null) return 0;
   return totals.cachedInputTokens * (rate.inputCostPerToken - rate.cacheReadCostPerToken);
 }

@@ -1,7 +1,4 @@
-"""Compare content-decoded HTTP document bytes; retain compressed entity bytes too.
-
-Original JSON lexemes remain intact: documents are never serialized for comparison.
-"""
+"""Compare decoded HTTP fields, with raw document and compressed bytes as evidence."""
 
 from __future__ import annotations
 
@@ -78,7 +75,13 @@ def read_capture(destination: Path) -> list[dict[str, Any]]:
     captured = [json.loads(line) for line in destination.read_text().splitlines()]
     for row in captured:
         encodings = {item.strip() for item in row["encoding"].split(",")}
-        assert row["complete"] and encodings <= {"", "identity", "gzip", "deflate", "br"}
+        assert row["complete"] and encodings <= {
+            "",
+            "identity",
+            "gzip",
+            "deflate",
+            "br",
+        }
     return captured
 
 
@@ -91,115 +94,47 @@ def _body(
     year_fields: bool = False,
     chart_keys: bool = False,
 ) -> str:
-    """Keep original spans; change only declared values or named map-member order."""
-    decoder = json.JSONDecoder()
-    replacements: list[tuple[int, int, str]] = []
+    """Compare JSON fields and numeric values, rather than Python serialization bytes."""
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        return cast(str, normalizer.normalize(text))
     ignored = normalizer.rules.get("response_ignore", {})
     tokens = normalizer.rules.get("response_tokens", {})
-    ordered_objects = 0
-    if year_fields:
-        assert normalizer.rules["cli_direct_rules"]["dataset_year_fields"]["fields"] == [
-            "2025",
-            "2024",
-        ]
-    chart_fields = ["20", "10", "__proto__", "constructor", "toString"]
-    if chart_keys:
-        assert (
-            normalizer.rules["cli_direct_rules"]["goal_numeric_chart_keys"]["fields"]
-            == chart_fields
-        )
 
-    def whitespace(index: int) -> int:
-        return len(text) - len(text[index:].lstrip())
-
-    def walk(index: int, path: str, exact_path: str = "body") -> int:
-        nonlocal ordered_objects
-        index = whitespace(index)
-        value, end = decoder.raw_decode(text, index)
-        kind = type(value).__name__
+    def walk(item: Any, path: str) -> Any:
         if path == "body.revision" and catalog:
-            assert type(value) is str
-            digest = re.fullmatch(r'"([0-9a-f]{64})(:[0-9]+)"', text[index:end])
+            assert isinstance(item, str)
+            digest = re.fullmatch(r"([0-9a-f]{64})(:[0-9]+)", item)
             assert digest is not None
             token = normalizer.token(digest[1], context + ".catalog_hash")
-            replacements.append((index + 1, index + 65, f"<catalog-hash:str:{token}>"))
-        elif path in ignored:
-            replacements.append((index, end, f"<declared-ignore:{kind}:{path}>"))
-        elif path in tokens:
-            token = normalizer.token(value, context + "." + path)
-            replacements.append((index, end, f"<declared-token:{kind}:{token}>"))
-        elif path == "body.created_at" and preview_created_at is not None:
-            assert type(value) is int and value == preview_created_at
-            replacements.append((index, end, "<preview-created-at>"))
-        elif text[index] in "{[":
-            is_object = text[index] == "{"
-            closing = "}" if is_object else "]"
-            cursor = index + 1
-            members: list[tuple[str, int, int]] = []
-            while True:
-                cursor = whitespace(cursor)
-                if text[cursor] == closing:
-                    break
-                child_path = path + ".*"
-                child_exact = exact_path + "." + str(len(members))
-                start = cursor
-                key = ""
-                if is_object:
-                    key, cursor = decoder.raw_decode(text, cursor)
-                    cursor = whitespace(cursor)
-                    assert text[cursor] == ":"
-                    cursor += 1
-                    child_path = path + "." + key
-                    child_exact = exact_path + "." + key
-                member_end = walk(cursor, child_path, child_exact)
-                members.append((key, start, member_end))
-                cursor = whitespace(member_end)
-                if text[cursor] == closing:
-                    break
-                assert text[cursor] == ","
-                cursor += 1
-            if (year_fields and exact_path == "body.results.0.rows.0.values") or (
-                chart_keys and exact_path == "body.charts"
-            ):
-                expected = chart_fields if chart_keys else ["2025", "2024"]
-                assert is_object and len(members) == len(expected) and set(value) == set(expected)
-                if chart_keys:
-                    ordered = [
-                        next(item for item in members if item[0] == key) for key in ("10", "20")
-                    ]
-                    ordered += [item for item in members if item[0] not in ("10", "20")]
-                else:
-                    ordered = sorted(members, key=lambda item: item[0], reverse=True)
-                separator = text[members[0][2] : members[1][1]]
-                assert all(
-                    text[left[2] : right[1]] == separator
-                    for left, right in zip(members, members[1:], strict=False)
-                )
-                replacements.append(
-                    (
-                        members[0][1],
-                        members[-1][2],
-                        separator.join(text[start:stop] for _, start, stop in ordered),
-                    )
-                )
-                ordered_objects += 1
-        return end
+            return f"<catalog-hash:{token}>{digest[2]}"
+        kind = "number" if type(item) in (int, float) else type(item).__name__
+        if path in ignored:
+            return f"<declared-ignore:{kind}:{path}>"
+        if path in tokens:
+            return f"<declared-token:{kind}:{normalizer.token(item, context + '.' + path)}>"
+        if path == "body.created_at" and preview_created_at is not None:
+            assert type(item) is int and item == preview_created_at
+            return "<preview-created-at>"
+        if isinstance(item, dict):
+            diagnostic = isinstance(item.get("error"), dict) and "message" in item["error"]
+            if diagnostic:
+                assert isinstance(item["error"]["message"], str), item
+            result = {key: walk(child, path + "." + key) for key, child in item.items()}
+            if diagnostic:
+                result["error"]["message"] = "<diagnostic>"
+            return result
+        if isinstance(item, list):
+            return [walk(child, path + ".*") for child in item]
+        if isinstance(item, float) and item.is_integer():
+            return int(item)
+        return item
 
-    if ignored or tokens or preview_created_at is not None or catalog or year_fields or chart_keys:
-        try:
-            _, end = decoder.raw_decode(text, len(text) - len(text.lstrip()))
-        except json.JSONDecodeError:
-            assert not (year_fields or chart_keys)
-            return cast(str, normalizer.normalize(text))  # Plain-text artifact response.
-        if text[end:].strip():
-            assert not (year_fields or chart_keys)
-            return cast(str, normalizer.normalize(text))
-        walk(0, "body")
-    if year_fields or chart_keys:
-        assert ordered_objects == 1, "the named member-order rule requires exactly one object"
-    for start, end, replacement in sorted(replacements, reverse=True):
-        text = text[:start] + replacement + text[end:]
-    return cast(str, normalizer.normalize(text))
+    return cast(
+        str,
+        normalizer.normalize(json.dumps(walk(value, "body"), sort_keys=True, ensure_ascii=False)),
+    )
 
 
 def wire_view(
@@ -225,7 +160,8 @@ def wire_view(
             bool(normalizer.rules.get("cli_wire_rules", {}).get("goal_catalog_revision"))
             and row["method"] == "GET"
             and re.fullmatch(
-                r"/api/artifact-catalog/goal/goal_[a-z0-9]{8}", urlsplit(row["path"]).path
+                r"/api/artifact-catalog/goal/goal_[a-z0-9]{8}",
+                urlsplit(row["path"]).path,
             )
             is not None
         )

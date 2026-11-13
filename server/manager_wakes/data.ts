@@ -1,12 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
-import { pythonRepr } from '../core/config.ts';
-import {
-  JsonNumber,
-  parse_numeric_json,
-  stringify_python_json,
-} from '../core/http/numeric_json.ts';
+import { parse_numeric_json } from '../core/http/numeric_json.ts';
 import type {
   FailureNoticeIdentity,
   ProposalNoticeSuppression,
@@ -119,39 +114,18 @@ export function create_turn_failure_wake(
   });
 }
 
-/** Python str() for the JSON fields consumed by the stored Principal constructor. */
 function notice_text(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (value instanceof JsonNumber) return stringify_python_json(value);
-  if (Array.isArray(value)) return '[' + value.map(notice_repr).join(', ') + ']';
-  if (value !== null && typeof value === 'object')
-    return (
-      '{' +
-      Object.entries(value)
-        .map(([key, item]) => pythonRepr(key) + ': ' + notice_repr(item))
-        .join(', ') +
-      '}'
-    );
-  return pythonRepr(value);
-}
-function notice_repr(value: unknown): string {
-  return typeof value === 'string' ? pythonRepr(value) : notice_text(value);
+  return typeof value === 'string' ? value : JSON.stringify(value);
 }
 function notice_principal(raw: string): Principal {
   const stored = parse_numeric_json(raw) as Record<string, unknown>;
-  if (!Object.hasOwn(stored, 'kind')) throw new Error(pythonRepr('kind'));
+  if (!Object.hasOwn(stored, 'kind')) throw new Error('Stored principal lacks kind');
   const kind = notice_text(stored.kind);
   if (!['owner', 'chief', 'manager', 'goal', 'ticket'].includes(kind))
-    throw new Error(`${pythonRepr(kind)} is not a valid PrincipalKind`);
-  if (!Object.hasOwn(stored, 'id')) throw new Error(pythonRepr('id'));
+    throw new Error(`${JSON.stringify(kind)} is not a valid PrincipalKind`);
+  if (!Object.hasOwn(stored, 'id')) throw new Error('Stored principal lacks id');
   const id = notice_text(stored.id);
-  // Python str.strip() includes the control separators and excludes the BOM.
-  if (
-    !id ||
-    /^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]$/u.test(
-      id,
-    )
-  )
+  if (!id || id !== id.trim())
     throw new Error('principal id must be non-empty and must not contain outer whitespace');
   if ((kind === 'owner' || kind === 'chief') && id !== kind)
     throw new Error(`${kind} principal id must be ${kind}`);

@@ -13,8 +13,6 @@ import type {
 import type * as Rpc from '../../../node_modules/@agentclientprotocol/sdk/dist/core/jsonrpc.js';
 import type * as Validators from '../../../node_modules/@agentclientprotocol/sdk/dist/v1/unstable/schema/zod.gen.js';
 import { BackendAdapterError, BackendSpawnFailed } from '../contracts.ts';
-import { CodexChildWouldNotStart } from '../codex_app_server/errors.ts';
-import { python_repr } from '../claude_agent_sdk/failure_summary.ts';
 import { spawn_codex_process, within } from '../codex_app_server/process.ts';
 import type { OwnedCodexProcess } from '../codex_app_server/process.ts';
 import type { ResolvedConversationStart } from '../../contracts.ts';
@@ -500,18 +498,7 @@ export class HermesAcpLauncher {
       } catch {
         // Cleanup reports its own failure. Startup preserves its original failure.
       }
-      const executable = launch.argv[0];
-      // The shared process helper retains Node's exact spawn message, not errno.
-      // Translate this one observed missing-executable failure, without a pattern
-      // that can rewrite provider errors or unrelated operating-system failures.
-      const detail =
-        error instanceof CodexChildWouldNotStart &&
-        executable !== undefined &&
-        error.message === `spawn ${executable} ENOENT`
-          ? `[Errno 2] No such file or directory: ${python_repr(executable)}`
-          : error instanceof Error
-            ? error.message
-            : String(error);
+      const detail = error instanceof Error ? error.message : String(error);
       throw new BackendSpawnFailed(detail);
     }
   }
