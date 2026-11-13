@@ -20,10 +20,9 @@ import type {
 import { same_turn as claude_same_turn } from '../../../conversation/backends/claude_agent_sdk/turn.ts';
 import { same_turn as codex_same_turn } from '../../../conversation/backends/codex_app_server/turn.ts';
 import type { ResolvedConversationStart } from '../../../conversation/contracts.ts';
-import { decode_json, as_object } from '../../protocol.ts';
+import { decode_json, as_object, ValueError } from '../../protocol.ts';
 import { MacCommandService } from '../runner/service.ts';
 import { dispatch_command } from '../runner/commands.ts';
-import { MacChildAdmissionRefused } from '../runner/contracts.ts';
 import { create_mac_output_publication } from '../runner/publication.ts';
 import type { MacCommandDependencies, MacOutputPublication } from '../runner/command_contracts.ts';
 import { MacNativeChildren } from '../runner/start_stop.ts';
@@ -383,7 +382,7 @@ try {
     fail,
   ).catch((error: unknown) => error);
   guards.unsafe_sender_count_refused =
-    unsafe_count instanceof MacChildAdmissionRefused &&
+    unsafe_count instanceof ValueError &&
     native_children.get('child')!.active_turn === null &&
     calls.length === before_unsafe;
   for (const raw of input.asks) {

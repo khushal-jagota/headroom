@@ -15,5 +15,6 @@ export interface MacRunnerLifetimeContract {
   /** Resource faults seal admission before the host starts its owned cleanup. */
   seal(): void;
   stop(options: StopOptions): Promise<void>;
+  /** Current actual stop attempt. Failure retains retry work; only success certifies completion. */
   settled(): Promise<void>;
 }

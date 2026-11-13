@@ -12,6 +12,7 @@ import type {
 import { as_object, decode_json, decode_event_arguments } from '../../protocol.ts';
 import { normalize_integer } from '../../integers.ts';
 import { MacRunner } from '../runner/index.ts';
+import type { MacRunnerOptions } from '../runner/lifecycle_contracts.ts';
 import { outcome, owed_outputs } from '../runner/logic/outcomes.ts';
 import { MacCommandQueues } from '../mailbox/queues.ts';
 import { read_canonical_body } from '../mailbox/poll.ts';
@@ -60,11 +61,14 @@ console.debug = (...values: unknown[]) => debug.push(values);
 const release = gate(),
   entered = gate(),
   cleanup_release = gate(),
+  drain_release = gate(),
   join_entered = gate(),
   join_release = gate();
 const terminal_entered = gate(),
   terminal_release = gate();
 const signal = new AbortController().signal;
+const live_failure = new Error('scripted unavailable live sender');
+let fail_live = false;
 function mailbox_commands(values: readonly ChildCommand[], first_sequence: number) {
   return values.map((command, index) => ({
     command_sequence: first_sequence + index,
@@ -76,6 +80,11 @@ function mailbox_commands(values: readonly ChildCommand[], first_sequence: numbe
 function observed_error(task: Promise<unknown>): Promise<unknown> {
   return task.catch((error: unknown) => error);
 }
+const retains = (error: unknown, expected: unknown): boolean =>
+  error === expected ||
+  (error instanceof AggregateError &&
+    error.errors.some((cause: unknown) => retains(cause, expected))) ||
+  (error instanceof Error && error.cause !== undefined && retains(error.cause, expected));
 let sink!: BackendEventSink,
   native_stops = 0,
   terminal_start = false,
@@ -125,13 +134,18 @@ let parity: unknown,
 try {
   stores = await open_fixture_stores(join(root, 'spool'), now, on_failure, options);
   const { store, journal } = stores;
-  const runner = new MacRunner({
+  const runner_options: MacRunnerOptions = {
     incarnation: 'inc',
     journal,
     outbox: store,
     now_ms: () => normalize_integer(now),
     inputs: { download_inputs: unexpected },
-    live: { send: (event) => live.push(as_object(event, 'BackendEvent')) },
+    live: {
+      send: (event) => {
+        if (fail_live) throw live_failure;
+        live.push(as_object(event, 'BackendEvent'));
+      },
+    },
     new_update_id: () => {
       throw new Error('Updates are outside this event flow.');
     },
@@ -150,7 +164,17 @@ try {
       native_skill_home: () => join(root, 'native'),
       snapshot_directory: join(root, 'skills'),
     }),
-  });
+  };
+  const make_runner = () => new MacRunner(runner_options);
+  const runner = make_runner();
+  const make_queues = (runner: MacRunner, errors: Error[]) =>
+    new MacCommandQueues({
+      runner,
+      journal,
+      catalog: { read_result: unexpected },
+      result_finished() {},
+      on_failure: (error) => errors.push(error),
+    });
   owners.unshift(runner);
   await record_commands(journal, mailbox_commands(Object.values(commands), 1));
   async function snapshot() {
@@ -163,6 +187,11 @@ try {
   }
   await runner.run(commands.start!, signal);
   await runner.run(commands.prompt!, signal);
+  fail_live = true;
+  await emit('delta');
+  await emit('delta');
+  fail_live = false;
+  assert.equal(live.length, 0);
   for (const key of input.before) await emit(key);
   await snapshot();
   const answer = as_object(await runner.run(commands.permission!, signal), 'CommandOutcome');
@@ -257,21 +286,59 @@ try {
         (owed) => store.lookup(owed.submission_id) === null,
       ),
     );
+  const drain_runner = make_runner(),
+    drain_failures: Error[] = [];
+  const drain_queues = make_queues(drain_runner, drain_failures);
+  owners.unshift(drain_queues, drain_runner);
+  const drain_start = {
+    ...commands.start!,
+    command_id: 'drain-start',
+    child: { ...commands.start!.child, child_id: 'drain-child' },
+  };
+  const drain_mailbox = mailbox_commands([drain_start], command_count + 4)[0]!;
+  await record_commands(journal, [drain_mailbox]);
+  const drain_entered = gate(),
+    drain_failure = new Error('scripted shutdown journal failure');
+  let drain_attempts = 0;
+  journal.finish = async (id, body, owed) => {
+    if (id !== drain_start.command_id) return original_finish(id, body, owed);
+    drain_attempts++;
+    drain_entered.resolve();
+    await drain_release.promise;
+    throw drain_failure;
+  };
+  drain_queues.submit(drain_mailbox);
+  await drain_entered.promise;
+  const drain_stop = observed_error(drain_queues.stop(options));
+  const drain_actual = observed_error(drain_runner.settled());
+  drain_release.resolve();
+  const [drain_result, drain_settled] = await Promise.all([drain_stop, drain_actual]);
+  await drain_queues.settled();
+  assert.equal(drain_result, undefined);
+  assert.equal(drain_failures.length, 0);
+  assert(drain_attempts >= 2);
+  assert.equal(failures.length, 1);
+  assert(retains(drain_settled, drain_failure));
+  journal.finish = original_finish;
+  const repaired_stop = drain_runner.stop(options);
+  const repaired_actual = drain_runner.settled();
+  await Promise.all([repaired_stop, repaired_actual]);
+  owners.splice(owners.indexOf(drain_queues), 1);
+  owners.splice(owners.indexOf(drain_runner), 1);
   const terminal = { ...commands.start!.child, child_id: 'terminal-child' };
   const terminal_command = { ...commands.start!, child: terminal, command_id: 'terminal-start' };
-  const terminal_mailbox = mailbox_commands([terminal_command], command_count + 4)[0]!;
+  const terminal_mailbox = mailbox_commands([terminal_command], command_count + 5)[0]!;
   await record_commands(journal, [terminal_mailbox]);
   const queue_failures: Error[] = [];
-  const queues = new MacCommandQueues({
-    runner,
-    journal,
-    catalog: { read_result: unexpected },
-    result_finished() {},
-    on_failure: (error) => queue_failures.push(error),
-  });
+  const queues = make_queues(runner, queue_failures);
   owners.unshift(queues);
   queues.submit(terminal_mailbox);
   await terminal_entered.promise;
+  const stray = new AbortController();
+  const stray_observer = observed_error(runner.run(terminal_command, stray.signal));
+  stray.abort(new Error('scripted unsupported observer abort'));
+  assert((await stray_observer) instanceof ServerLifecycleError);
+  assert(!runner.permanently_stopped);
   let queue_settled = false;
   const queue_actual = observed_error(queues.settled()).finally(() => {
     queue_settled = true;
@@ -279,6 +346,7 @@ try {
   const raw_source = new ShutdownDeadlineExceeded(['scripted source capability']);
   const raw_native = new ShutdownDeadlineExceeded(['scripted native capability']);
   const cleanup_stops = native_stops;
+  const native_failure_start = failures.length;
   cleanup_native_failure = raw_native;
   const held_source = runner.source_work(terminal, async () => {
     await cleanup_release.promise;
@@ -301,8 +369,10 @@ try {
   } finally {
     store.pending_count = pending_count;
   }
-  while (failures.length === 0) await yield_turn();
+  while (failures.length === native_failure_start) await yield_turn();
+  const first_native_failure_visible = failures.some((error) => retains(error, raw_native));
   const retry = observed_error(runner.stop(options));
+  const retry_actual = observed_error(runner.settled());
   await runner.native_children.settled().catch(() => {});
   await yield_turn();
   const actual_waited = !actual_settled && !queue_settled;
@@ -310,6 +380,7 @@ try {
   assert.equal(await observed_error(held_source), raw_source);
   const outward = await retry;
   const actual_failure = await actual;
+  const current_failure = await retry_actual;
   const queue_failure = await queue_actual;
   owners.splice(owners.indexOf(queues), 1);
   const terminal_result = await journal.result_of(terminal_command.command_id);
@@ -319,19 +390,19 @@ try {
     'CommandResult',
   ).child_outcome;
   owners.splice(owners.indexOf(runner), 1);
-  const retains = (error: unknown, expected: unknown): boolean =>
-    error === expected ||
-    (error instanceof AggregateError &&
-      error.errors.some((cause: unknown) => retains(cause, expected))) ||
-    (error instanceof Error && error.cause !== undefined && retains(error.cause, expected));
   cleanup = {
+    failed_drain_settles_once: retains(drain_settled, drain_failure),
     deadline_typed:
       expired instanceof ShutdownDeadlineExceeded && expired instanceof ServerLifecycleError,
     actual_waited,
-    raw_source_retained: retains(actual_failure, raw_source),
-    raw_operation_retained: retains(actual_failure, operation_error),
-    raw_native_retained_after_retry:
-      retains(actual_failure, raw_native) && native_stops === cleanup_stops + 2,
+    raw_source_retained:
+      retains(actual_failure, raw_source) && retains(current_failure, raw_source),
+    raw_operation_retained:
+      retains(actual_failure, operation_error) && retains(current_failure, operation_error),
+    native_retry_resolved:
+      first_native_failure_visible &&
+      !retains(current_failure, raw_native) &&
+      native_stops === cleanup_stops + 2,
     outward_typed:
       outward instanceof ServerLifecycleError && outward instanceof ShutdownDeadlineExceeded,
     queue_actual_joined:
@@ -341,9 +412,19 @@ try {
       !runner.native_children.get(terminal.child_id)?.lock.locked,
   };
   assert(Object.values(cleanup).every(Boolean), JSON.stringify(cleanup));
-  assert.equal(failures.length, 1);
-  assert.deepEqual([queue_failures, debug.length], [[], 1]);
-  assert.equal(debug[0]![0], 'Mac command canceled during stop command=terminal-start:');
+  assert.equal(failures.length, native_failure_start + 1);
+  assert.deepEqual(
+    [queue_failures, debug.map((entry) => entry[0])],
+    [
+      [],
+      [
+        'Mac live event was dropped:',
+        'Mac command canceled during stop command=drain-start:',
+        'Mac command canceled during stop command=terminal-start:',
+      ],
+    ],
+  );
+  assert.equal(debug[0]![1], live_failure);
   await assert.rejects(runner.run(commands.start!, signal));
   await assert.rejects(runner.publish_owed_outputs(unread, unread));
   await assert.rejects(
@@ -357,6 +438,7 @@ try {
     permanent: runner.permanently_stopped,
     rejected_before_callbacks: !touched,
     late_live_dropped: live.length === 3,
+    live_failure_isolated: !fail_live && live.length === 3,
   };
 } catch (error) {
   console.error('Event proof primary failure:', error);
@@ -368,6 +450,7 @@ try {
   console.debug = original_debug;
   release.resolve();
   cleanup_release.resolve();
+  drain_release.resolve();
   join_release.resolve();
   terminal_release.resolve();
   if (stores) owners.push(stores.journal, stores.store);

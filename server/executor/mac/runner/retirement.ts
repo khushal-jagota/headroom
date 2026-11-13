@@ -50,6 +50,11 @@ export class MacRetirement implements MacRetirementContract {
     })();
     return this.actual_join;
   }
+  prune(reference: ChildReference): void {
+    for (let index = this.joined_failures.length - 1; index >= 0; index--)
+      if (same_reference(this.joined_failures[index]!.reference, reference))
+        this.joined_failures.splice(index, 1);
+  }
   stop_exact(
     command: ChildCommand,
     work: MacCommandWork,
@@ -132,6 +137,7 @@ export class MacRetirement implements MacRetirementContract {
     }
     this.dependencies.state.mark_retired(reference);
     this.dependencies.native_children.retire(reference);
+    this.prune(reference);
     work.prune(reference);
     return outcome(command, 'succeeded', {});
   }

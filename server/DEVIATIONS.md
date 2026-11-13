@@ -411,7 +411,7 @@ Python allocates a fresh `update_stop_` identity on each preparation attempt.
 The caller supplies the real update request ID. A retry cannot publish a second `child_stopped` entry for the same request and child.
 
 The Manager also requires lossless native projection of `sender_message_count`.
-TypeScript refuses counts outside JavaScript's safe integer range before native invocation. Python's integer count has no corresponding bound.
+TypeScript raises `ValueError` for counts outside JavaScript's safe integer range before native invocation. Python's integer count has no corresponding bound.
 
 ### Exact Mac stop after a failed command join
 

@@ -5,6 +5,7 @@ import type {
 } from '../../../conversation/backends/contracts.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
+import { observe_conversation_operation } from '../../../runtime/abort.ts';
 import type {
   ChildCommand,
   ChildReference,
@@ -125,8 +126,9 @@ export class MacRunner implements MacRunnerContract {
     this.assert_admission();
     let stopping: Promise<void> | undefined;
     const abort = () => {
+      if (!(signal.reason instanceof MailboxRunCancelled)) return;
       this.commands.withdraw(command.command_id);
-      stopping = this.finish_cancelled_run(signal);
+      stopping = this.finish_cancelled_run(signal.reason);
       void stopping.catch(() => {});
     };
     signal.addEventListener('abort', abort, { once: true });
@@ -137,28 +139,24 @@ export class MacRunner implements MacRunnerContract {
       } catch (error) {
         operation = Promise.reject(error);
       }
-      const [result] = await Promise.allSettled([operation]);
-      if (stopping) {
-        const [cleanup] = await Promise.allSettled([stopping]);
-        const failures: unknown[] = [];
-        if (result.status === 'rejected') failures.push(result.reason);
-        if (cleanup.status === 'rejected') failures.push(cleanup.reason);
-        if (failures.length === 1) throw failures[0];
-        if (failures.length) throw new AggregateError(failures, 'Canceled Mac command failed.');
+      try {
+        return await observe_conversation_operation(() => operation, signal);
+      } catch (error) {
+        if (!signal.aborted) throw error;
+        if (!(signal.reason instanceof MailboxRunCancelled))
+          throw new ServerLifecycleError(
+            'Mac command cancellation requires mailbox shutdown options.',
+          );
+        await stopping;
         throw signal.reason;
       }
-      if (result.status === 'rejected') throw result.reason;
-      return result.value;
     } finally {
       signal.removeEventListener('abort', abort);
     }
   }
-  private async finish_cancelled_run(signal: AbortSignal): Promise<void> {
-    const reason = signal.reason;
+  private async finish_cancelled_run(reason: MailboxRunCancelled): Promise<void> {
     const [observation, actual] = await Promise.allSettled([
-      this.lifetime.stop(
-        reason instanceof MailboxRunCancelled ? reason.stop_options : { deadline: 0 },
-      ),
+      this.lifetime.stop(reason.stop_options),
       this.lifetime.settled(),
     ]);
     const failures: unknown[] = actual.status === 'rejected' ? [actual.reason] : [];

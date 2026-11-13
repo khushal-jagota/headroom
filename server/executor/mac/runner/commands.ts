@@ -97,14 +97,12 @@ async function invoke(
     case 'write_prompt': {
       if (dependencies.state.admission_stopped)
         throw new MacChildAdmissionRefused('executor is quiescing');
-      const sender_message_count = integer_value(args.sender_message_count ?? 1);
+      const sender_message_count = integer_value(args.sender_message_count!);
       if (
         sender_message_count < BigInt(Number.MIN_SAFE_INTEGER) ||
         sender_message_count > BigInt(Number.MAX_SAFE_INTEGER)
       )
-        throw new MacChildAdmissionRefused(
-          'sender message count exceeds the native safe-integer range',
-        );
+        throw new ValueError('sender message count exceeds the native safe-integer range');
       const model = args.model_change == null ? child.model : args.model_change;
       const effort =
         args.reasoning_effort_change == null && !args.reasoning_effort_is_set
