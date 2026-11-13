@@ -9,12 +9,14 @@ import os
 import resource
 import shutil
 import signal
+import sqlite3
 import stat
 import subprocess
 import sys
 import tarfile
 import time
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
 
@@ -43,14 +45,27 @@ def stop(_signal: int, _frame: Any) -> None:
             pass
 
 
-def command(arguments: list[str], log: Path, graceful: bool = False) -> dict[str, Any]:
+def command(
+    arguments: list[str], log: Path, *, timeout_seconds: float, graceful: bool = False
+) -> dict[str, Any]:
     """Publish the exact group before signals; withdraw authority before reap is visible."""
     global active, active_graceful, force_at
     if stopping:
         raise RuntimeError("hosted proof stopped")
+    started = time.monotonic()
+    deadline = started + timeout_seconds
+    timed_out = False
     with log.open("xb") as output:
         previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
         try:
+            if stopping:
+                raise RuntimeError("hosted proof stopped before command admission")
+            if time.monotonic() >= deadline:
+                phases[-1]["owned_command"] = dict(
+                    timeout_seconds=timeout_seconds, deadline_monotonic=deadline,
+                    timed_out=True, spawned=False,
+                )
+                raise TimeoutError("hosted command deadline expired before admission")
             child = subprocess.Popen(
                 arguments, stdout=output, stderr=subprocess.STDOUT, start_new_session=True
             )
@@ -62,6 +77,17 @@ def command(arguments: list[str], log: Path, graceful: bool = False) -> dict[str
             while True:
                 previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
                 try:
+                    now = time.monotonic()
+                    if not timed_out and now >= deadline:
+                        timed_out = True
+                        try:
+                            if graceful:
+                                os.kill(child.pid, signal.SIGTERM)
+                                force_at = min(force_at or deadline + 5, deadline + 5)
+                            else:
+                                os.killpg(child.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
                     if force_at is not None and time.monotonic() >= force_at:
                         try:
                             os.killpg(child.pid, signal.SIGKILL)
@@ -98,19 +124,24 @@ def command(arguments: list[str], log: Path, graceful: bool = False) -> dict[str
                     active = None
                 finally:
                     signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+    timed_out = timed_out or time.monotonic() >= deadline
     outcome = dict(
         exit_code=child.returncode,
         user_seconds=usage.ru_utime,
         system_seconds=usage.ru_stime,
         wait4_maxrss_kib=usage.ru_maxrss,
         group_force=group_force,
+        timeout_seconds=timeout_seconds,
+        deadline_monotonic=deadline,
+        seconds=time.monotonic() - started,
+        timed_out=timed_out,
     )
     phases[-1]["owned_command"] = outcome
-    if stopping or child.returncode:
+    if stopping or timed_out or child.returncode:
         with log.open("rb") as output:
             output.seek(max(0, log.stat().st_size - 4000))
             raise RuntimeError(
-                f"owned command exited {child.returncode}: "
+                f"owned command exited {child.returncode}, timed_out={timed_out}: "
                 + output.read().decode(errors="replace")
             )
     return outcome
@@ -297,7 +328,9 @@ def main(root: Path, report: Path, sha: str) -> None:
     signal.signal(signal.SIGINT, stop)
     try:
         if (
-            subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=SOURCE, text=True).strip()
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=SOURCE, text=True, timeout=10
+            ).strip()
             != sha
         ):
             raise RuntimeError("proof checkout SHA mismatch")
@@ -315,6 +348,7 @@ def main(root: Path, report: Path, sha: str) -> None:
                 sha,
             ],
             root / "build.log",
+            timeout_seconds=1800,
         )
         manifest = validate_app_manifest(app / "manifest.json", require_runtime=True)
         receipt["manifest"] = manifest.as_dict()
@@ -353,9 +387,49 @@ def main(root: Path, report: Path, sha: str) -> None:
                     json.dumps(request),
                 ],
                 root / f"{producer}-{operation}.log",
+                timeout_seconds=600,
                 graceful=True,
             )
             return cast(dict[str, Any], json.loads(output.read_text()))
+
+        # This factory boundary previously had recorded argv and syntax proof only.
+        # Reuse the genuine built candidate, not host Python or the structural fixture.
+        from planner.environments.update_install import migration_graph
+
+        graph = migration_graph(app)
+        heads = set(graph) - {parent for parents in graph.values() for parent in parents}
+        nonheads = sorted(set(graph) - heads)
+        if not heads or not nonheads:
+            raise RuntimeError("the real candidate needs heads and a known non-head revision")
+        schema_cases: list[dict[str, Any]] = []
+        for name, revisions, expected in (
+            ("heads", sorted(heads), False),
+            ("nonhead", [nonheads[0]], True),
+            ("unknown", ["hosted-unknown-revision"], "This release does not know the database's schema revision."),
+        ):
+            database = root / f"schema-{name}.sqlite"
+            with closing(sqlite3.connect(database)) as connection, connection:
+                connection.execute("CREATE TABLE alembic_version(version_num TEXT)")
+                connection.executemany(
+                    "INSERT INTO alembic_version VALUES(?)", [(value,) for value in revisions]
+                )
+            schema_cases.append(dict(database=str(database), expected=expected))
+        schema_report = root / "v1-schema.json"
+        phase(
+            "candidate-v1-schema-wrapper",
+            command,
+            [
+                shutil.which("node") or "node",
+                str(launcher),
+                (SOURCE / "server/environments/release/testing/hosted_archive.ts").as_uri(),
+                json.dumps(dict(operation="schema", app=str(app), sha=sha,
+                                report=str(schema_report), cases=schema_cases)),
+            ],
+            root / "v1-schema.log",
+            timeout_seconds=145,
+            graceful=True,
+        )
+        receipt["candidate_v1_schema"] = json.loads(schema_report.read_text())
 
         for producer in ("python", "typescript"):
             archive, node_tree, oracle = [
