@@ -12,6 +12,8 @@ import { rates_proxy_for } from '../conversation/usage/proxy.ts';
 import { parse_numeric_json, stringify_python_json } from '../core/http/numeric_json.ts';
 import type { CommandResult, Invocation } from './contracts.ts';
 import { CliFailure, human_error } from './errors.ts';
+import { ValueError } from '../core/value_error.ts';
+import type { IpcResponse } from '../executor/wire.generated.ts';
 
 export interface TransportLimits {
   connect_ms: number;
@@ -329,8 +331,6 @@ async function request(
   },
 ): Promise<{ response: { status: number; ok: boolean }; text: string }> {
   const env = inv.environment;
-  if (env.PLAN_EXECUTOR_ROOT)
-    fail_validation(inv, 'Executor transport remains with the executor unit.');
   try {
     const base = env.PLAN_SERVER_URL?.trim() || 'http://127.0.0.1:8767';
     if (!base.includes('://'))
@@ -380,21 +380,84 @@ async function request(
     );
   } catch (error) {
     if (error instanceof ClientConfigurationError) fail_validation(inv, error.message);
-    if (inv.values.as_json)
-      throw new CliFailure({
-        exit_code: 2,
-        stdout: '',
-        stderr:
-          json({
-            error: { code: 'connection', message: await connection_message(error), detail: {} },
-          }) + '\n',
-      });
-    throw new CliFailure(
-      human_error(inv.command, 'The Panels server is unavailable.', 2, {
-        no_route: 'No panels call can work until the server is available.',
-      }),
-    );
+    return fail_connection(inv, error);
   }
+}
+export async function fail_connection(inv: Invocation, error: unknown): Promise<never> {
+  if (inv.values.as_json)
+    throw new CliFailure({
+      exit_code: 2,
+      stdout: '',
+      stderr:
+        json({
+          error: { code: 'connection', message: await connection_message(error), detail: {} },
+        }) + '\n',
+    });
+  throw new CliFailure(
+    human_error(inv.command, 'The Panels server is unavailable.', 2, {
+      no_route: 'No panels call can work until the server is available.',
+    }),
+  );
+}
+export function executor_response(inv: Invocation, response: IpcResponse): any {
+  if (response.unconfirmed != null) {
+    const outcome = response.unconfirmed;
+    // Defaults are included by Python's dataclass output, including locally minted uncertainty.
+    const value = {
+      request_id: outcome.request_id,
+      submission_id: outcome.submission_id,
+      publication: outcome.publication,
+      acceptance: outcome.acceptance ?? 'unconfirmed',
+    };
+    throw new CliFailure({
+      exit_code: 3,
+      stderr: '',
+      stdout:
+        (inv.values.as_json
+          ? json(value)
+          : `Submission ${outcome.submission_id}: ${outcome.publication}; VPS acceptance is unconfirmed. ` +
+            `Inspect with panels executor retry ${outcome.submission_id}. Do not repeat the original write.`) +
+        '\n',
+    });
+  }
+  if (response.error !== null) fail_response(inv, 400, { error: response.error }, '');
+  if (response.result !== null && 'error' in response.result)
+    fail_response(inv, 400, response.result, '');
+  return response.result;
+}
+export async function executor_request(
+  inv: Invocation,
+  operation: 'read' | 'write' | 'retry',
+  payload: Record<string, any>,
+): Promise<any> {
+  const { request } = await import('../executor/mac/ipc_client.ts');
+  let response: IpcResponse;
+  try {
+    response = await request(operation, payload, inv.environment);
+  } catch (error) {
+    if (error instanceof ValueError || (error instanceof Error && error.name === 'ValueError'))
+      fail_validation(inv, error.message);
+    return fail_connection(inv, error);
+  }
+  return executor_response(inv, response);
+}
+async function executor_send(
+  inv: Invocation,
+  method: string,
+  path: string,
+  options: { json_body?: unknown; params?: Record<string, any> },
+): Promise<any> {
+  if (method.toUpperCase() === 'GET')
+    return executor_request(inv, 'read', { path, params: options.params ?? {} });
+  const { cli_mutation } = await import('../executor/mac/ipc_client.ts');
+  let translated: ReturnType<typeof cli_mutation>;
+  try {
+    translated = cli_mutation(method.toUpperCase(), path, options.json_body ?? null);
+  } catch (error) {
+    if (error instanceof ValueError) fail_validation(inv, error.message);
+    throw error;
+  }
+  return executor_request(inv, 'write', { operation: translated[0], arguments: translated[1] });
 }
 export async function send(
   inv: Invocation,
@@ -406,6 +469,7 @@ export async function send(
     transport_limits?: Readonly<TransportLimits>;
   } = {},
 ): Promise<any> {
+  if (inv.environment.PLAN_EXECUTOR_ROOT) return executor_send(inv, method, path, options);
   const { response, text } = await request(inv, method, path, options);
   let data: any = null;
   try {
@@ -422,6 +486,11 @@ export async function send_text(
   path: string,
   options: { params?: Record<string, any>; transport_limits?: Readonly<TransportLimits> } = {},
 ): Promise<string> {
+  if (inv.environment.PLAN_EXECUTOR_ROOT) {
+    const result = await executor_send(inv, method, path, options);
+    if (result && typeof result === 'object' && typeof result.text === 'string') return result.text;
+    fail_validation(inv, 'executor read did not return text');
+  }
   const { response, text } = await request(inv, method, path, options);
   if (response.ok) return text;
   let data: any = null;
