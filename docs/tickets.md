@@ -60,7 +60,7 @@ The navigation index stores each Ticket's derived status with its other facts, i
 
 An errored claim stops automatic progress. Restart the Worker for explicit repair. A restart first kills the Ticket's conversation. After a successful kill, it unlinks the conversation, gives back any claim, and starts a fresh step. The claim does not determine whether a restart can proceed. A revision also starts in a fresh conversation, with only its feedback.
 
-If new launch settings fail after the old Worker ends, restart still clears its old claim and link when the database permits cleanup. The settings error remains visible.
+If new launch settings fail after the old Worker ends, restart clears its old link and marks the claim errored when the database permits cleanup. The settings error remains visible. The Ticket stays stopped until an explicit restart, so old launch settings cannot start another Worker automatically.
 
 If cleanup cannot establish that the old Worker ended, restart refuses before the claim, conversation link, or launch settings change. Use Recheck Worker cleanup before another restart. A user-owned Stage refuses, because a restart there would end the user's discussion and start nothing. A Mac Ticket refuses while the Mac is away, because the kill cannot reach it.
 

@@ -81,7 +81,7 @@ New conversation ends the running turn, discards held work, and links a fresh co
 
 After a deploy or ordinary crash interrupts a session, an eligible conversation gets one inspection prompt through the ordinary send path. Headroom never replays uncertain actions. Recovery requires proof that the exact previous child stopped. The home records its identity before dispatch and checks its process birth, host boot, and supervision records. Older unit-backed children retain exact-unit checks.
 
-Missing evidence, a live child, or a failed inspection keeps the conversation fenced. An unresolved owner never counts as an idle workspace. When cleanup clears the fence, held messages can proceed through the ordinary queue again.
+Missing evidence, a live child, or a failed inspection keeps the conversation fenced. An unresolved owner never counts as an idle workspace. A cleanup recheck proves ownership without a new start. The next ordinary send can resume eligible held messages.
 
 Codex, Hermes, and Claude save the exact process identity as soon as native spawn returns, before protocol initialization. Stop can then end that recorded process after a home crash. If identity inspection or the durable write fails, startup must stop its owned process. Failed cleanup keeps that handle and blocks a second agent.
 
