@@ -14,7 +14,7 @@ from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.backend_usage import BackendUsageService, production_backend_usage_service
 from planner.conversation.backends.codex_app_server.login import CodexLoginRejectionMemory
 from planner.conversation.backends.codex_app_server.login_session import CodexSignInService
-from planner.conversation.backends.contracts import BackendChildFactory
+from planner.conversation.backends.contracts import BackendChildFactory, RetainedBackendRun
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.lifecycle_storage import (
     acquire_runtime_ownership,
@@ -27,7 +27,7 @@ from planner.conversation.publication.coordinator import (
     SignalPublicationCoordinator,
 )
 from planner.conversation.snapshot import BackendSnapshotService
-from planner.conversation.storage import ConversationStore
+from planner.conversation.storage import ConversationStore, RetainedRunEvidence
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.db import (
     ChangeSignallingConnection,
@@ -186,6 +186,8 @@ def build_conversation_runtime(
     cleanup: AsyncExitStack | None = None,
     signal_composition: SignalRuntimeComposition | None = None,
     defer_view_cleanup: bool = False,
+    retained_run_evidence: Mapping[str, RetainedRunEvidence] | None = None,
+    retained_runs: tuple[RetainedBackendRun, ...] | None = None,
 ) -> ConversationRuntime:
     """Compose the conversation system, its record, the files it keeps, and the tail."""
     store = ConversationStore(
@@ -218,6 +220,8 @@ def build_conversation_runtime(
 
     system = SqliteProcessConversationSystem(
         store=store,
+        retained_run_evidence=retained_run_evidence,
+        retained_runs=retained_runs,
         backend_child_factories=backend_child_factories,
         message_files=message_files,
         live_tail=live_tail,

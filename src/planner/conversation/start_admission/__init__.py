@@ -307,10 +307,13 @@ class AutomaticStartAdmission:
         with self._lock:
             self._remove(identity)
 
-    def finish_unbound(self, identity: str) -> None:
+    def finish_unbound(self, identity: str, *, inactive_only: bool = False) -> None:
         with self._lock:
             entry = self._requests.get(identity)
-            if entry is not None and entry.turn is None and not entry.managed:
+            if (
+                entry is not None and entry.turn is None and not entry.managed
+                and (not inactive_only or not entry.active)
+            ):
                 self._remove(identity)
 
     def uncertain(self, identity: str) -> None:

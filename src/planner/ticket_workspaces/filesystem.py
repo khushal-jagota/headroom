@@ -43,7 +43,7 @@ def _git(repository: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def _write_json(path: Path, value: Any) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary = path.with_suffix(path.suffix + f".{uuid4().hex}.tmp")
     temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
     temporary.replace(path)
 
@@ -68,17 +68,33 @@ def repository_root(folder: Path | None) -> Path | None:
     return None
 
 
-def workspace_identity(ticket_root: Path) -> WorkspaceIdentity:
+def workspace_identity(ticket_root: Path, *, create: bool = True) -> WorkspaceIdentity:
     """Allocate one physical token even when cleanup and startup arrive together."""
     if ticket_root.is_symlink() or ticket_root.parent.is_symlink():
         raise RuntimeError("Ticket workspace must not be a symlink")
-    ticket_root.mkdir(parents=True, exist_ok=True)
+    if create:
+        ticket_root.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(ticket_root, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
+        opened = os.fstat(descriptor)
+        attached = ticket_root.stat(follow_symlinks=False)
+        if (opened.st_dev, opened.st_ino) != (attached.st_dev, attached.st_ino):
+            raise RuntimeError("Ticket workspace changed before ownership inspection")
         return _allocate_workspace_identity(ticket_root)
     finally:
         os.close(descriptor)
+
+
+def read_workspace_identity(ticket_root: Path) -> WorkspaceIdentity:
+    """Read ownership without recreating a concurrently detached folder."""
+    if ticket_root.is_symlink() or ticket_root.parent.is_symlink():
+        raise RuntimeError("Ticket workspace must not be a symlink")
+    marker_path = ticket_root / OWNERSHIP_FILE
+    if marker_path.is_symlink():
+        raise RuntimeError("Ticket ownership must not be a symlink")
+    marker = json.loads(marker_path.read_text())
+    return WorkspaceIdentity(UUID(marker["machine_id"]).hex, UUID(marker["workspace_id"]).hex)
 
 
 def _allocate_workspace_identity(ticket_root: Path) -> WorkspaceIdentity:
@@ -470,6 +486,41 @@ def cleanup_local_workspaces(
     retire: Callable[[Path, WorkspaceState, WorkspaceIdentity], Path | str] | None = None,
     retirement_is_committed: Callable[[WorkspaceState, WorkspaceIdentity], bool] | None = None,
 ) -> CleanupResult:
+    """Serialize server and CLI passes without locking unrelated workspace starts."""
+    tickets_root.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = tickets_root.parent / ".ticket-workspace-cleanup.lock"
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        return _cleanup_local_workspaces(
+            tickets_root,
+            states,
+            now,
+            extra_roots=extra_roots,
+            active_ticket_ids=active_ticket_ids,
+            apply=apply,
+            before_remove=before_remove,
+            authorize_retirement=authorize_retirement,
+            retire=retire,
+            retirement_is_committed=retirement_is_committed,
+        )
+    finally:
+        os.close(descriptor)
+
+
+def _cleanup_local_workspaces(
+    tickets_root: Path,
+    states: Mapping[str, WorkspaceState],
+    now: int,
+    *,
+    extra_roots: tuple[Path, ...] = (),
+    active_ticket_ids: frozenset[str] = frozenset(),
+    apply: bool = True,
+    before_remove: Callable[[Path], str | None] | None = None,
+    authorize_retirement: Callable[[WorkspaceState, WorkspaceIdentity], bool] | None = None,
+    retire: Callable[[Path, WorkspaceState, WorkspaceIdentity], Path | str] | None = None,
+    retirement_is_committed: Callable[[WorkspaceState, WorkspaceIdentity], bool] | None = None,
+) -> CleanupResult:
     """Inventory before removal; unknown ownership and active Tickets always stay."""
     result = CleanupResult()
     candidates: list[tuple[Path, str | None]] = []
@@ -529,7 +580,7 @@ def cleanup_local_workspaces(
             match = _TICKET_ID.match(path.name)
             assert match is not None
             state = states[match.group(1)]
-            identity = workspace_identity(path)
+            identity = workspace_identity(path, create=False)
             if before_remove is not None:
                 reason = before_remove(path)
                 if reason:
@@ -575,10 +626,24 @@ def retire_workspace(
     The caller holds either the server's short write transaction or the executor's
     local start lock after canonical retirement authorization.
     """
+    target = prepare_workspace_retirement(path, state, retired_root=retired_root, identity=identity)
+    if isinstance(target, Path):
+        path.rename(target)
+    return target
+
+
+def prepare_workspace_retirement(
+    path: Path,
+    state: WorkspaceState,
+    *,
+    retired_root: Path | None = None,
+    identity: WorkspaceIdentity | None = None,
+) -> Path | str:
+    """Prepare the exact retirement record before acquiring the database writer."""
     if path.is_symlink() or path.parent.is_symlink():
         return "workspace path is a symlink"
-    identity = identity or workspace_identity(path)
-    if workspace_identity(path) != identity:
+    identity = identity or read_workspace_identity(path)
+    if read_workspace_identity(path) != identity:
         return "physical workspace identity changed"
     retired_root = retired_root or path.parent.parent / ".ticket-retired"
     if retired_root.is_symlink():
@@ -606,7 +671,6 @@ def retire_workspace(
             "scratch_names": scratch_names,
         },
     )
-    path.rename(target)
     return target
 
 

@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from planner.conversation.backends.contracts import RetainedBackendRun
 from planner.conversation.start_admission import AutomaticStartAdmission
 from planner.conversation.start_admission.contracts import StartRequest
+from planner.conversation.storage import RetainedRunEvidence, read_retained_run_evidence
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -92,6 +93,20 @@ def test_server_loads_both_retained_owners_before_adoption_and_dispatches_cleanu
                     machine,
                 ),
             )
+    from planner.server_lifecycle import runtime as lifecycle_runtime
+
+    evidence_reads: list[tuple[str, ...]] = []
+    read_evidence = read_retained_run_evidence
+
+    def off_loop_evidence(
+        path: str, ids: tuple[str, ...], timeout: int,
+    ) -> dict[str, RetainedRunEvidence]:
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            asyncio.get_running_loop()
+        evidence_reads.append(ids)
+        return read_evidence(path, ids, timeout)
+
+    monkeypatch.setattr(lifecycle_runtime, "read_retained_run_evidence", off_loop_evidence)
     seen: list[set[str]] = []
     retained = VpsExecutorRegistry.retained_runs
 
@@ -115,6 +130,8 @@ def test_server_loads_both_retained_owners_before_adoption_and_dispatches_cleanu
     app = create_app(config, build_clock(config), lambda: connect(database))
     with TestClient(app) as client:
         assert seen and all(ids == {"conversation0", "conversation1"} for ids in seen)
+        assert len(evidence_reads) == 1
+        assert set(evidence_reads[0]) == seen[0]
         registry = app.state.executor_registry
         first = registry.get(ORIGINAL_MAC_MACHINE_ID)
         second = registry.get(EXTRA)
