@@ -140,9 +140,15 @@ def test_press_answers_at_once_then_pauses_work_and_starts_the_installer(
         harness.service.install(SHA_B, "now", confirm_activity=True)
 
 
-def test_schema_change_takes_the_backup_before_the_installer_starts(tmp_path: Path) -> None:
-    """Only a migrating release pays for a backup, and it is taken while Panels still runs."""
-    harness = Harness(tmp_path / "current", migrated=False)
+@pytest.mark.parametrize("native_snapshot", [False, True])
+def test_required_snapshot_precedes_installer_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_snapshot: bool
+) -> None:
+    """Mac trials also need a restorable record when their schema stays unchanged."""
+    from planner.platform_runtime.linux.adapter import LinuxPlatformAdapter
+
+    monkeypatch.setattr(LinuxPlatformAdapter, "update_requires_snapshot", native_snapshot)
+    harness = Harness(tmp_path / "current", migrated=native_snapshot)
     harness.service.install(SHA_B, "now", confirm_activity=False)
     harness.advance()
     recorded = harness.store.read()
@@ -151,6 +157,25 @@ def test_schema_change_takes_the_backup_before_the_installer_starts(tmp_path: Pa
     assert snapshot.parent == harness.root / "data" / "backups"
     assert json.loads((snapshot / "metadata.json").read_text())["deployed_revision"] == SHA_A
     assert "backup" in recorded.steps and harness.launched
+
+
+
+def test_native_snapshot_policy_still_refuses_unknown_schema(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unconditional snapshot must not admit an incompatible database revision."""
+    from planner.platform_runtime.linux.adapter import LinuxPlatformAdapter
+
+    monkeypatch.setattr(LinuxPlatformAdapter, "update_requires_snapshot", True)
+    with sqlite3.connect(harness.database) as db:
+        db.execute("UPDATE alembic_version SET version_num = 'unknown_revision'")
+    harness.service.install(SHA_B, "now", confirm_activity=False)
+    harness.advance()
+    attempt = harness.store.read()
+    assert attempt is not None and attempt.state == "failed"
+    assert attempt.detail is not None and "schema revision" in attempt.detail
+    assert not harness.launched and attempt.backup is None
+    assert not harness.system.workspace_admission.closed
 
 
 def test_idle_wait_cancel_and_update_now(harness: Harness) -> None:

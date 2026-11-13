@@ -153,10 +153,12 @@ def _resolve_loader_path(value: str, binary: Path, executable: Path) -> Path | N
     return None
 
 
-def audit_native_dependencies(root: Path, environment: dict[str, str]) -> list[dict[str, object]]:
+def audit_native_dependencies(
+    root: Path, environment: dict[str, str], *, python_relative: str = "python/bin/python3"
+) -> list[dict[str, object]]:
     """Reject any non-system dependency outside the extracted archive."""
     root = root.resolve()
-    executable = root / "python/bin/python3"
+    executable = root / python_relative
     executable_rpaths = _rpaths(executable, root=root, environment=environment)
     records: list[dict[str, object]] = []
     for path in sorted(root.rglob("*")):

@@ -19,7 +19,7 @@ installer unit: stop → swap folders → start → health ── healthy → do
 
 ## What it is made of
 
-- **Publication.** A GitHub workflow on hosted machines. For one commit, the suites and static checks run on their own machines while another builds once and seals the archive. It then proves the archive on a clean Debian root and, at the same time, rehearses the install on a throwaway known-good release with the same installer the live host uses. A native Mac machine builds and proves the Mac runtime. A last machine checks every proof against the build and writes the receipt. Panels offers a release only when the whole run passed. If one job fails, "Re-run failed jobs" reruns only that job. Every attempt of a run checks the same commit, so the last machine accepts evidence from the attempt that made it, and still requires the latest result of every job to be a pass. Shared or unknown changes select all default suites.
+- **Publication.** A GitHub workflow on hosted machines. For one commit, the suites and static checks run on their own machines while another builds once and seals the archive. It then proves the archive on a clean Debian root and, at the same time, rehearses the install on a throwaway known-good release with the same installer the live host uses. A native Mac machine builds and proves separate Mac executor and home artifacts. A last machine checks every proof against the build and writes the receipt. Panels offers a release only when the whole run passed. If one job fails, "Re-run failed jobs" reruns only that job. Every attempt of a run checks the same commit, so the last machine accepts evidence from the attempt that made it, and still requires the latest result of every job to be a pass. Shared or unknown changes select all default suites.
 - **The sealed release.** An archive plus a receipt. It holds the app, a private CPython 3.12 with its native libraries, a virtual environment with every pinned Python dependency, the built browser app, and the agent backends' Node packages. Each build resolves current Claude Code and Codex CLIs and records the versions it checks. Once sealed, the archive never changes.
 - **The live tree.** `~/Deployments/Panels/current/` with `app`, `data`, and `logs`. An install changes only `app`. The next release waits beside it, unpacked, and the previous one stays beside it after an install. See [Environments](environments.md).
 - **The installer.** One small program that uses only Python's standard library. It runs outside every app, so the app it replaces cannot break it.
@@ -33,7 +33,7 @@ The host supplies the glibc loader and a short named list of system libraries, N
 
 Actual Claude and Codex conversations use owner-maintained CLIs outside the release. App installation does not change those versions. SDK dependencies keep their API pins, while CLI qualification checks the protocol that Panels uses instead of an exact version number. These checks cannot guarantee compatibility with every future CLI update. See [Conversations](conversations.md) for the owner update controls.
 
-The platform adapter owns the Linux service identity, independent installer launch, and installer source. The copied installer stays self-contained and uses only the standard library. It keeps the same stop, swap, start, health, and rollback sequence.
+The platform adapter owns service identity, independent installer launch, and installer source. Linux uses a separate systemd unit. A Mac home uses a separate LaunchAgent in the graphical login session. The copied installer stays self-contained and uses only the standard library. It keeps the same stop, swap, start, health, and rollback sequence.
 
 The update barrier remains separate work. Current updates close admission and take any schema backup before the installer stops the service. A later change must join confirmed child retirement, acknowledged-result settlement, and the snapshot before it can claim no-loss rollback. A queue drain alone does not prove process retirement.
 
@@ -41,11 +41,15 @@ The update barrier remains separate work. Current updates close admission and ta
 
 **Getting ready.** On its usual one-minute check, the server looks for the newest successful publication from `main`. For a release it is not running, it streams the archive to disk, checks its fingerprint against the receipt once, and unpacks it beside the live app on the same disk. It checks that the unpacked release names itself as the receipt does and that the host meets its runtime contract, and keeps the matching Mac runtime. Only then does the card show **Update available**. A failed download or check is tried again on the next pass and never shows as an error. Only one waiting release is kept.
 
-**The press.** Khushal chooses **Update now** or **When work finishes**. Only the owner can; Chief, Managers, and Workers are refused. The server answers at once and does the rest in the background. **When work finishes** waits for an idle workspace through the existing readiness loop; Khushal can cancel the wait or change it to Update now. When it is time, Panels pauses work, checks Ticket integrity, and, if the new release would change the database schema, takes a verified [backup](backups.md) while the server is still running. Then it marks the attempt as installing and starts the installer in its own short-lived user service, so stopping Headroom cannot kill it. The server copies the installer out of its own app first, so the folder swap cannot change the code that runs.
+**The press.** Khushal chooses **Update now** or **When work finishes**. Only the owner can; Chief, Managers, and Workers are refused. The server answers at once and does the rest in the background. **When work finishes** waits for an idle workspace through the existing readiness loop; Khushal can cancel the wait or change it to Update now. When it is time, Panels pauses work, checks Ticket integrity, and, if the new release would change the database schema, takes a verified [backup](backups.md) while the server is still running. Then it marks the attempt as installing and starts the installer in its own short-lived job, so stopping Headroom cannot kill it. The server copies the installer out of its own app first, so the folder swap cannot change the code that runs.
 
 **The installer.** It stops the service that the server runs in, which the server reads from its own systemd cgroup, so a copy of Panels elsewhere can never stop the live one. It renames the current app aside, renames the waiting release into its place, starts the service, and waits for the new app to report its exact commit. A healthy answer comes from the process that serves Headroom, so work is already open. Startup also refreshes the agents' skill links. Interrupted conversations get one recovery prompt ([Conversations](conversations.md)). On success the installer marks the attempt done and keeps only the newest previous app.
 
 A new database starts from one complete schema. An existing staging database upgrades directly to it in one startup transaction. The oldest revision it upgrades is staging's `goal_holders`; the upgrade passes `retire_explicit_reply_requirement` and `canonical_manager_identities`, where the installed release already stands. Later revisions add the Mac executor's mailbox tables and the stall-alarm switch, and drop the old Mac connection tables. A release refuses a database at a revision its own history does not contain. An upgrade refuses a database that still contains cancelled Tickets; resolve them through the prior supported version first.
+
+A Mac home selects the separate home artifact for its operating system and architecture. Its installer checks the exact installation and stops its home and backup jobs before replacement. It starts the backup job again after home health passes. The interpreter, installer, job definitions, and attempt record remain outside the app. Setup refuses a missing external Python interpreter. This interpreter prerequisite remains an open item for later installation work. See the [Mac procedure](../ops/mac-home/installation.md).
+
+Every Mac trial takes a verified snapshot before the installer starts, including a trial with no schema change. Rollback restores that snapshot before the previous home starts. Linux keeps its schema-based snapshot decision. The future no-loss barrier must join confirmed retirement and acknowledged-result settlement before this snapshot.
 
 ## What can be undone
 
@@ -83,7 +87,7 @@ The deploy workflow never changes Tailscale Serve. A separate manual workflow re
 - Build once, prove those bytes, install the same bytes.
 - A push publishes. Only the owner's press installs.
 - Do the slow work before the press: download, check, and unpack while Headroom keeps working.
-- The installer depends on nothing it replaces: standard library, host Python, its own unit.
+- The installer depends on nothing it replaces: standard library, external host Python, its own service job.
 - Data is restorable only until the new app is proven.
 - Every attempt ends, and nothing waits for the Mac.
 
@@ -110,4 +114,4 @@ Commands outside the guard, such as Ruff or a direct `.venv/bin` call, can still
 - `scripts/dev`, `scripts/development_safety/`: the worktree guard.
 - `ops/panels-environments/`: user units and runner setup.
 
-_Last verified: 2026-11-11._
+_Last verified: 2026-11-13._

@@ -106,6 +106,7 @@ jobs:
     timeout-minutes: 30
     outputs:
       artifact_id: ${{ steps.mac_artifact.outputs.artifact-id }}
+      home_artifact_id: ${{ steps.mac_home_artifact.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -141,6 +142,23 @@ jobs:
           overwrite: true
           name: panels-mac-runtime
           path: ${{ runner.temp }}/mac-runtime-publication/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - name: Compose and prove sealed native Mac home
+        run: |
+          python3 scripts/build_mac_home.py \
+            --source "$RUNNER_TEMP/mac-publication-source" \
+            --executor-publication "$RUNNER_TEMP/mac-runtime-publication" \
+            --output "$RUNNER_TEMP/mac-home-publication" \
+            --revision "$PANELS_REQUESTED_SHA" --run-id "$GITHUB_RUN_ID"
+      - name: Retain checked native Mac home
+        id: mac_home_artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          overwrite: true
+          name: panels-mac-home
+          path: ${{ runner.temp }}/mac-home-publication/
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
@@ -870,10 +888,19 @@ jobs:
           artifact-ids: ${{ needs.mac-runtime.outputs.artifact_id }}
           path: ${{ env.PANELS_GATE_DIR }}/mac
           merge-multiple: true
+      - name: Download checked native Mac home
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+          artifact-ids: ${{ needs.mac-runtime.outputs.home_artifact_id }}
+          path: ${{ env.PANELS_GATE_DIR }}/mac-home
+          merge-multiple: true
       - name: Write immutable publication receipt
         env:
           PANELS_ARTIFACT_ID: ${{ needs.build.outputs.app_artifact_id }}
           PANELS_MAC_ARTIFACT_ID: ${{ needs.mac-runtime.outputs.artifact_id }}
+          PANELS_MAC_HOME_ARTIFACT_ID: ${{ needs.mac-runtime.outputs.home_artifact_id }}
           PANELS_MAC_BUILD_RESULT: ${{ needs.mac-runtime.result }}
         run: python3 scripts/update_publication.py receipt
       - name: Retain workflow timing observations
@@ -896,6 +923,7 @@ jobs:
             ${{ env.PANELS_GATE_DIR }}/
             !${{ env.PANELS_GATE_DIR }}/panels-app.tar.gz
             !${{ env.PANELS_GATE_DIR }}/mac/panels-mac-runtime.tar.gz
+            !${{ env.PANELS_GATE_DIR }}/mac-home/panels-app.tar.gz
             !${{ env.PANELS_GATE_DIR }}/target-root/**
             !${{ env.PANELS_GATE_DIR }}/target-root-oci/**
           if-no-files-found: error

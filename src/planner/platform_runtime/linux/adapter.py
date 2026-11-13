@@ -109,3 +109,13 @@ class LinuxPlatformAdapter:
         from .updates import installer_source
 
         return installer_source()
+
+    update_requires_snapshot = False
+
+    def installer_python(self, current_root: Path) -> Path:
+        import shutil
+
+        python = shutil.which("python3", path="/usr/local/bin:/usr/bin:/bin")
+        if python is None:
+            raise OSError("The host has no python3 for the installer.")
+        return Path(python)

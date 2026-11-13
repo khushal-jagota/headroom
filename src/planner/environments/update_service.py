@@ -448,7 +448,8 @@ class UpdateService:
         if not staged.is_dir():
             raise OSError("the staged release is missing")
         backup: str | None = None
-        if schema_change_pending(self.database, staged):
+        schema_changes = schema_change_pending(self.database, staged)
+        if schema_changes or get_platform_adapter().update_requires_snapshot:
             backup = str(create_database_backup(
                 self.database, self.backup_directory, attempt.from_sha
             ))

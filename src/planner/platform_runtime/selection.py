@@ -11,7 +11,12 @@ from planner.platform_runtime.contracts import (
     RuntimeRequirements,
     UnsupportedPlatformError,
 )
-from planner.platform_runtime.targets import LINUX_HOME, RuntimeTarget, require_runtime_target
+from planner.platform_runtime.targets import (
+    LINUX_HOME,
+    MAC_HOME,
+    RuntimeTarget,
+    require_runtime_target,
+)
 
 
 def get_platform_adapter(system: str | None = None) -> PlatformAdapter:
@@ -32,7 +37,11 @@ def get_platform_adapter(system: str | None = None) -> PlatformAdapter:
 
 
 def select_home_runtime(target: RuntimeTarget) -> HomeRuntime:
-    """Select only the implemented Linux home runtime."""
+    """Select a native home, never an executor artifact."""
+    if target == MAC_HOME:
+        from planner.platform_runtime.darwin.runtime import DarwinRuntime
+
+        return DarwinRuntime()
     require_runtime_target(target, LINUX_HOME)
     from planner.platform_runtime.linux.runtime import LinuxRuntime
 
@@ -45,6 +54,8 @@ def parse_optional_runtime_contract(value: object) -> RuntimeRequirements | None
         return None
     if isinstance(value, dict):
         system = value.get("system")
+        if system == "darwin":
+            return select_home_runtime(MAC_HOME).parse_contract(value)
         if isinstance(system, str) and system != "linux":
             from planner.platform_runtime.linux.runtime_contracts import RuntimeContractError
 

@@ -170,6 +170,54 @@ def validate_mac_publication(
     return PublishedMacUpdate(artifact_id, digest, size)
 
 
+def validate_mac_home_publication(
+    directory: Path, *, requested: str, run_id: int, artifact_id: int, build_result: str
+) -> dict[str, object]:
+    """Bind the home role, sealed bytes and native home execution to this publication."""
+    from planner.platform_runtime.darwin.runtime_contracts import DarwinRuntimeContract
+
+    if build_result != "success" or type(artifact_id) is not int or artifact_id < 1:
+        raise ValueError("Mac home publication requires a successful native build and artifact")
+    value = json.loads((directory / "mac-home-publication.json").read_text())
+    archive = directory / APP_ARCHIVE_NAME
+    digest = hash_archive(archive)
+    manifest = value.get("manifest", {})
+    proof = value.get("proof", {})
+    if not isinstance(manifest, dict) or not isinstance(proof, dict):
+        raise ValueError("Mac home publication is malformed")
+    contract = DarwinRuntimeContract.from_dict(manifest.get("runtime_contract"))
+    if (
+        value.get("schema_version") != 1
+        or value.get("publication_run_id") != run_id
+        or re.fullmatch(r"[0-9a-f]{40}", requested) is None
+        or value.get("application_revision") != requested
+        or manifest.get("app_sha") != requested
+        or manifest.get("format") != "panels-app-v1"
+        or value.get("archive_sha256") != digest
+        or value.get("archive_size") != archive.stat().st_size
+        or proof.get("passed") is not True
+        or proof.get("application_revision") != requested
+        or proof.get("relocation") is not True
+        or proof.get("health_assets_api") is not True
+        or proof.get("archive_sha256") != digest
+        or proof.get("contract_sha256") != contract.digest
+        or not isinstance(proof.get("duration_seconds"), (int, float))
+        or proof["duration_seconds"] <= 0
+        or not value.get("native")
+    ):
+        raise ValueError(
+            "Mac home publication differs from source or lacks native home execution proof"
+        )
+    with tarfile.open(archive, "r:gz") as packed:
+        member = packed.getmember("manifest.json")
+        if not member.isfile() or member.size > MAX_MAC_RUNTIME_MANIFEST_BYTES:
+            raise ValueError("Mac home manifest is invalid")
+        stream = packed.extractfile(member)
+        if stream is None or json.load(stream) != manifest:
+            raise ValueError("Mac home archive manifest differs from its receipt")
+    return {"artifact_id": artifact_id, "manifest": manifest, "archive_sha256": digest}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument(
@@ -219,7 +267,15 @@ def main() -> None:
             artifact_id=int(os.environ["PANELS_MAC_ARTIFACT_ID"]),
             build_result=os.environ["PANELS_MAC_BUILD_RESULT"],
         )
+        mac_home = validate_mac_home_publication(
+            gate / "mac-home",
+            requested=requested,
+            run_id=int(os.environ["GITHUB_RUN_ID"]),
+            artifact_id=int(os.environ["PANELS_MAC_HOME_ARTIFACT_ID"]),
+            build_result=os.environ["PANELS_MAC_BUILD_RESULT"],
+        )
         receipt = {
+            "mac_home": mac_home,
             "mac": asdict(mac),
             "publication_run_id": int(os.environ["GITHUB_RUN_ID"]),
             "artifact_id": int(os.environ["PANELS_ARTIFACT_ID"]),
