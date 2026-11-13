@@ -3,8 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { realpathSync } from 'node:fs';
 import type { Writable } from 'node:stream';
 import { commands } from './commands.ts';
-import type { CommandResult } from './contracts.ts';
-import { CliFailure } from './errors.ts';
+import type { CommandResult, Invocation } from './contracts.ts';
+import { CliFailure, MissingResponseValue } from './errors.ts';
 import { render_help } from './help.ts';
 import { parse } from './parser.ts';
 
@@ -17,11 +17,12 @@ export async function run(
     return Buffer.concat(chunks);
   },
 ): Promise<CommandResult> {
+  let invocation: Invocation | undefined;
   try {
     const parsed = parse(argv, commands, environment);
     if (parsed.help)
       return { exit_code: 0, stdout: render_help(parsed.command, commands), stderr: '' };
-    const invocation = { ...parsed, environment, stdin };
+    invocation = { ...parsed, environment, stdin };
     switch (parsed.command.path[0]) {
       case 'goal':
         return await (await import('../goals/cli/index.ts')).run_goal_command(invocation);
@@ -47,6 +48,15 @@ export async function run(
     const { run_work_command } = await import('./work_commands.ts');
     return await run_work_command(invocation);
   } catch (error) {
+    if (error instanceof MissingResponseValue && invocation) {
+      const { fail_validation } = await import('./http.ts');
+      try {
+        fail_validation(invocation, error.message);
+      } catch (failure) {
+        if (failure instanceof CliFailure) return failure.result;
+        throw failure;
+      }
+    }
     if (error instanceof CliFailure) return error.result;
     throw error;
   }

@@ -110,6 +110,25 @@
       ],
       "cause": "The accepted JavaScript source contract replaces only the shared script example, two script notes and the history note; every CLI byte must equal its fresh canonical shared export.",
       "deviation": "server/DEVIATIONS.md#javascript-source-execution-limits"
+    },
+    "dataset_year_fields": {
+      "paths": [
+        "json.results.0.rows.0.values",
+        "text.results.0.rows.0.values",
+        "wire.body.results.0.rows.0.values"
+      ],
+      "fields": [
+        "2025",
+        "2024"
+      ],
+      "scope": {
+        "method": "POST",
+        "route": "/api/datasets/read",
+        "results": 1,
+        "rows": 1
+      },
+      "cause": "Manager accepts native ascending index-key display only where dictionary order has no meaning. This single retained row keeps both exact numeric member spans; compare every outside byte and all declaration arrays exactly. Ticket search follows declared workflow fields, and the preexisting unbound browser composition sum remains outside this server/CLI difference.",
+      "deviation": "server/DEVIATIONS.md#integer-like-json-map-keys"
     }
   },
   "cli_wire_rules": {

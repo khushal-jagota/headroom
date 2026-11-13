@@ -5,8 +5,7 @@ import { emit } from '../../cli/measure_io.ts';
 import { setup_collection } from './setup.ts';
 export async function run_attention_command(inv: Invocation): Promise<CommandResult> {
   const v = inv.values;
-  if (inv.command.path[1] === 'setup-collection')
-    return emit(await setup_collection(inv), v.as_json);
+  if (inv.command.path[1] === 'setup-collection') return emit(await setup_collection(inv), inv);
   const selections: [string, string][] = [];
   for (const kind of ['project', 'manager', 'ticket', 'goal'])
     if (v[kind + '_id'] !== null) selections.push([kind, v[kind + '_id']]);
@@ -24,5 +23,5 @@ export async function run_attention_command(inv: Invocation): Promise<CommandRes
     params.scope_kind = selections[0][0];
     if (params.scope_kind !== 'chief') params.scope_id = selections[0][1];
   }
-  return emit(await send(inv, 'GET', '/api/attention/summary', { params }), v.as_json);
+  return emit(await send(inv, 'GET', '/api/attention/summary', { params }), inv);
 }

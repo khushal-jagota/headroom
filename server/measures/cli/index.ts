@@ -12,7 +12,7 @@ const quote = (value: string) =>
 export async function run_measure_command(inv: Invocation): Promise<CommandResult> {
   const v = inv.values;
   const command = inv.command.path[1];
-  if (command === 'schema') return emit(CREATE, v.as_json);
+  if (command === 'schema') return emit(CREATE, inv);
   let data: unknown;
   const path = '/api/measures';
   if (command === 'list') {
@@ -37,5 +37,5 @@ export async function run_measure_command(inv: Invocation): Promise<CommandResul
       json_body: await stdin_object(inv),
     });
   }
-  return emit(data, v.as_json);
+  return emit(data, inv);
 }

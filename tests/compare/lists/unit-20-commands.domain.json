@@ -218,6 +218,44 @@
     },
     {
       "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "schema",
+        "edit"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Prints the complete offline goal edit declaration, examples and notes.",
+      "assert_text": [
+        "schema",
+        "examples",
+        "primary_chart"
+      ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "schema",
+        "primary-chart"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Prints the complete offline goal primary-chart declaration, examples and notes.",
+      "assert_text": [
+        "schema",
+        "examples",
+        "primary_line_chart"
+      ]
+    },
+    {
+      "kind": "cli",
       "area": "cli-measure",
       "argv": [
         "measure",
@@ -588,7 +626,7 @@
       "exit_code": 0,
       "proof": "Writes exact BOM, CRLF and final-newline bytes to a real goal.",
       "files": {
-        "goal.txt": "﻿CLI goal artifact\r\nsecond line\r\n"
+        "goal.txt": "\ufeffCLI goal artifact\r\nsecond line\r\n"
       }
     },
     {
@@ -628,7 +666,7 @@
         "CLI goal artifact"
       ],
       "assert_json": {
-        "content": "﻿CLI goal artifact\r\nsecond line\r\n"
+        "content": "\ufeffCLI goal artifact\r\nsecond line\r\n"
       }
     },
     {
@@ -735,7 +773,7 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Renames and re-encrypts the real fixture credential using this host’s private key, without revealing its secret.",
+      "proof": "Renames and re-encrypts the real fixture credential using this host\u2019s private key, without revealing its secret.",
       "assert_text": [
         "CLI renamed credential"
       ]
@@ -1120,7 +1158,7 @@
         "actor": "owner"
       },
       "exit_code": 1,
-      "proof": "Preserves this command group’s concrete input or missing-record refusal."
+      "proof": "Preserves this command group\u2019s concrete input or missing-record refusal."
     },
     {
       "kind": "cli",
@@ -1136,7 +1174,7 @@
         "actor": "owner"
       },
       "exit_code": 1,
-      "proof": "Preserves this command group’s concrete input or missing-record refusal."
+      "proof": "Preserves this command group\u2019s concrete input or missing-record refusal."
     },
     {
       "kind": "cli",
@@ -1149,49 +1187,52 @@
         "actor": "owner"
       },
       "exit_code": 1,
-      "proof": "Preserves this command group’s concrete input or missing-record refusal."
+      "proof": "Preserves this command group\u2019s concrete input or missing-record refusal."
     },
     {
       "kind": "cli",
       "area": "cli-measure",
       "argv": [
         "measure",
-        "create"
+        "show",
+        "measure_00000000"
       ],
       "identity": {
         "actor": "owner"
       },
       "exit_code": 1,
-      "proof": "Preserves this command group’s concrete input or missing-record refusal.",
-      "stdin": "[]"
+      "proof": "The real measure HTTP endpoint refuses a missing record with404, preserving its server error envelope.",
+      "assert_http_status": 404
     },
     {
       "kind": "cli",
       "area": "cli-measure-source",
       "argv": [
         "measure-source",
-        "create"
+        "show",
+        "source_00000000"
       ],
       "identity": {
         "actor": "owner"
       },
       "exit_code": 1,
-      "proof": "Preserves this command group’s concrete input or missing-record refusal.",
-      "stdin": "[]"
+      "proof": "The real measure-source HTTP endpoint refuses a missing record with404, preserving its server error envelope.",
+      "assert_http_status": 404
     },
     {
       "kind": "cli",
       "area": "cli-dataset",
       "argv": [
         "dataset",
-        "create"
+        "show",
+        "dataset_00000000"
       ],
       "identity": {
         "actor": "owner"
       },
       "exit_code": 1,
-      "proof": "Preserves this command group’s concrete input or missing-record refusal.",
-      "stdin": "[]"
+      "proof": "The real dataset HTTP endpoint refuses a missing record with404, preserving its server error envelope.",
+      "assert_http_status": 404
     },
     {
       "kind": "cli",
@@ -1208,7 +1249,7 @@
         "conversation_id": "unit20-domain-worker"
       },
       "exit_code": 2,
-      "proof": "Preserves this command group’s concrete input or missing-record refusal."
+      "proof": "Preserves this command group\u2019s concrete input or missing-record refusal."
     },
     {
       "kind": "cli",
@@ -1224,7 +1265,7 @@
         "actor": "owner"
       },
       "exit_code": 1,
-      "proof": "Preserves this command group’s concrete input or missing-record refusal."
+      "proof": "Preserves this command group\u2019s concrete input or missing-record refusal."
     },
     {
       "kind": "cli",
@@ -1241,7 +1282,72 @@
         "conversation_id": "unit20-domain-worker"
       },
       "exit_code": 2,
-      "proof": "Preserves this command group’s concrete input or missing-record refusal."
+      "proof": "Preserves this command group\u2019s concrete input or missing-record refusal."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-page",
+      "argv": [
+        "page",
+        "show",
+        "--manager",
+        "si_00000000"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "assert_http_status": 404,
+      "proof": "The actual page HTTP endpoint returns404; both clients preserve its response bytes and error rendering."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-credential",
+      "argv": [
+        "credential",
+        "rename",
+        "credential_00000000",
+        "--name",
+        "CLI absent credential",
+        "--expected-revision",
+        "1"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "assert_http_status": 404,
+      "proof": "The actual credential HTTP endpoint returns404; both clients preserve its response bytes and error rendering."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-attention",
+      "argv": [
+        "attention",
+        "summary",
+        "--first-date",
+        "not-a-date"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "assert_http_status": 422,
+      "proof": "The actual attention HTTP endpoint returns422; both clients preserve its response bytes and error rendering."
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "list",
+        "extra"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 2,
+      "proof": "Rejects an extra goal argument before HTTP or handler execution."
     }
   ],
   "probes": [],
@@ -1258,12 +1364,13 @@
       },
       "exit_code": 0,
       "stdin": "{\"dataset_ids\":[\"${retained_dataset}\"],\"first_date\":\"2026-10-26\",\"last_date\":\"2026-10-26\"}",
-      "proof": "Reads one real retained row and category label after canonical source completion; the direct driver supplies the fixture-owned dataset capture.",
+      "proof": "Reads one retained row with declared fields 2025 then 2024, exact year values, and a category label after canonical source completion. The same hosts prove Ticket search across two descending numeric field IDs.",
       "assert_json": {
         "returned_rows": 1,
         "matching_rows": 1,
         "results.0.rows.0.dimensions.region": "de",
-        "results.0.rows.0.values.events": 7.25
+        "results.0.rows.0.values.2025": 7.25,
+        "results.0.rows.0.values.2024": 3.0
       },
       "assert_text": [
         "7.25",
@@ -1427,6 +1534,23 @@
         "schema",
         "examples"
       ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-preview",
+      "argv": [
+        "preview",
+        "register",
+        "--port",
+        "${preview_port}"
+      ],
+      "identity": {
+        "actor": "worker",
+        "ticket_id": "${preview_ticket}"
+      },
+      "exit_code": 1,
+      "assert_http_status": 409,
+      "proof": "With trusted ingress and a valid owned listener, the server rejects registration before preparation with409."
     }
   ],
   "direct_proofs": [

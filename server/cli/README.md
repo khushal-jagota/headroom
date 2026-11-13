@@ -25,13 +25,20 @@ proof instead invokes both CLIs through the guarded synthetic-host driver. It
 compares fresh Python output, not frozen help snapshots. An offline drift check compares
 the complete fresh Python declarations with `commands.ts` without writing repository
 files or starting another server. The exporter rejects unsupported parameter types.
+The same exporter refreshes the goal, holder-page and measure offline declarations.
+Their readable TypeScript data is checked against fresh Python exports during migration.
+Pure canonical chart, page and measure validators also accept a printed example from
+each area; this checks the contract without another application host.
 Command help uses `inspect.cleandoc`, as Click does before formatting. This preserves
 the printed contract across Python compiler versions without ignoring help changes.
 
 The TypeScript declaration file is the runtime authority. While Python remains in the
 migration, regenerate it from Python and check for drift. After Python removal, edit
 these declarations with TypeScript command changes. The cutover retires the Python
-exporter and its drift comparison; the CLI does not require Python at startup.
+exporter and its drift comparison. TypeScript command and shared domain declarations
+then become the editing source of truth, including goal/page/measure schema data.
+The CLI requires no Python at startup. Source-author guidance selects named canonical
+note records; adding a note cannot silently change an override by array position.
 
 Parsing first checks the whole command line for option syntax, then processes eager
 help, then converts parameters in Click invocation order. Required parameters fail

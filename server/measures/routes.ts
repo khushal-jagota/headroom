@@ -31,25 +31,6 @@ function period(value: unknown): CountPeriod | null {
     throw invalid('$.period: supported values: day, week, month');
   return value as CountPeriod;
 }
-/** Python Measure dataclass order at the HTTP boundary. */
-function measure_json(measure: Measure): Measure {
-  return {
-    id: measure.id,
-    project_id: measure.project_id,
-    name: measure.name,
-    unit: measure.unit,
-    origin: measure.origin,
-    kind: measure.kind,
-    timezone: measure.timezone,
-    period: measure.period,
-    source_id: measure.source_id,
-    formula: measure.formula,
-    definition_revision: measure.definition_revision,
-    created_at: measure.created_at,
-    updated_at: measure.updated_at,
-    write_revision: measure.write_revision,
-  };
-}
 export const routes: FastifyPluginAsync<AreaServices> = async (app, s) => {
   install_numeric_json_parser(app);
   app.get('/measures', async (req, reply) => {
@@ -78,11 +59,11 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, s) => {
         limit,
         offset,
       );
-      return { ...result, measures: result.measures.map(measure_json) };
+      return result;
     });
   });
   app.get<{ Params: { measure_id: string } }>('/measures/:measure_id', async (req) =>
-    s.database.read((sql) => measure_json(data.read_measure(sql, req.params.measure_id))),
+    s.database.read((sql) => data.read_measure(sql, req.params.measure_id)),
   );
   app.post('/measures/read', async (req, reply) => {
     if (!dictionaryBody(req.body, reply)) return;
@@ -146,9 +127,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, s) => {
       source_id: source as string | null,
       formula: b.formula == null ? null : parse_formula(b.formula),
     };
-    return s.database.write((sql) =>
-      measure_json(actions.create_measure(sql, body, s.clock.nowUnix())),
-    );
+    return s.database.write((sql) => actions.create_measure(sql, body, s.clock.nowUnix()));
   });
   app.patch<{ Params: { measure_id: string } }>('/measures/:measure_id', async (req, reply) => {
     if (!dictionaryBody(req.body, reply)) return;
@@ -173,7 +152,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, s) => {
     if ('period' in b) b.period = period(b.period);
     if ('formula' in b) b.formula = parse_formula(b.formula);
     return s.database.write((sql) =>
-      measure_json(actions.update_measure(sql, req.params.measure_id, b, s.clock.nowUnix())),
+      actions.update_measure(sql, req.params.measure_id, b, s.clock.nowUnix()),
     );
   });
   app.delete<{ Params: { measure_id: string } }>('/measures/:measure_id', async (req) => {

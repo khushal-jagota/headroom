@@ -30,5 +30,5 @@ export async function run_dataset_command(inv: Invocation): Promise<CommandResul
       json_body: await stdin_object(inv),
     });
   }
-  return emit(data, v.as_json);
+  return emit(data, inv);
 }

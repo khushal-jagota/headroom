@@ -19,6 +19,7 @@ from typing import Any, cast
 import httpx
 import pytest
 from tests.compare.direct import unit20_cli as driver
+from tests.compare.direct.unit20_wire import wire_view
 from tests.compare.runner import Normalizer, backup_database, capture_values, substitute
 from tests.support.server import ServerHandle
 from tests.support.server_fixtures import _start_server, _stop_server
@@ -185,9 +186,9 @@ def _replay(
     candidate: bool,
     mode: str,
     rules: dict[str, Any],
-) -> list[Any]:
+    result: dict[str, Any],
+) -> None:
     normalizer = Normalizer(rules, handle.db_path.parent)
-    evidence = []
     with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
         for index, step in enumerate(requests):
             resolved = substitute(step, saved)
@@ -201,11 +202,15 @@ def _replay(
                     python_in_process=not candidate,
                 )
                 driver.cli_capture(answer, resolved, saved, mode)
-                evidence.append(
+                result["raw"].append(
+                    {"argv": resolved["argv"], "proof": step["proof"], "outcome": answer}
+                )
+                result["normalized"].append(
                     {
                         "step": index,
                         "proof": step["proof"],
                         "answer": normalizer.normalize(driver.comparable(answer)),
+                        "wire": wire_view(answer, normalizer),
                     }
                 )
             else:
@@ -219,18 +224,25 @@ def _replay(
                     resolved,
                     response.text,
                 )
+                result["controls"].append(
+                    {
+                        "step": index,
+                        "method": resolved["method"],
+                        "path": resolved["path"],
+                        "status": response.status_code,
+                    }
+                )
                 if step.get("capture"):
                     capture_values(response.json(), resolved, saved)
-    return evidence
 
 
-def test_unit20_same_python_host_populated_sequence(
-    tmp_path: Path, request: pytest.FixtureRequest
+def compare_cli_sequence(
+    list_path: Path, backend: str, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
-    """Fresh database/files and process state make both CLI write sequences comparable."""
+    """One reset route proves CLI isolation and actual TS-backend human/JSON bytes."""
     started = time.perf_counter()
-    spec = json.loads(LIST.read_text())
-    rules = json.loads((LIST.parent.parent / "rules" / LIST.name).read_text())
+    spec = json.loads(list_path.read_text())
+    rules = json.loads((list_path.parent.parent / "rules" / list_path.name).read_text())
     root = tmp_path / "same-host"
     handle = _start_server(root, server_module="tests.compare.host")
     captures: dict[str, Any] = {}
@@ -253,12 +265,27 @@ def test_unit20_same_python_host_populated_sequence(
     backup_database(handle.db_path, snapshot)
     seed_files = tmp_path / "seed-files"
     seed_files.mkdir()
-    for directory in ("skills", "files"):
-        if (root / directory).is_dir():
-            shutil.copytree(root / directory, seed_files / directory)
-    proof: dict[str, Any] = {}
+    for name in ("skills", "files", "credential-key"):
+        source = root / name
+        if source.is_dir():
+            shutil.copytree(source, seed_files / name)
+        elif source.is_file():
+            shutil.copy2(source, seed_files / name)
+    report_name = list_path.stem + (
+        ".same-python" if backend == "tests.compare.host" else ".typescript-backend"
+    )
+    proof: dict[str, Any] = {
+        "list": list_path.name,
+        "candidate_backend": backend,
+        "boundary": (
+            "Both modes: Python reference vs TS CLI on reference backend or real TS backend"
+        ),
+        "strategy": {"python": "CliRunner.invoke", "typescript": "subprocess"},
+        "seed_capture_names": sorted(captures),
+        "comparisons": {},
+    }
     for mode in ("json", "text"):
-        answers = []
+        answers: list[dict[str, Any]] = []
         for candidate in (False, True):
             # Never replace a database beneath a running server. The exact owned
             # process stopped above, so schema, caches and files all start fresh.
@@ -266,38 +293,43 @@ def test_unit20_same_python_host_populated_sequence(
 
             def restore(target: Path) -> None:
                 backup_database(snapshot, target)
-                for directory in seed_files.iterdir():
-                    shutil.copytree(directory, target.parent / directory.name, dirs_exist_ok=True)
+                for source in seed_files.iterdir():
+                    if source.is_dir():
+                        shutil.copytree(source, target.parent / source.name, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(source, target.parent / source.name)
 
             handle = _start_server(
-                root, port=port, server_module="tests.compare.host", seed_db=restore
+                root,
+                port=port,
+                server_module=backend if candidate else "tests.compare.host",
+                seed_db=restore,
             )
+            saved = dict(captures)
+            result: dict[str, Any] = {
+                "raw": [],
+                "normalized": [],
+                "controls": [],
+                "captures": saved,
+            }
             try:
-                answers.append(
-                    _replay(
-                        handle,
-                        tmp_path,
-                        spec["requests"],
-                        dict(captures),
-                        candidate,
-                        mode,
-                        rules,
-                    )
-                )
+                _replay(handle, tmp_path, spec["requests"], saved, candidate, mode, rules, result)
             finally:
                 _stop_server(handle)
-        proof[mode] = answers
-        _report(
-            request,
-            "unit20-same-host",
-            {
-                "seconds": time.perf_counter() - started,
-                "modes_completed": list(proof),
-                "strategy": {"python": "CliRunner.invoke", "typescript": "subprocess"},
-                "comparisons": proof,
-            },
-        )
-        assert answers[0] == answers[1], proof
+                answers.append(result)
+                proof["comparisons"][mode] = answers
+                proof["seconds"] = time.perf_counter() - started
+                _report(request, report_name, proof)
+        assert answers[0]["normalized"] == answers[1]["normalized"], proof
+
+
+@pytest.mark.parametrize(
+    "backend", ["tests.compare.host", "tests.compare.ts_launcher"], ids=["python", "typescript"]
+)
+def test_unit20_same_python_host_populated_sequence(
+    tmp_path: Path, request: pytest.FixtureRequest, backend: str
+) -> None:
+    compare_cli_sequence(LIST, backend, tmp_path, request)
 
 
 def test_unit20_every_help_and_group_usage(tmp_path: Path, request: pytest.FixtureRequest) -> None:

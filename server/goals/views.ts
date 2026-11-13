@@ -44,36 +44,51 @@ import {
 import { check_goal_demand_count, goal_actual_value } from './logic/reading_assembly.ts';
 import { chart_status, goal_status } from './logic/status.ts';
 import { read_goal_evaluation } from './reading_assembly.ts';
+import { ordered_record } from '../core/http/ordered_record.ts';
+const goal_fields = [
+  'id',
+  'holder_kind',
+  'holder_id',
+  'project_id',
+  'title',
+  'why',
+  'kind',
+  'active',
+  'completed',
+  'completion_date',
+  'completion_rule',
+  'outcome',
+  'primary_checklist_block_id',
+  'deadline',
+  'primary_chart',
+  'page',
+  'revision',
+  'created_at',
+  'updated_at',
+  'employee_backend',
+  'employee_launch_model',
+  'employee_launch_reasoning_effort',
+  'status',
+  'status_date',
+  'next_refresh_at',
+] as const;
 export function goal_json(_sql: ReadSql, goal: Goal, now: Date): GoalResponse {
   const [today, midnight] = calendar_parts(now),
     completed = goal_completed(goal);
-  return {
-    id: goal.id,
-    holder_kind: goal.holder_kind,
-    holder_id: goal.holder_id,
-    project_id: goal.project_id,
-    title: goal.title,
-    why: goal.why,
-    kind: goal.kind,
-    active: goal.active,
-    completed,
-    completion_date: goal.completion_date,
-    completion_rule: goal.completion_rule,
-    outcome: goal_outcome(goal, today),
-    primary_checklist_block_id: goal.primary_checklist_block_id,
-    deadline: goal.deadline,
-    primary_chart: goal.primary_chart,
-    page: goal.page,
-    revision: goal.revision,
-    created_at: goal.created_at,
-    updated_at: goal.updated_at,
-    employee_backend: goal.employee_backend,
-    employee_launch_model: goal.employee_launch_model,
-    employee_launch_reasoning_effort: goal.employee_launch_reasoning_effort,
-    status: goal.kind === 'binary' ? goal_status(completed, goal.deadline, today) : 'neutral',
-    status_date: today,
-    next_refresh_at: midnight,
-  };
+  return ordered_record(
+    {
+      ...goal,
+      completed,
+      outcome: goal_outcome(goal, today),
+      status:
+        goal.kind === 'binary' ? goal_status(completed, goal.deadline, today) : ('neutral' as Tone),
+      status_date: today,
+      next_refresh_at: midnight,
+    },
+    goal_fields,
+    'Goal',
+    ['binary_checked'],
+  );
 }
 export function list_json(
   sql: ReadSql,

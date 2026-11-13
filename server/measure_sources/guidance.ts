@@ -5,6 +5,8 @@ import {
   CREATE as CREATE_REFERENCE,
   SCRIPT as SCRIPT_REFERENCE,
   RUN as RUN_REFERENCE,
+  SCRIPT_NOTES,
+  RUN_NOTES,
 } from './request_guidance_data.ts';
 
 export const SCALAR_EXAMPLE = `export default async function ({context, request, record}) {
@@ -124,24 +126,26 @@ export const SCRIPT = {
       text: SCALAR_EXAMPLE,
     },
   },
-  notes: [
-    'Read the source first. Replace expected_revision with its current source_revision; ' +
+  notes: Object.values({
+    ...SCRIPT_NOTES,
+    submission:
+      'Read the source first. Replace expected_revision with its current source_revision; ' +
       'send the object to panels measure-source submit-script SOURCE_ID on stdin. ' +
       'The text is a nonempty JavaScript ES module, saved immediately as a new active script revision.',
-    'Before authoring or adapting the example, read panels measure-source runtime --json for ' +
+    runtime:
+      'Before authoring or adapting the example, read panels measure-source runtime --json for ' +
       runtime_guidance().helpers.request.signature +
       ', context declarations, dated output helpers and coverage. Printing JSON is not output.',
-    ...SCRIPT_REFERENCE.notes.slice(2),
-  ],
+  }),
 };
 export const RUN = {
   ...RUN_REFERENCE,
-  notes: [
-    RUN_REFERENCE.notes[0],
-    'history may be omitted or null; both default to null. A supplied object requires ' +
+  notes: Object.values({
+    ...RUN_NOTES,
+    history:
+      'history may be omitted or null; both default to null. A supplied object requires ' +
       'first_date and last_date as inclusive ISO calendar dates, with first_date not after last_date. ' +
       'The script receives context.history; the runtime does not fetch or fill history automatically. ' +
       'Replace example dates with the desired date window.',
-    ...RUN_REFERENCE.notes.slice(2),
-  ],
+  }),
 };

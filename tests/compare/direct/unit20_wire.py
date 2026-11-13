@@ -83,18 +83,30 @@ def read_capture(destination: Path) -> list[dict[str, Any]]:
 
 
 def _body(
-    text: str, normalizer: Any, context: str, preview_created_at: int | None, catalog: bool = False
+    text: str,
+    normalizer: Any,
+    context: str,
+    preview_created_at: int | None,
+    catalog: bool = False,
+    year_fields: bool = False,
 ) -> str:
-    """JSONDecoder supplies locations; only declared value spans may change."""
+    """Keep original spans; change only declared values or the named year-member order."""
     decoder = json.JSONDecoder()
     replacements: list[tuple[int, int, str]] = []
     ignored = normalizer.rules.get("response_ignore", {})
     tokens = normalizer.rules.get("response_tokens", {})
+    year_objects = 0
+    if year_fields:
+        assert normalizer.rules["cli_direct_rules"]["dataset_year_fields"]["fields"] == [
+            "2025",
+            "2024",
+        ]
 
     def whitespace(index: int) -> int:
         return len(text) - len(text[index:].lstrip())
 
-    def walk(index: int, path: str) -> int:
+    def walk(index: int, path: str, exact_path: str = "body") -> int:
+        nonlocal year_objects
         index = whitespace(index)
         value, end = decoder.raw_decode(text, index)
         kind = type(value).__name__
@@ -116,43 +128,73 @@ def _body(
             is_object = text[index] == "{"
             closing = "}" if is_object else "]"
             cursor = index + 1
+            members: list[tuple[str, int, int]] = []
             while True:
                 cursor = whitespace(cursor)
                 if text[cursor] == closing:
                     break
                 child_path = path + ".*"
+                child_exact = exact_path + "." + str(len(members))
+                start = cursor
+                key = ""
                 if is_object:
                     key, cursor = decoder.raw_decode(text, cursor)
                     cursor = whitespace(cursor)
                     assert text[cursor] == ":"
                     cursor += 1
                     child_path = path + "." + key
-                cursor = whitespace(walk(cursor, child_path))
+                    child_exact = exact_path + "." + key
+                member_end = walk(cursor, child_path, child_exact)
+                members.append((key, start, member_end))
+                cursor = whitespace(member_end)
                 if text[cursor] == closing:
                     break
                 assert text[cursor] == ","
                 cursor += 1
+            if year_fields and exact_path == "body.results.0.rows.0.values":
+                assert is_object and len(members) == 2 and set(value) == {"2025", "2024"}
+                ordered = sorted(members, key=lambda item: item[0], reverse=True)
+                separator = text[members[0][2] : members[1][1]]
+                replacements.append(
+                    (
+                        members[0][1],
+                        members[-1][2],
+                        separator.join(text[start:stop] for _, start, stop in ordered),
+                    )
+                )
+                year_objects += 1
         return end
 
-    if ignored or tokens or preview_created_at is not None or catalog:
+    if ignored or tokens or preview_created_at is not None or catalog or year_fields:
         try:
             _, end = decoder.raw_decode(text, len(text) - len(text.lstrip()))
         except json.JSONDecodeError:
+            assert not year_fields
             return cast(str, normalizer.normalize(text))  # Plain-text artifact response.
         if text[end:].strip():
+            assert not year_fields
             return cast(str, normalizer.normalize(text))
         walk(0, "body")
+    if year_fields:
+        assert year_objects == 1, "the year-key rule requires the one retained row"
     for start, end, replacement in sorted(replacements, reverse=True):
         text = text[:start] + replacement + text[end:]
     return cast(str, normalizer.normalize(text))
 
 
 def wire_view(
-    answer: dict[str, Any], normalizer: Any, *, preview_created_at: int | None = None
+    answer: dict[str, Any],
+    normalizer: Any,
+    *,
+    preview_created_at: int | None = None,
+    year_fields: bool = False,
 ) -> list[Any]:
     result = []
     for index, row in enumerate(answer["wire"]):
         assert row["complete"]
+        if year_fields:
+            assert len(answer["wire"]) == 1 and row["method"] == "POST"
+            assert row["path"] == "/api/datasets/read"
         raw = base64.b64decode(row["body_base64"], validate=True).decode("utf-8")
         path = normalizer.normalize(row["path"])
         catalog = (
@@ -175,6 +217,7 @@ def wire_view(
                         f"wire.{index}.{row['method']}.{path}",
                         preview_created_at,
                         catalog,
+                        year_fields,
                     )
                     if row["path"].startswith("/api/")
                     else normalizer.normalize(raw)
@@ -185,9 +228,17 @@ def wire_view(
 
 
 def compare_wire(
-    left: dict[str, Any], right: dict[str, Any], left_normalizer: Any, right_normalizer: Any
+    left: dict[str, Any],
+    right: dict[str, Any],
+    left_normalizer: Any,
+    right_normalizer: Any,
+    *,
+    year_fields: bool = False,
 ) -> None:
-    views = [wire_view(left, left_normalizer), wire_view(right, right_normalizer)]
+    views = [
+        wire_view(left, left_normalizer, year_fields=year_fields),
+        wire_view(right, right_normalizer, year_fields=year_fields),
+    ]
     assert views[0] == views[1], views
 
 

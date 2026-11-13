@@ -1,19 +1,22 @@
 /** Shared output contract for bounded measure-family commands. */
-import type { CommandResult } from './contracts.ts';
+import type { CommandResult, Invocation } from './contracts.ts';
+import { JsonNumber } from '../core/http/numeric_json.ts';
 import { emit as emit_text, json } from './http.ts';
-export function emit(data: any, as_json: boolean): CommandResult {
+import { python_text } from './python_text.ts';
+import { response_field } from './response_field.ts';
+export function emit(data: any, inv: Invocation): CommandResult {
   let human = json(data, { ensure_ascii: false, indent: 2 });
+  const page = data !== null && typeof data === 'object' ? data.page : undefined;
   if (
-    data !== null &&
-    typeof data === 'object' &&
-    data.page !== null &&
-    typeof data.page === 'object'
+    page !== null &&
+    typeof page === 'object' &&
+    !Array.isArray(page) &&
+    !(page instanceof JsonNumber)
   ) {
-    const page = data.page;
-    human += `\nReturned ${json(page.return_count)} of ${json(page.match_count)} matches.`;
-    human += `\nOmitted ${json(page.omitted_before)} before and ${json(page.omitted_after)} after.`;
-    if (page.next_offset !== null)
-      human += `\nUse --limit ${json(page.limit)} --offset ${json(page.next_offset)} for the next page.`;
+    human += `\nReturned ${python_text(response_field(inv, page, 'return_count', 'page.return_count'))} of ${python_text(response_field(inv, page, 'match_count', 'page.match_count'))} matches.`;
+    human += `\nOmitted ${python_text(response_field(inv, page, 'omitted_before', 'page.omitted_before'))} before and ${python_text(response_field(inv, page, 'omitted_after', 'page.omitted_after'))} after.`;
+    if (page.next_offset !== null && page.next_offset !== undefined)
+      human += `\nUse --limit ${python_text(response_field(inv, page, 'limit', 'page.limit'))} --offset ${python_text(page.next_offset)} for the next page.`;
   }
-  return emit_text(data, as_json, human);
+  return emit_text(data, inv.values.as_json, human);
 }

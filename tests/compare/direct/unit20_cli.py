@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import httpx
 from tests.support.server import ServerHandle
@@ -257,6 +257,7 @@ def run_cli(
         "proof",
         "assert_json",
         "assert_text",
+        "assert_http_status",
     }
     if set(step) - allowed:
         raise ValueError(f"unsupported CLI step fields: {sorted(set(step) - allowed)}")
@@ -317,6 +318,26 @@ def run_cli(
         }
     elapsed = time.perf_counter() - started
     wire = read_capture(wire_file)
+    # Fix the actual fixture file's input time before a later workspace read.
+    for row in wire:
+        url_path = urlsplit(row["path"]).path
+        if row["method"] == "PUT" and 200 <= row["status"] < 300 and url_path.startswith("/files/"):
+            host.check()
+            files = host.handle.db_path.parent / "files"
+            relative = Path(unquote(url_path)[len("/files/") :])
+            assert not relative.is_absolute() and ".." not in relative.parts
+            if relative.parts[0] == "managers":
+                relative = Path("sprint-items", *relative.parts[1:])
+            target = files / relative
+            assert target.resolve(strict=True).is_relative_to(files.resolve(strict=True))
+            for component in (target, *target.parents):
+                if component == files.parent:
+                    break
+                assert not component.is_symlink()
+            assert target.is_file()
+            os.utime(target, (0, 0), follow_symlinks=False)
+    if "assert_http_status" in step:
+        assert [row["status"] for row in wire] == [step["assert_http_status"]], (argv, wire)
     offline = tuple(argv[:2]) in {
         ("goal", "schema"),
         ("page", "schema"),

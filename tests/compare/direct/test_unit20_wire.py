@@ -55,3 +55,17 @@ def test_wire_spans_preserve_unapproved_lexemes() -> None:
     revision = '{"revision":"' + "a" * 64 + ':0","value":1.0}'
     assert catalog(revision) == catalog(revision.replace("a" * 64, "b" * 64))
     assert catalog(revision) != catalog(revision.replace(':0"', ':1"'))
+
+    years = '{"results":[{"rows":[{"values":{"2025":7.25,"2024":3.0},"strict":1.0}]}]}'
+    year_rules = {"cli_direct_rules": {"dataset_year_fields": {"fields": ["2025", "2024"]}}}
+
+    def year_view(text: str) -> str:
+        return _body(
+            text, Normalizer(year_rules, Path("/unused-wire-root")), "years", None, year_fields=True
+        )
+
+    assert year_view(years) == year_view(
+        years.replace('"2025":7.25,"2024":3.0', '"2024":3.0,"2025":7.25')
+    )
+    assert year_view(years) != year_view(years.replace('"2024":3.0', '"2024":3'))
+    assert year_view(years) != year_view(years.replace('"strict":1.0', '"strict":1'))

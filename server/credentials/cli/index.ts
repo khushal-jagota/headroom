@@ -2,6 +2,8 @@
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
 import { send, emit as emit_text, fail_validation } from '../../cli/http.ts';
 import { emit } from '../../cli/measure_io.ts';
+import { python_text } from '../../cli/python_text.ts';
+import { response_field } from '../../cli/response_field.ts';
 const quote = (value: string) =>
   encodeURIComponent(value).replace(
     /[!'()*]/g,
@@ -13,14 +15,14 @@ export async function run_credential_command(inv: Invocation): Promise<CommandRe
   if (command === 'list')
     return emit(
       await send(inv, 'GET', '/api/credentials', { params: { limit: v.limit, offset: v.offset } }),
-      v.as_json,
+      inv,
     );
   if (command === 'rename')
     return emit(
       await send(inv, 'PATCH', '/api/credentials/' + quote(v.credential_id), {
         json_body: { name: v.name, expected_revision: v.expected_revision },
       }),
-      v.as_json,
+      inv,
     );
   if ((v.replace_id === null) !== (v.expected_revision === null))
     fail_validation(inv, 'replacement requires --replace-id and --expected-revision');
@@ -40,6 +42,10 @@ export async function run_credential_command(inv: Invocation): Promise<CommandRe
   };
   const result = await send(inv, 'POST', '/api/credentials/requests', { json_body: body });
   return v.as_json
-    ? emit(result, true)
-    : emit_text(result, false, `API key request ${result.state}: ${result.name}`);
+    ? emit(result, inv)
+    : emit_text(
+        result,
+        false,
+        `API key request ${python_text(response_field(inv, result, 'state'))}: ${python_text(response_field(inv, result, 'name'))}`,
+      );
 }

@@ -15,9 +15,9 @@ export async function run_measure_source_command(inv: Invocation): Promise<Comma
   if (command === 'schema')
     return emit(
       ({ create: CREATE, script: SCRIPT, run: RUN } as Record<string, unknown>)[v.operation],
-      v.as_json,
+      inv,
     );
-  if (command === 'runtime') return emit(runtime_guide(), v.as_json);
+  if (command === 'runtime') return emit(runtime_guide(), inv);
   const path = '/api/measure-sources';
   let data: unknown;
   if (command === 'list') {
@@ -52,5 +52,5 @@ export async function run_measure_source_command(inv: Invocation): Promise<Comma
       );
     }
   }
-  return emit(data, v.as_json);
+  return emit(data, inv);
 }

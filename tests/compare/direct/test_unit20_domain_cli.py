@@ -13,11 +13,14 @@ import os
 import subprocess
 import time
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import httpx
 import pytest
+from tests.compare.direct import unit20_cli as driver
 from tests.compare.direct.unit20_cli import (
     PYTHON,
     ROOT,
@@ -27,7 +30,7 @@ from tests.compare.direct.unit20_cli import (
     environment,
     run_cli,
 )
-from tests.compare.direct.unit20_wire import compare_wire, wire_view
+from tests.compare.direct.unit20_wire import _body, compare_wire, wire_view
 from tests.compare.runner import Normalizer, backup_database, substitute
 from tests.support.measure_sources import NOW, configured_source
 from tests.support.server import ServerHandle
@@ -36,9 +39,20 @@ from tests.unit.test_dataset_persistence import dataset
 
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import connect
-from planner.datasets.contracts import CandidateDatasetResult, DatasetRow
+from planner.datasets import actions as dataset_actions
+from planner.datasets.contracts import (
+    CandidateDatasetResult,
+    DatasetField,
+    DatasetFieldKind,
+    DatasetRow,
+)
 from planner.measure_sources import run_actions
 from planner.measure_sources.contracts import RunMetrics, RunMode, RunResult, RunStatus
+from planner.tickets import data as tickets_data
+from planner.tickets.contracts import StageOwnershipMode
+from planner.worker_types.configuration import load_worker_runtime_definitions
+from planner.worker_types.contracts import FieldDefinition, StageDefinition
+from planner.worker_types.store import read_definition, write_definition
 
 LIST = ROOT / "tests/compare/lists/unit-20-commands.domain.json"
 
@@ -53,6 +67,19 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
         with closing(connect(str(target))) as conn:
             source, _ = configured_source(conn, enabled=False)
             item = dataset(conn, source.id)
+            item = dataset_actions.update_dataset(
+                conn,
+                item.id,
+                {
+                    "expected_revision": item.definition_revision,
+                    "fields": tuple(
+                        DatasetField(year, year, "events", DatasetFieldKind.count)
+                        for year in ("2025", "2024")
+                    ),
+                },
+                principal=OWNER_PRINCIPAL,
+                now=NOW,
+            )
             assert source.active_script is not None
             admitted = run_actions.request_run(
                 conn,
@@ -68,7 +95,7 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
             candidate = CandidateDatasetResult(
                 item.id,
                 "2026-10-26",
-                (DatasetRow({"region": "de", "device": "web"}, {"events": 7.25}),),
+                (DatasetRow({"region": "de", "device": "web"}, {"2025": 7.25, "2024": 3.0}),),
                 float(NOW),
                 query_start_at=float(NOW - 86400),
                 labels={"region": {"de": "Deutschland"}},
@@ -81,6 +108,34 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
             )
             assert completed.run.status is RunStatus.succeeded
             captures["retained_dataset"] = item.id
+            fields = ("2025", "2024", "consequences")
+            definition = replace(
+                read_definition(conn, "coding"),
+                worker_type="unit20_year_fields",
+                fields=tuple(FieldDefinition(field, field) for field in fields),
+                stages=tuple(
+                    StageDefinition("needs_" + field, field, field, False, StageOwnershipMode.user)
+                    for field in fields
+                )
+                + (StageDefinition("done", "Done", None, True, None),),
+            )
+            write_definition(conn, definition, now=NOW)
+            ticket = tickets_data.create_ticket(
+                conn,
+                title="Year field search",
+                principal=OWNER_PRINCIPAL,
+                now=NOW,
+                title_max_chars=200,
+                brief=None,
+                project_id="project_vylo",
+                worker_type=definition.worker_type,
+                worker_runtime_definitions=load_worker_runtime_definitions(conn),
+            )
+            for field, text in (("2025", "unit20-left-2025"), ("2024", "unit20-right-2024")):
+                ticket = tickets_data.complete_user_owned_gate(
+                    conn, ticket.id, field=field, new_body=text, principal=OWNER_PRINCIPAL, now=NOW
+                )
+            captures["numeric_ticket"] = ticket.id
 
     spec = json.loads(LIST.read_text())
     steps = [step for step in spec["direct_requests"] if step["argv"] == ["dataset", "read"]]
@@ -124,9 +179,36 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
                 "typescript_cli_python_host": ts_cli_reference,
                 "typescript_cli_typescript_host": ts_cli_candidate,
             }
-            assert comparable(python_cli) == comparable(ts_cli_reference), evidence
-            assert comparable(python_cli) == comparable(ts_cli_candidate), evidence
             wire_rules = json.loads((LIST.parent.parent / "rules" / LIST.name).read_text())
+            outcomes = []
+            for index, answer in enumerate((python_cli, ts_cli_reference, ts_cli_candidate)):
+                outcome = comparable(answer)
+                document = json.loads(outcome["stdout"])
+                assert [field["name"] for field in document["datasets"][0]["fields"]] == [
+                    "2025",
+                    "2024",
+                ]
+                assert len(document["results"]) == 1
+                result = document["results"][0]
+                assert len(result["rows"]) == 1
+                assert [field["name"] for field in result["output"]["fields"]] == ["2025", "2024"]
+                assert result["rows"][0]["values"] == {"2025": 7.25, "2024": 3.0}
+                assert list(result["rows"][0]["values"]) == (
+                    ["2025", "2024"] if index == 0 else ["2024", "2025"]
+                )
+                outcomes.append(
+                    {
+                        **outcome,
+                        "stdout": _body(
+                            outcome["stdout"],
+                            Normalizer(wire_rules, tmp_path),
+                            "dataset",
+                            None,
+                            year_fields=True,
+                        ),
+                    }
+                )
+            assert outcomes[0] == outcomes[1] == outcomes[2], evidence
             for other, handle in (
                 (ts_cli_reference, reference),
                 (ts_cli_candidate, candidate_host),
@@ -136,6 +218,7 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
                     other,
                     Normalizer(wire_rules, reference.db_path.parent),
                     Normalizer(wire_rules, handle.db_path.parent),
+                    year_fields=True,
                 )
         # One existing-host physical crosscheck isolates interception from CLI behavior.
         env = environment(CliHost(reference, tmp_path), step["identity"], tmp_path / "python-input")
@@ -172,6 +255,27 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
             assert base64.b64decode(observed["wire"][0]["body_base64"]) == oracle.content
             evidence["wire_transparency"].append(actual)
         evidence["wire_transparency_seconds"] = time.perf_counter() - transparency_started
+        search = []
+        for handle in handles:
+            CliHost(handle, tmp_path).check()
+            with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
+                search_response = client.get(
+                    handle.base + "/api/tickets",
+                    params={"search": "unit20-left-2025\nunit20-right-2024"},
+                )
+            assert search_response.status_code == 200
+            body = search_response.json()
+            assert [ticket["id"] for ticket in body["tickets"]] == [captures["numeric_ticket"]]
+            assert body["page"]["match_count"] == 1
+            search.append(
+                {
+                    "status": search_response.status_code,
+                    "body": body,
+                    "body_base64": base64.b64encode(search_response.content).decode(),
+                }
+            )
+        assert search[0]["body"] == search[1]["body"]
+        evidence["declared_field_search"] = search
         evidence["runtime_guidance"] = _runtime_proof(reference, candidate_host, tmp_path)
     finally:
         for handle in reversed(handles):
@@ -189,6 +293,7 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
 def _runtime_proof(reference: ServerHandle, candidate: ServerHandle, root: Path) -> dict[str, Any]:
     """Fresh shared exports pin every byte and each accepted schema language path."""
     from tests.compare.direct import unit20_domain_fixtures as fixtures
+    from tests.compare.direct.unit20_metadata import schema_declarations
 
     from planner.measure_sources.guidance import RUN, SCRIPT, runtime_guide
 
@@ -203,15 +308,45 @@ def _runtime_proof(reference: ServerHandle, candidate: ServerHandle, root: Path)
         root / "runtime-export",
         """
 import {runtime_guide,SCRIPT,RUN} from './server/measure_sources/guidance.ts';
+import {goal_guidance} from './server/goals/cli/guidance.ts';
+import {page_guidance} from './server/managers/page_cli/guidance.ts';
+import {CREATE as MEASURE} from './server/measures/cli/schema.ts';
+import {validate_chart} from './server/goals/logic/documents.ts';
+import {prepare_plain_document} from './server/managers/logic/documents.ts';
+import {validate_text} from './server/measures/actions.ts';
+import {validate_definition} from './server/measures/logic/formulas.ts';
 import {stringify_python_json as json} from './server/core/http/numeric_json.ts';
 const declarations={runtime:runtime_guide(),'schema-script':SCRIPT,'schema-run':RUN};
-process.stdout.write(JSON.stringify(Object.fromEntries(Object.entries(declarations).map(
+validate_chart(goal_guidance['primary-chart'].examples.primary_line_chart);
+prepare_plain_document(page_guidance.examples.checklist_and_workers.page,()=> 'block_example');
+const measure={...MEASURE.examples.taken_daily_count,id:'measure_example',formula:null,
+  definition_revision:1,created_at:0,updated_at:0,write_revision:0};
+validate_text(measure);validate_definition(measure,new Map());
+process.stdout.write(JSON.stringify({...Object.fromEntries(Object.entries(declarations).map(
   ([name,data])=>[name,{data,json:json(data)+'\\n',
-    text:json(data,{ensure_ascii:false,indent:2})+'\\n'}]))));
+    text:json(data,{ensure_ascii:false,indent:2})+'\\n'}])),
+  schemas:Object.fromEntries(Object.entries({goal:goal_guidance,page:page_guidance,measure:MEASURE})
+    .map(([name,data])=>[name,json(data)+'\\n'])),
+  validated_examples:['goal.primary_line_chart','page.checklist_and_workers','measure.taken_daily_count']}));
 """,
     )
     steps = fixtures.direct_steps("measure-source")
-    proof: dict[str, Any] = {"changed_paths": {}, "outputs": {}}
+    fresh_schemas = schema_declarations()
+    for name, value in fresh_schemas.items():
+        assert exported["schemas"][name] == json.dumps(value) + "\n", name
+    proof: dict[str, Any] = {
+        "changed_paths": {},
+        "outputs": {},
+        "schema_drift": {
+            "fresh_python": fresh_schemas,
+            "typescript_json": exported["schemas"],
+            "canonical_validated_examples": exported["validated_examples"],
+            "boundary": (
+                "Pure canonical document/chart/measure validators. "
+                "Referenced record existence remains the API writer's responsibility."
+            ),
+        },
+    }
     for name, expected_data in expected_python.items():
         changed = fixtures.differences(
             expected_data, exported[name]["data"], indexed_arrays=name != "runtime"
@@ -246,6 +381,20 @@ process.stdout.write(JSON.stringify(Object.fromEntries(Object.entries(declaratio
             assert right["stdout"] == exported[name][mode] and right["stderr"] == ""
             assert comparable(right) == comparable(hosted)
             proof["outputs"][name][mode] = [left, right, hosted]
+    build_environment = driver.environment
+
+    def executor_environment(*args: Any, **kwargs: Any) -> dict[str, str]:
+        return {
+            **build_environment(*args, **kwargs),
+            "PLAN_EXECUTOR_ROOT": str(root / "synthetic-executor"),
+        }
+
+    with patch.object(driver, "environment", executor_environment):
+        proof["executor_callback_precedence"] = driver.help_batch(
+            CliHost(reference, root),
+            [(["preview", "register", "--port", "80"], 1), (["preview", "show", "--help"], 1)],
+            root / "executor-help",
+        )
     proof["seconds"] = time.perf_counter() - started
     return proof
 
@@ -396,9 +545,7 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
     """One owned socket and real Git worktree prove registration without a browser."""
     import sys
     from dataclasses import asdict
-    from unittest.mock import patch
 
-    from tests.compare.direct import unit20_cli as driver
     from tests.compare.direct import unit20_domain_fixtures as fixtures
     from tests.integration.test_preview_registry import application
 
@@ -489,9 +636,24 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
                         json.loads(fixtures.RULES.read_text()), handle.db_path.parent
                     )
                     normalizer.ids[ticket["id"]] = "<preview-ticket>"
+                    preview_steps = fixtures.direct_steps("preview")
+                    failure = next(step for step in preview_steps if step["exit_code"] == 1)
+                    refusal = run_cli(
+                        CliHost(handle, tmp_path),
+                        substitute(
+                            failure, {"preview_ticket": ticket["id"], "preview_port": str(port)}
+                        ),
+                        candidate_cli,
+                        tmp_path / "preview-input",
+                        mode,
+                    )
+                    refusal_wire = wire_view(refusal, normalizer)
+                    evidence.setdefault("registration_refusals", []).append(
+                        {"implementation": name, "mode": mode, "raw": refusal}
+                    )
                     answers = []
                     generation, created_at = None, None
-                    for step in fixtures.direct_steps("preview"):
+                    for step in (step for step in preview_steps if step["exit_code"] == 0):
                         resolved = substitute(
                             step, {"preview_ticket": ticket["id"], "preview_port": str(port)}
                         )
@@ -535,6 +697,8 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
                             }
                         )
                     modes[mode] = {
+                        "registration_refusal": comparable(refusal),
+                        "refusal_wire": refusal_wire,
                         "output": answers,
                         "wire": [
                             item["raw"]["wire_compared"]
@@ -552,105 +716,13 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
         _domain_report(request, "unit20-real-preview-cli", evidence)
 
 
-def test_unit20_domain_same_python_host(tmp_path: Path, request: pytest.FixtureRequest) -> None:
-    """Ordinary domain commands need human bytes and both clients on one reference host.
+@pytest.mark.parametrize(
+    "backend", ["tests.compare.host", "tests.compare.ts_launcher"], ids=["python", "typescript"]
+)
+def test_unit20_domain_same_python_host(
+    tmp_path: Path, request: pytest.FixtureRequest, backend: str
+) -> None:
+    """Reuse the work-list reset proof for both CLI isolation and TS-backend bytes."""
+    from tests.compare.direct.test_unit20_cli import compare_cli_sequence
 
-    The shared list proves JSON across servers. It cannot prove human rendering or
-    isolate CLI differences from backend differences. Reuse the existing replay and
-    Python host, with database/process/private-file reset before each write sequence.
-    """
-    import shutil
-    from unittest.mock import patch
-
-    import httpx
-    from tests.compare.direct import unit20_cli as driver
-    from tests.compare.direct.test_unit20_cli import _replay
-    from tests.compare.direct.unit20_domain_fixtures import RULES
-    from tests.compare.runner import capture_values
-
-    started = time.perf_counter()
-    spec = json.loads(LIST.read_text())
-    rules = json.loads(RULES.read_text())
-    host_root = tmp_path / "domain-same-host"
-    handle = _start_server(host_root, server_module="tests.compare.host")
-    seed_captures: dict[str, Any] = {}
-    try:
-        with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
-            for step in spec["seed_requests"]:
-                resolved = substitute(step, seed_captures)
-                response = client.request(
-                    resolved["method"],
-                    handle.base + resolved["path"],
-                    json=resolved.get("json"),
-                    headers=resolved.get("headers"),
-                )
-                assert response.status_code == resolved["status"], (resolved, response.text)
-                capture_values(response.json(), resolved, seed_captures)
-    finally:
-        _stop_server(handle)
-    port = handle.port
-    snapshot = tmp_path / "domain-seed.db"
-    backup_database(handle.db_path, snapshot)
-    private_files = tmp_path / "domain-private-files"
-    private_files.mkdir()
-    # The source fixture scopes this key and these trees under the private host.
-    # Preserve the synthetic credential key as well as authored and managed files.
-    for name in ("skills", "files", "credential-key"):
-        source = host_root / name
-        if source.is_dir():
-            shutil.copytree(source, private_files / name)
-        elif source.is_file():
-            shutil.copy2(source, private_files / name)
-
-    evidence: dict[str, Any] = {
-        "list": LIST.name,
-        "boundary": "Human and JSON command contracts, both CLIs on one Python host",
-        "strategy": {"python": "CliRunner.invoke", "typescript": "subprocess"},
-        "seed_capture_names": sorted(seed_captures),
-        "comparisons": {},
-    }
-    physical_driver = driver.run_cli
-    for mode in ("json", "text"):
-        results: list[dict[str, Any]] = []
-        for candidate in (False, True):
-            # The previous fixture-owned process stopped before its files change.
-            shutil.rmtree(host_root)
-
-            def restore(target: Path) -> None:
-                backup_database(snapshot, target)
-                for source in private_files.iterdir():
-                    if source.is_dir():
-                        shutil.copytree(source, target.parent / source.name, dirs_exist_ok=True)
-                    else:
-                        shutil.copy2(source, target.parent / source.name)
-
-            handle = _start_server(
-                host_root, port=port, server_module="tests.compare.host", seed_db=restore
-            )
-            saved = dict(seed_captures)
-            raw: list[dict[str, Any]] = []
-
-            def capture_run(
-                *args: Any, raw: list[dict[str, Any]] = raw, **kwargs: Any
-            ) -> dict[str, Any]:
-                # Record the real driver, without substituting its result or checks.
-                outcome = physical_driver(*args, **kwargs)
-                raw.append({"argv": args[1]["argv"], "proof": args[1]["proof"], "outcome": outcome})
-                return outcome
-
-            normalized: list[Any] | None = None
-            try:
-                with patch.object(driver, "run_cli", capture_run):
-                    normalized = _replay(
-                        handle, tmp_path, spec["requests"], saved, candidate, mode, rules
-                    )
-            finally:
-                _stop_server(handle)
-                results.append({"raw": raw, "normalized": normalized, "captures": saved})
-                evidence["comparisons"][mode] = results
-                evidence["seconds"] = time.perf_counter() - started
-                _domain_report(request, "unit20-domain-same-host", evidence)
-        wire_normalizers = [Normalizer(rules, host_root), Normalizer(rules, host_root)]
-        for left, right in zip(results[0]["raw"], results[1]["raw"], strict=True):
-            compare_wire(left["outcome"], right["outcome"], *wire_normalizers)
-        assert results[0]["normalized"] == results[1]["normalized"], evidence
+    compare_cli_sequence(LIST, backend, tmp_path, request)
