@@ -22,7 +22,7 @@ from planner.core.contracts import (
 )
 from planner.core.errors import ErrorCode, PlannerError
 from planner.managers import data as managers_data
-from planner.tickets import data, revision_feedback, views
+from planner.tickets import data, views
 from planner.tickets.contracts import TITLE_MAX_CHARS, ReviewTransferNotice, Ticket, TicketEdit
 
 
@@ -132,7 +132,9 @@ def test_rejection_rolls_back_feedback_proposal_and_claim_together(
     unchanged = data.read_ticket(tmp_db, ticket.id)
     assert unchanged.pending_proposal == ticket.pending_proposal
     assert unchanged.worker_step_claim.value == "none"
-    assert revision_feedback.snapshot(tmp_db, ticket.id) is None
+    assert tmp_db.execute(
+        "SELECT 1 FROM ticket_decision_messages WHERE ticket_id=?", (ticket.id,)
+    ).fetchone() is None
 
 
 def test_the_holder_moves_while_a_proposal_is_parked(tmp_db: Connection) -> None:
