@@ -181,8 +181,11 @@ class MacService:
         loops: list[asyncio.Task[None]] = []
         event_loop = asyncio.get_running_loop()
         task = asyncio.current_task()
+        termination_requested = False
 
         def terminate() -> None:
+            nonlocal termination_requested
+            termination_requested = True
             self._stop.set()
             if task is not None:
                 task.cancel()
@@ -225,7 +228,7 @@ class MacService:
             for loop in loops:
                 loop.cancel()
             await asyncio.gather(*loops, return_exceptions=True)
-            if sys.platform == "linux":
+            if termination_requested:
                 try:
                     await asyncio.wait_for(self.runner.prepare_update("now"), STOP_SECONDS + 5)
                 except Exception as error:
