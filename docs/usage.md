@@ -27,6 +27,8 @@ Tokens and Cost read a summary when the selected window first opens. Refresh rea
 
 Costs use each request’s token counts and model prices before the server combines totals. Long prompts use the applicable higher rates. Claude cache writes use their reported cache duration.
 
+Codex totals also include automatic compactions from matched response records. Copies count once, and compactions that normal usage events already cover add no extra spend. A scan cache upgrade causes the next summary read to rebuild historical totals from local transcripts.
+
 ## Backend setup
 
 Backend cards read the tools installed on this host. Codex can sign in from the screen, while Claude and Hermes keep their own login commands. Claude supplies its model list through its CLI, and Headroom keeps no Claude model table. Each machine reads its own lists. See [Executor](executor.md). Panels saves each complete list it reads, one for each machine, and model checks read the saved list. Until a machine has a complete saved list for a backend, its models are not checked against it, and the backend decides.
