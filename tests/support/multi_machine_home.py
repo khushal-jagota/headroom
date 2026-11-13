@@ -15,6 +15,7 @@ import os
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
@@ -55,6 +56,26 @@ async def run_home(root: Path, ready: Path) -> None:
     from planner.executor.vps_presence import no_update_check
 
     counts: Counter[str] = Counter()
+    # Distinguish logical checkouts from costly physical SQLite opens. Patch only
+    # this private proof subprocess, including already-imported connect aliases.
+    original_physical_connect = sqlite3.connect
+
+    def physical_connect(*args: Any, **kwargs: Any) -> Any:
+        database = args[0] if args else kwargs.get("database")
+        if str(database) == str(root / "home.sqlite"):
+            counts["physical_database_opens"] += 1
+        return original_physical_connect(*args, **kwargs)
+
+    sqlite3.connect = physical_connect
+    original_checkout = connect
+
+    def checkout(*args: Any, **kwargs: Any) -> Any:
+        counts["logical_database_checkouts"] += 1
+        return original_checkout(*args, **kwargs)
+
+    for module in tuple(sys.modules.values()):
+        if module is not None and getattr(module, "connect", None) is original_checkout:
+            setattr(module, "connect", checkout)
     # Count successful mutating commits and SQLite row changes, including triggers.
     # Hook the existing connection's final commit primitive; no runtime telemetry.
     original = ChangeSignallingConnection._sqlite_commit

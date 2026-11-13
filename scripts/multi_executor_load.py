@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from typing import cast
 
 from tests.support.multi_machine_home import Executor, Home, clean_environment, wait_for
 
@@ -61,6 +62,10 @@ async def sample(root: Path, count: int, seconds: float) -> dict[str, object]:
                 "wall_seconds": wall,
                 "home_cpu_seconds": cpu,
                 "home_cpu_percent_one_core": 100 * cpu / wall,
+                "physical_database_opens": after.get("physical_database_opens", 0)
+                - before.get("physical_database_opens", 0),
+                "logical_database_checkouts": after.get("logical_database_checkouts", 0)
+                - before.get("logical_database_checkouts", 0),
                 "write_transactions": after.get("write_transactions", 0)
                 - before.get("write_transactions", 0),
                 "row_changes": after.get("row_changes", 0) - before.get("row_changes", 0),
@@ -99,6 +104,10 @@ async def run(output: Path, seconds: float) -> None:
             (output / f"home-{count}.log").write_bytes(
                 (root / str(count) / "h" / "home.log").read_bytes()
             )
+        cpu_per_turn = [
+            cast(float, r["home_cpu_seconds"]) / len(cast(list[object], r["completed_turns"]))
+            for r in results
+        ]
         report = {
             "sample_seconds": seconds,
             "workload": (
@@ -114,6 +123,8 @@ async def run(output: Path, seconds: float) -> None:
                 "time.process_time of isolated home PID; "
                 "excludes executor/proxy CPU; percent of one core."
             ),
+            "cpu_seconds_per_completed_turn": cpu_per_turn,
+            "ten_to_one_cpu_per_turn_ratio": cpu_per_turn[1] / cpu_per_turn[0],
             "results": results,
         }
         (output / "load.json").write_text(json.dumps(report, indent=2) + "\n")
