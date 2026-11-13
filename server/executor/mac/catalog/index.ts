@@ -8,6 +8,7 @@ import {
 } from '../../../conversation/shutdown.ts';
 import type { BackendSnapshot } from '../../../conversation/snapshot/contracts.ts';
 import { ValueError, KeyError } from '../../protocol.ts';
+import { model_catalog_cleanup_pending } from '../../../conversation/backends/catalog_cleanup.ts';
 import type { ModelListRequest } from '../../wire.generated.ts';
 import type { CanonicalReader } from '../storage/journal_contracts.ts';
 import type { CanonicalCatalogResult } from '../mailbox/contracts.ts';
@@ -26,6 +27,7 @@ class Result implements CanonicalCatalogResult {
   private readonly service: MacCatalog;
   private readonly descriptor: CatalogResultDescriptor;
   private closed = false;
+  private closing: Promise<void> | undefined;
   cleanup_failed = false;
   constructor(service: MacCatalog, descriptor: CatalogResultDescriptor) {
     this.service = service;
@@ -79,19 +81,29 @@ class Result implements CanonicalCatalogResult {
       },
     };
   }
-  async close(): Promise<void> {
-    if (this.closed) return;
-    try {
-      await this.service.close_reference({
-        operation: 'close_result',
-        result: this.descriptor.result,
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
+    if (this.closed) return Promise.resolve();
+    if (!this.closing) {
+      const task = Promise.resolve().then(async () => {
+        try {
+          await this.service.close_reference({
+            operation: 'close_result',
+            result: this.descriptor.result,
+          });
+        } catch (error) {
+          this.cleanup_failed = true;
+          throw this.service.resource_failure(error);
+        }
+        this.closed = true;
+        this.service.release_result(this);
       });
-    } catch (error) {
-      this.cleanup_failed = true;
-      throw this.service.resource_failure(error);
+      this.closing = task;
+      void task.catch(() => {
+        if (this.closing === task) this.closing = undefined;
+      });
     }
-    this.closed = true;
-    this.service.release_result(this);
+    return this.closing;
   }
 }
 function optional_failure(error: unknown): boolean {
@@ -122,6 +134,7 @@ export class MacCatalog {
   private closed = false;
   private sources_done = false;
   private source_stop: Promise<void> | undefined;
+  private invoking_sources = false;
   private resolve_actual!: () => void;
   private reject_actual!: (error: unknown) => void;
   private readonly actual = new Promise<void>((resolve, reject) => {
@@ -225,7 +238,9 @@ export class MacCatalog {
       try {
         worker.postMessage({ id, action } satisfies CatalogWorkerRequest);
       } catch (error) {
-        this.resource_failure(error);
+        const failure = this.resource_failure(error);
+        this.pending.delete(id);
+        reject(failure);
       }
     });
   }
@@ -295,21 +310,41 @@ export class MacCatalog {
   }
   stop(options: StopOptions): Promise<void> {
     this.closed = true;
+    if (!this.sources_done && !this.invoking_sources) {
+      let resolve!: () => void, reject!: (error: unknown) => void;
+      const task = new Promise<void>((done, failed) => {
+        resolve = done;
+        reject = failed;
+      });
+      this.source_stop = task;
+      void task.catch(() => {});
+      this.invoking_sources = true;
+      try {
+        // Publish the original stop options before cancellation reaches a probe.
+        Promise.resolve(this.dependencies.stop_sources(options)).then(
+          () => {
+            this.sources_done = true;
+            this.complete();
+            resolve();
+          },
+          (error: unknown) => {
+            if (!model_catalog_cleanup_pending(error)) this.sources_done = true;
+            this.resource_failure(error);
+            this.complete();
+            reject(error);
+          },
+        );
+      } catch (error) {
+        if (!model_catalog_cleanup_pending(error)) this.sources_done = true;
+        this.resource_failure(error);
+        this.complete();
+        reject(error);
+      } finally {
+        this.invoking_sources = false;
+      }
+    }
     this.cancellation.abort();
     this.maybe_stop_worker();
-    if (!this.source_stop && !this.sources_done) {
-      const task = Promise.resolve()
-        .then(() => this.dependencies.stop_sources())
-        .then(() => {
-          this.sources_done = true;
-          this.complete();
-        });
-      this.source_stop = task;
-      void task.catch((error) => {
-        this.resource_failure(error);
-        if (this.source_stop === task) this.source_stop = undefined;
-      });
-    }
     const retries = [...this.results]
       .filter((result) => result.cleanup_failed)
       .map((result) => result.close());

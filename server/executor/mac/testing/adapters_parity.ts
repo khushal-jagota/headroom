@@ -194,10 +194,7 @@ try {
         .stop_child(reference, () => {
           throw withdrawn;
         })
-        .then(
-          () => null,
-          (error: unknown) => error,
-        );
+        .catch((error: unknown) => error);
       if (rejected !== withdrawn || calls.length !== before)
         throw new Error('Withdrawn stop reached native cleanup or changed its refusal.');
     }
@@ -284,10 +281,9 @@ await skill_entered.promise;
 const joined = blocked.settled().then(() => {
   actual = true;
 });
-const expired = await blocked.stop({ deadline: performance.now() / 1000 - 1 }).then(
-  () => null,
-  (error: unknown) => error,
-);
+const expired = await blocked
+  .stop({ deadline: performance.now() / 1000 - 1 })
+  .catch((error: unknown) => error);
 const actual_waited = !actual;
 skill_gate.resolve();
 await blocked_start.catch(() => {});
@@ -311,10 +307,25 @@ const lifecycle = {
 };
 const publisher_failure = new Error('scripted publisher cleanup failed after actual exit');
 const cleanup_faults: Error[] = [];
+let failed_native_stops = 0;
 const failed_publisher = new MacNativeChildren({
-  ...options,
+  ...native_fixture_options({
+    ...options,
+    snapshot_directory: join(paths.skills, 'fixture-generation'),
+  }),
+  event_sink: options.event_sink,
+  factory: () => () =>
+    ({
+      async start() {
+        throw publisher_failure;
+      },
+      async stop() {
+        if (++failed_native_stops === 1) throw publisher_failure;
+      },
+    }) as unknown as BackendChild,
   skills: {
     ...options.skills,
+    install_native_skill_snapshot: async () => join(paths.skills, 'fixture-generation'),
     stop: async () => {
       throw publisher_failure;
     },
@@ -324,19 +335,29 @@ const failed_publisher = new MacNativeChildren({
   },
   on_failure: (error) => cleanup_faults.push(error),
 });
-const failed_stop = await failed_publisher.stop(deadline()).then(
-  () => null,
-  (error: unknown) => error,
+const failed_reference = {
+  executor_incarnation: 'inc',
+  child_id: 'failed-cleanup',
+  conversation_id: 'conversation-codex',
+};
+await failed_publisher
+  .start(failed_reference, decode_json(JSON.stringify(input.starts[0]), 'StartRun'), () => {})
+  .catch(() => {});
+const failed_child = failed_publisher.get(failed_reference.child_id);
+const failed_authentication = await refusal(() =>
+  failed_publisher.authenticate(failed_reference.child_id, failed_child?.capability ?? null),
 );
+const retained_failed_child =
+  failed_child !== null && failed_child.capability !== '' && failed_native_stops === 1;
+const failed_stop = await failed_publisher.stop(deadline()).catch((error: unknown) => error);
 const failed_actual = await observe_shutdown(
   failed_publisher.settled(),
   deadline(),
   'Native cleanup actual join stalled',
-).then(
-  () => null,
-  (error: unknown) => error,
-);
+).catch((error: unknown) => error);
 Object.assign(lifecycle, {
+  failed_start_capability_retired:
+    retained_failed_child && failed_authentication === 'unknown executor child capability',
   publisher_stop_failure_retained:
     failed_stop instanceof ServerLifecycleError &&
     (failed_stop.cause === publisher_failure ||

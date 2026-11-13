@@ -1,6 +1,8 @@
 /** Host the same provider factories with this Mac's account and launch settings. */
 import { dirname } from 'node:path';
 import { pure_posix_path } from '../../core/python_path.ts';
+import { provider_launch_settings } from '../../core/config.ts';
+import { claude_executable_override } from '../../conversation/snapshot/environment.ts';
 import type { ResolvedConversationStart } from '../../conversation/contracts.ts';
 import type { BackendChildFactory } from '../../conversation/backends/contracts.ts';
 import { create_claude_backend_child_factory } from '../../conversation/backends/claude_agent_sdk/adapter.ts';
@@ -32,6 +34,8 @@ export interface MacAdapterOptions {
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
 }
 export interface MacAdapterHost {
+  readonly environment: Readonly<NodeJS.ProcessEnv>;
+  executable_path(name: string): string | null;
   readonly launches: MacBackendLaunches;
   readonly hermes_paths: {
     readonly python: string;
@@ -52,24 +56,32 @@ function hermes_source_root(python: string): string {
   return parent;
 }
 export function create_mac_adapter_host(options: MacAdapterOptions): MacAdapterHost {
-  const environment = options.environment ?? process.env;
+  const settings = provider_launch_settings(options.environment);
+  const environment = settings.environment;
   const expand = (path: string) => pure_posix_path(expand_executor_path(path, environment));
-  const on_path = (name: string) => pure_posix_path(options.executable_path(name) ?? name);
-  const hermes_python = expand(
-    environment.PLAN_HERMES_PYTHON || '~/.hermes/hermes-agent/venv/bin/python',
+  const executables = new Map(
+    ['claude', 'codex'].map((name) => [name, options.executable_path(name)]),
   );
-  const hermes_home = expand(environment.PLAN_HERMES_HOME || '~/.hermes');
-  let override = environment.PLAN_CLAUDE_EXECUTABLE;
-  const app_root = environment.PLAN_APP_ROOT;
-  const legacy =
-    app_root === undefined
-      ? null
-      : pure_posix_path(
-          (app_root === '' ? '' : app_root.replace(/\/$/, '') + '/') +
-            'agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe',
-        );
-  if (override !== undefined && legacy !== null && expand(override) === legacy)
-    override = undefined;
+  const on_path = (name: string) => pure_posix_path(executables.get(name) ?? name);
+  const hermes_python = expand(settings.hermes_python);
+  const hermes_home = expand(settings.hermes_home);
+  const override = claude_executable_override(environment, expand);
+  environment.PLAN_HERMES_PYTHON = hermes_python;
+  environment.PLAN_HERMES_HOME = hermes_home;
+  if (override !== undefined) environment.PLAN_CLAUDE_EXECUTABLE = override;
+  environment.CODEX_HOME = expand(settings.codex_home);
+  environment.CLAUDE_CONFIG_DIR = expand(settings.claude_home);
+  const launch_environment = Object.entries(environment).filter(
+    (entry): entry is [string, string] => entry[1] !== undefined,
+  );
+  const native_launch = <
+    T extends { environment_overrides?: readonly (readonly [string, string])[] },
+  >(
+    launch: T,
+  ): T => ({
+    ...launch,
+    environment_overrides: [...launch_environment, ...(launch.environment_overrides ?? [])],
+  });
   const launches: MacBackendLaunches = {
     claude: {
       claude_executable: override === undefined ? on_path('claude') : expand(override),
@@ -87,6 +99,8 @@ export function create_mac_adapter_host(options: MacAdapterOptions): MacAdapterH
     }),
   };
   return {
+    environment,
+    executable_path: (name) => executables.get(name) ?? null,
     launches,
     hermes_paths: {
       python: hermes_python,
@@ -95,17 +109,17 @@ export function create_mac_adapter_host(options: MacAdapterOptions): MacAdapterH
     },
     factory(start) {
       if (start.backend_key === 'claude')
-        return create_claude_backend_child_factory(launches.claude, {
+        return create_claude_backend_child_factory(native_launch(launches.claude), {
           child_processes: options.child_processes,
           one_shot_children: options.one_shot_children,
         });
       if (start.backend_key === 'hermes')
-        return create_hermes_backend_child_factory(launches.hermes, {
+        return create_hermes_backend_child_factory(native_launch(launches.hermes), {
           child_processes: options.child_processes,
         });
       // Python MacRunner creates a new production factory for each native start.
       // This explicit memory is factory-local, unlike the VPS's durable rejection row.
-      return create_codex_backend_child_factory(launches.codex, {
+      return create_codex_backend_child_factory(native_launch(launches.codex), {
         child_processes: options.child_processes,
         remembered_login_rejection: new RememberedCodexLoginRejection(),
       });
@@ -113,9 +127,7 @@ export function create_mac_adapter_host(options: MacAdapterOptions): MacAdapterH
     native_skill_home(backend) {
       if (backend === 'codex') return codex_home(environment);
       if (backend === 'hermes') return hermes_home;
-      return environment.CLAUDE_CONFIG_DIR
-        ? expand(environment.CLAUDE_CONFIG_DIR)
-        : expand('~/.claude');
+      return environment.CLAUDE_CONFIG_DIR!;
     },
   };
 }

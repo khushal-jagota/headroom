@@ -13,14 +13,9 @@ import { open_command_journal } from '../storage/journal.ts';
 import type { AsyncCommandJournal } from '../storage/journal_contracts.ts';
 import { read_canonical_body } from '../mailbox/poll.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
+import { Deferred } from '../../../conversation/runtime/state.ts';
 
-export function gate() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
+export const gate = () => new Deferred<void>();
 
 export function native_fixture_options(
   input: Pick<

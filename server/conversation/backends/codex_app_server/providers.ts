@@ -25,8 +25,9 @@ import { ModelCatalogCleanupFailed, retry_model_catalog_cleanup } from '../catal
 
 export function read_codex_login_standing(
   rejection: CodexLoginRejectionMemory | null,
+  home?: string,
 ): CodexLoginStanding {
-  const stored = read_stored_codex_login();
+  const stored = read_stored_codex_login(home);
   const generation = stored.generation;
   const rejected = rejection?.applies_to(generation) ?? false;
   return {
@@ -64,6 +65,7 @@ export function create_codex_providers(
   const probes = new Map<AbortController, Promise<unknown>>();
   const failed_cleanup = new Set<ModelCatalogCleanupFailed>();
   const cleanup_history = new Set<unknown>();
+  let services: Promise<PromiseSettledResult<void>[]> | undefined;
   let closed = false;
   const sign_in = new CodexSignInService({
     child_processes: context.child_processes,
@@ -123,24 +125,25 @@ export function create_codex_providers(
         closed = true;
         const stopped = new CodexModelCatalogUnavailable('Codex providers stopped at shutdown.');
         for (const controller of probes.keys()) controller.abort(stopped);
-        const services = Promise.allSettled([sign_in.shutdown(), environment.shutdown()]);
+        services ??= Promise.allSettled([
+          Promise.resolve().then(() => sign_in.shutdown()),
+          Promise.resolve().then(() => environment.shutdown()),
+        ]);
         const probe_results = await Promise.allSettled([...probes.values()]);
         for (const result of probe_results)
           if (result.status === 'rejected' && result.reason instanceof ModelCatalogCleanupFailed)
             failed_cleanup.add(result.reason);
         // The shared one-shot barrier can need the failed client's close retry.
-        await retry_model_catalog_cleanup(failed_cleanup, cleanup_history);
-        const failed = [...(await services), ...probe_results]
-          .filter((result) => result.status === 'rejected')
-          .filter(
-            (result) =>
-              result.reason !== stopped && !(result.reason instanceof ModelCatalogCleanupFailed),
-          );
-        if (failed.length || cleanup_history.size)
-          throw new AggregateError(
-            [...cleanup_history, ...failed.map((result) => result.reason)],
-            'Codex provider shutdown failed',
-          );
+        await retry_model_catalog_cleanup(
+          failed_cleanup,
+          cleanup_history,
+          services.then((results) => [
+            ...results,
+            ...probe_results.filter(
+              (result) => result.status === 'rejected' && result.reason !== stopped,
+            ),
+          ]),
+        );
       },
     },
     usage: {

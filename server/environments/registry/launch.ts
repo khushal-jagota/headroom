@@ -1,4 +1,5 @@
 import { pure_posix_path } from '../../core/python_path.ts';
+import { provider_launch_settings } from '../../core/config.ts';
 /** Existing environment allowlist and explicit skill provisioning. No runtime launcher argv. */
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -52,11 +53,9 @@ export function build_test_environment_run_env(
 }
 export function resolve_hermes_python(
   value?: string | null,
-  environment: NodeJS.ProcessEnv = process.env,
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): string {
-  return expand_path(
-    value || environment.PLAN_HERMES_PYTHON || '~/.hermes/hermes-agent/venv/bin/python',
-  );
+  return expand_path(value || provider_launch_settings(environment).hermes_python);
 }
 export function provision_environment_skills(options: {
   database_parent: string;
