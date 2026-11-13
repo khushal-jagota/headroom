@@ -405,20 +405,32 @@ def test_service_command_limits_kill_and_reap_only_the_scripted_child(
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
+        text=False,
+        bufsize=0,
         env=environment,
     )
 
     def clock_line() -> str:
         assert old.stdout is not None
-        assert select.select([old.stdout], [], [], 5)[0], "clock child did not answer"
-        return old.stdout.readline().strip()
+        deadline = time.monotonic() + 30
+        line = bytearray()
+        while not line.endswith(b"\n"):
+            remaining = deadline - time.monotonic()
+            assert (
+                remaining > 0
+                and select.select([old.stdout], [], [], remaining)[0]
+                and time.monotonic() < deadline
+            ), "clock child did not answer"
+            value = os.read(old.stdout.fileno(), 1)
+            assert value, "clock child exited without its answer"
+            line.extend(value)
+        return line.decode("utf-8").strip()
 
     try:
         assert clock_line() == "ready"
         assert old.stdin is not None
         python_before = time.monotonic()
-        old.stdin.write("now\n")
+        old.stdin.write(b"now\n")
         old.stdin.flush()
         old_before = float(clock_line())
         new = subprocess.run(
@@ -430,12 +442,12 @@ def test_service_command_limits_kill_and_reap_only_the_scripted_child(
             check=True,
         )
         new_value = float(new.stdout)
-        old.stdin.write("now\n")
+        old.stdin.write(b"now\n")
         old.stdin.flush()
         old_after = float(clock_line())
         python_after = time.monotonic()
         assert python_before <= old_before <= new_value <= old_after <= python_after
-        old.stdin.write("stop\n")
+        old.stdin.write(b"stop\n")
         old.stdin.flush()
         old.communicate(timeout=5)
         assert old.returncode == 0
