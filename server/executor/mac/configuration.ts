@@ -1,7 +1,8 @@
 /** Mac-owned runtime settings. Protocol types remain with the shared wire owner. */
 import { isIP } from 'node:net';
 import fs from 'node:fs';
-import { dirname, isAbsolute, join, relative } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
+import { path_is_within } from '../../core/path_containment.ts';
 import { homedir } from 'node:os';
 import { resolve_path_sync } from '../../core/path_resolution.ts';
 import { strip } from '../../core/whitespace.ts';
@@ -145,11 +146,7 @@ export function executor_paths(environment: NodeJS.ProcessEnv = process.env): Ex
     : default_executor_root(home);
   const resolved = resolve_path_sync(root);
   const legacy = resolve_path_sync(python_executor_root(home));
-  const within_python = relative(legacy, resolved);
-  if (
-    !within_python ||
-    (within_python !== '..' && !within_python.startsWith('../') && !isAbsolute(within_python))
-  )
+  if (path_is_within(legacy, resolved))
     value_error('TypeScript executor root must be separate from the Python executor root');
   const legacy_inode = inode(legacy);
   if (legacy_inode !== null) {

@@ -1,4 +1,5 @@
-import { isAbsolute, dirname, join, relative } from 'node:path';
+import { isAbsolute, dirname, join } from 'node:path';
+import { path_is_within } from '../../core/path_containment.ts';
 import { readFile, stat } from 'node:fs/promises';
 import { resolved_path } from '../paths.ts';
 import { strip } from '../../projects/logic/index.ts';
@@ -129,21 +130,14 @@ export async function credential_reference(
     throw new EnvironmentValidationError(
       "live uses the vps user's normal provider homes and must not register a credential file",
     );
-  if (within(await validate_absolute_environment_root(root), value))
+  if (path_is_within(await validate_absolute_environment_root(root), value))
     throw new EnvironmentValidationError(
       `staging credential references must not be equal to or nested under the environment root: ${value}`,
     );
   return value;
 }
-function within(root: string, path: string): boolean {
-  const difference = relative(root, path);
-  return (
-    difference === '' ||
-    (difference !== '..' && !difference.startsWith('../') && !isAbsolute(difference))
-  );
-}
 function overlap(left: string, right: string): boolean {
-  return within(left, right) || within(right, left);
+  return path_is_within(left, right) || path_is_within(right, left);
 }
 function isolation_paths(instance: ResolvedEnvironmentInstance): Record<string, string> {
   const paths: Record<string, string> = {

@@ -2,7 +2,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstatSync, realpathSync, statSync } from 'node:fs';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative } from 'node:path';
+import { dirname, join } from 'node:path';
+import { path_is_within } from '../../core/path_containment.ts';
 import type {
   ConversationMessageFiles as MessageFilesContract,
   KeptMessageFile,
@@ -32,11 +33,6 @@ function ascii_identity(values: readonly (string | number)[]): string {
     /[\u007f-\uffff]/g,
     (character) => '\\u' + character.charCodeAt(0).toString(16).padStart(4, '0'),
   );
-}
-
-function inside(root: string, target: string): boolean {
-  const path = relative(root, target);
-  return path !== '..' && !path.startsWith('../') && !isAbsolute(path);
 }
 
 export class ConversationMessageFiles implements MessageFilesContract {
@@ -136,7 +132,7 @@ export class ConversationMessageFiles implements MessageFilesContract {
       }
       const entity_root = realpathSync(entity);
       const target = realpathSync(join(entity_root, stored_file_id));
-      if (!inside(root, entity_root) || !inside(entity_root, target)) {
+      if (!path_is_within(root, entity_root) || !path_is_within(entity_root, target)) {
         throw new Error('managed file escapes managed root');
       }
       if (!statSync(target).isFile()) {

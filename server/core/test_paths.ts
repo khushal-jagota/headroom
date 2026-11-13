@@ -2,14 +2,10 @@ import { testModeFromEnvironment } from './config.ts';
 /** Test processes must never open ambient application data. */
 import { lstatSync, readlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, parse, relative, resolve, join, sep } from 'node:path';
+import { basename, dirname, parse, relative, resolve, join, sep } from 'node:path';
+import { path_is_within } from './path_containment.ts';
 
 const testRoots = new Set<string>();
-
-function inside(path: string, root: string): boolean {
-  const suffix = relative(root, path);
-  return suffix !== '..' && !suffix.startsWith(`..${sep}`) && !isAbsolute(suffix);
-}
 
 /** Register a synthetic fixture root when a host cannot use the OS temp folder. */
 export function register_test_root(root: string): () => void {
@@ -51,7 +47,7 @@ export function assert_temporary_path(path: string): string {
   }
   function checked(candidate: string, links = 0): string {
     if (links > 40) refuse();
-    const index = [...roots, ...canonicalRoots].findIndex((root) => inside(candidate, root));
+    const index = [...roots, ...canonicalRoots].findIndex((root) => path_is_within(root, candidate));
     if (index < 0) refuse();
     const root = [...roots, ...canonicalRoots][index];
     let current = canonicalRoots[index % roots.length];

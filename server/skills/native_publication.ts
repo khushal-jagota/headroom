@@ -9,7 +9,8 @@ import {
   rmSync,
   symlinkSync,
 } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { path_is_within } from '../core/path_containment.ts';
 import { casefold } from '../core/casefold.ts';
 import { randomUUID } from 'node:crypto';
 export const RETIRED_PANELS_SKILL_NAMES = new Set([
@@ -42,15 +43,11 @@ function stat(path: string) {
     return null;
   }
 }
-function within(root: string, path: string): boolean {
-  const rel = relative(root, path);
-  return rel === '' || (!rel.startsWith('../') && rel !== '..' && !isAbsolute(rel));
-}
 /** Test composition supplies a fresh owned HOME. Validate before any directory/link mutation. */
 export function require_synthetic_destination(home: string, destination: string): void {
   const canonical = realpathSync(home),
     absolute = resolve(destination);
-  if (!within(resolve(home), absolute) || !within(canonical, realExisting(absolute)))
+  if (!path_is_within(resolve(home), absolute) || !path_is_within(canonical, realExisting(absolute)))
     throw new Error(`synthetic destination escapes owned home: ${destination}`);
 }
 function publish_server_skills(
@@ -162,7 +159,7 @@ export function prepare_native_skill_publication(
   const directory = policy.directory,
     state = resolve(policy.state_root),
     source = resolve(source_directory);
-  if (!within(state, source))
+  if (!path_is_within(state, source))
     throw new Error('Canonical skills source escapes the executor state root.');
   const hidden = new Set([
     ...RETIRED_PANELS_SKILL_NAMES,
@@ -174,7 +171,7 @@ export function prepare_native_skill_publication(
     throw new Error(`native skill publication refuses entry: ${name}`);
   };
   const owned = (target: string) =>
-    within(state, resolve_mac_path(isAbsolute(target) ? target : home + '/skills/' + target));
+    path_is_within(state, resolve_mac_path(isAbsolute(target) ? target : home + '/skills/' + target));
   const scan = () => {
     directory.assert_current();
     const entries = directory
