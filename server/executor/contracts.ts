@@ -1,5 +1,7 @@
 import type { ExecutorIdentity } from '../execution_identity.ts';
 import type { ChangeSignal } from '../core/changes/index.ts';
+import type { FileHandle } from 'node:fs/promises';
+import type { Principal } from '../core/contracts.ts';
 import type { WireInteger, WireRootName, WireTypes } from './wire.generated.ts';
 export interface ExecutorRefusal extends Omit<
   WireTypes['ExecutorRefusal'],
@@ -45,6 +47,42 @@ export interface MacPresenceOptions {
   changes: ChangeSignal;
   application_revision?: string;
   clock?: () => number;
+}
+
+/** Caller-owned Linux descriptor capabilities. Paths are diagnostic only. */
+export type DirectoryHandle = FileHandle;
+export interface HeldFileLocation {
+  readonly parent: DirectoryHandle;
+  readonly leaf: string;
+  readonly path: string;
+}
+export interface FileOperationOptions {
+  readonly signal?: AbortSignal;
+}
+export interface InputFile {
+  readonly path: string;
+  readonly sha256: string;
+  readonly byte_count: WireInteger;
+  readonly chunks: AsyncIterable<Uint8Array>;
+  close(): Promise<void>;
+}
+/** An owned upload stream: destruction cancels its outstanding iterator read. */
+export interface UploadSource extends AsyncIterable<Uint8Array> {
+  destroy(error?: Error): void;
+}
+export interface VpsFileInbox {
+  authorize_upload(upload: WireTypes['FileUploadRequest']): void | Promise<void>;
+  store_upload(
+    upload: WireTypes['FileUploadRequest'],
+    source: HeldFileLocation,
+    options?: FileOperationOptions,
+  ): Promise<void>;
+  readonly runs: {
+    authority(child: WireTypes['ChildReference']): Principal | Promise<Principal>;
+  };
+}
+export interface VpsFilesOptions {
+  readonly signal: AbortSignal;
 }
 
 /** Runtime wire values preserve Python integer custody. */
