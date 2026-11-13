@@ -24,6 +24,19 @@ class UpdateBarrier:
         self._drained = asyncio.Event()
         self._drained.set()
 
+    @property
+    def generation(self) -> int:
+        with self._lock:
+            return self._generation
+
+    def reopen_if_current(self, generation: int) -> int | None:
+        with self._lock:
+            if generation != self._generation:
+                return None
+            self._generation += 1
+            self.frozen = False
+            return self._generation
+
     def close(self) -> int:
         with self._lock:
             self._generation += 1
@@ -93,14 +106,15 @@ class UpdateBarrier:
                 self.frozen = self.path.exists()
 
     @contextmanager
-    def installer_guard(self, attempt_id: str) -> Iterator[bool]:
+    def installer_guard(self, _attempt_id: str) -> Iterator[bool]:
         """Keep an absent installer from a late claim until recovery marks it failed."""
         with (self.path.parent / "update-installer.lock").open("a+") as stream:
             try:
                 fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
-                stream.seek(0)
-                yield stream.read().strip() == attempt_id
+                # The owner can hold the lock before it publishes its attempt ID.
+                # Stale or missing text cannot prove that the owner is gone.
+                yield True
             else:
                 try:
                     yield False
@@ -108,7 +122,7 @@ class UpdateBarrier:
                     fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
     def installer_active(self, attempt_id: str) -> bool:
-        """The lifetime lock proves a matching installer can still restore data."""
+        """Any held lifetime lock proves an installer or restore can still write."""
         with self.installer_guard(attempt_id) as active:
             return active
 

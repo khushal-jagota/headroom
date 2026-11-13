@@ -10,7 +10,6 @@ import re
 import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic as _monotonic
@@ -80,7 +79,7 @@ from planner.environments.update_barrier import UpdateBarrier
 from planner.environments.update_configuration import DEPLOYMENT_SUCCESS_DISPLAY_SECONDS
 from planner.environments.update_install import own_service_unit
 from planner.environments.update_provider import GitHubUpdateProvider
-from planner.environments.update_service import RESTARTED_DETAIL, UpdateService
+from planner.environments.update_service import UpdateService
 from planner.environments.vps_metrics.api import router as vps_metrics_router
 from planner.environments.vps_metrics.config import load_config as load_metrics_config
 from planner.environments.vps_metrics.config import store_path
@@ -345,29 +344,26 @@ def create_app(
                 defer_view_cleanup=True,
                 startup_audit=audit_startup_tickets,
             ) as conversation:
+                app.state.updates.bind_owner(asyncio.get_running_loop())
+
                 def recover_orphaned_cut() -> None:
                     barrier = app.state.update_barrier
                     if not barrier.frozen:
                         return
+                    generation = barrier.generation
                     interrupted = update_attempts.read()
                     identity = "" if interrupted is None else interrupted.attempt_id
+                    if app.state.updates.owns_preparation(identity):
+                        return
                     with barrier.installer_guard(identity) as active:
-                        if (interrupted is not None
-                                and interrupted.state in {"preparing", "installing"}
-                                and active):
+                        if active:
+                            app.state.updates.installer_observed(identity)
                             return
-                        if interrupted is not None and interrupted.state not in {"done", "failed"}:
-                            update_attempts.change(
-                                interrupted.attempt_id, frozenset({interrupted.state}),
-                                lambda current: replace(
-                                    current, state="failed", detail=(
-                                        RESTARTED_DETAIL
-                                        if current.state in {"waiting", "preparing"} else
-                                        "The previous update did not complete. Try again."
-                                    ),
-                                ),
-                            )
-                        barrier.release()
+                        if app.state.updates.owns_preparation(identity):
+                            return
+                        released = app.state.updates.recover_orphaned_attempt(identity, generation)
+                        if released is not None:
+                            barrier.remove(released)
 
                 async def recover_orphaned_barrier() -> None:
                     await asyncio.to_thread(recover_orphaned_cut)
@@ -527,32 +523,52 @@ def create_app(
                 async def release_after_trial() -> None:
                     nonlocal normal_work_released, work_release_task
                     try:
+                        observed = update_attempts.read()
+                        identity = "" if observed is None else observed.attempt_id
+                        was_frozen = app.state.update_barrier.frozen
                         app.state.update_barrier.refresh()
-                        if startup_frozen and not normal_work_released:
+                        if app.state.update_barrier.frozen:
                             await recover_orphaned_barrier()
                         if app.state.update_barrier.frozen:
                             # Another installer event can request a check after this wait.
                             work_release_task = None
                             return
+                        if was_frozen or (startup_frozen and not normal_work_released):
+                            app.state.updates.reopen_trial_work(identity)
                         if normal_work_released:
+                            work_release_task = None
                             return
-                        if startup_frozen:
-                            conversation.system.workspace_admission.reopen()
                         await release_normal_work()
                         normal_work_released = True
+                        work_release_task = None
                     except Exception:
                         logging.getLogger(__name__).exception(
                             "Normal work could not resume after the update trial"
                         )
 
+                next_trial_probe = 0.0
+                last_trial_probe: object = None
+
                 def trial_probe() -> object:
-                    if not startup_frozen or normal_work_released:
+                    nonlocal next_trial_probe, last_trial_probe
+                    barrier = app.state.update_barrier
+                    if not barrier.frozen:
+                        next_trial_probe = 0.0
+                        last_trial_probe = None
                         return None
+                    now = _monotonic()
+                    if now < next_trial_probe:
+                        return last_trial_probe
+                    next_trial_probe = now + 2
                     attempt = update_attempts.read()
-                    return None if attempt is None else (
-                        attempt.attempt_id, attempt.state,
-                        app.state.update_barrier.installer_active(attempt.attempt_id),
-                    )
+                    identity = "" if attempt is None else attempt.attempt_id
+                    local = app.state.updates.owns_preparation(identity)
+                    active = False if local else barrier.installer_active(identity)
+                    if active:
+                        app.state.updates.installer_observed(identity)
+                    last_trial_probe = (identity, None if attempt is None else attempt.state,
+                                        local, active)
+                    return last_trial_probe
 
                 def attempt_changed() -> None:
                     nonlocal work_release_task

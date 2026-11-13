@@ -125,6 +125,7 @@ class UpdateService:
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._advancing = False
         self._advance_task: asyncio.Task[None] | None = None
+        self._installer_starting: tuple[str, float] | None = None
         # The attempt whose start closed this process's workspace admission.
         self._paused_attempt_id: str | None = None
         self._last_state: str | None = None
@@ -162,6 +163,58 @@ class UpdateService:
             raise UpdateConflict(
                 "Update controller did not answer. Check update status before retrying."
             ) from exc
+
+    def owns_preparation(self, attempt_id: str) -> bool:
+        """Exclude this process's real snapshot and bounded installer launch handshake."""
+        with self._work_wake_lock:
+            task = self._advance_task
+            starting = self._installer_starting
+            return bool(
+                (self._paused_attempt_id == attempt_id and task is not None and not task.done())
+                or (starting is not None and starting[0] == attempt_id
+                    and self._now() < starting[1])
+            )
+
+    def installer_observed(self, attempt_id: str) -> None:
+        with self._work_wake_lock:
+            if self._installer_starting is not None and self._installer_starting[0] == attempt_id:
+                self._installer_starting = None
+
+    def recover_orphaned_attempt(self, attempt_id: str, generation: int) -> int | None:
+        """The caller holds the installer lifetime lock until returned marker cleanup."""
+        return self._on_owner(lambda: self._recover_orphaned_attempt(attempt_id, generation))
+
+    def _recover_orphaned_attempt(self, attempt_id: str, generation: int) -> int | None:
+        barrier = self._update_barrier
+        current = self.attempts.read()
+        identity = "" if current is None else current.attempt_id
+        if (barrier is None or barrier.generation != generation or identity != attempt_id
+                or self.owns_preparation(attempt_id)
+                or self._paused_attempt_id not in {None, attempt_id}):
+            return None
+        if current is not None and current.state not in {"done", "failed"}:
+            self.attempts.change(attempt_id, frozenset({current.state}), lambda record: replace(
+                record, state="failed", detail=(
+                    RESTARTED_DETAIL if record.state in {"waiting", "preparing"}
+                    else "The previous update did not complete. Try again."
+                ),
+            ))
+        released = barrier.reopen_if_current(generation)
+        if released is not None:
+            self.reopen_trial_work(attempt_id)
+        return released
+
+    def reopen_trial_work(self, attempt_id: str) -> None:
+        """Reopen only the attempt this observer saw, never a later retry's work."""
+        current = self.attempts.read()
+        identity = "" if current is None else current.attempt_id
+        if (identity != attempt_id or self._paused_attempt_id not in {None, attempt_id}
+                or (self._update_barrier is not None and self._update_barrier.frozen)):
+            return
+        system = self.conversation()
+        if system is not None:
+            system.cancel_update()
+        self._paused_attempt_id = None
 
     # --- prefetch ------------------------------------------------------------------
 
@@ -458,13 +511,17 @@ class UpdateService:
 
     # --- the background part -------------------------------------------------------
 
+    def bind_owner(self, event_loop: asyncio.AbstractEventLoop) -> None:
+        """Bind control during health-only startup without admitting ordinary work."""
+        with self._work_wake_lock:
+            self._event_loop = event_loop
+
     def start(self, event_loop: asyncio.AbstractEventLoop) -> None:
         """Begin owning updates on this event loop; a `preparing` record is from a dead process."""
         self.stop()
         if self._unavailable_reason is not None:
             return
-        with self._work_wake_lock:
-            self._event_loop = event_loop
+        self.bind_owner(event_loop)
         system = self.conversation()
         if system is not None:
             self._unsubscribe_work = system.workspace_admission.subscribe_operations_finished(
@@ -741,6 +798,8 @@ class UpdateService:
 
         self.attempts.change(attempt_id, frozenset({"installing"}), installing)
         self._launch(attempt_id, command)
+        with self._work_wake_lock:
+            self._installer_starting = (attempt_id, self._now() + 5)
 
     def _fail(
         self, attempt_id: str, expected: frozenset[UpdateAttemptState], detail: str

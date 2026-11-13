@@ -358,7 +358,8 @@ def test_trial_boot_holds_runtime_until_installer_releases_cut(
         fcntl.flock(installer.fileno(), fcntl.LOCK_EX)
         installer.seek(0)
         installer.truncate()
-        installer.write(ATTEMPT_ID + "\n")
+        # The new owner acquired the lock before it replaced the previous ID.
+        installer.write("previous-attempt\n")
         installer.flush()
         with TestClient(app) as client:
             response = client.get("/api/health", params={"expected_sha": TO_SHA})
@@ -423,12 +424,66 @@ def test_trial_boot_holds_runtime_until_installer_releases_cut(
                 elif interrupted_state == "unknown":
                     assert attempt.detail == "The previous update did not complete. Try again."
 
+            if interrupted_state is None:
+                # Reuse this already-open home. A later update must recover without
+                # another lifespan or another call to the normal producer starters.
+                saves: list[bool] = []
+
+                def write_proof(target: list[bool]):
+                    async def save() -> dict[str, bool]:
+                        target.append(True)
+                        return {"saved": True}
+                    return save
+
+                recovered.add_api_route(
+                    "/__update-proof-write", write_proof(saves), methods=["POST"],
+                )
+                assert client.post("/__update-proof-write").status_code == 200
+                running_barrier = recovered.state.update_barrier
+                system = recovered.state.conversation_system
+                live_lock_observed = threading.Event()
+                active_probe = running_barrier.installer_active
+
+                def record_active(
+                    identity: str, probe=active_probe, observed=live_lock_observed,
+                ) -> bool:
+                    active = probe(identity)
+                    if active:
+                        observed.set()
+                    return active
+
+                monkeypatch.setattr(running_barrier, "installer_active", record_active)
+                with (tmp_path / "update-installer.lock").open("a+") as installer:
+                    fcntl.flock(installer.fileno(), fcntl.LOCK_EX)
+                    atomic_write_json(attempt_path, asdict(record))
+                    assert system.workspace_admission.claim(
+                        lambda: None, idle=lambda: True, require_idle=False,
+                    )
+                    running_barrier.freeze(ATTEMPT_ID)
+                    assert client.post("/__update-proof-write").status_code == 503
+                    assert live_lock_observed.wait(timeout=5)
+                    # Neither the marker nor the attempt changes when this kernel lock
+                    # disappears. The shared liveness probe must notice the dead job.
+                    fcntl.flock(installer.fileno(), fcntl.LOCK_UN)
+                    deadline = time.monotonic() + 7
+                    while (running_barrier.frozen or system.workspace_admission.closed
+                           ) and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    assert not running_barrier.frozen
+                    assert not system.workspace_admission.closed
+                    assert not system.workspace_admission.starts_closed
+                    ended = recovered.state.updates.attempts.read()
+                    assert ended is not None and ended.state == "failed"
+                    assert client.post("/__update-proof-write").status_code == 200
+                    assert saves == [True, True]
+                    assert starts == [True]
+
 
 @pytest.mark.parametrize("owner", [ATTEMPT_ID, "previous-attempt"])
-def test_busy_installer_preserves_same_trial_and_releases_foreign_attempt(
+def test_busy_installer_preserves_trial_with_same_or_stale_identity(
     scratch: Scratch, owner: str,
 ) -> None:
-    """Old post-health cleanup cannot leave a new refused attempt frozen."""
+    """Lock identity text cannot authorize a duplicate launch to release the trial."""
     import fcntl
 
     write_attempt(scratch)
@@ -441,21 +496,18 @@ def test_busy_installer_preserves_same_trial_and_releases_foreign_attempt(
         result = scratch.run_installer()
     assert result.returncode == 2
     assert not scratch.calls()
-    if owner == ATTEMPT_ID:
-        assert scratch.record()["state"] == "installing"
-        assert marker.exists()
-    else:
-        assert scratch.record()["state"] == "failed"
-        assert not marker.exists()
+    assert scratch.record()["state"] == "installing"
+    assert marker.exists()
 
 
 
-def test_restore_child_retains_lifetime_lock_after_parent_descriptor_closes(
+def test_restore_child_retains_lock_then_times_out_after_parent_descriptor_closes(
     scratch: Scratch, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A surviving restore writer must prevent orphan recovery after installer death."""
+    """An orphan restore retains custody until its own deadline ends the writer."""
     import argparse
     import fcntl
+    import signal
     import sys
 
     from planner.platform_runtime.linux import update_installer as installer
@@ -473,18 +525,19 @@ def test_restore_child_retains_lifetime_lock_after_parent_descriptor_closes(
     )
     monkeypatch.setattr(installation, "systemctl", lambda action: None)
     monkeypatch.setattr(installer, "healthy", lambda *args: True)
-    child_code = (
-        "import os,sys; os.fstat(int(sys.argv[1])); "
-        "print('ready',flush=True); sys.stdin.read(1)"
+    monkeypatch.setattr(installer, "DATABASE_RESTORE_TIMEOUT_SECONDS", 1)
+    (previous / "bin/panels").write_text(
+        f"#!{sys.executable}\nimport os,time\nos.fstat({inherited})\n"
+        "print('ready',flush=True)\ntime.sleep(30)\n"
     )
     observations: list[bool] = []
 
     def restore(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        assert command[1:3] == ["environment", "restore"]
+        assert command[8:10] == ["environment", "restore"]
         assert kwargs["pass_fds"] == (inherited,)
         child = subprocess.Popen(
-            [sys.executable, "-c", child_code, str(inherited)],
-            pass_fds=kwargs["pass_fds"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            command,
+            pass_fds=kwargs["pass_fds"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             text=True,
         )
         try:
@@ -494,11 +547,11 @@ def test_restore_child_retains_lifetime_lock_after_parent_descriptor_closes(
                 with pytest.raises(BlockingIOError):
                     fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 observations.append(True)
-            child.communicate("x", timeout=5)
-            assert child.returncode == 0
+            child.communicate(timeout=5)
+            assert child.returncode == -signal.SIGALRM
             with lock_path.open("a+") as probe:
                 fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return subprocess.CompletedProcess(command, 0)
+            raise subprocess.CalledProcessError(child.returncode, command)
         finally:
             if child.poll() is None:
                 child.terminate()
@@ -515,6 +568,7 @@ def test_restore_child_retains_lifetime_lock_after_parent_descriptor_closes(
         )
         assert result == 1
         assert observations == [True]
-        assert "rollback_healthy" in scratch.record()["steps"]
+        assert "rollback_healthy" not in scratch.record()["steps"]
+        assert scratch.record()["state"] == "failed"
     finally:
         parent.close()

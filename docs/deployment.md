@@ -47,6 +47,8 @@ Cancel reopens admission, including after an uncertain stop. An uncertain stop s
 
 The home checks Ticket integrity and the release schema. The final barrier closes writes and remote result acceptance, then joins accepted saves before the snapshot. Extra machines retain later output in their outboxes. The gate stays closed while an installer or its database-restore child can restore data. Terminal exits release it, and startup recovers stale barriers only after that ownership ends. The installer runs outside the app, so the home stop cannot kill it.
 
+A frozen home checks installer ownership every two seconds, including before its first restart. Active local preparation and a bounded launch handoff remain protected. A held lock counts as live before its identity text is ready. The restore process has its own limit of 15 minutes, even if the installer dies.
+
 Proposal retries release admission during their wait. Once the final barrier closes writes, the next retry refuses the proposal without a write. Activity reads use worker threads so that health checks remain responsive.
 
 **The installer.** It stops the service that the server runs in, which the server reads from its own systemd cgroup, so a copy of Panels elsewhere can never stop the live one. It renames the current app aside, renames the waiting release into its place, starts the service, and waits for the new app to report its exact commit. A healthy answer proves that the new process serves Headroom. Work remains paused until the installer commits success. Startup also refreshes the agents' skill links. Interrupted conversations get one recovery prompt ([Conversations](conversations.md)). On success the installer marks the attempt done and keeps only the newest previous app.

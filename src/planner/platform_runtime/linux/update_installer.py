@@ -454,23 +454,8 @@ def install(arguments: argparse.Namespace) -> int:
         try:
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            stream.seek(0)
-            owner = stream.read().strip()
-            if owner and owner != arguments.attempt_id:
-                installation = Installation(root, arguments.attempt_id, arguments.service)
-                with installation.locked():
-                    current = installation.read()
-                    if (current.get("attempt_id") == arguments.attempt_id
-                            and current.get("state") == "installing"):
-                        now = datetime.now(UTC).isoformat()
-                        steps = current.get("steps")
-                        current.update(
-                            state="failed", updated_at=now,
-                            detail="Another installer still owns the home. Try again shortly.",
-                            steps={**(steps if isinstance(steps, dict) else {}), "failed": now},
-                        )
-                        installation.write(current)
-                installation.release_barrier()
+            # The holder can still publish its identity, or retain old text.
+            # Recovery waits for the lock itself before it fails an orphan attempt.
             print("Another installer still owns this update.", file=sys.stderr)
             return 2
         stream.seek(0)
@@ -610,6 +595,12 @@ def roll_back(
         if restore_data:
             subprocess.run(
                 [
+                    # The alarm belongs to the restore process and survives exec.
+                    # It still fires if this installer dies before its run timeout.
+                    sys.executable, "-I", "-S", "-B", "-c",
+                    "import os,signal,sys; signal.signal(signal.SIGALRM,signal.SIG_DFL); "
+                    "signal.alarm(int(sys.argv[1])); os.execv(sys.argv[2],sys.argv[2:])",
+                    str(max(1, int(DATABASE_RESTORE_TIMEOUT_SECONDS))),
                     str(app / "bin/panels"), "environment", "restore",
                     "--snapshot", str(backup),
                     "--destination-db", str(root / "data/planner.db"),

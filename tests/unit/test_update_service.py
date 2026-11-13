@@ -169,6 +169,16 @@ def test_required_snapshot_precedes_installer_launch(
 
     monkeypatch.setattr(LinuxPlatformAdapter, "update_requires_snapshot", native_snapshot)
     harness = Harness(tmp_path / "current", migrated=native_snapshot)
+    from planner.environments import update_service
+
+    backup = update_service.create_database_backup
+
+    def protected_snapshot(*args, **kwargs):
+        current = harness.store.read()
+        assert current is not None and harness.service.owns_preparation(current.attempt_id)
+        return backup(*args, **kwargs)
+
+    monkeypatch.setattr(update_service, "create_database_backup", protected_snapshot)
     harness.service.install(SHA_B, "now", confirm_activity=False)
     harness.advance()
     recorded = harness.store.read()
@@ -777,3 +787,34 @@ def test_cancel_invalidates_preparation_before_late_safe_point(
         assert harness.store.read() is None
 
     asyncio.run(run())
+
+
+def test_stale_orphan_recovery_cannot_release_a_new_retry(harness: Harness) -> None:
+    """Old file cleanup and its owner callback must both preserve a newer cut."""
+    barrier = UpdateBarrier(harness.root / "data/update-barrier.json")
+    harness.service._update_barrier = barrier
+    first = harness.service.install(SHA_B, "now", confirm_activity=True)
+    harness.store.change(first.attempt_id, frozenset({"waiting"}),
+                         lambda current: replace(current, state="installing"))
+    barrier.freeze(first.attempt_id)
+    first_generation = barrier.generation
+    harness.service._paused_attempt_id = first.attempt_id
+    assert harness.system.workspace_admission.claim(
+        lambda: None, idle=lambda: True, require_idle=False,
+    )
+    released = harness.service.recover_orphaned_attempt(first.attempt_id, first_generation)
+    assert released is not None and not harness.system.workspace_admission.closed
+    second = harness.service.install(SHA_B, "now", confirm_activity=True)
+    harness.service._paused_attempt_id = second.attempt_id
+    assert harness.system.workspace_admission.claim(
+        lambda: None, idle=lambda: True, require_idle=False,
+    )
+    barrier.freeze(second.attempt_id)
+    # The old worker and owner callback resume only after the retry owns both gates.
+    barrier.remove(released)
+    harness.service.reopen_trial_work(first.attempt_id)
+    assert harness.service.recover_orphaned_attempt(first.attempt_id, first_generation) is None
+    assert barrier.path.read_text().strip() == second.attempt_id
+    assert barrier.frozen and harness.system.workspace_admission.closed
+    assert harness.system.workspace_admission.starts_closed
+    assert harness.store.read() == second
