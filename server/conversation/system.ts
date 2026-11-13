@@ -1,6 +1,5 @@
 import { turn_is_maintenance } from './runtime/state.ts';
 import { observe_shutdown } from '../lifecycle/deadline.ts';
-import { SHUTDOWN_GRACE_SECONDS } from '../core/config.ts';
 import { is_shutdown_business_cancellation } from './shutdown.ts';
 /** Local process core. Registered as ConversationSystem after the turn-control slice lands. */
 import { randomUUID } from 'node:crypto';
@@ -1373,11 +1372,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   settled(): Promise<void> {
     return this.shutdown_task ?? Promise.resolve();
   }
-  shutdown(
-    options: import('../lifecycle/contracts.ts').StopOptions = {
-      deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS,
-    },
-  ): Promise<void> {
+  shutdown(options: import('../lifecycle/contracts.ts').StopOptions): Promise<void> {
     if (!this.shutdown_task) this.begin_shutdown();
     return observe_shutdown(this.shutdown_task!, options, 'conversation core');
   }

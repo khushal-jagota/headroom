@@ -9,6 +9,8 @@ import type { ProductionServerDependencies } from '../lifecycle/production.ts';
 import { default_production_dependencies } from '../lifecycle/production_bindings.ts';
 import type { ProductionBindingContext } from '../lifecycle/production_bindings.ts';
 import { run_application_process } from '../lifecycle/application.ts';
+import * as backend_composition from '../conversation/snapshot/production.ts';
+import type { StopOptions } from '../lifecycle/contracts.ts';
 import {
   create_backend_runtime,
   unavailable_backend_providers,
@@ -89,6 +91,12 @@ function setup() {
 // record's sole reconciliation/epoch or leaves normal sends explicitly unavailable.
 test('normal staged server serves the reconciled record through real publication without a fabricated provider', async () => {
   const f = setup();
+  vi.stubEnv('PLAN_TEST_MODE', '0');
+  const production = vi
+    .spyOn(backend_composition, 'production_backend_providers')
+    .mockImplementation(() => {
+      throw new Error('Bare startup must not construct a production provider');
+    });
   const schema = JSON.parse(
     readFileSync(new URL('../core/database/application_schema.json', import.meta.url), 'utf8'),
   ) as ApplicationSchemaSeed;
@@ -174,6 +182,7 @@ test('normal staged server serves the reconciled record through real publication
       }),
     ]);
     expect(context?.conversationSystem).toBeUndefined();
+    expect(production).not.toHaveBeenCalled();
     expect(epochBeforePublication).not.toBe('old-runtime');
     expect(
       f.database.read((sql) =>
@@ -197,7 +206,7 @@ test('normal staged server serves the reconciled record through real publication
       release_listen();
       // Release and join even if startup rejects before the listen gate is observed.
       const server = await starting;
-      await server.close();
+      await server.close({ deadline: performance.now() / 1000 + 1 });
     }
   }
   const replacement = acquireRuntimeOwnership(f.path);
@@ -457,11 +466,15 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     },
   };
   // Missing and partial tables use the SAME validation/entry as the complete table.
-  await expect(
-    run_application_process({
+  const exit = vi.fn<(code: 0 | 1) => void>();
+  await run_application_process(
+    {
       start: () => start_production_server(default_production_dependencies()),
-    }),
-  ).rejects.toThrow('Missing production backend factories: claude, codex, hermes');
+    },
+    exit,
+  );
+  expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+  exit.mockClear();
   await expect(
     start_production_server({
       ...dependencies,
@@ -470,12 +483,16 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
   ).rejects.toThrow('Missing production backend factories: codex, hermes');
   expect(bindings_seen).toEqual([]);
   let server!: StartedServer;
-  await run_application_process({
-    start: async () => {
-      server = await start_production_server(dependencies);
-      return server;
+  await run_application_process(
+    {
+      start: async (onShutdownComplete) => {
+        server = await start_production_server(dependencies, onShutdownComplete);
+        return server;
+      },
     },
-  });
+    exit,
+  );
+  let stop: StopOptions | undefined;
   const post = (text: string, content: unknown = [{ piece: 'text', text }]) =>
     fetch(server.address + '/api/chief/conversation/send', {
       method: 'POST',
@@ -718,14 +735,16 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
       () => null,
     );
     await child.wait_for_barrier('shutdown');
-    await server.close();
+    expect(exit).not.toHaveBeenCalled();
+    await server.close((stop = { deadline: performance.now() / 1000 + 1 }));
+    expect(exit).toHaveBeenCalledExactlyOnceWith(0);
     await pending;
     expect(wakeStop).toHaveBeenCalledOnce();
     for (const result of wakePoll.mock.results) await expect(result.value).resolves.toEqual([]);
     const replacement = acquireRuntimeOwnership(f.path);
     replacement.close();
   } finally {
-    await server.close();
+    await server.close((stop ??= { deadline: performance.now() / 1000 + 1 }));
     await registry.close();
     console.info(
       'PRODUCTION_COMPOSITION_BOUNDARY',

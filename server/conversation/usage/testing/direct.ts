@@ -103,7 +103,7 @@ export async function compare_reader(spec: ReaderSpec) {
     ),
     lexical_created: await directoryExists(join(dirname(spec.composition_db_link), 'usage')),
   };
-  await compositionService.finish_operations();
+  await compositionService.finish_operations({ deadline: performance.now() / 1000 + 2 });
   const cache: ScanCache = new Map();
   for (const provider of ['claude', 'codex', 'grok'] as const) {
     const path = spec.selected[provider];
@@ -212,7 +212,7 @@ export async function compare_http(spec: HttpSpec) {
             recorded_usage: {
               readSummary: (input: UsageSummaryInput) => current.readSummary(input),
               refreshRates: () => current.refreshRates(),
-              finish_operations: () => current.finish_operations(),
+              finish_operations: (stop) => current.finish_operations(stop),
               settled: () => current.settled(),
             },
             backend_state: new BackendStateStore(database),

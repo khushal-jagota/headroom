@@ -2,6 +2,7 @@
  * conversation whose workspace policy is already home_relative. No HTTP/provider runs.
  */
 import { dirname, join } from 'node:path';
+import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 import { readFileSync } from 'node:fs';
 import { expect, test, vi } from 'vitest';
 import { setup } from './conversation_core_fixture.ts';
@@ -432,7 +433,7 @@ test('local composition refuses a retained Mac Ticket before constructing its se
     try {
       expect(await unchanged(() => wake.poll_once())).toEqual([]);
     } finally {
-      await wake.stop();
+      await wake.stop({ deadline: performance.now() / 1000 + 1 });
       await wake.settled();
     }
     const blocked_wakes = () =>
@@ -542,14 +543,15 @@ test('local composition refuses a retained Mac Ticket before constructing its se
     );
     expect(local_constructor).toHaveBeenCalledTimes(1);
   } finally {
-    await recovery_core?.shutdown();
+    const stop = { deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS };
+    await recovery_core?.shutdown(stop);
     await recovery_core?.settled();
-    await http.shutdown?.();
+    await http.shutdown?.(stop);
     await http.settled();
     children.seal();
     await children.settled();
     await child_processes.settled();
-    await f.core.shutdown();
+    await f.core.shutdown(stop);
     live_tail.close();
   }
   console.info(`Temporary Mac guard component proof: ${(performance.now() - began).toFixed(3)} ms`);

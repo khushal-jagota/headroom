@@ -1,5 +1,6 @@
 /** Shutdown races require an exact pause between the committed action and dispatch. */
 import { expect, test, vi } from 'vitest';
+import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 import { createApp } from '../app.ts';
 import { loadConfig } from '../core/config.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
@@ -147,7 +148,7 @@ test('a sealed shared write scope refuses late requests and drains an admitted s
       delivery: { attempt_id: intent.attempt_id, status: 'started' },
     });
     await drain;
-    await operations.finish_operations();
+    await operations.finish_operations({ deadline: performance.now() / 1000 + 1 });
     expect(drained).toBe(true);
     expect(sent).toHaveBeenCalledTimes(1);
     expect(
@@ -161,9 +162,9 @@ test('a sealed shared write scope refuses late requests and drains an admitted s
   } finally {
     released.resolve();
     await admitted.catch(() => {});
-    await operations.finish_operations();
+    await operations.settled();
     await app.close();
-    await f.core.shutdown();
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }
 });
 
