@@ -385,3 +385,37 @@ def test_kill_refuses_a_remote_stop_without_a_retirement_receipt(
         factory.link_back.set()
 
     _run(exercise)
+
+
+def test_retained_evidence_keeps_open_questions_and_memory_notice_origin(
+    stopped: tuple[_Harness, _StopFactory],
+) -> None:
+    from tests.unit.test_conversation_system import _send_memory_notice
+
+    from planner.conversation.events import UserInputRequestedEventPayload
+    from planner.conversation.storage import read_retained_run_evidence
+
+    harness, _ = stopped
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await _send_memory_notice(harness, "c")
+        request = await harness.request_user_input("c")
+        evidence = await asyncio.to_thread(
+            read_retained_run_evidence, str(harness.db_path), ("c",), 1000,
+        )
+        snapshot = evidence["c"]
+        assert snapshot.facts == await harness.store.lifecycle_facts("c")
+        assert snapshot.memory_notice_only
+        questions = [
+            event.payload for event in snapshot.events
+            if isinstance(event.payload, UserInputRequestedEventPayload)
+        ]
+        assert len(questions) == 1
+        assert questions[0].request_id == request.request_id
+        assert questions[0].questions == request.questions
+        assert snapshot.memory_notice_only == (
+            await asyncio.to_thread(harness.store._open_turn_holds_only_memory_notices_sync, "c")
+        )
+
+    _run(exercise)

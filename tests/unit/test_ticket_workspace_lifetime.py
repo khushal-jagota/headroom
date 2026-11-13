@@ -451,3 +451,70 @@ def test_recorded_child_uncertainty_blocks_local_detach_and_retirement_replay(
     tmp_db.commit()
     clean_for_database(database_path(tmp_db), RETENTION_SECONDS + 100)
     assert not retired.exists()
+
+
+def test_cleanup_does_not_recreate_a_folder_detached_after_inventory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.ticket_workspaces import filesystem
+
+    root = tmp_path / "files" / "tickets"
+    folder = root / "t_aaaaaaaa"
+    prepare_workspace(folder, None, folder.name)
+    detached = tmp_path / "detached"
+
+    def detach_during_inventory(path: Path) -> int:
+        path.rename(detached)
+        return 0
+
+    monkeypatch.setattr(filesystem, "_allocated_bytes", detach_during_inventory)
+    result = cleanup_local_workspaces(
+        root,
+        {folder.name: WorkspaceState(folder.name, 0, False)},
+        RETENTION_SECONDS,
+    )
+    assert not folder.exists()
+    assert detached.exists()
+    assert not result.removed
+
+
+def test_retirement_prepares_file_record_without_holding_sqlite_writer(
+    tmp_db: Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.conversation import worker_scratch
+    from planner.core.db import connect
+    from planner.files.lifecycle import database_path
+    from planner.files.logic.paths import ticket_files_root
+    from planner.ticket_workspaces.cleanup import clean_for_database
+
+    ticket = create_ticket(
+        tmp_db,
+        title="Short detach transaction",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+        worker_type="coding",
+    )
+    tmp_db.execute("UPDATE tickets SET stage='done',updated_at=100 WHERE id=?", (ticket.id,))
+    tmp_db.commit()
+    database = database_path(tmp_db)
+    folder = ticket_files_root(database) / ticket.id
+    prepare_workspace(folder, None, ticket.id)
+    checked = []
+
+    def snapshot(ticket_id: str) -> tuple[str, ...]:
+        other = connect(database, busy_timeout_ms=0)
+        try:
+            other.execute("BEGIN IMMEDIATE")
+            checked.append(ticket_id)
+            other.rollback()
+        finally:
+            other.close()
+        return ()
+
+    monkeypatch.setattr(worker_scratch, "snapshot_ticket_scratch", snapshot)
+    result = clean_for_database(database, RETENTION_SECONDS + 100)
+    assert checked == [ticket.id]
+    assert result.removed == [str(folder)]

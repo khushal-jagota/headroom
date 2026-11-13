@@ -92,6 +92,18 @@ def test_server_loads_both_retained_owners_before_adoption_and_dispatches_cleanu
                     machine,
                 ),
             )
+    from planner.server_lifecycle import runtime as lifecycle_runtime
+
+    evidence_reads: list[tuple[str, ...]] = []
+    read_evidence = lifecycle_runtime.read_retained_run_evidence
+
+    def off_loop_evidence(path: str, ids: tuple[str, ...], timeout: int):
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            asyncio.get_running_loop()
+        evidence_reads.append(ids)
+        return read_evidence(path, ids, timeout)
+
+    monkeypatch.setattr(lifecycle_runtime, "read_retained_run_evidence", off_loop_evidence)
     seen: list[set[str]] = []
     retained = VpsExecutorRegistry.retained_runs
 
@@ -115,6 +127,8 @@ def test_server_loads_both_retained_owners_before_adoption_and_dispatches_cleanu
     app = create_app(config, build_clock(config), lambda: connect(database))
     with TestClient(app) as client:
         assert seen and all(ids == {"conversation0", "conversation1"} for ids in seen)
+        assert len(evidence_reads) == 1
+        assert set(evidence_reads[0]) == seen[0]
         registry = app.state.executor_registry
         first = registry.get(ORIGINAL_MAC_MACHINE_ID)
         second = registry.get(EXTRA)
