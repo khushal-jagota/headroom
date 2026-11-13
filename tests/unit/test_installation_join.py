@@ -28,7 +28,9 @@ def test_owner_join_command_keeps_secret_out_of_command(monkeypatch: pytest.Monk
     calls: list[tuple[str, str, object]] = []
 
     def send(method: str, path: str, **kwargs: Any) -> object:
-        calls.append((method, path, kwargs["json_body"]))
+        calls.append((method, path, kwargs.get("json_body")))
+        if path == "/api/meta":
+            return {"app_sha": REVISION}
         return {"machine_id": machine_id, "credential": CREDENTIAL, "issued_at_ms": 1}
 
     monkeypatch.setattr("planner.installation.join_cli.http.send", send)
@@ -38,12 +40,10 @@ def test_owner_join_command_keeps_secret_out_of_command(monkeypatch: pytest.Monk
             "Studio",
             "--home",
             "https://home.example",
-            "--revision",
-            REVISION,
         ],
     )
     assert result.exit_code == 0, result.output
-    assert calls == [("POST", "/api/machines", {"name": "Studio"})]
+    assert calls == [("GET", "/api/meta", None), ("POST", "/api/machines", {"name": "Studio"})]
     command = next(
         line for line in result.output.splitlines() if line.startswith("panels_join_script=")
     )
@@ -52,7 +52,7 @@ def test_owner_join_command_keeps_secret_out_of_command(monkeypatch: pytest.Monk
     assert result.output.count(CREDENTIAL) == 1
     linux = CliRunner().invoke(
         machine_join_command,
-        ["Server", "--home", "https://home.example", "--revision", REVISION, "--platform", "linux"],
+        ["Server", "--home", "https://home.example", "--platform", "linux"],
     )
     assert linux.exit_code == 0, linux.output
     assert calls[-1] == ("POST", "/api/machines", {"name": "Server", "platform": "linux"})

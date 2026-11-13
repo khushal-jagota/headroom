@@ -17,7 +17,6 @@ from planner.executor.configuration import validate_server_url
 @click.option(
     "--home", "home_url", required=True, help="Use this same home's trusted HTTPS origin."
 )
-@click.option("--revision", required=True, help="Full published release SHA for the bootstrap.")
 @click.option(
     "--platform",
     "target_platform",
@@ -25,30 +24,20 @@ from planner.executor.configuration import validate_server_url
     default="darwin",
     show_default=True,
 )
-@click.option(
-    "--signing-identity",
-    help="Mac ad-hoc signing is the default. Use - or an optional legacy certificate fingerprint.",
-)
 def machine_join_command(
     name: str,
     home_url: str,
-    revision: str,
-    signing_identity: str | None,
     target_platform: str,
 ) -> None:
     """Register a machine, then print its join command and private credential once."""
     try:
         home_url = validate_server_url(home_url)
-        if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
-            raise ValueError("Use the full lowercase published release SHA")
-        if (
-            signing_identity is not None
-            and signing_identity != "-"
-            and re.fullmatch(r"[0-9A-Fa-f]{40}", signing_identity) is None
-        ):
-            raise ValueError("Use - for ad-hoc signing or the legacy certificate fingerprint")
     except ValueError as error:
         raise click.ClickException(str(error)) from error
+    metadata = http.send("GET", "/api/meta", as_json=False)
+    revision = metadata.get("app_sha")
+    if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise click.ClickException("Install a released home before you issue a join command")
     body = {"name": name}
     if target_platform == "linux":
         body["platform"] = target_platform
@@ -67,9 +56,7 @@ def machine_join_command(
         "--platform",
         target_platform,
     ]
-    if signing_identity:
-        arguments += ["--signing-identity", signing_identity]
-    arguments += ["--revision", revision, "--github-cli"]
+    arguments += ["--revision", revision]
     route = f"repos/khushal-jagota/headroom/contents/scripts/panels_install.py?ref={revision}"
     command = (
         "panels_join_script=$(mktemp) && gh api "

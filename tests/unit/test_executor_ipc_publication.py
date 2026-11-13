@@ -237,6 +237,12 @@ def test_retry_preserves_acknowledged_and_unknown_uncertainty_across_restart(
         async with ipc_service(tmp_path, monkeypatch) as (executor, child):
             response = await executor.gateway.handle(write_request(child, "original"))
             assert response.unconfirmed is not None
+            publication = executor.gateway._publishing.get("original")
+            if publication is not None:
+                async with asyncio.timeout(5):
+                    await publication[1]
+            response = await executor.gateway.handle(retry_request(child, "original"))
+            assert response.unconfirmed is not None
             assert response.unconfirmed.publication == "queued"
             envelope = executor.outbox.pending()[0]
             executor.outbox.acknowledge(
@@ -399,6 +405,11 @@ def test_post_commit_cleanup_error_keeps_identity_and_retry_observes_original(
             response = await executor.gateway.handle(write_request(child, "original"))
             assert response.error is None and response.unconfirmed is not None
             assert response.unconfirmed.submission_id == "original"
+            publication = executor.gateway._publishing.get("original")
+            if publication is not None:
+                async with asyncio.timeout(5):
+                    with pytest.raises(OSError, match="snapshot cleanup failed after commit"):
+                        await publication[1]
             original = executor.outbox.pending()[0]
             retried = await executor.gateway.handle(
                 replace(retry_request(child, "original"), response_deadline=time.monotonic() + 5)

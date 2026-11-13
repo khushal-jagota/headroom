@@ -22,7 +22,6 @@ This path installs a published runtime into a new private root. It never replace
 Use macOS 15 or newer on Apple Silicon, Node 22, Xcode command-line tools, and a graphical login session.
 The installer signs the fixed native launcher ad hoc and checks its strict signature.
 No signing certificate or keychain identity is required.
-Use `--signing-identity CERTIFICATE-FINGERPRINT` only for an explicit existing Apple Development route.
 Developer ID distribution and notarization remain separate work.
 The GitHub CLI must be installed and authenticated for access to the release repository.
 Provider login remains a separate step. Tailscale must reach the same home's trusted HTTPS origin.

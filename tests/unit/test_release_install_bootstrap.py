@@ -58,7 +58,7 @@ def test_publication_refuses_receipt_from_another_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    args = bootstrap.parser().parse_args(["home", "--run-id", "5"])
+    args = bootstrap.parser().parse_args(["home"])
     revision = "a" * 40
     receipt = {
         "publication_run_id": 6,
@@ -74,23 +74,20 @@ def test_publication_refuses_receipt_from_another_run(
         "archive_sha256": "0" * 64,
     }
 
-    def api(
-        repository: str,
-        path: str,
-        token_file: Path | None,
-        destination: Path | None = None,
-        *,
-        github_cli: bool = False,
-    ) -> Any:
-        if path == "actions/runs/5":
+    def api(path: str, destination: Path | None = None) -> Any:
+        if path.startswith("actions/workflows/deploy.yml/runs?"):
             return {
-                "id": 5,
-                "path": ".github/workflows/deploy.yml",
-                "head_branch": "main",
-                "event": "push",
-                "conclusion": "success",
-                "head_sha": revision,
-                "head_repository": {"full_name": args.repository},
+                "workflow_runs": [
+                    {
+                        "id": 5,
+                        "path": ".github/workflows/deploy.yml",
+                        "head_branch": "main",
+                        "event": "push",
+                        "conclusion": "success",
+                        "head_sha": revision,
+                        "head_repository": {"full_name": bootstrap.REPOSITORY},
+                    }
+                ]
             }
         if path.endswith("/artifacts?per_page=100"):
             return {

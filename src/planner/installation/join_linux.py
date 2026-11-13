@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -21,14 +20,11 @@ def install_linux_executor(
     machine_id: str,
     credential: str,
     root: Path,
-    label: str,
     isolated_providers: bool = False,
 ) -> None:
     from planner.installation.join import provider_environment, wait_for_lease
 
-    service = "panels-executor.service" if label == "com.panels.executor" else label
-    if re.fullmatch(r"[A-Za-z0-9_-]+\.service", service) is None:
-        raise ValueError("Linux join needs --service NAME.service with letters, digits, - or _")
+    service = "panels-executor.service"
     units = Path.home() / ".config/systemd/user"
     unit = units / service
     if unit.exists() or unit.is_symlink():
@@ -52,7 +48,6 @@ def install_linux_executor(
         executor_id=machine_id,
         server_url=home_url,
         revision=revision,
-        service_name=service,
     )
     with tempfile.TemporaryDirectory(prefix="panels-join-credential-") as temporary:
         grant = Path(temporary) / "credential.json"

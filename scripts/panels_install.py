@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Install a sealed Panels home or join an extra machine without a source checkout.
 
-This bootstrap uses only Python's standard library. Repository tokens stay in files.
+This bootstrap uses Python's standard library and the authenticated GitHub CLI.
 """
 
 from __future__ import annotations
@@ -27,6 +27,8 @@ from datetime import UTC, datetime
 from http.client import HTTPMessage
 from pathlib import Path
 from typing import IO, Any
+
+REPOSITORY = "khushal-jagota/headroom"
 
 
 class DownloadRedirect(urllib.request.HTTPRedirectHandler):
@@ -110,10 +112,10 @@ def preflight(args: argparse.Namespace, target: str) -> None:
             if "Could not find service" not in result.stderr:
                 raise ValueError("Log in to the Mac graphical session before installation.")
         if args.command == "home":
-            interpreter = args.installer_python.resolve(strict=True)
+            interpreter = Path(sys.executable).resolve(strict=True)
             if interpreter.is_relative_to(root) or not os.access(interpreter, os.X_OK):
                 raise ValueError(
-                    "Select an executable --installer-python outside the installation root."
+                    "Run setup with an executable external Python outside the installation root."
                 )
             result = _run(
                 str(interpreter),
@@ -132,22 +134,6 @@ def preflight(args: argparse.Namespace, target: str) -> None:
                     "Install the Xcode command line tools with xcode-select --install."
                 )
             _run("xcrun", "--find", "clang")
-            identity = args.signing_identity or "-"
-            if identity != "-":
-                if re.fullmatch(r"[0-9a-fA-F]{40}", identity) is None:
-                    raise ValueError(
-                        "Use - for ad-hoc signing or an Apple Development fingerprint."
-                    )
-                identities = _run(
-                    "/usr/bin/security", "find-identity", "-v", "-p", "codesigning"
-                ).stdout
-                if not any(
-                    identity.lower() in line.lower() and "Apple Development" in line
-                    for line in identities.splitlines()
-                ):
-                    raise ValueError(
-                        "This login keychain lacks the selected Apple Development certificate."
-                    )
             if not Path("/usr/bin/codesign").is_file():
                 raise ValueError("Mac join needs the macOS codesign tool.")
     else:
@@ -173,22 +159,13 @@ def preflight(args: argparse.Namespace, target: str) -> None:
             raise ValueError("The service already exists. Select another --service.")
 
 
-def _api(
-    repository: str,
-    path: str,
-    token_file: Path | None,
-    destination: Path | None = None,
-    *,
-    github_cli: bool = False,
-) -> Any:
-    token = token_file.read_text().strip() if token_file else ""
-    if not token and github_cli:
-        token = _run("gh", "auth", "token").stdout.strip()
+def _api(path: str, destination: Path | None = None) -> Any:
+    token = _run("gh", "auth", "token").stdout.strip()
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "panels-install"}
     if token:
         headers["Authorization"] = "Bearer " + token
     request = urllib.request.Request(
-        f"https://api.github.com/repos/{repository}/{path}", headers=headers
+        f"https://api.github.com/repos/{REPOSITORY}/{path}", headers=headers
     )
     opener = urllib.request.build_opener(DownloadRedirect())
     try:
@@ -199,7 +176,7 @@ def _api(
                 shutil.copyfileobj(response, stream, 1024 * 1024)
     except urllib.error.HTTPError as error:
         raise ValueError(
-            f"GitHub refused release access ({error.code}). Check --repository and --token-file."
+            f"GitHub refused release access ({error.code}). Check the GitHub CLI login."
         ) from None
     return None
 
@@ -217,24 +194,9 @@ def select_publication(
         return args.archive, select_receipt(receipt, target, args.command)
     if args.receipt is not None:
         raise ValueError("Supply --archive with --receipt.")
-    if re.fullmatch(r"[\w.-]+/[\w.-]+", args.repository) is None:
-        raise ValueError("Use --repository OWNER/REPOSITORY.")
-    if args.run_id is None:
-        runs = _api(
-            args.repository,
-            "actions/workflows/deploy.yml/runs?branch=main&event=push&status=success&per_page=20",
-            args.token_file,
-            github_cli=args.github_cli,
-        )["workflow_runs"]
-    else:
-        runs = [
-            _api(
-                args.repository,
-                f"actions/runs/{args.run_id}",
-                args.token_file,
-                github_cli=args.github_cli,
-            )
-        ]
+    runs = _api(
+        "actions/workflows/deploy.yml/runs?branch=main&event=push&status=success&per_page=20"
+    )["workflow_runs"]
     for run in runs:
         if args.revision is not None and run.get("head_sha") != args.revision:
             continue
@@ -243,14 +205,11 @@ def select_publication(
             or run.get("head_branch") != "main"
             or run.get("event") != "push"
             or run.get("conclusion") != "success"
-            or run.get("head_repository", {}).get("full_name") != args.repository
+            or run.get("head_repository", {}).get("full_name") != REPOSITORY
         ):
             continue
         artifacts = _api(
-            args.repository,
             f"actions/runs/{run['id']}/artifacts?per_page=100",
-            args.token_file,
-            github_cli=args.github_cli,
         )["artifacts"]
         by_name = {item["name"]: item for item in artifacts if not item["expired"]}
         artifact_name = (
@@ -264,11 +223,8 @@ def select_publication(
             continue
         proof_zip = work / f"proof-{run['id']}.zip"
         _api(
-            args.repository,
             f"actions/artifacts/{by_name['panels-publication-proof']['id']}/zip",
-            args.token_file,
             proof_zip,
-            github_cli=args.github_cli,
         )
         with zipfile.ZipFile(proof_zip) as zipped:
             original = json.loads(zipped.read("publication.json"))
@@ -285,11 +241,8 @@ def select_publication(
             continue
         artifact_zip = work / "artifact.zip"
         _api(
-            args.repository,
             f"actions/artifacts/{receipt['artifact_id']}/zip",
-            args.token_file,
             artifact_zip,
-            github_cli=args.github_cli,
         )
         with zipfile.ZipFile(artifact_zip) as zipped:
             candidates = [name for name in zipped.namelist() if name.endswith(".tar.gz")]
@@ -404,25 +357,18 @@ def check_linux_contract(payload: Path) -> None:
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("command", choices=("home", "join"))
-    result.add_argument("--repository", default="khushal-jagota/headroom")
-    result.add_argument("--token-file", type=Path)
-    result.add_argument("--run-id", type=int)
     result.add_argument("--revision")
-    result.add_argument("--github-cli", action="store_true")
     result.add_argument("--archive", type=Path)
     result.add_argument("--receipt", type=Path)
     result.add_argument("--root", type=Path)
-    result.add_argument("--service")
+    result.add_argument(
+        "--service", help="Home or Mac join label. Linux joins use panels-executor.service."
+    )
     result.add_argument("--port", type=int, default=8767)
-    result.add_argument("--installer-python", type=Path, default=Path(sys.executable))
     result.add_argument("--isolated-providers", action="store_true")
     result.add_argument("--home")
     result.add_argument("--machine-id")
     result.add_argument("--platform", choices=("darwin", "linux"))
-    result.add_argument(
-        "--signing-identity",
-        help="Default: ad-hoc (-). An explicit certificate fingerprint remains supported.",
-    )
     return result
 
 
@@ -432,6 +378,8 @@ def main() -> None:
         target = host_target()
         if args.platform is not None and args.platform != target:
             raise ValueError("This machine does not match the registered --platform.")
+        if args.command == "join" and target == "linux" and args.service is not None:
+            raise ValueError("Linux joins use panels-executor.service. Omit --service.")
         args.service = args.service or (
             "com.panels.home" if args.command == "home" else "com.panels.executor"
         )
@@ -447,12 +395,7 @@ def main() -> None:
                     "Join needs --home URL and --machine-id from the owner's join command."
                 )
             if target == "linux":
-                if args.service == "com.panels.executor":
-                    args.service = "panels-executor.service"
-                if re.fullmatch(r"[A-Za-z0-9_-]+\.service", args.service) is None:
-                    raise ValueError(
-                        "Linux join needs --service NAME.service with letters, digits, - or _."
-                    )
+                args.service = "panels-executor.service"
         args.root = (args.root or default_root).expanduser().absolute()
         preflight(args, target)
         print("Host prerequisites passed. Select and check the release.", flush=True)
@@ -469,9 +412,6 @@ def main() -> None:
             environment = {
                 key: value for key, value in os.environ.items() if not key.startswith("PLAN_")
             }
-            if args.token_file:
-                environment["PLAN_UPDATE_TOKEN_FILE"] = str(args.token_file.expanduser().resolve())
-                environment["PLAN_UPDATE_REPOSITORY"] = args.repository
             if args.command == "home":
                 command = [
                     str(payload / ".venv/bin/python"),
@@ -484,7 +424,7 @@ def main() -> None:
                     "root": str(args.root),
                     "service": args.service,
                     "port": args.port,
-                    "installer_python": str(args.installer_python.expanduser().resolve()),
+                    "installer_python": str(Path(sys.executable).resolve()),
                     "isolated_providers": args.isolated_providers,
                     "archive": str(archive),
                     "archive_sha256": receipt["archive_sha256"],
@@ -511,7 +451,6 @@ def main() -> None:
                     "isolated_providers": args.isolated_providers,
                     "credential": getpass.getpass("Private machine credential: "),
                     "root": str(args.root),
-                    "signing_identity": args.signing_identity,
                     "label": args.service,
                 }
             print("Release checksum passed. Install the new service.", flush=True)

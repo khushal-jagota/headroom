@@ -19,7 +19,7 @@ The sealed release also checks its native runtime requirements before the servic
 Authenticate the GitHub CLI for the release repository, then run this command:
 
 ```sh
-panels_setup=$(mktemp) && gh api repos/khushal-jagota/headroom/contents/scripts/panels_install.py --header 'Accept: application/vnd.github.raw+json' > "$panels_setup" && python3 "$panels_setup" home --github-cli
+panels_setup=$(mktemp) && gh api repos/khushal-jagota/headroom/contents/scripts/panels_install.py --header 'Accept: application/vnd.github.raw+json' > "$panels_setup" && python3 "$panels_setup" home
 ```
 
 The command selects a successful publication from the trusted release workflow on `main`.
@@ -27,15 +27,14 @@ It checks the publication identity, target, and archive checksum before it execu
 It refuses an existing installation root, service name, or occupied port.
 It starts only the new home and checks the exact release health before it reports its address.
 A private repository requires GitHub access to its contents and Actions artifacts.
-Use `--token-file /private/github-token` instead of `--github-cli` to supply a repository token file.
-The command never places that token in service arguments or environment values.
+The command uses the GitHub CLI login for release access. It does not persist a new token or authentication setting.
 
 The Mac default root is `~/Library/Application Support/PanelsHome`. The service name is `com.panels.home`.
 Linux uses `~/.local/share/panels-home` and the user service `com.panels.home.service`.
 The home binds to loopback port 8767. Select another port with `--port`.
 Use `--root` and `--service` for a separate installation.
-On the Mac, use `--installer-python /absolute/host/python3` if the command interpreter is not the stable external interpreter.
-That interpreter must stay outside the home and remain available for updates.
+On the Mac, run the bootstrap with a stable external Python interpreter.
+The command records that interpreter for updates. It must stay outside the home and remain available.
 
 Provider login remains a separate step. Authenticate Codex, Claude, or Hermes before the first Worker starts.
 For another device, configure Tailscale Serve HTTPS and the owner login through the existing trusted ingress.

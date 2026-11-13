@@ -21,28 +21,12 @@ from planner.executor.configuration import validate_server_url
 from planner.executor.credential_file import credential_path, write_credential
 
 
-def check_mac_prerequisites(signing_identity: str | None) -> str:
-    """Check native tools and an optional certificate before installation writes."""
+def check_mac_prerequisites() -> str:
+    """Check native tools before an ad-hoc installation writes any state."""
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("Mac join needs an Apple Silicon Mac")
     if int(platform.mac_ver()[0].split(".")[0]) < 15:
         raise ValueError("Mac join needs macOS 15 or newer")
-    signing_identity = signing_identity or "-"
-    if signing_identity != "-":
-        if re.fullmatch(r"[0-9A-Fa-f]{40}", signing_identity) is None:
-            raise ValueError("Use - for ad-hoc signing or an Apple Development fingerprint")
-        identities = subprocess.run(
-            ["/usr/bin/security", "find-identity", "-v", "-p", "codesigning"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        ).stdout
-        if not any(
-            signing_identity.lower() in line.lower() and "Apple Development:" in line
-            for line in identities.splitlines()
-        ):
-            raise ValueError("Install the selected Apple Development certificate and private key")
     if not Path("/usr/bin/codesign").is_file():
         raise ValueError("Mac join needs the macOS codesign tool")
     subprocess.run(
@@ -54,7 +38,7 @@ def check_mac_prerequisites(signing_identity: str | None) -> str:
         capture_output=True,
         timeout=10,
     )
-    return signing_identity
+    return "-"
 
 
 def wait_for_lease(python: Path, root: Path, revision: str, *, timeout: float = 45) -> None:
@@ -125,7 +109,6 @@ def install_executor(
     machine_id: str,
     credential: str,
     root: Path,
-    signing_identity: str | None = None,
     label: str = "com.panels.executor",
     isolated_providers: bool = False,
 ) -> None:
@@ -153,11 +136,10 @@ def install_executor(
             machine_id=machine_id,
             credential=credential,
             root=root.resolve(),
-            label=label,
             isolated_providers=isolated_providers,
         )
         return
-    identity = check_mac_prerequisites(signing_identity)
+    identity = check_mac_prerequisites()
     plist_path = Path.home() / "Library/LaunchAgents" / f"{label}.plist"
     if plist_path.exists() or plist_path.is_symlink():
         raise ValueError(f"The executor service already exists: {plist_path}")
