@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { create_mac_adapter_host } from '../adapters.ts';
 import { MacNativeChildren } from '../runner/start_stop.ts';
+import { MacChildAdmissionRefused } from '../runner/contracts.ts';
 import { MacCatalog } from '../catalog/index.ts';
 import { ExecutorPaths, FILE_CHUNK_BYTES } from '../configuration.ts';
 import { JsonNumber, stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
@@ -169,20 +170,34 @@ try {
       child_id: `child-${index}`,
       conversation_id: start.resolved_start.conversation_id,
     };
-    const child = await native.start(reference, start);
+    const child = await native.start(reference, start, () => {});
     const normalized = normalize(calls, child.capability) as unknown[];
     calls.splice(0, calls.length, ...normalized);
     if (native.authenticate(reference.child_id, child.capability) !== child)
       throw new Error('Native child capability did not identify its exact child.');
     errors.push(await refusal(() => native.authenticate(reference.child_id, 'wrong')));
     errors.push(await refusal(() => native.authenticate(null, child.capability)));
-    errors.push(await refusal(() => native.start(reference, start)));
+    errors.push(await refusal(() => native.start(reference, start, () => {})));
     if (index === 0)
       errors.push(
-        await refusal(() => native.start({ ...reference, child_id: 'another-child' }, start)),
+        await refusal(() =>
+          native.start({ ...reference, child_id: 'another-child' }, start, () => {}),
+        ),
       );
     native.begin_retirement(reference);
-    await native.stop_child(reference);
+    if (index === 0) {
+      const withdrawn = new MacChildAdmissionRefused('scripted withdrawal');
+      const before = calls.length;
+      const rejected = await native.stop_child(reference, () => {
+        throw withdrawn;
+      }).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      if (rejected !== withdrawn || calls.length !== before)
+        throw new Error('Withdrawn stop reached native cleanup or changed its refusal.');
+    }
+    await native.stop_child(reference, () => {});
     native.retire(reference);
     errors.push(await refusal(() => native.authenticate(reference.child_id, child.capability)));
   }
@@ -196,7 +211,7 @@ try {
     child_id: 'failed-child',
     conversation_id: failed.resolved_start.conversation_id,
   };
-  errors.push(await refusal(() => native.start(reference, failed)));
+  errors.push(await refusal(() => native.start(reference, failed, () => {})));
   if (native.get(reference.child_id) !== null)
     throw new Error('Failed native start remained addressable.');
   const missing = {
@@ -207,7 +222,7 @@ try {
     },
   };
   const missing_reference = { ...reference, child_id: 'missing-workspace' };
-  errors.push(await refusal(() => native.start(missing_reference, missing)));
+  errors.push(await refusal(() => native.start(missing_reference, missing, () => {})));
   if (native.get(missing_reference.child_id) !== null)
     throw new Error('Unavailable workspace retained a child.');
   const not_directory = {
@@ -218,7 +233,7 @@ try {
     },
   };
   const directory_reference = { ...reference, child_id: 'not-directory-workspace' };
-  errors.push(await refusal(() => native.start(directory_reference, not_directory)));
+  errors.push(await refusal(() => native.start(directory_reference, not_directory, () => {})));
   if (native.get(directory_reference.child_id) !== null)
     throw new Error('Invalid directory traversal retained a child.');
 } finally {
@@ -244,7 +259,8 @@ const in_start = new Promise<void>((done) => {
   entered = done;
 });
 let actual = false,
-  factory_calls = 0;
+  factory_calls = 0,
+  invocations = 0;
 const blocked = new MacNativeChildren({
   ...options,
   skills: {
@@ -264,6 +280,9 @@ const blocked = new MacNativeChildren({
 const blocked_start = blocked.start(
   { executor_incarnation: 'inc', child_id: 'blocked', conversation_id: 'conversation-codex' },
   decode_json(JSON.stringify(input.starts[0]), 'StartRun'),
+  () => {
+    invocations++;
+  },
 );
 void blocked_start.catch(() => {});
 await in_start;
@@ -278,6 +297,7 @@ const actual_waited = !actual;
 gate.resolve();
 await blocked_start.catch(() => {});
 await joined;
+if (invocations !== 0) throw new Error('Stopped skill preparation reached native invocation.');
 const lifecycle = {
   deadline_is_lifecycle_error:
     expired instanceof ShutdownDeadlineExceeded && expired instanceof ServerLifecycleError,
@@ -289,6 +309,7 @@ const lifecycle = {
       blocked.start(
         { executor_incarnation: 'inc', child_id: 'later', conversation_id: 'conversation-codex' },
         decode_json(JSON.stringify(input.starts[0]), 'StartRun'),
+        () => {},
       ),
     )) === 'executor is quiescing',
   no_faults: faults.length === 0,
@@ -367,6 +388,7 @@ const native_start = starting_native.start(
     conversation_id: 'conversation-codex',
   },
   decode_json(JSON.stringify(input.starts[0]), 'StartRun'),
+  () => {},
 );
 void native_start.catch(() => {});
 await native_entered_promise;

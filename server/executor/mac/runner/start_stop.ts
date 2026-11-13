@@ -73,7 +73,11 @@ export class MacNativeChildren implements MacNativeChildrenContract {
       });
     return child;
   }
-  start(reference: ChildReference, input: StartRun): Promise<MacRunningChild> {
+  start(
+    reference: ChildReference,
+    input: StartRun,
+    invoking: () => void,
+  ): Promise<MacRunningChild> {
     if (this.closed) return Promise.reject(new MacChildAdmissionRefused('executor is quiescing'));
     if (this.entries.has(reference.child_id))
       return Promise.reject(new BackendSpawnFailed('child identity already has a native start'));
@@ -97,12 +101,16 @@ export class MacNativeChildren implements MacNativeChildrenContract {
       native_stop: undefined,
     };
     this.entries.set(reference.child_id, entry);
-    const task = Promise.resolve().then(() => this.start_native(entry, input));
+    const task = Promise.resolve().then(() => this.start_native(entry, input, invoking));
     entry.start = task;
     void task.catch(() => {});
     return task;
   }
-  private async start_native(entry: Entry, input: StartRun): Promise<MacRunningChild> {
+  private async start_native(
+    entry: Entry,
+    input: StartRun,
+    invoking: () => void,
+  ): Promise<MacRunningChild> {
     const capability = randomBytes(32).toString('base64url');
     try {
       this.assert_start(entry);
@@ -146,6 +154,7 @@ export class MacNativeChildren implements MacNativeChildrenContract {
       entry.child = child;
       await child.lock.run(async () => {
         this.assert_start(entry);
+        invoking();
         await native.start(localized_start, {
           vendor_session_cursor: input.vendor_session_cursor ?? null,
         });
@@ -184,35 +193,38 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     const entry = this.entries.get(reference.child_id);
     if (entry && same_reference(entry.reference, reference)) entry.retiring = true;
   }
-  stop_child(reference: ChildReference): Promise<void> {
+  stop_child(reference: ChildReference, invoking: () => void): Promise<void> {
     const entry = this.entries.get(reference.child_id);
     if (!entry || !same_reference(entry.reference, reference)) return Promise.resolve();
     entry.retiring = true;
     if (!entry.stop) {
       const task = Promise.resolve().then(async () => {
         await entry.start?.catch(() => {});
-        await this.stop_native(entry);
+        await this.stop_native(entry, invoking);
       });
       entry.stop = task;
       void task.catch((error) => {
-        this.record_failure(error);
+        if (!(error instanceof MacChildAdmissionRefused)) this.record_failure(error);
         if (entry.stop === task) entry.stop = undefined;
       });
     }
     return entry.stop;
   }
-  private async stop_native(entry: Entry): Promise<void> {
+  private async stop_native(entry: Entry, invoking?: () => void): Promise<void> {
     if (entry.stopped) return;
-    if (entry.child) await entry.child.lock.run(() => this.stop_process(entry));
+    if (entry.child) await entry.child.lock.run(() => this.stop_process(entry, invoking));
     else entry.stopped = true;
   }
   /** Host shutdown closes the process before a provider call can release its lock. */
-  private stop_process(entry: Entry): Promise<void> {
+  private stop_process(entry: Entry, invoking?: () => void): Promise<void> {
     if (entry.stopped || entry.child === null) return Promise.resolve();
     if (!entry.native_stop) {
       const native = entry.child.native;
       const task = Promise.resolve()
-        .then(() => native.stop())
+        .then(() => {
+          invoking?.();
+          return native.stop();
+        })
         .then(() => {
           entry.stopped = true;
         });

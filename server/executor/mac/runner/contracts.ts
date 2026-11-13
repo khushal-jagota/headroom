@@ -40,13 +40,16 @@ export interface MacNativeChildrenOptions {
 }
 export interface MacNativeChildrenContract {
   readonly admission_stopped: boolean;
-  start(reference: ChildReference, input: StartRun): Promise<MacRunningChild>;
+  /** Under the child lock, invoking runs immediately before native.start.
+   * Throw MacChildAdmissionRefused to withdraw before native invocation. */
+  start(reference: ChildReference, input: StartRun, invoking: () => void): Promise<MacRunningChild>;
   authenticate(child_id: string | null, capability: string | null): MacRunningChild;
   get(child_id: string): MacRunningChild | null;
   is_retiring(child_id: string): boolean;
   /** Fence new native work first. The command owner joins its commands/source work separately. */
   begin_retirement(reference: ChildReference): void;
-  stop_child(reference: ChildReference): Promise<void>;
+  /** The same withdrawal callback runs under the child lock immediately before native.stop. */
+  stop_child(reference: ChildReference, invoking: () => void): Promise<void>;
   /** Called only after the runner's required source work and stop proof settle. */
   retire(reference: ChildReference): void;
   stop(options: StopOptions): Promise<void>;
