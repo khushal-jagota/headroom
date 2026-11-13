@@ -4,7 +4,7 @@ A Linux executor runs Workers for one home. It holds private credentials, worksp
 
 The archive supports the same Linux x86_64 hosts as the Linux home: Debian 13 and Ubuntu 24.04 with the declared processor features. Node 22 and a systemd user manager are prerequisites. Provider sign-ins belong to this Linux account.
 
-Build the archive on Linux with the existing native packaging tools and Python 3.12:
+Build the archive on Linux with the existing native packaging tools and upstream CPython 3.12, as CI uses through `actions/setup-python`. The existing packager does not support the patched interpreter from Debian or Ubuntu packages.
 
 ```sh
 python scripts/build_linux_executor.py --source /path/to/checkout --revision FULL_GIT_SHA --output /path/to/new-output
