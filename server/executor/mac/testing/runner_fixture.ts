@@ -91,9 +91,9 @@ export async function open_fixture_stores(
   on_failure: (error: Error) => void,
   options: StopOptions,
 ): Promise<FixtureStores> {
-  const owners: Cleanup[] = [];
+  let store: OutboxStore | undefined;
   try {
-    const store = await OutboxStore.open(
+    store = await OutboxStore.open(
       spool_root,
       {
         monotonic: () => 100,
@@ -102,7 +102,6 @@ export async function open_fixture_stores(
       options,
       on_failure,
     );
-    owners.push(store);
     const journal = await open_command_journal(
       store,
       'inc',
@@ -115,20 +114,12 @@ export async function open_fixture_stores(
     );
     return { store, journal };
   } catch (error) {
-    const carried = (error as { cleanup?: Cleanup } | null)?.cleanup;
-    if (carried && !owners.includes(carried)) owners.unshift(carried);
-    const cleanup: Cleanup = {
-      stop: (next) => close_fixture_owners(owners, next, true),
-      async settled() {
-        const joined = await Promise.allSettled(owners.map((owner) => owner.settled()));
-        const errors = joined.flatMap((result) =>
-          result.status === 'rejected' ? [result.reason] : [],
-        );
-        if (errors.length) throw new AggregateError(errors, 'Fixture startup cleanup failed.');
-      },
-    };
+    // The spool registers its journal before initialization and owns that join,
+    // including failed opens. Keep its original cleanup and lock capabilities.
+    const cleanup = store ?? (error as { cleanup?: Cleanup } | null)?.cleanup;
+    if (!cleanup) throw error;
     try {
-      await cleanup.stop(options);
+      await close_fixture_owners([cleanup], options, true);
     } catch (failure) {
       throw Object.assign(new AggregateError([error, failure], 'Fixture stores did not open.'), {
         cleanup,
@@ -139,7 +130,7 @@ export async function open_fixture_stores(
 }
 
 export function close_fixture_stores(stores: FixtureStores, options: StopOptions): Promise<void> {
-  return close_fixture_owners([stores.journal, stores.store], options);
+  return close_fixture_owners([stores.store], options);
 }
 
 export async function record_commands(
