@@ -687,6 +687,24 @@ def test_linux_download_failure_never_gates_home_or_mac_and_is_shared(
     assert first.check().prefetch is None and second.check().prefetch is None
     finish_linux_preparation(service)
     assert provider.downloads.count(rejected.artifact_id) == 1
+    # Even with a matching receipt, an incomplete gzip stream is permanently invalid bytes.
+    published = provider.publish_linux("e" * 40)
+    assert published.linux_executor is not None
+    truncated = provider.linux_archives[published.linux_executor.artifact_id][:16]
+    provider.linux_archives[published.linux_executor.artifact_id] = truncated
+    rejected = replace(
+        published.linux_executor,
+        archive_sha256=hashlib.sha256(truncated).hexdigest(), archive_size=len(truncated),
+    )
+    published = replace(published, linux_executor=rejected)
+    write(service, attempt(published, "installing"))
+    first.check()
+    finish_linux_preparation(service)
+    assert "EOFError" in caplog.text
+    owner._last_preparation = None
+    assert first.check().prefetch is None and second.check().prefetch is None
+    finish_linux_preparation(service)
+    assert provider.downloads.count(rejected.artifact_id) == 1
     published = provider.publish_linux("d" * 40)
     write(service, attempt(published, "installing"))
     first.check()

@@ -363,7 +363,7 @@ class MacUpdateService:
                             output.flush()
                             os.fsync(output.fileno())
                     self._validate_archive(candidate, release)
-                except (ValueError, tarfile.TarError, zipfile.BadZipFile):
+                except (ValueError, EOFError, tarfile.TarError, zipfile.BadZipFile):
                     if self.platform == "linux":
                         self._rejected_archive_digest = mac.archive_sha256
                     raise
