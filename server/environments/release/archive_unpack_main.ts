@@ -7,6 +7,7 @@ import {
 import type { UnpackRequest } from './archive_unpack.ts';
 let purpose: unknown;
 try {
+  const inherited_umask = process.umask();
   process.umask(0o077);
   const request: unknown = JSON.parse(process.argv[2] ?? '');
   purpose =
@@ -25,15 +26,21 @@ try {
         typeof request.archive_sha256 === 'string') ||
       ('destination' in request &&
         typeof request.destination === 'string' &&
-        request.purpose === 'application' &&
-        'archive_sha256' in request &&
-        typeof request.archive_sha256 === 'string' &&
-        'expected_sha' in request &&
-        typeof request.expected_sha === 'string')
+        (request.purpose === 'source-export' ||
+          (request.purpose === 'application' &&
+            'archive_sha256' in request &&
+            typeof request.archive_sha256 === 'string' &&
+            'expected_sha' in request &&
+            typeof request.expected_sha === 'string')))
     )
   )
     throw new Error('invalid unpack request');
-  await unpack_archive_child(request as UnpackRequest, process.stdin, process.stdout);
+  await unpack_archive_child(
+    request as UnpackRequest,
+    process.stdin,
+    process.stdout,
+    inherited_umask,
+  );
 } catch (error) {
   process.exitCode = 1;
   try {
