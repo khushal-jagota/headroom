@@ -1322,6 +1322,7 @@ class SqliteProcessConversationSystem:
                     state.local_child_retirement_proven = settlement == "retired"
                     state.local_preparation_cancelled = settlement == "undelivered"
                     state.child_is_quarantined = False
+                    self._settle_in_background(state, self._drain_held_prompts(state))
                     token = self._store.settled_recorded_turn(local_id)
                     if token is not None:
                         await run_on_worker_thread(
@@ -1347,6 +1348,7 @@ class SqliteProcessConversationSystem:
                         return CleanupResult(False, "The retained Worker cleanup is not proven")
                 state.local_child_retirement_proven = True
                 state.child_is_quarantined = False
+                self._settle_in_background(state, self._drain_held_prompts(state))
         return CleanupResult(True, "Recorded Worker cleanup is complete")
 
     async def kill(self, conversation_id: str) -> None:
@@ -1377,6 +1379,7 @@ class SqliteProcessConversationSystem:
         if state is None:
             return
         state.being_killed = True
+        kill_succeeded = False
         try:
             await self._kill_owned(state)
             if conversation_id in self._store.blocked_local_conversations:
@@ -1422,6 +1425,7 @@ class SqliteProcessConversationSystem:
                         ErrorCode.retry_later,
                         "The old Worker is not proven ended. Recheck Worker cleanup.",
                     )
+            kill_succeeded = True
         finally:
             try:
                 # A task the killed child reported on its way out is dropped too. Shutdown
@@ -1430,8 +1434,15 @@ class SqliteProcessConversationSystem:
                     await self._persist(
                         state, partial(self._store.take_background_tasks, conversation_id)
                     )
+            except BaseException:
+                kill_succeeded = False
+                raise
             finally:
                 state.being_killed = False
+                # Refusal also releases this fence. Preserve its error while a
+                # settlement checks whether the remaining fences permit delivery.
+                if not kill_succeeded:
+                    self._settle_in_background(state, self._drain_held_prompts(state))
         # A new message can arrive while the old child stops. Only its proven
         # retirement permits that message to start a successor child.
         await self._drain_held_prompts(state)
