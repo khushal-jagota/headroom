@@ -19,6 +19,7 @@
  */
 // @effect-diagnostics nodeBuiltinImport:off
 import { path_is_within } from '../../core/path_containment.ts';
+import { is_record } from '../../core/records.ts';
 
 import type { UsageProviderKind } from './contracts.ts';
 
@@ -147,13 +148,12 @@ function isRecordArray(value: unknown): value is readonly unknown[] {
  */
 export function decodeScanCache(document: unknown): ScanCache {
   const cache: ScanCache = new Map();
-  if (typeof document !== 'object' || document === null || Array.isArray(document)) return cache;
+  if (!is_record(document)) return cache;
 
   const root = document as Partial<SerializedCache>;
   if (root.version !== USAGE_SCAN_CACHE_VERSION) return cache;
   if (!isRecordArray(root.models) || !isRecordArray(root.sessions)) return cache;
-  if (typeof root.files !== 'object' || root.files === null || Array.isArray(root.files))
-    return cache;
+  if (!is_record(root.files)) return cache;
 
   // The intern tables must be all strings: a numeric entry would pass the
   // undefined guard below, land in a record's model, and crash the aggregate
@@ -220,7 +220,7 @@ export function decodeScanCache(document: unknown): ScanCache {
   };
 
   for (const [path, raw] of Object.entries(root.files)) {
-    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue;
+    if (!is_record(raw)) continue;
     const entry = raw as Partial<SerializedFile>;
     if (typeof entry.s !== 'number' || typeof entry.m !== 'number') continue;
     if (entry.p !== 'claude' && entry.p !== 'codex' && entry.p !== 'grok') continue;
@@ -276,7 +276,7 @@ export function decodeScanCache(document: unknown): ScanCache {
  */
 function decodeCodexState(value: unknown): CodexScanState | null | undefined {
   if (value === null) return null;
-  if (typeof value !== 'object' || Array.isArray(value)) return undefined;
+  if (!is_record(value)) return undefined;
   const state = value as Partial<CodexScanState>;
   if (
     typeof state.model !== 'string' ||

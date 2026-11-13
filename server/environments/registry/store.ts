@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { is_record } from '../../core/records.ts';
 import { flock } from '../../core/locks/flock.ts';
 import {
   acquire_server_lifecycle_lease,
@@ -136,7 +137,7 @@ function integer(value: unknown): number {
 }
 function port_from_payload(payload: Record<string, unknown>): EnvironmentPortPolicy {
   const raw = payload.runtime_port;
-  if (raw !== null && typeof raw === 'object' && !Array.isArray(raw)) {
+  if (is_record(raw)) {
     const port = raw as Record<string, unknown>;
     if (port.kind === 'fixed') return fixed_port(integer(port.port));
     if (port.kind === 'dynamic') return dynamic_port(integer(port.bind_attempts));
@@ -154,7 +155,7 @@ export async function read_manifest(
     const raw: unknown = JSON.parse(
       new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await readFile(path)),
     );
-    if (raw === null || typeof raw !== 'object' || Array.isArray(raw))
+    if (!is_record(raw))
       throw new TypeError('manifest object required');
     const payload = raw as Record<string, unknown>;
     const legacy = ['expected_linux_account', 'hermes_home', 'runtime_user_home'].filter((key) =>

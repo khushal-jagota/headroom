@@ -11,6 +11,7 @@
  */
 import type { UsageProviderKind, UsageTokenTotals } from './contracts.ts';
 import { parseIsoDatetime } from '../../core/clock.ts';
+import { is_record } from '../../core/records.ts';
 import {
   numeric_value,
   parse_numeric_json,
@@ -122,17 +123,17 @@ export function parseClaudeLine(line: string): UsageRecord | null {
   } catch {
     return null;
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+  if (!is_record(parsed)) return null;
 
   const record = parsed as Record<string, unknown>;
   if (record['type'] !== 'assistant') return null;
 
   const message = record['message'];
-  if (typeof message !== 'object' || message === null || Array.isArray(message)) return null;
+  if (!is_record(message)) return null;
   const messageRecord = message as Record<string, unknown>;
 
   const usage = messageRecord['usage'];
-  if (typeof usage !== 'object' || usage === null || Array.isArray(usage)) return null;
+  if (!is_record(usage)) return null;
   const usageRecord = usage as Record<string, unknown>;
 
   const timestampMs = parseTimestampMs(record['timestamp']);
@@ -212,11 +213,11 @@ export function initialCodexScanState(): CodexScanState {
 function isForkedSessionMeta(payload: Record<string, unknown>): boolean {
   if (typeof payload['forked_from_id'] === 'string') return true;
   const source = payload['source'];
-  if (typeof source !== 'object' || source === null || Array.isArray(source)) return false;
+  if (!is_record(source)) return false;
   const subagent = (source as Record<string, unknown>)['subagent'];
-  if (typeof subagent !== 'object' || subagent === null || Array.isArray(subagent)) return false;
+  if (!is_record(subagent)) return false;
   const spawn = (subagent as Record<string, unknown>)['thread_spawn'];
-  if (typeof spawn !== 'object' || spawn === null || Array.isArray(spawn)) return false;
+  if (!is_record(spawn)) return false;
   return typeof (spawn as Record<string, unknown>)['parent_thread_id'] === 'string';
 }
 
@@ -235,11 +236,11 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
   } catch {
     return null;
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+  if (!is_record(parsed)) return null;
 
   const record = parsed as Record<string, unknown>;
   const payload = record['payload'];
-  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return null;
+  if (!is_record(payload)) return null;
   const payloadRecord = payload as Record<string, unknown>;
   const payloadType = payloadRecord['type'];
 
@@ -267,9 +268,9 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
   if (payloadType !== 'token_count') return null;
 
   const info = payloadRecord['info'];
-  if (typeof info !== 'object' || info === null || Array.isArray(info)) return null;
+  if (!is_record(info)) return null;
   const last = (info as Record<string, unknown>)['last_token_usage'];
-  if (typeof last !== 'object' || last === null || Array.isArray(last)) return null;
+  if (!is_record(last)) return null;
   const lastRecord = last as Record<string, unknown>;
 
   // Only an event that is otherwise eligible may consume the duplicate
@@ -342,7 +343,7 @@ interface GrokUsageTotals {
 }
 
 function readGrokUsageTotals(value: unknown): GrokUsageTotals | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  if (!is_record(value)) return null;
   const record = value as Record<string, unknown>;
   return {
     inputTokens: int(record['inputTokens']),
@@ -391,20 +392,20 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
   } catch {
     return [];
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return [];
+  if (!is_record(parsed)) return [];
 
   const record = parsed as Record<string, unknown>;
   const params = record['params'];
-  if (typeof params !== 'object' || params === null || Array.isArray(params)) return [];
+  if (!is_record(params)) return [];
   const paramsRecord = params as Record<string, unknown>;
 
   const update = paramsRecord['update'];
-  if (typeof update !== 'object' || update === null || Array.isArray(update)) return [];
+  if (!is_record(update)) return [];
   const updateRecord = update as Record<string, unknown>;
   if (updateRecord['sessionUpdate'] !== 'turn_completed') return [];
 
   const usage = updateRecord['usage'];
-  if (typeof usage !== 'object' || usage === null || Array.isArray(usage)) return [];
+  if (!is_record(usage)) return [];
   const usageRecord = usage as Record<string, unknown>;
 
   const sessionId = typeof paramsRecord['sessionId'] === 'string' ? paramsRecord['sessionId'] : '';
@@ -413,7 +414,7 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
   // Prefer the high-resolution agent clock; fall back to the outer unix seconds.
   const meta = paramsRecord['_meta'];
   let timestampMs: number | null = null;
-  if (typeof meta === 'object' && meta !== null && !Array.isArray(meta)) {
+  if (is_record(meta)) {
     const agentTimestampMs = (meta as Record<string, unknown>)['agentTimestampMs'];
     if (typeof agentTimestampMs === 'number' && Number.isFinite(agentTimestampMs)) {
       timestampMs = agentTimestampMs;
@@ -432,7 +433,7 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
 
   const modelUsage = usageRecord['modelUsage'];
   const modelEntries: Array<{ model: string; totals: GrokUsageTotals }> = [];
-  if (typeof modelUsage === 'object' && modelUsage !== null && !Array.isArray(modelUsage)) {
+  if (is_record(modelUsage)) {
     for (const [model, raw] of Object.entries(modelUsage as Record<string, unknown>)) {
       if (model.length === 0) continue;
       const totals = readGrokUsageTotals(raw);

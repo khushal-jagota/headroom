@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { is_record } from '../core/records.ts';
 import type { ReadSql } from '../core/database/contracts.ts';
 import type { CommandNode, StaleReference } from './contracts.ts';
 import { PACKAGED_SKILLS_ROOT, read_all_skill_sources } from './data.ts';
@@ -57,7 +58,7 @@ export function ticket_create_examples(text: string): Record<string, unknown>[] 
     if (!command || body.at(-1) !== command[2] || body.slice(1, -1).includes(command[2])) continue;
     try {
       const data: unknown = JSON.parse(body.slice(1, -1).join('\n'));
-      if (data && typeof data === 'object' && !Array.isArray(data))
+      if (is_record(data))
         result.push(data as Record<string, unknown>);
     } catch {
       /* Nonliteral examples do not declare a contract. */
@@ -66,7 +67,7 @@ export function ticket_create_examples(text: string): Record<string, unknown>[] 
   return result;
 }
 function validPrincipal(value: unknown, manager: boolean): boolean {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (!is_record(value)) return false;
   const p = value as Record<string, unknown>;
   if (
     Object.keys(p).sort().join(',') !== 'id,kind' ||

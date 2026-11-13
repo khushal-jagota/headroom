@@ -1,4 +1,5 @@
 import { realpathSync, rmSync } from 'node:fs';
+import { is_record } from '../core/records.ts';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { Database, ReadSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
@@ -112,9 +113,7 @@ export function apply_skills(
   const names = new Set<string>();
   const entries = raw.skills.map((entry: unknown) => {
     if (
-      !entry ||
-      typeof entry !== 'object' ||
-      Array.isArray(entry) ||
+      !is_record(entry) ||
       Object.keys(entry).sort().join(',') !== 'name,source_text'
     )
       throw new PlannerError('validation', 'skill application must be an exact object');
