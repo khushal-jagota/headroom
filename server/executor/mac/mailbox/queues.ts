@@ -9,7 +9,6 @@ import { OUTBOX_RETRY_INITIAL_SECONDS, OUTBOX_RETRY_MAX_SECONDS } from '../confi
 import { mailbox_failure as failure_name } from './diagnostics.ts';
 import type { CanonicalCatalogResult, QueueDependencies } from './contracts.ts';
 import { MailboxLifetime, MailboxCleanupFailure } from './lifetime.ts';
-import { is_shutdown_business_cancellation } from '../../../conversation/shutdown.ts';
 import { MailboxRunCancelled } from './contracts.ts';
 function storage_error(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
@@ -140,7 +139,13 @@ export class MacCommandQueues {
         this.dependencies.result_finished();
         return;
       } catch (error) {
-        if (this.invocation.signal.aborted && is_shutdown_business_cancellation(error)) return;
+        if (this.invocation.signal.aborted) {
+          console.debug(
+            `Mac command canceled during stop command=${command.command_id}:`,
+            failure_name(error),
+          );
+          return;
+        }
         if (!this.lifetime.alive) throw error;
         this.dependencies.journal.assert_healthy();
         console.warn(

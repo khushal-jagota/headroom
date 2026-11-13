@@ -1,5 +1,6 @@
 /** Private control and bounded chunk transport. No executor message shapes are cloned. */
 import { JsonNumber } from '../../../core/http/numeric_json.ts';
+import type { JournalReportFeedback } from './journal_contracts.ts';
 export interface JournalWorkerData {
   root: string;
   incarnation: string;
@@ -9,7 +10,7 @@ export interface JournalWorkerData {
 }
 export type JournalAction =
   | { operation: 'open' | 'poll_cursor' | 'unpublished' | 'shrink_to_tombstones' | 'select_report' }
-  | { operation: 'report_feedback'; selection: number; settled_ids: readonly string[] | null }
+  | { operation: 'report_feedback'; selection: number; settled_ids: JournalReportFeedback }
   | { operation: 'lower_poll_cursor'; high: bigint; cursor_at_lease: bigint }
   | {
       operation: 'record_poll_reply';
