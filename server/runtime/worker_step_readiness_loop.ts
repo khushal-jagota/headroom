@@ -5,7 +5,7 @@ import {
   observe_conversation_operation,
 } from './abort.ts';
 import { observe_shutdown } from '../lifecycle/deadline.ts';
-import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
+import type { StopOptions } from '../lifecycle/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { Database } from '../core/database/contracts.ts';
 import {
@@ -418,11 +418,11 @@ export class WorkerStepReadinessLoop {
   settled(): Promise<void> {
     return this.shutdown_settlement ?? Promise.all([this.drain(), ...this.actual]).then(() => {});
   }
-  stop(options: { deadline?: number } = {}): Promise<void> {
+  stop(options: StopOptions): Promise<void> {
     if (this.closing) return this.closing;
     this.stop_requested = true;
     clearTimeout(this.timer);
-    const deadline = options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
+    const deadline = options.deadline;
     this.shutdown_settlement = Promise.allSettled([this.drain(), ...this.actual]).then(
       (results) => {
         const failure = results.find((result) => result.status === 'rejected');

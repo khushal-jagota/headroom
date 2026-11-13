@@ -1,5 +1,6 @@
 /** A timed-out lifecycle observer must not release the actual resource join. */
 import { mkdirSync } from 'node:fs';
+import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 import { setImmediate } from 'node:timers/promises';
 import { Worker } from 'node:worker_threads';
 import { expect, test, vi } from 'vitest';
@@ -149,6 +150,6 @@ test('four service deadlines reject without completing their actual settlement',
     ]);
     await Promise.allSettled([usage.settled(), backend.settled()]);
     termination.mockRestore();
-    await f.core.shutdown();
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }
 });

@@ -36,9 +36,7 @@ def _python(spec: dict[str, Any]) -> dict[str, Any]:
             except client.CodexLoginIsDuplicated as failure:
                 environment = None
                 error = str(failure)
-            cases.append(
-                {"name": item["name"], "environment": environment, "error": error}
-            )
+            cases.append({"name": item["name"], "environment": environment, "error": error})
         launches = []
         for item in spec["launches"]:
             calls: list[dict[str, Any]] = []
@@ -76,7 +74,7 @@ def _python(spec: dict[str, Any]) -> dict[str, Any]:
                 directory = Path(_item["unit_directory"])
                 temporary = str(directory / "t")
                 return WorkerUnit(
-                    name="panels-unit17-synthetic.service",
+                    name="panels-worker-" + "1" * 32 + ".service",
                     directory=directory,
                     environment={
                         **environment,
@@ -126,9 +124,7 @@ def _python(spec: dict[str, Any]) -> dict[str, Any]:
                     )
                 except client.CodexChildWouldNotStart as error:
                     assert str(error) == "synthetic stop before spawn"
-            launches.append(
-                {"name": item["name"], "calls": calls, "unit_stops": unit_stops}
-            )
+            launches.append({"name": item["name"], "calls": calls, "unit_stops": unit_stops})
         return {
             "cases": cases,
             "launches": launches,
@@ -140,9 +136,7 @@ def _python(spec: dict[str, Any]) -> dict[str, Any]:
         return asyncio.run(run())
 
 
-def test_unit17_startup_environment(
-    tmp_path: Path, request: pytest.FixtureRequest
-) -> None:
+def test_unit17_startup_environment(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """Protect account inheritance, copied-token refusal, and exact native argv."""
     started = time.perf_counter()
     home = tmp_path / "home"
@@ -284,11 +278,7 @@ def test_unit17_startup_environment(
         )
     assert script_bytes_equal
     assert actual["cases"] == expected["cases"]
-    assert (
-        actual["provider_processes_started"]
-        == expected["provider_processes_started"]
-        == 0
-    )
+    assert actual["provider_processes_started"] == expected["provider_processes_started"] == 0
     assert actual["service_manager_calls"] == expected["service_manager_calls"] == 0
     for difference in environment_differences:
         assert difference["variables"] == (
@@ -310,9 +300,5 @@ def test_unit17_startup_environment(
             python_launch["calls"], typescript_launch["calls"], strict=True
         ):
             assert {
-                key: value
-                for key, value in typescript_call.items()
-                if key != "environment"
-            } == {
-                key: value for key, value in python_call.items() if key != "environment"
-            }
+                key: value for key, value in typescript_call.items() if key != "environment"
+            } == {key: value for key, value in python_call.items() if key != "environment"}

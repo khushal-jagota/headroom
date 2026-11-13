@@ -1,5 +1,4 @@
 /** Record before handoff. An interrupted committed handoff faults the whole host. */
-import * as protocol from '../../protocol.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import { is_shutdown_business_cancellation } from '../../../conversation/shutdown.ts';
 import {
@@ -8,7 +7,7 @@ import {
   LEASE_INTERVAL_SECONDS,
   OUTBOX_RETRY_INITIAL_SECONDS,
 } from '../configuration.ts';
-import { JOURNAL_INPUT_BYTES } from '../storage/journal_limits.ts';
+import { JOURNAL_RESULT_BYTES } from '../storage/journal_limits.ts';
 import type { CanonicalReader } from '../storage/journal_contracts.ts';
 import type { PollDependencies } from './contracts.ts';
 import type { MacCommandQueues } from './queues.ts';
@@ -19,7 +18,7 @@ export async function read_canonical_body(reader: CanonicalReader): Promise<Uint
     if (
       !Number.isSafeInteger(reader.byte_count) ||
       reader.byte_count < 0 ||
-      reader.byte_count > JOURNAL_INPUT_BYTES
+      reader.byte_count > JOURNAL_RESULT_BYTES
     )
       throw new RangeError('Journal command exceeds the native byte limit.');
     const bytes = new Uint8Array(reader.byte_count);
@@ -78,18 +77,20 @@ export class MacPollLoop {
             this.lifetime.signal,
           );
         } catch (error) {
-          if (!this.lifetime.alive && is_shutdown_business_cancellation(error)) return;
+          if (!this.lifetime.alive) return;
           throw error;
         }
         if (!this.lifetime.alive) return;
-        const fresh = await journal.record_poll_reply(bytes, this.dependencies.incarnation, after);
+        const fresh = await journal.record_decoded_poll_reply(
+          bytes,
+          this.dependencies.incarnation,
+          after,
+        );
         let count = 0;
         try {
-          for await (const row of fresh) {
-            const command = protocol.decode_json(
-              await read_canonical_body(row.command),
-              'MailboxCommand',
-            );
+          if (!this.lifetime.alive) return;
+          for await (const command of fresh) {
+            if (!this.lifetime.alive) break;
             this.queues.submit(command);
             count++;
           }
@@ -99,7 +100,7 @@ export class MacPollLoop {
           await fresh.close();
         }
         delay = OUTBOX_RETRY_INITIAL_SECONDS;
-        if (count < fresh.command_count) {
+        if (this.lifetime.alive && count < fresh.command_count) {
           void this.queues.republish();
           this.dependencies.result_finished();
         }

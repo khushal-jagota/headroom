@@ -6,12 +6,22 @@ import type {
   ModelListRequest,
 } from '../../wire.generated.ts';
 import type { AsyncCommandJournal, CanonicalReader } from '../storage/journal_contracts.ts';
+import { DeliveryCancelled } from '../../../conversation/backends/contracts.ts';
+import type { StopOptions } from '../../../lifecycle/contracts.ts';
+export class MailboxRunCancelled extends DeliveryCancelled {
+  readonly stop_options: StopOptions;
+  constructor(options: StopOptions) {
+    super('Mac mailbox stopped.');
+    this.stop_options = options;
+  }
+}
 export interface MailboxRunner {
   readonly admission_stopped: boolean;
   /** Cancel only this waiter, never the runner's planned-replay gate. */
   planned_replay_finished(signal: AbortSignal): Promise<void>;
-  /** The runner shields and owns native work and idempotent durable settlement. */
-  run(command: ChildCommand): Promise<CommandOutcome>;
+  /** Abort stops owned native work and joins its actual custody, not only this waiter.
+   * MailboxRunCancelled supplies the host's original absolute shutdown deadline. */
+  run(command: ChildCommand, signal: AbortSignal): Promise<CommandOutcome>;
   publish_owed_outputs(command: CanonicalReader, result: CanonicalReader): Promise<void>;
 }
 export interface CanonicalCatalogResult {
