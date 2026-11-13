@@ -60,12 +60,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
   readonly runs: CatalogRunAuthority;
   readonly presence: Presence;
   readonly mailbox: Mailbox;
-  constructor(
-    database: Database,
-    runs: CatalogRunAuthority,
-    presence: Presence,
-    mailbox: Mailbox,
-  ) {
+  constructor(database: Database, runs: CatalogRunAuthority, presence: Presence, mailbox: Mailbox) {
     this.database = database;
     this.runs = runs;
     this.presence = presence;

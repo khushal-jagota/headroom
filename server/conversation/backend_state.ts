@@ -59,9 +59,10 @@ export class BackendStateStore {
     ticket_id: string | null,
   ): string | null {
     return this.database.read((sql) => {
-      const row = ticket_id === null ? undefined : sql.get<{ locale: TicketLocale }>(
-        'SELECT locale FROM tickets WHERE id=?', [ticket_id],
-      );
+      const row =
+        ticket_id === null
+          ? undefined
+          : sql.get<{ locale: TicketLocale }>('SELECT locale FROM tickets WHERE id=?', [ticket_id]);
       return model_refusal(sql, backend_key, model_id, row?.locale ?? 'vps');
     });
   }
@@ -129,18 +130,6 @@ export function disabled_models(
       .map((row) => row.model_id),
   );
 }
-export function require_enabled_model(
-  sql: ReadSql,
-  backend_key: ConversationBackendKey,
-  model_id: string,
-): void {
-  if (!model_is_enabled(sql, backend_key, model_id))
-    throw new PlannerError(
-      'validation',
-      `Model "${model_id}" is disabled. Choose an enabled model.`,
-      { employee_backend: backend_key, employee_launch_model: model_id },
-    );
-}
 /** Persist one machine's list and retire switch-offs only with complete lists everywhere. */
 export function save_machine_model_list(
   tx: TransactionSql,
@@ -161,12 +150,14 @@ export function save_machine_model_list(
     for (const model of listed) offered.add(model);
   }
   for (const row of tx.all<{ model_id: string }>(
-    'SELECT model_id FROM backend_model_enablement WHERE backend_key=?', [snapshot.backend_key],
+    'SELECT model_id FROM backend_model_enablement WHERE backend_key=?',
+    [snapshot.backend_key],
   )) {
-    if (!offered.has(row.model_id)) tx.run(
-      'DELETE FROM backend_model_enablement WHERE backend_key=? AND model_id=?',
-      [snapshot.backend_key, row.model_id],
-    );
+    if (!offered.has(row.model_id))
+      tx.run('DELETE FROM backend_model_enablement WHERE backend_key=? AND model_id=?', [
+        snapshot.backend_key,
+        row.model_id,
+      ]);
   }
 }
 export function offered_model_ids(
@@ -190,7 +181,7 @@ function is_offered(
 ): boolean {
   if (offered.includes(model_id)) return true;
   if (backend_key !== 'claude') return false;
-  const base_of = (model: string) => model.endsWith('[1m]') ? model.slice(0, -4) : model;
+  const base_of = (model: string) => (model.endsWith('[1m]') ? model.slice(0, -4) : model);
   const base = base_of(model_id);
   const listed_bases = new Set(offered.map(base_of));
   if (listed_bases.has(base)) return true;
@@ -219,9 +210,11 @@ export function require_usable_model(
   machine: TicketLocale,
 ): void {
   const refusal = model_refusal(sql, backend_key, model_id, machine);
-  if (refusal !== null) throw new PlannerError('validation', refusal, {
-    employee_backend: backend_key, employee_launch_model: model_id,
-  });
+  if (refusal !== null)
+    throw new PlannerError('validation', refusal, {
+      employee_backend: backend_key,
+      employee_launch_model: model_id,
+    });
 }
 export function write_model_enablement(
   tx: TransactionSql,

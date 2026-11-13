@@ -90,7 +90,12 @@ await startServer({
                 clock.nowUnix(),
               ),
           ),
-          delivery_model_refusal: (backend_key, model_id, ticket_id) => new BackendStateStore(database).delivery_model_refusal(backend_key, model_id, ticket_id),
+          delivery_model_refusal: (backend_key, model_id, ticket_id) =>
+            new BackendStateStore(database).delivery_model_refusal(
+              backend_key,
+              model_id,
+              ticket_id,
+            ),
         });
       },
   testAreas: (context): readonly Area[] => [

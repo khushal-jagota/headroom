@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-import os
 import json
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import asdict, fields, is_dataclass
@@ -223,11 +223,14 @@ def _scripted_routes(
 
     @app.get("/api/test/signals/{conversation_id}/live-status-before-adoption")
     async def live_status(
-        conversation_id: str, include_runtime_epoch: str | None = None,
+        conversation_id: str,
+        include_runtime_epoch: str | None = None,
     ) -> dict[str, Any]:
         return await live_status_before_adoption(
-            app.state.conversation.system, conversation_id,
-            include_runtime_epoch=include_runtime_epoch == "true", db_path=db_path,
+            app.state.conversation.system,
+            conversation_id,
+            include_runtime_epoch=include_runtime_epoch == "true",
+            db_path=db_path,
         )
 
     @app.post("/api/test/signals/{conversation_id}/ticket-choice-failure")
@@ -268,11 +271,18 @@ def _scripted_routes(
         with connect(db_path) as conn:
             conn.execute(
                 "INSERT INTO machine_backend_snapshots VALUES (?,?,?) "
-                "ON CONFLICT(machine_id,backend_key) DO UPDATE SET snapshot_json=excluded.snapshot_json",
-                (body["machine"], body["backend"], json.dumps({
-                    "models_complete": body.get("complete", True),
-                    "available_models": [{"model_id": model} for model in body["models"]],
-                })),
+                "ON CONFLICT(machine_id,backend_key) DO UPDATE "
+                "SET snapshot_json=excluded.snapshot_json",
+                (
+                    body["machine"],
+                    body["backend"],
+                    json.dumps(
+                        {
+                            "models_complete": body.get("complete", True),
+                            "available_models": [{"model_id": model} for model in body["models"]],
+                        }
+                    ),
+                ),
             )
         return {"configured": True}
 
@@ -330,12 +340,12 @@ def _scripted_routes(
 
     @app.post("/api/test/signals/{conversation_id}/finish")
     async def finish(
-        conversation_id: str, body: dict[str, Any] | None = None,
+        conversation_id: str,
+        body: dict[str, Any] | None = None,
     ) -> dict[str, bool]:
-        if (
-            (body or {}).get("only_if_running") is True
-            and not await app.state.conversation.system.is_running(conversation_id)
-        ):
+        if (body or {}).get(
+            "only_if_running"
+        ) is True and not await app.state.conversation.system.is_running(conversation_id):
             return {"ok": True}
         child = children[conversation_id]
         await child.finish()
@@ -435,7 +445,8 @@ def _scripted_routes(
 
     @app.get("/api/test/signals/{conversation_id}/inspect")
     async def inspect(
-        conversation_id: str, include_workspace_activity: str | None = None,
+        conversation_id: str,
+        include_workspace_activity: str | None = None,
     ) -> dict[str, Any]:
         await settled()
         children = await registry.inspect(conversation_id)

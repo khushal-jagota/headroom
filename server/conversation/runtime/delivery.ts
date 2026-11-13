@@ -134,9 +134,14 @@ export async function deliver_prompt(
 ): Promise<DeliveryAttempt> {
   const first = batch[0];
   const requested = first.model_change ?? state.record.model;
-  const refusal = requested === null ? null : host.options.delivery_model_refusal(
-    state.record.backend_key, requested, ticket_id_of(state.record.resolved_start()),
-  );
+  const refusal =
+    requested === null
+      ? null
+      : host.options.delivery_model_refusal(
+          state.record.backend_key,
+          requested,
+          ticket_id_of(state.record.resolved_start()),
+        );
   if (refusal !== null) {
     return result({
       refusal_reason: R.model_resolution_failed,

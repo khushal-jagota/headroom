@@ -138,7 +138,8 @@ export async function run_part2_parity(spec: Spec): Promise<unknown> {
   const frames: unknown[] = [];
   const core = new SqliteProcessConversationSystem({
     store: new ConversationStore(database, { integer_now: () => now }),
-    delivery_model_refusal: (backend, model, ticket_id) => new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),
+    delivery_model_refusal: (backend, model, ticket_id) =>
+      new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),
     execution_refusal: (id) =>
       database.read((sql) =>
         conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),

@@ -192,7 +192,8 @@ async function owned_server(installer?: Partial<InstallerOperations>) {
       createConversationCore(value) {
         return new SqliteProcessConversationSystem({
           store: value.record.store,
-          delivery_model_refusal: (backend, model, ticket_id) => new BackendStateStore(value.database).delivery_model_refusal(backend, model, ticket_id),
+          delivery_model_refusal: (backend, model, ticket_id) =>
+            new BackendStateStore(value.database).delivery_model_refusal(backend, model, ticket_id),
           execution_refusal: (id) =>
             value.database.read((sql) =>
               conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),

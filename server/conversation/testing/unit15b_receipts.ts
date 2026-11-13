@@ -24,7 +24,8 @@ export async function run_receipts(spec: { database: string }): Promise<unknown>
   const files = new ConversationMessageFiles(spec.database);
   const core = new SqliteProcessConversationSystem({
     store,
-    delivery_model_refusal: (backend, model, ticket_id) => new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),
+    delivery_model_refusal: (backend, model, ticket_id) =>
+      new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),
     execution_refusal: (id) =>
       database.read((sql) =>
         conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),

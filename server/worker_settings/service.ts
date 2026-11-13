@@ -36,7 +36,12 @@ const fail = (message: string, detail: Record<string, unknown> = {}): never => {
 };
 export function resolve_launch_defaults(sql: ReadSql, raw: unknown): ManagedWorkerLaunchDefaults {
   const defaults = validate_launch_defaults(raw);
-  require_usable_model(sql, require_conversation_backend_key(defaults.employee_backend), defaults.employee_launch_model, 'vps');
+  require_usable_model(
+    sql,
+    require_conversation_backend_key(defaults.employee_backend),
+    defaults.employee_launch_model,
+    'vps',
+  );
   return defaults;
 }
 export function launch_defaults(profile: WorkerProfile): ManagedWorkerLaunchDefaults {

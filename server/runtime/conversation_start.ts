@@ -261,7 +261,9 @@ export function worker_resolve(
       '\n[/Ticket workflow guidance]',
   });
   if (ticket.employee_launch_model === null || overrides.model != null)
-    database.read((sql) => require_usable_model(sql, values.backend_key, values.model, ticket.locale));
+    database.read((sql) =>
+      require_usable_model(sql, values.backend_key, values.model, ticket.locale),
+    );
   return values;
 }
 export function agent_resolve_from_sql(
@@ -541,9 +543,11 @@ export async function send_to_ticket_conversation(
       throw error;
     }
     if (fate instanceof PromptDeliveryRefused) {
-      if (options.retain_definite_start_refusal &&
+      if (
+        options.retain_definite_start_refusal &&
         (fate.refusal_reason === 'backend_did_not_start' ||
-          fate.refusal_reason === 'model_resolution_failed'))
+          fate.refusal_reason === 'model_resolution_failed')
+      )
         return { conversation_id: making, fate };
       await let_go_ticket(system, database, ticket_id, making, options.now);
       return { conversation_id: null, fate };

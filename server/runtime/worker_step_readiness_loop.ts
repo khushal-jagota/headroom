@@ -183,9 +183,11 @@ async function _admitted_start_ready_worker_step(
       console.error(
         `worker step send was refused (ticket=${ticket_id} conversation=${conversation_id} reason=${fate.refusal_reason})`,
       );
-      if (!paired_opener &&
+      if (
+        !paired_opener &&
         (fate.refusal_reason === 'backend_did_not_start' ||
-          fate.refusal_reason === 'model_resolution_failed')) {
+          fate.refusal_reason === 'model_resolution_failed')
+      ) {
         database.write((sql) =>
           tickets_data.mark_worker_step_claim_errored(sql, ticket_id, {
             expected_claim: taken_claim,

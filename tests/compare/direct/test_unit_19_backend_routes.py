@@ -33,7 +33,10 @@ from tests.support.synthetic_homes import (
 
 from planner.conversation import api
 from planner.conversation.backend_state import (
-    BackendStateStore, model_refusal, offered_model_ids, save_machine_model_list,
+    BackendStateStore,
+    model_refusal,
+    offered_model_ids,
+    save_machine_model_list,
 )
 from planner.conversation.backend_usage import (
     BackendUsageOutcome,
@@ -58,12 +61,12 @@ from planner.conversation.snapshot import (
     BackendUpdateAdvisory,
     CommandOutcome,
 )
-from planner.execution_identity import TicketLocale
 from planner.core.clock import TestClock as FakeClock
 from planner.core.config import load_config
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.execution_identity import TicketLocale
 from planner.managers.data import create_manager
 from planner.projects.data import create_project
 from planner.tickets.data import create_ticket
@@ -75,26 +78,43 @@ NOW = "2026-11-12T12:00:00Z"
 def model_admission_evidence(db_path: Path, cards: list[dict[str, Any]]) -> dict[str, Any]:
     # One retained sequence proves cross-machine retirement and exact alias admission.
     with closing(connect(str(db_path))) as conn:
-        initial = {key.value: list(offered_model_ids(conn, TicketLocale.vps, key) or ()) for key in Backend}
+        initial = {
+            key.value: list(offered_model_ids(conn, TicketLocale.vps, key) or ()) for key in Backend
+        }
         for model in ("retired-model", "mac-only"):
             conn.execute("INSERT INTO backend_model_enablement VALUES ('codex',?,0)", (model,))
         codex = card(next(value for value in cards if value["backend_key"] == "codex"))
         mac = replace(codex, available_models=(BackendModel("mac-only"),), models_complete=False)
         save_machine_model_list(conn, TicketLocale.macos, mac)
         save_machine_model_list(conn, TicketLocale.vps, codex)
-        before = [row[0] for row in conn.execute(
-            "SELECT model_id FROM backend_model_enablement WHERE model_id IN ('retired-model','mac-only') ORDER BY model_id"
-        )]
+        before = [
+            row[0]
+            for row in conn.execute(
+                "SELECT model_id FROM backend_model_enablement "
+                "WHERE model_id IN ('retired-model','mac-only') ORDER BY model_id"
+            )
+        ]
         save_machine_model_list(conn, TicketLocale.macos, replace(mac, models_complete=True))
-        after = [row[0] for row in conn.execute(
-            "SELECT model_id FROM backend_model_enablement WHERE model_id IN ('retired-model','mac-only') ORDER BY model_id"
-        )]
-        aliases = {model: model_refusal(conn, Backend.claude, model, TicketLocale.vps)
-                   for model in ("opus", "opus[1m]", "claude-opus-5[1m]", "sonnet")}
+        after = [
+            row[0]
+            for row in conn.execute(
+                "SELECT model_id FROM backend_model_enablement "
+                "WHERE model_id IN ('retired-model','mac-only') ORDER BY model_id"
+            )
+        ]
+        aliases = {
+            model: model_refusal(conn, Backend.claude, model, TicketLocale.vps)
+            for model in ("opus", "opus[1m]", "claude-opus-5[1m]", "sonnet")
+        }
         mac_refusal = model_refusal(conn, Backend.codex, "gpt-6.1-sol", TicketLocale.macos)
         conn.commit()
-    return {"initial": initial, "before": before, "after": after, "aliases": aliases,
-            "mac_refusal": mac_refusal}
+    return {
+        "initial": initial,
+        "before": before,
+        "after": after,
+        "aliases": aliases,
+        "mac_refusal": mac_refusal,
+    }
 
 
 def fixture_cards() -> list[dict[str, Any]]:
@@ -133,9 +153,7 @@ def fixture_cards() -> list[dict[str, Any]]:
                         "resolved_model_id": model,
                     }
                 ],
-                "reasoning_effort_options": (
-                    [] if backend == "hermes" else ["medium", "high"]
-                ),
+                "reasoning_effort_options": ([] if backend == "hermes" else ["medium", "high"]),
                 "default_model_id": model,
                 "default_reasoning_effort": None if backend == "hermes" else "medium",
                 "update_advisory": (
@@ -159,9 +177,7 @@ def fixture_cards() -> list[dict[str, Any]]:
 def card(value: dict[str, Any]) -> BackendSnapshot:
     raw = dict(value)
     raw["backend_key"] = Backend(raw["backend_key"])
-    raw["available_models"] = tuple(
-        BackendModel(**model) for model in raw["available_models"]
-    )
+    raw["available_models"] = tuple(BackendModel(**model) for model in raw["available_models"])
     raw["reasoning_effort_options"] = tuple(raw["reasoning_effort_options"])
     raw["diagnoses"] = tuple(raw["diagnoses"])
     if raw["identity"] is not None:
@@ -403,11 +419,7 @@ def test_unit19_backend_route_answers_and_rows(
 
     async def probe(key: Backend, machine: Any, **options: Any) -> BackendSnapshot:
         result = card(next(value for value in cards if value["backend_key"] == key))
-        return (
-            replace(result, version=environment.version)
-            if key == Backend.codex
-            else result
-        )
+        return replace(result, version=environment.version) if key == Backend.codex else result
 
     with (
         synthetic_home_environment(homes),
@@ -432,14 +444,13 @@ def test_unit19_backend_route_answers_and_rows(
             config,
             FakeClock(now),
             lambda: connect(str(paths[0])),
-            backend_child_factories_for_test={
-                key: registry.make_child for key in Backend
-            },
+            backend_child_factories_for_test={key: registry.make_child for key in Backend},
         )
         runtime = SimpleNamespace(
             database_path=str(paths[0]),
             backend_snapshots=BackendSnapshotService(
-                environment, now=lambda: now,
+                environment,
+                now=lambda: now,
                 keep_complete_model_list=BackendStateStore(str(paths[0])).keep_vps_model_list,
             ),
             backend_state=BackendStateStore(str(paths[0])),
@@ -468,24 +479,21 @@ def test_unit19_backend_route_answers_and_rows(
                     json=operation.get("json"),
                     headers=operation.get("headers"),
                 )
-                answers.append(
-                    {"status": response.status_code, "body": response.json()}
-                )
+                answers.append({"status": response.status_code, "body": response.json()})
         asyncio.run(registry.close())
     admission = model_admission_evidence(paths[0], cards)
     assert admission["initial"]["codex"] == ["gpt-6.1-sol"]
     assert admission["initial"]["claude"] == ["claude-opus-5"]
     assert admission["before"] == ["mac-only", "retired-model"]
     assert admission["after"] == ["mac-only"]
-    assert all(admission["aliases"][model] is None for model in ("opus", "opus[1m]", "claude-opus-5[1m]"))
+    assert all(
+        admission["aliases"][model] is None for model in ("opus", "opus[1m]", "claude-opus-5[1m]")
+    )
     assert admission["aliases"]["sonnet"] is not None
     with closing(sqlite3.connect(paths[0])) as conn:
         conn.row_factory = sqlite3.Row
         tables = {
-            table: [
-                dict(row)
-                for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")
-            ]
+            table: [dict(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")]
             for table in (
                 "backend_model_enablement",
                 "backend_usage_snapshots",
@@ -539,9 +547,7 @@ def test_unit19_backend_route_answers_and_rows(
                     "const spec=JSON.parse(readFileSync(process.argv[1],'utf8')); "
                     "process.stdout.write(JSON.stringify(await run(spec)));",
                     str(spec),
-                    str(
-                        ROOT / "server/conversation/snapshot/testing/http_comparison.ts"
-                    ),
+                    str(ROOT / "server/conversation/snapshot/testing/http_comparison.ts"),
                 ],
                 cwd=ROOT,
                 text=True,
@@ -559,7 +565,5 @@ def test_unit19_backend_route_answers_and_rows(
     if destination:
         folder = Path(destination)
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / "unit19-backend-routes.json").write_text(
-            json.dumps(report, indent=2) + "\n"
-        )
+        (folder / "unit19-backend-routes.json").write_text(json.dumps(report, indent=2) + "\n")
     assert actual == expected

@@ -65,7 +65,8 @@ export async function run(spec: Spec) {
   });
   let core = new SqliteProcessConversationSystem({
     store,
-    delivery_model_refusal: (backend, model, ticket_id) => new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),
+    delivery_model_refusal: (backend, model, ticket_id) =>
+      new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),
     execution_refusal: (id) =>
       database.read((sql) =>
         conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
@@ -227,7 +228,8 @@ export async function run(spec: Spec) {
       registry = new ScriptedBackendRegistry();
       core = new SqliteProcessConversationSystem({
         store,
-        delivery_model_refusal: (backend, model, ticket_id) => new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),
+        delivery_model_refusal: (backend, model, ticket_id) =>
+          new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),
         execution_refusal: (id) =>
           database.read((sql) =>
             conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
