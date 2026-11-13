@@ -37,13 +37,17 @@ function deferred() {
 }
 class Bytes implements CanonicalReader {
   readonly byte_count: number;
+  private readonly bytes: Buffer;
   private closed = false;
-  constructor(private readonly bytes: Buffer) {
+  constructor(bytes: Buffer) {
+    this.bytes = bytes;
     this.byte_count = bytes.length;
   }
   async *[Symbol.asyncIterator]() {
-    if (this.closed) throw new Error('Reader already closed');
-    yield this.bytes;
+    for (let offset = 0; offset < this.bytes.length; offset += 256 * 1024) {
+      if (this.closed) throw new Error('Reader already closed');
+      yield this.bytes.subarray(offset, offset + 256 * 1024);
+    }
   }
   async close() {
     this.closed = true;

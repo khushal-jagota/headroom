@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 from tests.compare.direct.test_unit22_mac_journal import Oracle
+from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
 from planner.executor import mac_mailbox
 from planner.executor.contracts import MacHttpClient
@@ -105,17 +105,32 @@ async def reference(
         for i, c in commands.items()
         if c.child_command is not None
     }
+    duplicate = commands["duplicate"].child_command
+    assert duplicate is not None
     results["duplicate"] = CommandResult(
         "duplicate",
         CommandOutcome(
             "duplicate",
-            commands["duplicate"].child_command.child,
+            duplicate.child,
             CommandDisposition.uncertain,
             {"reason": "fixture"},
         ),
-    )  # type: ignore[union-attr]
+    )
     for i in ("model", "shutdown"):
         results[i] = CommandResult(i, model_list={"value": i})
+    results["shutdown"] = CommandResult(
+        "shutdown",
+        model_list={
+            "models": [
+                {
+                    "name": "🦉" * 270_000,
+                    "integer": 9_007_199_254_741_003,
+                    "numbers": [1.0, -0.0, 1e-7, 1e-5, 1e16],
+                }
+            ]
+        },
+    )
+    assert len(oracle.remember(CommandResult, results["shutdown"])) > 1024 * 1024
     spec: dict[str, Any] = dict(
         commands={i: oracle.remember(MailboxCommand, c).hex() for i, c in commands.items()},
         results={i: oracle.remember(CommandResult, r).hex() for i, r in results.items()},
@@ -225,7 +240,7 @@ async def reference(
                 except asyncio.CancelledError:
                     # This scripted owned call shields its result, as the required TS port does.
                     await catalog_release.wait()
-            return {"value": i}
+            return results[i].model_list
 
     responses = [
         CommandOutcomeReply(("k",), ()),
@@ -356,8 +371,10 @@ def node(root: Path, spec: dict[str, Any], oracle: Oracle, homes: dict[str, str]
             "node",
             "--input-type=module",
             "-e",
-            "import {readFileSync} from 'node:fs';const {mailbox_parity}=await import(process.argv[1]);"
-            "process.stdout.write(JSON.stringify(await mailbox_parity(JSON.parse(readFileSync(process.argv[2],'utf8')))));",
+            "import {readFileSync} from 'node:fs';"
+            "const {mailbox_parity}=await import(process.argv[1]);"
+            "const input=JSON.parse(readFileSync(process.argv[2],'utf8'));"
+            "process.stdout.write(JSON.stringify(await mailbox_parity(input)));",
             (ROOT / "server/executor/mac/mailbox/testing/parity.ts").as_uri(),
             str(source),
         ],
@@ -412,7 +429,10 @@ def test_unit22_mac_mailbox_scripted_flow(
                     aggregate_shutdown=observed["aggregate_shutdown"],
                     stats=observed["stats"],
                     elapsed_seconds=time.perf_counter() - started,
-                    coverage="scripted ports + actual queues/poll/reporter + one journal worker; no actual shared-codec claim",
+                    coverage=(
+                        "scripted ports + actual queues/poll/reporter + one journal worker. "
+                        "No actual shared-codec claim."
+                    ),
                 ),
                 indent=2,
             )
