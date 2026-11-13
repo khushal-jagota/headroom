@@ -37,6 +37,7 @@ from planner.environments.update_configuration import STAGED_APP_PREFIX
 from planner.environments.update_contracts import (
     SUPPORTED_UPDATE_SCHEMA_FLOOR,
     UPDATE_ARTIFACT_RETENTION_DAYS,
+    PublishedLinuxExecutorUpdate,
     PublishedMacUpdate,
 )
 from planner.executor.update_configuration import (
@@ -174,6 +175,48 @@ def validate_mac_publication(
     return PublishedMacUpdate(artifact_id, digest, size)
 
 
+def validate_linux_executor_publication(
+    directory: Path,
+    *,
+    requested: str,
+    artifact_id: int,
+    build_result: str,
+) -> PublishedLinuxExecutorUpdate:
+    """Bind the Linux executor bytes and role to the requested source."""
+    if build_result != "success" or type(artifact_id) is not int or artifact_id < 1:
+        raise ValueError("Linux executor publication requires a successful native build")
+    value = json.loads((directory / "linux-executor-publication.json").read_text())
+    archive = directory / "panels-linux-executor.tar.gz"
+    digest, size = hash_archive(archive), archive.stat().st_size
+    expected = {
+        "application_revision": requested,
+        "platform": "linux",
+        "architecture": "x86_64",
+        "role": "executor",
+    }
+    if (
+        re.fullmatch(r"[0-9a-f]{40}", requested) is None
+        or any(value.get(key) != item for key, item in expected.items())
+        or value.get("archive_sha256") != digest
+        or value.get("archive_size") != size
+        or value.get("schema_version") != 1
+        or value.get("proof") != {"native_startup": "passed", "relocated_archive": "passed"}
+        or not 0 < size <= MAX_MAC_RUNTIME_ARCHIVE_BYTES
+    ):
+        raise ValueError("Linux executor publication differs from its source or archive")
+    with tarfile.open(archive, "r:gz") as packed:
+        member = packed.getmember(MAC_RUNTIME_MANIFEST_NAME)
+        if not member.isfile() or member.size > MAX_MAC_RUNTIME_MANIFEST_BYTES:
+            raise ValueError("Linux executor manifest is invalid")
+        stream = packed.extractfile(member)
+        manifest = None if stream is None else json.load(stream)
+        if not isinstance(manifest, dict) or any(
+            manifest.get(key) != item for key, item in expected.items()
+        ):
+            raise ValueError("Linux executor archive has the wrong target")
+    return PublishedLinuxExecutorUpdate(artifact_id, digest, size)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument(
@@ -223,7 +266,14 @@ def main() -> None:
             artifact_id=int(os.environ["PANELS_MAC_ARTIFACT_ID"]),
             build_result=os.environ["PANELS_MAC_BUILD_RESULT"],
         )
+        linux_executor = validate_linux_executor_publication(
+            gate / "linux-executor",
+            requested=requested,
+            artifact_id=int(os.environ["PANELS_LINUX_EXECUTOR_ARTIFACT_ID"]),
+            build_result=os.environ["PANELS_LINUX_EXECUTOR_BUILD_RESULT"],
+        )
         receipt = {
+            "linux_executor": asdict(linux_executor),
             "mac": asdict(mac),
             "publication_run_id": int(os.environ["GITHUB_RUN_ID"]),
             "artifact_id": int(os.environ["PANELS_ARTIFACT_ID"]),
