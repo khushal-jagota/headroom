@@ -18,9 +18,19 @@ from typing import Any
 
 import httpx
 
+from planner.environments.runtime_contracts import (
+    NODE_RUNTIME_CONTRACT_VERSION,
+    RUNTIME_CONTRACT_VERSION,
+)
 from planner.environments.update_attempts import parse_release
 from planner.environments.update_contracts import PublishedUpdate
 from planner.platform_runtime.targets import LINUX_HOME, MAC_HOME, RuntimeTarget
+
+# Each trusted publishing workflow may publish exactly one runtime contract version.
+TRUSTED_RELEASE_WORKFLOWS = {
+    ".github/workflows/deploy.yml": RUNTIME_CONTRACT_VERSION,
+    ".github/workflows/publish-typescript-release.yml": NODE_RUNTIME_CONTRACT_VERSION,
+}
 
 
 class GitHubUpdateProvider:
@@ -54,7 +64,9 @@ class GitHubUpdateProvider:
             raise RuntimeError("The repository update credential is unavailable.")
         return {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
 
-    def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+    def _request(
+        self, method: str, path: str, *, missing_ok: bool = False, **kwargs: Any
+    ) -> httpx.Response | None:
         headers = self._headers()
         try:
             with httpx.Client(timeout=30, follow_redirects=True) as client:
@@ -68,21 +80,43 @@ class GitHubUpdateProvider:
             raise RuntimeError(
                 "The repository update service is unavailable or its result is uncertain."
             ) from exc
+        if missing_ok and response.status_code == 404:
+            return None
         if response.is_error:
             raise RuntimeError("The repository update service refused the operation.")
         return response
 
+    def _get(self, path: str, **kwargs: Any) -> httpx.Response:
+        response = self._request("GET", path, **kwargs)
+        assert response is not None
+        return response
+
     def available(self) -> PublishedUpdate | None:
-        runs = self._request(
-            "GET",
-            "actions/workflows/deploy.yml/runs",
-            params={
-                "branch": "main",
-                "event": "push",
-                "status": "success",
-                "per_page": 20,
-            },
-        ).json()["workflow_runs"]
+        """The newest acceptable publication across every trusted workflow."""
+        runs: list[dict[str, Any]] = []
+        for workflow, contract_version in TRUSTED_RELEASE_WORKFLOWS.items():
+            # Until the TypeScript workflow is on GitHub its runs are a 404: no runs yet.
+            # A 404 for deploy.yml still fails, as before; it can mean a lost credential.
+            response = self._request(
+                "GET",
+                f"actions/workflows/{workflow.rsplit('/', 1)[-1]}/runs",
+                missing_ok=contract_version == NODE_RUNTIME_CONTRACT_VERSION,
+                params={
+                    "branch": "main",
+                    "event": "push",
+                    "status": "success",
+                    "per_page": 20,
+                },
+            )
+            if response is not None:
+                runs.extend(response.json()["workflow_runs"])
+        runs.sort(
+            key=lambda run: (
+                datetime.fromisoformat(run["created_at"].replace("Z", "+00:00")),
+                int(run["id"]),
+            ),
+            reverse=True,
+        )
         for run in runs:
             release = self.publication(int(run["id"]))
             if release is not None:
@@ -90,17 +124,18 @@ class GitHubUpdateProvider:
         return None
 
     def publication(self, run_id: int) -> PublishedUpdate | None:
-        run = self._request("GET", f"actions/runs/{run_id}").json()
+        run = self._get(f"actions/runs/{run_id}").json()
+        contract_version = TRUSTED_RELEASE_WORKFLOWS.get(run.get("path"))
         if (
             run["head_branch"] != "main"
             or run["event"] != "push"
             or run["conclusion"] != "success"
             or run.get("head_repository", {}).get("full_name") != self.repository
-            or run.get("path") != ".github/workflows/deploy.yml"
+            or contract_version is None
         ):
             return None
-        artifacts = self._request(
-            "GET", f"actions/runs/{run_id}/artifacts", params={"per_page": 100}
+        artifacts = self._get(
+            f"actions/runs/{run_id}/artifacts", params={"per_page": 100}
         ).json()["artifacts"]
         by_name = {a["name"]: a for a in artifacts if not a["expired"]}
         proof = by_name.get("panels-publication-proof")
@@ -116,7 +151,7 @@ class GitHubUpdateProvider:
         ):
             release = cached
         else:
-            archive = self._request("GET", f"actions/artifacts/{proof['id']}/zip").content
+            archive = self._get(f"actions/artifacts/{proof['id']}/zip").content
             with zipfile.ZipFile(BytesIO(archive)) as zipped:
                 payload = json.loads(zipped.read("publication.json"))
             if self.target == MAC_HOME:
@@ -146,12 +181,14 @@ class GitHubUpdateProvider:
             self.target.architecture,
         ):
             raise ValueError("Publication runtime target differs from this home")
+        if contract.version != contract_version:
+            raise ValueError("This workflow does not publish this runtime contract version.")
         self._publication_cache = release
         return release
 
     def download_artifact(self, artifact_id: int, destination: Path) -> None:
         """Stream the artifact ZIP to disk; a release is about 1 GB."""
-        metadata = self._request("GET", f"actions/artifacts/{artifact_id}").json()
+        metadata = self._get(f"actions/artifacts/{artifact_id}").json()
         if metadata["expired"]:
             raise ValueError("The pinned update artifact expired.")
         try:

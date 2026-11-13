@@ -45,16 +45,37 @@ def migration_graph(app_root: Path) -> dict[str, tuple[str, ...]]:
     return graph
 
 
+def _migration_heads(graph: dict[str, tuple[str, ...]]) -> set[str]:
+    return set(graph) - {parent for parents in graph.values() for parent in parents}
+
+
+def _database_revisions(database: Path) -> set[str]:
+    with closing(sqlite3.connect(f"file:{database}?mode=ro", uri=True)) as connection:
+        rows = connection.execute("SELECT version_num FROM alembic_version").fetchall()
+    return {str(row[0]) for row in rows}
+
+
 def schema_change_pending(database: Path, staged_app: Path) -> bool:
     """True when the candidate migrates this database; refuse a revision it does not know."""
     graph = migration_graph(staged_app)
-    heads = set(graph) - {parent for parents in graph.values() for parent in parents}
-    with closing(sqlite3.connect(f"file:{database}?mode=ro", uri=True)) as connection:
-        rows = connection.execute("SELECT version_num FROM alembic_version").fetchall()
-    revisions = {str(row[0]) for row in rows}
+    revisions = _database_revisions(database)
     if not revisions or not revisions <= set(graph):
         raise ValueError("This release does not know the database's schema revision.")
-    return revisions != heads
+    return revisions != _migration_heads(graph)
+
+
+def require_exact_schema_frontier(database: Path, staged_app: Path) -> None:
+    """A Node release runs no migration, so the database must already be at its heads.
+
+    Behind, ahead, unknown and divergent revision sets are all refused. A backup does
+    not make any of them acceptable.
+    """
+    revisions = _database_revisions(database)
+    if not revisions or revisions != _migration_heads(migration_graph(staged_app)):
+        raise ValueError(
+            "This release requires the database to be at exactly its schema revision. "
+            "Install the Python release that carries the same migrations first."
+        )
 
 
 def own_service_unit(cgroup: str | None = None) -> str | None:

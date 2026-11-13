@@ -513,11 +513,16 @@ class PromptDispatchDecision:
 
     A missing suppression reason means allow. Notice eligibility belongs to its domain.
     Ordinary messages pass through with ``is_manager_notice=False``.
+
+    ``is_memory_notice`` names a Worker memory-loss notice. It is maintenance, so a turn
+    holding only such notices does not renew automatic compaction. It is distinct from a
+    Manager notice, which drives failure reporting.
     """
 
     sender_message_id: str | None
     suppression_reason: str | None = None
     is_manager_notice: bool = False
+    is_memory_notice: bool = False
 
 
 @dataclass(frozen=True, slots=True)

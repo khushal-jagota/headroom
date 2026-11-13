@@ -54,7 +54,9 @@ class DarwinRuntime:
         if node.split(".")[0] != f"v{contract.node_major}":
             raise AppValidationError(f"runtime requires Node {contract.node_major}")
 
-    def native_tool_commands(self, root: Path, contract: RuntimeRequirements) -> list[list[str]]:
+    def native_tool_commands(
+        self, root: Path, contract: RuntimeRequirements, *, node: str = "node"
+    ) -> list[list[str]]:
         modules = root / "agent_backends/node_modules"
         executable = shutil.which("node")
         if executable is None:

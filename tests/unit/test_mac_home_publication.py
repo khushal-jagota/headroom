@@ -14,6 +14,7 @@ import pytest
 from scripts.update_publication import validate_mac_home_publication
 from tests.support.update_apps import SHA_B, build_app, release, rewrite_artifact_digest
 
+from planner.environments.app import AppManifest
 from planner.environments.update_artifacts import APP_ARCHIVE_NAME, create_app_archive
 from planner.environments.update_provider import GitHubUpdateProvider
 from planner.platform_runtime.darwin.runtime_contracts import DarwinRuntimeContract
@@ -179,5 +180,15 @@ def test_native_admission_uses_hosted_node_outside_default_system_path(
     assert commands == [[str(node), "--version"]]
     assert runtime.native_tool_commands(tmp_path, contract)[0][0] == str(node)
     assert runtime_admission.probe_environment(tmp_path)["PATH"].split(":")[0] == str(node.parent)
+    # The merge adds Linux Node v2 admission. This existing native case must also
+    # prove that a Darwin Python contract still reaches its own probe.
+    commands.clear()
+    manifest = AppManifest("a" * 40, "b" * 64, "c" * 64, contract)
+    runtime_admission.admit_runtime(tmp_path, manifest)
+    python_probes = [command for command in commands if "-c" in command]
+    assert len(python_probes) == 1
+    assert python_probes[0][0] == str(tmp_path / ".venv/bin/python")
+    assert python_probes[0][4] == runtime.native_probe()
+    assert "/proc/" not in python_probes[0][4]
     monkeypatch.setattr(sys, "platform", "linux")
     assert runtime_admission.probe_environment(tmp_path)["PATH"] == "/usr/local/bin:/usr/bin:/bin"

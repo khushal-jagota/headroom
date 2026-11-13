@@ -189,6 +189,7 @@ def build_private_icu(builder: Path, environment: dict[str, str]) -> Path:
             "--disable-samples",
             "--enable-shared",
             "--disable-static",
+            "--enable-rpath",
         ],
         cwd=build,
         environment=configured,

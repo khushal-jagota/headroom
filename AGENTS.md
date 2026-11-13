@@ -108,6 +108,12 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   Repository review or merge does not install enforcement into the deployed release.
 - Run `env | rg '^PLAN_(DB_PATH|LOGS_DIR|DISPATCHER_LOCK_PATH|SERVER_CONTROL_SOCKET|HERMES_HOME)='`
   and confirm any printed path resolves to the worktree before using its runtime.
+- Python test entry points replace inherited `PLAN_*` runtime paths with private
+  scratch storage before application imports. Each pytest worker gets its own storage.
+  The shared pytest setup and Python browser runners refuse remaining deployment
+  paths or live server URLs. Keep the explicit non-live `PLAN_SERVER_URL` default:
+  unsetting it restores the CLI's live-server fallback. Server fixtures replace it
+  with their allocated server URL. Original launch evidence stays with containment checks.
 - Node dependency trees under `web/` and `agent_backends/` may be reused when their
   manifests and locks match and their storage is independent of the deployment.
   Matching lockfiles never permit deployed storage. Detach safe development-owned

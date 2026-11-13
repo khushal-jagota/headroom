@@ -10,6 +10,7 @@ import io
 import json
 import subprocess
 import tarfile
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -237,7 +238,9 @@ def test_workflow_requires_same_run_native_artifact_before_publication() -> None
     assert receipt["env"]["PANELS_MAC_BUILD_RESULT"] == "${{ needs.mac-runtime.result }}"
 
 
-def test_private_icu_environment_replaces_host_library_and_compiler_inputs(tmp_path: Path) -> None:
+def test_private_icu_environment_replaces_host_inputs_and_requests_private_install_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     configured = build_mac_runtime.private_icu_environment(
         tmp_path,
         {
@@ -258,6 +261,38 @@ def test_private_icu_environment_replaces_host_library_and_compiler_inputs(tmp_p
         assert "-arch arm64" in configured[key]
         assert "-mmacosx-version-min=15.0" in configured[key]
         assert "27.0" not in configured[key] and "/opt/homebrew" not in configured[key]
+
+    # Exercise the real helper's configure boundary without a compiler or network.
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w:gz") as packed:
+        entry = tarfile.TarInfo("icu/source/runConfigureICU")
+        entry.size = 0
+        packed.addfile(entry, io.BytesIO())
+    payload = archive.getvalue()
+    import hashlib
+
+    monkeypatch.setattr(
+        build_mac_runtime, "MAC_ICU_SOURCE_SHA256", hashlib.sha256(payload).hexdigest()
+    )
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda *args, **kwargs: io.BytesIO(payload)
+    )
+    calls: list[tuple[list[str], dict[str, str]]] = []
+
+    def record(command: list[str], *, cwd: Path, environment: dict[str, str]) -> str:
+        calls.append((command, environment))
+        return "/toolchain/compiler-or-sdk"
+
+    monkeypatch.setattr(build_mac_runtime, "run", record)
+    monkeypatch.setattr(build_mac_runtime, "audit_native_dependencies", lambda *args, **kwargs: [])
+    builder = tmp_path / "builder"
+    builder.mkdir()
+    prefix = build_mac_runtime.build_private_icu(builder, {"PATH": "/usr/bin:/bin"})
+    [(command, environment)] = [call for call in calls if call[0][0].endswith("runConfigureICU")]
+    assert "--enable-rpath" in command
+    assert f"--prefix={prefix}" in command
+    assert prefix == builder / "icu-prefix"
+    assert environment["PKG_CONFIG_LIBDIR"] == str(prefix / "lib/pkgconfig")
 
 
 @pytest.mark.parametrize(

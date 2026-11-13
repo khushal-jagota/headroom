@@ -388,7 +388,7 @@ def test_turn_completion_keeps_durable_login_sql_off_event_loop(
     generation = CodexLoginGeneration(account_id=ACCOUNT_ID, last_refresh=REFRESH_STAMP)
     if not failed:
         remembered.remember(generation)
-    action = {"do": "complete", "status": "completed"}
+    action: dict[str, object] = {"do": "complete", "status": "completed"}
     if failed:
         action = {
             "do": "complete",
