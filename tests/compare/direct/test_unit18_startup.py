@@ -49,9 +49,7 @@ def _python_bytes(spec: dict[str, Any]) -> dict[str, Any]:
                 _outcome(lambda command=command: list(unit.argv(command)))
                 for command in spec["commands"]
             ],
-            "environment_hex": worker_unit._environment_file(spec["environment"])
-            .encode()
-            .hex(),
+            "environment_hex": worker_unit._environment_file(spec["environment"]).encode().hex(),
             "invalid_environment": [
                 _outcome(lambda value=value: worker_unit._environment_file(value))
                 for value in spec["invalid_environment"]
@@ -108,9 +106,7 @@ def _node(spec: dict[str, Any], root: Path) -> dict[str, Any] | list[dict[str, A
     return cast(dict[str, Any] | list[dict[str, Any]], json.loads(result.stdout))
 
 
-def test_unit18_containment_bytes(
-    tmp_path: Path, request: pytest.FixtureRequest
-) -> None:
+def test_unit18_containment_bytes(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """Protect exact systemd escaping without any service-manager connection."""
     started = time.perf_counter()
     working = tmp_path / "work % 'quoted'"
@@ -134,7 +130,7 @@ def test_unit18_containment_bytes(
     }
     spec = {
         "operation": "bytes",
-        "name": "panels-unit18-synthetic.service",
+        "name": "panels-worker-" + "2" * 32 + ".service",
         "directory": str(private),
         "working_directory": str(working),
         "slice_name": "unit18-synthetic.slice",
@@ -173,15 +169,11 @@ def test_unit18_containment_bytes(
     if destination:
         path = Path(destination)
         path.mkdir(parents=True, exist_ok=True)
-        (path / "unit18-containment-bytes.json").write_text(
-            json.dumps(report, indent=2) + "\n"
-        )
+        (path / "unit18-containment-bytes.json").write_text(json.dumps(report, indent=2) + "\n")
     assert actual == expected
 
 
-def _python_versions(
-    cases: list[dict[str, Any]], executable: str
-) -> list[dict[str, Any]]:
+def _python_versions(cases: list[dict[str, Any]], executable: str) -> list[dict[str, Any]]:
     from planner.conversation.backends import cli_compatibility
 
     class FakeProcess:
@@ -226,9 +218,7 @@ def _python_versions(
     return asyncio.run(run())
 
 
-def test_unit18_cli_version_errors(
-    tmp_path: Path, request: pytest.FixtureRequest
-) -> None:
+def test_unit18_cli_version_errors(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """Protect the chosen executable's feature floor and exact repair messages."""
     started = time.perf_counter()
     cases = [
@@ -269,8 +259,7 @@ def test_unit18_cli_version_errors(
         "seconds": time.perf_counter() - started,
         "python_boundary": "ensure_cli_compatible with synthetic process responses",
         "typescript_boundary": (
-            "pure validator and check-error factory; "
-            "actual spawn path covered by focused tests"
+            "pure validator and check-error factory; actual spawn path covered by focused tests"
         ),
         "provider_processes_started": 0,
     }
@@ -278,9 +267,7 @@ def test_unit18_cli_version_errors(
     if destination:
         path = Path(destination)
         path.mkdir(parents=True, exist_ok=True)
-        (path / "unit18-cli-version-errors.json").write_text(
-            json.dumps(report, indent=2) + "\n"
-        )
+        (path / "unit18-cli-version-errors.json").write_text(json.dumps(report, indent=2) + "\n")
     assert actual == expected
 
 
@@ -314,9 +301,7 @@ def _python_catalogs(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
             with (
                 patch.object(asyncio, "create_subprocess_exec", forbidden),
-                patch.object(
-                    claude_model_catalog, "ensure_cli_compatible", AsyncMock()
-                ),
+                patch.object(claude_model_catalog, "ensure_cli_compatible", AsyncMock()),
                 patch.object(claude_model_catalog, "ClaudeSDKClient", FakeClient),
             ):
                 try:
@@ -412,7 +397,5 @@ def test_unit18_model_catalog(tmp_path: Path, request: pytest.FixtureRequest) ->
     if destination:
         path = Path(destination)
         path.mkdir(parents=True, exist_ok=True)
-        (path / "unit18-model-catalog.json").write_text(
-            json.dumps(report, indent=2) + "\n"
-        )
+        (path / "unit18-model-catalog.json").write_text(json.dumps(report, indent=2) + "\n")
     assert actual == expected

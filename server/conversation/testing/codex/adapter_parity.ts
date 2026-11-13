@@ -1,5 +1,6 @@
 /** Shared scripted Codex child behind the actual TS conversation core and records. */
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../../../lifecycle/configuration.ts';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { existsSync, readFileSync } from 'node:fs';
@@ -355,7 +356,7 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
     );
     await capture('exit-before-reply', [missing], noReceipt);
   } finally {
-    await core.shutdown();
+    await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     database.close();
     Object.assign(childProcess, original);
     syncBuiltinESMExports();

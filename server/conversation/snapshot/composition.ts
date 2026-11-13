@@ -57,7 +57,7 @@ export function create_backend_runtime(options: {
     error instanceof ModelCatalogCleanupFailed ||
     (error instanceof AggregateError && error.errors.some(retained_cleanup));
   return {
-    shutdown(options = {}) {
+    shutdown(options) {
       if (shutdown_result === undefined) {
         let resolve_attempt!: () => void, reject_attempt!: (error: unknown) => void;
         const attempt = new Promise<void>((resolve, reject) => {

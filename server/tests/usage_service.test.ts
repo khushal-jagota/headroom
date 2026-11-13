@@ -318,11 +318,12 @@ test('shutdown aborts the injected rate operation and joins the worker within th
     () => null,
     (error: unknown) => error,
   );
+  let stop: { deadline: number } | undefined;
   try {
     await entered.promise;
     const started = performance.now();
     let stopped = false;
-    const stopping = service.stop({ deadline: performance.now() / 1000 + 2 }).then(() => {
+    const stopping = service.stop((stop = { deadline: performance.now() / 1000 + 2 })).then(() => {
       stopped = true;
     });
     await cleanupEntered.promise;
@@ -332,13 +333,13 @@ test('shutdown aborts the injected rate operation and joins the worker within th
     release.resolve();
     await stopping;
     expect(await result).toBeInstanceOf(UsageServiceStopped);
-    await service.finish_operations();
+    await service.finish_operations(stop);
     await expect(service.refreshRates()).rejects.toBeInstanceOf(UsageServiceStopped);
     await expect(service.readSummary(window)).rejects.toBeInstanceOf(UsageServiceStopped);
     console.info(JSON.stringify({ usage_worker_stop_ms: performance.now() - started }));
   } finally {
     release.resolve();
-    await service.stop({ deadline: performance.now() / 1000 + 2 });
+    await service.stop((stop ??= { deadline: performance.now() / 1000 + 2 }));
   }
 });
 
@@ -368,7 +369,7 @@ test('an unsettled injected callback makes shutdown fail at its shared deadline'
   } finally {
     release.resolve(null);
     await settled.promise;
-    await service.finish_operations();
+    await service.settled();
   }
 });
 

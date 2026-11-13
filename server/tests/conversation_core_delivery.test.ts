@@ -1,4 +1,5 @@
 import { setup } from './conversation_core_fixture.ts';
+import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 /** Internal ordering risks that HTTP request lists cannot pause at their exact boundary. */
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -100,7 +101,7 @@ test('backend news waits for the accepted prompt receipt and prose stays transie
     await expect(f.core.pending_permission_ask_ids(id)).rejects.toBe(signalFailure);
     await expect(f.core.pending_user_input_request_ids(id)).rejects.toBe(signalFailure);
   }
-  await f.core.shutdown();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
 
 // Inventory #11: possible emission must retain identity and must not send a retry.
@@ -120,7 +121,7 @@ test('possible emission stays uncertain and a duplicate never writes again', asy
     'unknown',
   );
   expect(f.core.workspace_activity()).toBe('busy');
-  await f.core.shutdown();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
 
 // Inventory #35: a record failure after native acceptance retries storage, not the provider.
@@ -156,7 +157,7 @@ test('a failed save restores runtime and retains one accepted sender through sto
     (await child.inspect()).calls.filter((call) => call.command === 'write_prompt'),
   ).toHaveLength(1);
   expect(f.store.read_events_after('core', 0).map((row) => row.kind)).toEqual(['prompt']);
-  await core.shutdown();
+  await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
 
 // Inventory #33: a failed live-tail subscriber must not turn a committed receipt into a retry.
@@ -239,7 +240,7 @@ test('publication failure after receipt commit does not append or deliver twice'
   expect(f.store.read_events_after('core', 4).map((row) => row.kind)).toEqual([
     'tool_call_started',
   ]);
-  await f.core.shutdown();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
 
 // Inventory #7: an old turn's terminal event must not end its successor.
@@ -270,7 +271,7 @@ test('a turn ends once and its late terminal event does not end the next turn', 
     'turn_ended',
     'prompt',
   ]);
-  await f.core.shutdown();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
 
 // Inventory #16: the queue entry disappears before its receipt, but sender identity must remain.
@@ -296,5 +297,5 @@ test('dequeued sender identity waits for the receipt instead of crossing the wir
     'turn_ended',
     'prompt',
   ]);
-  await f.core.shutdown();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });

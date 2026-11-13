@@ -2,6 +2,8 @@
 import { expect, test, vi } from 'vitest';
 import type { Database } from '../core/database/contracts.ts';
 import { PreviewService } from '../previews/service.ts';
+import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
+import type { StopOptions } from '../lifecycle/contracts.ts';
 
 test('an older queued inspection precedes a new microtask chain', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
@@ -33,6 +35,9 @@ test('an older queued inspection precedes a new microtask chain', async () => {
     await new Promise((resolve) => setTimeout(resolve, delay));
     return label;
   };
+  let stop: StopOptions | undefined;
+  let release_held = () => {};
+  let held: Promise<unknown> = Promise.resolve();
   try {
     const chain = (async () => {
       for (let number = 0; number < 8; number++) await run(() => operation('new-' + number, 150));
@@ -57,8 +62,43 @@ test('an older queued inspection precedes a new microtask chain', async () => {
       'new-6',
       'new-7',
     ]);
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const inspection = new Promise<void>((resolve) => {
+      release_held = resolve;
+    });
+    held = run(async () => {
+      enter();
+      await inspection;
+    });
+    await entered;
+    const closing = service.close((stop = { deadline: performance.now() / 1000 + 0.01 }));
+    const bounded = expect(closing).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
+    let settled = false;
+    const actual = service.settled().then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(11);
+    await bounded;
+    expect(settled).toBe(false);
+    await expect(run(async () => 'late inspection')).rejects.toThrow();
+    release_held();
+    await Promise.all([held, actual]);
+    expect(settled).toBe(true);
   } finally {
-    await service.close();
-    vi.useRealTimers();
+    try {
+      release_held();
+      await held;
+      await service
+        .close((stop ??= { deadline: performance.now() / 1000 + 1 }))
+        .catch((error: unknown) => {
+          if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+        });
+      await service.settled();
+    } finally {
+      vi.useRealTimers();
+    }
   }
 });

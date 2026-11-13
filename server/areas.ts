@@ -1,7 +1,7 @@
 import { Runtime as SourceRuntime } from './measure_sources/runtime/supervisor.ts';
 import { observe_shutdown } from './lifecycle/deadline.ts';
 import { ShutdownDeadlineExceeded } from './lifecycle/contracts.ts';
-import { SHUTDOWN_GRACE_SECONDS } from './core/config.ts';
+import type { StopOptions } from './lifecycle/contracts.ts';
 import { SourceScheduleLoop } from './measure_sources/schedule_loop.ts';
 import { build_participants as source_participants } from './measure_sources/scheduling.ts';
 import { createPreviewRoutes } from './previews/routes.ts';
@@ -97,6 +97,15 @@ export function createAreasRuntime(
     async startRouteServices(): Promise<void> {
       await navigation!.start();
       await previews.start();
+    },
+    sealPreviews(): void {
+      previews.seal();
+    },
+    stopPreviews(options: StopOptions, http_actual: Promise<void>): Promise<void> {
+      return previews.stop(options, http_actual);
+    },
+    previewsSettled(): Promise<void> {
+      return previews.settled();
     },
     bindRuntimeFacts(facts: ConversationViewRuntime['runtime_facts']): void {
       conversation.bind_runtime_facts(facts);
@@ -255,11 +264,9 @@ export function composeAreaLoops(context: OwnedAreaContext, options: AreaLoopOpt
       unsubscribe = context.changes.subscribe(() => wakes?.wake());
       wakes.start(context.config.tick_seconds);
     },
-    stop(options: { deadline?: number } = {}): Promise<void> {
+    stop(options: StopOptions): Promise<void> {
       if (closing) return closing;
-      const stop = {
-        deadline: options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS,
-      };
+      const stop = options;
       const drains: Promise<unknown>[] = [];
       actual_stop = Promise.resolve().then(async () => {
         for (const actual of [() => wakes?.settled(), () => sources?.settled()]) {

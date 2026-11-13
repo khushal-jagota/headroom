@@ -8,6 +8,8 @@ import * as data from './data.ts';
 import { PreviewError, type PreviewRecord } from './contracts.ts';
 import { require_eligible, require_port, require_vps } from './logic/eligibility.ts';
 import { LinuxProcessInspector, validate_worktree } from './process.ts';
+import type { StopOptions } from '../lifecycle/contracts.ts';
+import { observe_shutdown } from '../lifecycle/deadline.ts';
 export class PreviewService {
   readonly database: Database;
   readonly public_origin: string;
@@ -16,6 +18,9 @@ export class PreviewService {
   readonly inspector = new LinuxProcessInspector();
   private outstanding = 0;
   private closed = false;
+  private rechecks_sealed = false;
+  private closing: Promise<void> | undefined;
+  private pending = new Set<Promise<void>>();
   private registering = false;
   private known = new Set<string>();
   private process_checks = new Map<string, Promise<void>>();
@@ -39,6 +44,11 @@ export class PreviewService {
     )
       throw new PreviewError('Preview inspection is busy; try again shortly.', 503);
     this.outstanding++;
+    let release!: () => void;
+    const actual = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.pending.add(actual);
     const submitted = performance.now();
     const waiters = lifecycle ? this.lifecycle_waiters : this.inspection_waiters;
     let acquired = false;
@@ -89,6 +99,8 @@ export class PreviewService {
         waiters.shift()?.();
       }
       this.outstanding--;
+      this.pending.delete(actual);
+      release();
     }
   }
   private enabled(): void {
@@ -228,6 +240,7 @@ export class PreviewService {
     });
   }
   async recheck_all(): Promise<string[]> {
+    if (this.rechecks_sealed) return [];
     const records = await this.run(async () => {
       for (const record of this.database.read(data.live)) {
         try {
@@ -241,6 +254,7 @@ export class PreviewService {
     const current = new Set(records.map((r) => r.generation));
     const ended = [...this.known].filter((g) => !current.has(g));
     this.known = current;
+    if (this.rechecks_sealed) return ended;
     for (const record of records) {
       if (record.state === 'active' && !this.process_checks.has(record.generation)) {
         const task = this.check(record.ticket_id, record.generation)
@@ -254,9 +268,22 @@ export class PreviewService {
     }
     return ended;
   }
-  async close(): Promise<void> {
+  seal_rechecks(): void {
+    this.rechecks_sealed = true;
+  }
+  seal(): void {
     this.closed = true;
-    await Promise.allSettled(this.process_checks.values());
-    while (this.outstanding) await new Promise((r) => setTimeout(r, 1));
+    this.seal_rechecks();
+  }
+  async settled(): Promise<void> {
+    while (this.pending.size || this.process_checks.size)
+      await Promise.allSettled([...this.pending, ...this.process_checks.values()]);
+  }
+  close(options: StopOptions): Promise<void> {
+    if (!this.closing) {
+      this.seal();
+      this.closing = observe_shutdown(this.settled(), options, 'preview inspections');
+    }
+    return this.closing;
   }
 }

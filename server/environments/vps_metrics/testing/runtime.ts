@@ -251,21 +251,30 @@ export async function metrics_runtime_probe(input: string): Promise<string> {
       owner: runtime.owns_collection,
       stop_ms: performance.now() - began,
     };
-    // One launcher write deterministically exercises two coalesced state records.
-    if (spec.mode === 'short_hung')
-      return encode(pending) + '\n' + encode({ retained_worker: true });
+    // One launcher write still exercises two coalesced records (PR811). The held
+    // collector never receives its gate. Actual settlement therefore needs exit.
+    if (spec.mode === 'short_hung') {
+      await runtime.settled();
+      return (
+        encode(pending) + '\n' + encode({ terminated_worker: true, owner: runtime.owns_collection })
+      );
+    }
     emit(pending);
-    while (!existsSync(spec.root + '/release')) await delay(5);
-    writeFileSync(spec.root + '/gate', 'release');
     await runtime.settled();
+    if (existsSync(spec.root + '/gate'))
+      throw new Error('the original held collector was released');
     while (!existsSync(spec.root + '/contender/collection.jsonl')) await delay(5);
-    await contender!.stop({ deadline: performance.now() / 1000 + 0.03 }).catch((error: unknown) => {
-      if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
-    });
     const contender_took_over = contender!.owns_collection;
     writeFileSync(spec.root + '/contender/gate', 'release');
+    while (!(await contender!.latest()).sample) await delay(5);
+    await contender!.stop({ deadline: performance.now() / 1000 + 1 });
     await contender!.settled();
-    return encode({ settled: true, owner: runtime.owns_collection, contender_took_over });
+    return encode({
+      settled: true,
+      owner: runtime.owns_collection,
+      contender_took_over,
+      collector_gate_unreleased: true,
+    });
   }
   const starts = (): { include_slow: boolean }[] => {
     const text = readFileSync(spec.root + '/collection.jsonl', 'utf8');
