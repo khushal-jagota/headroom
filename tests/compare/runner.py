@@ -120,7 +120,9 @@ class Normalizer:
         if value is None:
             return None
         seen = self.tokens.setdefault(context, {})
-        key = json.dumps({"bytes": value.hex()} if isinstance(value, bytes) else value, sort_keys=True)
+        key = json.dumps(
+            {"bytes": value.hex()} if isinstance(value, bytes) else value, sort_keys=True,
+        )
         if key not in seen:
             seen[key] = len(seen)
         return seen[key]
@@ -448,6 +450,7 @@ def run_list(
     modules = ["tests.compare.host", right_module]
     differences: list[dict[str, Any]] = []
     byte_answers: list[dict[str, Any]] = []
+    cli_answers: list[dict[str, Any]] = []
     reach: dict[str, set[str]] = {}
     try:
         for name, module in zip(("python", "candidate"), modules, strict=True):
@@ -485,6 +488,40 @@ def run_list(
                 and not path.startswith("/api/test/")
             ]
             for index, request in enumerate(spec["requests"]):
+                if request.get("kind") == "cli":
+                    from tests.compare.direct.unit20_cli import (
+                        CliHost,
+                        cli_capture,
+                        comparable,
+                        run_cli,
+                    )
+                    answers, evidence = [], []
+                    for side, server in enumerate(servers):
+                        resolved = substitute(request, captures[side])
+                        outcome = run_cli(
+                            CliHost(server, root), resolved, side == 1,
+                            root / ("python" if side == 0 else "candidate") / "cli-input",
+                        )
+                        cli_capture(outcome, resolved, captures[side])
+                        evidence.append(outcome)
+                        answer = comparable(outcome)
+                        # A declared probe retains its ordinary HTTP-200 requirement.
+                        for path in spec.get("probes", []):
+                            probe = substitute(path, captures[side])
+                            response = client.get(server.base + probe)
+                            assert response.status_code == 200, (probe, response.text)
+                            answer.setdefault("probes", {})[probe] = norms[side].normalize(
+                                {"body": response.json()}, "GET " + probe
+                            )
+                        answers.append(norms[side].normalize(
+                            answer, "CLI " + " ".join(resolved["argv"])
+                        ))
+                    cli_answers.append({
+                        "step": index, "proof": request["proof"], "answers": evidence,
+                    })
+                    if answers[0] != answers[1]:
+                        differences.append({"step": index, "call": request, "answers": answers})
+                    continue
                 if request.get("kind") == "restart":
                     for side, server in enumerate(servers):
                         _stop_server(server)
@@ -548,13 +585,20 @@ def run_list(
                             elif "application/json" in response.headers.get("content-type", ""):
                                 body = response.json()
                             else:
-                                body = (response.content
-                                        if resolved.get("response_bytes") is True else response.text)
+                                body = (
+                                    response.content
+                                    if resolved.get("response_bytes") is True else response.text
+                                )
                             answer = {
                                 "status": response.status_code,
                                 "headers": {
                                     h: response.headers[h]
-                                    for h in (*HEADERS, *(("content-length", "content-encoding", "vary", "location") if resolved.get("response_bytes") is True else ())) if h in response.headers
+                                    for h in (
+                                        *HEADERS, *((
+                                            "content-length", "content-encoding", "vary",
+                                            "location",
+                                        ) if resolved.get("response_bytes") is True else ()),
+                                    ) if h in response.headers
                                 },
                                 "body": body,
                             }
@@ -591,7 +635,9 @@ def run_list(
                             method + " " + path
                         )
                     if call.get("response_bytes") is True:
-                        byte_answers.append({"step": index, "path": call["path"], "answers": answers})
+                        byte_answers.append({
+                            "step": index, "path": call["path"], "answers": answers,
+                        })
                     if answers[0] != answers[1]:
                         differences.append({"step": index, "call": call, "answers": answers})
         snapshots = [rows(s.db_path, n) for s, n in zip(servers, norms, strict=True)]
@@ -609,8 +655,10 @@ def run_list(
             for server, normalizer in zip(servers, norms, strict=True):
                 tree = server.db_path.parent / directory
                 trees.append({
-                    (normalizer.normalize(path.relative_to(tree).as_posix())
-                     if directory == "files" else path.relative_to(tree).as_posix()): path.read_bytes()
+                    (
+                        normalizer.normalize(path.relative_to(tree).as_posix())
+                        if directory == "files" else path.relative_to(tree).as_posix()
+                    ): path.read_bytes()
                     for path in sorted(tree.rglob("*")) if path.is_file()
                 })
             for name in sorted(set(trees[0]) | set(trees[1])):
@@ -640,6 +688,7 @@ def run_list(
             "rules": rules,
             **file_reports,
             **({"byte_answers": byte_answers} if byte_answers else {}),
+            **({"cli_answers": cli_answers} if cli_answers else {}),
         }
     finally:
         for server in reversed(servers):
