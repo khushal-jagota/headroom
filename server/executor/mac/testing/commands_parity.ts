@@ -19,8 +19,7 @@ import type {
 import { same_turn as claude_same_turn } from '../../../conversation/backends/claude_agent_sdk/turn.ts';
 import { same_turn as codex_same_turn } from '../../../conversation/backends/codex_app_server/turn.ts';
 import type { ResolvedConversationStart } from '../../../conversation/contracts.ts';
-import type { ConversationMessageFiles } from '../../../conversation/message_files.ts';
-import { decode_json, as_object, encode_value } from '../../protocol.ts';
+import { decode_json, as_object } from '../../protocol.ts';
 import { MacCommandService } from '../runner/service.ts';
 import { create_mac_output_publication } from '../runner/publication.ts';
 import type { MacCommandDependencies, MacOutputPublication } from '../runner/command_contracts.ts';
@@ -32,10 +31,16 @@ import { MacMaintenance } from '../runner/maintenance.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 import { ConversationStartAborted } from '../../../runtime/abort.ts';
 import { ExecutorPaths } from '../configuration.ts';
-import { OutboxStore } from '../storage/outbox.ts';
-import { open_command_journal } from '../storage/journal.ts';
+import type { OutboxStore } from '../storage/outbox.ts';
 import { read_canonical_body } from '../mailbox/poll.ts';
 import type { AsyncCommandJournal } from '../storage/journal_contracts.ts';
+import {
+  gate,
+  native_fixture_options,
+  open_fixture_stores,
+  close_fixture_stores,
+  record_commands,
+} from './runner_fixture.ts';
 
 const started = performance.now(),
   root = process.argv[2]!;
@@ -60,13 +65,6 @@ const on_failure = (error: Error) => {
 };
 const now = 1_700_000_010_123;
 const update_id = '0123456789abcdef0123456789abcdef';
-function gate() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 const entered = gate(),
   release = gate(),
   input_entered = gate(),
@@ -82,36 +80,15 @@ let maintenance_blocked = false,
   cleanup_native_failure: Error | null = null;
 let store: OutboxStore, journal: AsyncCommandJournal;
 async function open() {
-  store = await OutboxStore.open(
+  ({ store, journal } = await open_fixture_stores(
     join(root, 'spool'),
-    {
-      monotonic: () => 100,
-      now_ns: () => BigInt(now) * 1_000_000n,
-    },
-    options,
+    BigInt(now),
     on_failure,
-  );
-  journal = await open_command_journal(
-    store,
-    'inc',
-    {
-      outputs_module: new URL('../runner/logic/outcomes.ts', import.meta.url),
-      now_ms: () => BigInt(now),
-      on_failure,
-    },
     options,
-  );
+  ));
 }
 async function close() {
-  // The journal owns a sidecar of this spool: join it before closing its parent owner.
-  const results = await Promise.allSettled([journal.stop(options)]);
-  try {
-    await journal.settled();
-  } finally {
-    await store.stop(options);
-    await store.settled();
-  }
-  if (results[0]?.status === 'rejected') throw results[0].reason;
+  await close_fixture_stores({ store, journal }, options);
 }
 const child_state = new MacChildState();
 const native = {
@@ -182,32 +159,19 @@ const native = {
 } as unknown as BackendChild;
 mkdirSync(join(root, 'workspace'), { recursive: true });
 const native_children = new MacNativeChildren({
-  paths: new ExecutorPaths(join(root, 'state')),
-  workspace_home: root,
-  factory: () => () => native,
-  native_skill_home: () => join(root, 'native'),
+  ...native_fixture_options({
+    paths: new ExecutorPaths(join(root, 'state')),
+    workspace_home: root,
+    factory: () => () => native,
+    native_skill_home: () => join(root, 'native'),
+    snapshot_directory: join(root, 'skills'),
+    on_failure,
+  }),
   event_sink: () => ({
     async report() {
       throw new Error('Event custody belongs to PR5.');
     },
   }),
-  message_files: null as unknown as ConversationMessageFiles,
-  files: {
-    async open_directory(path) {
-      mkdirSync(path, { recursive: true });
-      return { id: 0 };
-    },
-    async close_directory() {},
-  },
-  skills: {
-    async install_native_skill_snapshot() {
-      return join(root, 'skills');
-    },
-    async stop() {},
-    async settled() {},
-  },
-  record_children: async () => {},
-  on_failure,
 });
 const sources = new MacSourceWork(child_state, () => native_children.admission_stopped);
 const retirement = new MacRetirement({ native_children, state: child_state, sources });
@@ -315,8 +279,9 @@ let actual_work_joined = false;
 let source_failure_seconds = 0;
 let cleanup_completed = false;
 try {
-  const reply = {
-    commands: Object.values(commands)
+  await record_commands(
+    journal!,
+    Object.values(commands)
       .map((command, index) => ({
         command_sequence: index + 1,
         command_id: command.command_id,
@@ -325,17 +290,7 @@ try {
         model_list_request: null,
       }))
       .filter((command) => command.command_id !== 'synthetic-stop'),
-  };
-  const cursor = await journal!.record_poll_reply(
-    stringify_pydantic_json(encode_value(reply, 'MailboxPollReply')),
-    'inc',
-    0n,
   );
-  try {
-    for await (const row of cursor) await read_canonical_body(row.command);
-  } finally {
-    await cursor.close();
-  }
   await run('start');
   for (const raw of input.asks) {
     const ask = decode_json(raw, 'AskReference');
