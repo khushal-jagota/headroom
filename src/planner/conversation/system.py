@@ -1062,6 +1062,15 @@ class SqliteProcessConversationSystem:
             else:
                 fate = await self._queue(state=state, message=message)
             if (
+                isinstance(fate, PromptDeliveryQueued)
+                and state.phase is _ConversationPhase.idle
+                and not state.being_killed
+                and not state.child_is_quarantined
+            ):
+                # An ordinary send can resume eligible traffic after an observational
+                # cleanup recheck. The recheck itself never authorizes native work.
+                self._settle_in_background(state, self._drain_held_prompts(state))
+            if (
                 record_refusal
                 and isinstance(fate, PromptDeliveryRefused)
                 and sender_message_id is not None
@@ -1328,7 +1337,6 @@ class SqliteProcessConversationSystem:
                     state.local_child_retirement_proven = settlement == "retired"
                     state.local_preparation_cancelled = settlement == "undelivered"
                     state.child_is_quarantined = False
-                    self._settle_in_background(state, self._drain_held_prompts(state))
                     token = self._store.settled_recorded_turn(local_id)
                     if token is not None:
                         await run_on_worker_thread(
@@ -1354,7 +1362,6 @@ class SqliteProcessConversationSystem:
                         return CleanupResult(False, "The retained Worker cleanup is not proven")
                 state.local_child_retirement_proven = True
                 state.child_is_quarantined = False
-                self._settle_in_background(state, self._drain_held_prompts(state))
         return CleanupResult(True, "Recorded Worker cleanup is complete")
 
     async def kill(self, conversation_id: str) -> None:
@@ -1445,9 +1452,13 @@ class SqliteProcessConversationSystem:
                 raise
             finally:
                 state.being_killed = False
-                # Refusal also releases this fence. Preserve its error while a
-                # settlement checks whether the remaining fences permit delivery.
-                if not kill_succeeded:
+                # A refused kill can resume traffic only after its safety fences
+                # clear. Do not leave a task that wakes after an explicit recheck.
+                if (
+                    not kill_succeeded
+                    and not state.child_is_quarantined
+                    and conversation_id not in self._store.blocked_local_conversations
+                ):
                     self._settle_in_background(state, self._drain_held_prompts(state))
         # A new message can arrive while the old child stops. Only its proven
         # retirement permits that message to start a successor child.
