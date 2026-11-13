@@ -326,6 +326,5 @@ The branch was subsequently rebased onto `ios-app` at `4317aef4`. Integration
 preserves the newer full More tab, deployment capsule, conversation smoke entry,
 and title-case Settings heading. Review notification taps with a ticket now open
 Workspace, matching the updated Review screen. The corresponding UI expectation
-was updated; the rebase was verified by a compile-only build as requested by
-firstmate, without repeating Simulator interaction tests. The earlier Simulator
+was updated; the rebase was verified by a compile-only build, without repeating Simulator interaction tests. The earlier Simulator
 evidence above belongs to the pre-rebase navigation shell.
