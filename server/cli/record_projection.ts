@@ -4,6 +4,7 @@ export interface RecordPart {
   proposal: any;
   approval?: Record<string, any>;
 }
+export type RecordParts = Map<string, RecordPart>;
 export function part(
   value: any,
   options: { proposal?: any; approval?: Record<string, any> | null } = {},
@@ -23,13 +24,13 @@ export function parse_part_names(raw: string | null): string[] | null {
 const length = (text: string): number => [...text].length;
 export function project_record(
   header: Record<string, any>,
-  parts: Record<string, RecordPart>,
+  parts: RecordParts,
   requested: string[] | null,
 ): any {
   if (requested === null) {
-    const manifest: Record<string, any> = {};
-    for (const [name, p] of Object.entries(parts)) {
-      manifest[name] = {
+    const manifest: [string, Record<string, any>][] = [];
+    for (const [name, p] of parts) {
+      const entry: Record<string, any> = {
         character_count:
           p.value === null
             ? 0
@@ -37,20 +38,24 @@ export function project_record(
               ? length(p.value)
               : length(stringify_python_json(p.value)),
       };
-      if ('approval' in p) manifest[name].approval = p.approval;
+      if ('approval' in p) entry.approval = p.approval;
+      manifest.push([name, entry]);
     }
-    return { header: { ...header }, manifest };
+    return { header: { ...header }, manifest: Object.fromEntries(manifest) };
   }
   const duplicates = [
     ...new Set(requested.filter((s) => requested.filter((n) => n === s).length > 1)),
   ];
-  const valid = Object.keys(parts).join(', ');
+  const valid = [...parts.keys()].join(', ');
   if (duplicates.length)
     throw new Error(`duplicate part names: ${duplicates.join(', ')}; valid part names: ${valid}`);
-  const unknown = requested.filter((s) => !(s in parts));
+  const unknown = requested.filter((s) => !parts.has(s));
   if (unknown.length)
     throw new Error(`unknown part names: ${unknown.join(', ')}; valid part names: ${valid}`);
-  return { header: { ...header }, parts: Object.fromEntries(requested.map((s) => [s, parts[s]])) };
+  return {
+    header: { ...header },
+    parts: Object.fromEntries(requested.map((s) => [s, parts.get(s)!])),
+  };
 }
 function display(value: any): string {
   if (value === null) return 'null';
@@ -69,12 +74,13 @@ function append(lines: string[], label: string, value: any, indent: string, anno
   if (split.at(-1) === '') split.pop();
   lines.push(...split.map((s) => `${indent}  ${s}`));
 }
-export function render_text(projection: any): string {
+export function render_text(projection: any, part_order: readonly string[]): string {
   const lines = ['header:'];
   for (const [key, value] of Object.entries(projection.header)) append(lines, key, value, '  ');
   if (projection.manifest !== undefined) {
     lines.push('', 'manifest:');
-    for (const [name, entry] of Object.entries(projection.manifest) as [string, any][]) {
+    for (const name of part_order) {
+      const entry = projection.manifest[name];
       lines.push(
         `  ${name}:${entry.approval ? ' # ' + entry.approval.display_label : ''}`,
         `    character_count: ${stringify_python_json(entry.character_count)}`,
@@ -82,7 +88,8 @@ export function render_text(projection: any): string {
     }
   } else {
     lines.push('', 'parts:');
-    for (const [name, p] of Object.entries(projection.parts) as [string, RecordPart][]) {
+    for (const name of part_order) {
+      const p: RecordPart = projection.parts[name];
       lines.push(`  ${name}:`);
       append(lines, 'value', p.value, '    ', p.approval ? ' # ' + p.approval.display_label : '');
       append(lines, 'proposal', p.proposal, '    ');

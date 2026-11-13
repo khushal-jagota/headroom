@@ -16,7 +16,7 @@ import {
   expression_references,
   phase_changed,
 } from '../measures/logic/evaluation.ts';
-import { parse_formula } from '../measures/logic/formulas.ts';
+import { float_number, parse_formula } from '../measures/logic/formulas.ts';
 import * as limits from './configuration.ts';
 import type {
   ChartBlock,
@@ -44,18 +44,51 @@ import {
 import { check_goal_demand_count, goal_actual_value } from './logic/reading_assembly.ts';
 import { chart_status, goal_status } from './logic/status.ts';
 import { read_goal_evaluation } from './reading_assembly.ts';
+import { ordered_record } from '../core/http/ordered_record.ts';
+const goal_fields = [
+  'id',
+  'holder_kind',
+  'holder_id',
+  'project_id',
+  'title',
+  'why',
+  'kind',
+  'active',
+  'completed',
+  'completion_date',
+  'completion_rule',
+  'outcome',
+  'primary_checklist_block_id',
+  'deadline',
+  'primary_chart',
+  'page',
+  'revision',
+  'created_at',
+  'updated_at',
+  'employee_backend',
+  'employee_launch_model',
+  'employee_launch_reasoning_effort',
+  'status',
+  'status_date',
+  'next_refresh_at',
+] as const;
 export function goal_json(_sql: ReadSql, goal: Goal, now: Date): GoalResponse {
   const [today, midnight] = calendar_parts(now),
     completed = goal_completed(goal);
-  const { binary_checked, ...facts } = goal;
-  return {
-    ...facts,
-    completed,
-    outcome: goal_outcome(goal, today),
-    status: goal.kind === 'binary' ? goal_status(completed, goal.deadline, today) : 'neutral',
-    status_date: today,
-    next_refresh_at: midnight,
-  };
+  return ordered_record(
+    {
+      ...goal,
+      completed,
+      outcome: goal_outcome(goal, today),
+      status:
+        goal.kind === 'binary' ? goal_status(completed, goal.deadline, today) : ('neutral' as Tone),
+      status_date: today,
+      next_refresh_at: midnight,
+    },
+    goal_fields,
+    'Goal',
+    ['binary_checked'],
+  );
 }
 export function list_json(
   sql: ReadSql,
@@ -202,7 +235,7 @@ function formula_projections(
       instant,
       limits.MAX_DEMANDED_MEASURE_DATES,
     ),
-    result: Record<string, ScalarChartProjection> = {};
+    result: Record<string, ScalarChartProjection> = Object.create(null);
   for (const chart of formula_charts) {
     const [a, b, today] = bounds.get(chart.id)!,
       m = bound.get(chart.measure_id!)!,
@@ -244,6 +277,21 @@ export function readings_json(
   options: { first_date?: string | null; last_date?: string | null } = {},
 ): Record<string, unknown> {
   return document_readings_json(sql, read_goal(sql, id), now, options);
+}
+// These public scalar fields are declared floats in Python, including whole-valued readings.
+function projection_json(projection: ChartProjection) {
+  if (projection.kind !== 'scalar') return projection;
+  return {
+    ...projection,
+    points: projection.points.map((point) => ({
+      ...point,
+      expected: {
+        ...point.expected,
+        value: point.expected.value === null ? null : float_number(point.expected.value),
+      },
+      difference: point.difference === null ? null : float_number(point.difference),
+    })),
+  };
 }
 export function document_readings_json(
   sql: ReadSql,
@@ -303,12 +351,14 @@ export function document_readings_json(
     if (subject.primary_chart?.measure_id === id) primary = reading.values;
   }
   const known = new Set(values.map(pair_key));
-  for (const projection of Object.values(categories))
-    for (const value of projection.measure_values)
+  for (const chart of charts(subject.primary_chart ?? null, subject.page)) {
+    if (!Object.hasOwn(categories, chart.id)) continue;
+    for (const value of categories[chart.id]!.measure_values)
       if (!known.has(pair_key(value))) {
         values.push(value);
         known.add(pair_key(value));
       }
+  }
   let status: Tone;
   if ((subject.kind ?? 'binary') === 'binary')
     status = goal_status(
@@ -320,7 +370,7 @@ export function document_readings_json(
       subject.deadline ?? null,
       today,
     );
-  else if (subject.primary_chart && subject.primary_chart.id in projections) {
+  else if (subject.primary_chart && Object.hasOwn(projections, subject.primary_chart.id)) {
     const p = projections[subject.primary_chart.id]!;
     if (p.kind === 'scalar') status = projection_status(subject.primary_chart, p);
     else {
@@ -341,6 +391,8 @@ export function document_readings_json(
     next_refresh_at: midnight,
     values,
     sources: [...sources.values()],
-    charts: projections,
+    charts: Object.fromEntries(
+      Object.entries(projections).map(([id, projection]) => [id, projection_json(projection)]),
+    ),
   };
 }
