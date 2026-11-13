@@ -49,13 +49,14 @@ from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.task_settlement import run_on_worker_thread
 from planner.runtime import conversation_start, worker_memory, worker_step_readiness
+from planner.runtime.decision_message_delivery import deliver_ticket_decision_messages
 from planner.runtime.logic.worker_step_prompt import (
     WorkerStepPrompt,
     compose_worker_step_prompt,
     mid_step_memory_loss_prompt,
 )
 from planner.tickets import data as tickets_data
-from planner.tickets import revision_feedback
+from planner.tickets import decision_messages
 from planner.tickets.derivation import RESTS_PREDICATE
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.registry import WorkerTypeRegistry
@@ -131,6 +132,15 @@ async def start_ready_worker_step(
     with admission.operation() if admission is not None else nullcontext(True) as admitted:
         if not admitted:
             return WorkerStepStartResult(started=False)
+        decision_fate = await deliver_ticket_decision_messages(
+            ticket_id,
+            connect_database=connect_database,
+            conversation_system=conversation_system,
+            worker_type_registry=worker_type_registry,
+            now=now,
+        )
+        if decision_fate is not None:
+            return WorkerStepStartResult.from_delivery_fate(decision_fate)
         return await _admitted_start_ready_worker_step(
             ticket_id,
             connect_database=connect_database,
@@ -272,22 +282,17 @@ async def _admitted_start_ready_worker_step(
 
             # Composed before anything is made: a failure here must not leave a conversation
             # behind, and the opener is what would have brought one into being.
-            def prepare_prompt() -> tuple[
-                WorkerStepPrompt, revision_feedback.PendingRevisionFeedback | None
-            ]:
+            def prepare_prompt() -> WorkerStepPrompt:
                 current_ticket = tickets_data.read_ticket(conn, ticket_id)
-                feedback = revision_feedback.snapshot(conn, ticket_id)
-                prompt = compose_worker_step_prompt(
+                return compose_worker_step_prompt(
                     current_ticket,
                     worker_type_definition=worker_type_definition,
-                    revision_feedback=feedback,
                     memory_was_lost=worker_memory.conversation_holds_an_unanswered_memory_loss(
                         conn, conversation_id
                     ),
                 )
-                return prompt, feedback
 
-            prompt, pending_revision_feedback = await run_on_worker_thread(prepare_prompt)
+            prompt = await run_on_worker_thread(prepare_prompt)
 
             def record_dispatch() -> None:
                 from planner.ticket_workspaces.data import ensure_workspace_activity
@@ -310,7 +315,7 @@ async def _admitted_start_ready_worker_step(
                 mode=PromptDeliveryMode.queue,
                 sender_message_id=sender_message_id,
                 worker_type_registry=worker_type_registry,
-                retain_backend_start_failure=not paired_opener,
+                retain_definite_start_refusal=not paired_opener,
                 workspace_activity_recorded=True,
                 now=now(),
             )
@@ -340,10 +345,12 @@ async def _admitted_start_ready_worker_step(
                 conversation_id,
                 fate.refusal_reason.value,
             )
-            if (
-                not paired_opener
-                and fate.refusal_reason is PromptDeliveryRefusalReason.backend_did_not_start
-            ):
+            if not paired_opener and fate.refusal_reason in {
+                PromptDeliveryRefusalReason.backend_did_not_start,
+                # The model is switched off or no longer offered. Retrying cannot help,
+                # and the refusal with its reason is already in the conversation.
+                PromptDeliveryRefusalReason.model_resolution_failed,
+            }:
                 await run_on_worker_thread(
                     tickets_data.mark_worker_step_claim_errored,
                     conn,
@@ -386,21 +393,6 @@ async def _admitted_start_ready_worker_step(
         if paired_opener:
             await give_the_claim_back(opener_succeeded=True)
 
-        if pending_revision_feedback is not None:
-            try:
-                await run_on_worker_thread(
-                    revision_feedback.acknowledge,
-                    conn,
-                    ticket_id,
-                    pending_revision_feedback.revision,
-                )
-            except Exception:
-                # The text is delivered and cannot be taken back, so this is reported and
-                # nothing is reverted: reverting would only send the feedback twice.
-                _log.exception(
-                    "delivered revision feedback could not be acknowledged (ticket=%s)",
-                    ticket_id,
-                )
         return WorkerStepStartResult.from_delivery_fate(fate)
     finally:
         if starts is not None and automatic_identity is not None and not automatic_sent:
@@ -591,6 +583,12 @@ class WorkerStepReadinessLoop:
                 ready_ticket_ids.append(groups[destination].popleft())
                 if groups[destination]:
                     rotation.append(destination)
+            for ticket_id in decision_messages.pending_ticket_ids(conn):
+                if ticket_id not in ready_ticket_ids:
+                    ready_ticket_ids.append(ticket_id)
+                    self._ticket_destinations[ticket_id] = tickets_data.read_ticket(
+                        conn, ticket_id
+                    ).machine_id
             return ready_ticket_ids
         finally:
             conn.close()

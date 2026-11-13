@@ -361,3 +361,114 @@ def test_legacy_failure_returns_inert_owner_and_releases_every_candidate(
         _assert_lock(cfg.dispatcher_lock_path, held=False)
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("identity_valid", [True, False])
+def test_darwin_home_startup_polls_an_external_waiting_update(
+    tmp_path: Path, cfg: object, monkeypatch: pytest.MonkeyPatch, identity_valid: bool,
+) -> None:
+    """The production lifespan must own the thread that advances an external attempt."""
+    import json
+    import os
+    from dataclasses import replace
+
+    from fastapi.testclient import TestClient
+    from tests.support.update_apps import SHA_A, build_app
+    from tests.unit.test_update_service import Harness
+
+    from planner.core.config import Config
+    from planner.core.server import create_app, resolve_application_root
+    from planner.environments.update_attempts import atomic_write_json, attempt_to_dict, utc_now
+    from planner.environments.update_contracts import UpdateAttempt
+    from planner.environments.update_service import UpdateService
+    from planner.platform_runtime.darwin.adapter import DarwinPlatformAdapter
+    from planner.platform_runtime.darwin.contracts import MacHomeInstallation
+    from planner.platform_runtime.darwin.runtime_contracts import DarwinRuntimeContract
+    from planner.platform_runtime.linux.adapter import LinuxPlatformAdapter
+    from planner.platform_runtime.linux.update_installer import MacService
+
+    # Reuse the existing update fixture and ASGI host. Native process operations
+    # remain separate Mac proof; this case exercises actual production loop startup.
+    harness = Harness(tmp_path / "home")
+    (harness.root / "workspaces").mkdir()
+    build_app(harness.root / "app", SHA_A, "installed")
+    harness.release = replace(harness.release, mac=None, manifest=replace(
+        harness.release.manifest, runtime_contract=DarwinRuntimeContract("3.12.16", "f" * 64),
+    ))
+    label = "com.panels.proof.test"
+    record = MacHomeInstallation(
+        os.getuid(), harness.root, label, harness.root / "agents" / f"{label}.plist",
+        harness.root / "agents" / f"{label}.backup.plist", Path(sys.executable),
+    )
+    (harness.root / "data/mac-home-installation.json").write_text(json.dumps(record.as_dict()))
+    config_path = harness.root / "data/config.yaml"
+    config_path.write_text(json.dumps({"provision_account_skills": False}))
+    monkeypatch.setenv("PLAN_CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("PLAN_APP_ROOT", str(harness.root / "app"))
+
+    def authenticate(service: MacService, *, parent: int | None = None) -> None:
+        assert service.root == harness.root
+        assert parent == os.getppid()
+        if not identity_valid:
+            raise ValueError("The installed launchd identity is unavailable")
+
+    # Only native launchctl/process evidence is simulated. The installation record,
+    # current_service, own_service_unit, and no-repository configuration run normally.
+    monkeypatch.setattr(MacService, "validate_running_home", authenticate)
+    isolated = replace(
+        cast(Config, cfg), db_path=str(harness.database), test_mode=False,
+        dispatch_enabled=True, tick_seconds=60, app_sha=SHA_A, executor_id=None,
+        dispatcher_lock_path=str(harness.root / "data/dispatcher.lock"),
+        logs_dir=str(harness.root / "logs"), backup_dir=str(harness.root / "data/backups"),
+        workspace_root=harness.root / "workspaces", provision_account_skills=False,
+    )
+    adapter = DarwinPlatformAdapter()
+    if sys.platform != "darwin":
+        monkeypatch.setattr(adapter, "worker_processes", LinuxPlatformAdapter().worker_processes)
+    monkeypatch.setattr(
+        "planner.platform_runtime.selection.get_platform_adapter", lambda *args: adapter,
+    )
+    monkeypatch.setattr("planner.environments.update_service.get_platform_adapter", lambda: adapter)
+    monkeypatch.setattr("planner.environments.update_install.get_platform_adapter", lambda: adapter)
+    monkeypatch.setattr("planner.core.server._REPO_ROOT", resolve_application_root())
+    monkeypatch.delenv("PLAN_UPDATE_REPOSITORY", raising=False)
+    monkeypatch.delenv("PLAN_UPDATE_TOKEN_FILE", raising=False)
+    app = create_app(isolated, build_clock(isolated), lambda: connect(str(harness.database)))
+    launched = threading.Event()
+    with TestClient(app):
+        updater = cast(UpdateService, app.state.updates)
+        owner = loops._active
+        assert owner is not None and owner.worker_step_readiness_loop is not None
+        thread = owner.worker_step_readiness_loop._thread
+        assert thread is not None and thread.is_alive()
+        assert getattr(owner.worker_step_readiness_loop._before_poll, "__self__", None) is (
+            updater
+        )
+        assert updater.provider is None
+        assert updater._service_unit == (f"gui/{os.getuid()}/{label}" if identity_valid else "")
+        assert updater._event_loop is not None and updater._event_loop.is_running()
+        updater._launch = lambda *args: launched.set()
+        deadline = monotonic() + 5
+        while updater.status().activity != "idle" and monotonic() < deadline:
+            threading.Event().wait(0.01)
+        assert updater.status().activity == "idle"
+        now = utc_now()
+        # Write the other process's bytes without its process-local change signal.
+        atomic_write_json(harness.store.path, attempt_to_dict(UpdateAttempt(
+            attempt_id="external-native-proof", from_sha=SHA_A,
+            to_sha=harness.release.manifest.app_sha, mode="idle", confirm_activity=False,
+            state="waiting", created_at=now, updated_at=now, release=harness.release,
+        )))
+        deadline = monotonic() + 10
+        while monotonic() < deadline:
+            attempt = harness.store.read()
+            if attempt is not None and attempt.state in {"installing", "failed"}:
+                break
+            threading.Event().wait(0.01)
+        assert attempt is not None and "work_paused" in attempt.steps, updater.status()
+        if identity_valid:
+            assert launched.wait(2) and attempt.state == "installing"
+            assert attempt.backup is not None
+        else:
+            assert attempt.state == "failed" and not launched.is_set()
+            assert "launchd identity is unavailable" in (attempt.detail or "")

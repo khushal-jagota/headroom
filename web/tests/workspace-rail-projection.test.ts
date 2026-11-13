@@ -446,13 +446,13 @@ import { currentSnapshot, conversation, continuity, envelope } from './support/n
 import { encodeCursor } from './support/navigation/fixtures';
 import type { TicketRecord, NavigationRecord } from '../src/lib/navigation/contracts';
 const sourceTicket:(TicketRecord & {value:import('../src/lib/navigation/contracts').TicketValue})={kind:'ticket',id:'source-ticket',value:{
-  title:'Source Ticket',recap:'Full source recap.\n'+'Body continues. '.repeat(20),recap_preview:'Source recap',worker_type:'coding',stage_label:'Implementation',workflow_label:'Coding',stage:'needs_implementation',ticket_status:'empty',blocked:false,created_at:1,
+  title:'Source Ticket',recap:'Full source recap.\n'+'Body continues. '.repeat(20),recap_preview:'Source recap',recap_updated_at:null,recap_stage_changed:false,worker_type:'coding',stage_label:'Implementation',workflow_label:'Coding',stage:'needs_implementation',ticket_status:'empty',blocked:false,created_at:1,
   updated_at:11,worker_step_claim_out:false,deadline:null,project_id:'project',manager_kind:'manager',
   manager_id:'item',conversation_id:'conversation',is_backlogged:false,ceiling:'needs_implementation',
   ceiling_holder:{kind:'owner',id:'owner'},gating_field:'implementation',proposal_field:null,proposal_revision:0,
   proposal_created_at:null,stage_ownership:'worker',terminal:false,machine_id:'75a49e78-97de-4e28-8dc5-79646761c46f',locale:'en'}};
 const sourceRecords:NavigationRecord[]=[sourceTicket,conversation('conversation'),
-  {kind:'manager',id:'item',value:{title:'Parent',recap:'Full parent recap.\n'+'Body continues. '.repeat(20),recap_preview:'Parent recap',created_at:1,updated_at:11,project_id:'project',settled:false,conversation_id:null}},
+  {kind:'manager',id:'item',value:{title:'Parent',recap:'Full parent recap.\n'+'Body continues. '.repeat(20),recap_preview:'Parent recap',recap_updated_at:null,created_at:1,updated_at:11,project_id:'project',settled:false,conversation_id:null}},
   {kind:'project',id:'project',value:{name:'Project'}},
   {kind:'chief',id:'chief',value:{label:'Chief',conversation_id:null}},
   {kind:'address',id:'address',value:{owner_kind:'ticket',owner_id:'source-ticket',conversation_id:'conversation',current:true,parent_kind:'manager',parent_id:'item'}}];

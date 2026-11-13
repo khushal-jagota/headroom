@@ -10,6 +10,32 @@ from planner.platform_runtime.legacy_posix import LegacyPosixPlatformAdapter
 
 
 class DarwinPlatformAdapter(LegacyPosixPlatformAdapter):
+    update_unavailable_reason = None
+    update_requires_snapshot = True
+
+    def own_service_unit(self, cgroup: str | None = None) -> str | None:
+        from .updates import own_service_unit
+
+        return own_service_unit()
+
+    def launch_installer(self, attempt_id: str, command: list[str]) -> None:
+        from .updates import launch_installer
+
+        launch_installer(attempt_id, command)
+
+    def installer_source(self) -> Path:
+        from planner.platform_runtime.linux.updates import installer_source
+
+        return installer_source()
+
+    def installer_python(self, current_root: Path) -> Path:
+        from .updates import current_service
+
+        service = current_service()
+        if service.root != current_root.resolve():
+            raise ValueError("Installer root differs from this Mac home")
+        return service.python
+
     def control_socket_path(self, port: int, environ: Mapping[str, str], launch_root: Path) -> Path:
         from .paths import resolve_server_control_socket_path
 

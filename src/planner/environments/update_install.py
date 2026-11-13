@@ -14,8 +14,6 @@ from pathlib import Path
 from planner.environments.update_configuration import INSTALLER_FILE_NAME
 from planner.platform_runtime.selection import get_platform_adapter
 
-_HOST_PYTHON_PATH = "/usr/local/bin:/usr/bin:/bin"
-
 
 def migration_graph(app_root: Path) -> dict[str, tuple[str, ...]]:
     """Read revision -> parents from the staged app's migration files without importing them.
@@ -102,11 +100,9 @@ def installer_command(
     health_url: str,
     health_timeout_seconds: float,
 ) -> list[str]:
-    python = shutil.which("python3", path=_HOST_PYTHON_PATH)
-    if python is None:
-        raise OSError("The host has no python3 for the installer.")
+    python = get_platform_adapter().installer_python(current_root)
     return [
-        python, "-I", "-S", "-B", str(installer),
+        str(python), "-I", "-S", "-B", str(installer),
         "--current-root", str(current_root),
         "--attempt-id", attempt_id,
         "--service", service,

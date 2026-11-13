@@ -200,11 +200,11 @@ def build_conversation_runtime(
         view_output_directory=Path(db_path).parent / "conversation-view-output"
     )
     message_files = ConversationMessageFiles(db_path)
-    backend_snapshots = BackendSnapshotService(
-        remembered_codex_login_rejection=remembered_codex_login_rejection
-    )
-
     backend_state = BackendStateStore(db_path, busy_timeout_ms=db_busy_timeout_ms)
+    backend_snapshots = BackendSnapshotService(
+        remembered_codex_login_rejection=remembered_codex_login_rejection,
+        keep_complete_model_list=backend_state.keep_vps_model_list,
+    )
 
     async def codex_app_server_argv() -> tuple[str, ...] | None:
         """How to run a codex app-server here, read when a sign-in starts, not at boot.

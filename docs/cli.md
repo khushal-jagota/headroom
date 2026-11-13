@@ -26,6 +26,10 @@ A `show` returns a short header and a list of parts, and the caller names the pa
 
 `ticket create --machine-id ID` chooses the machine from `machine list`. The JSON object also accepts `machine_id`. Omission selects the home. The destination stays fixed after creation, including when a machine changes its name. Away work waits for that machine. Legacy `--locale vps` and `--locale macos` remain aliases for the original home and Mac. If both forms arrive, the server rejects disagreement.
 
+Ticket and Manager lists include each recap and its age. Missing recaps and unknown ages are explicit. Ticket overviews also flag a stage change since the recap. JSON carries the recap timestamp, so agents can calculate its age.
+
+`ticket request-recap ID` and `manager request-recap ID` ask for a fresh recap within the caller's supervision scope. See [conversations](conversations.md).
+
 A Manager workspace read identifies the document that the browser displays and gives its edit command. It keeps the purpose, recap, held goals, artifacts, and Tickets distinct. `page show` and `page edit` select a Manager or Chief. `page schema` describes their shared document format. A sole held goal remains a goal edit through `goal`. A page edit replaces the complete document, so an agent preserves unrelated content.
 
 ## What the CLI feeds

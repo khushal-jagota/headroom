@@ -2,7 +2,7 @@
 from alembic import op
 
 revision = "linux_executor_platform"
-down_revision = "retryable_original_credential"
+down_revision = "merge_home_recap"
 branch_labels = None
 depends_on = None
 

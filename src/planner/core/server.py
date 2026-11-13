@@ -243,6 +243,7 @@ def create_app(
         stall_checker: StallChecker | None = None
 
         async def shutdown_dependents() -> None:
+            app.state.updates.stop()
             app.state.conversation = None
             deadline = _monotonic() + float(SHUTDOWN_GRACE_SECONDS)
             failures: list[BaseException] = []

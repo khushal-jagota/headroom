@@ -106,6 +106,11 @@ def native_tool_commands(
 class LinuxRuntime:
     target = LINUX_HOME
 
+    def native_probe(self) -> str:
+        from .runtime_probe import NATIVE_PROBE
+
+        return NATIVE_PROBE
+
     def complete_private_runtime(self, app_root: Path) -> RuntimeContract:
         from planner.platform_runtime.linux.runtime_packaging import complete_private_runtime
 

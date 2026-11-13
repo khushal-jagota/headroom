@@ -50,7 +50,7 @@ class LegacyPosixPlatformAdapter(LinuxPlatformAdapter):
 
         return DarwinWorkerProcesses()
 
-    update_unavailable_reason = "Home updates are unavailable on this operating system."
+    update_unavailable_reason: str | None = "Home updates are unavailable on this operating system."
 
     def read_process_identity(self, pid: int) -> ProcessIdentity | None:
         return None

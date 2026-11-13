@@ -167,6 +167,7 @@ def test_parallel_publication_binds_checked_build_and_native_mac_before_receipt(
     assert receipt["env"] == {
         "PANELS_ARTIFACT_ID": "${{ needs.build.outputs.app_artifact_id }}",
         "PANELS_MAC_ARTIFACT_ID": "${{ needs.mac-runtime.outputs.artifact_id }}",
+        "PANELS_MAC_HOME_ARTIFACT_ID": "${{ needs.mac-runtime.outputs.home_artifact_id }}",
         "PANELS_MAC_BUILD_RESULT": "${{ needs.mac-runtime.result }}",
         "PANELS_LINUX_EXECUTOR_ARTIFACT_ID": "${{ needs.linux-executor.outputs.artifact_id }}",
         "PANELS_LINUX_EXECUTOR_BUILD_RESULT": "${{ needs.linux-executor.result }}",
@@ -188,6 +189,16 @@ def test_parallel_publication_binds_checked_build_and_native_mac_before_receipt(
         "merge-multiple": True,
     }
     assert "!${{ env.PANELS_GATE_DIR }}/mac/panels-mac-runtime.tar.gz" in (
+        steps["Retain publication proof"]["with"]["path"]
+    )
+    assert steps["Download checked native Mac home"]["with"] == {
+        "artifact-ids": "${{ needs.mac-runtime.outputs.home_artifact_id }}",
+        "run-id": "${{ github.run_id }}",
+        "github-token": "${{ github.token }}",
+        "path": "${{ env.PANELS_GATE_DIR }}/mac-home",
+        "merge-multiple": True,
+    }
+    assert "!${{ env.PANELS_GATE_DIR }}/mac-home/panels-app.tar.gz" in (
         steps["Retain publication proof"]["with"]["path"]
     )
 
