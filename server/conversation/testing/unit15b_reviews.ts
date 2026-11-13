@@ -22,6 +22,11 @@ import type { WakeBatch } from '../../manager_wakes/contracts.ts';
 import { dirname } from 'node:path';
 import { OWNER, CHIEF } from '../../core/contracts.ts';
 import { delivery_fate_json } from '../http.ts';
+import { model_is_enabled } from '../backend_state.ts';
+import {
+  canonical_ticket_execution_refusal,
+  conversation_execution_refusal,
+} from '../../tickets/execution_admission.ts';
 
 interface Spec {
   path: string;
@@ -59,6 +64,12 @@ export async function run(spec: Spec) {
   });
   let core = new SqliteProcessConversationSystem({
     store,
+    model_is_enabled: (backend, model) =>
+      database.read((sql) => model_is_enabled(sql, backend, model)),
+    execution_refusal: (id) =>
+      database.read((sql) =>
+        conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
+      ),
     backend_child_factories: registry.factories,
     message_files: new ConversationMessageFiles(spec.path),
     unix_time_now: () => 100,
@@ -216,6 +227,12 @@ export async function run(spec: Spec) {
       registry = new ScriptedBackendRegistry();
       core = new SqliteProcessConversationSystem({
         store,
+        model_is_enabled: (backend, model) =>
+          database.read((sql) => model_is_enabled(sql, backend, model)),
+        execution_refusal: (id) =>
+          database.read((sql) =>
+            conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
+          ),
         backend_child_factories: registry.factories,
         message_files: new ConversationMessageFiles(spec.path),
         unix_time_now: () => 100,

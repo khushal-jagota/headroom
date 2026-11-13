@@ -50,7 +50,16 @@ export async function restart_worker(
   let killed_conversation_looked_running = false;
   let revision_restarted_in_fresh_conversation = false;
   await conversation_start.conversation_link_lock(`ticket:${ticket_id}`).run(async () => {
-    const ticket = database.read((sql) => require_restartable(sql, principal, ticket_id));
+    const ticket = database.read((sql) => {
+      const current = require_restartable(sql, principal, ticket_id);
+      const refusal = conversation_start.configured_ticket_execution_refusal(
+        database,
+        sql,
+        current,
+      );
+      if (refusal !== null) throw refusal;
+      return current;
+    });
     killed_conversation_id = ticket.conversation_id;
     if (killed_conversation_id !== null) {
       revision_restarted_in_fresh_conversation = database.read(

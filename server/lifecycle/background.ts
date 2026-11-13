@@ -94,23 +94,75 @@ export function compose_background_services(
   let started = false;
   let starting: Promise<void> | undefined;
   let actual_stop: Promise<void> | undefined;
+  let stopping_options: StopOptions | undefined;
   const own = (factory: () => ComposedBackgroundService) => {
     let service: ComposedBackgroundService | undefined;
+    let closed_service: ComposedBackgroundService | undefined;
+    let late_cleanup: Promise<void> | undefined;
     services.push({
       async start() {
         service = factory();
+        if (stopped) {
+          // A factory can synchronously request stop before returning its owner.
+          // The earlier close saw no service. Join this late cleanup explicitly.
+          if (service !== closed_service) {
+            closed_service = service;
+            let resolve!: () => void, reject!: (error: unknown) => void;
+            late_cleanup = new Promise<void>((yes, no) => {
+              resolve = yes;
+              reject = no;
+            });
+            void late_cleanup.catch(() => {});
+            const actuals: Promise<unknown>[] = [];
+            try {
+              actuals.push(
+                Promise.resolve(service.close(stopping_options!)).catch((error: unknown) => {
+                  if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+                }),
+              );
+            } catch (error) {
+              actuals.push(Promise.reject(error));
+            }
+            try {
+              actuals.push(service.settled());
+            } catch (error) {
+              actuals.push(Promise.reject(error));
+            }
+            void Promise.allSettled(actuals).then((results) => {
+              const failures = results.filter((result) => result.status === 'rejected');
+              if (failures.length)
+                reject(
+                  new AggregateError(
+                    failures.map((failure) => failure.reason),
+                    'Late background cleanup failed',
+                  ),
+                );
+              else resolve();
+            });
+          }
+          await late_cleanup;
+          return;
+        }
         await service.start();
       },
-      close: (stop) => service?.close(stop),
-      settled: () => service?.settled() ?? Promise.resolve(),
+      close: (stop) => {
+        closed_service = service;
+        return service?.close(stop);
+      },
+      settled: () => late_cleanup ?? service?.settled() ?? Promise.resolve(),
     });
   };
-  if (dispatcher_admitted(context.config, options.dispatcher_owned)) {
+  const dispatch = dispatcher_admitted(context.config, options.dispatcher_owned);
+  const factoryContext: BackgroundCompositionContext = context;
+  if (dispatch) {
     context.assert_database_owned();
-    const factoryContext: BackgroundCompositionContext = context;
     // Construction is side-effect free. Register each owner before starting it.
     if (options.notificationDelivery) own(() => options.notificationDelivery!(factoryContext));
-    if (options.stallChecker) own(() => options.stallChecker!(factoryContext));
+  }
+  // The production constructor supplies the real checker by default. Explicit test
+  // factories remain allowed; dispatch and the polling lock do not gate diagnostics.
+  if (options.stallChecker) own(() => options.stallChecker!(factoryContext));
+  if (dispatch) {
     own(() => {
       const worker = prepare_background_loops({
         enable_worker_readiness: options.enable_worker_readiness ?? false,
@@ -159,6 +211,7 @@ export function compose_background_services(
     },
     close(stop: StopOptions) {
       if (stopped) return stopped;
+      stopping_options = stop;
       const drains: Promise<unknown>[] = [];
       actual_stop = Promise.resolve().then(async () => {
         for (const service of services) {
