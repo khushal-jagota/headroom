@@ -743,7 +743,11 @@ import XCTest
     }
     func testProtectedDecisionLostAfterCommitRestartsFromReceiptWithoutAnotherOutcome() async throws {
         let outbox = Outbox(store: store)
-        let original = try protectedDecision("committed")
+        var original = try protectedDecision("committed")
+        let note = "  Exact approval note\n\nwith Unicode 🪶.  \n"
+        original.guidance = note; original.draftID = "approval-guidance"
+        store.saveDraft(note, server: server, id: original.draftID!)
+        original.decisionDraftUpdatedAt = try store.outgoing.captureDraft(server: server, id: original.draftID!).text?.updated
         OfflineProtocol.state.loseDecisionAfterCommit = true
         try outbox.enqueue(original, api: api)
         await outbox.drain(api: api)
@@ -752,6 +756,9 @@ import XCTest
         XCTAssertNotNil(frozen.protectedDecisionBody)
         XCTAssertEqual(frozen.protectedProposalCreatedAt, original.proposal?.createdAt)
         XCTAssertEqual(frozen.state, .uncertain)
+        XCTAssertEqual(store.draft(server: server, id: original.draftID!), note, "A lost response cannot clear the draft")
+        let command = try APIClient.decoder().decode(DecisionCommand.self, from: XCTUnwrap(frozen.protectedDecisionBody))
+        XCTAssertEqual(command.message, note)
         let raw = try XCTUnwrap(store.record(server: server, kind: "outbox", id: original.id)?.payload)
         OfflineProtocol.state.bumpRevision() // Recovery must precede any current-proposal read.
         let reopenedStore = LocalStore(url: directory.appendingPathComponent("test.store"))
@@ -759,6 +766,7 @@ import XCTest
         await reopened.drain(api: api)
         await reopened.drain(api: api)
         XCTAssertEqual(reopened.work(server, id: original.id)?.state, .sent)
+        XCTAssertEqual(reopenedStore.draft(server: server, id: original.draftID!), "", "Only the applied receipt clears the captured draft")
         XCTAssertEqual(OfflineProtocol.state.decisionOutcomes, 1)
         XCTAssertEqual(OfflineProtocol.state.decisionBodies.count, 1)
         XCTAssertEqual(try reopenedStore.record(server: server, kind: "outbox", id: original.id)?.payload, raw)
@@ -766,25 +774,56 @@ import XCTest
     }
     func testSupportedNullRetriesOnlyOriginalDecisionIDAndFrozenBytesAfterRestart() async throws {
         let outbox = Outbox(store: store)
-        let original = try protectedDecision("null-retry", kind: .sendBack)
+        var original = try protectedDecision("null-retry", kind: .sendBack)
+        let note = "  Exact send-back note\n\nwith Unicode 🪶.  \n"
+        original.guidance = note; original.draftID = "send-back-guidance"
+        store.saveDraft(note, server: server, id: original.draftID!)
         OfflineProtocol.state.loseDecisionBeforeCommit = true
         try outbox.enqueue(original, api: api)
         await outbox.drain(api: api)
         let body = try XCTUnwrap(outbox.work(server, id: original.id)?.protectedDecisionBody)
+        XCTAssertEqual(try APIClient.decoder().decode(DecisionCommand.self, from: body).message, note)
+        XCTAssertEqual(store.draft(server: server, id: original.draftID!), note)
         XCTAssertEqual(outbox.work(server, id: original.id)?.state, .uncertain)
         XCTAssertEqual(try store.outgoing.summary(server: server, id: original.id)?.provenance, "attempted")
-        let reopened = Outbox(store: LocalStore(url: directory.appendingPathComponent("test.store")))
+        let reopenedStore = LocalStore(url: directory.appendingPathComponent("test.store"))
+        let reopened = Outbox(store: reopenedStore)
         await reopened.drain(api: api)
         XCTAssertEqual(reopened.work(server, id: original.id)?.state, .sent)
+        XCTAssertEqual(reopenedStore.draft(server: server, id: original.draftID!), "")
         XCTAssertEqual(OfflineProtocol.state.decisionBodies.map { $0.0 }, [original.id, original.id])
         XCTAssertEqual(OfflineProtocol.state.decisionBodies.map { $0.1 }, [body, body])
         XCTAssertEqual(OfflineProtocol.state.decisionOutcomes, 1)
         XCTAssertTrue(OfflineProtocol.state.writes.isEmpty, "No legacy decision endpoint is available as fallback")
     }
+    func testAppliedDecisionPreservesANewerDraftEvenWhenTextMatches() async throws {
+        let outbox = Outbox(store: store)
+        var original = try protectedDecision("newer-draft")
+        original.guidance = "The same text after another edit"; original.draftID = "guidance"
+        store.saveDraft(original.guidance!, server: server, id: original.draftID!)
+        original.decisionDraftUpdatedAt = try store.outgoing.captureDraft(server: server, id: original.draftID!).text?.updated
+        OfflineProtocol.state.loseDecisionAfterCommit = true
+        try outbox.enqueue(original, api: api)
+        await outbox.drain(api: api)
+        let frozen = try XCTUnwrap(outbox.work(server, id: original.id))
+        XCTAssertEqual(frozen.state, .uncertain)
+        XCTAssertNotNil(frozen.decisionDraftUpdatedAt)
+        store.saveDraft("Newer text", server: server, id: original.draftID!)
+        store.saveDraft(original.guidance!, server: server, id: original.draftID!)
+        let reopenedStore = LocalStore(url: directory.appendingPathComponent("test.store"))
+        let reopened = Outbox(store: reopenedStore)
+        await reopened.drain(api: api)
+        XCTAssertEqual(reopened.work(server, id: original.id)?.state, .sent)
+        XCTAssertEqual(reopenedStore.draft(server: server, id: original.draftID!), original.guidance)
+        XCTAssertEqual(OfflineProtocol.state.decisionOutcomes, 1)
+        XCTAssertEqual(OfflineProtocol.state.decisionBodies.count, 1)
+    }
+
     func testUnsupportedDecisionServerRestoresCardAndDraftAfterTransientPreflight() async throws {
         let outbox = Outbox(store: store)
-        let original = try protectedDecision("unsupported")
-        store.saveDraft("Kept local guidance", server: server, id: "draft")
+        var original = try protectedDecision("unsupported")
+        original.guidance = "Kept local guidance"; original.draftID = "draft"
+        store.saveDraft(original.guidance!, server: server, id: original.draftID!)
         OfflineProtocol.state.lookupStatus = 503
         OfflineProtocol.state.decisionLookup = Data(#"{"error":{"message":"Temporary failure"}}"#.utf8)
         try outbox.enqueue(original, api: api)

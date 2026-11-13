@@ -18,6 +18,7 @@ struct PendingWork: Codable, Identifiable, Sendable {
     var protectedProposalCreatedAt: Double?
     var audioFile: String?
     var draftID: String?
+    var decisionDraftUpdatedAt: Date?
     var completed: Date?
     var priorMessageIDs: [String]?
     var ticketTitle: String?

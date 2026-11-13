@@ -50,11 +50,12 @@ def _command(ticket: Ticket, decision: str) -> dict[str, Any]:
     }
     if decision == "approve":
         command.update(
+            message="  Exact approval note.\n\nUnicode café 🧭\nFinal line.  ",
             edited_body="The exact accepted text", next_ceiling="needs_implementation",
             next_holder={"kind": "owner", "id": "owner"},
         )
     else:
-        command["message"] = "The exact revision guidance"
+        command["message"] = "  Exact revision guidance.\n\nUnicode café 🧭\nFinal line.  "
     return command
 
 
@@ -114,11 +115,19 @@ def test_lost_response_lookup_and_retry_keep_original_outcome_after_ticket_advan
             tmp_db, original.id, body="A later proposal",
             principal=Principal(PrincipalKind.ticket, original.id), now=99,
         )
-        feedback = list(tmp_db.execute("SELECT * FROM ticket_revision_feedback"))
+        feedback = list(tmp_db.execute("SELECT * FROM ticket_decision_messages"))
+        assert len(feedback) == 1
+        assert feedback[0]["decision_id"] == "lost-response"
+        assert feedback[0]["message"] == command["message"]
+        assert feedback[0]["proposal_revision"] == command["expected_proposal_revision"]
+        action = "approved" if decision == "approve" else "sent back"
+        assert feedback[0]["model_text"] == (
+            f"User {action} the What Changes proposal with this note:\n{command['message']}"
+        )
         assert client.post(path, json=command).json() == receipt
         assert client.get(path).json() == receipt
         assert data.read_ticket(tmp_db, original.id) == advanced
-        assert list(tmp_db.execute("SELECT * FROM ticket_revision_feedback")) == feedback
+        assert list(tmp_db.execute("SELECT * FROM ticket_decision_messages")) == feedback
         assert _count(tmp_db) == 1
         for changed in (
             {**command, "field": "implementation"},
@@ -147,7 +156,7 @@ def test_lost_response_lookup_and_retry_keep_original_outcome_after_ticket_advan
         assert oversized_stale.status_code == 400
         assert _count(tmp_db) == 1
         assert data.read_ticket(tmp_db, original.id) == advanced
-        assert list(tmp_db.execute("SELECT * FROM ticket_revision_feedback")) == feedback
+        assert list(tmp_db.execute("SELECT * FROM ticket_decision_messages")) == feedback
         refusal = client.post(path + "-stale", json=command)
         assert refusal.status_code == 200
         terminal = refusal.json()["receipt"]
@@ -184,7 +193,7 @@ def test_actor_rank_and_saved_actor_ownership_precede_receipt_access(
         principal=OWNER_PRINCIPAL, title_max_chars=TITLE_MAX_CHARS, now=4,
     )
     chief_command = _command(chief_ticket, "approve")
-    feedback = list(tmp_db.execute("SELECT * FROM ticket_revision_feedback"))
+    feedback = list(tmp_db.execute("SELECT * FROM ticket_decision_messages"))
     for operation in ("private", "unknown"):
         with pytest.raises(PlannerError) as denied:
             decision_operations.apply(
@@ -200,7 +209,7 @@ def test_actor_rank_and_saved_actor_ownership_precede_receipt_access(
     assert collision.value.detail == {}
     assert data.read_ticket(tmp_db, chief_ticket.id) == chief_ticket
     assert _count(tmp_db) == 1
-    assert list(tmp_db.execute("SELECT * FROM ticket_revision_feedback")) == feedback
+    assert list(tmp_db.execute("SELECT * FROM ticket_decision_messages")) == feedback
     chief_receipt = decision_operations.apply(
         tmp_db, chief_ticket.id, "chief-new", chief_command, actor=CHIEF_PRINCIPAL, now=4,
     )
@@ -255,7 +264,7 @@ def test_stale_refusal_preserves_new_content_and_feedback_and_replays(
         assert refused["receipt"]["error"] is not None
         assert refused["receipt"]["error"]["code"] == "already_running"
         assert data.read_ticket(tmp_db, original.id) == running
-        assert list(tmp_db.execute("SELECT * FROM ticket_revision_feedback")) == []
+        assert list(tmp_db.execute("SELECT * FROM ticket_decision_messages")) == []
         tmp_db.execute("UPDATE tickets SET worker_step_claim='none' WHERE id=?", (original.id,))
         assert decision_operations.apply(
             tmp_db, original.id, "running", command, actor=OWNER_PRINCIPAL, now=4,
@@ -264,7 +273,7 @@ def test_stale_refusal_preserves_new_content_and_feedback_and_replays(
         tmp_db, original.id, body="Replacement B",
         principal=Principal(PrincipalKind.ticket, original.id), now=3,
     )
-    feedback = list(tmp_db.execute("SELECT * FROM ticket_revision_feedback"))
+    feedback = list(tmp_db.execute("SELECT * FROM ticket_decision_messages"))
     receipt = decision_operations.apply(
         tmp_db, original.id, "stale", command, actor=OWNER_PRINCIPAL, now=4,
     )
@@ -277,7 +286,7 @@ def test_stale_refusal_preserves_new_content_and_feedback_and_replays(
         tmp_db, original.id, "stale", command, actor=OWNER_PRINCIPAL, now=99,
     ) == receipt
     assert data.read_ticket(tmp_db, original.id) == replacement
-    assert list(tmp_db.execute("SELECT * FROM ticket_revision_feedback")) == feedback
+    assert list(tmp_db.execute("SELECT * FROM ticket_decision_messages")) == feedback
     assert _count(tmp_db) == (2 if decision == "send_back" else 1)
 
 
@@ -295,7 +304,7 @@ def test_receipt_or_unexpected_failure_rolls_back_canonical_transition(
     if failure == "send_back_receipt_insert":
         _conversation_on_a_ticket(tmp_db, original.id)
         original = data.read_ticket(tmp_db, original.id)
-    feedback = list(tmp_db.execute("SELECT * FROM ticket_revision_feedback"))
+    feedback = list(tmp_db.execute("SELECT * FROM ticket_decision_messages"))
     real_accept = data.accept_proposal
     real_workflow = workflow_from_row
     if failure == "structural":
@@ -336,7 +345,7 @@ def test_receipt_or_unexpected_failure_rolls_back_canonical_transition(
     assert list(tmp_db.execute(
         "SELECT * FROM attention_approval_events WHERE ticket_id=?", (original.id,),
     )) == []
-    assert list(tmp_db.execute("SELECT * FROM ticket_revision_feedback")) == feedback
+    assert list(tmp_db.execute("SELECT * FROM ticket_decision_messages")) == feedback
     if failure in ("receipt_insert", "send_back_receipt_insert"):
         tmp_db.execute("DROP TRIGGER refuse_receipt")
     else:
@@ -398,7 +407,54 @@ def test_receipt_migration_upgrades_previous_head_and_follows_ticket_deletion(
         assert _count(conn) == 0
 
 
-def test_two_connections_race_one_operation_and_one_feedback_effect(
+@pytest.mark.parametrize(
+    "previous_head", ["ticket_decision_operations", "ticket_decision_messages"]
+)
+def test_shared_notes_merge_upgrades_a_copy_of_either_branch_without_schema_changes(
+    tmp_path: Path, previous_head: str,
+) -> None:
+    """Each historical head remains an admitted source; the join itself has no DDL."""
+    source = str(tmp_path / "historical.db")
+    target = str(tmp_path / "copy.db")
+    with schema_migration_transaction(source) as migration:
+        upgrade_schema_connection(migration, previous_head)
+    with closing(connect(source)) as original:
+        original.execute(
+            "INSERT INTO projects (id,name,created_at,updated_at,summary) "
+            "VALUES ('project_preserved','Preserved project',1,2,'Exact saved text')"
+        )
+        with closing(connect(target)) as copy:
+            original.backup(copy)
+    # Run the other branch, then isolate the merge revision's effect from its parents.
+    other_head = (
+        "ticket_decision_messages" if previous_head == "ticket_decision_operations"
+        else "ticket_decision_operations"
+    )
+    with schema_migration_transaction(target) as migration:
+        upgrade_schema_connection(migration, other_head)
+    with closing(connect(target)) as copy:
+        before = list(copy.execute(
+            "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY name"
+        ))
+    with schema_migration_transaction(target) as migration:
+        upgrade_schema_connection(migration, "head")
+    with closing(connect(target)) as copy:
+        assert list(copy.execute(
+            "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY name"
+        )) == before
+        assert tuple(copy.execute(
+            "SELECT name,created_at,updated_at,summary FROM projects WHERE id='project_preserved'"
+        ).fetchone()) == ("Preserved project", 1, 2, "Exact saved text")
+        assert copy.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
+            "native_shared_decision_notes"
+        )
+    with closing(connect(source)) as original:
+        assert original.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
+            previous_head
+        )
+
+
+def test_two_connections_race_one_operation_and_one_decision_message(
     tmp_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original = _park(tmp_db)
@@ -443,7 +499,7 @@ def test_two_connections_race_one_operation_and_one_feedback_effect(
     assert begin_count == 2
     assert reject_count == 1
     assert _count(tmp_db) == 1
-    assert len(list(tmp_db.execute("SELECT * FROM ticket_revision_feedback"))) == 1
+    assert len(list(tmp_db.execute("SELECT * FROM ticket_decision_messages"))) == 1
     settled = data.read_ticket(tmp_db, original.id)
     assert settled.pending_proposal is None
     assert settled.pending_proposal_revision == original.pending_proposal_revision

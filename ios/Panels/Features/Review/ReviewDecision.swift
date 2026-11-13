@@ -1,6 +1,37 @@
 import Foundation
 import Observation
 
+/// The approval sheet displays this exact note and submits only this proposal-bound snapshot.
+struct DecisionGuidance: Sendable, Equatable {
+    let server: String
+    let ticketID: String
+    let field: String
+    let proposalCreatedAt: Double
+    let proposalRevision: Int
+    let draftID: String
+    let text: String
+    let draftUpdatedAt: Date?
+
+    static func draftIdentity(ticketID: String, proposal: TicketProposal) -> String {
+        "review:\(ticketID):\(proposal.field):\(proposal.createdAt):\(proposal.revision)"
+    }
+
+    static func capture(text: String, server: String, ticketID: String, proposal: TicketProposal,
+                        loadedServer: String?, loadedIdentity: String?, draftUpdatedAt: Date? = nil) -> DecisionGuidance? {
+        let identity = draftIdentity(ticketID: ticketID, proposal: proposal)
+        guard loadedServer == server, loadedIdentity == identity,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return DecisionGuidance(server: server, ticketID: ticketID, field: proposal.field,
+            proposalCreatedAt: proposal.createdAt, proposalRevision: proposal.revision,
+            draftID: identity + ":guidance", text: text, draftUpdatedAt: draftUpdatedAt)
+    }
+
+    func matches(server: String, ticketID: String, proposal: TicketProposal) -> Bool {
+        self.server == server && self.ticketID == ticketID && field == proposal.field
+            && proposalCreatedAt == proposal.createdAt && proposalRevision == proposal.revision
+    }
+}
+
 /// A draft belongs to the exact proposal the person read, including its revision.
 @MainActor @Observable final class ReviewDecision {
     /// The Ticket's view stamp when the last load started; a read-ahead taken before a
@@ -19,7 +50,7 @@ import Observation
         LocalStore.shared.saveDraft(text, server: server, id: id + suffix)
     }
     private func restoreDrafts(api: APIClient, ticket: TicketDetail, proposal: TicketProposal, discard: Bool = false) {
-        let id = "review:\(ticket.id):\(proposal.field):\(proposal.createdAt):\(proposal.revision)"
+        let id = DecisionGuidance.draftIdentity(ticketID: ticket.id, proposal: proposal)
         guard draftIdentity != id || discard else { return }
         restoringDrafts = true
         draftServer = LocalStore.server(api.baseURL); draftIdentity = id
@@ -106,22 +137,34 @@ import Observation
         } catch { self.error = error.localizedDescription; return false }
     }
 
-    func approve(api: APIClient, ceiling: String, holder: Principal) async -> Bool {
+    func approvalGuidance(api: APIClient) -> DecisionGuidance? {
+        guard ready, let ticket, let proposal else { return nil }
+        let server = LocalStore.server(api.baseURL)
+        let captured = revisionDraftID.flatMap { try? LocalStore.shared.outgoing.captureDraft(server: server, id: $0).text }
+        let updated = captured?.payload == Data(revisionDraft.utf8) ? captured?.updated : nil
+        return DecisionGuidance.capture(text: revisionDraft, server: server,
+            ticketID: ticket.id, proposal: proposal, loadedServer: draftServer, loadedIdentity: draftIdentity, draftUpdatedAt: updated)
+    }
+
+    func approve(api: APIClient, ceiling: String, holder: Principal, guidance: DecisionGuidance? = nil) async -> Bool {
         guard ready, let ticket, let proposal, approvalStages.contains(where: { $0.id == ceiling }) else { return false }
+        guard guidance == nil || guidance?.matches(server: LocalStore.server(api.baseURL), ticketID: ticket.id, proposal: proposal) == true else {
+            error = "The proposal changed. Close approval and review it again."
+            return false
+        }
         let body = ReviewApproval(expectedProposalRevision: proposal.revision,
                                   editedBody: draft == proposal.body ? nil : draft,
                                   nextCeiling: ceiling, nextHolder: holder)
         return enqueue(PendingWork(id: UUID().uuidString, created: .now, kind: .approval,
-            ticketID: ticket.id, proposal: proposal, approval: body,
+            ticketID: ticket.id, proposal: proposal, approval: body, guidance: guidance?.text, draftID: guidance?.draftID, decisionDraftUpdatedAt: guidance?.draftUpdatedAt,
             ticketTitle: ticket.title, proposalFieldLabel: manifest?.fields.first { $0.id == proposal.field }?.label ?? proposal.field.capitalized), api: api)
     }
 
     func sendBack(api: APIClient, message: String) async -> Bool {
-        let message = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard ready, canReturn, !message.isEmpty, let ticket else { return false }
+        guard ready, canReturn, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let ticket else { return false }
         guard let proposal else { return false }
         return enqueue(PendingWork(id: UUID().uuidString, created: .now, kind: .sendBack,
-            ticketID: ticket.id, proposal: proposal, guidance: message,
+            ticketID: ticket.id, proposal: proposal, guidance: message, draftID: revisionDraftID,
             ticketTitle: ticket.title, proposalFieldLabel: manifest?.fields.first { $0.id == proposal.field }?.label ?? proposal.field.capitalized), api: api)
     }
 

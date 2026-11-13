@@ -73,7 +73,7 @@ def test_cli_pins_command_read_and_explicit_revision_before_ancillary_writes(
     assert [method for method, _path, _body in calls] == ["GET"]
 
 
-def test_native_and_web_stale_decisions_preserve_replacement_and_feedback(
+def test_native_and_web_stale_decisions_preserve_replacement_and_decision_messages(
     tmp_db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = Path(__file__).resolve().parents[2]
@@ -93,8 +93,8 @@ def test_native_and_web_stale_decisions_preserve_replacement_and_feedback(
         principal=Principal(PrincipalKind.ticket, original.id), now=2,
     )
     assert replacement.pending_proposal_revision == revision + 1
-    feedback_before = list(tmp_db.execute(
-        "SELECT * FROM ticket_revision_feedback WHERE ticket_id=?", (original.id,)
+    messages_before = list(tmp_db.execute(
+        "SELECT * FROM ticket_decision_messages WHERE ticket_id=?", (original.id,)
     ))
     with TestClient(_app(tmp_db)) as client:
         for native in (True, False):
@@ -110,8 +110,8 @@ def test_native_and_web_stale_decisions_preserve_replacement_and_feedback(
                 assert "visible proposal changed" in refused.json()["error"]["message"]
                 assert data.read_ticket(tmp_db, original.id) == replacement
                 assert list(tmp_db.execute(
-                    "SELECT * FROM ticket_revision_feedback WHERE ticket_id=?", (original.id,)
-                )) == feedback_before
+                    "SELECT * FROM ticket_decision_messages WHERE ticket_id=?", (original.id,)
+                )) == messages_before
         accepted = client.post(f"/api/tickets/{original.id}/reject", json={
             **captured["send_back"],
             "expected_proposal_revision": replacement.pending_proposal_revision,
@@ -119,6 +119,9 @@ def test_native_and_web_stale_decisions_preserve_replacement_and_feedback(
         assert accepted.status_code == 200, accepted.text
         assert accepted.json()["pending_proposal"] is None
         saved = tmp_db.execute(
-            "SELECT feedback_json FROM ticket_revision_feedback WHERE ticket_id=?", (original.id,)
-        ).fetchone()
-        assert saved is not None and captured["send_back"]["message"] in saved[0]
+            "SELECT message,proposal_revision FROM ticket_decision_messages WHERE ticket_id=?",
+            (original.id,),
+        ).fetchall()
+        assert len(saved) == len(messages_before) + 1
+        assert saved[-1]["message"] == captured["send_back"]["message"]
+        assert saved[-1]["proposal_revision"] == replacement.pending_proposal_revision

@@ -20,13 +20,19 @@ struct TicketProposalCard: View {
         let api: APIClient
         let draft: String
         let guidance: String
+        let approvalGuidance: DecisionGuidance?
         let label: String
         var server: String { LocalStore.server(api.baseURL) }
         var draftIdentity: String { "review:\(presentation.ticket.id):\(proposal.field):\(proposal.createdAt):\(proposal.revision)" }
     }
     private func captureDecision() {
+        let captured = try? LocalStore.shared.outgoing.captureDraft(server: server, id: draftIdentity + ":guidance").text
+        let updated = captured?.payload == Data(guidance.utf8) ? captured?.updated : nil
         decisionSnapshot = DecisionSnapshot(presentation: presentation, proposal: proposal, api: store.client,
-                                            draft: draft, guidance: guidance, label: label)
+            draft: draft, guidance: guidance,
+            approvalGuidance: DecisionGuidance.capture(text: guidance, server: server,
+                ticketID: presentation.ticket.id, proposal: proposal,
+                loadedServer: loadedDraftServer, loadedIdentity: loadedDraftIdentity, draftUpdatedAt: updated), label: label)
     }
     @State private var savedDecision: OutgoingStore.Summary?
     private var server: String { LocalStore.server(store.baseURL) }
@@ -95,7 +101,7 @@ struct TicketProposalCard: View {
         .onChange(of: LocalStore.shared.outgoingRevision(server)) { _, _ in refreshSavedDecision() }
         .sheet(isPresented: $approveOpen) {
             if let snapshot = decisionSnapshot {
-                TicketApprovalLimitSheet(presentation: snapshot.presentation, approval: true) { ceiling, holder in
+                TicketApprovalLimitSheet(presentation: snapshot.presentation, approval: true, guidance: snapshot.approvalGuidance) { ceiling, holder in
                     guard let ceiling else { return }
                     try LocalStore.shared.put(server: snapshot.server, kind: "draft", id: snapshot.draftIdentity + ":edit", data: Data(snapshot.draft.utf8))
                     let approval = ReviewApproval(expectedProposalRevision: snapshot.proposal.revision,
@@ -103,6 +109,8 @@ struct TicketProposalCard: View {
                         nextCeiling: ceiling, nextHolder: holder)
                     try enqueue(PendingWork(id: UUID().uuidString, created: .now, kind: .approval,
                         ticketID: snapshot.presentation.ticket.id, proposal: snapshot.proposal, approval: approval,
+                        guidance: snapshot.approvalGuidance?.text, draftID: snapshot.approvalGuidance?.draftID,
+                        decisionDraftUpdatedAt: snapshot.approvalGuidance?.draftUpdatedAt,
                         ticketTitle: snapshot.presentation.ticket.title, proposalFieldLabel: snapshot.label), api: snapshot.api)
                 }
             }
@@ -116,13 +124,17 @@ struct TicketProposalCard: View {
         .sheet(isPresented: $returnOpen) {
             if let snapshot = decisionSnapshot {
                 TicketTextEditor(title: "What needs changing", actionTitle: "Send it back", requiresText: true, save: { text in
-                    let capturedGuidance = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let capturedGuidance = text
                     try LocalStore.shared.put(server: snapshot.server, kind: "draft", id: snapshot.draftIdentity + ":guidance", data: Data(capturedGuidance.utf8))
                     if snapshot.server == server && snapshot.draftIdentity == draftIdentity { guidance = capturedGuidance }
                     try enqueue(PendingWork(id: UUID().uuidString, created: .now, kind: .sendBack,
                         ticketID: snapshot.presentation.ticket.id, proposal: snapshot.proposal, guidance: capturedGuidance,
+                        draftID: snapshot.draftIdentity + ":guidance",
                         ticketTitle: snapshot.presentation.ticket.title, proposalFieldLabel: snapshot.label), api: snapshot.api)
-                }, text: snapshot.guidance)
+                }, text: snapshot.guidance, onTextChange: { text in
+                    LocalStore.shared.saveDraft(text, server: snapshot.server, id: snapshot.draftIdentity + ":guidance")
+                    if snapshot.server == server && snapshot.draftIdentity == draftIdentity { guidance = text }
+                })
             }
         }
     }

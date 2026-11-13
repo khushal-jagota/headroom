@@ -72,6 +72,9 @@ MODEL_LIST_LIMIT_SECONDS: Final = 35.0
 # Item batches: one conversation's items, at most 32 and 4 MiB of body. The VPS's one
 # budget for a whole batch is core.config.MAC_ITEM_RETRY_LATER_SECONDS (20 s).
 MAX_ITEM_BATCH_ITEMS: Final = 32
+# One SQLite write transaction publishes at most this many of an item's uploaded files
+# into the served tree, so other writers get turns during a large artifact set.
+MAX_FILES_PER_PUBLICATION_TRANSACTION: Final = 32
 MAX_ITEM_BATCH_BYTES: Final = 4 * 1024 * 1024
 ITEM_BATCH_TIMEOUT_SECONDS: Final = 30.0
 # Uploads and input downloads fail when no bytes move for this long, on both sides.

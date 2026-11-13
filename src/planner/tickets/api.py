@@ -408,11 +408,17 @@ def _expected_proposal_revision(raw: JsonDict) -> int | None:
         raise PlannerError(
             ErrorCode.validation, "expected_proposal_revision must be a positive integer", {}
         )
+    if raw.get("message") is not None and revision is None:
+        raise PlannerError(
+            ErrorCode.validation, "a decision note requires expected_proposal_revision"
+        )
     return revision
 
 
 def _marshal_accept(raw: JsonDict) -> AcceptBody:
     return AcceptBody(
+        message=body_opt_str(raw, "message"),
+        decision_id=body_opt_str(raw, "decision_id"),
         expected_proposal_revision=_expected_proposal_revision(raw),
         edited_body=body_opt_str(raw, "edited_body"),
         next_ceiling=body_opt_str(raw, "next_ceiling"),
@@ -1069,6 +1075,8 @@ def accept_field(
         edited_body=body["edited_body"],
         next_ceiling=next_ceiling,
         expected_proposal_revision=body["expected_proposal_revision"],
+        message=body["message"],
+        decision_id=body["decision_id"],
         next_holder=_parse_required_principal(body["next_holder"], "next_holder"),
     )
     return tickets_views.ticket_json(ticket, now)
@@ -1086,6 +1094,7 @@ def reject_ticket_proposal(
     """Send a parked proposal back, with guidance for the executing agent or without."""
     body = RejectionBody(
         message=body_opt_str(raw, "message"),
+        decision_id=body_opt_str(raw, "decision_id"),
         expected_proposal_revision=_expected_proposal_revision(raw),
     )
     now = clk.now_unix()
@@ -1093,6 +1102,7 @@ def reject_ticket_proposal(
         conn,
         ticket_id,
         message=body["message"],
+        decision_id=body["decision_id"],
         expected_proposal_revision=body["expected_proposal_revision"],
         ctx=ctx,
         clock=clk,

@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from re import fullmatch
 
 RUNTIME_CONTRACT_VERSION = 1
+NODE_RUNTIME_CONTRACT_VERSION = 2
+MINIMUM_NODE_VERSION = "22.18.0"
 RUNTIME_CONTRACT_PATH = "runtime/contract.json"
 RUNTIME_INVENTORY_PATH = "runtime/inventory.json"
 # Conservative supported processor boundary, not a claim about vendor minima.
@@ -182,6 +184,121 @@ class RuntimeContract:
         )
 
 
-def parse_optional_runtime_contract(value: object) -> RuntimeContract | None:
-    """Legacy manifests stay readable; candidate admission must reject None."""
-    return None if value is None else RuntimeContract.from_dict(value)
+@dataclass(frozen=True)
+class NodeRuntimeContract:
+    """Version 2: the Node Linux x86_64 release. It carries no private Python runtime."""
+
+    inventory_sha256: str
+    version: int = NODE_RUNTIME_CONTRACT_VERSION
+    system: str = "linux"
+    architecture: str = "x86_64"
+    platforms: tuple[RuntimePlatform, ...] = SUPPORTED_PLATFORMS
+    node_major: int = 22
+    minimum_node_version: str = MINIMUM_NODE_VERSION
+    cpu_features: tuple[str, ...] = SUPPORTED_CPU_FEATURES
+    external_libraries: tuple[str, ...] = GLIBC_LIBRARIES
+    external_executables: tuple[str, ...] = ("sh", "node")
+
+    def __post_init__(self) -> None:
+        if type(self.version) is not int or self.version != NODE_RUNTIME_CONTRACT_VERSION:
+            raise RuntimeContractError("unsupported runtime contract version; republish the app")
+        if self.system != "linux" or self.architecture != "x86_64":
+            raise RuntimeContractError("unsupported runtime operating system or architecture")
+        if self.platforms != SUPPORTED_PLATFORMS:
+            raise RuntimeContractError("unsupported runtime platform boundary")
+        if type(self.node_major) is not int or self.node_major != 22:
+            raise RuntimeContractError("runtime requires host Node major 22")
+        if self.minimum_node_version != MINIMUM_NODE_VERSION:
+            raise RuntimeContractError(f"runtime requires minimum Node {MINIMUM_NODE_VERSION}")
+        if fullmatch(r"[0-9a-f]{64}", self.inventory_sha256) is None:
+            raise RuntimeContractError("invalid runtime inventory SHA256")
+        if self.external_libraries != GLIBC_LIBRARIES:
+            raise RuntimeContractError("non-glibc runtime libraries must be bundled")
+        if self.external_executables != ("sh", "node"):
+            raise RuntimeContractError("unsupported external runtime executables")
+        if (
+            not isinstance(self.cpu_features, tuple)
+            or not set(SUPPORTED_CPU_FEATURES) <= set(self.cpu_features)
+            or len(set(self.cpu_features)) != len(self.cpu_features)
+            or any(fullmatch(r"[a-z0-9_]+", feature) is None for feature in self.cpu_features)
+        ):
+            raise RuntimeContractError("invalid required CPU features")
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "version": self.version,
+            "system": self.system,
+            "architecture": self.architecture,
+            "platforms": [platform.as_dict() for platform in self.platforms],
+            "node_major": self.node_major,
+            "minimum_node_version": self.minimum_node_version,
+            "cpu_features": list(self.cpu_features),
+            "external_libraries": list(self.external_libraries),
+            "external_executables": list(self.external_executables),
+            "inventory_sha256": self.inventory_sha256,
+        }
+
+    @property
+    def digest(self) -> str:
+        return runtime_bytes_digest(canonical_json_bytes(self.as_dict()))
+
+    @classmethod
+    def from_dict(cls, value: object) -> NodeRuntimeContract:
+        if not isinstance(value, dict):
+            raise RuntimeContractError("runtime contract must be an object")
+        required = {
+            "version",
+            "system",
+            "architecture",
+            "platforms",
+            "node_major",
+            "minimum_node_version",
+            "cpu_features",
+            "external_libraries",
+            "external_executables",
+            "inventory_sha256",
+        }
+        if set(value) != required:
+            raise RuntimeContractError("runtime contract has missing or unknown fields")
+        if value["platforms"] != [platform.as_dict() for platform in SUPPORTED_PLATFORMS]:
+            raise RuntimeContractError("unsupported runtime platform boundary")
+        for key in ("version", "node_major"):
+            if type(value[key]) is not int:
+                raise RuntimeContractError(f"runtime {key} must be an integer")
+        for key in ("system", "architecture", "minimum_node_version", "inventory_sha256"):
+            if not isinstance(value[key], str):
+                raise RuntimeContractError(f"runtime {key} must be a string")
+        for key in ("cpu_features", "external_libraries", "external_executables"):
+            if not isinstance(value[key], list) or not all(
+                isinstance(item, str) for item in value[key]
+            ):
+                raise RuntimeContractError(f"runtime {key} must be a list of strings")
+        return cls(
+            version=value["version"],
+            system=value["system"],
+            architecture=value["architecture"],
+            platforms=SUPPORTED_PLATFORMS,
+            node_major=value["node_major"],
+            minimum_node_version=value["minimum_node_version"],
+            cpu_features=tuple(value["cpu_features"]),
+            external_libraries=tuple(value["external_libraries"]),
+            external_executables=tuple(value["external_executables"]),
+            inventory_sha256=value["inventory_sha256"],
+        )
+
+
+AnyRuntimeContract = RuntimeContract | NodeRuntimeContract
+
+
+def parse_optional_runtime_contract(value: object) -> AnyRuntimeContract | None:
+    """Legacy manifests stay readable; candidate admission must reject None.
+
+    The version selects one closed shape. Any other version is refused.
+    """
+    if value is None:
+        return None
+    if isinstance(value, dict) and type(value.get("version")) is int and (
+        value["version"] == NODE_RUNTIME_CONTRACT_VERSION
+    ):
+        return NodeRuntimeContract.from_dict(value)
+    return RuntimeContract.from_dict(value)

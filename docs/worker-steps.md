@@ -42,7 +42,9 @@ One more question goes to the conversation itself: is a turn already running? A 
 
 ## How a step is sent
 
-One guarded write takes the claim, re-running every readiness check inside it, so two passes cannot both win. On a user-owned stage the same write records the opener fact. The loop then starts or reuses the Ticket's conversation and sends an opener built from the current Ticket and its saved workflow, any revision guidance from a sent-back proposal, and a memory-loss note when the Worker was compacted mid-step. It sends in Queue mode, which waits for a free turn.
+Decision notes use the same conversation door as separate system messages before ordinary stage openers. They preserve the actor, action, proposal, and complete note. A note does not change the stage or authorize further work. See [Review](review.md).
+
+One guarded write takes the claim, re-running every readiness check inside it, so two passes cannot both win. On a user-owned stage the same write records the opener fact. The loop then starts or reuses the Ticket's conversation and sends an opener built from the current Ticket and its saved workflow, plus a memory-loss note when the Worker was compacted mid-step. It sends in Queue mode, which waits for a free turn.
 
 | Delivery fate | What happens to the claim |
 | --- | --- |
@@ -52,7 +54,7 @@ One guarded write takes the claim, re-running every readiness check inside it, s
 | any other refusal, or suppressed | The claim returns to rest, and a tentative opener is forgotten, so a later pass can try again. |
 | uncertain | The claim becomes errored. Headroom does not resend a prompt that may have arrived. |
 
-On a Worker-owned stage the claim stays out until the Worker files a proposal or someone decides the parked one. A turn that merely ends does not give it back. A Worker that was compacted while its step was still out also gets a short memory-loss note, because nothing in its shortened conversation says that it forgot.
+On a Worker-owned stage the claim stays out until the Worker files a proposal or someone decides the parked one. A turn that merely ends does not give it back. A Worker that was compacted while its step was still out also gets a short memory-loss note, because nothing in its shortened conversation says that it forgot. A backlogged Ticket gets no note until its next wake carries it.
 
 Every Ticket receives its complete workflow guide at kickoff, from its own copy, so a later edit to its Worker type does not change what it reads. Context recovery restores access to that guide. Ordinary later stage prompts identify the current step.
 

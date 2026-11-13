@@ -169,7 +169,8 @@ def run(browser, urls):
     review_sibling_transferred = False
     review_message_sends = []
     review_note_sends = []
-    review_note_fate = None
+    decision_response = None
+    approval_attempts = []
     review_held = []
     review_send_fate = "refused"
     review_message_mode = False
@@ -656,17 +657,9 @@ def run(browser, urls):
                     "pending_user_input": None,
                     "composer_catalog": [],
                 }
-        elif path == "tickets/t_review/conversation/send" and review_note_fate is None:
-            result = {"conversation_id": "ticket-delivered-local", "fate": "started"}
         elif path == "tickets/t_review/conversation/send":
             review_note_sends.append(route.request.post_data_json)
-            if review_note_fate == "network":
-                route.abort("failed")
-                return
-            if review_note_fate == "http503":
-                route.fulfill(status=503, json={"error": {"code": "unavailable", "message": "Delivery response unavailable"}})
-                return
-            result = {"conversation_id": "review-worker", "fate": review_note_fate}
+            result = {"conversation_id": "ticket-delivered-local", "fate": "started"}
         elif path == "tickets/t_review/conversation/reset":
             result = {}
         elif path.endswith("/conversation/start-values"):
@@ -813,6 +806,13 @@ def run(browser, urls):
         elif path.endswith("/accept/success_condition"):
             assert route.request.method == "POST"
             approval = route.request.post_data_json
+            approval_attempts.append(approval)
+            if decision_response == "network":
+                route.abort("failed")
+                return
+            if decision_response == "http503":
+                route.fulfill(status=503, json={"error": {"code": "unavailable", "message": "Decision response unavailable"}})
+                return
             if (
                 server_revision is not None
                 and approval["expected_proposal_revision"] != server_revision
@@ -914,6 +914,29 @@ def run(browser, urls):
                 page.wait_for_event("requestfinished", lambda _: predicate(), timeout=5000)
             except PlaywrightTimeoutError:
                 pass
+
+    def composing_enter(field):
+        # Enter that confirms an input method's text is not a send.
+        return field.evaluate(
+            """field => {
+              const event = new KeyboardEvent('keydown', {key:'Enter', keyCode:229, isComposing:true, bubbles:true, cancelable:true});
+              field.dispatchEvent(event);
+              return event.defaultPrevented;
+            }"""
+        )
+
+    def assert_enter_rules_leave_a_draft(field, draft, writes):
+        """Shift+Enter adds a line and composing Enter does nothing: no write, words kept."""
+        before = writes()
+        field.fill(draft)
+        field.press("End")
+        field.press("Shift+Enter")
+        expect(field).to_have_value(draft + "\n")
+        assert not composing_enter(field)
+        page.wait_for_timeout(100)
+        assert writes() == before
+        expect(field).to_have_value(draft + "\n")
+        field.fill(draft)
 
     def wait_for_held(predicate):
         # A held route never finishes its request, so poll the fixture while the
@@ -1400,15 +1423,16 @@ def run(browser, urls):
     page.locator("[data-send-back]").click()
     expect(page.locator("[data-revision-note]")).to_be_focused()
     exact_revision = "Keep the agreed scope.\nPreserve the attributed details."
+    assert_enter_rules_leave_a_draft(page.locator("[data-revision-note]"), "Draft note", lambda: len(revisions))
     page.locator("[data-revision-note]").fill(exact_revision)
-    page.locator("[data-send-back]").click()
+    page.locator("[data-revision-note]").press("Enter")
     wait_for_write(lambda: revisions)
-    assert revisions == [{"message": exact_revision}]
+    assert revisions == [{"message": exact_revision, "expected_proposal_revision": 1, "decision_id": '["t_with_session",1]:send_back'}]
     drive("window.__batch()")
     expect(
         page.locator('[data-ticket-id="t_with_session"] [data-approval-block][data-mode="pending"]')
     ).to_have_count(0)
-    assert revisions == [{"message": exact_revision}]
+    assert revisions == [{"message": exact_revision, "expected_proposal_revision": 1, "decision_id": '["t_with_session",1]:send_back'}]
     page.evaluate("window.__showTicket('t_done')")
     page.locator('[data-ticket-id="t_done"]').wait_for()
     expect(page.locator("[data-ticket-backlog-action], [data-ticket-backlogged]")).to_have_count(0)
@@ -1464,87 +1488,66 @@ def run(browser, urls):
     assert choices == ["owner", "outcome_kept", "chief"], choices
     expect(approve_row.get_by_role("option", name="Manager", exact=True)).to_have_count(1)
     approve_row.get_by_role("listbox").press("Escape")
-    # The real card must recover the original message receipt before it can approve.
-    # Mocked HTTP boundaries isolate this browser ownership/persistence regression.
-    note_check_started = time.monotonic()
-    original_note = "Keep the existing approval boundary."
+    # An ambiguous decision keeps its exact request across Ticket, Review, and reload.
+    # The existing browser host proves that these controls never pre-send plain chat.
+    decision_check_started = time.monotonic()
+    review_note_sends.clear()
+    original_note = "  Keep the existing approval boundary.\n\nPreserve café and all whitespace.  "
     note_input = page.locator("[data-review-revision-input]")
+    assert_enter_rules_leave_a_draft(note_input, original_note, lambda: len(approval_attempts) + len(revisions))
     note_input.fill(original_note)
-    review_note_fate = "uncertain"
-
-    def assert_original_note_identity():
-        first = review_note_sends[0]
-        immutable = ("sender_message_id", "sent_at_unix_milliseconds", "content", "mode", "sender_label")
-        assert all({key: row[key] for key in immutable} == {key: first[key] for key in immutable} for row in review_note_sends)
-        assert first["conversation_id"] in (None, "review-worker")
-        assert all(row["conversation_id"] == "review-worker" for row in review_note_sends[1:])
-
-    def retry_note(expected_count):
-        page.locator("[data-accept]").click()
-        wait_for_write(lambda: len(review_note_sends) == expected_count)
-        assert len(review_note_sends) == expected_count
-        expect(page.locator("[data-accept]")).to_be_enabled()
-        assert not approvals
-        assert_original_note_identity()
-
-    retry_note(1)
-    expect(page.locator("[data-review-note-pending] .error-message")).to_be_visible()
-    retry_note(2)
-    if os.environ.get("PANELS_UNCERTAIN_NOTE_SCREENSHOT"):
-        page.screenshot(path=os.environ["PANELS_UNCERTAIN_NOTE_SCREENSHOT"], full_page=True, animations="disabled")
-    note_input.fill("A changed note cannot discard the unresolved instruction.")
-    retry_note(3)
-    note_input.fill("")
-    retry_note(4)
-    expect(review).to_contain_text(original_note)
-    # The Ticket page must recover the same receipt and block approval too.
-    page.evaluate("window.__showTicket('t_review')")
-    expect(page.locator("[data-review-card]")).to_have_count(0)
-    expect(page.locator("[data-revision-note]")).to_have_value(original_note)
-    expect(page.locator("[data-send-back]")).to_have_count(1)
-    retry_note(5)
-    page.evaluate("window.__showReview()")
-    expect(review).to_be_visible()
-    page.reload()
-    page.evaluate("window.__showReview()")
-    expect(review).to_be_visible()
-    retry_note(6)
-    review_note_fate = "http503"
-    retry_note(7)
-    review_note_fate = "network"
-    retry_note(8)
-    # A recovered positive receipt allows acceptance. If that acceptance fails,
-    # its next attempt must not send the already confirmed note again.
-    review_note_fate = "started"
-    server_revision = 999
-    page.locator("[data-accept]").click()
-    expect(page.locator(".error-message")).to_contain_text("visible proposal changed")
-    assert len(review_note_sends) == 9
-    assert_original_note_identity()
-    assert review_note_sends[0]["content"] == [{"piece": "text", "text": original_note}]
-    assert not approvals
-    server_revision = 2
-    page.reload()
-    page.evaluate("window.__showReview()")
-    expect(review).to_be_visible()
-    print(f"Review uncertain note recovery: {time.monotonic() - note_check_started:.3f}s", flush=True)
     retained_editor = page.locator("[data-approval-block] [data-edit]")
     retained_editor.click()
     retained_editor.fill("Retained local draft")
     retained_editor.press("Tab")
-    drive("window.__batch()")
-    expect(retained_editor).to_contain_text("Retained local draft")
-    # This fixture's Coding manifest ends after Success. Approval therefore keeps
-    # the saved reviewer and the retained local edit without another scope choice.
-    approve_row.locator("[data-accept]").click()
+    decision_response = "network"
+
+    def retry_decision(expected_count):
+        page.locator("[data-accept]").click()
+        wait_for_write(lambda: len(approval_attempts) == expected_count)
+        expect(page.locator("[data-accept]")).to_be_enabled()
+        assert not approvals
+        assert not review_note_sends
+        assert all(row == approval_attempts[0] for row in approval_attempts)
+
+    retry_decision(1)
+    note_input.fill("A changed draft cannot replace the ambiguous decision.")
+    page.locator("[data-accept]").click()
+    expect(page.locator(".error-message")).to_contain_text("original note")
+    assert len(approval_attempts) == 1
+    page.evaluate("window.__showTicket('t_review')")
+    expect(page.locator("[data-revision-note]")).to_have_value(original_note)
+    expect(page.locator("[data-approval-block] [data-edit]")).to_contain_text("Retained local draft")
+    retry_decision(2)
+    page.reload()
+    page.evaluate("window.__showReview()")
+    expect(review).to_be_visible()
+    expect(page.locator("[data-review-revision-input]")).to_have_value(original_note)
+    decision_response = "http503"
+    retry_decision(3)
+    decision_response = None
+    server_revision = 999
+    page.locator("[data-accept]").click()
+    expect(page.locator(".error-message")).to_contain_text("visible proposal changed")
+    assert len(approval_attempts) == 4
+    assert not approvals
+    assert not review_note_sends
+    server_revision = 2
+    # This fixture ends after Success, so approval retains its reviewer without a scope choice.
+    page.locator("[data-accept]").click()
     expect(page.get_by_role("listbox")).to_have_count(0)
     wait_for_write(lambda: approvals)
     assert len(approvals) == 1
-    assert len(review_note_sends) == 9
+    assert len(approval_attempts) == 5
+    assert all(row == approval_attempts[0] for row in approval_attempts)
+    assert not review_note_sends
     assert approvals[0]["next_ceiling"] == "none"
     assert approvals[0]["next_holder"] == {"kind": "owner", "id": "owner"}
     assert approvals[0]["expected_proposal_revision"] == 2
+    assert approvals[0]["decision_id"] == '["t_review",2]:approve'
+    assert approvals[0]["message"] == original_note
     assert approvals[0]["edited_body"] == "Retained local draft"
+    print(f"Review decision recovery: {time.monotonic() - decision_check_started:.3f}s", flush=True)
     expect(page.locator('[data-review-card][data-ticket-id="t_review"]')).to_have_count(0)
     remaining = page.locator('[data-review-ticket-card][data-ticket-id="t_personal_pending"]')
     expect(remaining).to_have_count(1)
@@ -1910,7 +1913,7 @@ def run(browser, urls):
     expect(message_card.locator('[data-review-message-sequence="121"] iframe')).to_have_count(1)
     assert review_read == 0, "Showing review must not mark messages read"
     reply = message_card.locator("[data-review-reply]")
-    reply.fill("Keep these words")
+    assert_enter_rules_leave_a_draft(reply, "Keep these words", lambda: len(review_message_sends))
     page.evaluate("window.__replyNode=document.querySelector('[data-review-reply]')")
     drive("window.__batch()")
     expect(reply).to_have_value("Keep these words")
@@ -1946,7 +1949,7 @@ def run(browser, urls):
     ticket.update(ticket_status="awaiting_approval", pending_proposal={"field":"success_condition","body":"A separate decision","created_at":500,"revision":1})
     drive("window.__refresh()")
     expect(combined.locator('[data-review-item-type="proposal"]')).to_be_visible()
-    message_card.locator("[data-review-send]").click()
+    reply.press("Control+Enter")
     expect(message_card.locator(".error-line")).to_be_visible()
     expect(reply).to_have_value("Keep these words")
     expect(reply).to_be_enabled()
@@ -1968,7 +1971,7 @@ def run(browser, urls):
         return original.call(this,frames,options);
       };
     }""")
-    message_card.locator("[data-review-send]").click()
+    reply.press("Enter")
     expect(message_card.locator('[data-review-message-sequence="122"]')).to_be_visible()
     expect(message_card.locator("[data-review-message-sequence]")).to_have_count(1)
     assert review_read == 121

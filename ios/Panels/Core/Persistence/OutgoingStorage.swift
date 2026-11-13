@@ -419,9 +419,13 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         }
     }
     /// Receipts update their exact operation even after a replacement retires its schedule.
-    func settle(server: String, id: String, state: PendingWork.State, note: String, conversationID: String? = nil, now: Date = .now) throws {
+    func settle(server: String, id: String, state: PendingWork.State, note: String, conversationID: String? = nil, now: Date = .now, decisionDraft: (id: String, text: String, updated: Date)? = nil) throws {
         try transaction(server) {
             guard let row = try metadata(server, id) else { throw StoreError.missingWork }
+            if state == .sent, let decisionDraft,
+               let draft = try raw(server, "draft", decisionDraft.id), draft.payload == Data(decisionDraft.text.utf8), draft.updatedAt == decisionDraft.updated {
+                draft.payload = Data(); draft.updatedAt = .now
+            }
             let oldLane = row.lane
             let enteredUncertain = state == .uncertain && row.state != "uncertain"
             let enteredFailed = state == .failed && row.state != "failed"

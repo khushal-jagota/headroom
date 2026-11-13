@@ -6,6 +6,7 @@ struct TicketTextEditor: View {
     var requiresText = false
     let save: (String) async throws -> Void
     @State var text: String
+    var onTextChange: ((String) -> Void)? = nil
     @State private var error: String?
     @State private var busy = false
     @Environment(\.dismiss) private var dismiss
@@ -33,5 +34,6 @@ struct TicketTextEditor: View {
                     }
                 }
         }.interactiveDismissDisabled(busy)
+            .onChange(of: text) { _, value in onTextChange?(value) }
     }
 }

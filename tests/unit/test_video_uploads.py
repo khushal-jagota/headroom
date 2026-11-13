@@ -254,7 +254,8 @@ def test_real_probe_distinguishes_mp4_mov_webm_and_renamed_matroska(tmp_path: Pa
 
 
 def test_precreation_crash_keeps_explicit_absence_binding(
-    intake: VideoUploadService, monkeypatch: pytest.MonkeyPatch,
+    intake: VideoUploadService,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Existing recovery coverage starts after a target exists. This case protects the
     # earlier admission-to-adoption gap, without a server or another connected host.
@@ -271,3 +272,48 @@ def test_precreation_crash_keeps_explicit_absence_binding(
     retry = restarted.preflight(upload.upload_id, request.destination, "message_1")
     assert retry.conversation_id is None
     assert restarted.status(upload.upload_id).state == "admitted"
+
+
+def test_chunks_are_written_without_the_writer_and_progress_is_saved_in_few_writes(
+    intake: VideoUploadService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Risk: an upload that takes SQLite's single writer once per 256 KiB chunk, so a
+    large video is thousands of back-to-back write transactions that starve other
+    writers. Gap: the tests above prove bounds and races, not the transaction shape."""
+    import sqlite3
+
+    monkeypatch.setattr(service_module, "probe_video", accept_probe)
+    monkeypatch.setattr(config, "TRANSFER_CHUNK_BYTES", 2)
+    monkeypatch.setattr(config, "PROGRESS_RECORD_BYTES", 6)
+    upload = intake.reserve(reservation(16))
+
+    def writer_free() -> bool:
+        probe = sqlite3.connect(intake.db_path, timeout=0, isolation_level=None)
+        try:
+            probe.execute("BEGIN IMMEDIATE")
+            probe.execute("ROLLBACK")
+            return True
+        except sqlite3.OperationalError:
+            return False
+        finally:
+            probe.close()
+
+    written_while_free: list[bool] = []
+    recorded: list[int] = []
+    store_chunk, record_progress = intake._store_chunk, intake._record_progress
+
+    def store(output: object, chunk: bytes, received: int) -> int:
+        written_while_free.append(writer_free())
+        return store_chunk(output, chunk, received)  # type: ignore[arg-type]
+
+    def record(upload_id: str, received: int) -> None:
+        recorded.append(received)
+        record_progress(upload_id, received)
+
+    monkeypatch.setattr(intake, "_store_chunk", store)
+    monkeypatch.setattr(intake, "_record_progress", record)
+    ready = asyncio.run(intake.transfer(upload.upload_id, chunks(b"0123456789abcdef")))
+    assert written_while_free == [True] * 8
+    assert recorded == [6, 12, 16]  # once per PROGRESS_RECORD_BYTES, then at the end
+    assert (ready.state, ready.received_bytes) == ("ready", 16)
+    assert intake._temporary(upload.upload_id).read_bytes() == b"0123456789abcdef"
