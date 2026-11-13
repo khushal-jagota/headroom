@@ -120,7 +120,9 @@ class Normalizer:
         if value is None:
             return None
         seen = self.tokens.setdefault(context, {})
-        key = json.dumps({"bytes": value.hex()} if isinstance(value, bytes) else value, sort_keys=True)
+        key = json.dumps(
+            {"bytes": value.hex()} if isinstance(value, bytes) else value, sort_keys=True,
+        )
         if key not in seen:
             seen[key] = len(seen)
         return seen[key]
@@ -590,13 +592,20 @@ def run_list(
                             elif "application/json" in response.headers.get("content-type", ""):
                                 body = response.json()
                             else:
-                                body = (response.content
-                                        if resolved.get("response_bytes") is True else response.text)
+                                body = (
+                                    response.content
+                                    if resolved.get("response_bytes") is True else response.text
+                                )
                             answer = {
                                 "status": response.status_code,
                                 "headers": {
                                     h: response.headers[h]
-                                    for h in (*HEADERS, *(("content-length", "content-encoding", "vary", "location") if resolved.get("response_bytes") is True else ())) if h in response.headers
+                                    for h in (
+                                        *HEADERS, *((
+                                            "content-length", "content-encoding", "vary",
+                                            "location",
+                                        ) if resolved.get("response_bytes") is True else ()),
+                                    ) if h in response.headers
                                 },
                                 "body": body,
                             }
@@ -633,7 +642,9 @@ def run_list(
                             method + " " + path
                         )
                     if call.get("response_bytes") is True:
-                        byte_answers.append({"step": index, "path": call["path"], "answers": answers})
+                        byte_answers.append({
+                            "step": index, "path": call["path"], "answers": answers,
+                        })
                     if answers[0] != answers[1]:
                         differences.append({"step": index, "call": call, "answers": answers})
         snapshots = [rows(s.db_path, n) for s, n in zip(servers, norms, strict=True)]
@@ -651,8 +662,10 @@ def run_list(
             for server, normalizer in zip(servers, norms, strict=True):
                 tree = server.db_path.parent / directory
                 trees.append({
-                    (normalizer.normalize(path.relative_to(tree).as_posix())
-                     if directory == "files" else path.relative_to(tree).as_posix()): path.read_bytes()
+                    (
+                        normalizer.normalize(path.relative_to(tree).as_posix())
+                        if directory == "files" else path.relative_to(tree).as_posix()
+                    ): path.read_bytes()
                     for path in sorted(tree.rglob("*")) if path.is_file()
                 })
             for name in sorted(set(trees[0]) | set(trees[1])):

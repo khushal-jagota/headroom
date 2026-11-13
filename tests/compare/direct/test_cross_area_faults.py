@@ -73,7 +73,8 @@ def test_cross_area_repr_matches_fresh_python(tmp_path: Path) -> None:
         "\u0378",
     ]
     assert unicodedata.unidata_version in {"15.0.0", "15.1.0"}, (
-        "This proof requires the Unicode 15.0 Python reference or the documented local 15.1 exception"
+        "This proof requires the Unicode 15.0 Python reference "
+        "or the documented local 15.1 exception"
     )
     expected = [repr(value) for value in values]
     # CI Python 3.12 uses Unicode 15.0. Local Python 3.13 uses 15.1, which

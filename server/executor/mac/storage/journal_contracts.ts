@@ -1,32 +1,11 @@
 /** Required dependencies and asynchronous journal custody, not another wire model. */
-import type { NumericJSON } from '../../../core/http/numeric_json.ts';
-import type {
-  WireRootName,
-  WireTypes,
-  MailboxCommand,
-  CommandResult,
-} from '../../wire.generated.ts';
+import type { MailboxCommand, CommandResult } from '../../wire.generated.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import type { OutboxCleanup, OutboxSidecar } from './resources.ts';
-export interface RequiredJournalProtocol {
-  decode_json<R extends WireRootName>(
-    bytes: Uint8Array | string,
-    root: R,
-    options?: { strict?: boolean },
-  ): NumericJSON<WireTypes[R]>;
-  encode_value<R extends WireRootName>(
-    value: NumericJSON<WireTypes[R]>,
-    root: R,
-  ): NumericJSON<WireTypes[R]>;
-}
 export interface JournalOutputPolicy {
-  command_owes_outputs(
-    command: NumericJSON<MailboxCommand>,
-    result: NumericJSON<CommandResult>,
-  ): boolean;
+  command_owes_outputs(command: MailboxCommand, result: CommandResult): boolean;
 }
 export interface JournalDependencies {
-  protocol_module: URL;
   outputs_module: URL;
   now_ms(): bigint;
   /** The host must initiate shutdown. This notification occurs once per service fault. */
