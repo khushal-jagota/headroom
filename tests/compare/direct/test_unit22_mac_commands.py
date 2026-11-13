@@ -142,7 +142,7 @@ def fixture(root: Path) -> dict[str, Any]:
     )
     add("stale", replace(permission, answer=replace(permission_answer, answer_id="stale")))
     add("withdraw", replace(prompt, content=(MessageFile("input", "text/plain", "input.txt", 4),)))
-    add("prewithdraw", prompt)
+    add("prewithdraw", prompt, token=replace(turn, turn_number=HIGH + 1))
     add("missing", prompt, replace(child, child_id="missing"))
     add("stop", StopRun())
     add("synthetic-stop", StopRun())
@@ -609,6 +609,7 @@ def test_unit22_mac_commands(
     assert observed["parity"] == expected
     assert expected["facts"] and all(expected["facts"].values())
     assert observed["actual_work_joined"]
+    assert observed["guards"] and all(observed["guards"].values())
     report_direct(
         request,
         "unit-22-mac-commands.json",

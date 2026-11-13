@@ -29,6 +29,8 @@ import { MacSourceWork } from '../runner/source_work.ts';
 import { MacRetirement } from '../runner/retirement.ts';
 import { MacMaintenance } from '../runner/maintenance.ts';
 import { ConversationStartAborted } from '../../../runtime/abort.ts';
+import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
+import { integer_value } from '../../integers.ts';
 import { ExecutorPaths } from '../configuration.ts';
 import type { OutboxStore } from '../storage/outbox.ts';
 import { read_canonical_body } from '../mailbox/poll.ts';
@@ -57,8 +59,10 @@ const calls: unknown[] = [],
   outcomes: unknown[] = [],
   states: unknown[] = [];
 const facts: Record<string, boolean> = {};
+const guards: Record<string, boolean> = {};
+const signal = new AbortController().signal;
 const options = { deadline: performance.now() / 1000 + 25 };
-const faults = new Set(['finish', 'append', 'mark', 'replay']);
+const faults = new Set(['finish', 'append', 'mark', 'replay', 'update']);
 const failures: Error[] = [];
 const on_failure = (error: Error) => {
   failures.push(error);
@@ -76,6 +80,9 @@ const source_release = gate(),
 const maintenance_entered = gate(),
   maintenance_release = gate();
 let maintenance_blocked = false;
+let stop_failure: Error | undefined, held_stop: ReturnType<typeof gate> | undefined;
+let stop_entered = gate(),
+  update_ids = 0;
 let store: OutboxStore, journal: AsyncCommandJournal;
 async function open() {
   ({ store, journal } = await open_fixture_stores(
@@ -144,6 +151,15 @@ const native = {
   },
   async stop() {
     calls.push(['stop']);
+    if (held_stop) {
+      stop_entered.resolve();
+      await held_stop.promise;
+    }
+    if (stop_failure) {
+      const failure = stop_failure;
+      stop_failure = undefined;
+      throw failure;
+    }
     if (maintenance_blocked) {
       maintenance_blocked = false;
       maintenance_release.resolve();
@@ -151,21 +167,23 @@ const native = {
   },
 } as unknown as BackendChild;
 mkdirSync(join(root, 'workspace'), { recursive: true });
-const native_children = new MacNativeChildren({
-  ...native_fixture_options({
-    paths: new ExecutorPaths(join(root, 'state')),
-    workspace_home: root,
-    factory: () => () => native,
-    native_skill_home: () => join(root, 'native'),
-    snapshot_directory: join(root, 'skills'),
-    on_failure,
-  }),
-  event_sink: () => ({
-    async report() {
-      throw new Error('Event custody belongs to PR5.');
-    },
-  }),
-});
+const make_native_children = () =>
+  new MacNativeChildren({
+    ...native_fixture_options({
+      paths: new ExecutorPaths(join(root, 'state')),
+      workspace_home: root,
+      factory: () => () => native,
+      native_skill_home: () => join(root, 'native'),
+      snapshot_directory: join(root, 'skills'),
+      on_failure,
+    }),
+    event_sink: () => ({
+      async report() {
+        throw new Error('Event custody belongs to PR5.');
+      },
+    }),
+  });
+const native_children = make_native_children();
 const sources = new MacSourceWork(child_state, () => native_children.admission_stopped);
 const retirement = new MacRetirement({ native_children, state: child_state, sources });
 const state = () => {
@@ -213,6 +231,11 @@ function wrap_publication(actual: MacOutputPublication): MacOutputPublication {
       if (entry.submission_id === 'turn_failed_' + digest('replay') && faults.delete('replay'))
         throw new Error('scripted append before commit');
       await actual.add(entry);
+      if (
+        entry.submission_id === 'stopped_' + digest('update_stop_' + update_id) &&
+        faults.delete('update')
+      )
+        throw new Error('scripted update append after commit');
       if (entry.submission_id === 'turn_failed_' + digest('reject') && faults.delete('append'))
         throw new Error('scripted append after commit');
     },
@@ -247,15 +270,18 @@ let service = new MacCommandService(
   dependencies(wrap_journal(journal!), wrap_publication(create_mac_output_publication(store!))),
 );
 const original_service = service;
-const maintenance = new MacMaintenance({
-  native_children,
-  state: child_state,
-  sources,
-  commands: () => service,
-  outbox: { pending_count: () => store!.pending_count() },
-  new_update_id: () => update_id,
-  permanently_stopped: () => native_children.admission_stopped,
-});
+const make_maintenance = (stop_owner = retirement) =>
+  new MacMaintenance({
+    native_children,
+    state: child_state,
+    sources,
+    commands: () => service,
+    outbox: { pending_count: () => store!.pending_count() },
+    new_update_id: () => (update_ids++ === 0 ? update_id : 'ffffffffffffffffffffffffffffffff'),
+    permanently_stopped: () => native_children.admission_stopped,
+    retirement: stop_owner,
+  });
+const maintenance = make_maintenance();
 async function run(key: string, fail = false) {
   try {
     const value = await service.run(commands[key]!);
@@ -271,6 +297,65 @@ async function run(key: string, fail = false) {
 let actual_work_joined = false;
 let source_failure_seconds = 0;
 try {
+  {
+    const recovery = make_maintenance(),
+      recovery_reference = { ...commands.start!.child, child_id: 'native-recovery' };
+    await native_children.start(
+      recovery_reference,
+      commands.start!.arguments as Parameters<MacNativeChildren['start']>[1],
+      () => {},
+    );
+    stop_failure = new Error('scripted recoverable native stop');
+    const failed = await recovery.quiesce(signal).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    recovery.resume_after_cancelled_update();
+    await native_children.stop_native(recovery_reference);
+    native_children.retire(recovery_reference);
+    await native_children.start(
+      recovery_reference,
+      commands.start!.arguments as Parameters<MacNativeChildren['start']>[1],
+      () => {},
+    );
+    guards.maintenance_failure_is_recoverable =
+      failed instanceof ServerLifecycleError &&
+      !native_children.admission_stopped &&
+      failures.length === 0 &&
+      (await recovery.settled_operations()).length === 0;
+    await native_children.stop_native(recovery_reference);
+    native_children.retire(recovery_reference);
+    const late_retirement = new MacRetirement({ native_children, state: child_state, sources });
+    const abandoned = make_maintenance(late_retirement),
+      cancelled = new AbortController();
+    await native_children.start(
+      recovery_reference,
+      commands.start!.arguments as Parameters<MacNativeChildren['start']>[1],
+      () => {},
+    );
+    held_stop = gate();
+    const raw_late = new Error('scripted late native stop');
+    stop_failure = raw_late;
+    const late = abandoned.quiesce(cancelled.signal).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    await stop_entered.promise;
+    cancelled.abort();
+    const cancellation = await late;
+    held_stop.resolve();
+    await yield_turn();
+    guards.abandoned_maintenance_keeps_late_failure =
+      cancellation instanceof ConversationStartAborted &&
+      (await abandoned.settled_operations()).some(
+        (error) => error instanceof Error && error.cause === raw_late,
+      );
+    abandoned.resume_after_cancelled_update();
+    held_stop = undefined;
+    await native_children.stop_native(recovery_reference);
+    native_children.retire(recovery_reference);
+    calls.length = 0;
+  }
   await record_commands(
     journal!,
     Object.values(commands)
@@ -341,13 +426,79 @@ try {
     record.task !== null;
   finish_release.resolve();
   await held;
+  const idle_child = native_children.get('child')!,
+    active_turn = idle_child.active_turn;
+  idle_child.active_turn = null;
+  const native_stops = calls.filter((call) => JSON.stringify(call) === '["stop"]').length;
+  const unsettled = await maintenance.quiesce(signal);
+  guards.zero_output_fate_blocks_idle_stop =
+    !record.settled &&
+    record.task === null &&
+    integer_value(unsettled.uncertain_operation_count) !== 0n &&
+    calls.filter((call) => JSON.stringify(call) === '["stop"]').length === native_stops;
+  const empty_children = make_native_children();
+  const stop_probe = new MacRetirement({
+    native_children: empty_children,
+    state: new MacChildState(),
+    sources,
+  });
+  const certificate = await stop_probe.stop_exact(commands.stop!, service, () => {});
+  guards.zero_output_fate_blocks_exact_stop =
+    certificate.disposition === 'uncertain' && !record.settled;
+  const task_release = gate(),
+    held_record = new Proxy(record, {
+      get: (target, key) =>
+        key === 'task'
+          ? task_release.promise.then(() => record.outcome!)
+          : Reflect.get(target, key),
+    });
+  const bounded = stop_probe
+    .stop_exact(
+      commands.stop!,
+      {
+        records: () => [held_record],
+        withdraw: (id) => service.withdraw(id),
+        settle_known: (reference) => service.settle_known(reference),
+        prune: (reference) => service.prune(reference),
+      },
+      () => {},
+    )
+    .then(
+      () => null,
+      (error: unknown) => error,
+    );
+  await yield_turn();
+  let stop_joined = false;
+  const actual_stop = stop_probe.settled().then(() => {
+    stop_joined = true;
+  });
+  stop_probe.begin_shutdown({ deadline: performance.now() / 1000 });
+  guards.exact_stop_uses_original_deadline =
+    (await bounded) instanceof ServerLifecycleError && !stop_joined;
+  task_release.resolve();
+  await actual_stop;
+  await empty_children.stop(options);
+  await Promise.all([empty_children.settled(), stop_probe.settled()]);
+  maintenance.resume_after_cancelled_update();
+  idle_child.active_turn = active_turn;
   await run('zero-held');
   const pending = service.run(commands.withdraw!);
   void pending.catch(() => {});
   await input_entered.promise;
   facts.preparation_withdrawn = service.withdraw('withdraw');
   outcomes.push(['withdraw', as_object(await pending, 'CommandOutcome')]);
+  const child = native_children.get('child')!,
+    previous_turn = child.active_turn,
+    lock_release = gate();
+  const lock = child.lock.run(() => lock_release.promise);
+  await yield_turn();
+  const undelivered = service.run(commands.prewithdraw!);
+  await yield_turn();
   facts.prewithdrawn = service.withdraw('prewithdraw');
+  lock_release.resolve();
+  await lock;
+  await undelivered;
+  guards.withdrawn_turn_unchanged = child.active_turn === previous_turn;
   await run('prewithdraw');
   await run('missing');
   const source = sources.source_work(commands.stop!.child, () => source_release.promise);
@@ -371,6 +522,7 @@ try {
   source_release.resolve();
   await source;
   await stopping;
+  guards.exact_retirement_prunes_records = service.records(commands.stop!.child).length === 0;
   const synthetic = commands['synthetic-stop']!;
   const known = {
     command_id: synthetic.command_id,
@@ -419,7 +571,7 @@ try {
   facts.shared_replay_gate =
     gate_held && child_state.admission_stopped && !maintenance.planned_update_replay;
   maintenance.resume_after_cancelled_update();
-  const quiescence = await maintenance.quiesce();
+  const quiescence = await maintenance.quiesce(signal);
   states.push(as_object(quiescence, 'Quiescence'));
   facts.receipts_block_exit = !quiescence.idle_children_stopped && store!.pending_count() > 0n;
   maintenance.resume_after_cancelled_update();
@@ -427,13 +579,22 @@ try {
   const maintenance_child = native_children.get('maintenance-child')!;
   maintenance_child.background_task_ids.add('background');
   facts.background_blocks_idle_update =
-    !(await maintenance.prepare_update('idle')) && !child_state.admission_stopped;
+    !(await maintenance.prepare_update('idle', 'idle-check', signal)) &&
+    !child_state.admission_stopped;
   maintenance_child.background_task_ids.clear();
   const updating_prompt = run('maintenance-prompt');
   void updating_prompt.catch(() => {});
   await maintenance_entered.promise;
   const stops = calls.filter((call) => JSON.stringify(call) === '["stop"]').length;
-  const updated = await maintenance.prepare_update('now');
+  const rejected_update = await maintenance.prepare_update('now', 'planned-update', signal).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  const updated = await maintenance.prepare_update('now', 'planned-update', signal);
+  guards.update_retry_keeps_stop_identity =
+    rejected_update instanceof Error &&
+    rejected_update.message === 'scripted update append after commit' &&
+    update_ids === 1;
   await updating_prompt;
   facts.update_stops_before_join =
     updated &&
@@ -551,7 +712,7 @@ try {
       trace.findIndex((candidate) => JSON.stringify(candidate) === JSON.stringify(row)) === index,
   );
   const parity = {
-    calls,
+    calls: [...calls],
     trace: unique_trace,
     outcomes,
     states,
@@ -560,11 +721,39 @@ try {
     pending: pending_rows,
     results,
   };
+  const reference = { ...commands.start!.child, child_id: 'cached-native-stop' };
+  await native_children.start(
+    reference,
+    commands.start!.arguments as Parameters<MacNativeChildren['start']>[1],
+    () => {},
+  );
+  held_stop = gate();
+  stop_entered = gate();
+  const native_stopping = native_children.stop_native(reference);
+  await stop_entered.promise;
+  const command = { ...commands.stop!, command_id: 'cached-native-stop', child: reference };
+  await record_commands(journal!, [
+    {
+      command_sequence: Object.keys(commands).length + 1,
+      command_id: command.command_id,
+      created_at_vps_ms: now,
+      child_command: command,
+      model_list_request: null,
+    },
+  ]);
+  const joined_stop = service.run(command);
+  await yield_turn();
+  guards.cached_native_stop_marks_invocation =
+    service.records(reference)[0]?.phase === 'invoking' && !service.withdraw(command.command_id);
+  held_stop.resolve();
+  await Promise.all([native_stopping, joined_stop]);
+  guards.exact_retirement_prunes_records &&= service.records(reference).length === 0;
   process.stdout.write(
     stringify_pydantic_json({
       parity,
       retry_attempts: trace,
       actual_work_joined,
+      guards,
       source_failure_seconds,
       elapsed_seconds: (performance.now() - started) / 1000,
     }),
@@ -575,16 +764,23 @@ try {
   source_release.resolve();
   replay_release.resolve();
   maintenance_release.resolve();
+  held_stop?.resolve();
   // Teardown occurs after the semantic snapshot; it is not a command stop proof.
   try {
     const native_stop = native_children.stop(options);
-    const operations = maintenance.finish_operations();
-    const joined = await Promise.allSettled([native_stop, native_children.settled(), operations]);
+    const operations = maintenance.finish_operations(options);
+    const joined = await Promise.allSettled([
+      native_stop,
+      native_children.settled(),
+      operations,
+      maintenance.settled_operations(),
+    ]);
     await sources.finish();
     await service.settled_replays();
     await Promise.allSettled(
       original_service.records().flatMap((record) => (record.task === null ? [] : [record.task])),
     );
+    await retirement.settled();
     const failures = joined.flatMap((result) =>
       result.status === 'rejected'
         ? [result.reason]

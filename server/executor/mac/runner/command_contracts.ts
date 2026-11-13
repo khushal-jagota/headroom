@@ -26,12 +26,16 @@ export interface MacCommandRecordView {
   readonly outcome: CommandOutcome | null;
   readonly has_outputs: boolean;
   readonly outputs_published: boolean;
+  /** Native fate and every required journal/output step are complete. */
+  readonly settled: boolean;
 }
 /** Exact retirement uses these same records and cannot invent successful command joins. */
 export interface MacCommandWork {
   records(reference?: ChildReference): readonly MacCommandRecordView[];
   withdraw(command_id: string): boolean;
   settle_known(reference?: ChildReference): Promise<void>;
+  /** Drop only the exact retired child's completed records; retain unsettled work for retry. */
+  prune(reference: ChildReference): void;
 }
 export interface MacCommandDependencies {
   readonly incarnation: string;

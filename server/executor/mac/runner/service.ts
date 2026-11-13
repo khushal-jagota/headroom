@@ -20,7 +20,6 @@ import { dispatch_command } from './commands.ts';
 import {
   error_message,
   error_outcome,
-  outcome_detail,
   owed_outputs,
   same_reference,
   same_wire,
@@ -38,6 +37,7 @@ class Record implements MacCommandRecordView {
   next_output = 0;
   outputs_published = false;
   settlement: Promise<void> | undefined;
+  pruned = false;
   constructor(command: ChildCommand, journaled: boolean) {
     this.command = command;
     this.journaled = journaled;
@@ -70,7 +70,7 @@ export class MacCommandService implements MacCommandServiceContract {
   private readonly dependencies: MacCommandDependencies;
   private readonly commands = new Map<string, Record>();
   private readonly withdrawn = new Set<string>();
-  private readonly start_failed = new Map<string, string>();
+  private readonly start_failed = new Map<string, CommandOutcome>();
   private readonly replays = new Set<Promise<void>>();
   constructor(dependencies: MacCommandDependencies) {
     this.dependencies = dependencies;
@@ -79,6 +79,17 @@ export class MacCommandService implements MacCommandServiceContract {
     return [...this.commands.values()].filter(
       (record) => reference === undefined || same_reference(record.command.child, reference),
     );
+  }
+  prune(reference: ChildReference): void {
+    for (const [id, record] of this.commands) {
+      if (!same_reference(record.command.child, reference)) continue;
+      record.pruned = true;
+      this.withdrawn.delete(id);
+      if (record.task === null && record.settled) this.commands.delete(id);
+    }
+    const failed = this.start_failed.get(reference.child_id);
+    if (failed && same_reference(failed.child, reference))
+      this.start_failed.delete(reference.child_id);
   }
   withdraw(command_id: string): boolean {
     if (this.withdrawn.has(command_id)) return true;
@@ -132,6 +143,7 @@ export class MacCommandService implements MacCommandServiceContract {
     record.task = task;
     const finished = () => {
       if (record.task === task) record.task = null;
+      if (record.pruned && record.settled) this.commands.delete(record.command.command_id);
     };
     void task.then(finished, finished);
     return task;
@@ -191,7 +203,7 @@ export class MacCommandService implements MacCommandServiceContract {
       !this.dependencies.state.is_retiring(child_id) &&
       !this.dependencies.state.is_retired(child_id)
     )
-      this.start_failed.set(child_id, outcome_detail(result, 'unknown'));
+      this.start_failed.set(child_id, result);
     // Retain the known provider fate before any output derivation or storage can fail.
     record.outcome = result;
     await this.settle(record);

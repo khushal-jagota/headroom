@@ -667,3 +667,17 @@ NUL artifact paths retain Python's exact `lstat: embedded null character in path
 Ancestor symlink loops produce the clean `artifact path contains symlink` validation refusal, without raw Node errors.
 Python raises a raw `RuntimeError` for the same ancestor loop. The Manager accepts this clean TypeScript refusal.
 The Manager reviews these implementation differences before this slice merges.
+
+## Mac command settlement and update stop proof identity
+
+The Manager requires withdrawal before invocation to preserve the active turn.
+Python changes that turn before its withdrawal check. TypeScript changes it only after invocation admission succeeds.
+
+The Manager requires completed journal and output settlement before idle or a successful stop certificate.
+Python checks only for derived output that remains unpublished, so a failed journal write for a command without output can escape that check.
+TypeScript also blocks on the retained command's unsettled state.
+
+The Manager requires one stop proof for each update request and exact child across retries.
+TypeScript retains that proof's command identity until its required output settles.
+Python allocates a fresh `update_stop_` identity on each preparation attempt.
+The caller supplies the real update request ID. A retry cannot publish a second `child_stopped` entry for the same request and child.

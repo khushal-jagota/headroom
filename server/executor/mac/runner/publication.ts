@@ -2,21 +2,20 @@
 import { stringify_python_json } from '../../../core/http/numeric_json.ts';
 import { decode_json } from '../../protocol.ts';
 import { normalize_integer } from '../../integers.ts';
+import { is_json_object } from '../../protocol_json.ts';
 import type { OutboxStore } from '../storage/outbox.ts';
 import type { MacOutputPublication } from './command_contracts.ts';
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 
 export function create_mac_output_publication(outbox: OutboxStore): MacOutputPublication {
   return {
     async add(entry) {
-      const child = object(entry.payload.child)
+      const child = is_json_object(entry.payload.child)
         ? entry.payload.child
-        : object(entry.payload.ask)
+        : is_json_object(entry.payload.ask)
           ? entry.payload.ask.child
           : null;
-      const child_id = object(child) && typeof child.child_id === 'string' ? child.child_id : '';
+      const child_id =
+        is_json_object(child) && typeof child.child_id === 'string' ? child.child_id : '';
       const payload = Buffer.from(
         stringify_python_json(
           { payload: entry.payload, files: [] },

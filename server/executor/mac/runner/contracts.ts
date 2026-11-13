@@ -51,9 +51,9 @@ export interface MacNativeChildrenContract {
   is_retiring(child_id: string): boolean;
   /** Fence new native work first. The command owner joins its commands/source work separately. */
   begin_retirement(reference: ChildReference): void;
-  /** The same withdrawal callback runs under the child lock immediately before native.stop. */
+  /** Each command invokes its withdrawal callback before native.stop or a retained stop join. */
   stop_child(reference: ChildReference, invoking: () => void): Promise<void>;
-  /** Maintenance stops before command locks. Successful cleanup does not seal this owner. */
+  /** Maintenance stops before command locks. Failure propagates without sealing this owner. */
   stop_native(reference: ChildReference): Promise<void>;
   /** Called only after the runner's required source work and stop proof settle. */
   retire(reference: ChildReference): void;

@@ -1,5 +1,6 @@
 /** Native Claude facts enter the unchanged backend event seam here. */
 import { stringify_python_json } from '../../../core/http/numeric_json.ts';
+import { python_truth } from '../../../core/python_truth.ts';
 import { ComposerCatalogEntry, ComposerCatalogEntryKind } from '../../contracts.ts';
 import { PlanEntry, PlanEntryStatus, ToolCallStatus } from '../../events.ts';
 import { text_message_content } from '../../message_content.ts';
@@ -101,11 +102,6 @@ function joined_text(values: readonly unknown[]): string {
       );
   }
   return values.join('');
-}
-function python_truth(value: unknown): boolean {
-  if (Array.isArray(value)) return value.length > 0;
-  if (record(value)) return Object.keys(value as object).length > 0;
-  return Boolean(value);
 }
 export function canonical_json(value: unknown): string | null {
   if (!python_truth(value)) return null;
