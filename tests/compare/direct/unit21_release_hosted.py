@@ -138,7 +138,7 @@ def paths(root: Path) -> list[Path]:
     return sorted(root.rglob("*"), key=lambda path: path.relative_to(root).as_posix())
 
 
-def compare(left: Path, right: Path) -> dict[str, Any]:
+def compare(left: Path, right: Path, record: dict[str, Any]) -> dict[str, Any]:
     def names(root: Path) -> list[str]:
         return [path.relative_to(root).as_posix() for path in paths(root)]
 
@@ -146,7 +146,8 @@ def compare(left: Path, right: Path) -> dict[str, Any]:
     if left_names != right_names:
         raise AssertionError("extracted path sets differ")
     inodes: list[dict[tuple[int, int], str]] = [{}, {}]
-    mismatches: list[str] = []
+    mismatches: list[dict[str, Any]] = []
+    categories: dict[str, int] = {}
     total = 0
     for name in left_names:
         if stopping:
@@ -155,34 +156,58 @@ def compare(left: Path, right: Path) -> dict[str, Any]:
         information = [path.lstat() for path in pair]
         if stat.S_IFMT(information[0].st_mode) != stat.S_IFMT(information[1].st_mode):
             raise AssertionError(f"file kinds differ: {name}")
-        equal = stat.S_IMODE(information[0].st_mode) == stat.S_IMODE(information[1].st_mode)
+        differences: dict[str, Any] = {}
+        modes = [stat.S_IMODE(info.st_mode) for info in information]
+        if modes[0] != modes[1]:
+            differences["mode"] = modes
         if stat.S_ISLNK(information[0].st_mode):
-            equal &= os.readlink(pair[0]) == os.readlink(pair[1])
+            targets = [os.readlink(path) for path in pair]
+            if targets[0] != targets[1]:
+                differences["symlink_target"] = targets
         else:
-            equal &= information[0].st_mtime_ns == information[1].st_mtime_ns
+            times = [str(info.st_mtime_ns) for info in information]
+            if times[0] != times[1]:
+                differences["mtime_ns"] = times
             if stat.S_ISREG(information[0].st_mode):
+                lengths = [info.st_size for info in information]
+                if lengths[0] != lengths[1]:
+                    differences["length"] = lengths
                 links = []
                 for index, info in enumerate(information):
                     key = (info.st_dev, info.st_ino)
                     links.append(inodes[index].setdefault(key, name))
-                equal &= links[0] == links[1]
+                if links[0] != links[1]:
+                    differences["hardlink_identity"] = links
+                bytes_equal = True
                 with pair[0].open("rb") as first, pair[1].open("rb") as second:
                     while True:
                         if stopping:
                             raise RuntimeError("hosted proof stopped")
                         data, other = first.read(CHUNK), second.read(CHUNK)
-                        equal &= data == other
+                        bytes_equal &= data == other
                         if not data and not other:
                             break
-        if not equal:
+                if not bytes_equal:
+                    differences["bytes"] = "different; payload bytes omitted"
+        if differences:
             total += 1
+            for category in differences:
+                categories[category] = categories.get(category, 0) + 1
             if len(mismatches) < 20:
-                mismatches.append(name)
+                mismatches.append(dict(path=name, differences=differences))
+    result = dict(
+        equal=not total,
+        paths=len(left_names),
+        mtime="exact filesystem st_mtime_ns; no tolerance",
+        mismatch_count=total,
+        mismatch_categories=categories,
+        first_mismatches=mismatches,
+        value_order=["typescript", "python"],
+    )
+    record["tree"] = result
     if total:
         raise AssertionError(f"{total} trees differ in bytes/mode/link/mtime: {mismatches}")
-    return dict(
-        equal=True, paths=len(left_names), mtime="exact filesystem st_mtime_ns; no tolerance"
-    )
+    return result
 
 
 class Counted(io.BufferedIOBase):
@@ -360,7 +385,7 @@ def main(root: Path, report: Path, sha: str) -> None:
                 record["checksum"],
                 sha,
             )
-            record["tree"] = phase(producer + "-compare", compare, node_tree, oracle)
+            record["tree"] = phase(producer + "-compare", compare, node_tree, oracle, record)
             if (
                 hash_archive(archive) != record["checksum"]
                 or digest_app_artifact(app) != manifest.artifact_digest

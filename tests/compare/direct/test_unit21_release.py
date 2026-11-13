@@ -231,7 +231,7 @@ def _archive_vectors(root: Path, ordinary: Path) -> list[dict[str, str]]:
             _record(
                 "PaxHeaders/leading-zero",
                 tarfile.XHDTYPE,
-                _pax("path", "pax-length", leading_zero=True),
+                _pax("path", "pax-length", leading_zero=True) + _pax("mtime", "-1.25"),
             )
             + _record("raw"),
         ),
@@ -240,7 +240,7 @@ def _archive_vectors(root: Path, ordinary: Path) -> list[dict[str, str]]:
             "pax-long-path",
             "parity",
             _record("pax", tarfile.DIRTYPE, mode=0o755)
-            + x({"path": "pax/" + "p" * 140, "mtime": "1.25"})
+            + x({"path": "pax/" + "p" * 140, "mtime": "1700000000.1234567"})
             + _record("raw", body=b"PAX bytes"),
         ),
         (
@@ -320,11 +320,15 @@ def _archive_vectors(root: Path, ordinary: Path) -> list[dict[str, str]]:
         "pax-escape": "PAX path overrides a safe raw header with traversal",
         "pax-duplicate": "Duplicate detection uses the effective PAX path",
         "pax-high-bit-length": "Length digits must retain their original ASCII bytes",
-        "pax-leading-zero-length": "Positive PAX length allows leading zero digits",
+        "pax-leading-zero-length": (
+            "Positive PAX length allows leading zero digits; negative fractional time normalizes"
+        ),
         "pax-hex-mtime": (
             "Invalid decimal PAX time uses Python zero fallback, not JavaScript hexadecimal"
         ),
-        "pax-long-path": "PAX long path and fractional time survive extraction",
+        "pax-long-path": (
+            "PAX long path and non-dyadic current-epoch time retain exact nanoseconds"
+        ),
         "gnu-long-name": "GNU long-name payload is not interpreted as PAX",
         "gnu-long-link": "GNU long-link target is applied to its member",
         "pax-gnu-unwind": "Nested PAX and GNU override precedence",
