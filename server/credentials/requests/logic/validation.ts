@@ -18,9 +18,6 @@ const object = (value: unknown): value is Record<string, unknown> =>
 function exact_keys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   return Object.keys(value).sort().join(',') === [...keys].sort().join(',');
 }
-export function strip(value: string): string {
-  return value.replace(/^[\p{White_Space}\u001c-\u001f]+|[\p{White_Space}\u001c-\u001f]+$/gu, '');
-}
 function uuid(value: string): string {
   const hex = value
     .replaceAll('urn:', '')
@@ -107,8 +104,8 @@ export function validate_request(value: unknown): CreateCredentialRequestBody {
     )
       throw invalid('a header request needs its header name');
   } else if (header !== null) throw invalid('bearer requests do not name a header');
-  const hint = value.help === null ? null : strip(text(value.help, 1000));
-  const url = value.help_url === null ? null : strip(text(value.help_url, 2000));
+  const hint = value.help === null ? null : text(value.help, 1000).trim();
+  const url = value.help_url === null ? null : text(value.help_url, 2000).trim();
   if (url !== null) require_https_url(url);
   const raw = value.replacement;
   let replacement: RequestReplacement | null = null;
@@ -124,9 +121,9 @@ export function validate_request(value: unknown): CreateCredentialRequestBody {
   }
   return {
     request_id,
-    name: strip(text(value.name, 200)),
-    provider: strip(text(value.provider, 200)),
-    use: strip(text(value.use, 2000)),
+    name: text(value.name, 200).trim(),
+    provider: text(value.provider, 200).trim(),
+    use: text(value.use, 2000).trim(),
     auth_kind: kind,
     header_name: header as string | null,
     help: hint,

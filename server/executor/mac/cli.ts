@@ -2,7 +2,7 @@
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
 import { CliFailure, human_error } from '../../cli/errors.ts';
 import { emit, executor_request, json } from '../../cli/http.ts';
-import { python_text } from '../../cli/python_text.ts';
+import { scalar_text } from '../../cli/text.ts';
 import { as_object } from '../protocol.ts';
 import { is_value_error } from '../../core/value_error.ts';
 import { local_status, request } from './ipc_client.ts';
@@ -34,7 +34,7 @@ export async function run_executor_command(inv: Invocation): Promise<CommandResu
         inv.environment,
       );
       if (response.error !== null)
-        throw new CliFailure(human_error(inv.command, python_text(response.error)));
+        throw new CliFailure(human_error(inv.command, scalar_text(response.error)));
       return { exit_code: 0, stdout: json(response.result) + '\n', stderr: '' };
     }
     case 'permissions':

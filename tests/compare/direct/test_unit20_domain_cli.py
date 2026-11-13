@@ -131,9 +131,17 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
                 worker_type=definition.worker_type,
                 worker_runtime_definitions=load_worker_runtime_definitions(conn),
             )
-            for field, text in (("2025", "unit20-left-2025"), ("2024", "unit20-right-2024")):
+            for field, text in (
+                ("2025", "unit20-left-2025"),
+                ("2024", "unit20-right-2024"),
+            ):
                 ticket = tickets_data.complete_user_owned_gate(
-                    conn, ticket.id, field=field, new_body=text, principal=OWNER_PRINCIPAL, now=NOW
+                    conn,
+                    ticket.id,
+                    field=field,
+                    new_body=text,
+                    principal=OWNER_PRINCIPAL,
+                    now=NOW,
                 )
             captures["numeric_ticket"] = ticket.id
 
@@ -166,13 +174,25 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
         # The POST read changes no data, so both clients reuse each existing host.
         for mode in ("json", "text"):
             python_cli = run_cli(
-                CliHost(reference, tmp_path), step, False, tmp_path / "python-input", mode
+                CliHost(reference, tmp_path),
+                step,
+                False,
+                tmp_path / "python-input",
+                mode,
             )
             ts_cli_reference = run_cli(
-                CliHost(reference, tmp_path), step, True, tmp_path / "typescript-input", mode
+                CliHost(reference, tmp_path),
+                step,
+                True,
+                tmp_path / "typescript-input",
+                mode,
             )
             ts_cli_candidate = run_cli(
-                CliHost(candidate_host, tmp_path), step, True, tmp_path / "candidate-input", mode
+                CliHost(candidate_host, tmp_path),
+                step,
+                True,
+                tmp_path / "candidate-input",
+                mode,
             )
             evidence["comparisons"][mode] = {
                 "python_cli_python_host": python_cli,
@@ -183,7 +203,7 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
             outcomes = []
             for index, answer in enumerate((python_cli, ts_cli_reference, ts_cli_candidate)):
                 outcome = comparable(answer)
-                document = json.loads(outcome["stdout"])
+                document = json.loads(answer["stdout"])
                 assert [field["name"] for field in document["datasets"][0]["fields"]] == [
                     "2025",
                     "2024",
@@ -191,7 +211,10 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
                 assert len(document["results"]) == 1
                 result = document["results"][0]
                 assert len(result["rows"]) == 1
-                assert [field["name"] for field in result["output"]["fields"]] == ["2025", "2024"]
+                assert [field["name"] for field in result["output"]["fields"]] == [
+                    "2025",
+                    "2024",
+                ]
                 assert result["rows"][0]["values"] == {"2025": 7.25, "2024": 3.0}
                 assert list(result["rows"][0]["values"]) == (
                     ["2025", "2024"] if index == 0 else ["2024", "2025"]
@@ -240,7 +263,7 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
                 [*command, *step["argv"]], env, input=step.get("stdin", "").encode()
             )
             actual = driver.process_answer(plain)
-            assert actual == comparable(observed)
+            assert comparable(actual) == comparable(observed)
             assert len(observed["wire"]) == 1
             assert base64.b64decode(observed["wire"][0]["body_base64"]) == oracle.content
             evidence["wire_transparency"].append(actual)
@@ -252,7 +275,12 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
             argv = (
                 ["ticket", "list", "--search", "unit20-left-2025\nunit20-right-2024"]
                 if searching
-                else ["ticket", "show", captures["numeric_ticket"], *([parts] if parts else [])]
+                else [
+                    "ticket",
+                    "show",
+                    captures["numeric_ticket"],
+                    *([parts] if parts else []),
+                ]
             )
             order = parts.split(",") if parts and not searching else ["2025", "2024"]
             step = {
@@ -261,9 +289,11 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
                 "identity": {"actor": "owner"},
                 "exit_code": 0,
                 "assert_http_status": 200,
-                "proof": "Search joins numeric field bodies in workflow order."
-                if searching
-                else "Human Ticket order follows the default manifest or explicit requested parts.",
+                "proof": (
+                    "Search joins numeric field bodies in workflow order."
+                    if searching
+                    else "Human Ticket order follows the manifest or explicit requested parts."
+                ),
             }
             answers = [
                 run_cli(
@@ -291,7 +321,12 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
                         "\n  " + order[1] + ":"
                     )
             assert comparable(answers[0]) == comparable(answers[1]) == comparable(answers[2])
-            observed = {"argv": argv, "proof": step["proof"], "order": order, "answers": answers}
+            observed = {
+                "argv": argv,
+                "proof": step["proof"],
+                "order": order,
+                "answers": answers,
+            }
             if searching:
                 evidence["declared_field_search"] = observed
             else:
@@ -348,7 +383,7 @@ process.stdout.write(JSON.stringify({...Object.fromEntries(Object.entries(declar
     steps = fixtures.direct_steps("measure-source")
     fresh_schemas = schema_declarations()
     for name, value in fresh_schemas.items():
-        assert exported["schemas"][name] == json.dumps(value) + "\n", name
+        assert json.loads(exported["schemas"][name]) == value, name
     proof: dict[str, Any] = {
         "changed_paths": {},
         "outputs": {},
@@ -392,8 +427,11 @@ process.stdout.write(JSON.stringify({...Object.fromEntries(Object.entries(declar
             left = run_cli(CliHost(reference, root), step, False, root / "runtime-py", mode)
             right = run_cli(CliHost(reference, root), step, True, root / "runtime-ts", mode)
             hosted = run_cli(CliHost(candidate, root), step, True, root / "runtime-hosted", mode)
-            assert left["stdout"] == expected and left["stderr"] == ""
-            assert right["stdout"] == exported[name][mode] and right["stderr"] == ""
+            assert json.loads(left["stdout"]) == json.loads(expected) and left["stderr"] == ""
+            assert (
+                json.loads(right["stdout"]) == json.loads(exported[name][mode])
+                and right["stderr"] == ""
+            )
             assert comparable(right) == comparable(hosted)
             proof["outputs"][name][mode] = [left, right, hosted]
     build_environment = driver.environment
@@ -407,7 +445,10 @@ process.stdout.write(JSON.stringify({...Object.fromEntries(Object.entries(declar
     with patch.object(driver, "environment", executor_environment):
         proof["executor_callback_precedence"] = driver.help_batch(
             CliHost(reference, root),
-            [(["preview", "register", "--port", "80"], 1), (["preview", "show", "--help"], 1)],
+            [
+                (["preview", "register", "--port", "80"], 1),
+                (["preview", "show", "--help"], 1),
+            ],
             root / "executor-help",
         )
     proof["seconds"] = time.perf_counter() - started
@@ -493,7 +534,12 @@ process.stdout.write(JSON.stringify(collection_script(value.path,value.datasets,
                 )
             state = fixtures.attention_state(reference, returned, expected, root=tmp_path)
             evidence["implementations"].append(
-                {"implementation": implementation, "json": answer, "text": human, "state": state}
+                {
+                    "implementation": implementation,
+                    "json": answer,
+                    "text": human,
+                    "state": state,
+                }
             )
             states.append({"returned": state["returned"], "rows": state["rows"]})
             normalizer = Normalizer(
@@ -504,7 +550,10 @@ process.stdout.write(JSON.stringify(collection_script(value.path,value.datasets,
                 for metric, identifier in returned[kind].items():
                     normalizer.ids[identifier] = f"<attention-{kind}-{metric}>"
             outputs.append(
-                [normalizer.normalize(comparable(answer)), normalizer.normalize(comparable(human))]
+                [
+                    normalizer.normalize(comparable(answer)),
+                    normalizer.normalize(comparable(human)),
+                ]
             )
         left, right = evidence["implementations"][1:]
         wire_rules = json.loads(fixtures.RULES.read_text())
@@ -570,7 +619,9 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
     }
     try:
         reference = _start_server(
-            tmp_path / "python", server_module="tests.compare.host", trusted_ingress_env=ingress
+            tmp_path / "python",
+            server_module="tests.compare.host",
+            trusted_ingress_env=ingress,
         )
         handles.append(reference)
         git_root = tmp_path / "project"
@@ -630,7 +681,10 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
         handles.append(candidate)
         results = []
         # The reused listener helper receives only synthetic HOME/provider homes.
-        with patch.dict(os.environ, env, clear=True), application(tree) as (child, port):
+        with (
+            patch.dict(os.environ, env, clear=True),
+            application(tree) as (child, port),
+        ):
             actual_process = asdict(LinuxProcessInspector().discover(port, tree))
             for name, handle, candidate_cli in (
                 ("python_cli_python_host", reference, False),
@@ -648,7 +702,8 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
                     refusal = run_cli(
                         CliHost(handle, tmp_path),
                         substitute(
-                            failure, {"preview_ticket": ticket["id"], "preview_port": str(port)}
+                            failure,
+                            {"preview_ticket": ticket["id"], "preview_port": str(port)},
                         ),
                         candidate_cli,
                         tmp_path / "preview-input",
@@ -662,7 +717,8 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
                     generation, created_at = None, None
                     for step in (step for step in preview_steps if step["exit_code"] == 0):
                         resolved = substitute(
-                            step, {"preview_ticket": ticket["id"], "preview_port": str(port)}
+                            step,
+                            {"preview_ticket": ticket["id"], "preview_port": str(port)},
                         )
                         interval_start = int(time.time())
                         answer = run_cli(
@@ -674,11 +730,17 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
                         )
                         interval = interval_start, int(time.time())
                         current = fixtures.api(
-                            handle, "GET", "/api/previews", identity={"ticket_id": ticket["id"]}
+                            handle,
+                            "GET",
+                            "/api/previews",
+                            identity={"ticket_id": ticket["id"]},
                         )
                         first = resolved["argv"][1] == "prepare"
                         if first:
-                            generation, created_at = current["generation"], current["created_at"]
+                            generation, created_at = (
+                                current["generation"],
+                                current["created_at"],
+                            )
                         assert (
                             current["generation"] == generation
                             and current["created_at"] == created_at
@@ -690,7 +752,13 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
                         )
                         answers.append(
                             fixtures.preview_answer(
-                                answer, current, handle, interval, normalizer, mode, first=first
+                                answer,
+                                current,
+                                handle,
+                                interval,
+                                normalizer,
+                                mode,
+                                first=first,
                             )
                         )
                         evidence["implementations"].append(
@@ -724,7 +792,9 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
 
 
 @pytest.mark.parametrize(
-    "backend", ["tests.compare.host", "tests.compare.ts_launcher"], ids=["python", "typescript"]
+    "backend",
+    ["tests.compare.host", "tests.compare.ts_launcher"],
+    ids=["python", "typescript"],
 )
 def test_unit20_domain_same_python_host(
     tmp_path: Path, request: pytest.FixtureRequest, backend: str

@@ -15,3 +15,36 @@ export const watchdog: OperatorHandler<'watchdog'> = async (args, deps) => ({
   stdout: (await deps.run_watchdog(args)) + '\n',
   stderr: '',
 });
+
+export const serve: OperatorHandler<'serve'> = async (_args, deps) => {
+  try {
+    const code = await deps.run_supervisor();
+    return code === 0
+      ? { exit_code: 0, stdout: '', stderr: '' }
+      : {
+          exit_code: 1,
+          stdout: '',
+          failure_message: 'Panels application exited unexpectedly.',
+          stderr_prefix: '',
+        };
+  } catch (error) {
+    const { ServerLifecycleError } = await import('./contracts.ts');
+    if (!(error instanceof ServerLifecycleError)) throw error;
+    return { exit_code: 1, stdout: '', failure_message: error.message, stderr_prefix: '' };
+  }
+};
+export const restart: OperatorHandler<'restart'> = async (_args, deps) => {
+  try {
+    await deps.request_restart();
+    return { exit_code: 0, stdout: 'Panels restart accepted.\n', stderr: '' };
+  } catch (error) {
+    const { ServerRestartConnectionError, ServerRestartProtocolError } =
+      await import('./contracts.ts');
+    if (
+      !(error instanceof ServerRestartConnectionError) &&
+      !(error instanceof ServerRestartProtocolError)
+    )
+      throw error;
+    return { exit_code: 1, stdout: '', failure_message: error.message, stderr_prefix: '' };
+  }
+};

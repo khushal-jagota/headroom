@@ -85,6 +85,7 @@ function structural_app(app: string, sha: string): void {
     'server/lifecycle/managed_main.ts',
     'server/lifecycle/application.ts',
     'server/lifecycle/stop_main.ts',
+    'server/stalls/watchdog_main.ts',
     'server/environments/updates/interruption_capture_main.ts',
     'server/environments/updates/restore_main.ts',
     'runtime/installer-files.json',

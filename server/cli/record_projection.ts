@@ -1,4 +1,5 @@
 import { stringify_python_json } from '../core/http/numeric_json.ts';
+import { json } from './http.ts';
 export interface RecordPart {
   value: any;
   proposal: any;
@@ -61,7 +62,7 @@ function display(value: any): string {
   if (value === null) return 'null';
   if (typeof value === 'boolean') return value ? 'true' : 'false';
   if (typeof value === 'string') return value;
-  return stringify_python_json(value, { sort_keys: true });
+  return json(value);
 }
 function append(lines: string[], label: string, value: any, indent: string, annotation = ''): void {
   const rendered = display(value);
@@ -70,7 +71,7 @@ function append(lines: string[], label: string, value: any, indent: string, anno
     return;
   }
   lines.push(`${indent}${label}: |${annotation}`);
-  const split = rendered.split(/\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/);
+  const split = rendered.split(/\r?\n/);
   if (split.at(-1) === '') split.pop();
   lines.push(...split.map((s) => `${indent}  ${s}`));
 }
@@ -83,7 +84,7 @@ export function render_text(projection: any, part_order: readonly string[]): str
       const entry = projection.manifest[name];
       lines.push(
         `  ${name}:${entry.approval ? ' # ' + entry.approval.display_label : ''}`,
-        `    character_count: ${stringify_python_json(entry.character_count)}`,
+        `    character_count: ${String(entry.character_count)}`,
       );
     }
   } else {

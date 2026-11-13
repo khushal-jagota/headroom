@@ -5,18 +5,11 @@ import { read_source, read_json_object, worker_stdin_body } from './input.ts';
 import { part, parse_part_names, project_record, render_text } from './record_projection.ts';
 import type { RecordParts } from './record_projection.ts';
 import { JsonNumber, numeric_value, parse_numeric_json } from '../core/http/numeric_json.ts';
-import { python_text as scalar } from './python_text.ts';
+import { scalar_text as scalar } from './text.ts';
 import { ticket_argument } from './parser.ts';
 import { recap_preview } from '../tickets/logic/recap.ts';
-import { strip } from '../core/whitespace.ts';
 
 type Body = Record<string, any>;
-const python_sort = (left: string, right: string): number => {
-  const a = Array.from(left, (c) => c.codePointAt(0)!);
-  const b = Array.from(right, (c) => c.codePointAt(0)!);
-  for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i] - b[i];
-  return a.length - b.length;
-};
 const quote = (value: string, slash = false): string => {
   const encoded = encodeURIComponent(value).replace(
     /[!'()*]/g,
@@ -33,7 +26,7 @@ const lines = (rows: any[], format: (row: any) => string): string =>
 const raw = (stdout: string): CommandResult => ({ exit_code: 0, stdout, stderr: '' });
 function format_recap(item: Body): string {
   const recap = scalar(item.recap);
-  if (!strip(recap)) return 'no recap';
+  if (!recap.trim()) return 'no recap';
   let freshness = 'recap age unknown';
   if (item.recap_updated_at != null) {
     const age = Math.max(
@@ -860,7 +853,7 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       return emit(data, as_json, `${scalar(v.item_id)} ${scalar(v.active ? 'active' : 'settled')}`);
     case 'manager artifact list': {
       data = await send(inv, 'GET', `/api/managers/${v.item_id}/workspace`);
-      const artifacts = artifact_paths(data.artifacts).sort(python_sort);
+      const artifacts = artifact_paths(data.artifacts).sort();
       return emit({ manager_id: v.item_id, artifacts }, as_json, lines(artifacts, scalar));
     }
     case 'manager artifact read': {

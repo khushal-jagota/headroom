@@ -1,4 +1,3 @@
-import { python_string_repr as shared_string_repr } from '../../../core/python_repr.ts';
 /** Permission and question conversion without wire or record ownership. */
 import { PermissionAskOption, UserInputOption, UserInputQuestion } from '../../events.ts';
 import type { UserInputAnswer } from '../../events.ts';
@@ -55,15 +54,17 @@ export function user_input_questions(
     const prompt = question.question.trim();
     if (!id || !header || !prompt)
       throw new Error('Codex requested user input with a blank id, header, or question');
-    if (ids.has(id)) throw new Error(`Codex repeated user-input question id ${repr(id)}`);
+    if (ids.has(id)) throw new Error(`Codex repeated user-input question id ${JSON.stringify(id)}`);
     if (question.isSecret)
-      throw new Error(`Codex question ${repr(id)} asks for unsupported secret input`);
+      throw new Error(`Codex question ${JSON.stringify(id)} asks for unsupported secret input`);
     const options = (question.options ?? []).map(
       (option) =>
         new UserInputOption({ label: option.label.trim(), description: option.description.trim() }),
     );
     if (options.some((option) => !option.label || !option.description))
-      throw new Error(`Codex question ${repr(id)} has an option without a label or description`);
+      throw new Error(
+        `Codex question ${JSON.stringify(id)} has an option without a label or description`,
+      );
     ids.add(id);
     translated.push(
       new UserInputQuestion({
@@ -85,4 +86,3 @@ export function user_input_answer(answers: readonly UserInputAnswer[]): Record<s
     ),
   });
 }
-export const repr = shared_string_repr;

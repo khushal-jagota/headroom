@@ -15,10 +15,7 @@ export function text(value: unknown, maximum?: number, allow_empty = false): str
   if (
     typeof value !== 'string' ||
     (maximum !== undefined && Array.from(value).length > maximum) ||
-    (!allow_empty &&
-      /^[\t\n\v\f\r \u001c-\u001f\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$/.test(
-        value,
-      ))
+    (!allow_empty && !value.trim())
   )
     throw invalid();
   return value;

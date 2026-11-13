@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { lstatSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { executor_client_settings } from '../../core/config.ts';
-import { python_text } from '../../cli/python_text.ts';
+import { scalar_text } from '../../cli/text.ts';
 import {
   CLI_RESULT_TIMEOUT_SECONDS,
   CLI_TRANSPORT_RESERVE_SECONDS,
@@ -193,7 +193,7 @@ export async function local_status(
   if (response.error !== null || response.result === null) {
     throw new ValueError(
       response.error && Object.keys(response.error).length
-        ? python_text(response.error)
+        ? scalar_text(response.error)
         : 'executor health returned nothing',
     );
   }

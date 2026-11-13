@@ -1,4 +1,4 @@
-/** Native JSON intake that retains Python's integer/float distinction for document storage. */
+/** JSON intake retains exact integers and numeric kinds for validation and storage. */
 export type JsonNumberKind = 'integer' | 'float';
 /** The server's document form retains numeric kinds until an explicit validation projection. */
 export type NumericJSON<T> = T extends number
@@ -29,7 +29,9 @@ export class JsonNumber {
     Object.freeze(this);
   }
   toJSON(): unknown {
-    return rawJSON(number_token(this));
+    if (this.integer !== null) return rawJSON(String(this.integer));
+    if (!Number.isFinite(this.value)) throw new RangeError('JSON numbers must be finite');
+    return this.value;
   }
 }
 function python_float(value: number, pydantic = false): string {

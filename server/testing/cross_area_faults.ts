@@ -3,8 +3,6 @@ import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { registerHooks } from 'node:module';
-import { python_string_repr } from '../core/python_repr.ts';
-import { NODE_UNICODE_VERSION } from '../core/python_repr_unicode.ts';
 import { loadConfig, testModeFromEnvironment } from '../core/config.ts';
 import { assert_test_database_path } from '../core/test_paths.ts';
 import {
@@ -30,15 +28,7 @@ import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
 
 const [mode, argument] = process.argv.slice(2);
 let result: unknown;
-if (mode === 'repr') {
-  assert.equal(
-    process.versions.unicode,
-    NODE_UNICODE_VERSION,
-    'Regenerate the Python repr Unicode delta for this Node Unicode version',
-  );
-  const values = JSON.parse(readFileSync(0, 'utf8')) as string[];
-  result = values.map(python_string_repr);
-} else if (mode === 'serializers') {
+if (mode === 'serializers') {
   const definitions = JSON.parse(
     readFileSync(
       new URL('../../src/planner/worker_types/shipped_worker_types.json', import.meta.url),
