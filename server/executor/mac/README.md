@@ -7,6 +7,11 @@ Each producer receives the original absolute stop deadline. Actual joins precede
 `inputs.ts` downloads verified prompt files and removes temporary entries through a retained directory capability.
 Production update/process bindings and the CLI process entry remain the next composition step.
 
+`AgentProcesses` records descendant identities in `run/agent-processes.json` and retains reparented tools.
+The Darwin host supplies its existing files and one-shot child owners. Native `ps`, priority and individual-PID signals stay in `platform.ts`.
+Startup checks start times before orphan signals and preserves discovered identities across cancellation.
+Linux checks use scripted snapshots only. Real Darwin process identity, priority and signal behavior remain a later Mac check.
+
 ## Unix CLI client
 
 `ipc/gateway.ts` owns the private Unix listener and admitted CLI publications.
