@@ -2498,10 +2498,14 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     set_lines(3)
     panel_settled()
     before = panel.bounding_box()["height"]
-    keyboard_request()
-    refresh()
-    expect(text).to_have_count(0)
-    sample_change('keyboard-no-pointer', lambda: None)
+    def clear_by_keyboard():
+        keyboard_request()
+        refresh()
+        expect(text).to_have_count(0)
+
+    # Arm frame capture before the request. Response/refresh roundtrips can consume
+    # the transition on a loaded host, even though the production motion is correct.
+    sample_change('keyboard-no-pointer', clear_by_keyboard)
     after = panel.bounding_box()["height"]
     assert after < before - 20
     assert any(after + 1 < frame["height"] < before - 1 for frame in proof["samples"][-1]["frames"]), proof["samples"][-1]
@@ -2858,8 +2862,18 @@ def verify_selection_washes(page, url, fixture, evidence):
 
     def hover_at(row_selector, host_selector, where):
         page.mouse.move(*where(page.locator(row_selector).bounding_box()))
-        return page.evaluate("""async ([row, host]) => {
-          await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+        # ResizeObserver and the rail projection can commit after two frames.
+        # Wait for the actual pointer state and wash geometry that this proof needs.
+        page.wait_for_function("""([row,host])=>{
+          const node=document.querySelector(row),wash=document.querySelector(host+' > .rail-wash--hover:not(.rail-wash--leaving)');
+          if(!node||!wash)return false;
+          const hovered=node.matches(':hover');
+          if(wash.hidden!==!hovered)return false;
+          if(!hovered)return true;
+          const a=node.getBoundingClientRect(),b=wash.getBoundingClientRect();
+          return ['x','y','width','height'].every(key=>Math.abs(a[key]-b[key])<1.6);
+        }""", arg=[row_selector, host_selector])
+        return page.evaluate("""([row, host]) => {
           const node=document.querySelector(row), wash=document.querySelector(host+' > .rail-wash--hover:not(.rail-wash--leaving)');
           const box=n=>{const r=n.getBoundingClientRect();return [r.x,r.y,r.width,r.height];};
           return {hover:node.matches(':hover'), hidden:wash.hidden, row:box(node), wash:box(wash)};

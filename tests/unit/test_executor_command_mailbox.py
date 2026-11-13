@@ -583,6 +583,18 @@ def test_a_restart_watches_again_the_steer_its_uncertain_row_names(
             first = (await world.endpoint.poll(world.identity, 0, SETTLES)).commands[0]
             await world.report(_succeeded(first.command_id, world.child, kind="steer_accepted"))
             await answered
+            # Establish the fixture's in-time first result independently of host load.
+            # The matching rule uses persisted timestamps, not this test's await order.
+            connection = connect(world.endpoint.db_path)
+            try:
+                connection.execute(
+                    "UPDATE executor_commands SET finished_at_ms=created_at_ms+1 "
+                    "WHERE command_id=?",
+                    (first.command_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
             late = asyncio.create_task(steer(world))
             command = (
                 await world.endpoint.poll(world.identity, first.command_sequence, SETTLES)

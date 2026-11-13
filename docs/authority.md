@@ -61,6 +61,8 @@ The rule decides what a caller may do. It does not prove who the caller is. The 
 
 Reading Tickets and Managers is open to every caller. The rule guards writes.
 
+Recap requests follow the same hierarchy. The owner can request any agent. Chief can request Managers and Tickets. Managers can request their child Tickets. A Ticket can request none. Each request names its caller and clears the old recap before delivery.
+
 ## Decisions that shape it
 
 - **One rule instead of per-route lists.** Adding a route means asking where its target sits, not writing a new list of who is allowed.

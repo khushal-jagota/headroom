@@ -81,7 +81,7 @@ New conversation ends the running turn, discards held work, and links a fresh co
 
 After a deploy or ordinary crash interrupts a session, an eligible conversation gets one inspection prompt through the ordinary send path. Headroom never replays uncertain actions. Recovery requires proof that the exact previous child stopped. The home records its identity before dispatch and checks its process birth, host boot, and supervision records. Older unit-backed children retain exact-unit checks.
 
-Missing evidence, a live child, or a failed inspection keeps the conversation fenced. An unresolved owner never counts as an idle workspace.
+Missing evidence, a live child, or a failed inspection keeps the conversation fenced. An unresolved owner never counts as an idle workspace. A cleanup recheck proves ownership without a new start. The next ordinary send can resume eligible held messages.
 
 Codex, Hermes, and Claude save the exact process identity as soon as native spawn returns, before protocol initialization. Stop can then end that recorded process after a home crash. If identity inspection or the durable write fails, startup must stop its owned process. Failed cleanup keeps that handle and blocks a second agent.
 
@@ -103,7 +103,7 @@ Linux can adopt a late tool from the root's session after the leader exits. This
 
 ## Models and asks
 
-A model or reasoning change rides the next message that is actually delivered. Codex and Hermes switch in place. Claude starts a new child on the new model and carries the session across. The backend itself is fixed once the conversation exists, so a message to the Chief or a Manager that names only a backend, as the iOS app does with every message, is an ordinary message and is not checked against launch defaults. Only a message that starts a conversation resolves its launch settings, and a start on another backend must name that backend's model. The picker reads the model list from the machine that runs the conversation and shows only the newest version of each Claude and Codex model. A model disabled in the [Usage](usage.md) catalog is refused when a Ticket is created or saved and when a message is dispatched, and a refused dispatch stays in the notebook with its reason. A Ticket's saved starting choice belongs to [Tickets](tickets.md). If that saved choice fails to update after delivery, the accepted turn continues and the error still reaches the caller.
+A model or reasoning change rides the next message that is actually delivered. Codex and Hermes switch in place. Claude starts a new child on the new model and carries the session across. The backend itself is fixed once the conversation exists, so a message to the Chief or a Manager that names only a backend, as the iOS app does with every message, is an ordinary message and is not checked against launch defaults. Only a message that starts a conversation resolves its launch settings, and a start on another backend must name that backend's model. The picker reads the model list from the machine that runs the conversation and shows only the newest version of each Claude and Codex model. A model is refused when a Ticket is created or saved, when a Worker restarts on it, when launch defaults are set, and when a message is dispatched. It is refused if it is disabled in the [Usage](usage.md) catalog. A Codex or Claude model is also refused if the machine that runs it does not offer it. That machine is a Ticket's own, and the VPS for everything else. The refusal names the valid choices. Claude's short names, such as `opus`, and the `[1m]` form of a listed model count as offered. A refused dispatch stays in the notebook with its reason. A Worker step refused this way leaves the Ticket errored, and a restart on another model is the repair. A Ticket's saved starting choice belongs to [Tickets](tickets.md). If that saved choice fails to update after delivery, the accepted turn continues and the error still reaches the caller.
 
 Permission asks are always shown and always wait for an answer. Headroom does not auto-approve and does not remember a grant. Claude and Codex can also ask structured questions. Hermes has only the permission flow. Production agents run with full tool access, so an ask appears because the agent chose to ask.
 
@@ -114,6 +114,8 @@ Each conversation starts in one folder and keeps it through resume and restart. 
 The worktree and its sibling artifacts folder follow the lifetime in [Environments](environments.md#ticket-scratch). The Chief and each Manager instead start in a home folder of their own, made on their first start: `data/files/chief/` for the Chief, and the Manager's files folder for a Manager, beside the `artifacts/` the owner sees. They keep their own notes, scratch files and rules there, and their role text names the server's default workspace, where the repositories are. A new configuration applies to new conversations. [Environments](environments.md) covers the server default.
 
 ## What comes back out
+
+The owner can request a fresh recap from any agent. Chief can request one from any Manager or Ticket. A Manager can request one from its own Tickets. A Ticket cannot request one. The request clears the previous recap and sends the standard Panels instruction with the requester identified.
 
 Automation sends a Ticket its [Worker steps](worker-steps.md), a Manager its goal and wakes ([Managers and Chief](managers.md)), the Chief a recap request, and any interrupted conversation its recovery notice, all through the ordinary send path.
 
@@ -136,4 +138,4 @@ The pane reads a stored view that is built from the notebook. When the app conne
 - `src/planner/runtime/conversation_start.py` and `runtime/workspaces.py`: starting a conversation and choosing its folder.
 - `web/src/components/conversation/` and `web/src/lib/conversation/`: the pane and composer.
 
-_Last verified: 2026-11-12._
+_Last verified: 2026-11-13._

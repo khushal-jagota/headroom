@@ -671,7 +671,7 @@ def test_output_an_earlier_process_owed_is_queued_before_the_first_lease(
     asyncio.run(run())
 
 
-def test_lease_reports_the_backlog_and_update_work_never_holds_it(
+def test_lease_reports_backlog_while_update_and_cleanup_work_wait(
     tls: tuple[ssl.SSLContext, ssl.SSLContext],
     paths: ExecutorPaths,
     monkeypatch: pytest.MonkeyPatch,
@@ -693,6 +693,18 @@ def test_lease_reports_the_backlog_and_update_work_never_holds_it(
             mac = service(paths, origin, tls[1])
             applying, release = asyncio.Event(), asyncio.Event()
             applied: list[MacUpdateCheck] = []
+            cleanup_entered, cleanup_release = asyncio.Event(), asyncio.Event()
+            cleanup_calls: list[bool] = []
+            refresh_cleanup = mac.runner.refresh_worker_cleanup
+
+            async def cleanup(*, revoke_pending: bool = False) -> None:
+                cleanup_calls.append(revoke_pending)
+                if not revoke_pending:
+                    cleanup_entered.set()
+                    await cleanup_release.wait()
+                await refresh_cleanup(revoke_pending=revoke_pending)
+
+            monkeypatch.setattr(mac.runner, "refresh_worker_cleanup", cleanup)
 
             async def apply(check: MacUpdateCheck) -> None:
                 applied.append(check)
@@ -707,9 +719,13 @@ def test_lease_reports_the_backlog_and_update_work_never_holds_it(
             running = asyncio.create_task(mac.run())
             try:
                 await applying.wait()
+                await cleanup_entered.wait()
                 count = len(stub.leases)
                 await until(lambda: len(stub.leases) >= count + 3)
                 assert len(applied) == 1  # The lease loop never waited on the update.
+                # Startup proves cleanup before the first lease; only one slow sweep
+                # follows while subsequent leases avoid the full retained history.
+                assert cleanup_calls == [True, False]
                 lease = stub.leases[-1]
                 assert lease.queue_depth == 2 and lease.oldest_item_age_ms is not None
                 assert [w.conversation_id for w in lease.waiting_conversations] == [
@@ -721,6 +737,7 @@ def test_lease_reports_the_backlog_and_update_work_never_holds_it(
                 assert mac.presence.leased()
                 release.set()
             finally:
+                cleanup_release.set()
                 release.set()
                 await stopped(mac, running)
 

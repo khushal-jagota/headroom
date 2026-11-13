@@ -8,6 +8,7 @@ refuses a restart while the Mac is away because the kill cannot reach it.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
@@ -22,7 +23,7 @@ from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
 from planner.machines.data import read_machine
 from planner.runtime import conversation_start, worker_step_readiness
 from planner.tickets import data as tickets_data
-from planner.tickets import locale_configuration, revision_feedback
+from planner.tickets import decision_messages, locale_configuration
 from planner.tickets.contracts import (
     StageOwnershipMode,
     Ticket,
@@ -88,7 +89,7 @@ async def restart_worker(
     nothing started.
 
     The configuration is already validated when it arrives: the caller checked
-    the backend name and disabled-model policy before anything was killed, so a
+    the backend name and the model check before anything was killed, so a
     bad argument costs the Ticket nothing. It runs in the same transaction as the claim,
     after it, because the launch values unfreeze only once the claim is back.
 
@@ -102,8 +103,13 @@ async def restart_worker(
         killed_conversation_looked_running = False
         revision_restarted_in_fresh_conversation = False
         if killed_conversation_id is not None:
-            revision_restarted_in_fresh_conversation = (
-                await run_on_worker_thread(revision_feedback.snapshot, conn, ticket_id) is not None
+            starts = getattr(conversations, "start_admission", None)
+            if starts is not None:
+                # Only restart retirement gives up deferred preparation priority.
+                # An admitted preparation still owns its permit until settlement.
+                starts.finish_unbound(f"worker-preparation:{ticket_id}", inactive_only=True)
+            revision_restarted_in_fresh_conversation = bool(
+                await run_on_worker_thread(decision_messages.has_undelivered, conn, ticket_id)
             )
             killed_conversation_looked_running = await conversations.is_running(
                 killed_conversation_id
@@ -140,16 +146,32 @@ def _unlink_give_back_the_claim_and_write_configuration(
     killed_conversation_id: str | None,
     write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None,
     now: int,
+    recover_after_failure: bool = True,
 ) -> None:
     """Unlink the killed conversation, give back any claim, and write the configuration.
 
     One transaction. The Ticket is read again inside it, because a Worker can file its
     proposal while the kill is awaited, and that gives the claim back by itself.
     """
-    conn.execute("BEGIN IMMEDIATE")
     try:
+        conn.execute("BEGIN IMMEDIATE")
         ticket = tickets_data.read_ticket(conn, ticket_id)
-        if ticket.worker_step_claim in {
+        if not recover_after_failure and ticket.conversation_id != killed_conversation_id:
+            conn.execute("COMMIT")
+            return
+        if not recover_after_failure:
+            tickets_data.mark_worker_step_claim_errored(
+                conn,
+                ticket_id,
+                expected_claim=ticket.worker_step_claim,
+                expected_claim_revision=ticket.worker_step_claim_revision,
+                now=now,
+                error_reason=(
+                    "Restart failed after the old Worker stopped. "
+                    "Retry restart before this Ticket can start again."
+                ),
+            )
+        elif ticket.worker_step_claim in {
             WorkerStepClaim.out,
             WorkerStepClaim.errored,
         }:
@@ -167,12 +189,32 @@ def _unlink_give_back_the_claim_and_write_configuration(
                 expected_conversation_id=killed_conversation_id,
                 now=now,
             )
+        if recover_after_failure:
+            decision_messages.rearm_after_restart(conn, ticket_id)
         if write_employee_configuration is not None:
             write_employee_configuration(conn, now)
         conn.execute("COMMIT")
     except BaseException:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
+        if killed_conversation_id is not None and recover_after_failure:
+            try:
+                # The configuration failed, but the old child is already gone.
+                # Unlink it, but hold an errored claim so automatic readiness
+                # cannot start the old settings after this restart failed.
+                _unlink_give_back_the_claim_and_write_configuration(
+                    conn,
+                    ticket_id,
+                    killed_conversation_id=killed_conversation_id,
+                    write_employee_configuration=None,
+                    now=now,
+                    recover_after_failure=False,
+                )
+            except BaseException:
+                logging.getLogger(__name__).exception(
+                    "Could not release retired Worker ownership after restart failure: %s",
+                    ticket_id,
+                )
         raise
 
 
@@ -189,7 +231,7 @@ def _restart_result(
         "ticket_id": ticket_id,
         "killed_conversation_id": killed_conversation_id,
         "killed_conversation_looked_running": killed_conversation_looked_running,
-        # The old working context is gone. Only the revision feedback carries over.
+        # The old working context is gone. Pending decision instructions carry over.
         "revision_restarted_in_fresh_conversation": revision_restarted_in_fresh_conversation,
         "employee_configuration": {
             "employee_backend": restarted.employee_backend,

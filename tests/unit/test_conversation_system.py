@@ -4193,3 +4193,34 @@ def test_start_and_end_never_execute_sql_on_the_event_loop(harness: _Harness) ->
 
     with sql_must_run_off_event_loop():
         _run(exercise)
+
+
+def test_refused_kill_rechecks_messages_after_its_fence_clears(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Risk: refusal skips the sole queue drain. Existing kill race covers success only.
+
+    Reuse the real conversation harness and fail after the old child stops.
+    """
+    original = harness.system._kill_owned
+    failure = RuntimeError("cleanup refused after stop")
+
+    async def refuse_after_stop(state: Any) -> None:
+        await original(state)
+        fate = await harness.system.send(
+            "c", text_message_content("arrived during stop"), sender_label="Owner",
+        )
+        assert isinstance(fate, PromptDeliveryQueued)
+        raise failure
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("old"), sender_label="Owner")
+        monkeypatch.setattr(harness.system, "_kill_owned", refuse_after_stop)
+        with pytest.raises(RuntimeError) as raised:
+            await harness.system.kill("c")
+        assert raised.value is failure
+        await harness.settle()
+        assert harness.backend("c").written_texts() == ("old", "arrived during stop")
+
+    _run(exercise)

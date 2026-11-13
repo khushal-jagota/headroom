@@ -30,7 +30,8 @@ def begin_proposal(conn: sqlite3.Connection) -> None:
                 conn.execute("BEGIN IMMEDIATE")
                 return
             except sqlite3.OperationalError as error:
-                if getattr(error, "sqlite_errorcode", None) != sqlite3.SQLITE_BUSY:
+                code = getattr(error, "sqlite_errorcode", None)
+                if code is None or code & 0xFF != sqlite3.SQLITE_BUSY:
                     raise
                 if conn.in_transaction:
                     raise

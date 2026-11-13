@@ -385,3 +385,137 @@ def test_kill_refuses_a_remote_stop_without_a_retirement_receipt(
         factory.link_back.set()
 
     _run(exercise)
+
+
+def test_retained_evidence_keeps_open_questions_and_memory_notice_origin(
+    stopped: tuple[_Harness, _StopFactory],
+) -> None:
+    from tests.unit.test_conversation_system import _send_memory_notice
+
+    from planner.conversation.events import UserInputRequestedEventPayload
+    from planner.conversation.lifecycle import (
+        LifecycleFact,
+        LifecycleKind,
+        LifecycleOperation,
+        LifecycleStatus,
+    )
+    from planner.conversation.lifecycle_storage import apply_facts
+    from planner.conversation.logic.retained_turn import OpenRunTurn
+    from planner.conversation.storage import read_retained_run_evidence
+
+    harness, _ = stopped
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await _send_memory_notice(harness, "c")
+        request = await harness.request_user_input("c")
+        token = harness.backend("c").live_turn_token
+        assert token is not None
+        next_turn = token.turn_number + 1
+
+        def reserve_later_prompt() -> None:
+            conn = connect(str(harness.db_path))
+            try:
+                apply_facts(conn, "c", (
+                    LifecycleFact(
+                        LifecycleKind.turn, str(next_turn), next_turn,
+                        LifecycleOperation.turn, LifecycleStatus.intent,
+                    ),
+                    LifecycleFact(
+                        LifecycleKind.attempt, f"prompt:{next_turn}", next_turn,
+                        LifecycleOperation.prompt, LifecycleStatus.intent,
+                    ),
+                ))
+                conn.commit()
+            finally:
+                conn.close()
+
+        await asyncio.to_thread(reserve_later_prompt)
+        evidence = await asyncio.to_thread(
+            read_retained_run_evidence, str(harness.db_path), ("c",), 1000,
+        )
+        snapshot = evidence["c"]
+        assert snapshot.facts == await harness.store.lifecycle_facts("c")
+        assert snapshot.memory_notice_only
+        questions = [
+            event.payload for event in snapshot.events
+            if isinstance(event.payload, UserInputRequestedEventPayload)
+        ]
+        assert len(questions) == 1
+        assert questions[0].request_id == request.request_id
+        assert questions[0].questions == request.questions
+        await asyncio.to_thread(
+            harness.store.claim_runtime,
+            existing_ownership=harness.system._runtime_ownership,
+            open_runs={"c": OpenRunTurn(token.turn_number, True)},
+        )
+        reconciled = (await asyncio.to_thread(
+            read_retained_run_evidence, str(harness.db_path), ("c",), 1000,
+        ))["c"]
+        assert reconciled.facts != snapshot.facts
+        assert {
+            fact.status for fact in reconciled.facts if fact.turn_number == next_turn
+        } == {LifecycleStatus.unavailable, LifecycleStatus.suppressed}
+        assert reconciled.events == snapshot.events
+        assert reconciled.memory_notice_only == snapshot.memory_notice_only
+        assert reconciled.memory_notice_only == (
+            await asyncio.to_thread(harness.store._open_turn_holds_only_memory_notices_sync, "c")
+        )
+
+    _run(exercise)
+
+
+def test_constructor_prefetch_does_not_revive_intent_with_unknown_prompt(
+    stopped: tuple[_Harness, _StopFactory],
+) -> None:
+    from unittest.mock import MagicMock
+
+    from planner.conversation.contracts import ConversationBackendKey
+    from planner.conversation.lifecycle import (
+        LifecycleFact,
+        LifecycleKind,
+        LifecycleOperation,
+        LifecycleStatus,
+    )
+    from planner.conversation.storage import ConversationStore, RetainedRunEvidence
+    from planner.conversation.system import SqliteProcessConversationSystem
+
+    harness, factory = stopped
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        record = harness.system._conversations["c"].record
+        run = RetainedBackendRun(
+            ChildReference("inc", "child", "c"), TurnToken("c", 1), False, False
+        )
+        factory.runs["c"] = run
+        facts = (
+            LifecycleFact(
+                LifecycleKind.turn, "1", 1, LifecycleOperation.turn, LifecycleStatus.intent
+            ),
+            LifecycleFact(
+                LifecycleKind.attempt,
+                "prompt:1",
+                1,
+                LifecycleOperation.prompt,
+                LifecycleStatus.unknown,
+            ),
+        )
+        store = MagicMock(spec=ConversationStore)
+        store.signal_coordinator = None
+        store.read_conversation_records.return_value = (record,)
+        store.read_live_background_task_ids.return_value = {}
+        system = SqliteProcessConversationSystem(
+            store=store,
+            message_files=harness.message_files,
+            backend_child_factories={key: factory for key in ConversationBackendKey},
+            retained_runs=(run,),
+            retained_run_evidence={"c": RetainedRunEvidence(facts, (), False)},
+        )
+        assert system._conversations["c"].running_turn is None
+        assert system._retained_run_evidence is None
+        store._read_events_after_sync.assert_not_called()
+        store._open_turn_holds_only_memory_notices_sync.assert_not_called()
+        system._runtime_ownership.close()
+
+    _run(exercise)

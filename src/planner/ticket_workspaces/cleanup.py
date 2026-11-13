@@ -21,7 +21,8 @@ from planner.ticket_workspaces.data import (
 )
 from planner.ticket_workspaces.filesystem import (
     cleanup_local_workspaces,
-    retire_workspace,
+    prepare_workspace_retirement,
+    read_workspace_identity,
 )
 
 
@@ -44,12 +45,15 @@ def clean_for_database(
         # A separate CLI process cannot stop or release a live runtime's children.
         # Missing legacy custody keeps its existing policy. Any recorded uncertainty
         # stays fenced until the runtime positively retires it.
-        return conn.execute(
-            "SELECT 1 FROM ticket_workspace_conversations w "
-            "JOIN conversation_child_custody c USING(conversation_id) "
-            "WHERE w.machine_id=? AND w.workspace_id=? AND c.state!='retired' LIMIT 1",
-            (identity.machine_id, identity.workspace_id),
-        ).fetchone() is None
+        return (
+            conn.execute(
+                "SELECT 1 FROM ticket_workspace_conversations w "
+                "JOIN conversation_child_custody c USING(conversation_id) "
+                "WHERE w.machine_id=? AND w.workspace_id=? AND c.state!='retired' LIMIT 1",
+                (identity.machine_id, identity.workspace_id),
+            ).fetchone()
+            is None
+        )
 
     def granted(expected: WorkspaceState, identity: WorkspaceIdentity) -> bool:
         def check() -> Path | str:
@@ -60,44 +64,58 @@ def clean_for_database(
                     and has_committed_retirement(fresh, expected, identity)
                     else "Local child retirement is not proven"
                 )
+
         result = (
             retire_local_children(expected.ticket_id, identity, check)
-            if retire_local_children is not None else check()
+            if retire_local_children is not None
+            else check()
         )
         return isinstance(result, Path)
 
     def detach(path: Path, expected: WorkspaceState, identity: WorkspaceIdentity) -> Path | str:
-        with closing(connect(db_path)) as fresh:
-            fresh.execute("BEGIN IMMEDIATE")
-            target: Path | str | None = None
-            try:
-                if not custody_retired(fresh, identity):
+        target = prepare_workspace_retirement(
+            path,
+            expected,
+            identity=identity,
+            retired_root=ticket_files_root(db_path).parent / ".ticket-retired",
+        )
+        if isinstance(target, str):
+            return target
+        detached = False
+        try:
+            with closing(connect(db_path)) as fresh:
+                fresh.execute("BEGIN IMMEDIATE")
+                try:
+                    if not custody_retired(fresh, identity):
+                        fresh.rollback()
+                        return "Local child retirement is not proven"
+                    if not authorize_retirement(fresh, expected, now, identity):
+                        fresh.rollback()
+                        return "Ticket is active or no longer eligible"
+                    if read_workspace_identity(path) != identity:
+                        fresh.rollback()
+                        return "Physical workspace identity changed"
+                    path.rename(target)
+                    detached = True
+                    fresh.commit()
+                    return target
+                except BaseException:
+                    if detached and target.exists() and not path.exists():
+                        target.rename(path)
                     fresh.rollback()
-                    return "Local child retirement is not proven"
-                current = read_workspace_states(fresh).get(expected.ticket_id)
-                if current != expected or not authorize_retirement(fresh, expected, now, identity):
-                    fresh.rollback()
-                    return "Ticket is active or no longer eligible"
-                target = retire_workspace(
-                    path,
-                    expected,
-                    identity=identity,
-                    retired_root=ticket_files_root(db_path).parent / ".ticket-retired",
-                )
-                fresh.commit()
-                return target
-            except BaseException:
-                if isinstance(target, Path) and target.exists() and not path.exists():
-                    target.rename(path)
-                fresh.rollback()
-                raise
+                    raise
+        finally:
+            if not detached:
+                (target.parent / f"{target.name.rsplit('-', 1)[1]}.json").unlink(missing_ok=True)
 
     def retire(path: Path, expected: WorkspaceState, identity: WorkspaceIdentity) -> Path | str:
         def operation() -> Path | str:
             return detach(path, expected, identity)
+
         return (
             retire_local_children(expected.ticket_id, identity, operation)
-            if retire_local_children is not None else operation()
+            if retire_local_children is not None
+            else operation()
         )
 
     result = cleanup_local_workspaces(

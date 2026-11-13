@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Final
 from uuid import uuid4
 from weakref import WeakValueDictionary
 
-from planner.conversation.backend_state import require_enabled_model
+from planner.conversation.backend_state import require_usable_model
 from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationMessageContent,
@@ -232,7 +232,7 @@ def worker_resolve(
             ),
         )
     if ticket.employee_launch_model is None or overrides.model is not None:
-        require_enabled_model(conn, values.backend_key, values.model)
+        require_usable_model(conn, values.backend_key, values.model, ticket.machine_id)
     return values
 
 
@@ -305,7 +305,7 @@ def agent_resolve(
         workspace_folder=chief_home_folder(conn) if workspace_folder is None else workspace_folder,
         shared_workspace_folder=_default_workspace_folder(conn),
     )
-    require_enabled_model(conn, values.backend_key, values.model)
+    require_usable_model(conn, values.backend_key, values.model, TicketLocale.vps)
     return values
 
 
@@ -508,7 +508,7 @@ async def send_to_ticket_conversation(
     sender: Principal | None = None,
     recipient: Principal | None = None,
     worker_type_registry: WorkerTypeRegistry | None = None,
-    retain_backend_start_failure: bool = False,
+    retain_definite_start_refusal: bool = False,
     workspace_activity_recorded: bool = False,
     now: int,
     recording_receipt: NativeMessageOperation | None = None,
@@ -582,7 +582,7 @@ async def send_to_ticket_conversation(
             ticket,
             content,
             created_conversation_id=created_conversation_id,
-            retain_backend_start_failure=retain_backend_start_failure,
+            retain_definite_start_refusal=retain_definite_start_refusal,
             runs_under=runs_under,
             sender_label=sender_label,
             mode=mode,
@@ -762,7 +762,7 @@ async def _make_a_conversation_and_send_into_it(
     sender: Principal | None,
     recipient: Principal | None,
     worker_type_registry: WorkerTypeRegistry | None,
-    retain_backend_start_failure: bool = False,
+    retain_definite_start_refusal: bool = False,
     now: int,
     recording_receipt: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
@@ -857,8 +857,12 @@ async def _make_a_conversation_and_send_into_it(
         raise
     if (
         isinstance(fate, PromptDeliveryRefused)
-        and retain_backend_start_failure
-        and fate.refusal_reason is PromptDeliveryRefusalReason.backend_did_not_start
+        and retain_definite_start_refusal
+        and fate.refusal_reason
+        in {
+            PromptDeliveryRefusalReason.backend_did_not_start,
+            PromptDeliveryRefusalReason.model_resolution_failed,
+        }
     ):
         # This exact conversation holds the refusal for explicit recovery. Do not
         # relink it: a concurrent reset can already have selected a newer one.
