@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
 import tarfile
 import tempfile
 import threading
+import time
 import zipfile
 from collections.abc import Callable
 from dataclasses import asdict, replace
@@ -30,6 +32,7 @@ from planner.environments.update_attempts import (
     attempt_to_dict,
     parse_attempt,
 )
+from planner.environments.update_configuration import UPDATE_AVAILABILITY_REFRESH_SECONDS
 from planner.environments.update_contracts import (
     PublishedLinuxExecutorUpdate,
     PublishedMacUpdate,
@@ -78,11 +81,18 @@ class MacUpdateService:
         archive_root: Path | None = None,
         platform: str = "darwin",
         platform_for: Callable[[str], str] | None = None,
+        linux_registered: Callable[[], bool] = lambda: False,
+        linux_archive_owner: MacUpdateService | None = None,
     ) -> None:
         self.root, self.attempts, self.provider = root, attempts, provider
         self.machine_id = machine_id
         self.platform = platform
         self.platform_for = platform_for
+        self.linux_registered = linux_registered
+        self._linux_archive_owner = linux_archive_owner
+        self._preparation_lock = threading.Lock()
+        self._last_preparation: tuple[str, float] | None = None
+        self._ready_archives: set[str] = set()
         self.archive_root = root if archive_root is None else archive_root
         self._machines: dict[str, MacUpdateService] = {}
         self.current_app_sha = current_app_sha
@@ -106,17 +116,91 @@ class MacUpdateService:
             return self
         UUID(machine_id)
         with self._lock:
+            platform = self.platform_for(machine_id) if self.platform_for else "darwin"
             kept = self._machines.get(machine_id)
-            if kept is None:
+            if kept is None or kept.platform != platform:
+                linux = self._linux_owner() if platform == "linux" else None
+                machine_root = (
+                    (linux.root if linux is not None else self.root) / "machines" / machine_id
+                )
                 kept = MacUpdateService(
-                    self.root / "machines" / machine_id, self.attempts, self.provider,
+                    machine_root, self.attempts, self.provider,
                     self.current_app_sha, self.ready_release, machine_id=machine_id,
-                    archive_root=self.archive_root,
-                    platform=(self.platform_for(machine_id) if self.platform_for else "darwin"),
-                    platform_for=self.platform_for,
+                    archive_root=linux.root if linux is not None else self.archive_root,
+                    platform=platform, platform_for=self.platform_for,
+                    linux_archive_owner=linux,
                 )
                 self._machines[machine_id] = kept
             return kept
+
+    def _linux_owner(self) -> MacUpdateService:
+        with self._lock:
+            if self._linux_archive_owner is None:
+                if self.platform == "linux":
+                    return self
+                self._linux_archive_owner = MacUpdateService(
+                    self.root / "linux", self.attempts, self.provider, self.current_app_sha,
+                    self.ready_release, platform="linux",
+                )
+            return self._linux_archive_owner
+
+    def _schedule_linux_preparation(self, release: PublishedUpdate | None) -> None:
+        if release is None or release.linux_executor is None:
+            return
+        owner = self._linux_owner()
+        digest = release.linux_executor.archive_sha256
+        if digest in owner._ready_archives:
+            return
+        if not owner._preparation_lock.acquire(blocking=False):
+            return
+        previous = owner._last_preparation
+        if (previous is not None and previous[0] == digest
+                and time.monotonic() - previous[1] < UPDATE_AVAILABILITY_REFRESH_SECONDS):
+            owner._preparation_lock.release()
+            return
+        owner._last_preparation = (digest, time.monotonic())
+
+        def prepare() -> None:
+            try:
+                owner._prepare(release)
+                owner._retain_applied(owner._attempt())
+                owner._prune_linux_archives(release)
+                owner._ready_archives.add(digest)
+                change_signal.emit()
+            except Exception:
+                # Linux readiness never gates the home or Mac publication.
+                logging.getLogger(__name__).warning(
+                    "Linux executor archive preparation failed", exc_info=True
+                )
+            finally:
+                owner._preparation_lock.release()
+
+        threading.Thread(target=prepare, name="linux-executor-prefetch", daemon=True).start()
+
+    def _prune_linux_archives(self, release: PublishedUpdate) -> None:
+        """Keep the current candidate and the running home's Linux archive, or its predecessor."""
+        assert release.linux_executor is not None
+        digest = release.linux_executor.archive_sha256
+        retained_path = self.root / "retained-archives.json"
+        try:
+            previous = json.loads(retained_path.read_text())["archives"]
+        except FileNotFoundError:
+            previous = []
+        active = self._read_applied()
+        active_digest = (
+            active.release.linux_executor.archive_sha256
+            if active is not None and active.release.linux_executor is not None
+            and active.to_sha == self.current_app_sha else None
+        )
+        other = active_digest if active_digest != digest else None
+        if other is None:
+            other = next((value for value in previous if value != digest), None)
+        keep = [digest] if other is None else [digest, other]
+        atomic_write_json(retained_path, {"archives": keep})
+        self._ready_archives.intersection_update(keep)
+        for path in (self.root / "archives").glob("*.tar.gz"):
+            if path.name.removesuffix(".tar.gz") not in keep:
+                path.unlink()
 
     def check_for(self, machine_id: str) -> MacUpdateCheck:
         return self.for_machine(machine_id).check()
@@ -197,7 +281,8 @@ class MacUpdateService:
 
     def _read_applied(self) -> UpdateAttempt | None:
         try:
-            return parse_attempt(json.loads(self._applied_path.read_text()))
+            attempt = parse_attempt(json.loads(self._applied_path.read_text()))
+            return attempt if self._artifact(attempt.release) is not None else None
         except FileNotFoundError:
             return None
         except (ValueError, KeyError, TypeError):
@@ -226,13 +311,14 @@ class MacUpdateService:
         """Pin the bytes before the release shows as available or the provider expires them."""
         try:
             self._prepare(release)
-            if self.platform == "darwin" and release.linux_executor is not None:
-                # Pin both platform archives before the release becomes available.
-                linux = MacUpdateService(
-                    self.root, self.attempts, self.provider, self.current_app_sha,
-                    self.ready_release, archive_root=self.archive_root, platform="linux",
-                )
-                linux._prepare(release)
+            if self.platform == "darwin":
+                try:
+                    if self.linux_registered():
+                        self._schedule_linux_preparation(release)
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "Linux executor archive preparation could not start", exc_info=True
+                    )
         except (tarfile.TarError, zipfile.BadZipFile) as error:
             raise UpdateConflict("The Mac runtime archive is invalid.") from error
 
@@ -304,7 +390,12 @@ class MacUpdateService:
             return None
         mac, request_id = self._artifact(attempt.release), attempt.mac_attempt_id
         assert mac is not None and request_id is not None
+        if (self.platform == "linux"
+                and mac.archive_sha256 not in self._linux_owner()._ready_archives):
+            return None
         if not self._archive_path(attempt.release).is_file():
+            if self.platform == "linux":
+                return None
             raise UpdateConflict("The Mac runtime archive for this update is unavailable.")
         return MacUpdateTarget(
             request_id,
@@ -322,12 +413,21 @@ class MacUpdateService:
         release = self.ready_release()
         if release is None or self._artifact(release) is None:
             return None
+        if (self.platform == "linux" and release.linux_executor is not None
+                and release.linux_executor.archive_sha256
+                not in self._linux_owner()._ready_archives):
+            return None
         try:
             return release if self._archive_path(release).is_file() else None
         except UpdateConflict:
             return None
 
     def check(self) -> MacUpdateCheck:
+        if self.platform == "linux":
+            selected = self._selected_attempt()
+            self._schedule_linux_preparation(
+                selected.release if selected is not None else self.ready_release()
+            )
         with self._lock:
             release = self._prefetch_release()
             prefetch = None

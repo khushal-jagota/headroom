@@ -602,6 +602,15 @@ def create_app(
         finally:
             connection.close()
 
+    def linux_executor_registered() -> bool:
+        connection = conn_factory()
+        try:
+            return connection.execute(
+                "SELECT 1 FROM machine_executor_credentials WHERE platform='linux' LIMIT 1"
+            ).fetchone() is not None
+        finally:
+            connection.close()
+
     app.state.mac_updates = MacUpdateService(
         data_directory / "mac-updates",
         update_attempts,
@@ -609,6 +618,7 @@ def create_app(
         config.app_sha,
         ready_release=lambda: app.state.updates.ready_release(),
         platform_for=executor_update_platform,
+        linux_registered=linux_executor_registered,
     )
     app.state.updates = UpdateService(
         update_provider,

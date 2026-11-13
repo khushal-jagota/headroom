@@ -166,11 +166,6 @@ class GitHubUpdateProvider:
             or release.artifact_id != app["id"]
             or release.manifest.app_sha != run["head_sha"]
             or (
-                release.linux_executor is not None
-                and (by_name.get("panels-linux-executor", {}).get("id")
-                     != release.linux_executor.artifact_id)
-            )
-            or (
                 release.mac is not None
                 and (by_name.get("panels-mac-runtime", {}).get("id") != release.mac.artifact_id)
             )

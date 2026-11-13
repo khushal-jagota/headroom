@@ -15,6 +15,7 @@ from tests.support.update_apps import SHA_B, release
 
 from planner.environments import update_provider
 from planner.environments.runtime_contracts import NodeRuntimeContract
+from planner.environments.update_contracts import PublishedLinuxExecutorUpdate
 
 DEPLOY = ".github/workflows/deploy.yml"
 queries: list[dict[str, str]] = []
@@ -94,15 +95,18 @@ def test_runs_from_both_workflows_merge_newest_first_with_run_id_breaking_ties(
     assert queries == [eligible, eligible]
 
 
-def test_a_typescript_workflow_absent_from_github_leaves_deploy_releases_offered(
+def test_absent_optional_workflow_and_linux_artifact_leave_deploy_releases_offered(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Risk: before the TypeScript workflow exists, its 404 stops every update."""
-    github = provider(tmp_path, monkeypatch, listed={
+    """Optional workflow or Linux archive absence must not stop existing home updates."""
+    published = replace(PYTHON_RELEASE, linux_executor=PublishedLinuxExecutorUpdate(
+        99, "a" * 64, 123,
+    ))
+    github = provider(tmp_path, monkeypatch, published=published, listed={
         "deploy.yml": [run(1, "2026-11-12T09:00:00Z")],
         "publish-typescript-release.yml": None,
     })
-    assert github.available() == PYTHON_RELEASE
+    assert github.available() == published
     missing_deploy = provider(tmp_path, monkeypatch, listed={
         "deploy.yml": None, "publish-typescript-release.yml": [],
     })

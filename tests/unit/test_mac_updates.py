@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import tarfile
+import threading
 import zipfile
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -32,6 +33,8 @@ from planner.environments.runtime_contracts import RuntimeContract
 from planner.environments.update_attempts import (
     FileUpdateAttemptStore,
     UpdateConflict,
+    atomic_write_json,
+    attempt_to_dict,
     import_legacy_request,
     utc_now,
 )
@@ -490,34 +493,20 @@ def test_mac_runtimes_in_the_field_read_the_check_response_with_prefetch(tmp_pat
     assert seen == FieldMacUpdateCheck(1, FieldMacUpdateTarget(**asdict(target)))
 
 
-def test_linux_machine_receives_only_registered_platform_archive(tmp_path: Path) -> None:
-    """Mac-only coverage cannot prove Linux offer selection or role validation."""
-    from planner.machines.executor_credentials import executor_platform, register_machine
+class LinuxProvider(MacProvider):
+    """Reuse the Mac publication fixture for platform-specific Linux bytes."""
 
-    database = tmp_path / "home.db"
-    conn = connect(str(database))
-    try:
-        create_schema(conn)
-        linux_id = register_machine(conn, "Linux", "linux").machine_id
-        mac_id = register_machine(conn, "Mac").machine_id
-        assert executor_platform(conn, linux_id) == "linux"
-        assert executor_platform(conn, mac_id) == "darwin"
-        class PlatformProvider(MacProvider):
-            def download_artifact(self, artifact_id: int, destination: Path) -> None:
-                if artifact_id != 100:
-                    return super().download_artifact(artifact_id, destination)
-                self.downloads.append(artifact_id)
-                with zipfile.ZipFile(destination, "w") as artifact:
-                    artifact.writestr("panels-linux-executor.tar.gz", linux_bytes)
-                    artifact.writestr("linux-executor-publication.json", "{}")
+    def __init__(self) -> None:
+        super().__init__()
+        self.linux_archives: dict[int, bytes] = {}
 
-        provider = PlatformProvider()
-        published = provider.publish()
+    def publish_linux(self, app_sha: str = TARGET_SHA) -> PublishedUpdate:
+        published = self.publish(app_sha)
         archive = BytesIO()
         with tarfile.open(fileobj=archive, mode="w:gz") as tar:
             for name, content in (
                 ("mac-runtime.json", json.dumps({
-                    "schema_version": 1, "application_revision": TARGET_SHA,
+                    "schema_version": 1, "application_revision": app_sha,
                     "platform": "linux", "architecture": "x86_64", "role": "executor",
                 }).encode()),
                 (".venv/bin/python", b"Linux executable"),
@@ -525,41 +514,157 @@ def test_linux_machine_receives_only_registered_platform_archive(tmp_path: Path)
                 member = tarfile.TarInfo(name)
                 member.size = len(content)
                 tar.addfile(member, BytesIO(content))
-        linux_bytes = archive.getvalue()
-        linux = PublishedLinuxExecutorUpdate(
-            100, hashlib.sha256(linux_bytes).hexdigest(), len(linux_bytes),
-        )
-        published = replace(published, linux_executor=linux)
-        from planner.environments.update_attempts import parse_release
+        content = archive.getvalue()
+        artifact_id = 100 + len(self.linux_archives)
+        self.linux_archives[artifact_id] = content
+        return replace(published, linux_executor=PublishedLinuxExecutorUpdate(
+            artifact_id, hashlib.sha256(content).hexdigest(), len(content),
+        ))
 
-        assert parse_release(json.loads(json.dumps(asdict(published)))) == published
+    def download_artifact(self, artifact_id: int, destination: Path) -> None:
+        if artifact_id not in self.linux_archives:
+            return super().download_artifact(artifact_id, destination)
+        self.downloads.append(artifact_id)
+        with zipfile.ZipFile(destination, "w") as artifact:
+            artifact.writestr("panels-linux-executor.tar.gz", self.linux_archives[artifact_id])
+            artifact.writestr("linux-executor-publication.json", "{}")
+
+
+def finish_linux_preparation(service: MacUpdateService) -> None:
+    owner = service._linux_owner()
+    assert owner._preparation_lock.acquire(timeout=5), "Linux archive did not finish preparation"
+    owner._preparation_lock.release()
+
+
+def test_linux_machine_receives_only_registered_platform_archive(tmp_path: Path) -> None:
+    """Mac-only coverage cannot prove Linux offer selection, retention, or role validation."""
+    from planner.environments.update_attempts import parse_release
+    from planner.machines.executor_credentials import (
+        authenticate_executor,
+        executor_platform,
+        register_machine,
+    )
+
+    conn = connect(str(tmp_path / "home.db"))
+    try:
+        create_schema(conn)
+        linux_grant = register_machine(conn, "Linux")
+        linux_id = linux_grant.machine_id
+        mac_id = register_machine(conn, "Mac").machine_id
+        provider = LinuxProvider()
+        published = provider.publish_linux()
         service = MacUpdateService(
             tmp_path / "updates", FileUpdateAttemptStore(tmp_path / "attempt.json"),
             provider, RUNNING_SHA, lambda: published,
             platform_for=lambda machine_id: executor_platform(conn, machine_id),
         )
-        path = service.archive_root / "archives" / (linux.archive_sha256 + ".tar.gz")
-        service.prepare(published)
-        assert provider.downloads == [published.mac.artifact_id, linux.artifact_id]
+        # An owner can exist before the first authenticated platform header arrives.
+        assert service.for_machine(linux_id).platform == "darwin"
+        authenticate_executor(conn, linux_id, linux_grant.credential, None,
+                              authenticated_platform="linux")
         linux_service = service.for_machine(linux_id)
-        mac_service = service.for_machine(mac_id)
+        assert linux_service.platform == "linux"
+        assert executor_platform(conn, mac_id) == "darwin"
+        assert parse_release(json.loads(json.dumps(asdict(published)))) == published
+        service.prepare(published)
+        assert published.mac is not None and published.linux_executor is not None
+        assert provider.downloads == [published.mac.artifact_id]
         write(service, attempt(published, "installing"))
-        linux_check, mac_check = linux_service.check(), mac_service.check()
+        linux_service.check()  # Late Linux join starts preparation without blocking its lease.
+        finish_linux_preparation(service)
+        linux_check, mac_check = linux_service.check(), service.for_machine(mac_id).check()
         assert linux_check.target is not None and mac_check.target is not None
+        linux = published.linux_executor
         assert linux_check.target.archive_sha256 == linux.archive_sha256
-        assert published.mac is not None
         assert mac_check.target.archive_sha256 == published.mac.archive_sha256
-        assert linux_service.prefetch_archive(linux.archive_sha256) == path
+        assert linux_service.prefetch_archive(linux.archive_sha256) == (
+            service.root / "linux/archives" / (linux.archive_sha256 + ".tar.gz")
+        )
         with pytest.raises(UpdateConflict):
             linux_service.prefetch_archive(published.mac.archive_sha256)
-        # The Mac artifact has valid bytes and source but the wrong platform and role.
-        mac_path = service._archive_path(published)
         with pytest.raises(UpdateConflict, match="source and platform"):
             linux_service._validate_archive(
-                mac_path, replace(published, linux_executor=PublishedLinuxExecutorUpdate(
-                    published.mac.artifact_id, published.mac.archive_sha256,
-                    published.mac.archive_size,
-                )),
+                service._archive_path(published), replace(
+                    published, linux_executor=PublishedLinuxExecutorUpdate(
+                        published.mac.artifact_id, published.mac.archive_sha256,
+                        published.mac.archive_size,
+                    ),
+                ),
             )
+        # Three successful candidates retain only the newest two Linux archives.
+        for revision in (NEXT_SHA, "d" * 40):
+            owner = service._linux_owner()
+            owner.current_app_sha = published.manifest.app_sha
+            write(service, attempt(published, "done"))
+            owner._retain_applied(owner._attempt())
+            published = provider.publish_linux(revision)
+            write(service, attempt(published, "installing"))
+            linux_service.check()
+            finish_linux_preparation(service)
+        archives = list((service.root / "linux/archives").glob("*.tar.gz"))
+        assert len(archives) == 2
+        old_archive = linux_service.archive_root / "archives" / (linux.archive_sha256 + ".tar.gz")
+        assert not old_archive.exists()
+        assert (service.root / "archives").is_dir()  # Mac storage remains separate.
     finally:
         conn.close()
+
+
+def test_linux_download_failure_never_gates_home_or_mac_and_is_shared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No-Linux and unavailable-Linux bytes must not prevent an existing home/Mac update."""
+    provider = LinuxProvider()
+    published = provider.publish_linux()
+    registered = False
+    entered, release_download = threading.Event(), threading.Event()
+    original_download = provider.download_artifact
+
+    def unavailable(artifact_id: int, destination: Path) -> None:
+        if artifact_id in provider.linux_archives:
+            provider.downloads.append(artifact_id)
+            entered.set()
+            assert release_download.wait(5)
+            raise ConnectionError("Linux artifact unavailable")
+        original_download(artifact_id, destination)
+
+    monkeypatch.setattr(provider, "download_artifact", unavailable)
+    service = MacUpdateService(
+        tmp_path / "updates", FileUpdateAttemptStore(tmp_path / "attempt.json"),
+        provider, RUNNING_SHA, lambda: published,
+        platform_for=lambda machine_id: "linux", linux_registered=lambda: registered,
+    )
+    service.prepare(published)
+    assert published.mac is not None and published.linux_executor is not None
+    assert provider.downloads == [published.mac.artifact_id]
+    assert service.check().prefetch is not None
+    registered = True
+    try:
+        service.prepare(published)  # Returns while the Linux download remains held.
+        assert entered.wait(5)
+        first = service.for_machine(str(uuid4()))
+        second = service.for_machine(str(uuid4()))
+        assert first.check().prefetch is None and second.check().prefetch is None
+        assert service.check().prefetch is not None
+        assert provider.downloads.count(published.linux_executor.artifact_id) == 1
+    finally:
+        release_download.set()
+        finish_linux_preparation(service)
+    assert "Linux executor archive preparation failed" in caplog.text
+    assert service.check().prefetch is not None
+    assert first.check().prefetch is None
+    assert provider.downloads.count(published.linux_executor.artifact_id) == 1
+    # A Linux-only done record belongs to its own store, never the original Mac.
+    monkeypatch.setattr(provider, "download_artifact", original_download)
+    owner = service._linux_owner()
+    owner.current_app_sha = TARGET_SHA
+    owner._last_preparation = None
+    linux_only = replace(published, mac=None)
+    write(service, attempt(linux_only, "done"))
+    first.check()
+    finish_linux_preparation(service)
+    assert owner._applied_path.is_file()
+    assert not service._applied_path.exists()
+    # A record left by the old shared-store bug cannot create a Mac target.
+    atomic_write_json(service._applied_path, attempt_to_dict(attempt(linux_only, "done")))
+    assert service.check().target is None
