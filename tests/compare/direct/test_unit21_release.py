@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import ctypes
 import gzip
 import json
 import os
 import shutil
+import signal
 import sqlite3
 import stat
 import subprocess
+import sys
 import tarfile
 import time
 from dataclasses import asdict
@@ -21,9 +24,17 @@ import pytest
 from tests.support.synthetic_homes import create_synthetic_homes
 from tests.support.update_apps import build_app, rewrite_artifact_digest
 from tests.unit.test_app import _legacy_cached_app
+from tests.unit.test_runtime_admission import DEPENDENCIES as admission_dependencies
+from tests.unit.test_runtime_admission import node_report
 
-from planner.environments.app import digest_app_artifact, digest_app_source, validate_app_manifest
-from planner.environments.runtime_contracts import RuntimeContractError
+from planner.environments import runtime_admission as admission
+from planner.environments.app import (
+    AppValidationError,
+    digest_app_artifact,
+    digest_app_source,
+    validate_app_manifest,
+)
+from planner.environments.runtime_contracts import NodeRuntimeContract, RuntimeContractError
 from planner.environments.runtime_elf import ElfDynamic, ElfObject, read_dynamic, resolve_provider
 from planner.environments.update_artifacts import (
     create_app_archive,
@@ -35,6 +46,192 @@ from planner.environments.update_install import require_exact_schema_frontier, s
 ROOT = Path(__file__).resolve().parents[3]
 SHA = "a" * 40
 FIXTURE_TIME_NS = 1_700_000_000_125_000_000
+
+
+def _admission_group_proof(root: Path, environment: dict[str, str], node: str) -> dict[str, Any]:
+    """Hosted only: independent pinned cleanup survives a regressed leader-only kill."""
+    from tests.compare.direct.test_unit21_stop_coherence import (
+        _native_dead,
+        _pin_native,
+        _reap_native,
+    )
+
+    root.mkdir()
+    libc = ctypes.CDLL(None, use_errno=True)
+    previous = ctypes.c_int()
+    assert libc.prctl(37, ctypes.byref(previous), 0, 0, 0) == 0
+    assert libc.prctl(36, 1, 0, 0, 0) == 0
+    handles: dict[int, int] = {}
+    process: subprocess.Popen[str] | None = None
+    started = time.perf_counter()
+    try:
+        entry = root / "group-proof.mjs"
+        entry.write_text(
+            "const{admission_group_parity}=await import(process.argv[2]);"
+            "console.log(JSON.stringify(await admission_group_parity(process.argv[3])));"
+        )
+        process = subprocess.Popen(
+            [
+                node,
+                str(entry),
+                (ROOT / "server/environments/release/testing/release_parity.ts").as_uri(),
+                str(root),
+            ],
+            cwd=ROOT,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        marker = root / "group-identities.json"
+        until = time.monotonic() + 15
+        while not marker.exists():
+            assert process.poll() is None, "Admission fixture exited before its identity handoff"
+            assert time.monotonic() < until, (
+                "Admission fixture did not publish its owned identities"
+            )
+            time.sleep(0.01)
+        identities = json.loads(marker.read_text())
+        for name, parent in (("leader", process.pid), ("descendant", identities["leader"]["pid"])):
+            identity = identities[name]
+            handles[identity["pid"]] = _pin_native(identity, parent)
+        assert len(handles) == 2
+        # No actual timeout callback can run before both validated pidfds exist.
+        (root / "release-timeout").touch()
+        output, errors = process.communicate(timeout=20)
+        assert process.returncode == 0, errors
+        result: dict[str, Any] = json.loads(output)
+        assert result["timeout_callback_released_after_pin"] is True
+        assert result["message"] == "runtime probe failed: command timed out"
+        assert 0 < result["timer_delay"] <= 45_000
+        _native_dead(handles)
+        _reap_native(handles)
+        return {
+            **result,
+            "seconds": time.perf_counter() - started,
+            "independent_pidfd_cleanup": True,
+            "both_actual_exits_reaped": True,
+            "scope": (
+                "Actual group timeout delivery and reap. Real timer duration is covered separately."
+            ),
+        }
+    finally:
+        try:
+            if process is not None:
+                # Pin a partial handoff before any fixture-parent cleanup or reparenting.
+                try:
+                    marker = root / "group-identities.json"
+                    if marker.exists() and not (root / "release-timeout").exists():
+                        identities = json.loads(marker.read_text())
+                        for name, parent in (
+                            ("leader", process.pid),
+                            ("descendant", identities["leader"]["pid"]),
+                        ):
+                            identity = identities[name]
+                            if identity["pid"] not in handles:
+                                handles[identity["pid"]] = _pin_native(identity, parent)
+                finally:
+                    if len(handles) == 2:
+                        if process.poll() is None:
+                            process.kill()  # Both descendants have independent cleanup handles.
+                        process.communicate(timeout=10)
+                    else:
+                        # Keep its own20s handoff guard, force and actual join alive first.
+                        process.communicate(timeout=30)
+        finally:
+            try:
+                for descriptor in handles.values():
+                    try:
+                        signal.pidfd_send_signal(descriptor, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                _reap_native(handles)
+            finally:
+                for descriptor in handles.values():
+                    os.close(descriptor)
+                assert libc.prctl(36, previous.value, 0, 0, 0) == 0
+
+
+def _admission_rules(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    v1 = validate_app_manifest(root / "app/manifest.json").runtime_contract
+    v2 = validate_app_manifest(root / "v2/manifest.json").runtime_contract
+    assert v1 is not None and isinstance(v2, NodeRuntimeContract)
+    facts: dict[str, Any] = dict(
+        system="linux",
+        architecture="x86_64",
+        distribution="ubuntu",
+        version="24.04",
+        glibc="2.39",
+        feature_sets=[list(v1.cpu_features)],
+    )
+    hosts: list[dict[str, Any]] = [
+        dict(version=version, node=node, facts={**facts, "feature_sets": flags})
+        for version, node, flags in [
+            (1, "v22.0.0", facts["feature_sets"]),
+            (2, "v22.0.0", facts["feature_sets"]),
+            (2, "v22.18.0", facts["feature_sets"]),
+            (2, "v22.18.0", [[]]),
+        ]
+    ]
+    read_text = Path.read_text
+    expected_hosts: list[str | None] = []
+    for item in hosts:
+        flags = tuple(item["facts"]["feature_sets"][0])
+
+        def synthetic_text(
+            path: Path, *args: Any, _flags: tuple[str, ...] = flags, **kwargs: Any
+        ) -> str:
+            if str(path) == "/proc/cpuinfo":
+                return "flags: " + " ".join(_flags)
+            return read_text(path, *args, **kwargs)
+
+        with (
+            patch("planner.environments.runtime_admission.platform.system", lambda: "Linux"),
+            patch("planner.environments.runtime_admission.platform.machine", lambda: "x86_64"),
+            patch(
+                "planner.environments.runtime_admission.platform.freedesktop_os_release",
+                lambda: {"ID": "ubuntu", "VERSION_ID": "24.04"},
+            ),
+            patch(
+                "planner.environments.runtime_admission.platform.libc_ver",
+                lambda: ("glibc", "2.39"),
+            ),
+            patch("planner.environments.runtime_admission.ctypes.CDLL", lambda name: None),
+            patch(
+                "planner.environments.runtime_admission.shutil.which",
+                lambda *args, **kwargs: "/synthetic/tool",
+            ),
+            patch.object(
+                admission, "_run_probe", lambda *args, _node=item["node"], **kwargs: _node
+            ),
+            patch.object(Path, "read_text", synthetic_text),
+        ):
+            try:
+                admission.verify_runtime_host(v1 if item["version"] == 1 else v2, state=root)
+                expected_hosts.append(None)
+            except AppValidationError as error:
+                expected_hosts.append(str(error))
+    reports = [
+        node_report(root / "v2"),
+        node_report(root / "v2", extra=True),
+        node_report(root / "v2", loaded_libraries=[str(root / "outside.node")]),
+        node_report(root / "v2", package_paths={}),
+    ]
+    expected_reports: list[str | None] = []
+    for report in reports:
+        with patch.object(
+            admission, "_run_json_probe", lambda *args, _report=report, **kwargs: _report
+        ):
+            try:
+                admission._run_node_probe(
+                    root / "v2", v2, node="/synthetic/node", state=root, deadline=1
+                )
+                expected_reports.append(None)
+            except AppValidationError as error:
+                expected_reports.append(str(error))
+    return dict(host_cases=hosts, reports=reports), dict(
+        hosts=expected_hosts, reports=expected_reports
+    )
 
 
 def _native_loader_fixture(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -479,7 +676,11 @@ def test_unit21_release_identity_archive_and_frontier(
     ):
         path = v2 / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("{}")
+        path.write_text(
+            json.dumps({"dependencies": admission_dependencies})
+            if name == "server/package.json"
+            else "{}"
+        )
     document = json.loads((v2 / "manifest.json").read_text())
     contract = document["runtime_contract"]
     contract.pop("python_version")
@@ -487,6 +688,7 @@ def test_unit21_release_identity_archive_and_frontier(
     (v2 / "runtime/contract.json").write_text(json.dumps(contract))
     (v2 / "manifest.json").write_text(json.dumps(document))
     rewrite_artifact_digest(v2)
+    admission_spec, expected_admission = _admission_rules(tmp_path)
     for name in ("v2-missing", "v2-extra"):
         shutil.copytree(v2, tmp_path / name, symlinks=True)
     (tmp_path / "v2-missing/server/lifecycle/stop_main.ts").unlink()
@@ -518,9 +720,12 @@ def test_unit21_release_identity_archive_and_frontier(
     loader_input, expected_loader = _native_loader_fixture(tmp_path / "loader")
     launcher = tmp_path / "probe.mjs"
     launcher.write_text(
-        "const{release_parity,native_loader_parity}=await import(process.argv[2]);"
+        "const{release_parity,native_loader_parity,admission_rules_parity}="
+        "await import(process.argv[2]);"
         "const result=await release_parity(process.argv[3],JSON.parse(process.argv[4]));"
         "result.native_loader=await native_loader_parity(JSON.parse(process.argv[5]));"
+        "result.admission=await admission_rules_parity("
+        "process.argv[3],JSON.parse(process.argv[6]));"
         "console.log(JSON.stringify(result));"
     )
     env = {
@@ -555,6 +760,7 @@ def test_unit21_release_identity_archive_and_frontier(
             str(tmp_path),
             json.dumps(vectors),
             json.dumps(loader_input),
+            json.dumps(admission_spec),
         ],
         cwd=ROOT,
         env=env,
@@ -588,6 +794,12 @@ def test_unit21_release_identity_archive_and_frontier(
         == native_paths
     )
     assert actual["native_loader"] == expected_loader
+    assert actual["admission"] == expected_admission
+    group_proof = (
+        _admission_group_proof(tmp_path / "hosted-admission-group", env, node)
+        if os.environ.get("GITHUB_ACTIONS") == "true" and sys.platform == "linux"
+        else {"executed": False, "reason": "Hosted Linux only"}
+    )
     assert actual["identity"] == {
         "source": digest_app_source(app),
         "artifact": digest_app_artifact(app),
@@ -736,6 +948,8 @@ def test_unit21_release_identity_archive_and_frontier(
                         "outside_target": actual["native_tree_admission"],
                         "full_native_closure": "OPEN; static synthetic paths only",
                     },
+                    "admission_rules": actual["admission"],
+                    "admission_group": group_proof,
                     "accepted_restrictions": ["GNU sparse", "PAX sparse", "member behind link"],
                     "limits": {
                         "oversized_header": "metadata entry bytes",
