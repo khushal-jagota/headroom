@@ -651,6 +651,7 @@ def test_linux_download_failure_never_gates_home_or_mac_and_is_shared(
         release_download.set()
         finish_linux_preparation(service)
     assert "Linux executor archive preparation failed" in caplog.text
+    assert "ConnectionError: Linux artifact unavailable" in caplog.text
     assert service.check().prefetch is not None
     assert first.check().prefetch is None
     assert provider.downloads.count(published.linux_executor.artifact_id) == 1
