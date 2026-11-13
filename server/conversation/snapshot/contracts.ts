@@ -125,6 +125,7 @@ export type BackendProbe = (
   options: SnapshotProbeOptions,
 ) => Promise<BackendSnapshot>;
 export interface BackendSnapshotServiceOptions {
+  readonly keep_complete_model_list?: (snapshot: BackendSnapshot) => void | Promise<void>;
   readonly environment: BackendProbeEnvironment;
   readonly probe: BackendProbe;
   readonly read_codex_login_standing: () => CodexLoginStanding | null;

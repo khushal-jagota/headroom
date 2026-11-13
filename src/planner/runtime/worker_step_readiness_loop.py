@@ -255,7 +255,7 @@ async def _admitted_start_ready_worker_step(
                 mode=PromptDeliveryMode.queue,
                 sender_message_id=sender_message_id,
                 worker_type_registry=worker_type_registry,
-                retain_backend_start_failure=not paired_opener,
+                retain_definite_start_refusal=not paired_opener,
                 now=now(),
             )
             conversation_id = delivered.conversation_id
@@ -278,10 +278,12 @@ async def _admitted_start_ready_worker_step(
                 conversation_id,
                 fate.refusal_reason.value,
             )
-            if (
-                not paired_opener
-                and fate.refusal_reason is PromptDeliveryRefusalReason.backend_did_not_start
-            ):
+            if not paired_opener and fate.refusal_reason in {
+                PromptDeliveryRefusalReason.backend_did_not_start,
+                # The model is switched off or no longer offered. Retrying cannot help,
+                # and the refusal with its reason is already in the conversation.
+                PromptDeliveryRefusalReason.model_resolution_failed,
+            }:
                 await run_on_worker_thread(
                     tickets_data.mark_worker_step_claim_errored,
                     conn,

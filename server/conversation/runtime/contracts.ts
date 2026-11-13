@@ -102,7 +102,11 @@ export interface ConversationCoreOptions {
   readonly monotonic_now?: () => number;
   readonly idle_child_stop_after_seconds?: number;
   readonly idle_child_sweep_interval_seconds?: number;
-  readonly model_is_enabled: (backend: ConversationBackendKey, model: string) => boolean;
+  readonly delivery_model_refusal: (
+    backend: ConversationBackendKey,
+    model: string,
+    ticket_id: string | null,
+  ) => string | null;
   readonly execution_refusal: (
     conversation_id: string,
   ) => import('../../core/contracts.ts').PlannerError | null;
