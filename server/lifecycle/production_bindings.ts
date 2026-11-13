@@ -19,7 +19,8 @@ import { create_codex_backend_child_factory } from '../conversation/backends/cod
 import { create_hermes_backend_child_factory } from '../conversation/backends/hermes_acp/adapter.ts';
 import { production_backend_launches } from './production_launches.ts';
 import { create_production_backend_http } from './production_http.ts';
-import { HOST } from '../core/config.ts';
+import { applicationRootFromEnvironment, HOST } from '../core/config.ts';
+import { create_production_environment_operations } from '../environments/production.ts';
 
 export const BACKEND_KEYS = ['claude', 'codex', 'hermes'] as const;
 export type ProductionBackendChildFactory = BackendChildFactory &
@@ -123,7 +124,18 @@ export function compose_production_backends(
   };
 }
 export function default_production_dependencies(): ProductionServerDependencies {
-  throw new Error('Production environment operations are not installed');
+  return {
+    backends: create_production_backend_bindings(),
+    environments: {
+      factory: create_production_environment_operations,
+      dependencies: {
+        executor: null,
+        application_root: applicationRootFromEnvironment(),
+        node_executable: process.execPath,
+        admitted_legacy_null_sha: null,
+      },
+    },
+  };
 }
 
 export function create_production_backend_bindings(): ProductionBackendBindings {
