@@ -46,9 +46,11 @@ panels machine replace-credential MACHINE_ID --json > machine-grant.json
 
 Install that grant into the same selected root. Restart only that executor so its clients use the replacement. Remove the transfer copy after installation.
 
-The first credential issuance permanently closes the original Mac's old authority, including its update requests. The home log records the issuance time and executor incarnation.
+Until the first request authenticates with the new credential, the original Mac can fetch the same pending credential with its old authority. A lost reply or a crash before the private save needs no operator step. This retry also works after a home restart.
 
-A lost issuance reply, a crash before the private save, or an incorrect claimant requires operator replacement. A home restart never reopens issuance. An older runtime without credential support cannot use the old authority after rollback.
+The first authenticated request permanently closes the old authority, including its update requests, and removes the pending secret. The home log records issuance and closure times with the executor incarnation. A home restart or migration replay never reopens that authority. An older runtime without credential support cannot use it after rollback.
+
+If the wrong device takes the credential, use the operator replacement command.
 
 ## Record inputs before changes
 

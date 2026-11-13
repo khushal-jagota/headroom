@@ -31,13 +31,15 @@ Settings → Machines shows availability, current Worker activity, and Tickets t
 
 ## Credentials and the original Mac
 
-The owner registers an extra destination and gives it its credential through the operator commands. A credential permits executor requests for one destination. Replacing it invalidates the old credential. The home stores a verifier rather than the credential itself.
+The owner registers an extra destination and gives it its credential through the operator commands. A credential permits executor requests for one destination. Replacing it invalidates the old credential. The home normally stores only a verifier. During the original Mac handover, it also keeps the pending credential until the first authenticated request.
 
-The original Mac has a one-time transition from its existing authority. The first upgraded runtime requests its credential automatically and saves it privately before its work loops start. The home closes the old authority in the same transaction that issues the credential. That closure survives home restarts. The home log records the time and executor process identity.
+The original Mac has a one-time transition from its existing authority. The first upgraded runtime requests its credential automatically and saves it privately before its work loops start. Until the first request authenticates with that credential, the original Mac can fetch the same pending credential again. Its old authority permits that fetch. The first authenticated request permanently closes the old authority and removes the pending secret. That closure survives home restarts and migration replay.
 
-Until issuance, the old trust proves the owner login and the claimed executor ID. It does not prove the physical device. Another device under that login can take the original Mac's one-time credential. This is the accepted transition exception. The operator replacement command provides recovery. A lost issuance reply or a crash before the private save also requires that command. The home never silently issues another credential.
+The home log records issuance and closure times with the executor incarnation.
 
-After issuance, every executor request needs the credential, including update requests. A previous runtime that lacks credential support cannot regain the old authority after rollback.
+Until that first authenticated request, the old trust proves the owner login and the claimed executor ID. It does not prove the physical device. Under the accepted transition exception, another device under that login can take the original Mac's one-time credential. The operator replacement command provides recovery. A lost reply or a crash before the private save permits another fetch of the same credential, including after a home restart. The home never silently issues another credential.
+
+After the first authenticated request, every executor request needs the credential, including update requests. A previous runtime that lacks credential support cannot regain the old authority after rollback.
 
 ## Starts and presence
 
@@ -78,6 +80,8 @@ The stall checker watches outstanding waits. Each machine's presence clock contr
 Presence cannot distinguish a sleeping machine from a stuck process that sends no leases. Long model silence can resemble a stalled turn. Home restarts can lose some accumulated presence time. Physical sleep, power loss, permissions, and native process cleanup need checks on the actual Mac.
 
 ## Cost and storage
+
+The home shares a bounded set of database connections across machines for frequent runtime requests. Each operation retains its own transaction and commit participants. Shutdown closes these connections. These operations reuse the schema that each connection prepares.
 
 Credentials, presence, catalogs, and runtime owners grow with machine count. Journals, command tombstones, incarnation records, and receipts grow with work history because duplicate protection requires them.
 
