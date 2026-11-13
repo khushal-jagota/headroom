@@ -627,6 +627,16 @@ def test_output_an_earlier_process_owed_is_queued_before_the_first_lease(
 
     async def run() -> None:
         stub = VpsStub()
+        receipt_release = asyncio.Event()
+        post_items = stub.post_items
+
+        async def held_receipts(request: web.Request) -> web.Response:
+            # Publication precedes startup, but sending and leasing then race.
+            # Keep the output owed until the first lease observes its backlog.
+            await receipt_release.wait()
+            return await post_items(request)
+
+        monkeypatch.setattr(stub, "post_items", held_receipts)
         async with serving(stub, tls[0]) as origin:
             mac = service(paths, origin, tls[1])
             child = ChildReference(mac.identity.executor_incarnation, str(uuid4()), "c_one")
@@ -645,20 +655,17 @@ def test_output_an_earlier_process_owed_is_queued_before_the_first_lease(
                 CommandResult(command.command_id, child_outcome=refused),
                 outputs_owed=True,
             )
-            publish = mac.runner.publish_owed_outputs
-
-            async def slow_publish(*args: object) -> None:
-                await asyncio.sleep(0.3)
-                await publish(*args)  # type: ignore[arg-type]
-
-            monkeypatch.setattr(mac.runner, "publish_owed_outputs", slow_publish)
             running = asyncio.create_task(mac.run())
             try:
                 await until(lambda: bool(stub.leases))
                 assert [w.conversation_id for w in stub.leases[0].waiting_conversations] == [
                     "c_one"
                 ]
+                receipt_release.set()
+                await until(lambda: bool(stub.items))
+                await until(lambda: mac.outbox.lease_backlog().queue_depth == 0)
             finally:
+                receipt_release.set()
                 await stopped(mac, running)
 
     asyncio.run(run())
