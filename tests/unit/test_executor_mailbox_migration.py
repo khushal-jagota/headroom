@@ -39,6 +39,7 @@ from planner.executor.vps_presence_store import (
     read_presence,
     require_current_incarnation,
 )
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 
 NEW_TABLES = (
     "executor_incarnations",
@@ -99,8 +100,9 @@ def test_fresh_database_has_the_mailbox_tables_and_no_presence(tmp_path: Path) -
         assert judge_presence(read_presence(conn), 1).presence == "never"
         # The stored lease is diagnostic: an unreadable one reads as none, never an error.
         conn.execute(
-            "INSERT INTO mac_executor_presence(singleton,last_lease_at_ms,lease_json) "
-            'VALUES (1,5,\'{"older":"shape"}\')'
+            "INSERT INTO mac_executor_presence(machine_id,last_lease_at_ms,lease_json) "
+            'VALUES (?,5,\'{"older":"shape"}\')',
+            (ORIGINAL_MAC_MACHINE_ID,),
         )
         presence = read_presence(conn)
         assert presence is not None
@@ -203,6 +205,7 @@ def test_cleanup_recheck_upgrade_preserves_mailbox_rows_and_deleted_cursor(tmp_p
     with schema_migration_transaction(path) as migration:
         upgrade_schema_connection(migration, "worker_supervision")
     with closing(connect(path)) as conn:
+        conn.execute("INSERT INTO executor_incarnations VALUES ('old',1,2)")
         conn.execute(
             "INSERT INTO executor_commands(command_sequence,command_id,executor_incarnation,"
             "operation,conversation_id,child_id,command_json,state,created_at_ms,finished_at_ms,"
@@ -215,10 +218,22 @@ def test_cleanup_recheck_upgrade_preserves_mailbox_rows_and_deleted_cursor(tmp_p
             "VALUES(99,'deleted','old','read_model_list','{}','withdrawn',1)"
         )
         conn.execute("DELETE FROM executor_commands WHERE command_sequence=99")
-        before = tuple(conn.execute("SELECT * FROM executor_commands").fetchone())
+        old_columns = ",".join(
+            row[1] for row in conn.execute("PRAGMA table_info(executor_commands)")
+        )
+        before = tuple(conn.execute(f"SELECT {old_columns} FROM executor_commands").fetchone())
         conn.commit()
         create_schema(conn)
-        assert tuple(conn.execute("SELECT * FROM executor_commands").fetchone()) == before
+        assert (
+            tuple(conn.execute(f"SELECT {old_columns} FROM executor_commands").fetchone()) == before
+        )
+        assert conn.execute("SELECT machine_id FROM executor_commands").fetchone()[0] == (
+            ORIGINAL_MAC_MACHINE_ID
+        )
+        conn.execute(
+            "INSERT INTO executor_incarnations(executor_incarnation,first_leased_at_ms) "
+            "VALUES ('new',3)"
+        )
         conn.execute(
             "INSERT INTO executor_commands(command_id,executor_incarnation,operation,command_json,"
             "state,created_at_ms) VALUES('recheck','new','recheck_cleanup','{}','waiting',3)"
