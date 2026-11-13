@@ -56,10 +56,12 @@ class AutomaticStartAdmission:
         self.limit = limit
         self._clock = clock
         self._lock = threading.RLock()
-        self._next_start = float("-inf")
-        self._last_permit: str | None = None
+        self._next_start: dict[str, float] = {}
+        self._last_permit: dict[str, str] = {}
         self._eligibility_sequence = 0
         self._requests: dict[str, _Reservation] = {}
+        self._destinations: dict[str, dict[str, _Reservation]] = {}
+        self._turn_destinations: dict[TurnToken, str] = {}
         self._observed_turns: dict[str, int] = {}
         self._reachable: Callable[[str], bool] = lambda destination: destination == HOME_MACHINE_ID
 
@@ -72,8 +74,33 @@ class AutomaticStartAdmission:
             self._eligibility_sequence += 1
             reservation.eligible_order = self._eligibility_sequence
 
-    def _refresh(self) -> None:
-        for reservation in self._requests.values():
+    def _put(self, entry: _Reservation) -> _Reservation:
+        self._requests[entry.request.identity] = entry
+        self._destinations.setdefault(entry.request.destination, {})[entry.request.identity] = entry
+        if entry.turn is not None:
+            self._turn_destinations[entry.turn] = entry.request.destination
+        return entry
+
+    def _remove(self, identity: str) -> _Reservation | None:
+        entry = self._requests.pop(identity, None)
+        if entry is not None:
+            members = self._destinations[entry.request.destination]
+            members.pop(identity, None)
+            if entry.turn is not None and not any(r.turn == entry.turn for r in members.values()):
+                self._turn_destinations.pop(entry.turn, None)
+            if not members:
+                self._destinations.pop(entry.request.destination)
+        return entry
+
+    def _for_turn(self, turn: TurnToken) -> tuple[_Reservation, ...]:
+        destination = self._turn_destinations.get(turn)
+        return tuple(
+            r for r in self._destinations.get(destination or "", {}).values() if r.turn == turn
+        )
+
+    def _refresh(self, destination: str | None = None) -> None:
+        members = self._requests if destination is None else self._destinations.get(destination, {})
+        for reservation in members.values():
             if not self._reachable(reservation.request.destination):
                 reservation.active = False
                 reservation.eligible_order = None
@@ -91,16 +118,20 @@ class AutomaticStartAdmission:
 
     def try_start(self, request: StartRequest) -> bool:
         with self._lock:
-            entry = self._requests.setdefault(request.identity, _Reservation(request))
+            entry = self._requests.get(request.identity) or self._put(_Reservation(request))
             if entry.phase in ("queued", "failed"):
                 return False
             return self._admit_group((request.identity,))
 
     def _admit_group(self, identities: Iterable[str]) -> bool:
-        self._refresh()
         entries = [self._requests[i] for i in identities if i in self._requests]
         if not entries:
             return True
+        destination = entries[0].request.destination
+        if any(entry.request.destination != destination for entry in entries):
+            raise ValueError("One start group cannot span destinations")
+        self._refresh(destination)
+        members = self._destinations[destination]
         if not all(self._reachable(r.request.destination) for r in entries):
             return False
         for entry in entries:
@@ -110,19 +141,25 @@ class AutomaticStartAdmission:
         if permits:
             permit = next(iter(permits))
         else:
-            active = {r.permit: r for r in self._requests.values() if r.active}
-            if len(active) >= self.limit or self._clock() < self._next_start:
+            active = {r.permit: r for r in members.values() if r.active}
+            if len(active) >= self.limit or self._clock() < self._next_start.get(
+                destination, float("-inf")
+            ):
                 return False
             supervisor = any(r.request.work_class == "supervisor" for r in entries)
             if not supervisor:
-                if sum(r.request.work_class == "worker" for r in active.values()) >= self.limit - 1:
+                if (
+                    destination == HOME_MACHINE_ID
+                    and sum(r.request.work_class == "worker" for r in active.values())
+                    >= self.limit - 1
+                ):
                     return False
                 if any(
                     r.request.work_class == "supervisor"
                     and not r.active
                     and r.eligible_order is not None
                     and self._reachable(r.request.destination)
-                    for r in self._requests.values()
+                    for r in members.values()
                 ):
                     return False
             work_class = "supervisor" if supervisor else "worker"
@@ -133,12 +170,12 @@ class AutomaticStartAdmission:
                 and r.eligible_order is not None
                 and r.eligible_order < order
                 and self._reachable(r.request.destination)
-                for r in self._requests.values()
+                for r in members.values()
             ):
                 return False
             permit = entries[0].request.identity
-            self._last_permit = permit
-            self._next_start = self._clock() + AUTOMATIC_START_INTERVAL_SECONDS
+            self._last_permit[destination] = permit
+            self._next_start[destination] = self._clock() + AUTOMATIC_START_INTERVAL_SECONDS
         for entry in entries:
             entry.active = True
             entry.permit = permit
@@ -166,22 +203,35 @@ class AutomaticStartAdmission:
                 self._mark_eligible(entry)
             entry.active = False
             entry.permit = None
+            previous_turn = entry.turn
             entry.turn = None
+            if previous_turn is not None and not any(
+                r.turn == previous_turn
+                for r in self._destinations[entry.request.destination].values()
+            ):
+                self._turn_destinations.pop(previous_turn, None)
             entry.source = None
             entry.uncertain = False
             entry.managed = True
-            self._refund_unstarted_permit(permit, refundable)
+            self._refund_unstarted_permit(permit, refundable, entry.request.destination)
 
-    def _refund_unstarted_permit(self, permit: str | None, refundable: bool) -> None:
+    def _refund_unstarted_permit(
+        self, permit: str | None, refundable: bool, destination: str
+    ) -> None:
         # Only the latest grant can be returned, and only after its whole group waits.
         if (
             refundable
             and permit is not None
-            and self._last_permit == permit
-            and not any(r.active and r.permit == permit for r in self._requests.values())
+            and self._last_permit.get(destination) == permit
+            and not any(
+                r.active and r.permit == permit
+                for r in self._destinations.get(destination, {}).values()
+            )
         ):
-            self._next_start = min(self._next_start, self._clock())
-            self._last_permit = None
+            self._next_start[destination] = min(
+                self._next_start.get(destination, self._clock()), self._clock()
+            )
+            self._last_permit.pop(destination, None)
 
     def reuse_outcome(self, identity: str | None, *, queued: bool) -> None:
         with self._lock:
@@ -192,8 +242,10 @@ class AutomaticStartAdmission:
                 if entry.phase != "attempted" and not entry.uncertain:
                     self.queue(identity)
             elif entry.turn is None and not entry.managed:
-                self._requests.pop(entry.request.identity)
-                self._refund_unstarted_permit(entry.permit, entry.phase == "preparing")
+                self._remove(entry.request.identity)
+                self._refund_unstarted_permit(
+                    entry.permit, entry.phase == "preparing", entry.request.destination
+                )
 
     def wait_if_unadmitted(self, identity: str | None) -> None:
         with self._lock:
@@ -227,12 +279,13 @@ class AutomaticStartAdmission:
     def transfer(self, preparation: str, request: StartRequest) -> bool:
         """Attach the actual committed claim identity without a second pacing charge."""
         with self._lock:
-            entry = self._requests.pop(preparation)
+            entry = self._remove(preparation)
+            assert entry is not None
             if request.identity in self._requests:
-                self._requests[preparation] = entry
+                self._put(entry)
                 raise RuntimeError("Actual claim identity already owns a reservation")
             entry.request = request
-            self._requests[request.identity] = entry
+            self._put(entry)
             self._refresh()
             return entry.active
 
@@ -252,13 +305,13 @@ class AutomaticStartAdmission:
 
     def finish(self, identity: str) -> None:
         with self._lock:
-            self._requests.pop(identity, None)
+            self._remove(identity)
 
     def finish_unbound(self, identity: str) -> None:
         with self._lock:
             entry = self._requests.get(identity)
             if entry is not None and entry.turn is None and not entry.managed:
-                self._requests.pop(identity, None)
+                self._remove(identity)
 
     def uncertain(self, identity: str) -> None:
         with self._lock:
@@ -269,19 +322,25 @@ class AutomaticStartAdmission:
         with self._lock:
             for identity in identities:
                 if identity is not None and (entry := self._requests.get(identity)) is not None:
+                    previous = entry.turn
                     entry.turn = turn
+                    if previous is not None and previous != turn and not any(
+                        r.turn == previous
+                        for r in self._destinations[entry.request.destination].values()
+                    ):
+                        self._turn_destinations.pop(previous, None)
+                    self._turn_destinations[turn] = entry.request.destination
 
     def observe(self, turn: TurnToken) -> None:
         """Only the core's current-sink, exact-turn activity proves acceptance."""
         with self._lock:
-            for identity, entry in tuple(self._requests.items()):
-                if entry.turn == turn:
-                    del self._requests[identity]
+            for entry in self._for_turn(turn):
+                self._remove(entry.request.identity)
 
     def allow_dispatch(self, turn: TurnToken) -> bool:
         """A deferred remote prompt re-enters pacing before mailbox delivery."""
         with self._lock:
-            entries = [r for r in self._requests.values() if r.turn == turn]
+            entries = list(self._for_turn(turn))
             return self._admit_group(r.request.identity for r in entries)
 
     def snapshots(self) -> tuple[StartSnapshot, ...]:
@@ -320,7 +379,7 @@ class AutomaticStartAdmission:
                     and not entry.uncertain
                     and not entry.managed
                 ):
-                    del self._requests[identity]
+                    self._remove(identity)
 
     def requests_for(self, identities: Iterable[str | None]) -> tuple[StartRequest, ...]:
         """Snapshot the admission facts that the turn transaction must retain."""
@@ -335,19 +394,26 @@ class AutomaticStartAdmission:
         from planner.core.db import connect
 
         with self._lock:
-            requests = tuple(r.request for r in self._requests.values() if r.turn == turn)
+            requests = tuple(r.request for r in self._for_turn(turn))
         if not requests:
             return
         conn = connect(db_path)
         try:
             missing = tuple(
-                request for request in requests
+                request
+                for request in requests
                 if conn.execute(
                     "SELECT 1 FROM automatic_start_bindings WHERE identity=? "
                     "AND work_class=? AND destination=? AND conversation_id=? AND turn_number=?",
-                    (request.identity, request.work_class, request.destination,
-                     turn.conversation_id, turn.turn_number),
-                ).fetchone() is None
+                    (
+                        request.identity,
+                        request.work_class,
+                        request.destination,
+                        turn.conversation_id,
+                        turn.turn_number,
+                    ),
+                ).fetchone()
+                is None
             )
             write_bindings(conn, turn, missing)
         finally:
@@ -361,10 +427,8 @@ class AutomaticStartAdmission:
                 (turn.conversation_id, turn.turn_number),
             ):
                 request = StartRequest(row[0], row[1], row[2])
-                self._requests.setdefault(
-                    request.identity,
-                    _Reservation(request, turn=turn, phase="attempted", managed=True),
-                )
+                if request.identity not in self._requests:
+                    self._put(_Reservation(request, turn=turn, phase="attempted", managed=True))
 
     def accept(self, db_path: str, turn: TurnToken) -> None:
         from planner.core.db import connect
@@ -428,10 +492,9 @@ class AutomaticStartAdmission:
 
     def bind_source(self, turn: TurnToken, source: object | None) -> None:
         with self._lock:
-            for reservation in self._requests.values():
-                if reservation.turn == turn:
-                    reservation.source = source
-                    reservation.phase = "preparing" if source is None else "attempted"
+            for reservation in self._for_turn(turn):
+                reservation.source = source
+                reservation.phase = "preparing" if source is None else "attempted"
 
     def retire_source(self, db_path: str, source: object) -> None:
         with self._lock:
@@ -476,12 +539,12 @@ class AutomaticStartAdmission:
             conn.close()
         with self._lock:
             for identity in keys:
-                self._requests.pop(identity, None)
+                self._remove(identity)
 
     def failed_attempt(self, db_path: str, turn: TurnToken) -> None:
         """A bound preparation is not evidence that a prompt write was attempted."""
         with self._lock:
-            entries = [r for r in self._requests.values() if r.turn == turn]
+            entries = list(self._for_turn(turn))
             if any(r.phase == "attempted" for r in entries):
                 for entry in entries:
                     entry.uncertain = True
@@ -497,7 +560,7 @@ class AutomaticStartAdmission:
                 entry.source = None
                 entry.phase = "failed"
                 entry.eligible_order = None
-                self._requests[entry.request.identity] = entry
+                self._put(entry)
 
     def failed_sender(self, db_path: str, identity: str | None) -> None:
         with self._lock:
@@ -522,6 +585,8 @@ def write_bindings(
         "(identity,work_class,destination,conversation_id,turn_number) VALUES (?,?,?,?,?) "
         "ON CONFLICT(identity) DO UPDATE SET conversation_id=excluded.conversation_id,"
         "turn_number=excluded.turn_number,executor_incarnation=NULL,child_id=NULL",
-        [(r.identity, r.work_class, r.destination, turn.conversation_id, turn.turn_number)
-         for r in requests],
+        [
+            (r.identity, r.work_class, r.destination, turn.conversation_id, turn.turn_number)
+            for r in requests
+        ],
     )

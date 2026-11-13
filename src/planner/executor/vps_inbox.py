@@ -32,7 +32,7 @@ from planner.conversation.backends.contracts import BackendEventValue, TurnToken
 from planner.core.clock import Clock
 from planner.core.config import MAC_ITEM_RETRY_LATER_SECONDS
 from planner.core.contracts import ErrorCode, PlannerError, PrincipalKind
-from planner.core.db import connect
+from planner.core.runtime_connections import runtime_connection
 from planner.core.task_settlement import run_on_worker_thread, wait_for_settlement
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.clock import now_ms
@@ -72,9 +72,13 @@ from planner.executor.protocol import (
 )
 from planner.executor.store import ExecutorStore, VpsDatabase, _invalid, _record
 from planner.executor.vps_agent_writes import AgentWrites
-from planner.executor.vps_presence_store import require_current_incarnation_in_transaction
+from planner.executor.vps_presence_store import (
+    require_current_incarnation_in_transaction,
+    require_incarnation_owner,
+)
 from planner.executor.vps_runs import MacRuns
 from planner.files.logic.paths import PRIVATE_TICKET_NAMES
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 from planner.stalls.contracts import TrackedWaitKind
 from planner.stalls.registry import WAITS
 
@@ -163,9 +167,11 @@ type PublishFiles = Callable[[], Coroutine[Any, Any, PublishedFiles | None]]
 
 
 class InboxStore(VpsDatabase):
-    def __init__(self, db_path: str) -> None:
-        super().__init__(db_path)
-        self.runs = ExecutorStore(db_path)
+    def __init__(
+        self, db_path: str, *, machine_id: str = ORIGINAL_MAC_MACHINE_ID
+    ) -> None:
+        super().__init__(db_path, machine_id=machine_id)
+        self.runs = ExecutorStore(db_path, machine_id=machine_id)
 
     @staticmethod
     def _receipt(row: sqlite3.Row) -> AcceptanceReceipt:
@@ -213,7 +219,9 @@ class InboxStore(VpsDatabase):
             raise RuntimeError("inbox acceptance requires an open transaction")
         # The binding sender fence, in the transaction that writes the receipt: an item
         # from a replaced process is never receipted, so its successor still sends it.
-        require_current_incarnation_in_transaction(connection, identity.executor_incarnation)
+        require_current_incarnation_in_transaction(
+            connection, identity.executor_incarnation, self.machine_id
+        )
         previous = self._prior_receipt(connection, envelope, identity)
         if previous is not None:
             return previous, False
@@ -234,7 +242,10 @@ class InboxStore(VpsDatabase):
             disposition = ReceiptDisposition.refused
             refusal = error if isinstance(error, PlannerError) else _invalid(str(error))
             result = cast(JsonObject, refusal.to_payload())
-        if disposition is ReceiptDisposition.accepted and result.get("fate") == "uncertain":
+        if (
+            disposition is ReceiptDisposition.accepted
+            and result.get("fate") == "uncertain"
+        ):
             disposition = ReceiptDisposition.uncertain
         selected = AcceptanceReceipt(
             envelope.sender_id,
@@ -246,8 +257,8 @@ class InboxStore(VpsDatabase):
         self._write_position(connection, envelope, selected)
         return selected, disposition is not ReceiptDisposition.refused
 
-    @staticmethod
     def _write_position(
+        self,
         connection: sqlite3.Connection,
         envelope: QueuedEnvelope,
         receipt: AcceptanceReceipt,
@@ -255,7 +266,9 @@ class InboxStore(VpsDatabase):
         dispatching: bool = False,
     ) -> None:
         connection.execute(
-            "INSERT INTO mac_inbox_positions VALUES(?,?,?,?,?,?) "
+            "INSERT INTO "
+            "mac_inbox_positions(sender_id,conversation_id,sequence,submission_id,"
+            "disposition,result_json,machine_id) VALUES(?,?,?,?,?,?,?) "
             "ON CONFLICT(sender_id,conversation_id) DO UPDATE SET "
             "sequence=excluded.sequence,submission_id=excluded.submission_id,"
             "disposition=excluded.disposition,result_json=excluded.result_json",
@@ -266,8 +279,33 @@ class InboxStore(VpsDatabase):
                 envelope.submission_id,
                 "dispatching" if dispatching else receipt.disposition.value,
                 _record(receipt),
+                self.machine_id,
             ),
         )
+
+    def require_sender(self, identity: ExecutorIdentity) -> None:
+        with runtime_connection(self.db_path) as connection:
+            require_current_incarnation_in_transaction(
+                connection, identity.executor_incarnation, self.machine_id
+            )
+
+    def require_envelope(
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity
+    ) -> None:
+        child = type_adapter(ChildReference).validate_python(
+            envelope_child(envelope.payload)
+        )
+        with runtime_connection(self.db_path) as connection:
+            require_current_incarnation_in_transaction(
+                connection, identity.executor_incarnation, self.machine_id
+            )
+            require_incarnation_owner(
+                connection, child.executor_incarnation, self.machine_id
+            )
+            if child.conversation_id != envelope.conversation_id:
+                raise PlannerError(
+                    ErrorCode.agent_forbidden, "item belongs to another conversation"
+                )
 
     def file_target(self, manifest: FileManifest) -> Path:
         safe_component(manifest.owner_id)
@@ -280,10 +318,19 @@ class InboxStore(VpsDatabase):
         root = Path(self.db_path).resolve().parent / "files" / "tickets"
         return contained_path(root, f"{manifest.owner_id}/{manifest.relative_path}")
 
+    @property
+    def upload_staging_root(self) -> Path:
+        root = Path(self.db_path).resolve().parent / "executor-uploads"
+        return (
+            root
+            if self.machine_id == ORIGINAL_MAC_MACHINE_ID
+            else root / safe_component(self.machine_id)
+        )
+
     def _staged_file(self, manifest: FileManifest) -> Path:
         self.file_target(manifest)
         key = hashlib.sha256(_record(manifest).encode()).hexdigest()
-        return Path(self.db_path).resolve().parent / "executor-uploads" / key
+        return self.upload_staging_root / key
 
     def store_upload(self, manifest: FileManifest, source: Path) -> None:
         """Verify and flush into private staging, never into the served file tree."""
@@ -303,11 +350,8 @@ class InboxStore(VpsDatabase):
         is refused leaves earlier groups published, as a rename that survived a crash
         is; the retry finds them at their targets.
         """
-        connection = connect(self.db_path)
-        try:
+        with runtime_connection(self.db_path) as connection:
             self.require_file_owner(connection, envelope)
-        finally:
-            connection.close()
         ready: list[PublishedFile | None] = []
         uploaded: list[tuple[int, Path, PublishedFile]] = []
         missing: list[FileManifest] = []
@@ -354,10 +398,12 @@ class InboxStore(VpsDatabase):
         try:
             with self._transaction() as connection:
                 require_current_incarnation_in_transaction(
-                    connection, identity.executor_incarnation
+                    connection, identity.executor_incarnation, self.machine_id
                 )
                 if self._prior_receipt(connection, envelope, identity) is not None:
-                    raise PlannerError(ErrorCode.retry_later, "This item was saved meanwhile")
+                    raise PlannerError(
+                        ErrorCode.retry_later, "This item was saved meanwhile"
+                    )
                 self.require_file_owner(connection, envelope)
                 with directory_descriptor(staging_path) as staging:
                     for index, source, file in group:
@@ -376,7 +422,10 @@ class InboxStore(VpsDatabase):
                         if installed is None or installed[:4] != file.version[:4]:
                             raise _artifact_changed()
                         published.append(
-                            (index, PublishedFile(file.manifest, file.target, installed))
+                            (
+                                index,
+                                PublishedFile(file.manifest, file.target, installed),
+                            )
                         )
             return published
         finally:
@@ -408,14 +457,14 @@ class InboxStore(VpsDatabase):
         the endpoint retains the per-conversation lock across both, and through native
         outcome recording, and must preserve sender dedup IDs.
         """
-        connection = connect(self.db_path)
-        try:
+        with runtime_connection(self.db_path) as connection:
             return self._prior_receipt(connection, envelope, identity)
-        finally:
-            connection.close()
 
     def _prior_receipt(
-        self, connection: sqlite3.Connection, envelope: QueuedEnvelope, identity: ExecutorIdentity
+        self,
+        connection: sqlite3.Connection,
+        envelope: QueuedEnvelope,
+        identity: ExecutorIdentity,
     ) -> AcceptanceReceipt | None:
         """Look up the sender's position. Nothing here reads a connection.
 
@@ -423,10 +472,27 @@ class InboxStore(VpsDatabase):
         transaction. A dropped request of the same process fails nothing: the resend is
         the same item, and its sequence decides whether it is new.
         """
+        require_current_incarnation_in_transaction(
+            connection, identity.executor_incarnation, self.machine_id
+        )
+        reference = payload_child(envelope.payload)
+        if reference is not None:
+            child = type_adapter(ChildReference).validate_python(reference)
+            require_incarnation_owner(
+                connection, child.executor_incarnation, self.machine_id
+            )
+            if child.conversation_id != envelope.conversation_id:
+                raise PlannerError(
+                    ErrorCode.agent_forbidden, "item belongs to another conversation"
+                )
         previous = connection.execute(
             "SELECT * FROM mac_inbox_positions WHERE sender_id=? AND conversation_id=?",
             (envelope.sender_id, envelope.conversation_id),
         ).fetchone()
+        if previous is not None and previous["machine_id"] != self.machine_id:
+            raise PlannerError(
+                ErrorCode.agent_forbidden, "receipt belongs to another machine"
+            )
         if previous is None or envelope.sequence > previous["sequence"]:
             return None
         stored = self._receipt(previous)
@@ -473,7 +539,8 @@ class MacInbox:
         self.db_path = db_path
         self.clock = clock
         self.runs = runs
-        self.store = InboxStore(db_path)
+        self.machine_id = runs.machine_id
+        self.store = InboxStore(db_path, machine_id=self.machine_id)
         self.conversations: MacInboxConversations
         self.agent_writes = AgentWrites(self.store, clock, runs)
         self._conversation_locks: dict[str, asyncio.Lock] = {}
@@ -493,22 +560,36 @@ class MacInbox:
         first item to send again, or the first whose files must be uploaded first.
         """
         _validate_batch(conversation_id, batch)
-        retry_later_at = asyncio.get_running_loop().time() + MAC_ITEM_RETRY_LATER_SECONDS
+        for item in batch.items:
+            await run_on_worker_thread(
+                self.store.require_envelope, item.envelope, identity
+            )
+        retry_later_at = (
+            asyncio.get_running_loop().time() + MAC_ITEM_RETRY_LATER_SECONDS
+        )
         receipts: list[AcceptanceReceipt] = []
         for item in batch.items:
             envelope = item.envelope
             try:
                 if item.sender_refusal is not None:
                     receipt = await self.refuse_item(
-                        envelope, identity, item.sender_refusal, retry_later_at=retry_later_at
+                        envelope,
+                        identity,
+                        item.sender_refusal,
+                        retry_later_at=retry_later_at,
                     )
                 else:
-                    receipt = await self.accept(envelope, identity, retry_later_at=retry_later_at)
+                    receipt = await self.accept(
+                        envelope, identity, retry_later_at=retry_later_at
+                    )
             except MissingFiles as missing:
                 return ItemBatchReply(
                     tuple(receipts),
                     ItemBatchStop(
-                        envelope.sequence, "missing_files", str(missing), missing.manifests
+                        envelope.sequence,
+                        "missing_files",
+                        str(missing),
+                        missing.manifests,
                     ),
                 )
             except (sqlite3.OperationalError, OSError) as error:
@@ -522,13 +603,17 @@ class MacInbox:
                     ),
                 )
             except PlannerError as error:
-                if error.code is ErrorCode.executor_incarnation_not_current and receipts:
+                if (
+                    error.code is ErrorCode.executor_incarnation_not_current
+                    and receipts
+                ):
                     # Replaced part-way: keep what was saved; the next request is refused.
                     error = PlannerError(ErrorCode.retry_later, error.message)
                 if error.code is not ErrorCode.retry_later:
                     raise
                 return ItemBatchReply(
-                    tuple(receipts), ItemBatchStop(envelope.sequence, "retry_later", error.message)
+                    tuple(receipts),
+                    ItemBatchStop(envelope.sequence, "retry_later", error.message),
                 )
             receipts.append(receipt)
         return ItemBatchReply(tuple(receipts))
@@ -671,17 +756,26 @@ class MacInbox:
         Its authority is the child's assignment, not the sending process. Without that
         authority the item is still refused: the receipt says why, and nothing applies.
         """
-        child = type_adapter(ChildReference).validate_python(envelope_child(envelope.payload))
+        await run_on_worker_thread(self.store.require_envelope, envelope, identity)
+        child = type_adapter(ChildReference).validate_python(
+            envelope_child(envelope.payload)
+        )
 
         def authorize() -> None:
             if child.conversation_id != envelope.conversation_id:
-                raise PlannerError(ErrorCode.validation, "item refusal belongs to another child")
+                raise PlannerError(
+                    ErrorCode.validation, "item refusal belongs to another child"
+                )
             principal = self.runs.authority(child)
             for manifest in envelope.file_dependencies:
                 self.store.file_target(manifest)
-                if principal.kind is not PrincipalKind.ticket or principal.id != manifest.owner_id:
+                if (
+                    principal.kind is not PrincipalKind.ticket
+                    or principal.id != manifest.owner_id
+                ):
                     raise PlannerError(
-                        ErrorCode.agent_forbidden, "upload refusal belongs to another Ticket"
+                        ErrorCode.agent_forbidden,
+                        "upload refusal belongs to another Ticket",
                     )
 
         refusal = PlannerError(ErrorCode.validation, message)
@@ -699,9 +793,11 @@ class MacInbox:
 
         return await self._answer_by(
             envelope,
-            asyncio.get_running_loop().time() + MAC_ITEM_RETRY_LATER_SECONDS
-            if retry_later_at is None
-            else retry_later_at,
+            (
+                asyncio.get_running_loop().time() + MAC_ITEM_RETRY_LATER_SECONDS
+                if retry_later_at is None
+                else retry_later_at
+            ),
             refuse,
         )
 
@@ -724,10 +820,16 @@ class MacInbox:
             yield
 
     async def _accept_envelope(
-        self, envelope: QueuedEnvelope, identity: ExecutorIdentity, retry_later_at: float
+        self,
+        envelope: QueuedEnvelope,
+        identity: ExecutorIdentity,
+        retry_later_at: float,
     ) -> AcceptanceReceipt:
+        await run_on_worker_thread(self.store.require_envelope, envelope, identity)
         try:
-            previous = await run_on_worker_thread(self.store.preflight, envelope, identity=identity)
+            previous = await run_on_worker_thread(
+                self.store.preflight, envelope, identity=identity
+            )
             if previous is not None:
                 if (
                     envelope.kind is EnvelopeKind.child_stopped
@@ -749,16 +851,23 @@ class MacInbox:
                     )
 
                 if envelope.kind is EnvelopeKind.backend_event:
-                    return await self._apply_event(envelope, identity, retry_later_at, publish)
+                    return await self._apply_event(
+                        envelope, identity, retry_later_at, publish
+                    )
                 if envelope.kind is EnvelopeKind.answer_application:
-                    return await self._apply_answer(envelope, identity, retry_later_at, publish)
+                    return await self._apply_answer(
+                        envelope, identity, retry_later_at, publish
+                    )
                 handler = {
                     EnvelopeKind.cli_write: self.agent_writes.accept,
                     EnvelopeKind.child_stopped: self._apply_stop,
                 }[envelope.kind]
                 return await handler(envelope, identity, publish)
         except PlannerError as error:
-            if error.code in (ErrorCode.retry_later, ErrorCode.executor_incarnation_not_current):
+            if error.code in (
+                ErrorCode.retry_later,
+                ErrorCode.executor_incarnation_not_current,
+            ):
                 # Not a refusal: a refusal receipt would drop the item for good. A
                 # replaced process gets no receipt; its successor still holds the item.
                 raise

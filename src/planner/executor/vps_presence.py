@@ -69,6 +69,7 @@ from planner.executor.vps_presence_store import (
     record_contact,
     record_refusal,
 )
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 from planner.stalls.contracts import TrackedWait, TrackedWaitKind
 
 LOGGER = logging.getLogger(__name__)
@@ -94,9 +95,11 @@ class MacPresenceService:
         mailbox: SqliteCommandMailbox,
         *,
         application_revision: str = "unknown",
+        machine_id: str = ORIGINAL_MAC_MACHINE_ID,
         clock: Callable[[], int] = now_ms,
     ) -> None:
         self.db_path = db_path
+        self.machine_id = machine_id
         self.mailbox = mailbox
         self.application_revision = application_revision
         self._clock = clock
@@ -119,6 +122,7 @@ class MacPresenceService:
         self._memory_lock = threading.Lock()
         self._working_turns: dict[tuple[str, int], _WorkingTurn] = {}
         self._activity_ms: dict[str, int] = {}
+        self._working_conversations: set[str] = set()
         self._closed = False
 
     @property
@@ -127,7 +131,7 @@ class MacPresenceService:
         if not self._record_loaded:
             connection = connect(self.db_path)
             try:
-                self._loaded_record = read_presence(connection)
+                self._loaded_record = read_presence(connection, self.machine_id)
             finally:
                 connection.close()
             self._record_loaded = True
@@ -147,7 +151,9 @@ class MacPresenceService:
             PROTOCOL_VERSION, self.application_revision, SPOOL_FORMAT_VERSION, "", 0
         )
 
-    async def refuse_lease_version(self, identity: ExecutorIdentity) -> LeaseRefused | None:
+    async def refuse_lease_version(
+        self, identity: ExecutorIdentity
+    ) -> LeaseRefused | None:
         """Judge the stable identity before a lease needs the current body shape."""
         now = self._clock()
         try:
@@ -155,7 +161,9 @@ class MacPresenceService:
         except ProtocolRefused as error:
             self.record_contact()
             raise PlannerError(ErrorCode.validation, str(error)) from error
-        if not supports_executor_versions(identity.protocol_version, identity.spool_format_version):
+        if not supports_executor_versions(
+            identity.protocol_version, identity.spool_format_version
+        ):
             refusal = ExecutorRefusal(
                 refusal_reason_for_versions(
                     identity.protocol_version, identity.spool_format_version
@@ -185,7 +193,9 @@ class MacPresenceService:
             return refusal
         identity = request.identity
         try:
-            accepted, settled, now = await run_on_worker_thread(self._write_lease, request)
+            accepted, settled, now = await run_on_worker_thread(
+                self._write_lease, request
+            )
         except PlannerError as error:
             if error.code is not ErrorCode.executor_incarnation_not_current:
                 raise
@@ -205,7 +215,7 @@ class MacPresenceService:
         ):
             self._record = accepted.current
             self._flushed_contact_ms = accepted.current.last_contact_at_ms
-            self._observe_lease(request, accepted, now)
+            self._observe_lease(accepted.current.lease or request, accepted, now)
             self._schedule_presence_change()
         self.mailbox.settled(settled)
         self._wake_drains()
@@ -219,11 +229,16 @@ class MacPresenceService:
                 self._drains_owed = False
             except (OSError, sqlite3.Error) as error:
                 # Its rows are untouched: the next lease starts the drains again.
-                LOGGER.warning("The replaced Mac process's drains did not start: %r", error)
+                LOGGER.warning(
+                    "The replaced Mac process's drains did not start: %r", error
+                )
         if returned and self.returned is not None:
             self.returned()
         reply = LeaseReply(
-            now, MAC_AWAY_AFTER_SECONDS, await self._update_check(), self.mailbox.high_sequence()
+            now,
+            MAC_AWAY_AFTER_SECONDS,
+            await self._update_check(),
+            self.mailbox.high_sequence(),
         )
         try:
             encode_bounded(reply)
@@ -231,7 +246,10 @@ class MacPresenceService:
             # An optional update offer must never break an already accepted lease.
             LOGGER.warning("The Mac update offer exceeds the lease response budget")
             reply = LeaseReply(
-                now, MAC_AWAY_AFTER_SECONDS, no_update_check(), reply.mailbox_high_sequence
+                now,
+                MAC_AWAY_AFTER_SECONDS,
+                no_update_check(),
+                reply.mailbox_high_sequence,
             )
             encode_bounded(reply)
         return reply
@@ -247,6 +265,80 @@ class MacPresenceService:
             LOGGER.warning("The Mac's update target is unavailable: %r", error)
             return no_update_check()
 
+    def _validated_lease(
+        self, connection: sqlite3.Connection, request: LeaseRequest
+    ) -> LeaseRequest:
+        """Telemetry cannot borrow another machine's work or alarm identity."""
+
+        def owner(conversation_id: str) -> str | None:
+            row = connection.execute(
+                "SELECT machine_id FROM mac_runs WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+            if row is None:
+                row = connection.execute(
+                    "SELECT i.machine_id FROM executor_child_assignments a "
+                    "JOIN executor_incarnations i USING(executor_incarnation) "
+                    "WHERE a.conversation_id=? LIMIT 1",
+                    (conversation_id,),
+                ).fetchone()
+            if row is not None and row[0] != self.machine_id:
+                raise PlannerError(
+                    ErrorCode.agent_forbidden, "lease references another machine's work"
+                )
+            return None if row is None else str(row[0])
+
+        waiting = tuple(
+            item
+            for item in request.waiting_conversations
+            if owner(item.conversation_id)
+        )
+        working = []
+        for item in request.working_turns:
+            if item.turn.conversation_id != item.child.conversation_id:
+                raise PlannerError(
+                    ErrorCode.validation, "lease turn belongs to another conversation"
+                )
+            owner(item.child.conversation_id)
+            incarnation = connection.execute(
+                "SELECT machine_id FROM executor_incarnations WHERE executor_incarnation=?",
+                (item.child.executor_incarnation,),
+            ).fetchone()
+            if incarnation is not None and incarnation[0] != self.machine_id:
+                raise PlannerError(
+                    ErrorCode.agent_forbidden, "lease child belongs to another machine"
+                )
+            exact = connection.execute(
+                "SELECT 1 FROM mac_runs r JOIN executor_child_assignments a "
+                "ON a.executor_incarnation=r.executor_incarnation AND a.child_id=r.child_id "
+                "AND a.conversation_id=r.conversation_id WHERE r.machine_id=? "
+                "AND r.executor_incarnation=? AND r.child_id=? AND r.conversation_id=? "
+                "AND r.turn_number=? AND r.stop_state='open' AND a.closed_at_ms IS NULL",
+                (
+                    self.machine_id,
+                    item.child.executor_incarnation,
+                    item.child.child_id,
+                    item.child.conversation_id,
+                    item.turn.turn_number,
+                ),
+            ).fetchone()
+            if exact is not None:
+                working.append(item)
+        for uncertainty in request.cleanup_uncertainties:
+            owner(uncertainty.conversation_id)
+            ticket = connection.execute(
+                "SELECT machine_id FROM tickets WHERE id=?",
+                (uncertainty.ticket_id,),
+            ).fetchone()
+            if ticket is not None and ticket[0] != self.machine_id:
+                raise PlannerError(
+                    ErrorCode.agent_forbidden,
+                    "cleanup evidence belongs to another machine",
+                )
+        return replace(
+            request, waiting_conversations=waiting, working_turns=tuple(working)
+        )
+
     def _write_lease(
         self, request: LeaseRequest
     ) -> tuple[AcceptedLease, tuple[tuple[MailboxCommand, CommandResult], ...], int]:
@@ -255,7 +347,10 @@ class MacPresenceService:
             connection.execute("BEGIN IMMEDIATE")
             # Read the clock once the write lock is held, so leases commit in time order.
             now = self._clock()
-            accepted = accept_lease_in_transaction(connection, request, now)
+            request = self._validated_lease(connection, request)
+            accepted = accept_lease_in_transaction(
+                connection, request, now, self.machine_id
+            )
             settled: tuple[tuple[MailboxCommand, CommandResult], ...] = ()
             if accepted.replaced_incarnation is not None:
                 settled = self.mailbox.replace_incarnation_in_transaction(
@@ -264,7 +359,9 @@ class MacPresenceService:
                     current=request.identity.executor_incarnation,
                     now_ms=now,
                 )
-            previous_lease = None if accepted.previous is None else accepted.previous.lease
+            previous_lease = (
+                None if accepted.previous is None else accepted.previous.lease
+            )
             cleanup_changed = (
                 previous_lease is None
                 or previous_lease.cleanup_uncertainties != request.cleanup_uncertainties
@@ -295,14 +392,18 @@ class MacPresenceService:
         if at_ms is None or self._closed:
             return
         delay = max((at_ms - self._clock()) / 1000, 0.0)
-        self._presence_timer = asyncio.get_running_loop().call_later(delay, change_signal.emit)
+        self._presence_timer = asyncio.get_running_loop().call_later(
+            delay, change_signal.emit
+        )
 
     # --- refusals and contact ------------------------------------------------------------
 
     async def refuse_old_websocket(self) -> None:
         """Route 10: an old Mac's WebSocket is refused, and the refusal kept as evidence."""
         await self._record_refusal(
-            ExecutorRefusal(MAC_NEEDS_UPDATE, None, self.server_identity(), self._clock())
+            ExecutorRefusal(
+                MAC_NEEDS_UPDATE, None, self.server_identity(), self._clock()
+            )
         )
 
     async def _record_refusal(self, refusal: ExecutorRefusal) -> None:
@@ -315,7 +416,9 @@ class MacPresenceService:
             self.record_contact()
             return
         await run_on_worker_thread(self._write_refusal, refusal)
-        base = self._record or PresenceRecord(None, None, None, None, None, None, None, None)
+        base = self._record or PresenceRecord(
+            None, None, None, None, None, None, None, None
+        )
         contact = max(base.last_contact_at_ms or 0, refusal.refused_at_ms)
         self._record = replace(base, refusal=refusal, last_contact_at_ms=contact)
         self._flushed_contact_ms = contact
@@ -325,7 +428,7 @@ class MacPresenceService:
         connection = connect(self.db_path)
         try:
             connection.execute("BEGIN IMMEDIATE")
-            if record_refusal(connection, refusal):
+            if record_refusal(connection, refusal, self.machine_id):
                 connection.commit()
             else:
                 commit_without_change_signal(connection)
@@ -339,9 +442,15 @@ class MacPresenceService:
         """Contact without a lease. Kept in memory and written at most every
         CONTACT_FLUSH_INTERVAL_SECONDS, only if it changed, without a change signal."""
         now = self._clock()
-        base = self._record or PresenceRecord(None, None, None, None, None, None, None, None)
-        self._record = replace(base, last_contact_at_ms=max(base.last_contact_at_ms or 0, now))
-        if self._closed or (self._contact_flush is not None and not self._contact_flush.done()):
+        base = self._record or PresenceRecord(
+            None, None, None, None, None, None, None, None
+        )
+        self._record = replace(
+            base, last_contact_at_ms=max(base.last_contact_at_ms or 0, now)
+        )
+        if self._closed or (
+            self._contact_flush is not None and not self._contact_flush.done()
+        ):
             return
         try:
             loop = asyncio.get_running_loop()
@@ -366,7 +475,7 @@ class MacPresenceService:
         connection = connect(self.db_path)
         try:
             connection.execute("BEGIN IMMEDIATE")
-            record_contact(connection, at_ms)
+            record_contact(connection, at_ms, self.machine_id)
             commit_without_change_signal(connection)
         except BaseException:
             connection.rollback()
@@ -412,7 +521,11 @@ class MacPresenceService:
 
     def current_identity(self) -> ExecutorIdentity | None:
         record = self._record
-        return None if record is None or record.executor_incarnation is None else record.identity
+        return (
+            None
+            if record is None or record.executor_incarnation is None
+            else record.identity
+        )
 
     def health(self) -> ExecutorHealthRead:
         record = self._record
@@ -428,7 +541,9 @@ class MacPresenceService:
             oldest_item_age_ms=None if lease is None else lease.oldest_item_age_ms,
             admission_stopped=False if lease is None else lease.admission_stopped,
             cleanup_uncertainties=() if lease is None else lease.cleanup_uncertainties,
-            legacy_cleanup_notice=None if lease is None else lease.legacy_cleanup_notice,
+            legacy_cleanup_notice=(
+                None if lease is None else lease.legacy_cleanup_notice
+            ),
         )
 
     # --- drains --------------------------------------------------------------------------
@@ -441,11 +556,13 @@ class MacPresenceService:
         lease = record.lease
         return (
             self.is_present()
-            and self._clock() - record.last_lease_at_ms <= LEASE_CONTINUITY_SECONDS * 1000
+            and self._clock() - record.last_lease_at_ms
+            <= LEASE_CONTINUITY_SECONDS * 1000
             and lease.identity.executor_incarnation == record.executor_incarnation
             and not lease.waiting_conversations_truncated
             and not any(
-                item.conversation_id == conversation_id for item in lease.cleanup_uncertainties
+                item.conversation_id == conversation_id
+                for item in lease.cleanup_uncertainties
             )
             and all(
                 waiting.conversation_id != conversation_id
@@ -477,9 +594,12 @@ class MacPresenceService:
     def note_conversation_activity(self, conversation_id: str) -> None:
         """An applied item or an accepted live batch: activity for mac_turn_silent."""
         with self._memory_lock:
-            self._activity_ms[conversation_id] = self._clock()
+            if conversation_id in self._working_conversations:
+                self._activity_ms[conversation_id] = self._clock()
 
-    def _observe_lease(self, request: LeaseRequest, accepted: AcceptedLease, now: int) -> None:
+    def _observe_lease(
+        self, request: LeaseRequest, accepted: AcceptedLease, now: int
+    ) -> None:
         with self._memory_lock:
             previous_turns = {} if accepted.new_incarnation else self._working_turns
             turns: dict[tuple[str, int], _WorkingTurn] = {}
@@ -487,11 +607,18 @@ class MacPresenceService:
                 key = (working.turn.conversation_id, working.turn.turn_number)
                 kept_turn = previous_turns.get(key)
                 turns[key] = _WorkingTurn(
-                    now if kept_turn is None else kept_turn.first_seen_ms, working.tool_running
+                    now if kept_turn is None else kept_turn.first_seen_ms,
+                    working.tool_running,
                 )
                 if working.tool_running:
                     self._activity_ms[working.turn.conversation_id] = now
             self._working_turns = turns
+            self._working_conversations = {conversation for conversation, _turn in turns}
+            self._activity_ms = {
+                conversation: self._activity_ms[conversation]
+                for conversation in self._working_conversations
+                if conversation in self._activity_ms
+            }
 
     def _tracked_waits(self, now: int) -> tuple[TrackedWait, ...]:
         del now
@@ -506,7 +633,10 @@ class MacPresenceService:
                         f"{conversation_id}:{turn_number}",
                         conversation_id,
                         f"Turn {turn_number} is working on the Mac but sends nothing",
-                        max(turn.first_seen_ms, self._activity_ms.get(conversation_id, 0)),
+                        max(
+                            turn.first_seen_ms,
+                            self._activity_ms.get(conversation_id, 0),
+                        ),
                     )
                 )
         return tuple(waits)
@@ -542,6 +672,8 @@ class PresenceStallSource:
     def __init__(self, presence: MacPresenceService) -> None:
         self._presence = presence
 
-    def tracked_waits(self, conn: sqlite3.Connection, now_ms: int) -> tuple[TrackedWait, ...]:
+    def tracked_waits(
+        self, conn: sqlite3.Connection, now_ms: int
+    ) -> tuple[TrackedWait, ...]:
         del conn
         return self._presence._tracked_waits(now_ms)

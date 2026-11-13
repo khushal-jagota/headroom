@@ -95,11 +95,17 @@ def authorize_retirement(
     identity: WorkspaceIdentity,
 ) -> bool:
     """Authorize only this ended Ticket and this exact physical folder."""
-    current = read_workspace_states(conn).get(state.ticket_id)
-    if current != state or state.ended_at is None or now < state.ended_at + RETENTION_SECONDS:
+    states = read_workspace_states_for_tickets(conn, (state.ticket_id,))
+    current = states[0] if states else None
+    if (
+        current != state
+        or state.ended_at is None
+        or now < state.ended_at + RETENTION_SECONDS
+    ):
         return False
     if conn.execute(
-        "SELECT 1 FROM tickets WHERE id=? AND worker_step_claim='out'", (state.ticket_id,)
+        "SELECT 1 FROM tickets WHERE id=? AND worker_step_claim='out'",
+        (state.ticket_id,),
     ).fetchone() is not None or has_workspace_activity(conn, state.ticket_id):
         return False
     conn.execute(

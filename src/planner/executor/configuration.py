@@ -140,6 +140,8 @@ EXECUTOR_CHILD_ID_ENV: Final = "PLAN_EXECUTOR_CHILD_ID"
 EXECUTOR_CAPABILITY_ENV: Final = "PLAN_EXECUTOR_CAPABILITY"
 NATIVE_SKILLS_DIR_ENV: Final = "PLAN_NATIVE_SKILLS_DIR"
 EXECUTOR_ID_HEADER: Final = "X-Panels-Executor-ID"
+EXECUTOR_CREDENTIAL_HEADER: Final = "X-Panels-Executor-Credential"
+EXECUTOR_CREDENTIAL_PATH: Final = "/api/executor/credential"
 EXECUTOR_INCARNATION_HEADER: Final = "X-Panels-Executor-Incarnation"
 EXECUTOR_PROTOCOL_HEADER: Final = "X-Panels-Executor-Protocol"
 # Route 5: base64url of the JSON FileUploadRequest. Route 6: the served bytes' digest.

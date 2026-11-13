@@ -2,9 +2,9 @@
 
 from typing import Final
 
-# Protocol 25 reads bounded local-folder lifetimes separately from presence leases.
+# Protocol 26 binds every executor request to a machine-specific credential.
 # Both peers must understand the cleanup contract before they exchange work.
-PROTOCOL_VERSION: Final = 25
+PROTOCOL_VERSION: Final = 26
 MIN_SUPPORTED_PROTOCOL_VERSION: Final = PROTOCOL_VERSION
 SPOOL_FORMAT_VERSION: Final = 5
 # The Mac's spool/commands.sqlite3, kept apart from the outbox so the outbox format

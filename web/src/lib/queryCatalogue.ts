@@ -1,4 +1,5 @@
 import type { ExecutorHealth } from "./ticketMachines";
+import { ORIGINAL_MAC_MACHINE_ID } from "./machines/contracts";
 import { MACHINE_HEALTH_POLL_MS } from "./machines/config";
 import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson, PlannerFetchError } from "./api";
@@ -59,8 +60,9 @@ export const queries = {
     queryFn: () => readScopedBackends({ticket_id: ticketId}, refresh),
     staleTime: Infinity, retry: false
   }),
-  executorHealth: () => ({
-    ...jsonQuery<ExecutorHealth>(["executor-health"], "/api/executor/health"),
+  executorHealth: (machineId = ORIGINAL_MAC_MACHINE_ID) => ({
+    ...jsonQuery<ExecutorHealth>(["executor-health", machineId],
+      `/api/executor/health?machine_id=${encodeURIComponent(machineId)}`),
     refetchInterval: MACHINE_HEALTH_POLL_MS,
     refetchOnWindowFocus: true,
     retry: false

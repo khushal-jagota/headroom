@@ -55,6 +55,7 @@ from planner.core.response_compression import (
     answers_uncompressed,
     uncompressed_route_patterns,
 )
+from planner.core.runtime_connections import reuse_connections
 from planner.core.sse import change_stream
 from planner.core.task_settlement import run_on_worker_thread
 from planner.core.testmode import build_test_router
@@ -238,6 +239,7 @@ def create_app(
         loops: Any = None
         metrics: MetricsRuntime | None = None
         executor_endpoint = None
+        executor_registry = None
         stall_checker: StallChecker | None = None
 
         async def shutdown_dependents() -> None:
@@ -276,8 +278,8 @@ def create_app(
                 await attempt(_stop_runtime_with_deadline(loops, deadline))
             if stall_checker is not None:
                 await attempt(stall_checker.close())
-            if executor_endpoint is not None:
-                await attempt(executor_endpoint.close())
+            if executor_registry is not None:
+                await attempt(executor_registry.close())
             if attempt_observer is not None:
                 await attempt(cancel_task(attempt_observer))
             if failures:
@@ -299,27 +301,29 @@ def create_app(
                 remembered_codex_login_rejection=remembered_codex_login_rejection,
             )
         )
-        if config.executor_id is not None:
-            from planner.executor.routing import LocaleBackendChildFactory
-            from planner.executor.vps_transport import VpsExecutor
+        from planner.executor.registry import VpsExecutorRegistry
+        from planner.executor.routing import LocaleBackendChildFactory
 
-            executor_endpoint = VpsExecutor(
-                config.db_path,
-                clock,
-                machine_id=config.executor_id,
-                application_revision=config.app_sha or "unknown",
-            )
-            backend_factories = {
-                key: LocaleBackendChildFactory(config.db_path, local, executor_endpoint.runs)
-                for key, local in backend_factories.items()
-            }
-        app.state.executor_endpoint = executor_endpoint
-        with register_workspace_root(config.db_path, config.workspace_root):
+        executor_registry = VpsExecutorRegistry(
+            config.db_path, clock, original_enabled=config.executor_id is not None,
+            application_revision=config.app_sha or "unknown",
+        )
+        backend_factories = {
+            key: LocaleBackendChildFactory(config.db_path, local, executor_registry)
+            for key, local in backend_factories.items()
+        }
+        app.state.executor_registry = executor_registry
+        app.state.executor_endpoint = None
+        with (
+            reuse_connections(config.db_path),
+            register_workspace_root(config.db_path, config.workspace_root),
+        ):
             from planner.tickets.integrity import TicketIntegrityError
 
             ticket_integrity_faults: list[TicketIntegrityError] = []
 
             def audit_startup_tickets(connection: sqlite3.Connection) -> None:
+                executor_registry.load(connection)
                 ticket_integrity_faults.extend(
                     tickets_data.audit_ticket_registry_integrity(connection, startup=True)
                 )
@@ -337,25 +341,17 @@ def create_app(
             ) as conversation:
                 # Mac runs survive a VPS restart: their rows, assignments and commands
                 # are all in the database, and the conversation core adopts them.
-                if executor_endpoint is not None:
-                    executor_endpoint.configure(
-                        conversation.system, app, update_check=app.state.mac_updates.check
-                    )
-                    remote_presence = executor_endpoint.presence
-                    conversation.system.start_admission.configure_destinations(
-                        lambda destination: (
-                            destination == HOME_MACHINE_ID
-                            or (
-                                destination == ORIGINAL_MAC_MACHINE_ID
-                                and remote_presence.is_present()
-                            )
-                        )
-                    )
-                    executor_endpoint.mailbox.start_admission = conversation.system.start_admission
-                    await executor_endpoint.start()
-                conversation.system.configure_machine_catalog(
-                    None if executor_endpoint is None else executor_endpoint.catalog
+                executor_registry.configure(
+                    conversation.system, app, update_check=app.state.mac_updates.check_for,
                 )
+                executor_endpoint = executor_registry.get(ORIGINAL_MAC_MACHINE_ID)
+                app.state.executor_endpoint = executor_endpoint
+                conversation.system.start_admission.configure_destinations(
+                    lambda destination: destination == HOME_MACHINE_ID
+                    or executor_registry.is_present(destination)
+                )
+                await executor_registry.start()
+                conversation.system.configure_machine_catalog(executor_registry)
                 app.state.conversation_system = (
                     conversation.system
                     if conversation_system_for_test is None
@@ -471,7 +467,7 @@ def create_app(
                         else stalls_checker.StallChecker
                     )
                     if stall_checker_factory is not None:
-                        endpoint = executor_endpoint
+                        endpoint = executor_registry
                         stall_checker = stall_checker_factory(
                             config.db_path,
                             WAITS,
@@ -566,6 +562,8 @@ def create_app(
     uncompressed_patterns: list[re.Pattern[str]] = []
     executor_router = build_executor_router()
     app.include_router(executor_router)
+    from planner.machines.credential_api import router as machine_credential_router
+    app.include_router(machine_credential_router, prefix="/api")
     uncompressed_patterns.extend(uncompressed_route_patterns(executor_router.routes))
     app.state.executor_id = config.executor_id
     app.state.config = config
@@ -692,9 +690,13 @@ def create_app(
         }
 
     @app.get("/api/executor/health")
-    async def executor_health() -> dict[str, object]:
-        endpoint = getattr(app.state, "executor_endpoint", None)
+    async def executor_health(machine_id: str | None = None) -> dict[str, object]:
+        destination = machine_id or ORIGINAL_MAC_MACHINE_ID
+        registry = getattr(app.state, "executor_registry", None)
+        endpoint = None if registry is None else registry.get(destination)
         if endpoint is None:
+            if destination not in (HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID):
+                raise PlannerError(ErrorCode.not_found, "Unknown executor destination")
             return {"mode": "local", "connection_state": "disconnected"}
         return _with_native_build_1_fields({"mode": "remote", **endpoint.health_payload()})
 

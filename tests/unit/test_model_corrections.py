@@ -87,7 +87,10 @@ def test_http_scoped_read_exact_write_and_retired_corrections(
 
         mac_source = ScriptedBackendSnapshots()
         mac_source.model = "mac-only-model"
-        runtime.system.configure_machine_catalog(cast(Any, mac_source))
+        from types import SimpleNamespace
+        runtime.system.configure_machine_catalog(cast(Any, SimpleNamespace(
+            catalog_for=lambda machine_id: mac_source,
+        )))
         with closing(connect(db_path)) as conn:
             mac_ticket = create_ticket(
                 conn, title="Mac Hermes", principal=OWNER_PRINCIPAL, now=1,

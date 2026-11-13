@@ -80,7 +80,7 @@
   $effect(()=>{if(currentMasthead) heldMasthead=currentMasthead;});
   let masthead=$derived(heldMasthead ? {...heldMasthead,
     conversation_signal:navigationConversationSignal(currentView,heldMasthead.conversation_id)} : undefined);
-  const machineHealth = createQuery(() => ({...queries.executorHealth(), enabled: masthead?.locale === "macos"}));
+  const machineHealth = createQuery(() => ({...queries.executorHealth(masthead?.machine_id), enabled: masthead?.locale === "macos"}));
   const ticket = createQuery(() => queries.workspaceTicket(stableId));
   let brokenTicket = $derived(isBrokenTicket(ticket.data) ? ticket.data : undefined);
   let healthyTicket = $derived(ticket.data && !isBrokenTicket(ticket.data) ? ticket.data : undefined);

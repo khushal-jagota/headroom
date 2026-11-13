@@ -20,6 +20,8 @@ from tests.support.conversation_scripted_acp_agent import (
     ScriptedAcpAgentControl,
     scripted_acp_agent_launch,
 )
+from tests.support.executor_catalog import SingleMachineCatalog
+from tests.support.executor_presence import mac_identity, make_current
 from tests.support.executor_turns import MacRemoteChildFactory
 
 from planner.conversation.backends.claude_agent_sdk import (
@@ -177,6 +179,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
             )
 
         reference = ChildReference(str(uuid4()), str(uuid4()), "c_native")
+        make_current(db_path, mac_identity(reference.executor_incarnation))
         spool = MacOutbox(tmp_path / "spool")
         registry = MacRunner(
             paths=ExecutorPaths(tmp_path / "executor"),
@@ -201,7 +204,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
         )
         endpoint = VpsExecutor(db_path, RealClock())
         endpoint.runs.children[reference.child_id] = remote.recover(reference)
-        system.configure_machine_catalog(endpoint.catalog)
+        system.configure_machine_catalog(SingleMachineCatalog(endpoint.catalog))
         recipient = Principal(PrincipalKind.ticket, ticket.id)
 
         async def deliver(text: str, **options: Any) -> Any:
@@ -339,6 +342,7 @@ def test_a_native_rebind_writes_only_after_confirmed_cleanup(
             )
 
         incarnation = str(uuid4())
+        make_current(db_path, mac_identity(incarnation))
 
         def reference(start: ResolvedConversationStart, sink: Any) -> ChildReference:
             return ChildReference(incarnation, str(uuid4()), "c")

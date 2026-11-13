@@ -53,7 +53,7 @@ from planner.conversation.contracts import NativeMessageAdmission, NativeMessage
 from planner.machines.contracts import HOME_MACHINE_ID
 
 if TYPE_CHECKING:
-    from planner.conversation.model_resolution.contracts import RemoteCatalogSource
+    from planner.conversation.model_resolution.contracts import MachineCatalogResolver
     from planner.conversation.snapshot import BackendSnapshotService
 
 
@@ -622,7 +622,7 @@ class SqliteProcessConversationSystem:
         from planner.conversation.snapshot import BackendSnapshotService
 
         self._backend_snapshots = backend_snapshots or BackendSnapshotService()
-        self.machine_catalog: RemoteCatalogSource | None = None
+        self.machine_catalog: MachineCatalogResolver | None = None
         from planner.conversation.start_admission import AutomaticStartAdmission
 
         self.start_admission = AutomaticStartAdmission(clock=monotonic_now)
@@ -1254,7 +1254,7 @@ class SqliteProcessConversationSystem:
 
                 presence = conn.execute(
                     "SELECT lease_json,last_lease_at_ms FROM mac_executor_presence "
-                    "WHERE singleton=1"
+                    "WHERE machine_id=?", (str(row[0]),),
                 ).fetchone()
                 lease = None
                 fresh = False
@@ -3157,7 +3157,7 @@ class SqliteProcessConversationSystem:
 
         return await run_on_worker_thread(read_request)
 
-    def configure_machine_catalog(self, endpoint: RemoteCatalogSource | None) -> None:
+    def configure_machine_catalog(self, endpoint: MachineCatalogResolver | None) -> None:
         self.machine_catalog = endpoint
 
     async def _deliver_prompt_unsettled(

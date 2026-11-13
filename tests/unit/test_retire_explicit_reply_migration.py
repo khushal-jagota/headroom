@@ -4,9 +4,10 @@ Risk: deleting the projected explicit_reply_missing rows strands the rest-line p
 on missing rows, or moves them onto rows whose cached rest summary was cleared, so the
 status line shows nothing. No other test seeds a database at the previous head with the
 old projection. The focused staging-shape fixture reinstates the actual retired
-table definitions on the fresh retained schema. It exercises both admitted migration starts without
-restoration of the collapsed historical chain. The separate scratch proof uses a real
-staging database. Events use the real projection writer and retain their stored bodies.
+table definitions on the first retained schema, before later executor tables exist.
+It exercises both admitted migration starts without restoration of the collapsed historical chain.
+The separate scratch proof uses a real staging database. Events use the real projection writer
+and retain their stored bodies.
 """
 
 import json
@@ -114,60 +115,23 @@ STAGING_ONLY_TABLES = (
         'OT NULL,\n        PRIMARY KEY(conversation_id,turn_number,principal_kind,prin'
         'cipal_id))'
     ),
-    # The WebSocket executor tables, which retire_executor_websocket_tables drops after
-    # executor_mailboxes has copied them.
-    (
-        'CREATE TABLE executor_connections (\n        executor_incarnation TEXT PRIMARY KEY,'
-        ' connection_generation INTEGER NOT NULL,\n        identity_json TEXT NOT NULL, conn'
-        'ection_state TEXT NOT NULL,\n        active INTEGER NOT NULL CHECK(active IN (0,1)))'
-    ),
-    (
-        'CREATE UNIQUE INDEX executor_one_active_connection ON executor_connections(active) '
-        'WHERE active=1'
-    ),
-    (
-        'CREATE TABLE mac_contact_status (singleton INTEGER PRIMARY KEY CHECK(singleton=1), '
-        'last_contact_at_ms INTEGER NOT NULL, refusal_json TEXT)'
-    ),
-)
-
-
-# Tables created by revisions after canonical_manager_identities, which a database at
-# goal_holders does not have yet.
-LATER_TABLES = (
-    "conversation_child_custody",
-    "worker_step_dispatch_intents",
-    "automatic_start_bindings",
-    "ticket_workspace_conversations",
-    "ticket_workspace_retirements",
-    "ticket_workspace_lifecycle",
-    "executor_incarnations",
-    "mac_executor_presence",
-    "executor_commands",
-    "stall_findings",
-    "stall_checker_heartbeat",
 )
 
 
 def _staging_shape(tmp_path: Path) -> Path:
-    """Keep retained schema real, reinstate only the tables the upgrade removes, and
-    remove the tables later revisions add."""
+    """Reconstruct the retired boundary before later executor schemas exist.
+
+    The collapsed goal_holders entry creates no tables. Its first retained schema
+    and the exact old-release DDL above supply the projection migration's inputs.
+    """
     path = tmp_path / "staging.db"
+    with schema_migration_transaction(str(path)) as migration:
+        upgrade_schema_connection(migration, "canonical_manager_identities")
     with closing(connect(str(path))) as conn:
-        create_schema(conn)
-        conn.execute("DROP TRIGGER tickets_legacy_machine")
-        conn.execute("ALTER TABLE tickets DROP COLUMN machine_id")
-        conn.execute("DROP TABLE machines")
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='trigger' "
-            "AND name GLOB 'ticket_workspace_*'"
-        ).fetchall():
-            conn.execute(f'DROP TRIGGER "{row[0]}"')
-        for table in LATER_TABLES:
-            conn.execute(f"DROP TABLE {table}")
         for statement in STAGING_ONLY_TABLES:
             conn.execute(statement)
-        # This is only an isolated unit fixture, not a database upgrade or proof stamp.
+        # This fixture reconstructs the collapsed boundary; no current tables are
+        # dropped and foreign-key enforcement remains active throughout.
         conn.execute("UPDATE alembic_version SET version_num='goal_holders'")
         conn.commit()
     return path

@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Literal
 from uuid import uuid4
 
@@ -149,6 +150,13 @@ def executor_app(service: MacUpdateService) -> FastAPI:
     app = FastAPI()
     app.state.executor_id = "configured-mac"
     app.state.mac_updates = service
+    path = str(service.root.parent / "planning.db")
+    conn = connect(path)
+    try:
+        create_schema(conn)
+    finally:
+        conn.close()
+    app.state.config = SimpleNamespace(db_path=path)
     app.include_router(build_executor_router())
     app.add_middleware(
         TrustedIngressMiddleware,

@@ -1,6 +1,6 @@
 """SQLite ownership for conversations and the rows they record.
 
-Calls open their own connection inside a worker thread and close it before returning.
+Calls borrow an exclusive connection inside a worker thread and release it before returning.
 Conversation delivery never receives or owns an application transaction.
 
 Appending a row is one immediate transaction: take the write lock, read where the
@@ -23,7 +23,7 @@ import logging
 import sqlite3
 import time
 from collections.abc import Callable, Collection, Coroutine, Iterator, Mapping
-from contextlib import AbstractContextManager, ExitStack, closing, contextmanager
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -103,6 +103,7 @@ from planner.core.db import (
     connect,
     transaction_control_guard,
 )
+from planner.core.runtime_connections import runtime_connection
 from planner.execution_identity import TurnToken
 from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import (
@@ -479,8 +480,7 @@ class ConversationStore:
         """Read only conversations bound to this physical local workspace."""
 
         def read() -> tuple[str, ...]:
-            conn = self._connect()
-            try:
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
                 return tuple(
                     str(row[0])
                     for row in conn.execute(
@@ -489,15 +489,12 @@ class ConversationStore:
                         (ticket_id, identity.machine_id, identity.workspace_id),
                     )
                 )
-            finally:
-                conn.close()
 
         return await asyncio.to_thread(read)
 
     async def has_recorded_source(self, conversation_id: str) -> bool:
         def read() -> bool:
-            conn = self._connect()
-            try:
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
                 return (
                     conn.execute(
                         "SELECT 1 FROM conversation_child_custody WHERE conversation_id=?",
@@ -505,15 +502,12 @@ class ConversationStore:
                     ).fetchone()
                     is not None
                 )
-            finally:
-                conn.close()
 
         return await asyncio.to_thread(read)
 
     async def recorded_source_retirement_proven(self, conversation_id: str) -> bool:
         def read() -> bool:
-            conn = self._connect()
-            try:
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
                 row = conn.execute(
                     "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
                     (conversation_id,),
@@ -522,8 +516,6 @@ class ConversationStore:
                     row["state"] == "retired"
                     or tuple(row) == self._startup_source_proofs.get(conversation_id)
                 )
-            finally:
-                conn.close()
 
         return await asyncio.to_thread(read)
 
@@ -537,8 +529,7 @@ class ConversationStore:
         turn_number: int,
     ) -> bool:
         def read() -> bool:
-            conn = self._connect()
-            try:
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
                 row = conn.execute(
                     "SELECT 1 FROM conversation_child_custody c "
                     "JOIN conversation_turn_occurrences o ON o.conversation_id=c.conversation_id "
@@ -550,8 +541,6 @@ class ConversationStore:
                     (conversation_id, generation, turn_number),
                 ).fetchone()
                 return row is not None
-            finally:
-                conn.close()
 
         return await asyncio.to_thread(read)
 
@@ -560,14 +549,11 @@ class ConversationStore:
     ) -> bool:
         """Retire exact quiet custody even when no foreground turn survives restart."""
         def retire() -> bool:
-            conn = self._connect()
-            try:
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
                 source = conn.execute(
                     "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
                     (conversation_id,),
                 ).fetchone()
-            finally:
-                conn.close()
             if source is None:
                 return False
             proven = child_custody.retirement_row_proven(source)
@@ -602,7 +588,7 @@ class ConversationStore:
 
     async def recorded_source_block_reason(self, conversation_id: str) -> str:
         def read() -> bool:
-            with closing(self._connect()) as conn:
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
                 row = conn.execute(
                     "SELECT state,supervision_record FROM conversation_child_custody "
                     "WHERE conversation_id=?", (conversation_id,),
@@ -643,14 +629,11 @@ class ConversationStore:
         conversation_id: str,
         inspect_only: bool = False,
     ) -> tuple[RecordedSourceSettlement, TurnToken] | None:
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             source = conn.execute(
                 "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
                 (conversation_id,),
             ).fetchone()
-        finally:
-            conn.close()
         if source is None:
             return None
         result: RecordedSourceSettlement
@@ -769,12 +752,9 @@ class ConversationStore:
         path: str,
     ) -> None:
         def persist() -> None:
-            conn = self._connect()
-            try:
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
                 child_custody.write_supervision_record(conn, conversation_id, generation, path)
                 commit_without_change_signal(conn)
-            finally:
-                conn.close()
 
         await self._write(persist)
 
@@ -797,8 +777,7 @@ class ConversationStore:
         identity: LocalChildIdentity | None,
         retired: bool,
     ) -> None:
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             if retired:
                 child_custody.write_retired(conn, conversation_id, generation)
             elif identity is None:
@@ -815,8 +794,6 @@ class ConversationStore:
                 ):
                     raise BackendSpawnFailed("The agent process identity could not be saved")
             commit_without_change_signal(conn)
-        finally:
-            conn.close()
 
     async def bind_interruption_delivery(
         self,
@@ -873,8 +850,7 @@ class ConversationStore:
     def _unknown_recovery_deliveries_sync(
         self,
     ) -> tuple[tuple[str, str, tuple[DeploymentRecoveryReference, ...]], ...]:
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             groups: dict[tuple[str, int, str], list[DeploymentRecoveryReference]] = {}
             for row in conn.execute(
                 "SELECT x.conversation_id,x.turn_number,x.interruption_id,t.stage,"
@@ -889,8 +865,6 @@ class ConversationStore:
                     DeploymentRecoveryReference(str(row[2]), row[3])
                 )
             return tuple((key[0], key[2], tuple(value)) for key, value in groups.items())
-        finally:
-            conn.close()
 
     async def select_deployment_recoveries(
         self,
@@ -900,11 +874,8 @@ class ConversationStore:
     def _select_deployment_recoveries_sync(
         self,
     ) -> dict[str, tuple[DeploymentRecoveryReference, ...]]:
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             return interruption_data.select_recoveries(conn)
-        finally:
-            conn.close()
 
     async def fail_recovery_claims(self, conversation_id: str, turn_number: int) -> None:
         await self._write(self._fail_recovery_claims_sync, conversation_id, turn_number)
@@ -992,11 +963,8 @@ class ConversationStore:
 
     async def lifecycle_facts(self, conversation_id: str) -> tuple[LifecycleFact, ...]:
         def read() -> tuple[LifecycleFact, ...]:
-            conn = self._connect()
-            try:
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
                 return read_facts(conn, conversation_id)
-            finally:
-                conn.close()
 
         return await asyncio.to_thread(read)
 
@@ -1408,15 +1376,12 @@ class ConversationStore:
         self, conversation_id: str, sender_message_ids: tuple[str, ...]
     ) -> bool:
         placeholders = ",".join("?" for _ in sender_message_ids)
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             row = conn.execute(
                 f"SELECT count(*) FROM manager_wake_batches "
                 f"WHERE conversation_id=? AND sender_message_id IN ({placeholders})",
                 (conversation_id, *sender_message_ids),
             ).fetchone()
-        finally:
-            conn.close()
         return row is not None and int(row[0]) == len(sender_message_ids)
 
     def _mark_held_sender_messages_leaving_queue_sync(
@@ -1542,15 +1507,12 @@ class ConversationStore:
     def _expiry_sync(self, conversation_id: str, sequence: int | None) -> bool:
         from planner.conversation.views.omissions import diagnostics_expired, sequence_expired
 
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             return (
                 diagnostics_expired(conn, conversation_id)
                 if sequence is None
                 else sequence_expired(conn, conversation_id, sequence)
             )
-        finally:
-            conn.close()
 
     async def read_latest_events(
         self, conversation_id: str, *, before_sequence: int | None, limit: int
@@ -1685,14 +1647,11 @@ class ConversationStore:
 
     def read_live_background_task_ids(self) -> dict[str, tuple[str, ...]]:
         """Every conversation with a live background task, and those tasks' ids."""
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             rows = conn.execute(
                 "SELECT conversation_id, task_id FROM conversation_background_tasks "
                 "ORDER BY conversation_id, rowid"
             ).fetchall()
-        finally:
-            conn.close()
         live: dict[str, tuple[str, ...]] = {}
         for row in rows:
             live[str(row[0])] = (*live.get(str(row[0]), ()), str(row[1]))
@@ -1779,8 +1738,7 @@ class ConversationStore:
         return record
 
     def _read_conversation_sync(self, conversation_id: str) -> ConversationRecord | None:
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             row = conn.execute(
                 "SELECT conversation_id, backend_key, model, reasoning_effort, "
                 "workspace_folder, workspace_path_policy, role_text, "
@@ -1794,8 +1752,6 @@ class ConversationStore:
                 "FROM conversations WHERE conversation_id = ?",
                 (conversation_id,),
             ).fetchone()
-        finally:
-            conn.close()
         return None if row is None else _conversation_record(row)
 
     def _advance_owner_read_through_sequence_sync(
@@ -1850,17 +1806,13 @@ class ConversationStore:
         )
 
     def _automated_maintenance_suppression_reason_sync(self, conversation_id: str) -> str | None:
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             return tickets_data.automated_maintenance_suppression_reason(conn, conversation_id)
-        finally:
-            conn.close()
 
     def _conversations_due_for_automatic_compaction_sync(
         self, due_at_or_before: int, activity_after: int
     ) -> tuple[str, ...]:
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             rows = conn.execute(
                 "SELECT conversation_id FROM conversations "
                 "WHERE latest_agent_activity_at IS NOT NULL "
@@ -1879,8 +1831,6 @@ class ConversationStore:
                 )
                 is None
             )
-        finally:
-            conn.close()
 
     def _append_delivered_prompt_sync(
         self,
@@ -2148,16 +2098,13 @@ class ConversationStore:
     def _read_events_after_sync(
         self, conversation_id: str, after_sequence: int
     ) -> tuple[StoredConversationEvent, ...]:
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             rows = conn.execute(
                 "SELECT conversation_id, sequence, kind, payload, created_at "
                 "FROM conversation_events WHERE conversation_id = ? AND sequence > ? "
                 "ORDER BY sequence",
                 (conversation_id, after_sequence),
             ).fetchall()
-        finally:
-            conn.close()
         return tuple(_stored_event(row) for row in rows)
 
     def _open_turn_holds_only_memory_notices_sync(self, conversation_id: str) -> bool:
@@ -2167,8 +2114,7 @@ class ConversationStore:
         (the opener and any steer) are the ones after the previous turn's ending. A steer
         whose admission is uncertain counts too, as it does while the turn runs here.
         """
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             rows = conn.execute(
                 "SELECT json_extract(payload,'$.sender_message_id') FROM conversation_events "
                 "WHERE conversation_id = ? AND kind IN ('prompt','prompt_delivery_uncertain') "
@@ -2177,8 +2123,6 @@ class ConversationStore:
                 "WHERE conversation_id = ? AND kind = 'turn_ended'),0)",
                 (conversation_id, conversation_id),
             ).fetchall()
-        finally:
-            conn.close()
         return bool(rows) and all(
             worker_memory.is_memory_notice_sender_message_id(row[0]) for row in rows
         )
@@ -2186,14 +2130,13 @@ class ConversationStore:
     def _read_latest_events_sync(
         self, conversation_id: str, before_sequence: int | None, limit: int
     ) -> tuple[StoredConversationEvent, ...]:
-        conn = self._connect()
         parameters: list[object] = [conversation_id]
         before_clause = ""
         if before_sequence is not None:
             before_clause = " AND sequence < ?"
             parameters.append(before_sequence)
         parameters.append(limit)
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             rows = conn.execute(
                 "SELECT * FROM (SELECT conversation_id, sequence, kind, payload, created_at "
                 "FROM conversation_events WHERE conversation_id = ?"
@@ -2201,29 +2144,23 @@ class ConversationStore:
                 + " ORDER BY sequence DESC LIMIT ?) ORDER BY sequence",
                 tuple(parameters),
             ).fetchall()
-        finally:
-            conn.close()
         return tuple(_stored_event(row) for row in rows)
 
     def _read_event_sync(
         self, conversation_id: str, sequence: int
     ) -> StoredConversationEvent | None:
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             row = conn.execute(
                 "SELECT conversation_id, sequence, kind, payload, created_at "
                 "FROM conversation_events WHERE conversation_id = ? AND sequence = ?",
                 (conversation_id, sequence),
             ).fetchone()
-        finally:
-            conn.close()
         return None if row is None else _stored_event(row)
 
     def _sender_message_outcome_sync(
         self, conversation_id: str, sender_message_id: str
     ) -> StoredConversationEvent | None:
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             row = conn.execute(
                 "SELECT conversation_id,sequence,kind,payload,created_at FROM conversation_events "
                 "WHERE conversation_id=? AND json_extract(payload,'$.sender_message_id')=? "
@@ -2232,8 +2169,6 @@ class ConversationStore:
                 "'prompt_discarded','message_to_owner') ORDER BY sequence DESC LIMIT 1",
                 (conversation_id, sender_message_id),
             ).fetchone()
-        finally:
-            conn.close()
         return None if row is None else _stored_event(row)
 
     def _latest_turn_ended_sequences_sync(
@@ -2242,16 +2177,13 @@ class ConversationStore:
         unique = tuple(dict.fromkeys(conversation_ids))
         if not unique:
             return {}
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             rows = conn.execute(
                 "SELECT conversation_id, MAX(sequence) AS latest_turn_ended_sequence "
                 "FROM conversation_events WHERE kind = ? AND conversation_id IN "
                 f"({','.join('?' * len(unique))}) GROUP BY conversation_id",
                 (str(ConversationEventKind.turn_ended), *unique),
             ).fetchall()
-        finally:
-            conn.close()
         return {str(row["conversation_id"]): int(row["latest_turn_ended_sequence"]) for row in rows}
 
     def _owner_read_through_sequences_sync(
@@ -2261,15 +2193,12 @@ class ConversationStore:
         if not ids:
             return {}
         placeholders = ",".join("?" for _ in ids)
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             rows = conn.execute(
                 "SELECT conversation_id, owner_read_through_sequence FROM conversations "
                 f"WHERE conversation_id IN ({placeholders})",
                 ids,
             ).fetchall()
-        finally:
-            conn.close()
         return {
             str(row["conversation_id"]): int(row["owner_read_through_sequence"]) for row in rows
         }
@@ -2281,8 +2210,7 @@ class ConversationStore:
         if not ids:
             return {}
         placeholders = ",".join("?" for _ in ids)
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             rows = conn.execute(
                 "SELECT c.conversation_id, c.owner_read_through_sequence, "
                 "e.latest_owner_message, "
@@ -2305,8 +2233,6 @@ class ConversationStore:
                 f"WHERE c.conversation_id IN ({placeholders})",
                 ids,
             ).fetchall()
-        finally:
-            conn.close()
         return {
             str(row["conversation_id"]): ConversationAttentionFacts(
                 unread_message_to_owner=(
@@ -2320,14 +2246,11 @@ class ConversationStore:
         }
 
     def _has_delivered_prompt_sync(self, conversation_id: str) -> bool:
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             row = conn.execute(
                 "SELECT 1 FROM conversation_events WHERE conversation_id = ? AND kind = ? LIMIT 1",
                 (conversation_id, str(ConversationEventKind.prompt)),
             ).fetchone()
-        finally:
-            conn.close()
         return row is not None
 
     @contextmanager
@@ -2348,18 +2271,17 @@ class ConversationStore:
         an exception leaving this block means the rows rolled back. Memory must say the
         same: a Mac item answered "retry later" or refused is interpreted again from it.
         """
-        conn = self._connect()
         undo: list[PlainFieldMutation] = []
         undo_scope = self._runtime_field_undo.set(undo)
         try:
-            yield conn, self._signal_mutation.get()
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+                yield conn, self._signal_mutation.get()
         except BaseException:
             for previous in reversed(undo):
                 setattr(previous.target, previous.attribute, previous.value)
             raise
         finally:
             self._runtime_field_undo.reset(undo_scope)
-            conn.close()
 
     def _apply_signal_mutation(
         self, conn: sqlite3.Connection, mutation: SignalRuntimeMutation | None
@@ -2420,8 +2342,7 @@ class ConversationStore:
     ) -> tuple[ConversationRecord, ...]:
         if not conversation_ids:
             return ()
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             placeholders = ",".join("?" for _ in conversation_ids)
             return tuple(
                 _conversation_record(row)
@@ -2430,8 +2351,6 @@ class ConversationStore:
                     tuple(conversation_ids),
                 )
             )
-        finally:
-            conn.close()
 
     async def commit_backend_event(
         self,

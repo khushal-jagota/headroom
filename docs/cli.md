@@ -12,7 +12,7 @@ Manager commands accept `panels manager` and `--manager`. The old Sprint Item an
 
 - **Ordinary roots**, shown in help, for people and supervising agents:
   - `send-message` addresses Khushal, the Chief, a Ticket's Worker, or a Manager through the [conversation](conversations.md) door.
-  - `machine list` reads the named machines, their stable destination identities, and availability.
+  - `machine list` reads named destinations and availability. Owner commands register extra machines and replace their credentials.
   - `project`, `ticket`, and `manager` read and edit the catalog, Tickets, and Managers, including backlog and resume, assignment, accepting or revising a parked proposal, restarting a stalled Worker, and settling a Manager.
   - `page` reads and edits Manager and Chief documents. `goal` edits [goal](goals.md) pages. `measure`, `dataset`, and `measure-source` maintain [project measures](measures.md). `credential` lists and requests [credentials](credentials.md). `attention` reads [historical attention](attention.md).
   - `executor`, `environment`, and `preview` serve the operator: the [Mac executor](executor.md), [environments](environments.md), and [previews](previews.md).
@@ -44,4 +44,4 @@ A Worker's proposal feeds the [proposal resolver](tickets.md#how-a-stage-advance
 - `src/planner/server_lifecycle/control.py`: the control socket and its messages. `event_loop_tasks.py`: the event loop tasks and the creation times it reads.
 - Each domain's `cli.py` holds its own group, such as `src/planner/credentials/cli.py` and `src/planner/goals/cli.py`. The routes they call are in each domain's `api.py`.
 
-_Last verified: 2026-11-11._
+_Last verified: 2026-11-13._

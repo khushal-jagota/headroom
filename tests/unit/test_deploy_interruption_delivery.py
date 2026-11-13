@@ -1157,7 +1157,10 @@ def test_admission_exempts_only_the_current_mac_processs_run(tmp_path: Path) -> 
         with connect(path) as conn:
             conn.execute("DELETE FROM mac_runs")
             conn.execute(
-                "INSERT INTO mac_runs VALUES ('c',?,'child','ticket','t',1,0,'open')",
+                "INSERT INTO "
+                "mac_runs(conversation_id,executor_incarnation,child_id,principal_kind,"
+                "principal_id,turn_number,delivery_uncertain,stop_state) VALUES ('c',?,"
+                "'child','ticket','t',1,0,'open')",
                 (incarnation,),
             )
             conn.commit()
@@ -1297,15 +1300,50 @@ def test_legacy_upgrade_keeps_existing_update_recovery(tmp_path: Path) -> None:
         await original.system.shutdown()
         # The previous schema contains the live turn and its Update Now capture,
         # but no child custody records. Upgrade it without adding ownership proof.
-        with connect(str(path)) as db:
-            db.execute("DROP TRIGGER tickets_legacy_machine")
-            db.execute("ALTER TABLE tickets DROP COLUMN machine_id")
-            db.execute("DROP TABLE machines")
-            db.execute("DROP TABLE conversation_child_custody")
-            db.execute("DROP TABLE worker_step_dispatch_intents")
-            db.execute("DROP TABLE automatic_start_bindings")
-            db.execute("UPDATE alembic_version SET version_num='ticket_workspace_lifecycle'")
-            db.commit()
+        import sqlite3
+        from contextlib import closing
+
+        from planner.core.db import schema_migration_transaction, upgrade_schema_connection
+
+        legacy_path = tmp_path / "historical.db"
+        with schema_migration_transaction(str(legacy_path)) as migration:
+            upgrade_schema_connection(migration, "ticket_workspace_lifecycle")
+        # Copy the captured work into the real historical table shapes. New custody
+        # tables never exist here, so upgrade cannot invent their ownership proof.
+        with closing(sqlite3.connect(path)) as source, connect(str(legacy_path)) as legacy:
+            legacy.execute("PRAGMA defer_foreign_keys=ON")
+            triggers = legacy.execute(
+                "SELECT name,sql FROM sqlite_master WHERE type='trigger'"
+            ).fetchall()
+            for name, _sql in triggers:
+                legacy.execute(f'DROP TRIGGER "{name}"')
+            source_tables = {row[0] for row in source.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )}
+            for (table,) in legacy.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%' AND name<>'alembic_version'"
+            ).fetchall():
+                if table not in source_tables:
+                    continue
+                current_columns = {
+                    row[1] for row in source.execute(f'PRAGMA table_info("{table}")')
+                }
+                columns = [row[1] for row in legacy.execute(f'PRAGMA table_info("{table}")')
+                           if row[1] in current_columns]
+                selected = ','.join(f'"{column}"' for column in columns)
+                legacy.execute(f'DELETE FROM "{table}"')
+                legacy.executemany(
+                    f'INSERT INTO "{table}" ({selected}) VALUES ({",".join("?" for _ in columns)})',
+                    source.execute(f'SELECT {selected} FROM "{table}"').fetchall(),
+                )
+            for _name, sql in triggers:
+                legacy.execute(sql)
+        with (
+            closing(sqlite3.connect(legacy_path)) as source,
+            closing(sqlite3.connect(path)) as target,
+        ):
+            source.backup(target)
         upgrade = connect(str(path))
         create_schema(upgrade)
         upgrade.close()

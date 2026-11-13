@@ -57,8 +57,12 @@ from planner.executor.vps_files import InputFile, VpsFiles
 from planner.executor.vps_inbox import MacInbox
 from planner.executor.vps_mailbox import SqliteCommandMailbox
 from planner.executor.vps_presence import MacPresenceService, UpdateCheck
-from planner.executor.vps_presence_store import require_current_incarnation_in_transaction
+from planner.executor.vps_presence_store import (
+    require_current_incarnation_in_transaction,
+    require_incarnation_owner,
+)
 from planner.executor.vps_runs import MacRuns
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 from planner.ticket_workspaces.contracts import WorkspaceIdentity, WorkspaceState
 from planner.ticket_workspaces.data import (
     authorize_retirement,
@@ -90,15 +94,19 @@ class VpsExecutor:
         db_path: str,
         clock: Clock,
         *,
-        machine_id: str = "macos",
+        machine_id: str = ORIGINAL_MAC_MACHINE_ID,
         application_revision: str = "unknown",
     ) -> None:
         self.db_path = db_path
+        self.machine_id = machine_id
         self.clock = clock
         self.application_revision = application_revision
-        self.mailbox = SqliteCommandMailbox(db_path)
+        self.mailbox = SqliteCommandMailbox(db_path, machine_id=machine_id)
         self.presence = MacPresenceService(
-            db_path, self.mailbox, application_revision=application_revision
+            db_path,
+            self.mailbox,
+            application_revision=application_revision,
+            machine_id=machine_id,
         )
         self.runs = MacRuns(db_path, self.presence, self.mailbox)
         self.inbox = MacInbox(db_path, clock, self.runs)
@@ -113,10 +121,11 @@ class VpsExecutor:
         self.app: ASGIApp
         self._owned: set[asyncio.Task[Any]] = set()
 
-    def bind_conversations(self, conversations: SqliteProcessConversationSystem) -> None:
+    def bind_conversations(
+        self, conversations: SqliteProcessConversationSystem
+    ) -> None:
         self.conversations = conversations
         self.runs.conversations = conversations
-        conversations.configure_worker_cleanup_recheck(self.runs.recheck_cleanup)
         self.inbox.conversations = conversations
         self.inbox.agent_writes.conversations = conversations
 
@@ -217,7 +226,16 @@ class VpsExecutor:
         connection = connect(self.db_path)
         try:
             connection.execute("BEGIN")
-            require_current_incarnation_in_transaction(connection, identity.executor_incarnation)
+            require_current_incarnation_in_transaction(
+                connection, identity.executor_incarnation, self.machine_id
+            )
+            for ticket_id in request.ticket_ids:
+                exists = connection.execute(
+                    "SELECT 1 FROM ticket_workspace_lifecycle WHERE ticket_id=?",
+                    (ticket_id,),
+                ).fetchone()
+                if exists is not None:
+                    self._require_ticket_owner(connection, ticket_id)
             states = read_workspace_states_for_tickets(connection, request.ticket_ids)
             return WorkspaceStatesReply(states, self.clock.now_unix() * 1000)
         finally:
@@ -237,15 +255,21 @@ class VpsExecutor:
         connection = connect(self.db_path)
         try:
             connection.execute("BEGIN IMMEDIATE")
-            require_current_incarnation_in_transaction(connection, identity.executor_incarnation)
+            require_current_incarnation_in_transaction(
+                connection, identity.executor_incarnation, self.machine_id
+            )
             if registration.child.executor_incarnation != identity.executor_incarnation:
                 raise PlannerError(
-                    ErrorCode.agent_forbidden, "workspace child belongs to another executor"
+                    ErrorCode.agent_forbidden,
+                    "workspace child belongs to another executor",
                 )
-            assignment = self.runs.store.open_child_assignment(connection, registration.child)
+            assignment = self.runs.store.open_child_assignment(
+                connection, registration.child
+            )
             if assignment is None or assignment[0] != PrincipalKind.ticket.value:
                 raise PlannerError(
-                    ErrorCode.agent_forbidden, "workspace child has no Ticket assignment"
+                    ErrorCode.agent_forbidden,
+                    "workspace child has no Ticket assignment",
                 )
             register_ticket_workspace(
                 connection,
@@ -283,7 +307,27 @@ class VpsExecutor:
         connection = connect(self.db_path)
         try:
             connection.execute("BEGIN IMMEDIATE")
-            require_current_incarnation_in_transaction(connection, identity.executor_incarnation)
+            require_current_incarnation_in_transaction(
+                connection, identity.executor_incarnation, self.machine_id
+            )
+            self._require_ticket_owner(connection, state.ticket_id)
+            proof = connection.execute(
+                "SELECT 1 FROM ticket_workspace_conversations w "
+                "JOIN executor_child_assignments a ON a.conversation_id=w.conversation_id "
+                "JOIN executor_incarnations i ON i.executor_incarnation=a.executor_incarnation "
+                "WHERE w.ticket_id=? AND w.machine_id=? AND w.workspace_id=? AND "
+                "i.machine_id=? LIMIT 1",
+                (
+                    state.ticket_id,
+                    workspace.machine_id,
+                    workspace.workspace_id,
+                    self.machine_id,
+                ),
+            ).fetchone()
+            if proof is None:
+                raise PlannerError(
+                    ErrorCode.agent_forbidden, "workspace belongs to another machine"
+                )
             authorized = (
                 has_committed_retirement(connection, state, workspace)
                 if replay
@@ -296,6 +340,33 @@ class VpsExecutor:
         except BaseException:
             connection.rollback()
             raise
+        finally:
+            connection.close()
+
+    def _require_ticket_owner(self, connection: Any, ticket_id: str) -> None:
+        owned = connection.execute(
+            "SELECT 1 FROM tickets WHERE id=? AND machine_id=? UNION ALL "
+            "SELECT 1 FROM executor_child_assignments a JOIN executor_incarnations i "
+            "USING(executor_incarnation) "
+            "WHERE a.principal_kind='ticket' AND a.principal_id=? AND i.machine_id=? LIMIT 1",
+            (ticket_id, self.machine_id, ticket_id, self.machine_id),
+        ).fetchone()
+        if owned is None:
+            raise PlannerError(
+                ErrorCode.agent_forbidden, "Ticket belongs to another machine"
+            )
+
+    def _require_read_child(
+        self, identity: ExecutorIdentity, read: LiveReadRequest
+    ) -> None:
+        connection = connect(self.db_path)
+        try:
+            require_current_incarnation_in_transaction(
+                connection, identity.executor_incarnation, self.machine_id
+            )
+            require_incarnation_owner(
+                connection, read.child.executor_incarnation, self.machine_id
+            )
         finally:
             connection.close()
 
@@ -349,9 +420,11 @@ class VpsExecutor:
         """Route 6."""
         return await self.files.input_file(identity, command_id, stored_file_id)
 
-    async def read(self, identity: ExecutorIdentity, read: LiveReadRequest) -> JsonObject:
+    async def read(
+        self, identity: ExecutorIdentity, read: LiveReadRequest
+    ) -> JsonObject:
         """Route 7: an allowlisted GET, as the child's own principal."""
-        del identity
+        await run_on_worker_thread(self._require_read_child, identity, read)
         if not read.path.startswith(_READABLE_PATHS):
             raise PlannerError(ErrorCode.validation, "unsupported executor read")
         import httpx
@@ -365,13 +438,23 @@ class VpsExecutor:
         try:
             async with asyncio.timeout(LIVE_READ_SERVER_LIMIT_SECONDS):
                 async with httpx.AsyncClient(
-                    transport=httpx.ASGITransport(app=self.app), base_url="http://executor"
+                    transport=httpx.ASGITransport(app=self.app),
+                    base_url="http://executor",
                 ) as client:
-                    response = await client.get(
-                        read.path, params=cast(Any, read.params), headers=headers
+                    request = client.build_request(
+                        "GET", read.path, params=cast(Any, read.params), headers=headers
                     )
+                    path = request.url.path
+                    if any(part in (".", "..") for part in path.split("/")) or not any(
+                        path == root.rstrip("/") or path.startswith(root.rstrip("/") + "/")
+                        for root in _READABLE_PATHS
+                    ):
+                        raise PlannerError(ErrorCode.validation, "unsupported executor read")
+                    response = await client.send(request)
         except TimeoutError as error:
-            raise PlannerError(ErrorCode.retry_later, "the read took too long") from error
+            raise PlannerError(
+                ErrorCode.retry_later, "the read took too long"
+            ) from error
         try:
             value = response.json()
         except ValueError:
@@ -387,19 +470,25 @@ class VpsExecutor:
             event.method not in LIVE_BACKEND_EVENT_METHODS for event in batch.events
         ):
             raise PlannerError(ErrorCode.validation, "a live batch carries only live events")
+        delivered = False
         try:
             async with asyncio.timeout(LIVE_EVENT_SERVER_LIMIT_SECONDS):
                 for event in batch.events:
                     if (
                         event.child.executor_incarnation != identity.executor_incarnation
                         or event.child.conversation_id != conversation_id
+                        or (
+                            event.turn is not None
+                            and event.turn.conversation_id != conversation_id
+                        )
                     ):
                         continue
                     child = self.runs.children.get(event.child.child_id)
                     if child is None or child.reference != event.child or child.event_sink is None:
                         continue
                     await child.event_sink.report(event.turn, decode_event_arguments(event))
+                    delivered = True
         except TimeoutError:
             return  # Live text is lossy; the ordered items carry what matters.
-        if batch.events:
+        if delivered:
             self.presence.note_conversation_activity(conversation_id)

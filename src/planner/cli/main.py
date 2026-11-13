@@ -931,6 +931,26 @@ def machine() -> None:
     """Read named execution destinations."""
 
 
+@machine.command("register")
+@click.argument("name")
+@json_option
+def machine_register(name: str, as_json: bool) -> None:
+    """Register an extra machine and print its credential once."""
+    data = http.send("POST", "/api/machines", as_json=as_json, json_body={"name": name})
+    http.emit(data, True, "")
+
+
+@machine.command("replace-credential")
+@click.argument("machine_id")
+@json_option
+def machine_replace_credential(machine_id: str, as_json: bool) -> None:
+    """Revoke the old credential and print its replacement once."""
+    data = http.send(
+        "POST", f"/api/machines/{quote(machine_id, safe='')}/credential", as_json=as_json
+    )
+    http.emit(data, True, "")
+
+
 @machine.command("list")
 @json_option
 def machine_list(as_json: bool) -> None:

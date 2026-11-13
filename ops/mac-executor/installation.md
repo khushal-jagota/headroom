@@ -13,6 +13,45 @@ Run host commands only under separate authorization for the target Mac.
 Code review and this runbook grant no live authority.
 Linux tests establish software behavior, not installed credentials, login behavior, reboot, or pre-unlock operation.
 
+
+## Register another destination or replace a credential
+
+The original Mac receives its first machine credential automatically. No operator step belongs to a successful handover.
+
+For another Mac, register a destination on the home as the owner:
+
+```sh
+umask 077
+panels machine register "Studio Mac" --json > machine-grant.json
+```
+
+Keep the grant private. It contains the credential, which the home prints once.
+
+Use its `machine_id` as the executor ID in the ordinary installation inputs. Give this executor its own persistent root.
+
+Move the grant privately to that Mac. Install it into the selected executor root before the service starts:
+
+```sh
+PLAN_EXECUTOR_ROOT="/absolute/private/executor-root" panels executor credential --file "/private/path/machine-grant.json"
+```
+
+The command writes the private credential file outside versioned runtimes. Updates retain that file.
+
+If a credential needs replacement, run this command on the home as the owner:
+
+```sh
+umask 077
+panels machine replace-credential MACHINE_ID --json > machine-grant.json
+```
+
+Install that grant into the same selected root. Restart only that executor so its clients use the replacement. Remove the transfer copy after installation.
+
+Until the first request authenticates with the new credential, the original Mac can fetch the same pending credential with its old authority. A lost reply or a crash before the private save needs no operator step. This retry also works after a home restart.
+
+The first authenticated request permanently closes the old authority, including its update requests, and removes the pending secret. The home log records issuance and closure times with the executor incarnation. A home restart or migration replay never reopens that authority. An older runtime without credential support cannot use it after rollback.
+
+If the wrong device takes the credential, use the operator replacement command.
+
 ## Record inputs before changes
 
 Use the signed-in owner's normal HOME and GUI session.

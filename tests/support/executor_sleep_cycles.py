@@ -62,6 +62,7 @@ from typing import Any, cast
 import aiohttp
 from fastapi import FastAPI
 from starlette.types import ASGIApp, Receive, Scope, Send
+from tests.support.executor_catalog import SingleMachineCatalog
 
 from planner.conversation.backends.contracts import (
     AgentMessageCompleted,
@@ -854,7 +855,7 @@ def _make_core(endpoint: VpsExecutor) -> SqliteProcessConversationSystem:
         backend_child_factories={key: endpoint.runs for key in ConversationBackendKey},
         message_files=ConversationMessageFiles(endpoint.db_path),
     )
-    system.configure_machine_catalog(endpoint.catalog)
+    system.configure_machine_catalog(SingleMachineCatalog(endpoint.catalog))
     system.start_admission.configure_destinations(
         lambda destination: destination == "home" or endpoint.presence.is_present()
     )
@@ -1793,7 +1794,7 @@ class SleepCycles:
         return _query(
             self.db_path,
             "SELECT r.conversation_id FROM mac_runs AS r "
-            "LEFT JOIN mac_executor_presence AS p ON p.singleton=1 "
+            "LEFT JOIN mac_executor_presence AS p ON p.machine_id=r.machine_id "
             "WHERE r.stop_state<>'closed' AND r.executor_incarnation IS NOT p.executor_incarnation",
         )
 
