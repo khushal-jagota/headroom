@@ -11,13 +11,14 @@ import {
   presence_waits,
 } from '../stalls/logic/findings.ts';
 import type { PresenceObservation } from '../stalls/logic/findings.ts';
+import {
+  CONTACT_FLUSH_INTERVAL_SECONDS,
+  LEASE_CONTINUITY_SECONDS,
+  LEASE_INTERVAL_SECONDS,
+} from '../executor/configuration.ts';
 
 const S = 1000;
 const CHECK_MS = configuration.STALL_CHECK_INTERVAL_SECONDS * S;
-// The existing executor lease timings are 10, 25, and 10 seconds. Unit 22 owns their TS port.
-const LEASE_INTERVAL_SECONDS = 10;
-const LEASE_CONTINUITY_SECONDS = 25;
-const CONTACT_FLUSH_INTERVAL_SECONDS = 10;
 const LEASE_MS = LEASE_INTERVAL_SECONDS * S;
 const IDENTITY = {
   protocol_version: 22,
@@ -29,14 +30,26 @@ const IDENTITY = {
 const WATCHDOG_TIMER_ACCURACY_SECONDS = 5;
 function lease(
   waiting: readonly (readonly [string, number])[] = [],
-  working: StallLease['working_turns'] = [],
+  working: readonly { child: { conversation_id: string }; tool_running: boolean }[] = [],
 ): StallLease {
   return {
+    identity: IDENTITY,
+    process_id: 1,
+    mac_wall_clock_ms: 0,
+    queue_depth: waiting.length,
+    oldest_item_age_ms: waiting.length === 0 ? null : 0,
     waiting_conversations: waiting.map(([conversation_id, oldest_sequence]) => ({
       conversation_id,
       oldest_sequence,
     })),
-    working_turns: working,
+    waiting_conversations_truncated: false,
+    working_turns: working.map(({ child, tool_running }) => ({
+      child: { ...child, executor_incarnation: IDENTITY.executor_incarnation, child_id: 'child-1' },
+      turn: { conversation_id: child.conversation_id, turn_number: 1 },
+      tool_running,
+    })),
+    admission_stopped: false,
+    going_to_sleep: false,
   };
 }
 function present(
