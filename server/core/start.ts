@@ -621,7 +621,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       child_processes,
       executor,
     };
-    const open_runs = options.readOpenRuns?.(before_record) ?? executor?.open_runs() ?? new Map();
+    const open_runs = options.readOpenRuns?.(before_record) ?? new Map();
     areas.initialize(
       database,
       config,

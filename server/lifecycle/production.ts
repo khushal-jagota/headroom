@@ -65,6 +65,7 @@ export async function start_production_server(
             application_revision: context.config.app_sha ?? 'unknown',
           });
     },
+    readOpenRuns: (context) => context.executor?.open_runs() ?? new Map(),
     enableWorkerReadiness: true,
     areaLoops: { managerWakes: true, measureSources: true },
     notificationDelivery: production_notification_delivery,
