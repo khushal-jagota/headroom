@@ -5,6 +5,7 @@ import { isAbsolute, join } from 'node:path';
 import { inside } from '../ticket_scratch/logic.ts';
 import { is_file } from '../backup/evidence.ts';
 import { shell_quote } from '../../conversation/worker_unit/logic.ts';
+import { EXTERNAL_RUNTIME_ENVIRONMENT_KEYS } from '../../core/config.ts';
 import { AppValidationError } from './contracts.ts';
 import type {
   PackagedLauncherArguments,
@@ -16,48 +17,6 @@ import { validate_app_manifest, validate_app_sha, validate_app_tree } from './id
 import { resolved_path } from '../paths.ts';
 import { execve } from './posix.ts';
 
-const EXTERNAL_RUNTIME_ENVIRONMENT_KEYS = new Set([
-  'HOME',
-  'LOGNAME',
-  'PATH',
-  'SHELL',
-  'LANG',
-  'TERM',
-  'TMPDIR',
-  'USER',
-  'XDG_RUNTIME_DIR',
-  'DBUS_SESSION_BUS_ADDRESS',
-  'PLAN_CONFIG_PATH',
-  'PLAN_DB_PATH',
-  'PLAN_PORT',
-  'PLAN_BOUNDARY_HOUR',
-  'PLAN_TICK_SECONDS',
-  'PLAN_DISPATCH_ENABLED',
-  'PLAN_DISPATCHER_LOCK_PATH',
-  'PLAN_LOGS_DIR',
-  'PLAN_BACKUP_DIR',
-  'PLAN_TRUSTED_INGRESS_PROVIDER',
-  'PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN',
-  'PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN',
-  'PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS',
-  'PLAN_GROQ_API_KEY',
-  'PLAN_APNS_KEY_PATH',
-  'PLAN_APNS_KEY_ID',
-  'PLAN_APNS_TEAM_ID',
-  'PLAN_APNS_BUNDLE_IDS',
-  'PLAN_HERMES_HOME',
-  'PLAN_HERMES_PYTHON',
-  'PLAN_CLAUDE_EXECUTABLE',
-  'PLAN_SERVER_CONTROL_SOCKET',
-  'PLAN_UPDATE_REPOSITORY',
-  'PLAN_UPDATE_TOKEN_FILE',
-  'ANTHROPIC_API_KEY',
-  'OPENAI_API_KEY',
-  'GOOGLE_API_KEY',
-  // TS's explicit lifecycle address must survive the first launcher boundary.
-  'PLAN_SERVER_LIFECYCLE_LEASE_PATH',
-  'PLAN_SERVER_LISTENER_FD',
-]);
 export async function validate_public_cli_entrypoint(root: string, input: string): Promise<void> {
   if (!input || isAbsolute(input) || input.split('/').includes('..'))
     throw new AppValidationError(

@@ -20,7 +20,10 @@ import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
 import { Pack } from 'tar';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
+import { ShutdownDeadlineExceeded } from '../../lifecycle/contracts.ts';
 import { stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
+import { observe_shutdown } from '../../conversation/shutdown.ts';
+import { inside } from '../ticket_scratch/logic.ts';
 import type { AppManifest, ArchiveUnpackRequest, ReleaseExecution } from './contracts.ts';
 import { assert_release_execution } from './process.ts';
 import { AppValidationError } from './contracts.ts';
@@ -46,9 +49,8 @@ export async function hash_archive(path: string): Promise<string> {
 export async function create_app_archive(app: string, archive: string): Promise<string> {
   await validate_app_manifest(join(app, 'manifest.json'), { require_runtime: true });
   const root = await resolved_path(app),
-    target = await resolved_path(archive),
-    suffix = relative(root, target);
-  if (suffix === '' || (suffix !== '..' && !suffix.startsWith('../') && !isAbsolute(suffix)))
+    target = await resolved_path(archive);
+  if (inside(target, root))
     throw new AppValidationError('archive must be outside the candidate app');
   const paths = await app_tree_paths(root);
   for (const path of paths) {
@@ -161,7 +163,6 @@ async function extract_archive(
     }
   };
   const abort = () => cancel(execution!.signal.reason);
-  let timer: ReturnType<typeof setTimeout> | undefined;
   let target = resolve(destination);
   const require_live = (): void => {
     if (failure !== undefined) throw failure;
@@ -178,15 +179,8 @@ async function extract_archive(
     require_live();
     if (typeof free !== 'bigint' || free < bytes) throw new AppValidationError(message);
   };
+  async function unpack(): Promise<AppManifest | string> {
   try {
-    if (execution) {
-      execution.signal.addEventListener('abort', abort);
-      if (execution.deadline !== null)
-        timer = setTimeout(
-          () => cancel(new AppValidationError('release operation exceeded its time budget')),
-          Math.max(0, execution.deadline - performance.now() / 1000) * 1000,
-        );
-    }
     require_live();
     input = await open(archive, constants.O_RDONLY | constants.O_NONBLOCK);
     require_live();
@@ -352,8 +346,6 @@ async function extract_archive(
     }
     if (success && ownOutput && (errors.length || failure !== undefined))
       await clean(() => remove_owned_tree(target));
-    clearTimeout(timer);
-    execution?.signal.removeEventListener('abort', abort);
   }
   if (errors.length)
     throw new AppValidationError(
@@ -366,4 +358,21 @@ async function extract_archive(
           `app archive unpack failed: ${failure instanceof Error ? failure.message : String(failure)}`,
         );
   return result!;
+  }
+  execution?.signal.addEventListener('abort', abort);
+  const actual = unpack();
+  if (execution && execution.deadline !== null)
+    void observe_shutdown(
+      actual,
+      { deadline: execution.deadline },
+      'release operation exceeded its time budget',
+    ).catch((error) => {
+      if (error instanceof ShutdownDeadlineExceeded)
+        cancel(new AppValidationError('release operation exceeded its time budget'));
+    });
+  try {
+    return await actual;
+  } finally {
+    execution?.signal.removeEventListener('abort', abort);
+  }
 }
