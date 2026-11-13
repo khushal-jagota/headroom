@@ -77,8 +77,7 @@ export class OwnedCodexProcess {
   signal(signal: NodeJS.Signals | number = 'SIGTERM'): boolean {
     const pid = this.child.pid;
     // After the leader is reaped, its numeric PID/PGID can belong to another process.
-    if (this.reaped || this.child.exitCode !== null || this.child.signalCode !== null)
-      return false;
+    if (this.reaped || this.child.exitCode !== null || this.child.signalCode !== null) return false;
     try {
       const sent =
         process.platform === 'win32' || pid === undefined

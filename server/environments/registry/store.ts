@@ -155,8 +155,7 @@ export async function read_manifest(
     const raw: unknown = JSON.parse(
       new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await readFile(path)),
     );
-    if (!is_record(raw))
-      throw new TypeError('manifest object required');
+    if (!is_record(raw)) throw new TypeError('manifest object required');
     const payload = raw as Record<string, unknown>;
     const legacy = ['expected_linux_account', 'hermes_home', 'runtime_user_home'].filter((key) =>
       Object.hasOwn(payload, key),

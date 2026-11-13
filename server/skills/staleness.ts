@@ -58,8 +58,7 @@ export function ticket_create_examples(text: string): Record<string, unknown>[] 
     if (!command || body.at(-1) !== command[2] || body.slice(1, -1).includes(command[2])) continue;
     try {
       const data: unknown = JSON.parse(body.slice(1, -1).join('\n'));
-      if (is_record(data))
-        result.push(data as Record<string, unknown>);
+      if (is_record(data)) result.push(data as Record<string, unknown>);
     } catch {
       /* Nonliteral examples do not declare a contract. */
     }
