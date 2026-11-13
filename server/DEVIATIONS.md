@@ -530,7 +530,9 @@ Python routes those calls through its executor transport. Help and offline decla
 This is a temporary implementation gap owned by Unit 22, with CLI binding in Unit 20.
 The migration Manager accepted this temporary refusal. It remains until the executor unit supplies the socket route.
 
-## Executor messages validate before encoding
+## Executor message and core admission
+
+### Encoding validation
 
 The Manager required this admission rule in the shared codec review of PR 806.
 TypeScript validates each root-specific encoder input through the wire decoder before serialization.
@@ -538,6 +540,10 @@ It rejects missing required fields and invalid command semantics, and it supplie
 Python's serializer can write a dataclass whose state did not pass that validation.
 The TypeScript sender must produce a message that the Python peer can read.
 Root-specific encoder inputs use the generated contracts. Nullable fields without defaults require an explicit null.
+
+### Retained turn numbers
+
+Python accepts unbounded turn numbers. TypeScript refuses retained turns outside the safe integer range at core adoption. Wire and mailbox integers remain exact.
 
 ## Release archive sparse members — accepted
 
@@ -671,10 +677,6 @@ The Manager reviews these implementation differences before this slice merges.
 ## Catalog cancellation withdraws waiting commands
 
 The Manager requires that TypeScript withdraw a waiting model-list command after an internal read cancellation, reconnection, or stop. Python cancellation leaves that row waiting. A caller that cancels its own observation does not cancel or withdraw the shared read. TypeScript uses its own short cleanup signal, capped by the original shared shutdown deadline, and joins withdrawal before catalog settlement. The invocation keeps the mailbox open until that cleanup settles.
-
-## Retained turn numbers
-
-Python accepts unbounded turn numbers. TypeScript refuses retained turns outside the safe integer range at core adoption. Wire and mailbox integers remain exact.
 
 ## Installer database and attempt paths — accepted
 
