@@ -5,15 +5,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
-import signal
-import subprocess
 import time
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from tests.compare.direct.mac_executor_fixture import report_direct, run_node, start_inputs
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
 from planner.conversation import production_backends
@@ -35,8 +33,6 @@ from planner.executor.protocol import (
 )
 from planner.executor.skills import native_skill_home
 
-ROOT = Path(__file__).resolve().parents[3]
-
 
 def normalized(value: Any, root: Path, capability: str | None = None) -> Any:
     if isinstance(value, str):
@@ -48,55 +44,6 @@ def normalized(value: Any, root: Path, capability: str | None = None) -> Any:
     if isinstance(value, dict):
         return {key: normalized(item, root, capability) for key, item in value.items()}
     return value
-
-
-def start_inputs(root: Path) -> list[dict[str, Any]]:
-    values = []
-    for backend, policy, workspace in (
-        ("codex", "executor_default", "/vps/workspace"),
-        ("claude", "home_relative", "/vps/project"),
-        ("hermes", "absolute", str(root / "absolute")),
-    ):
-        identity = [
-            ["PLAN_ACTOR", "worker"],
-            ["PLAN_TICKET_ID", "ticket-" + backend],
-            ["KEPT_IDENTITY", "retained"],
-            *[
-                [key, "/vps/" + key]
-                for key in (
-                    "HOME",
-                    "USERPROFILE",
-                    "CODEX_HOME",
-                    "HERMES_HOME",
-                    "CLAUDE_CONFIG_DIR",
-                    "PLAN_EXECUTOR_ROOT",
-                    "PLAN_EXECUTOR_CHILD_ID",
-                    "PLAN_EXECUTOR_CAPABILITY",
-                    "PLAN_TICKET_FILES_DIR",
-                    "PLAN_NATIVE_SKILLS_DIR",
-                )
-            ],
-        ]
-        values.append(
-            dict(
-                resolved_start=dict(
-                    conversation_id="conversation-" + backend,
-                    backend_key=backend,
-                    model=backend + "-model",
-                    reasoning_effort="high",
-                    access="full",
-                    workspace_folder=workspace,
-                    workspace_path_policy=policy,
-                    role_materials=dict(
-                        role_text="Canonical Worker role", identity_environment_variables=identity
-                    ),
-                ),
-                canonical_skill_snapshot=dict(sources=[], required_skill_names=[]),
-                vendor_session_cursor="resume-" + backend,
-                workspace_home_relative="project" if policy != "absolute" else None,
-            )
-        )
-    return values
 
 
 async def reference(root: Path, patch: pytest.MonkeyPatch) -> dict[str, Any]:
@@ -368,54 +315,15 @@ def test_unit22_mac_adapters(
     target.mkdir()
     source = target / "input.json"
     source.write_text(json.dumps(dict(starts=start_inputs(target))))
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith("PLAN_") and key not in homes
-    }
-    environment.update(homes)
-    environment.update(PLAN_TEST_MODE="1", PLAN_SERVER_URL="http://127.0.0.1:9")
-    process = subprocess.Popen(
-        ["node", "server/executor/mac/testing/adapters_parity.ts", str(target)],
-        cwd=ROOT,
-        env=environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
-    try:
-        stdout, stderr = process.communicate(timeout=30)
-    except BaseException:
-        if process.poll() is None:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        process.communicate(timeout=5)
-        raise
-    assert process.returncode == 0, stdout + stderr
-    observed = json.loads(stdout)
+    observed = run_node("server/executor/mac/testing/adapters_parity.ts", target, homes, timeout=30)
     (target / "expected.json").write_text(json.dumps(expected, indent=2))
     (target / "observed.json").write_text(json.dumps(observed, indent=2))
     assert observed["parity"] == expected
     assert observed["lifecycle"] and all(observed["lifecycle"].values())
-    destination = request.config.getoption("--compare-report-dir")
-    if destination:
-        path = Path(destination)
-        path.mkdir(parents=True, exist_ok=True)
-        (path / "unit-22-mac-adapters.json").write_text(
-            json.dumps(
-                dict(
-                    kind="direct",
-                    equal=True,
-                    **{key: value for key, value in observed.items() if key != "elapsed_seconds"},
-                    node_elapsed_seconds=observed["elapsed_seconds"],
-                    elapsed_seconds=time.perf_counter() - started,
-                    boundary=(
-                        "Mac composition and retained-child custody; no network or provider process"
-                    ),
-                ),
-                indent=2,
-            )
-        )
+    report_direct(
+        request,
+        "unit-22-mac-adapters.json",
+        observed,
+        started,
+        "Mac composition and retained-child custody; no network or provider process",
+    )
