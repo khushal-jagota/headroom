@@ -101,7 +101,7 @@ export class MacService {
     this.runtime = runtime;
     void this.actual.catch(() => {});
     this.identity = identity;
-    const on_failure = (error: Error) => this.failed(error);
+    const on_failure = (error: unknown) => this.failed(error);
     this.skills = new MacSkillsPublisher(on_failure);
     this.processes = bindings.processes({
       child_processes: this.child_processes,
@@ -132,7 +132,7 @@ export class MacService {
       journal,
       outbox,
       live: this.live,
-      inputs: new MacInputs(this.transfer, this.files, configuration.paths),
+      inputs: new MacInputs(this.transfer, this.files, configuration.paths, on_failure),
       now_ms: Date.now,
       new_update_id: () => randomUUID().replaceAll('-', ''),
       native: {
@@ -293,7 +293,7 @@ export class MacService {
   private record_children(): Promise<void> {
     return this.processes?.record_children() ?? Promise.resolve();
   }
-  private failed(error: Error): void {
+  private failed(error: unknown): void {
     this.failures.add(error);
     this.request_exit(1);
   }
@@ -324,7 +324,12 @@ export class MacService {
     ).catch(() => {});
   }
   async run(): Promise<number> {
-    await this.start();
+    try {
+      await this.start();
+    } catch (error) {
+      if (!(this.controller.signal.aborted && is_shutdown_business_cancellation(error)))
+        throw error;
+    }
     await this.actual;
     return this.exit_code;
   }

@@ -8,6 +8,7 @@ import { Readable } from 'node:stream';
 import type { IncomingMessage } from 'node:http';
 import { createHash } from 'node:crypto';
 import { MacService } from './service.ts';
+import { production_bindings } from './entry.ts';
 import type { MacHostBindings, MacHostContext, MacInvocation } from './contracts.ts';
 import { MacHttpClient } from '../transport/http.ts';
 import { create_mac_catalog } from '../catalog/production.ts';
@@ -57,6 +58,15 @@ test('composes the Mac invocation and joins HTTP, providers and workers before t
     connection_generation: 4,
   });
   const handoff_path = join(root, 'handoff.json');
+  const configuration = {
+    paths: new ExecutorPaths(join(root, 'state')),
+    revision: 'synthetic',
+    executor_id: 'synthetic',
+    panels_server_url: 'https://127.0.0.1:9',
+    identity,
+    runtime: { child: true, ready_path: null, handoff_path },
+  };
+  const production = production_bindings(configuration, environment);
   await writeFile(
     handoff_path,
     JSON.stringify({
@@ -349,42 +359,15 @@ test('composes the Mac invocation and joins HTTP, providers and workers before t
       });
     },
     updates(value) {
+      if (!context) assert.equal(value.runner.planned_update_replay, true);
       context = value;
-      assert.equal(value.runner.planned_update_replay, true);
-      const loop = (name: string) => ({
-        start() {
-          calls.push(name + '-start');
-        },
-        async stop() {
-          calls.push(name + '-stop');
-        },
-        async settled() {},
-      });
-      return {
-        ...loop('updates'),
-        offer() {
-          value.runner.finish_planned_replay();
-          value.runner.resume_after_cancelled_update();
-          calls.push('offer');
-        },
-      };
+      return production.updates(value);
     },
   };
   let service: MacService | undefined;
   const options = () => ({ deadline: performance.now() / 1000 + 10 });
   try {
-    service = await MacService.open(
-      {
-        paths: new ExecutorPaths(join(root, 'state')),
-        revision: 'synthetic',
-        executor_id: 'synthetic',
-        panels_server_url: 'https://127.0.0.1:9',
-        identity,
-        runtime: { child: true, ready_path: null, handoff_path },
-      },
-      bindings,
-      options(),
-    );
+    service = await MacService.open(configuration, bindings, options());
     expect(invocation.child_processes).toBe(service.child_processes);
     expect(invocation.one_shot_children).toBe(service.one_shot_children);
     expect(context.outbox).toBe(service.outbox);

@@ -18,14 +18,17 @@ export class MacInputs {
   private readonly transport: Pick<MacFileTransport, 'download_command_file'>;
   private readonly files: FilesService;
   private readonly paths: ExecutorPaths;
+  private readonly on_failure: (error: unknown) => void;
   constructor(
     transport: Pick<MacFileTransport, 'download_command_file'>,
     files: FilesService,
     paths: ExecutorPaths,
+    on_failure: (error: unknown) => void,
   ) {
     this.transport = transport;
     this.files = files;
     this.paths = paths;
+    this.on_failure = on_failure;
   }
   async download_inputs(command: ChildCommand, signal: AbortSignal): Promise<void> {
     const args = command.arguments;
@@ -104,8 +107,14 @@ export class MacInputs {
         result.status === 'rejected' ? [result.reason] : [],
       );
       if (primary !== undefined && failures.length) failures.unshift(primary);
-      if (failures.length === 1) throw failures[0];
-      if (failures.length) throw new AggregateError(failures, 'Input download and cleanup failed.');
+      if (failures.length) {
+        const error =
+          failures.length === 1
+            ? failures[0]
+            : new AggregateError(failures, 'Input download and cleanup failed.');
+        this.on_failure(error);
+        throw error;
+      }
     }
   }
 }
