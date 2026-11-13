@@ -18,16 +18,19 @@ from tests.integration.test_executor_end_to_end import (
     CutReceiptEndpoint,
     create_mac_ticket,
     make_core,
+    public_ask_id,
     start_ticket_conversation,
 )
 from tests.support.executor_https import HttpsProxy, serve_executor_app, short_transport_root
 from tests.support.synthetic_homes import create_synthetic_homes
 
+from planner.conversation.events import UserInputAnswer
 from planner.conversation.message_content import MessageFile, MessageText
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.db import connect, create_schema
 from planner.execution_identity import AskKind, AskReference, ExecutorIdentity
 from planner.executor.protocol import (
+    DurableAnswer,
     EnvelopeKind,
     ItemBatch,
     ItemBatchReply,
@@ -94,6 +97,7 @@ class NodePeer:
         self.process, self.log = process, log
         self.lock = asyncio.Lock()
         self.sequence = 0
+        self.final: dict[str, Any] = {}
 
     async def line(self) -> dict[str, Any]:
         assert self.process.stdout is not None
@@ -118,18 +122,79 @@ class NodePeer:
             result: dict[str, Any] = reply["result"]
             return result
 
-    async def close(self) -> None:
+    async def close(self) -> dict[str, Any]:
         try:
             if self.process.returncode is None:
-                await self.call("stop")
+                self.final = await self.call("stop")
                 assert self.process.stdin is not None
                 self.process.stdin.close()
                 await asyncio.wait_for(self.process.wait(), 25)
             assert self.process.returncode == 0, self.log.read_text()
+            return self.final
         finally:
             if self.process.returncode is None:
                 os.killpg(self.process.pid, signal.SIGKILL)
                 await self.process.wait()
+
+
+async def start_peer(
+    root: Path,
+    mac_root: Path,
+    proxy: HttpsProxy,
+    environment: dict[str, str],
+    *,
+    sequence: int,
+    revision: str,
+    early_event: bool = False,
+    ready_path: Path | None = None,
+    handoff_path: Path | None = None,
+    catalog_model: str = "scripted",
+    catalog_complete: bool = True,
+) -> NodePeer:
+    source = root / f"node-{sequence}.json"
+    source.write_text(
+        json.dumps(
+            dict(
+                root=str(mac_root),
+                origin=proxy.origin,
+                fixture_origin=proxy.origin,
+                allocated_port=urlsplit(proxy.origin).port,
+                ca_path=str(proxy.ca_path),
+                environment=environment,
+                revision=revision,
+                early_event=early_event,
+                catalog_model=catalog_model,
+                catalog_complete=catalog_complete,
+                runtime=dict(
+                    child=True,
+                    ready_path=None if ready_path is None else str(ready_path),
+                    handoff_path=None if handoff_path is None else str(handoff_path),
+                ),
+            )
+        )
+    )
+    log = root / f"node-{sequence}.log"
+    with log.open("wb") as output:
+        process = await asyncio.create_subprocess_exec(
+            "node",
+            "server/executor/mac/testing/end_to_end.ts",
+            str(source),
+            cwd=ROOT,
+            env=environment,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=output,
+            start_new_session=True,
+        )
+    peer = NodePeer(process, log)
+    try:
+        assert await asyncio.wait_for(peer.line(), 20) == {"ready": True}
+        return peer
+    except BaseException:
+        if process.returncode is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            await process.wait()
+        raise
 
 
 class Harness:
@@ -143,6 +208,7 @@ class Harness:
         system: SqliteProcessConversationSystem,
         app: FastAPI,
         ticket_id: str,
+        environment: dict[str, str],
     ) -> None:
         self.root, self.mac_root, self.endpoint, self.proxy, self.peer = (
             root,
@@ -155,6 +221,47 @@ class Harness:
         self.transport_app, self.ticket_id = app, ticket_id
         self.old_systems: list[SqliteProcessConversationSystem] = []
         self.endpoints = [endpoint]
+        self.environment = environment
+        self.revision = "a" * 40
+        self.mac_sequence = 0
+
+    async def stop_mac(self) -> dict[str, Any]:
+        return await self.peer.close()
+
+    async def start_mac(
+        self,
+        *,
+        revision: str | None = None,
+        ready_path: Path | None = None,
+        handoff_path: Path | None = None,
+        catalog_model: str = "scripted",
+        catalog_complete: bool = True,
+    ) -> None:
+        self.mac_sequence += 1
+        self.revision = revision or self.revision
+        self.peer = await start_peer(
+            self.root,
+            self.mac_root,
+            self.proxy,
+            self.environment,
+            sequence=self.mac_sequence,
+            revision=self.revision,
+            ready_path=ready_path,
+            handoff_path=handoff_path,
+            catalog_model=catalog_model,
+            catalog_complete=catalog_complete,
+        )
+
+        async def leased() -> bool:
+            return (await self.state())["leased"] and self.endpoint.health().presence == "present"
+
+        await eventually(leased, "replacement Node Mac was not leased")
+
+    async def restart_mac(
+        self, *, catalog_model: str = "reconnected-model", catalog_complete: bool = True
+    ) -> None:
+        await self.stop_mac()
+        await self.start_mac(catalog_model=catalog_model, catalog_complete=catalog_complete)
 
     async def restart_vps_core(self) -> None:
         await asyncio.wait_for(self.endpoint.close(), 2)
@@ -275,6 +382,48 @@ class Harness:
             kind,
         )
 
+    def saved_answer(self, ask: AskReference) -> DurableAnswer | None:
+        with contextlib.closing(connect(self.endpoint.db_path)) as connection:
+            key = "ask_id" if ask.kind is AskKind.permission else "request_id"
+            row = connection.execute(
+                "SELECT payload,created_at FROM conversation_events WHERE conversation_id=? "
+                "AND kind=? AND json_extract(payload,?)=? ORDER BY sequence DESC LIMIT 1",
+                (
+                    ask.child.conversation_id,
+                    "permission_answered"
+                    if ask.kind is AskKind.permission
+                    else "user_input_answered",
+                    f"$.{key}",
+                    public_ask_id(ask),
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+            value = json.loads(row[0])
+            answers = (
+                tuple(
+                    UserInputAnswer(key, tuple(answer["answers"]))
+                    for key, answer in value["answers"].items()
+                )
+                if "answers" in value
+                else None
+            )
+            return DurableAnswer(value["answer_id"], ask, value.get("option_id"), row[1], answers)
+
+    def answer_applied(self, ask: AskReference) -> bool:
+        answer = self.saved_answer(ask)
+        if answer is None:
+            return False
+        with contextlib.closing(connect(self.endpoint.db_path)) as connection:
+            return (
+                connection.execute(
+                    "SELECT 1 FROM conversation_events WHERE conversation_id=? "
+                    "AND kind='answer_applied' AND json_extract(payload,'$.answer_id')=?",
+                    (ask.child.conversation_id, answer.answer_id),
+                ).fetchone()
+                is not None
+            )
+
 
 @contextlib.asynccontextmanager
 async def boot(root: Path, *, early_event: bool = False) -> AsyncIterator[Harness]:
@@ -319,37 +468,18 @@ async def boot(root: Path, *, early_event: bool = False) -> AsyncIterator[Harnes
                 }
                 environment.update(homes)
                 environment.update(PLAN_TEST_MODE="1", PLAN_SERVER_URL="http://127.0.0.1:9")
-                source = root / "node.json"
-                source.write_text(
-                    json.dumps(
-                        dict(
-                            root=str(mac_root),
-                            origin=proxy.origin,
-                            fixture_origin=proxy.origin,
-                            allocated_port=urlsplit(proxy.origin).port,
-                            ca_path=str(proxy.ca_path),
-                            environment=environment,
-                            revision="a" * 40,
-                            early_event=early_event,
-                        )
-                    )
+                peer = await start_peer(
+                    root,
+                    mac_root,
+                    proxy,
+                    environment,
+                    sequence=0,
+                    revision="a" * 40,
+                    early_event=early_event,
                 )
-                log = root / "node.log"
-                with log.open("wb") as output:
-                    process = await asyncio.create_subprocess_exec(
-                        "node",
-                        "server/executor/mac/testing/end_to_end.ts",
-                        str(source),
-                        cwd=ROOT,
-                        env=environment,
-                        stdin=asyncio.subprocess.PIPE,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=output,
-                        start_new_session=True,
-                    )
-                peer = NodePeer(process, log)
-                harness = Harness(root, mac_root, endpoint, proxy, peer, system, app, ticket)
-                assert await asyncio.wait_for(peer.line(), 20) == {"ready": True}
+                harness = Harness(
+                    root, mac_root, endpoint, proxy, peer, system, app, ticket, environment
+                )
 
                 async def leased() -> bool:
                     return (await harness.state())[
@@ -372,7 +502,7 @@ async def boot(root: Path, *, early_event: bool = False) -> AsyncIterator[Harnes
                     owned.poll_release.set()
                 try:
                     if peer is not None:
-                        await peer.close()
+                        await (peer if harness is None else harness.peer).close()
                 finally:
                     for owned in [endpoint] if harness is None else harness.endpoints:
                         await owned.close()
