@@ -1,7 +1,10 @@
-/** Offline admission. Candidate entrypoints never run, and every probe belongs to the caller. */
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+/** Candidate package, worker, and tool admission belongs to the invocation child owner. */
+import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, relative } from 'node:path';
+import { isAbsolute, join } from 'node:path';
+import { constants } from 'node:fs';
+import { inside } from '../ticket_scratch/logic.ts';
+import { is_file } from '../backup/evidence.ts';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import type { AppManifest, RuntimeContract, NodeRuntimeContract } from './contracts.ts';
 import { AppValidationError } from './contracts.ts';
@@ -15,7 +18,11 @@ import {
 } from './logic/host.ts';
 import { RUNTIME_ADMISSION_TIMEOUT_SECONDS } from './process_configuration.ts';
 import { find_release_executable } from './process.ts';
-import { run_runtime_json_probe, run_runtime_probe } from './admission_process.ts';
+import {
+  RuntimeProbeUnsettled,
+  run_runtime_json_probe,
+  run_runtime_probe,
+} from './admission_process.ts';
 import { NATIVE_NODE_PROBE } from './admission_probe.ts';
 import { NATIVE_PYTHON_PROBE } from './python_admission_probe.ts';
 import { resolved_path } from '../paths.ts';
@@ -29,9 +36,16 @@ function current(deadline: number): void {
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-function inside(root: string, path: string): boolean {
-  const suffix = relative(root, path);
-  return suffix !== '..' && !suffix.startsWith('../') && !isAbsolute(suffix);
+async function candidate_tool_path(
+  root: string,
+  path: string,
+  executable: boolean,
+): Promise<string> {
+  const actual = await realpath(path);
+  if (!inside(actual, root) || !(await is_file(actual)))
+    throw new AppValidationError('runtime tool resolves outside the candidate or is not a file');
+  if (executable) await access(actual, constants.X_OK);
+  return actual;
 }
 async function host_node(): Promise<string> {
   const found = await find_release_executable('node', { PATH: HOST_PATH });
@@ -154,7 +168,7 @@ export async function validate_node_probe_report(
   )
     throw new AppValidationError('runtime probe reported malformed loaded libraries');
   for (const path of libraries)
-    if (path.endsWith('.node') && !inside(root, await resolved_path(path)))
+    if (path.endsWith('.node') && !inside(await resolved_path(path), root))
       throw new AppValidationError('runtime probe loaded a native addon outside the candidate');
   const declared: unknown = JSON.parse(
     new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
@@ -172,7 +186,7 @@ export async function validate_node_probe_report(
   )
     throw new AppValidationError("runtime probe packages differ from the candidate's own");
   for (const value of Object.values(report.package_paths))
-    if (typeof value !== 'string' || !inside(root, await resolved_path(value)))
+    if (typeof value !== 'string' || !inside(await resolved_path(value), root))
       throw new AppValidationError("runtime probe packages differ from the candidate's own");
 }
 export async function admit_runtime(
@@ -194,6 +208,7 @@ export async function admit_runtime(
     throw new AppValidationError('candidate manifest differs from the admitted receipt');
   current(deadline);
   const state = await mkdtemp(join(tmpdir(), 'panels-runtime-probe-'));
+  let deferred_cleanup = false;
   try {
     for (const name of [
       'config',
@@ -215,7 +230,14 @@ export async function admit_runtime(
     current(deadline);
     if (contract.version === 2) {
       const report = await run_runtime_json_probe(
-        [node, '--input-type=module', '-e', NATIVE_NODE_PROBE, root],
+        [
+          node,
+          '--experimental-import-meta-resolve',
+          '--input-type=module',
+          '-e',
+          NATIVE_NODE_PROBE,
+          root,
+        ],
         state,
         deadline,
         child_processes,
@@ -224,7 +246,7 @@ export async function admit_runtime(
     } else {
       await run_runtime_probe(
         [
-          join(root, '.venv/bin/python'),
+          await candidate_tool_path(root, join(root, '.venv/bin/python'), true),
           '-I',
           '-B',
           '-c',
@@ -239,15 +261,26 @@ export async function admit_runtime(
       );
     }
     current(deadline);
-    for (const command of native_tool_commands(
-      root,
-      contract,
-      contract.version === 2 ? node : 'node',
-    )) {
+    for (const command of native_tool_commands(root, contract, node)) {
+      for (const [index, value] of command.entries()) {
+        if (index === 0 && value === node) continue;
+        if (isAbsolute(value)) command[index] = await candidate_tool_path(root, value, index === 0);
+      }
+      current(deadline);
       await run_runtime_probe(command, state, deadline, child_processes);
       current(deadline);
     }
+  } catch (error) {
+    if (error instanceof RuntimeProbeUnsettled) {
+      deferred_cleanup = true;
+      void error.settled
+        .finally(() => rm(state, { recursive: true, force: true }))
+        .catch((failure) => {
+          console.error(`Runtime probe deferred cleanup failed for ${state}: ${String(failure)}`);
+        });
+    }
+    throw error;
   } finally {
-    await rm(state, { recursive: true, force: true });
+    if (!deferred_cleanup) await rm(state, { recursive: true, force: true });
   }
 }

@@ -1,4 +1,6 @@
 /** Trusted v1 compatibility probe. It runs only the candidate's own CPython. */
+import { GLIBC_LIBRARIES } from '../updates/logic/runtime_contract.ts';
+import { SYSTEM_LIBRARY_DIRECTORIES } from './native/configuration.ts';
 export const NATIVE_PYTHON_PROBE = String.raw`
 import sys, pathlib, json, os
 root = pathlib.Path(sys.argv[1]).resolve()
@@ -69,14 +71,17 @@ try:
 finally:
     loop.close()
 loaded = set()
-external = set(json.loads(sys.argv[3]))
+external = set(${JSON.stringify(GLIBC_LIBRARIES)})
+system_directories = {pathlib.Path(path).resolve() for path in ${JSON.stringify(SYSTEM_LIBRARY_DIRECTORIES)}
+                      if pathlib.Path(path).is_dir()}
 for line in pathlib.Path("/proc/self/maps").read_text().splitlines():
-    path = line.split()[-1]
-    if not path.startswith("/") or ".so" not in pathlib.Path(path).name:
+    parts = line.split(maxsplit=5)
+    if len(parts) < 6 or "x" not in parts[1] or not parts[5].startswith("/"):
         continue
-    resolved = pathlib.Path(path).resolve()
+    resolved = pathlib.Path(parts[5]).resolve()
     loaded.add(str(resolved))
-    assert resolved.is_relative_to(root) or resolved.name in external, str(resolved)
+    assert resolved.is_relative_to(root) or (
+        resolved.parent in system_directories and resolved.name in external), str(resolved)
 assert any("libicu" in path and pathlib.Path(path).is_relative_to(root) for path in loaded)
 print(json.dumps({"libraries": sorted(loaded), "python": sys.version.split()[0],
                   "prefix": sys.prefix, "native": "passed"}))
