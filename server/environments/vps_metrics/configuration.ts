@@ -1,6 +1,5 @@
 import { dirname, basename, join } from 'node:path';
 import { MetricsValueError } from './contracts.ts';
-import { pythonRepr } from '../../core/config.ts';
 import { resolved_path } from '../paths.ts';
 export interface MetricsConfig {
   idle_seconds: number;
@@ -84,8 +83,8 @@ function configured_number(raw: string, integer: boolean): number {
   if (!valid)
     throw new MetricsValueError(
       integer
-        ? `invalid literal for int() with base 10: ${pythonRepr(raw)}`
-        : `could not convert string to float: ${pythonRepr(raw)}`,
+        ? `Invalid integer: ${JSON.stringify(raw)}`
+        : `Invalid number: ${JSON.stringify(raw)}`,
     );
   if (/^[+-]?inf(?:inity)?$/i.test(text)) return text.startsWith('-') ? -Infinity : Infinity;
   return Number(text.replaceAll('_', ''));

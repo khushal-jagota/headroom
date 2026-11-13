@@ -4,8 +4,6 @@ import { dirname, isAbsolute, join, relative } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import koffi from 'koffi';
-import { stringify_python_json } from '../../core/http/numeric_json.ts';
-import { strip } from '../../projects/logic/index.ts';
 import {
   acquire_server_lifecycle_lease,
   resolve_server_lifecycle_lease_path,
@@ -141,8 +139,8 @@ export async function write_manifest(
 function integer(value: unknown): number {
   if (typeof value === 'boolean') return Number(value);
   if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
-  if (typeof value === 'string' && /^[+-]?\d(?:_?\d)*$/.test(strip(value)))
-    return Number(strip(value).replaceAll('_', ''));
+  if (typeof value === 'string' && /^[+-]?\d(?:_?\d)*$/.test(value.trim()))
+    return Number(value.trim().replaceAll('_', ''));
   throw new TypeError('invalid integer');
 }
 function port_from_payload(payload: Record<string, unknown>): EnvironmentPortPolicy {
@@ -396,8 +394,5 @@ export function manifest_to_json(
   manifest: EnvironmentManifest,
   options: { prepared?: boolean; running?: boolean } = {},
 ): string {
-  return stringify_python_json(manifest_to_json_dict(manifest, options), {
-    sort_keys: true,
-    ensure_ascii: true,
-  });
+  return JSON.stringify(manifest_to_json_dict(manifest, options));
 }

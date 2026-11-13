@@ -3,7 +3,7 @@ import { Readable } from 'node:stream';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Config } from './config.ts';
-import { SSE_HEARTBEAT_MS, pythonRepr } from './config.ts';
+import { SSE_HEARTBEAT_MS } from './config.ts';
 import type { Clock } from './clock.ts';
 import { TestClock } from './clock.ts';
 import { PlannerError } from './contracts.ts';
@@ -133,7 +133,7 @@ export async function registerCoreRoutes(
             try {
               new TestClock(raw);
             } catch {
-              throw new PlannerError('validation', `invalid ISO datetime: ${pythonRepr(raw)}`);
+              throw new PlannerError('validation', `invalid ISO datetime: ${JSON.stringify(raw)}`);
             }
             if (!(clock instanceof TestClock))
               throw new PlannerError(

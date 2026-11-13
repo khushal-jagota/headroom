@@ -9,7 +9,6 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import type { Database, ReadSql } from '../core/database/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
-import { pythonRepr } from '../core/config.ts';
 import { PlannerError } from '../core/contracts.ts';
 import {
   ConversationRoleMaterials,
@@ -631,8 +630,8 @@ export function read_manager_conversation_history(
           .map(
             ([key, value]) =>
               [
-                typeof key === 'string' ? key : pythonRepr(key),
-                typeof value === 'string' ? value : pythonRepr(value),
+                typeof key === 'string' ? key : JSON.stringify(key),
+                typeof value === 'string' ? value : JSON.stringify(value),
               ] as const,
           ),
       );

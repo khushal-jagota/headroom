@@ -3,7 +3,7 @@ import koffi from 'koffi';
 import { PlannerError } from '../../core/contracts.ts';
 import type { ReadSql, TransactionSql } from '../../core/database/contracts.ts';
 import type { CreateProjectBody, Project, UpdateProjectBody } from '../contracts.ts';
-import { projectIdForName, strip } from '../logic/index.ts';
+import { projectIdForName } from '../logic/index.ts';
 
 const libc = koffi.load(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6');
 const passwordEntry = koffi.struct('CatalogPasswordEntry', {
@@ -44,7 +44,7 @@ export function resolveProject(
   if (project !== null) {
     byName =
       sql.get<Project>(`SELECT ${COLUMNS} FROM projects WHERE name = ? COLLATE NOCASE`, [
-        strip(project),
+        project.trim(),
       ]) ?? null;
     if (!byName) throw new PlannerError('validation', 'invalid project', { project });
   }
@@ -83,8 +83,8 @@ function normalizeFolderPath(raw: string | null): string | null {
   );
 }
 export function createProject(tx: TransactionSql, body: CreateProjectBody, now: number): Project {
-  const name = strip(body.name),
-    summary = strip(body.summary),
+  const name = body.name.trim(),
+    summary = body.summary.trim(),
     folder_path = normalizeFolderPath(body.folder_path ?? null);
   if (!name) throw new PlannerError('validation', 'project name is required');
   if (tx.get('SELECT 1 FROM projects WHERE name = ? COLLATE NOCASE', [name]))
@@ -107,11 +107,11 @@ export function updateProject(
 ): Project {
   const updates: Record<string, string | null> = {};
   if (body.name !== undefined) {
-    const name = strip(body.name);
+    const name = body.name.trim();
     if (!name) throw new PlannerError('validation', 'project name is required');
     updates.name = name;
   }
-  if (body.summary !== undefined) updates.summary = strip(body.summary);
+  if (body.summary !== undefined) updates.summary = body.summary.trim();
   if ('folder_path' in body) updates.folder_path = normalizeFolderPath(body.folder_path!);
   if (!Object.keys(updates).length)
     throw new PlannerError('validation', 'no project fields to update');

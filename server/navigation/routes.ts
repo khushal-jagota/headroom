@@ -13,7 +13,6 @@ import { SnapshotFences } from './delivery/snapshot_fence.ts';
 import { DELIVERY } from './delivery/configuration.ts';
 import { parseView } from './logic/view.ts';
 import { NavigationUnavailable } from './logic/errors.ts';
-import { jsonFailure } from '../core/http/json.ts';
 import { scalarQueries } from '../list_reads/http.ts';
 import { validateInstallation } from './publication.ts';
 import { install_request_lifetime } from '../core/http/lifetime.ts';
@@ -48,14 +47,7 @@ function view(request: FastifyRequest, reply: FastifyReply): ViewRequest | null 
   try {
     return parseView(JSON.parse(value.view));
   } catch (error) {
-    let detail = (error as Error).message;
-    if (error instanceof SyntaxError) {
-      const failure = jsonFailure(value.view);
-      const before = [...value.view].slice(0, failure.position).join('');
-      const line = before.split('\n').length,
-        column = [...before.slice(before.lastIndexOf('\n') + 1)].length + 1;
-      detail = `${failure.message}: line ${line} column ${column} (char ${failure.position})`;
-    }
+    const detail = (error as Error).message;
     reply.code(400).send({ detail });
     return null;
   }

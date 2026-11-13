@@ -2,7 +2,7 @@
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
 import { send, emit as emit_text, fail_validation } from '../../cli/http.ts';
 import { emit } from '../../cli/measure_io.ts';
-import { python_text } from '../../cli/python_text.ts';
+import { scalar_text } from '../../cli/text.ts';
 import { response_field } from '../../cli/response_field.ts';
 const quote = (value: string) =>
   encodeURIComponent(value).replace(
@@ -46,6 +46,6 @@ export async function run_credential_command(inv: Invocation): Promise<CommandRe
     : emit_text(
         result,
         false,
-        `API key request ${python_text(response_field(inv, result, 'state'))}: ${python_text(response_field(inv, result, 'name'))}`,
+        `API key request ${scalar_text(response_field(inv, result, 'state'))}: ${scalar_text(response_field(inv, result, 'name'))}`,
       );
 }

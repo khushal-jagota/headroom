@@ -462,7 +462,7 @@ export class VideoUploadService {
       const temporary = join(dirname(target), '.' + randomUUID().replaceAll('-', ''));
       try {
         // A ready upload carries the media type from the completed probe.
-        if (row.media_type === null) throw new TypeError('data must be str, not NoneType');
+        if (row.media_type === null) throw new TypeError('Uploaded media requires a media type');
         writeFileSync(temporary, row.media_type, 'utf8');
         renameSync(temporary, metadata);
       } finally {

@@ -22,7 +22,7 @@ import { resolve_path_sync } from '../core/path_resolution.ts';
 import { pure_posix_path } from '../core/python_path.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import { observe_shutdown } from '../conversation/shutdown.ts';
-import { python_str } from '../conversation/backends/claude_agent_sdk/failure_summary.ts';
+import { display_text } from '../conversation/backends/claude_agent_sdk/failure_summary.ts';
 import { python_truth } from '../conversation/backends/claude_agent_sdk/events.ts';
 import { now_ms } from './clock.ts';
 import { ProtocolRefused, KeyError, ValueError } from './protocol.ts';
@@ -56,12 +56,12 @@ function raise_for(outcome: WireTypes['CommandOutcome']): void {
     throw new backend.RemoteCommandUncertain(outcome.command_id);
   if (outcome.disposition !== 'refused') return;
   const result = outcome.result;
-  const error_name = python_str(
+  const error_name = display_text(
     Object.hasOwn(result, 'error_type') ? result.error_type : 'BackendSpawnFailed',
   );
   if (error_name === 'BackendPromptRejected')
     throw new backend.BackendPromptRejected(
-      python_str(
+      display_text(
         Object.hasOwn(result, 'error_message') ? result.error_message : 'provider rejected prompt',
       ),
     );
@@ -78,7 +78,7 @@ function raise_for(outcome: WireTypes['CommandOutcome']): void {
     ? errors[error_name]!
     : backend.BackendSpawnFailed;
   throw new ErrorType(
-    python_str(
+    display_text(
       Object.hasOwn(result, 'error_message') ? result.error_message : 'remote operation refused',
     ),
   );
@@ -299,7 +299,7 @@ export class MacRemoteChild implements BackendChild {
     if (!Object.hasOwn(result, 'kind')) throw new KeyError('kind');
     if (result.kind === 'steer_refused') {
       if (!Object.hasOwn(result, 'refusal_reason')) throw new KeyError('refusal_reason');
-      const reason = python_str(result.refusal_reason);
+      const reason = display_text(result.refusal_reason);
       if (
         !Object.values(PromptDeliveryRefusalReason).includes(reason as PromptDeliveryRefusalReason)
       )
