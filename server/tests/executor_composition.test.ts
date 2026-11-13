@@ -1,6 +1,5 @@
 /** Actual startup preserves retained turns and keeps away/unconfigured Mac work remote. */
 import { dirname, join } from 'node:path';
-import { readFileSync } from 'node:fs';
 import { expect, test, vi } from 'vitest';
 import { fixture, fixture_path, create } from './ticket_fixture.ts';
 import { startServer } from '../core/start.ts';
@@ -28,20 +27,11 @@ test('configured restart adopts before reconciliation and Mac locality never sel
   const database = fixture(),
     path = fixture_path(database),
     root = dirname(path);
-  const schema = JSON.parse(
-    readFileSync(new URL('../core/database/application_schema.json', import.meta.url), 'utf8'),
-  ) as { statements: string[] };
   database.write((tx) => {
     // Reuse the staged lifecycle host's prepared navigation frontier.
     tx.run("INSERT INTO navigation_meta VALUES(1,'source',7,'old-view',0)");
     tx.run('INSERT INTO chief_page(singleton) VALUES(1)');
     tx.run("INSERT INTO conversation_runtime_epoch VALUES(1,'old-runtime')");
-    // The shared fixture already supplies runs, inbox positions and assignments.
-    for (const statement of schema.statements.filter((sql) =>
-      /^CREATE TABLE (mac_executor_presence|executor_commands|executor_incarnations) \(/.test(sql),
-    )) {
-      tx.run(statement);
-    }
   });
   const ticket = create(database, { locale: 'macos' });
   const initial = new ConversationStore(database, { integer_now: () => 100 });
