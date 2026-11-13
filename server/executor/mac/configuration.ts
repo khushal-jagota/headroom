@@ -80,7 +80,7 @@ export const NATIVE_WORKER_CONTEXT =
   'PLAN_TICKET_FILES_DIR. Keep served /files/tickets/<ticket-id>/<relative-path> ' +
   'links in Ticket fields.';
 
-export const MAC_UPDATE_SCHEMA_VERSION = 1;
+export { MAC_UPDATE_SCHEMA_VERSION } from '../configuration.ts';
 export const MAC_RUNTIME_UPDATE_EXIT_CODE = 75;
 export const MAC_RUNTIME_CHILD_ENV = 'PLAN_EXECUTOR_RUNTIME_CHILD';
 export const MAC_RUNTIME_READY_ENV = 'PLAN_EXECUTOR_RUNTIME_READY';

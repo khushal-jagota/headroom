@@ -57,6 +57,10 @@ The same exported schema carries minimal Python annotations for field declaratio
 
 `vps_mailbox.ts::SqliteCommandMailbox` takes the application's Database and an optional millisecond clock. The existing synchronous write door owns command admission, run custody and result persistence. Polls capture raw rows, then decode commands and prepare settlement text outside the writer. The final writer checks every selected row against that preparation before any effect, reads current expiry facts and applies changes atomically. A changed selection retries preparation. Stored decoding errors surface only at Python's corresponding row visit and roll the writer back. In-memory waits observe committed rows. A canceled put observer leaves the admitted commit and its wake intact.
 
+With 50,000 old rows and a poll at the 4 MiB byte bound, the measured largest event-loop gap is 72.6 ms. The Manager accepts that cost for a poll every few seconds. Gate 3 must compare this baseline with the real table size on a copy of live data.
+
+The fixture reactivates 3,000 of its 50,000 history rows as waiting commands (504,801 encoded bytes), leaving 47,000 closed history rows. Their replacement takes 338.5 ms inside the actual transaction and 365.3 ms through reply encoding. The largest measured event-loop gap is 377.2 ms. Python completes the corresponding lease in 110.2 ms. This lease cost remains synchronous; Gate 3 must compare it with the real replacement backlog beside the poll baseline.
+
 Replacement withdraws waiting commands in the lease transaction. Delivered commands settle from the successor's journal cursor. A successful stop result stays delivered until `finish_by_proof` supplies actual child-stop evidence. `publish_settlements` wakes one command's waiters before its listener, then advances to the next command. A listener failure leaves the whole committed batch durable.
 
 Sequence, turn and recovery counters retain exact SQL text reads and bigint bindings. Public values use the shared codec's safe-number or exact-marker rule. Command rows use Pydantic bytes. Outcome rows use validated object conversion followed by sorted standard-library JSON.
