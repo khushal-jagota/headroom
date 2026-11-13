@@ -3,6 +3,7 @@
  * Copyright (c) 2026 T3 Tools Inc. MIT. See T3-LICENSE.
  * Effect construction becomes injected asynchronous dependencies with Python's cache policy.
  */
+import { is_record as object } from '../../core/records.ts';
 import { access, readFile, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
@@ -54,8 +55,6 @@ interface ScannedDirectory {
   readonly volumeId: string;
   readonly files: readonly { path: string; records: readonly UsageRecord[] }[] | null;
 }
-const object = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
 function decodeCacheDocument(raw: Uint8Array): unknown {
   // Path.read_text rejects invalid UTF-8 and leaves a text BOM for json.loads to reject.
   const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(raw);

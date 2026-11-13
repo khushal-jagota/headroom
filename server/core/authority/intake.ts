@@ -1,3 +1,4 @@
+import { is_record } from '../records.ts';
 import type { FastifyRequest } from 'fastify';
 import { PlannerError } from '../contracts.ts';
 import type { Principal } from '../contracts.ts';
@@ -15,13 +16,10 @@ import {
 } from './service.ts';
 import type { AuthoritySql, Target } from './service.ts';
 function object(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+  return is_record(value) ? value : {};
 }
 function principal(raw: unknown): Principal {
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw))
-    throw new PlannerError('validation', 'target must be a principal object');
+  if (!is_record(raw)) throw new PlannerError('validation', 'target must be a principal object');
   const value = object(raw),
     kind = value.kind;
   if (typeof kind !== 'string' || !['owner', 'chief', 'manager', 'ticket', 'goal'].includes(kind))

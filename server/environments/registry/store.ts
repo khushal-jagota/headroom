@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import koffi from 'koffi';
+import { flock } from '../../core/locks/flock.ts';
 import {
   acquire_server_lifecycle_lease,
   resolve_server_lifecycle_lease_path,
@@ -40,15 +40,6 @@ import {
 
 export const MANIFEST_FILENAME = 'manifest.json';
 export const FAKE_FIXTURE_VERSION = 'fake-fixture-v1';
-const libc = koffi.load(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6');
-const flock = libc.func('int flock(int fd, int operation)');
-function registry_flock(descriptor: number, operation: number): number {
-  let result: number;
-  do {
-    result = flock(descriptor, operation);
-  } while (result !== 0 && koffi.errno() === 4); // EINTR: Python retries the interrupted syscall.
-  return result;
-}
 
 export async function with_registry_lock<T>(
   root: string,
@@ -65,8 +56,8 @@ export async function with_registry_lock<T>(
     0o600,
   );
   try {
-    if (registry_flock(descriptor, 2) !== 0) {
-      const error = koffi.errno();
+    const error = flock(descriptor, 'exclusive');
+    if (error !== 0) {
       if ([11, 13, 35].includes(error))
         throw new EnvironmentValidationError(`environment registry is locked: ${resolved}`);
       throw new Error(`flock failed: errno ${error}`);
@@ -74,7 +65,7 @@ export async function with_registry_lock<T>(
     return await action();
   } finally {
     try {
-      registry_flock(descriptor, 8);
+      flock(descriptor, 'unlock');
     } finally {
       closeSync(descriptor);
     }

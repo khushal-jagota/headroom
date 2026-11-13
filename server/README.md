@@ -13,6 +13,8 @@ with the prepared repository's CLI and retains its reserved listener. `serve` us
 foreground supervisor, and `restart` requests replacement through its control socket.
 The installed wrapper and production deployment remain separate cutover work.
 
+`core/promise_observer.ts` limits ordinary promise waits without cancelling admitted work. Shutdown retains its absolute deadline and separate settlement path.
+
 From the repository root:
 
 ```sh
@@ -218,6 +220,8 @@ The 45-second value starts forced termination; it does not claim unconditional p
 Node timers cannot interrupt synchronous JavaScript or SQLite. The separate supervisor fallback is required for a blocked application loop.
 New TypeScript packaging must consume the exported 60-second supervisor APP fallback. Packaged policy uses an 80-second stop client and a 90-second outer unit phase. The legacy Python rehearsal's 30-second unit is not its rehearsal route. Those packaged consumers remain unmerged and unproved by this application change.
 Real new-unit/supervisor timeout proofs remain part of the later packaging work.
+
+`core/locks/flock.ts` owns advisory lock calls and retries interruptions. Callers retain file permissions, contention errors, and lock lifetimes.
 
 Registry mutation and direct startup share a stable database-derived authority outside the instance tree.
 Reset/remove hold it through the complete swap, walk, and manifest publication. They also retain the legacy supervisor and DB locks.

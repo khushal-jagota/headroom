@@ -1,4 +1,5 @@
 import type { TicketStates } from './contracts.ts';
+import { path_is_within } from '../../core/path_containment.ts';
 import { SETTLE_SECONDS } from './configuration.ts';
 
 const TICKET_ID = /t_[0-9abcdefghjkmnpqrstuvwxyz]{8}(?![a-z0-9])/;
@@ -20,9 +21,6 @@ export function finished(ticket_id: string, states: TicketStates, now: number): 
   const state = states.get(ticket_id);
   return state === undefined || (state[0] === 'done' && state[1] <= now - SETTLE_SECONDS);
 }
-export function inside(path: string, root: string): boolean {
-  return path === root || path.startsWith(root.endsWith('/') ? root : root + '/');
-}
 /** Python sorts Unicode code points and compares Path components separately. */
 export function compare_strings(left: string, right: string): number {
   const a = Array.from(left, (value) => value.codePointAt(0)!);
@@ -40,4 +38,8 @@ export function compare_paths(left: string, right: string): number {
     if (order !== 0) return order;
   }
   return a.length - b.length;
+}
+/** Release callers retain this argument order until their shared-helper migration. */
+export function inside(path: string, root: string): boolean {
+  return path_is_within(root, path);
 }

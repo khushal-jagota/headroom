@@ -49,19 +49,3 @@ export class TurnInFlight {
 export function same_turn(one: TurnToken, other: TurnToken): boolean {
   return one.conversation_id === other.conversation_id && one.turn_number === other.turn_number;
 }
-export async function bounded<T>(
-  task: Promise<T>,
-  seconds: number,
-): Promise<{ completed: true; value: T } | { completed: false }> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      task.then((value) => ({ completed: true as const, value })),
-      new Promise<{ completed: false }>((resolve) => {
-        timer = setTimeout(() => resolve({ completed: false }), seconds * 1000);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}

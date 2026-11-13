@@ -18,7 +18,7 @@
  * @module usageScanCache
  */
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NodePath from 'node:path';
+import { path_is_within } from '../../core/path_containment.ts';
 
 import type { UsageProviderKind } from './contracts.ts';
 
@@ -328,15 +328,7 @@ export function pruneScanCache(cache: ScanCache, options: PruneOptions): number 
   let removed = 0;
   for (const [path, entry] of cache) {
     const agedOut = entry.mtimeMs < options.retentionCutoffMs;
-    const underWalkedRoot = options.walkedRoots.some((root) => {
-      const relative = NodePath.relative(root, path);
-      return (
-        relative === '' ||
-        (relative !== '..' &&
-          !relative.startsWith(`..${NodePath.sep}`) &&
-          !NodePath.isAbsolute(relative))
-      );
-    });
+    const underWalkedRoot = options.walkedRoots.some((root) => path_is_within(root, path));
     const deleted =
       underWalkedRoot && entry.mtimeMs >= options.windowStartMs && !options.livePaths.has(path);
     if (agedOut || deleted) {

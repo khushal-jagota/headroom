@@ -33,7 +33,7 @@ import type { PublishedFiles } from './data/inbox.ts';
 import { open_child_assignment } from './data/child_custody.ts';
 import { AgentWrites } from './vps_agent_writes.ts';
 import { now_ms } from './clock.ts';
-import { answer_by } from './item_budget.ts';
+import { observe_promise } from '../core/promise_observer.ts';
 import { is_json_object } from './protocol_json.ts';
 import { MAC_ITEM_RETRY_LATER_SECONDS, MAX_ITEM_BATCH_ITEMS } from './configuration.ts';
 
@@ -256,14 +256,14 @@ export class MacInbox {
       const earlier = this.still_settling.get(id);
       if (earlier) {
         // An earlier rejection is already observed. It does not poison the next item.
-        const settled = await answer_by(
+        const settled = await observe_promise(
           earlier.then(
             () => undefined,
             () => undefined,
           ),
-          deadline,
+          Math.max(deadline * 1000 - performance.now(), 0),
         );
-        if (!settled.done)
+        if (!settled.completed)
           throw retry("An earlier attempt at this conversation's item is still settling");
         this.still_settling.delete(id);
       }
@@ -287,7 +287,7 @@ export class MacInbox {
       void task.catch(() => {});
       let result;
       try {
-        result = await answer_by(task, deadline);
+        result = await observe_promise(task, Math.max(deadline * 1000 - performance.now(), 0));
       } catch (error) {
         if (storage_error(error))
           throw retry(
@@ -295,7 +295,7 @@ export class MacInbox {
           );
         throw error;
       }
-      if (result.done) return result.value;
+      if (result.completed) return result.value;
       this.still_settling.set(id, task);
       const clear = () => {
         if (this.still_settling.get(id) === task) this.still_settling.delete(id);

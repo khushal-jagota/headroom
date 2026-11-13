@@ -4,6 +4,7 @@ import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import type { WorkerUnit } from '../../worker_unit/index.ts';
 import { CHILD_KILL_WAIT_SECONDS, CHILD_SHUTDOWN_GRACE_SECONDS } from './configuration.ts';
 import { CodexChildWouldNotStart } from './errors.ts';
+import { observe_promise } from '../../../core/promise_observer.ts';
 
 export interface CodexProcessOptions {
   child_processes: OwnedChildProcesses;
@@ -83,28 +84,15 @@ export class OwnedCodexProcess {
   private async stop_group(): Promise<void> {
     this.child.stdin.end();
     this.signal_group('SIGTERM');
-    if (!(await within(this.exited, CHILD_SHUTDOWN_GRACE_SECONDS))) {
+    if (!(await observe_promise(this.exited, CHILD_SHUTDOWN_GRACE_SECONDS * 1000)).completed) {
       this.signal_group('SIGKILL');
-      if (!(await within(this.exited, CHILD_KILL_WAIT_SECONDS)))
+      if (!(await observe_promise(this.exited, CHILD_KILL_WAIT_SECONDS * 1000)).completed)
         throw new CodexChildWouldNotStart('the codex process did not exit after SIGKILL');
     }
     // Never signal a retired group, even if descendants still hold output pipes.
     this.child.stdout.destroy();
     this.child.stderr.destroy();
     this.child.stdin.destroy();
-  }
-}
-export async function within(task: Promise<unknown>, seconds: number): Promise<boolean> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      task.then(() => true),
-      new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(false), seconds * 1000);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
   }
 }
 export async function spawn_codex_process(
