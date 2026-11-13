@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
+import stat
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -123,32 +125,78 @@ def install(
         raise ValueError("machine credential file is missing")
     # Validate service inputs before an install can mutate the destination.
     render_service(configuration, installation / "releases/validation")
-    runtime = extract_runtime(
-        archive,
-        installation / "releases",
-        expected_sha256=archive_sha256,
-        expected_size=archive_size,
-        expected_revision=configuration.revision,
-    )
-    manifest = validate_app_manifest(
-        runtime / "manifest.json",
-        require_runtime=True,
-        verify_artifact_digest=False,
-        expected_target=LINUX_EXECUTOR,
-    )
-    if manifest.runtime_contract is None:
-        raise ValueError("Linux executor requires its runtime contract")
-    with tempfile.TemporaryDirectory(prefix="panels-linux-install-") as state:
-        LinuxRuntime().verify_host(manifest.runtime_contract, state=Path(state))
-    data.mkdir(parents=True, exist_ok=True, mode=0o700)
-    data.chmod(0o700)
-    write_credential(credential_path(data), credential)
-    unit_directory.mkdir(parents=True, exist_ok=True)
-    unit = unit_directory / "panels-executor.service"
-    temporary = unit.with_suffix(".service.tmp")
-    temporary.write_text(render_service(configuration, runtime))
-    temporary.replace(unit)
-    return unit
+    releases = installation / "releases"
+    new_directories: set[Path] = set()
+    for root in (releases, data, unit_directory):
+        for directory in (root, *root.parents):
+            if directory.exists():
+                break
+            new_directories.add(directory)
+    data_mode = stat.S_IMODE(data.stat().st_mode) if data.exists() else None
+    runtime: Path | None = None
+    created_files: list[Path] = []
+    try:
+        runtime = extract_runtime(
+            archive,
+            releases,
+            expected_sha256=archive_sha256,
+            expected_size=archive_size,
+            expected_revision=configuration.revision,
+        )
+        manifest = validate_app_manifest(
+            runtime / "manifest.json",
+            require_runtime=True,
+            verify_artifact_digest=False,
+            expected_target=LINUX_EXECUTOR,
+        )
+        if manifest.runtime_contract is None:
+            raise ValueError("Linux executor requires its runtime contract")
+        with tempfile.TemporaryDirectory(prefix="panels-linux-install-") as state:
+            LinuxRuntime().verify_host(manifest.runtime_contract, state=Path(state))
+        data.mkdir(parents=True, exist_ok=True, mode=0o700)
+        data.chmod(0o700)
+        created_files.append(credential_path(data))
+        write_credential(credential_path(data), credential)
+        unit_directory.mkdir(parents=True, exist_ok=True)
+        unit = unit_directory / "panels-executor.service"
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            prefix=".panels-executor-",
+            suffix=".service",
+            dir=unit_directory,
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            created_files.append(temporary_path)
+            temporary.write(render_service(configuration, runtime))
+        created_files.append(unit)
+        temporary_path.replace(unit)
+        return unit
+    except BaseException as error:
+        for path in reversed(created_files):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as cleanup_error:
+                error.add_note(f"Could not remove installer file {path}: {cleanup_error}")
+        if runtime is not None and runtime.parent == releases:
+            try:
+                shutil.rmtree(runtime)
+            except OSError as cleanup_error:
+                error.add_note(f"Could not remove installer runtime {runtime}: {cleanup_error}")
+        if data_mode is not None:
+            try:
+                data.chmod(data_mode)
+            except OSError as cleanup_error:
+                error.add_note(f"Could not restore data folder permissions: {cleanup_error}")
+        for directory in sorted(new_directories, key=lambda path: len(path.parts), reverse=True):
+            try:
+                directory.rmdir()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                # A foreign file makes this folder nonempty. Preserve it.
+                pass
+        raise
 
 
 def main() -> None:

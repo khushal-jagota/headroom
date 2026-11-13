@@ -136,3 +136,63 @@ def test_reinstall_refuses_before_selected_runtime_or_credentials_change(
     assert old_credential.read_text() == "private-existing-credential"
     assert unit.read_text() == "existing service"
     assert not config.installation.exists()
+
+
+def test_failed_first_install_removes_own_files_and_allows_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Late unit publication failure must not turn a first install into a reinstall."""
+    config = configuration(tmp_path)
+    credential = tmp_path / "credential.json"
+    write_credential(credential, "a" * 43)
+    releases = config.installation / "releases"
+    releases.mkdir(parents=True)
+    foreign_runtime_file = config.installation / "keep.txt"
+    foreign_runtime_file.write_text("keep installation content")
+    units = tmp_path / "units"
+    units.mkdir()
+    foreign_unit_file = units / "panels-executor.service.tmp"
+    foreign_unit_file.write_text("keep unrelated temporary file")
+    runtime = releases / "new-runtime"
+
+    def extract(*args: object, **kwargs: object) -> Path:
+        runtime.mkdir()
+        (runtime / "payload").write_text("new runtime")
+        return runtime
+
+    monkeypatch.setattr("planner.environments.linux_executor_runtime.extract_runtime", extract)
+    monkeypatch.setattr(
+        "planner.environments.app.validate_app_manifest",
+        lambda *a, **kw: SimpleNamespace(runtime_contract=object()),
+    )
+    monkeypatch.setattr(
+        "planner.platform_runtime.linux.runtime.LinuxRuntime.verify_host",
+        lambda *a, **kw: None,
+    )
+    replace_path = Path.replace
+
+    def fail_publication(path: Path, target: Path) -> Path:
+        if path.parent == units:
+            raise OSError("unit publication failed")
+        return replace_path(path, target)
+
+    arguments = dict(
+        archive=tmp_path / "archive.tar.gz",
+        archive_sha256="a" * 64,
+        archive_size=123,
+        credential_file=credential,
+        unit_directory=units,
+    )
+    with monkeypatch.context() as failure:
+        failure.setattr(Path, "replace", fail_publication)
+        with pytest.raises(OSError, match="unit publication failed"):
+            install(config, **arguments)
+    assert not config.data.exists()
+    assert releases.is_dir() and list(releases.iterdir()) == []
+    assert foreign_runtime_file.read_text() == "keep installation content"
+    assert list(units.iterdir()) == [foreign_unit_file]
+    assert foreign_unit_file.read_text() == "keep unrelated temporary file"
+    unit = install(config, **arguments)
+    assert unit.read_text() == render_service(config, runtime)
+    assert foreign_unit_file.read_text() == "keep unrelated temporary file"
