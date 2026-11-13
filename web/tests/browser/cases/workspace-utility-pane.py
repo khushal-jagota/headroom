@@ -2488,10 +2488,13 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     set_lines(3)
     panel_settled()
     before = panel.bounding_box()["height"]
-    keyboard_request()
-    refresh()
-    expect(text).to_have_count(0)
-    sample_change('keyboard-no-pointer', lambda: None)
+    def keyboard_shrink():
+        keyboard_request()
+        refresh()
+        expect(text).to_have_count(0)
+    # Arm frame capture before the request. Response/refresh roundtrips can consume
+    # the transition on a loaded host, even though the production motion is correct.
+    sample_change('keyboard-no-pointer', keyboard_shrink)
     after = panel.bounding_box()["height"]
     assert after < before - 20
     assert any(after + 1 < frame["height"] < before - 1 for frame in proof["samples"][-1]["frames"]), proof["samples"][-1]

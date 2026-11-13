@@ -626,8 +626,10 @@ def touch_overlap(browser, url):
     last = long_panel.get_by_role("checkbox", name="Long item 29", exact=True)
     # A normal tap must stay quiet: no pending-save text, no panel height change.
     before = long_panel.bounding_box()
+    last_box = last.bounding_box()
     last.tap()
     expect(last).to_have_attribute("aria-checked", "true")
+    last_checked = last.get_attribute("aria-checked")
     expect(long_panel.get_by_text("Saving checklist…")).to_have_count(0)
     after = long_panel.bounding_box()
     assert before and after and before["height"] == after["height"]
@@ -641,8 +643,8 @@ def touch_overlap(browser, url):
             path=str(Path(evidence) / "goal-preview-short-phone.png"), animations="disabled"
         )
         (Path(evidence) / "goal-preview-short-phone.json").write_text(json.dumps({
-            "preview": box, "footer": footer, "lastControl": last.bounding_box(),
-            "checked": last.get_attribute("aria-checked"), "nativeTap": True,
+            "preview": box, "footer": footer, "lastControl": last_box,
+            "checked": last_checked, "nativeTap": True,
         }, indent=2))
     page.touchscreen.tap(5, 5)
     expect(long_panel).to_have_count(0)

@@ -464,11 +464,15 @@ def run_retirement(browser, urls, *, control=""):
         native_events.append({"kind": "gesture-setup", "barrier": establish_scrollback(page, lambda: page.mouse.wheel(0, -900), min_clearance=0)})
         cancel_setup = sample('latest-before-cancel')
         assert cancel_setup['totalTail'] == 0 and cancel_setup['latest'] and cancel_setup['owner'] == 'manual', ('SETUP_LATEST_GEOMETRY', cancel_setup)
-        _arm_motion(page, 'latest', suppress_wheel=control == 'broken-wheel')
+        latest_button = page.get_by_role('button', name='Jump to latest message')
+        latest_button.focus()
         cancel_box = page.locator('[data-conversation-thread]').bounding_box()
-        page.get_by_role('button', name='Jump to latest message').click()
         page.mouse.move(cancel_box['x'] + cancel_box['width'] / 2, cancel_box['y'] + cancel_box['height'] / 2)
         page.evaluate("window.__retirementPhase='latest-cancel-gesture'")
+        _arm_motion(page, 'latest', suppress_wheel=control == 'broken-wheel')
+        # Activate the real button with trusted Enter after pointer placement. Moving
+        # the pointer after click can consume this short motion before observation.
+        page.keyboard.press('Enter')
         delta = -100000 if control == 'zero-tail' else -120
         # Capture and emit together inside the admission callback. Python keeps
         # the original observations and checks after this atomic baseline task.
