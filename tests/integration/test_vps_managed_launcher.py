@@ -66,6 +66,7 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
     )
     python.write_text(
         "#!/bin/sh\nset -eu\n"
+        'if [ "$1" = "-B" ]; then shift; fi\n'
         'if [ "$1" = "-c" ]; then\n'
         + "  printf '%s\\n' "
         + shlex.quote(str(app / "src/planner/__init__.py"))
