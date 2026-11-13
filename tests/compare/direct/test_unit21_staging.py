@@ -202,6 +202,15 @@ def test_unit21_receipt_staging_and_readonly_frontier(
         "cleanup_error": True,
         "state_removed": True,
     }
+    cancellation = actual["staging_cancellation"]
+    assert {key: value for key, value in cancellation.items() if key != "seconds"} == {
+        "signal": True,
+        "held": True,
+        "original_error": True,
+        "admissions": 0,
+        "published": False,
+        "temporary_removed": True,
+    }
     argv = actual["argv"]
     assert isinstance(receipt.manifest.runtime_contract, RuntimeContract)
     assert argv[:4] == [str(candidate / ".venv/bin/python"), "-I", "-B", "-c"]
@@ -219,11 +228,15 @@ def test_unit21_receipt_staging_and_readonly_frontier(
             seconds=time.perf_counter() - began,
             node_seconds=time.perf_counter() - node_began,
             held_cleanup_seconds=held["seconds"],
+            staging_cancellation_seconds=cancellation["seconds"],
             held_cleanup_boundary=(
                 "The existing host holds actual RuntimeProbeUnsettled cleanup. "
                 "Real staging retains fresh and retained candidates until settlement. "
                 "Real schema status retains private state and preserves both failure identities. "
                 "Outer service adapter coverage does not prove consumer deletion order. "
+                "The same staging invocation forwards its exact stop signal to a held download. "
+                "It retains the temporary path until that provider settles "
+                "and refuses late publication. "
                 "No additional host, test case, or candidate process runs."
             ),
             result=actual,

@@ -63,7 +63,7 @@ export const create_production_environment_operations: ProductionEnvironmentFact
       repository === null
         ? null
         : new GitHubUpdateProvider(repository.repository, repository.token_file),
-    staging: create_release_staging(context.child_processes),
+    staging: create_release_staging(context.child_processes, signal),
     installer: create_installer_operations({
       application_root,
       node_executable: dependencies.node_executable,

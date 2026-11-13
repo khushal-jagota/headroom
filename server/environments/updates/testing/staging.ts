@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { SpawnOptions } from 'node:child_process';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
+import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import { AppValidationError } from '../../release/contracts.ts';
 import { RuntimeProbeUnsettled } from '../../release/admission_process.ts';
 import { parse_release } from '../codec.ts';
@@ -31,6 +32,7 @@ export async function staging_parity(
   probe: Probe,
 ): Promise<unknown> {
   const owner = new ChildProcesses(),
+    one_shot_children = new OneShotChildren(owner),
     spawn = owner.spawn.bind(owner);
   const entry = fileURLToPath(new URL('../../release/archive_unpack_main.ts', import.meta.url));
   let spawned = 0,
@@ -53,6 +55,7 @@ export async function staging_parity(
   const stop = () => {
     stopping = true;
     owner.seal();
+    one_shot_children.seal();
     try {
       owner.force_kill(performance.now() / 1000 + 5);
     } catch (error) {
@@ -63,8 +66,9 @@ export async function staging_parity(
   try {
     const receipt = parse_release(spec.release),
       rows = [];
-    let held_admission: { error: RuntimeProbeUnsettled; entered: (root: string) => void } | undefined;
-    const stage = create_release_staging(owner, async (root) => {
+    let held_admission:
+      { error: RuntimeProbeUnsettled; entered: (root: string) => void } | undefined;
+    const stage = create_release_staging(owner, one_shot_children.signal, async (root) => {
       admissions++;
       if (held_admission) {
         held_admission.entered(root);
@@ -157,24 +161,39 @@ export async function staging_parity(
     )
       throw new Error('Schema probe lost owner, original deadline or temporary cleanup');
     // These observations use the same host and real consumers, without candidate execution.
-    const cleanup_began = performance.now(), cleanup_spawned = spawned;
+    const cleanup_began = performance.now(),
+      cleanup_spawned = spawned;
     const held_stage = async (current: string, retained: boolean) => {
-      const cleanup = deferred<void>(), entered = deferred<string>();
+      const cleanup = deferred<void>(),
+        entered = deferred<string>();
       const original = new RuntimeProbeUnsettled(
-        cleanup.promise, new AppValidationError('Held staged runtime probe'),
+        cleanup.promise,
+        new AppValidationError('Held staged runtime probe'),
       );
       held_admission = { error: original, entered: entered.resolve };
       let completed = false;
-      const actual = stage.stage({
-        available: async () => null,
-        download_artifact: async (_id, destination) => {
-          if (retained) throw new Error('Retained stage downloaded again');
-          await copyFile(spec.artifact, destination);
-        },
-      }, receipt, current).then(
-        () => { completed = true; return null; },
-        (error: unknown) => { completed = true; return error; },
-      );
+      const actual = stage
+        .stage(
+          {
+            available: async () => null,
+            download_artifact: async (_id, destination) => {
+              if (retained) throw new Error('Retained stage downloaded again');
+              await copyFile(spec.artifact, destination);
+            },
+          },
+          receipt,
+          current,
+        )
+        .then(
+          () => {
+            completed = true;
+            return null;
+          },
+          (error: unknown) => {
+            completed = true;
+            return error;
+          },
+        );
       const candidate = await entered.promise;
       try {
         await new Promise<void>((resolve) => setImmediate(resolve));
@@ -185,27 +204,46 @@ export async function staging_parity(
       }
       const failure = await actual;
       held_admission = undefined;
-      if (failure !== original || existsSync(candidate) !== retained ||
-          existsSync(dirname(candidate)) !== retained)
+      if (
+        failure !== original ||
+        existsSync(candidate) !== retained ||
+        existsSync(dirname(candidate)) !== retained
+      )
         throw new Error('Staging lost original error or actual cleanup ordering');
-      return { held: true, original_error: true, candidate_after: retained, workspace_after: retained };
+      return {
+        held: true,
+        original_error: true,
+        candidate_after: retained,
+        workspace_after: retained,
+      };
     };
     const fresh_cleanup = await held_stage(join(spec.root, 'typescript/admission'), false);
     const retained_cleanup = await held_stage(join(spec.root, 'typescript/current'), true);
-    const cleanup = deferred<void>(), entered = deferred<void>();
+    const cleanup = deferred<void>(),
+      entered = deferred<void>();
     const original = new RuntimeProbeUnsettled(
-      cleanup.promise, new AppValidationError('Held schema runtime probe'),
+      cleanup.promise,
+      new AppValidationError('Held schema runtime probe'),
     );
     const cleanup_failure = new Error('Recorded schema capture cleanup failure');
     probe.response = original;
     probe.entered = () => entered.resolve();
     let schema_completed = false;
-    const actual = migration.schema_change_pending(
-      '~/schema.sqlite', join(spec.root, 'typescript/current/.app-next-' + receipt.manifest.app_sha),
-    ).then(
-      () => { schema_completed = true; return null; },
-      (error: unknown) => { schema_completed = true; return error; },
-    );
+    const actual = migration
+      .schema_change_pending(
+        '~/schema.sqlite',
+        join(spec.root, 'typescript/current/.app-next-' + receipt.manifest.app_sha),
+      )
+      .then(
+        () => {
+          schema_completed = true;
+          return null;
+        },
+        (error: unknown) => {
+          schema_completed = true;
+          return error;
+        },
+      );
     await entered.promise;
     const state = probe.calls.at(-1)!.state;
     try {
@@ -217,20 +255,89 @@ export async function staging_parity(
       delete probe.entered;
     }
     const failure = await actual;
-    if (!(failure instanceof AggregateError) || failure.errors.length !== 2 ||
-        failure.errors[0] !== original || failure.errors[1] !== cleanup_failure || existsSync(state))
+    if (
+      !(failure instanceof AggregateError) ||
+      failure.errors.length !== 2 ||
+      failure.errors[0] !== original ||
+      failure.errors[1] !== cleanup_failure ||
+      existsSync(state)
+    )
       throw new Error('Schema status lost error identity or actual cleanup ordering');
     const held_cleanup = {
-      fresh: fresh_cleanup, retained: retained_cleanup,
+      fresh: fresh_cleanup,
+      retained: retained_cleanup,
       schema: { held: true, original_error: true, cleanup_error: true, state_removed: true },
       seconds: (performance.now() - cleanup_began) / 1000,
       archive_children: spawned - cleanup_spawned,
+    };
+    // Stop cannot detach the actual provider operation or publish its late result.
+    const cancellation_began = performance.now();
+    const download = deferred<void>(),
+      download_entered = deferred<string>();
+    const admissions_before = admissions;
+    let download_signal: AbortSignal | undefined,
+      cancellation_completed = false;
+    const current = join(spec.root, 'typescript/admission');
+    const cancelled = stage
+      .stage(
+        {
+          available: async () => null,
+          download_artifact: async (_id, destination, signal) => {
+            download_signal = signal;
+            await copyFile(spec.artifact, destination);
+            download_entered.resolve(destination);
+            await download.promise;
+          },
+        },
+        receipt,
+        current,
+      )
+      .then(
+        () => {
+          cancellation_completed = true;
+          return null;
+        },
+        (error: unknown) => {
+          cancellation_completed = true;
+          return error;
+        },
+      );
+    const artifact = await download_entered.promise;
+    let retained = false;
+    try {
+      one_shot_children.seal();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      retained = !cancellation_completed && existsSync(artifact) && existsSync(dirname(artifact));
+    } finally {
+      download.resolve();
+    }
+    const cancellation_failure = await cancelled;
+    const published = existsSync(join(current, '.app-next-' + receipt.manifest.app_sha));
+    if (
+      download_signal !== one_shot_children.signal ||
+      !download_signal.aborted ||
+      !retained ||
+      cancellation_failure !== download_signal.reason ||
+      admissions !== admissions_before ||
+      published ||
+      existsSync(dirname(artifact))
+    )
+      throw new Error('Staging lost caller cancellation or raw download cleanup');
+    const staging_cancellation = {
+      signal: true,
+      held: true,
+      original_error: true,
+      admissions: 0,
+      published: false,
+      temporary_removed: true,
+      seconds: (performance.now() - cancellation_began) / 1000,
     };
     return {
       rows,
       frontier,
       schema,
       held_cleanup,
+      staging_cancellation,
       argv: call.argv,
       spawned,
       closed,
@@ -238,6 +345,7 @@ export async function staging_parity(
     };
   } finally {
     owner.seal();
+    one_shot_children.seal();
     try {
       try {
         owner.force_kill(performance.now() / 1000 + 5);

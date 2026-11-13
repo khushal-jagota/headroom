@@ -51,11 +51,14 @@ async function staged_manifest(path: string, app_sha: string): Promise<AppManife
 
 export function create_release_staging(
   child_processes: OwnedChildProcesses,
+  signal: AbortSignal,
   admit: RuntimeAdmission = (root, manifest) => admit_runtime(root, manifest, child_processes),
 ): ReleaseStaging {
   const admit_candidate: RuntimeAdmission = async (root, manifest) => {
     try {
+      signal.throwIfAborted();
       await admit(root, manifest);
+      signal.throwIfAborted();
     } catch (error) {
       if (error instanceof RuntimeProbeUnsettled) {
         try {
@@ -69,32 +72,43 @@ export function create_release_staging(
   };
   return {
     async stage(provider, release, current_root) {
+      signal.throwIfAborted();
       const app_sha = release.manifest.app_sha;
       const staged = join(current_root, STAGED_APP_PREFIX + app_sha);
       for (const entry of await readdir(current_root, { withFileTypes: true })) {
+        signal.throwIfAborted();
         if (!(entry.name.startsWith(STAGED_APP_PREFIX) || entry.name.startsWith('.app-download-')))
           continue;
         const path = join(current_root, entry.name);
         if (path !== staged && entry.isDirectory() && !entry.isSymbolicLink())
           await remove_directory(path);
       }
+      signal.throwIfAborted();
       if (await directory(staged)) {
-        if (python_json_equal(await staged_manifest(staged, app_sha), release.manifest)) {
+        signal.throwIfAborted();
+        const manifest = await staged_manifest(staged, app_sha);
+        signal.throwIfAborted();
+        if (python_json_equal(manifest, release.manifest)) {
           await admit_candidate(staged, release.manifest);
           return staged;
         }
         await remove_directory(staged);
       }
+      signal.throwIfAborted();
       const work = await mkdtemp(join(current_root, '.app-download-'));
       let failure: unknown;
       try {
+        signal.throwIfAborted();
         const artifact = join(work, 'artifact.zip');
         const archive = join(work, APP_ARCHIVE_NAME);
-        await provider.download_artifact(release.artifact_id, artifact);
+        await provider.download_artifact(release.artifact_id, artifact, signal);
+        signal.throwIfAborted();
         await with_zip_member(artifact, APP_ARCHIVE_NAME, (input) =>
-          pipeline(input, createWriteStream(archive, { flags: 'wx' })),
+          pipeline(input, createWriteStream(archive, { flags: 'wx' }), { signal }),
         );
+        signal.throwIfAborted();
         await unlink(artifact);
+        signal.throwIfAborted();
         const unpacked = join(work, 'app');
         const manifest = await extract_app_archive(
           archive,
@@ -103,10 +117,13 @@ export function create_release_staging(
           app_sha,
           child_processes,
         );
+        signal.throwIfAborted();
         await unlink(archive);
+        signal.throwIfAborted();
         if (!python_json_equal(manifest, release.manifest))
           throw new AppValidationError('The downloaded app differs from its publication receipt.');
         await admit_candidate(unpacked, manifest);
+        signal.throwIfAborted();
         await rename(unpacked, staged);
         return staged;
       } catch (error) {
