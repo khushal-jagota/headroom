@@ -1,3 +1,4 @@
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -62,6 +63,7 @@ async function start() {
   const warnings: string[] = [];
   const ended: string[] = [];
   const client = new CodexAppServerClient({
+    child_processes: new ChildProcesses(),
     description: 'synthetic',
     warning: (message) => warnings.push(message),
     handler: {
@@ -190,6 +192,7 @@ test('shutdown joins a pending version probe and prevents a later app-server lau
     version.owned as unknown as OwnedCodexProcess,
   );
   const client = new CodexAppServerClient({
+    child_processes: new ChildProcesses(),
     description: 'pending-version',
     handler: {
       async on_notification() {},

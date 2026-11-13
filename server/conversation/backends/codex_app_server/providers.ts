@@ -1,5 +1,6 @@
 /** The real Codex implementations of the fixed snapshot and usage boundaries. */
 import type { Database } from '../../../core/database/contracts.ts';
+import type { OwnedOneShotChildren, OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import type { BackendProviders } from '../../snapshot/composition.ts';
 import type { BackendSnapshot, CodexLoginStanding } from '../../snapshot/contracts.ts';
 import type {
@@ -50,16 +51,19 @@ export interface CodexProviderContext {
   database: Database;
   now(): Date;
   read_codex_snapshot(): Promise<Pick<BackendSnapshot, 'executable_path'>>;
+  one_shot_children: OwnedOneShotChildren;
+  child_processes: OwnedChildProcesses;
 }
 export function create_codex_providers(
   context: CodexProviderContext,
 ): Pick<BackendProviders, 'codex' | 'saved_codex_login' | 'codex_sign_in' | 'usage'> {
   // Production composition calls this only after its independent test-mode refusal.
-  const environment = new SubprocessBackendProbeEnvironment();
+  const environment = new SubprocessBackendProbeEnvironment(context.one_shot_children);
   const rejection = create_durable_codex_login_rejection(context.database, context.now);
   const probes = new Map<AbortController, Promise<unknown>>();
   let closed = false;
   const sign_in = new CodexSignInService({
+    child_processes: context.child_processes,
     resolve_argv: async () => {
       if (backend_io_is_test())
         throw new CodexSignInUnavailable('Production sign-in is unavailable in tests.');
@@ -82,7 +86,10 @@ export function create_codex_providers(
           'Production catalog reads are unavailable in tests.',
         );
       const controller = new AbortController();
-      const operation = probe_codex_model_catalog(executable, { signal: controller.signal });
+      const operation = probe_codex_model_catalog(executable, {
+        signal: controller.signal,
+        child_processes: context.child_processes,
+      });
       probes.set(controller, operation);
       try {
         return await operation;
@@ -137,7 +144,11 @@ export function create_codex_providers(
           const signal = options.signal
             ? AbortSignal.any([options.signal, controller.signal])
             : controller.signal;
-          const operation = read_codex_rate_limits(executable, { ...options, signal });
+          const operation = read_codex_rate_limits(
+            executable,
+            { ...options, signal },
+            { child_processes: context.child_processes },
+          );
           probes.set(controller, operation);
           try {
             return await operation;

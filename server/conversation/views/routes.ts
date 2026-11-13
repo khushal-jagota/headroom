@@ -645,17 +645,16 @@ export function createConversationViewRoutes(
         const control: {
           close?: () => void;
         } = {};
-        const stream = Readable.from(
-          conversation_view_tail(
-            runtime,
-            conversation_id,
-            selected_lens,
-            selected_transcript,
-            after,
-            ranges,
-            control,
-          ),
+        const output = conversation_view_tail(
+          runtime,
+          conversation_id,
+          selected_lens,
+          selected_transcript,
+          after,
+          ranges,
+          control,
         );
+        const stream = Readable.from(request.request_lifetime?.iterator(output) ?? output);
         reply.raw.once('close', () => {
           control.close?.();
           stream.destroy();

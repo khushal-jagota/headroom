@@ -10,4 +10,6 @@ export interface EnvironmentRuntime {
   start(): void | Promise<void>;
   /** Fence producers immediately and retain pending starts and work until settlement. */
   close(options: StopOptions): void | Promise<void>;
+  /** Actual starts, workers, readers and update/scratch work, not a timed observer. */
+  settled(): Promise<void>;
 }

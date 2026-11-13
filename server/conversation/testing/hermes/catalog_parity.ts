@@ -1,4 +1,5 @@
 /** Synthetic inventory commands only. The retained Hermes script is never executed. */
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import {
   HermesModelCatalogOwner,
   hermes_model_catalog_launch,
@@ -25,7 +26,7 @@ export async function run_catalog_parity(spec: Specification): Promise<unknown> 
         argv: item.name === 'missing' ? [spec.launch.hermes_python] : [...spec.command, item.name],
         environment_overrides: launch.environment_overrides,
       },
-      { timeout_seconds: item.timeout_seconds },
+      { child_processes: new ChildProcesses(), timeout_seconds: item.timeout_seconds },
     );
     const started = performance.now();
     try {

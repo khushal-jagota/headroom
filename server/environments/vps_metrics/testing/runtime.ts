@@ -9,6 +9,7 @@ import { decode, encode, float } from '../codec.ts';
 import type { Collector, LatestResponse, Sample } from '../contracts.ts';
 import { MetricsRuntime } from '../runtime.ts';
 import { MetricsReaders } from '../readers/pool.ts';
+import { ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 import type { BuildCollector } from '../sampler/contracts.ts';
 
 interface Probe {
@@ -237,18 +238,30 @@ export async function metrics_runtime_probe(input: string): Promise<string> {
         throw new Error('two metrics samplers collected at once');
     }
     const began = performance.now();
-    await runtime.stop({ deadline: performance.now() / 1000 + 0.03 });
-    emit({
+    await runtime.stop({ deadline: performance.now() / 1000 + 0.03 }).then(
+      () => {
+        throw new Error('A held collector cannot complete shutdown');
+      },
+      (error: unknown) => {
+        if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+      },
+    );
+    const pending = {
       type: 'stopped_pending',
       owner: runtime.owns_collection,
       stop_ms: performance.now() - began,
-    });
-    if (spec.mode === 'short_hung') return encode({ unref_exit: true });
+    };
+    // One launcher write deterministically exercises two coalesced state records.
+    if (spec.mode === 'short_hung')
+      return encode(pending) + '\n' + encode({ retained_worker: true });
+    emit(pending);
     while (!existsSync(spec.root + '/release')) await delay(5);
     writeFileSync(spec.root + '/gate', 'release');
     await runtime.settled();
     while (!existsSync(spec.root + '/contender/collection.jsonl')) await delay(5);
-    await contender!.stop({ deadline: performance.now() / 1000 + 0.03 });
+    await contender!.stop({ deadline: performance.now() / 1000 + 0.03 }).catch((error: unknown) => {
+      if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+    });
     const contender_took_over = contender!.owns_collection;
     writeFileSync(spec.root + '/contender/gate', 'release');
     await contender!.settled();

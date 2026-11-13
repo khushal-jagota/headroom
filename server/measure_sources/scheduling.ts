@@ -55,6 +55,9 @@ export class SourceScheduleParticipant implements SlotParticipant {
     this.stopped = true;
     return this.dispatcher.stop(options);
   }
+  settled(): Promise<void> {
+    return this.dispatcher.settled();
+  }
 }
 export function build_participants(
   context: OwnedAreaContext,
@@ -67,6 +70,8 @@ export function build_participants(
       start: () => completion.start(),
       poll: (database, clock) => completion.poll(database, clock.nowUnix()),
       stop: (options) => completion.stop(options),
+      // Goal reconciliation is synchronous. Its stop fence leaves no async flight.
+      settled: () => Promise.resolve(),
     },
   ];
 }

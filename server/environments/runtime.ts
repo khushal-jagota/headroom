@@ -2,6 +2,8 @@
 import { dirname } from 'node:path';
 import type { Config } from '../core/config.ts';
 import { HOST } from '../core/config.ts';
+import { observe_shutdown } from '../lifecycle/deadline.ts';
+import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import type { TestCompositionContext } from '../core/start.ts';
 import type { EnvironmentRuntime } from './contracts.ts';
 import { expand_path, resolved_path } from './paths.ts';
@@ -24,6 +26,8 @@ import type { CollectorFactory } from './vps_metrics/sampler/contracts.ts';
 import { create_metrics_routes } from './vps_metrics/routes.ts';
 import { create_vps_status_routes } from './vps_status/routes.ts';
 import type { VpsStatusSnapshot } from './vps_status/contracts.ts';
+import type { StatusOptions } from './vps_status/contracts.ts';
+import { create_vps_status_dependencies } from './vps_status/probes.ts';
 import { layout_for } from './ticket_scratch/collect.ts';
 import { clean_finished_ticket_scratch } from './ticket_scratch/apply.ts';
 import { create_ticket_scratch_runtime } from './ticket_scratch/runtime.ts';
@@ -38,7 +42,7 @@ export interface EnvironmentOperations {
   mac: MacUpdateOperations;
   mac_reads: UpdateMacReads;
   collector: CollectorFactory | null;
-  collect_status(config: Config): Promise<VpsStatusSnapshot>;
+  collect_status(config: Config, options: StatusOptions): Promise<VpsStatusSnapshot>;
 }
 export async function createEnvironmentRuntime(
   context: TestCompositionContext,
@@ -100,11 +104,20 @@ export async function createEnvironmentRuntime(
     });
   let starting: Promise<void> | undefined;
   let closing: Promise<void> | undefined;
+  let actual_stop: Promise<void> | undefined;
   return {
     areas: [
       { prefix: '/api', routes: create_update_routes(updates, operations.mac_reads) },
       { prefix: '/api', routes: create_metrics_routes(metrics) },
-      { prefix: '/api', routes: create_vps_status_routes(operations.collect_status) },
+      {
+        prefix: '/api',
+        routes: create_vps_status_routes((status_config) =>
+          operations.collect_status(status_config, {
+            application_root: operations.app_root,
+            dependencies: create_vps_status_dependencies(context.one_shot_children),
+          }),
+        ),
+      },
       {
         prefix: '/api',
         routes: async (app) => {
@@ -129,17 +142,22 @@ export async function createEnvironmentRuntime(
     },
     close(options) {
       if (closing) return closing;
-      // Fence every producer now, including when setup still owns a continuation.
-      const begin = async (operation: () => void | Promise<void>) => {
-        await operation();
-      };
-      const drains = [
-        begin(() => metrics.stop(options)),
-        begin(() => updates.stop(options)),
-        begin(() => scratch?.close(options)),
-        starting?.catch(() => {}),
-      ];
-      closing = Promise.allSettled(drains).then((results) => {
+      const drains: Promise<unknown>[] = [];
+      actual_stop = Promise.resolve().then(async () => {
+        const actuals = [
+          () => metrics.settled(),
+          () => updates.settled(),
+          () => scratch?.settled(),
+        ];
+        for (const actual of actuals) {
+          try {
+            drains.push(Promise.resolve(actual()));
+          } catch (error) {
+            drains.push(Promise.reject(error));
+          }
+        }
+        if (starting) drains.push(starting.catch(() => {}));
+        const results = await Promise.allSettled(drains);
         const failures = results.filter((result) => result.status === 'rejected');
         if (failures.length)
           throw new AggregateError(
@@ -147,7 +165,32 @@ export async function createEnvironmentRuntime(
             'Environment shutdown failed',
           );
       });
+      closing = observe_shutdown(actual_stop, options, 'environment services');
+      // Fence every producer now, including when setup still owns a continuation.
+      for (const stop of [
+        () => metrics.stop(options),
+        () => updates.stop(options),
+        () => scratch?.close(options),
+      ]) {
+        try {
+          drains.push(
+            Promise.resolve(stop()).catch((error: unknown) => {
+              if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+            }),
+          );
+        } catch (error) {
+          drains.push(Promise.reject(error));
+        }
+      }
       return closing;
     },
+    settled: () =>
+      actual_stop ??
+      Promise.all([
+        metrics.settled(),
+        updates.settled(),
+        scratch?.settled(),
+        starting?.catch(() => {}),
+      ]).then(() => {}),
   };
 }

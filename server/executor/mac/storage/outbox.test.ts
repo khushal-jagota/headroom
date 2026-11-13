@@ -16,6 +16,7 @@ import { Worker } from 'node:worker_threads';
 import BetterSqlite3 from 'better-sqlite3';
 import { afterEach, expect, test, vi } from 'vitest';
 import { createReadAccess } from '../../../core/database/index.ts';
+import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import { FilesService } from '../files.ts';
 import { MAX_ENVELOPE_BYTES } from '../configuration.ts';
 import { acquire_process_lock } from '../platform.ts';
@@ -235,9 +236,9 @@ test('capture yields the writer and shutdown drains its reservation despite a fa
   try {
     await entered.promise;
     expect(store.append(columns('other'), payload, [], [], () => {}).sequence).toBe(1n);
-    await expect(store.stop({ deadline: performance.now() / 1000 - 1 })).rejects.toMatchObject({
-      name: 'ServerLifecycleError',
-    });
+    await expect(store.stop({ deadline: performance.now() / 1000 - 1 })).rejects.toBeInstanceOf(
+      ServerLifecycleError,
+    );
     expect(() => store.append(columns('too_late'), payload, [], [], () => {})).toThrow();
     expect(() => store.with_capture('ticket', () => null)).toThrow();
     release.resolve();

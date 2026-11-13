@@ -1,7 +1,8 @@
 /** A timed-out lifecycle observer must not release the actual resource join. */
 import { mkdirSync } from 'node:fs';
 import { setImmediate } from 'node:timers/promises';
-import { expect, test } from 'vitest';
+import { Worker } from 'node:worker_threads';
+import { expect, test, vi } from 'vitest';
 import { ServerLifecycleError } from '../lifecycle/contracts.ts';
 import { Deferred } from '../conversation/runtime/state.ts';
 import { VideoUploadService } from '../conversation/video_uploads/service.ts';
@@ -70,6 +71,14 @@ test('four service deadlines reject without completing their actual settlement',
     await release.promise;
   });
   const backend_failure = new Error('Synthetic environment cleanup failure');
+  const usage_failure = new Error('Synthetic worker termination failure after exit');
+  const terminate = Worker.prototype.terminate;
+  const termination = vi.spyOn(Worker.prototype, 'terminate').mockImplementation(async function (
+    this: Worker,
+  ) {
+    await terminate.call(this);
+    throw usage_failure;
+  });
   const backend = create_backend_runtime({
     database: f.database,
     config: loadConfig(undefined, { PLAN_TEST_MODE: '1', PLAN_DB_PATH: f.database_path }),
@@ -107,7 +116,7 @@ test('four service deadlines reject without completing their actual settlement',
     ];
     const completed = [false, false, false, false];
     const settlement = [video, usage, credentials, backend].map((service, index) =>
-      service.settled().then(() => {
+      service.settled().finally(() => {
         completed[index] = true;
       }),
     );
@@ -120,15 +129,15 @@ test('four service deadlines reject without completing their actual settlement',
     await setImmediate();
     expect(completed).toEqual([false, false, false, false]);
     release.resolve();
-    await Promise.all(settlement);
+    const actual_results = await Promise.allSettled(settlement);
     await Promise.allSettled(work);
     expect(completed).toEqual([true, true, true, true]);
-    // An operational failure still propagates after both backend cleanups end.
-    await expect(
-      backend.shutdown!({ deadline: performance.now() / 1000 + 1 }),
-    ).rejects.toMatchObject({
-      errors: [backend_failure],
-    });
+    expect(actual_results).toMatchObject([
+      { status: 'fulfilled' },
+      { status: 'rejected', reason: { errors: [usage_failure] } },
+      { status: 'fulfilled' },
+      { status: 'rejected', reason: { errors: [backend_failure] } },
+    ]);
   } finally {
     release.resolve();
     await Promise.allSettled(work);
@@ -138,7 +147,8 @@ test('four service deadlines reject without completing their actual settlement',
       credentials.settled(),
       backend.shutdown!({ deadline: performance.now() / 1000 + 1 }),
     ]);
-    await Promise.all([usage.settled(), backend.settled()]);
+    await Promise.allSettled([usage.settled(), backend.settled()]);
+    termination.mockRestore();
     await f.core.shutdown();
   }
 });

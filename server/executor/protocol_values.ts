@@ -1,9 +1,11 @@
 /** The current executor schema grammar, source validation modes and value serializer. */
-import { readFileSync } from 'node:fs';
 import { pure_posix_path } from '../core/python_path.ts';
 import { JsonNumber, numeric_value, stringify_pydantic_json } from '../core/http/numeric_json.ts';
-import type { NumericJSON } from '../core/http/numeric_json.ts';
+import { strip_unicode_space } from '../core/whitespace.ts';
+import { WIRE_SCHEMA } from './wire.generated.ts';
 import type { JsonValue, WireRootName, WireTypes } from './wire.generated.ts';
+import { normalize_integer, normalize_json_number } from './integers.ts';
+import { EXECUTOR_JSON_MAX_DEPTH, EXECUTOR_JSON_MAX_INTEGER_LENGTH } from './configuration.ts';
 import { ordered_json_entries, ordered_json_object } from './protocol_json.ts';
 import {
   class_name,
@@ -13,6 +15,7 @@ import {
   ValidationError,
   KeyError,
   python_repr,
+  ValueError,
 } from './protocol_errors.ts';
 import type { FieldRepresentation, Issue } from './protocol_errors.ts';
 export interface Schema {
@@ -34,20 +37,30 @@ export interface Schema {
   'x-python-container'?: 'tuple' | 'list';
   'x-python-enum'?: { name: string; members: readonly (readonly [string, string])[] };
 }
-const document = JSON.parse(
-  readFileSync(new URL('./wire.schema.json', import.meta.url), 'utf8'),
-) as {
+const document = WIRE_SCHEMA as unknown as {
   $defs: Record<string, Schema>;
   pydantic_error_version: string;
 };
 export const ERROR_VERSION = document.pydantic_error_version;
 const definitions = document.$defs;
+const json_value_items = definitions.JsonValue!.anyOf!.find(
+  (schema) => schema.type === 'array',
+)!.items!;
 const BAD = Symbol('invalid executor value');
+type ReadonlyWire<T> = T extends JsonNumber
+  ? T
+  : T extends readonly (infer Item)[]
+    ? readonly ReadonlyWire<Item>[]
+    : T extends object
+      ? { readonly [Key in keyof T]: ReadonlyWire<T[Key]> }
+      : T;
+export type WireInput<K extends WireRootName> = ReadonlyWire<WireTypes[K]>;
 type Context = {
   strict: boolean;
   origin: 'json' | 'python';
   pythonInput: boolean;
   issues: Issue[];
+  revalidate: boolean;
 };
 const record = (v: unknown): v is Record<string, unknown> =>
   v !== null &&
@@ -73,13 +86,50 @@ function fail(
   loc: readonly (string | number)[],
   url = true,
 ): typeof BAD {
-  ctx.issues.push({ type, message, input, loc, url });
+  ctx.issues.push({ type, message, input, loc: loc.slice(), url });
   return BAD;
 }
 function field_repr(name: string, schema: Schema): FieldRepresentation {
   schema = dereference(schema);
   if (schema.anyOf) schema = dereference(schema.anyOf.find((s) => s.type !== 'null')!);
-  return { name, enumeration: schema['x-python-enum'], path: schema.format === 'path' };
+  return {
+    name,
+    enumeration: schema['x-python-enum'],
+    path: schema.format === 'path',
+    floating: schema.type === 'number',
+  };
+}
+type Branch = { schema: Schema; label: string; fields: readonly string[]; name?: string };
+const fields_cache = new WeakMap<Schema, readonly FieldRepresentation[]>();
+const branch_cache = new WeakMap<Schema, readonly Branch[]>();
+const tags_cache = new WeakMap<Schema, readonly string[]>();
+function representations(schema: Schema): readonly FieldRepresentation[] {
+  let cached = fields_cache.get(schema);
+  if (!cached) {
+    cached = schema['x-python-fields']!.map((key) => field_repr(key, schema.properties![key]!));
+    fields_cache.set(schema, cached);
+  }
+  return cached;
+}
+function branches(schema: Schema): readonly Branch[] {
+  let cached = branch_cache.get(schema);
+  if (!cached) {
+    cached = schema.anyOf!.map((branch) => {
+      const target = dereference(branch);
+      const name = branch.$ref?.slice('#/$defs/'.length);
+      return {
+        schema: branch,
+        name,
+        label:
+          name && target['x-python-fields']
+            ? name
+            : `literal[${(target.enum ?? [target.const]).map(python_repr).join(',')}]`,
+        fields: Object.keys(target.properties ?? {}),
+      };
+    });
+    branch_cache.set(schema, cached);
+  }
+  return cached;
 }
 function default_value(schema: Schema): unknown {
   const value = schema.default;
@@ -89,10 +139,7 @@ function default_value(schema: Schema): unknown {
     if (node['x-python-container'] === 'tuple') tag_tuple(result);
     return result;
   }
-  if (typeof value === 'number')
-    return new JsonNumber(
-      String(value) + (node.type === 'number' && Number.isInteger(value) ? '.0' : ''),
-    );
+  if (typeof value === 'number') return node.type === 'integer' ? normalize_integer(value) : value;
   return value;
 }
 function scalar(
@@ -148,15 +195,25 @@ function scalar(
     return fail(ctx, 'bool_type', 'Input should be a valid boolean', value, loc);
   }
   if (schema.type === 'integer') {
-    if (value instanceof JsonNumber && value.kind === 'integer') return value;
-    if (typeof value === 'number' && Number.isInteger(value) && !Object.is(value, -0))
-      return new JsonNumber(String(BigInt(value)));
+    if (value instanceof JsonNumber && value.kind === 'integer') return normalize_integer(value);
+    if (typeof value === 'number' && Number.isSafeInteger(value) && !Object.is(value, -0))
+      return normalize_integer(value);
     if (!ctx.strict) {
-      if (typeof value === 'boolean') return new JsonNumber(value ? '1' : '0');
+      if (typeof value === 'boolean') return value ? 1 : 0;
       if (numeric !== undefined) {
         if (!Number.isFinite(numeric))
           return fail(ctx, 'finite_number', 'Input should be a finite number', value, loc);
-        if (Number.isInteger(numeric)) return new JsonNumber(String(BigInt(numeric)));
+        if (Number.isInteger(numeric)) {
+          if (Math.abs(numeric) >= 2 ** 63)
+            return fail(
+              ctx,
+              'int_parsing_size',
+              'Unable to parse input string as an integer, exceeded maximum size',
+              value,
+              loc,
+            );
+          return normalize_integer(BigInt(numeric));
+        }
         return fail(
           ctx,
           'int_from_float',
@@ -166,10 +223,10 @@ function scalar(
         );
       }
       if (typeof value === 'string') {
-        const text = value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
+        const text = strip_unicode_space(value);
         if (/^[+-]?[0-9]+(?:_[0-9]+)*(?:\.0+)?$/.test(text)) {
           const integer = text.replaceAll('_', '').replace(/\.0+$/, '');
-          if (integer.length <= 4300) return new JsonNumber(String(BigInt(integer)));
+          if (integer.length <= 4300) return normalize_integer(BigInt(integer));
           return fail(
             ctx,
             'int_parsing_size',
@@ -191,19 +248,13 @@ function scalar(
   }
   if (schema.type === 'number') {
     if (numeric !== undefined) {
-      if (!Number.isFinite(numeric)) return numeric;
-      return value instanceof JsonNumber && value.kind === 'float'
-        ? value
-        : new JsonNumber(
-            Object.is(numeric, -0) && !(value instanceof JsonNumber)
-              ? '-0.0'
-              : String(numeric) +
-                  (!String(numeric).includes('.') && !String(numeric).includes('e') ? '.0' : ''),
-          );
+      return value instanceof JsonNumber && value.kind === 'integer' && Object.is(numeric, -0)
+        ? 0
+        : numeric;
     }
-    if (!ctx.strict && typeof value === 'boolean') return new JsonNumber(value ? '1.0' : '0.0');
+    if (!ctx.strict && typeof value === 'boolean') return value ? 1 : 0;
     if (!ctx.strict && typeof value === 'string') {
-      const raw = value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
+      const raw = strip_unicode_space(value);
       const text =
         raw.startsWith('_') || raw.endsWith('_') || raw.includes('__')
           ? ''
@@ -214,13 +265,7 @@ function scalar(
             ? -Infinity
             : Infinity
           : Number(text);
-        return Number.isFinite(n)
-          ? new JsonNumber(
-              Object.is(n, -0)
-                ? '-0.0'
-                : String(n) + (!String(n).includes('.') && !String(n).includes('e') ? '.0' : ''),
-            )
-          : n;
+        return n;
       }
       return fail(
         ctx,
@@ -238,36 +283,64 @@ function node(
   schema: Schema,
   value: unknown,
   ctx: Context,
-  loc: readonly (string | number)[],
+  loc: (string | number)[],
   name?: string,
+  depth = 0,
 ): unknown {
   if (schema.$ref) {
     const key = schema.$ref.slice('#/$defs/'.length);
-    return node(definitions[key]!, value, ctx, loc, key);
+    return node(definitions[key]!, value, ctx, loc, key, depth);
   }
   if (name === 'JsonValue') {
     if (
       value === null ||
-      ['string', 'boolean', 'number'].includes(typeof value) ||
+      typeof value === 'string' ||
+      typeof value === 'boolean' ||
+      typeof value === 'number' ||
       value instanceof JsonNumber
     )
-      return value;
-    if (Array.isArray(value))
-      return value.map((v, i) =>
-        node(schema.anyOf!.find((s) => s.type === 'array')!.items!, v, ctx, [...loc, i]),
-      );
-    if (record(value))
-      return ordered_json_object(
-        ordered_json_entries(value).map(([k, v]) => [
-          k,
-          node(schema, v, ctx, [...loc, k], 'JsonValue'),
-        ]),
-      );
+      return value instanceof JsonNumber ? normalize_json_number(value) : value;
+    if (Array.isArray(value)) {
+      if (ctx.revalidate && value.length && depth >= EXECUTOR_JSON_MAX_DEPTH)
+        throw new ValueError('recursion limit exceeded');
+      const result: unknown[] = [];
+      for (let i = 0; i < value.length; i++) {
+        loc.push(i);
+        result.push(node(json_value_items, value[i], ctx, loc, undefined, depth + 1));
+        loc.pop();
+      }
+      return result;
+    }
+    if (record(value)) {
+      if (ctx.revalidate && depth >= EXECUTOR_JSON_MAX_DEPTH && Object.keys(value).length)
+        throw new ValueError('recursion limit exceeded');
+      const entries: [string, unknown][] = [];
+      for (const [key, item] of ordered_json_entries(value)) {
+        loc.push(key);
+        entries.push([key, node(schema, item, ctx, loc, 'JsonValue', depth + 1)]);
+        loc.pop();
+      }
+      return ordered_json_object(entries);
+    }
   }
   if (schema.oneOf) {
+    if (!record(value) && !class_name(value))
+      return fail(
+        ctx,
+        'model_attributes_type',
+        ctx.origin === 'json'
+          ? 'Input should be an object'
+          : 'Input should be a valid dictionary or object to extract fields from',
+        value,
+        loc,
+      );
     const tag =
       record(value) || class_name(value) ? (value as Record<string, unknown>).kind : undefined;
-    const choices = schema.oneOf.map((s) => dereference(s).properties!.kind!.const as string);
+    let choices = tags_cache.get(schema);
+    if (!choices) {
+      choices = schema.oneOf.map((s) => dereference(s).properties!.kind!.const as string);
+      tags_cache.set(schema, choices);
+    }
     if (typeof tag !== 'string' || !choices.includes(tag))
       return fail(
         ctx,
@@ -278,7 +351,10 @@ function node(
         value,
         loc,
       );
-    return node(schema.oneOf[choices.indexOf(tag)]!, value, ctx, [...loc, tag]);
+    loc.push(tag);
+    const result = node(schema.oneOf[choices.indexOf(tag)]!, value, ctx, loc, undefined, depth);
+    loc.pop();
+    return result;
   }
   if (schema.anyOf) {
     if (schema.anyOf.some((s) => s.type === 'null'))
@@ -289,29 +365,33 @@ function node(
             value,
             ctx,
             loc,
+            undefined,
+            depth,
           );
-    const input = value;
-    const candidates = schema.anyOf.map((branch) => {
+    let winner: unknown = BAD,
+      best = -1;
+    const errors: Issue[] = [];
+    const known = class_name(value);
+    const options = branches(schema);
+    const selected = known ? options.find((branch) => branch.name === known) : undefined;
+    for (const branch of options) {
+      if (selected && selected !== branch) continue;
       const issues: Issue[] = [];
-      const target = dereference(branch);
-      const label =
-        branch.$ref && target['x-python-fields']
-          ? branch.$ref.slice('#/$defs/'.length)
-          : `literal[${(target.enum ?? [target.const]).map(python_repr).join(',')}]`;
-      const result = node(branch, value, { ...ctx, issues }, [...loc, label]);
-      return {
-        result,
-        issues,
-        score: record(input)
-          ? Object.keys(target.properties ?? {}).filter((k) => Object.hasOwn(input, k)).length
-          : 0,
-      };
-    });
-    const winners = candidates
-      .filter((c) => c.issues.length === 0)
-      .sort((a, b) => b.score - a.score);
-    if (winners.length) return winners[0]!.result;
-    ctx.issues.push(...candidates.flatMap((c) => c.issues));
+      loc.push(branch.label);
+      const result = node(branch.schema, value, { ...ctx, issues }, loc, undefined, depth);
+      loc.pop();
+      if (!issues.length) {
+        let score = 0;
+        if (record(value))
+          for (const field of branch.fields) if (Object.hasOwn(value, field)) score++;
+        if (score > best) {
+          winner = result;
+          best = score;
+        }
+      } else errors.push(...issues);
+    }
+    if (best >= 0) return winner;
+    ctx.issues.push(...errors);
     return BAD;
   }
   if (schema.enum || Object.hasOwn(schema, 'const')) {
@@ -342,12 +422,18 @@ function node(
         loc,
       );
     const items = value;
+    if (ctx.revalidate && items.length && depth >= EXECUTOR_JSON_MAX_DEPTH)
+      throw new ValueError('recursion limit exceeded');
     const result: unknown[] = [];
     const prefix = schema.prefixItems;
     if (prefix) {
       prefix.forEach((item, i) => {
         if (i >= items.length) fail(ctx, 'missing', 'Field required', items, [...loc, i]);
-        else result.push(node(item, items[i], ctx, [...loc, i]));
+        else {
+          loc.push(i);
+          result.push(node(item, items[i], ctx, loc, undefined, depth + 1));
+          loc.pop();
+        }
       });
       if (schema.maxItems !== undefined && value.length > schema.maxItems)
         fail(
@@ -357,14 +443,21 @@ function node(
           value,
           loc,
         );
-    } else value.forEach((item, i) => result.push(node(schema.items!, item, ctx, [...loc, i])));
+    } else {
+      for (let i = 0; i < items.length; i++) {
+        loc.push(i);
+        result.push(node(schema.items!, items[i], ctx, loc, undefined, depth + 1));
+        loc.pop();
+      }
+    }
     if (schema['x-python-container'] === 'tuple') tag_tuple(result);
     return result;
   }
   if (schema.type === 'object') {
     const fields = schema['x-python-fields'];
-    if (fields && class_name(value) === name) return value;
-    if (!record(value))
+    const known = class_name(value);
+    if (fields && known === name && !ctx.revalidate) return value;
+    if (!record(value) && !(fields && known === name && ctx.revalidate))
       return fail(
         ctx,
         fields ? 'dataclass_type' : 'dict_type',
@@ -379,7 +472,13 @@ function node(
         loc,
       );
     const original = value;
-    let object = value;
+    let object = value as Record<string, unknown>;
+    if (
+      ctx.revalidate &&
+      depth >= EXECUTOR_JSON_MAX_DEPTH &&
+      (fields ? fields.length : Object.keys(object).length)
+    )
+      throw new ValueError('recursion limit exceeded');
     if (name === 'ChildCommand') {
       for (const key of ['operation', 'arguments'])
         if (!Object.hasOwn(object, key)) throw new KeyError(key);
@@ -401,6 +500,8 @@ function node(
         raw,
         { ...ctx, strict: false, pythonInput: true },
         loc,
+        undefined,
+        depth + 1,
       );
       if (ctx.issues.length > count) return BAD;
       if ((arguments_value as Record<string, unknown>).kind !== operation)
@@ -416,21 +517,36 @@ function node(
       );
       ctx = { ...ctx, pythonInput: true };
     }
-    if (!fields)
-      return ordered_json_object(
-        ordered_json_entries(object).map(([k, v]) => [
-          k,
+    if (!fields) {
+      const entries: [string, unknown][] = [];
+      for (const [key, item] of ordered_json_entries(object)) {
+        loc.push(key);
+        entries.push([
+          key,
           typeof schema.additionalProperties === 'object'
-            ? node(schema.additionalProperties, v, ctx, [...loc, k])
-            : v,
-        ]),
-      );
+            ? node(schema.additionalProperties, item, ctx, loc, undefined, depth + 1)
+            : item,
+        ]);
+        loc.pop();
+      }
+      return ordered_json_object(entries);
+    }
     const count = ctx.issues.length;
     const result: Record<string, unknown> = Object.create(null);
     for (const key of fields) {
       const child = schema.properties![key]!;
-      if (Object.hasOwn(object, key)) result[key] = node(child, object[key], ctx, [...loc, key]);
-      else if (Object.hasOwn(child, 'default')) result[key] = default_value(child);
+      if (Object.hasOwn(object, key) && object[key] !== undefined) {
+        loc.push(key);
+        result[key] = node(
+          child,
+          object[key],
+          name === 'ChildCommand' && key === 'arguments' ? { ...ctx, revalidate: false } : ctx,
+          loc,
+          undefined,
+          depth + 1,
+        );
+        loc.pop();
+      } else if (Object.hasOwn(child, 'default')) result[key] = default_value(child);
       else fail(ctx, 'missing', 'Field required', object, [...loc, key]);
     }
     if (schema.additionalProperties === false)
@@ -438,11 +554,7 @@ function node(
         if (!fields.includes(key))
           fail(ctx, 'unexpected_keyword_argument', 'Unexpected keyword argument', v, [...loc, key]);
     if (ctx.issues.length !== count) return BAD;
-    tag_class(
-      result,
-      name!,
-      fields.map((key) => field_repr(key, schema.properties![key]!)),
-    );
+    tag_class(result, name!, representations(schema));
     let problem: string | undefined;
     if (name === 'ChildCommand') {
       const args = result.arguments as Record<string, unknown>;
@@ -488,47 +600,27 @@ export function decode_json_value<K extends WireRootName>(
   root: K,
   strict = false,
   origin: 'json' | 'python' = 'json',
-): NumericJSON<WireTypes[K]> {
-  const ctx: Context = { strict, origin, pythonInput: origin === 'python', issues: [] };
+  revalidate = false,
+): WireTypes[K] {
+  const ctx: Context = { strict, origin, pythonInput: origin === 'python', issues: [], revalidate };
   const result = node(definitions[root]!, value, ctx, [], root);
   if (ctx.issues.length) throw new ValidationError(root, ctx.issues, ERROR_VERSION);
-  return result as NumericJSON<WireTypes[K]>;
+  return result as WireTypes[K];
 }
-export function decode_value<K extends WireRootName>(
-  value: unknown,
-  root: K,
-): NumericJSON<WireTypes[K]> {
+export function decode_value<K extends WireRootName>(value: unknown, root: K): WireTypes[K] {
   return decode_json_value(value, root, false, 'python');
 }
-function encode_node(value: unknown, schema?: Schema, typed = false, nativeField = false): unknown {
+function encode_node(value: unknown, schema?: Schema): unknown {
+  if (schema?.$ref === '#/$defs/JsonValue') schema = undefined;
   if (schema) schema = dereference(schema);
-  const known = class_name(value);
-  if (!schema && known) schema = definitions[known];
-  if (!schema && value !== null && typeof value === 'object' && !Array.isArray(value)) {
-    const name = value.constructor?.name;
-    if (name && name !== 'Object') schema = definitions[name];
-  }
   if (schema?.anyOf) {
-    const choices = schema.anyOf;
+    const choices = branches(schema);
+    const known = class_name(value);
     schema =
       value === null
-        ? choices.find((s) => s.type === 'null')
-        : choices.find((s) => s.type !== 'null');
-    if (choices.length > 1 && !choices.some((s) => s.type === 'null')) {
-      const name =
-        known ??
-        (value !== null && typeof value === 'object' ? value.constructor?.name : undefined);
-      schema =
-        choices.find((s) => s.$ref?.endsWith('/' + name)) ??
-        choices.slice().sort((a, b) => {
-          const score = (s: Schema) =>
-            value !== null && typeof value === 'object'
-              ? Object.keys(dereference(s).properties ?? {}).filter((k) => Object.hasOwn(value, k))
-                  .length
-              : 0;
-          return score(b) - score(a);
-        })[0];
-    }
+        ? schema.anyOf.find((s) => s.type === 'null')
+        : (choices.find((branch) => branch.name === known && known !== undefined)?.schema ??
+          schema.anyOf.find((s) => s.type !== 'null'));
     if (schema) schema = dereference(schema);
   }
   if (schema?.oneOf) {
@@ -542,20 +634,13 @@ function encode_node(value: unknown, schema?: Schema, typed = false, nativeField
     );
   }
   if (value instanceof JsonNumber) {
-    if (
-      typed &&
-      schema?.type === 'number' &&
-      value.kind === 'integer' &&
-      Number.isFinite(value.value)
-    ) {
-      const text = String(value.value);
-      return new JsonNumber(text + (!text.includes('.') && !text.includes('e') ? '.0' : ''));
-    }
+    if (value.kind === 'integer' && String(value.integer).length > EXECUTOR_JSON_MAX_INTEGER_LENGTH)
+      throw new ValueError('integer exceeds JSON number limit');
     return !Number.isFinite(value.value) && value.kind === 'float' ? null : value;
   }
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) return null;
-    if ((typed || nativeField) && schema?.type === 'number')
+    if (schema?.type === 'number')
       return new JsonNumber(
         Object.is(value, -0)
           ? '-0.0'
@@ -566,39 +651,43 @@ function encode_node(value: unknown, schema?: Schema, typed = false, nativeField
   }
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
   if (Array.isArray(value))
-    return value.map((v, i) =>
-      encode_node(v, schema?.prefixItems?.[i] ?? schema?.items, typed, nativeField),
-    );
+    return value.map((v, i) => encode_node(v, schema?.prefixItems?.[i] ?? schema?.items));
   if (value instanceof Uint8Array)
     return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(value);
   if (typeof value === 'object') {
     const fields = schema?.['x-python-fields'];
     const record = value as Record<string, unknown>;
-    const entries = fields
-      ? fields.filter((k) => Object.hasOwn(record, k)).map((k) => [k, record[k]] as const)
-      : ordered_json_entries(record);
-    return ordered_json_object(
-      entries.map(([k, v]) => [
-        k,
-        encode_node(
-          v,
-          schema?.properties?.[k] ??
-            (typeof schema?.additionalProperties === 'object'
-              ? schema.additionalProperties
-              : undefined),
-          typed,
-          Boolean(
-            !class_name(value) && value.constructor?.name && value.constructor.name !== 'Object',
-          ),
-        ),
-      ]),
-    );
+    const entries: [string, unknown][] = [];
+    if (fields) {
+      for (const key of fields)
+        entries.push([key, encode_node(record[key], schema!.properties![key])]);
+    } else {
+      const child =
+        typeof schema?.additionalProperties === 'object' ? schema.additionalProperties : undefined;
+      for (const [key, item] of ordered_json_entries(record))
+        entries.push([key, encode_node(item, child)]);
+    }
+    return ordered_json_object(entries);
   }
   throw new TypeError('Unable to serialize executor value');
 }
-export function encode_value(value: unknown, root?: WireRootName): NumericJSON<JsonValue> {
-  return encode_node(value, root ? definitions[root] : undefined) as NumericJSON<JsonValue>;
+function validated_output(value: unknown, root: WireRootName, strict: boolean): JsonValue {
+  const normalized = decode_json_value(value, root, false, 'python', true);
+  const encoded = encode_node(normalized, definitions[root]) as JsonValue;
+  // JSON conversion maps nonfinite values to null. Check what the peer will actually read.
+  decode_json_value(encoded, root, strict, 'json', true);
+  return encoded;
 }
-export function encode_typed_value(value: unknown, root: WireRootName): unknown {
-  return encode_node(value, definitions[root], true);
+export function encode_value<K extends WireRootName>(
+  value: WireInput<NoInfer<K>>,
+  root: K,
+): JsonValue {
+  return validated_output(value, root, false);
+}
+export function encode_typed_value<K extends WireRootName>(
+  value: WireInput<NoInfer<K>>,
+  root: K,
+  operation: 'bounded' | 'frame',
+): JsonValue {
+  return validated_output(value, root, operation === 'frame');
 }

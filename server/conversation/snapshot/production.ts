@@ -26,6 +26,8 @@ export function production_backend_providers(
   if (test_mode || backend_io_is_test()) return providers;
   if (context === undefined)
     throw new Error('Production backend providers require database and clock context.');
+  const children = context.one_shot_children;
+  if (!children) throw new Error('Production catalogs require a server-owned child lifetime');
   const codex = create_codex_providers(context);
   return {
     ...providers,
@@ -47,7 +49,7 @@ export function production_backend_providers(
           'Production catalog reads are unavailable in tests.',
         );
       try {
-        return await probe_claude_model_catalog(executable);
+        return await probe_claude_model_catalog(executable, children);
       } catch (error) {
         if (error instanceof ProviderUnavailable)
           throw new ClaudeModelCatalogUnavailable(error.message);
