@@ -1,5 +1,5 @@
 import type { StopIntent } from '../contracts.ts';
-export function consume_stop_intent(
+export function stop_intent_is_current(
   intent: StopIntent | null,
   incarnation: string,
   now: number,
