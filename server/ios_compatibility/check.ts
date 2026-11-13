@@ -4,7 +4,12 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { strip } from '../core/whitespace.ts';
 import { parse_attempt_json, is_object } from '../environments/updates/codec.ts';
-import { python_json_equal } from '../environments/release/logic/manifest.ts';
+import { python_json_equal, validate_app_sha } from '../environments/release/logic/manifest.ts';
+import {
+  publication_git,
+  require_clean_publication_source,
+} from '../environments/release/publication_identity.ts';
+import type { ReleaseExecution } from '../environments/release/contracts.ts';
 import { MINIMUM_SUPPORTED_BUILD } from './policy.ts';
 
 export const REVIEW_PATH = 'server/ios_compatibility/review.json';
@@ -87,4 +92,60 @@ export async function check(root: string, review_path = join(root, REVIEW_PATH))
     throw new Error(
       'Record concrete check evidence, or the break that required a minimum increase.',
     );
+}
+
+export interface CommittedIosReview {
+  readonly contract_sha256: string;
+  readonly oldest_supported_build: number;
+  readonly decision: 'compatible' | 'minimum_raised';
+  readonly evidence: string;
+  readonly review_commit: string;
+  readonly reviewer: { readonly name: string; readonly email: string };
+}
+
+/** Publication reads only the committed human review, never a job-written verdict. */
+export async function check_head_review(
+  root: string,
+  expected_sha: string,
+  execution: ReleaseExecution,
+): Promise<CommittedIosReview> {
+  await require_clean_publication_source(root, expected_sha, execution);
+  const review: unknown = JSON.parse(
+    await publication_git(root, ['show', `HEAD:${REVIEW_PATH}`], execution),
+  );
+  if (review === null || typeof review !== 'object' || Array.isArray(review))
+    throw new Error('iOS compatibility review must be an object');
+  const value = review as Record<string, unknown>;
+  const digest = await contract_digest(root);
+  if (value.contract_sha256 !== digest)
+    throw new Error(
+      'Native-facing contracts changed. Review iOS compatibility and refresh the source-bound review.',
+    );
+  if (value.oldest_supported_build !== MINIMUM_SUPPORTED_BUILD)
+    throw new Error("Review must name the policy's oldest supported build.");
+  if (value.decision !== 'compatible' && value.decision !== 'minimum_raised')
+    throw new Error('Record compatible or minimum_raised after review.');
+  if (typeof value.evidence !== 'string' || value.evidence.trim().length < 40)
+    throw new Error(
+      'Record concrete check evidence, or the break that required a minimum increase.',
+    );
+  const author = (
+    await publication_git(
+      root,
+      ['log', '-1', '--pretty=format:%H%x00%an%x00%ae%x00', 'HEAD', '--', REVIEW_PATH],
+      execution,
+    )
+  ).split('\0');
+  if (author.length !== 4 || author[3] !== '' || !author[1] || !author[2])
+    throw new Error('Committed iOS review has no complete author identity');
+  const review_commit = validate_app_sha(author[0], 'review commit');
+  await require_clean_publication_source(root, expected_sha, execution);
+  return {
+    contract_sha256: digest,
+    oldest_supported_build: MINIMUM_SUPPORTED_BUILD,
+    decision: value.decision,
+    evidence: value.evidence,
+    review_commit,
+    reviewer: { name: author[1], email: author[2] },
+  };
 }

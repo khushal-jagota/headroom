@@ -1,10 +1,51 @@
 /** Actual GitHub intake shared by the build and final receipt entries. */
 import { readFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { is_object } from '../updates/codec.ts';
 import { validate_app_sha } from './logic/manifest.ts';
+import { run_release_command } from './process.ts';
+import { PUBLICATION_GIT_SECONDS } from './publication_configuration.ts';
+import type { ReleaseExecution } from './contracts.ts';
 import type { PublicationSourceRun } from './publication_contracts.ts';
 
 export const TYPESCRIPT_PUBLICATION_WORKFLOW = '.github/workflows/publish-typescript-release.yml';
+
+/** Source reads retain the caller's owner, signal, and original deadline. */
+export async function publication_git(
+  root: string,
+  args: readonly string[],
+  execution: ReleaseExecution,
+): Promise<string> {
+  return (
+    await run_release_command(
+      ['git', '-C', root, ...args],
+      {
+        timeout_seconds: PUBLICATION_GIT_SECONDS,
+        environment: {
+          PATH: dirname(process.execPath) + ':/usr/local/bin:/usr/bin:/bin',
+          LANG: 'C.UTF-8',
+          GIT_CONFIG_NOSYSTEM: '1',
+          GIT_CONFIG_SYSTEM: '/dev/null',
+          GIT_CONFIG_GLOBAL: '/dev/null',
+          GIT_NO_REPLACE_OBJECTS: '1',
+        },
+      },
+      execution,
+    )
+  ).stdout;
+}
+
+export async function require_clean_publication_source(
+  root: string,
+  expected_sha: string,
+  execution: ReleaseExecution,
+): Promise<void> {
+  validate_app_sha(expected_sha);
+  if ((await publication_git(root, ['rev-parse', 'HEAD'], execution)).trim() !== expected_sha)
+    throw new Error('Publication source HEAD differs from the event SHA');
+  if (await publication_git(root, ['status', '--porcelain=v1', '--untracked-files=all'], execution))
+    throw new Error('Publication source must have a clean working tree');
+}
 export async function publication_json_file(path: string): Promise<unknown> {
   return JSON.parse(
     new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await readFile(path)),

@@ -17,7 +17,7 @@ try {
     if (
       !is_object(request) ||
       Object.keys(request).sort().join(',') !==
-        'artifact_id,linux_root,mac_artifact_id,mac_build_result,mac_root,output_directory,source_root'
+        'artifact_id,linux_artifact_zip,linux_build_artifact_id,linux_build_artifact_zip,mac_artifact_id,mac_artifact_zip,mac_build_result,output_directory,source_root'
     )
       throw new Error('Invalid publication receipt request');
     const provenance = await source_run(publication_text(process.env.GITHUB_SHA, 'GITHUB_SHA'));
@@ -28,15 +28,24 @@ try {
     await write_publication_receipt(
       {
         source_root: publication_text(request.source_root, 'source_root'),
-        linux_root: publication_text(request.linux_root, 'linux_root'),
-        mac_root: publication_text(request.mac_root, 'mac_root'),
+        linux_artifact_zip: publication_text(request.linux_artifact_zip, 'linux_artifact_zip'),
+        linux_build_artifact_zip: publication_text(
+          request.linux_build_artifact_zip,
+          'linux_build_artifact_zip',
+        ),
+        mac_artifact_zip: publication_text(request.mac_artifact_zip, 'mac_artifact_zip'),
         output_directory,
         artifact_id: publication_id(request.artifact_id, 'artifact ID'),
+        linux_build_artifact_id: publication_id(
+          request.linux_build_artifact_id,
+          'Linux evidence artifact ID',
+        ),
         mac_artifact_id: publication_id(request.mac_artifact_id, 'Mac artifact ID'),
         mac_build_result: publication_text(request.mac_build_result, 'Mac build result'),
       },
       provenance,
       execution,
+      publication_text(process.env.GITHUB_TOKEN, 'GITHUB_TOKEN'),
     );
     register_output(output_directory);
   });

@@ -40,8 +40,8 @@ export async function build_linux_publication(
 ): Promise<LinuxPublicationBuild> {
   const fence = () => assert_release_execution(execution);
   fence();
-  if (execution.deadline !== null)
-    throw new AppValidationError('publication build requires explicit standalone deadline policy');
+  if (execution.deadline === null || !Number.isFinite(execution.deadline))
+    throw new AppValidationError('publication build requires a finite original deadline');
   const requested = validate_app_sha(options.requested_sha, 'requested SHA');
   if (source_run.source_sha !== requested)
     throw new AppValidationError('publication provenance differs from requested SHA');
