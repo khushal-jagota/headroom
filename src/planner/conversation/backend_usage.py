@@ -115,9 +115,7 @@ class _CodexRateLimitWindow(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     used_percent: StrictInt = Field(alias="usedPercent")
-    window_duration_minutes: StrictInt | None = Field(
-        default=None, alias="windowDurationMins"
-    )
+    window_duration_minutes: StrictInt | None = Field(default=None, alias="windowDurationMins")
     resets_at: StrictInt | None = Field(default=None, alias="resetsAt")
 
 
@@ -143,9 +141,7 @@ class _CodexUsageMessageHandler:
     async def on_notification(self, method: str, notification: BaseModel) -> None:
         del method, notification
 
-    async def on_server_request(
-        self, method: str, request_id: Any, params: BaseModel
-    ) -> None:
+    async def on_server_request(self, method: str, request_id: Any, params: BaseModel) -> None:
         del method, request_id, params
 
     async def on_child_ended(self) -> None:
@@ -171,9 +167,7 @@ class _CodexUsageClient(Protocol):
         params: Mapping[str, Any] | None = None,
     ) -> Any: ...
 
-    async def notify(
-        self, method: str, params: Mapping[str, Any] | None = None
-    ) -> None: ...
+    async def notify(self, method: str, params: Mapping[str, Any] | None = None) -> None: ...
 
     async def stop(self) -> None: ...
 
@@ -203,9 +197,7 @@ class CodexUsageAdapter:
                 outcome=BackendUsageOutcome.unavailable,
                 detail="Codex is not installed or not on PATH.",
             )
-        client = self._client_factory(
-            handler=_CodexUsageMessageHandler(), description="usage-read"
-        )
+        client = self._client_factory(handler=_CodexUsageMessageHandler(), description="usage-read")
         try:
             response = await asyncio.wait_for(
                 _read_codex_rate_limits(client, executable),
@@ -501,11 +493,7 @@ def _parse_claude_limit_entry(value: Any) -> BackendUsageWindow | None:
 
     scope = value.get("scope")
     model = scope.get("model") if isinstance(scope, dict) else None
-    model_name = (
-        model.get("display_name")
-        if isinstance(model, dict)
-        else None
-    )
+    model_name = model.get("display_name") if isinstance(model, dict) else None
     if not isinstance(model_name, str) or not model_name:
         model_name = model.get("displayName") if isinstance(model, dict) else None
     if isinstance(model_name, str) and model_name:

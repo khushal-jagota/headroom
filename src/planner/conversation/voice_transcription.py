@@ -183,9 +183,7 @@ async def transcribe_conversation_audio(
         ) from not_json
     text = body.get("text") if isinstance(body, dict) else None
     if not isinstance(text, str):
-        raise VoiceTranscriptionFailed(
-            "the transcription provider's answer carries no transcript"
-        )
+        raise VoiceTranscriptionFailed("the transcription provider's answer carries no transcript")
     return without_whisper_hallucination(text)
 
 

@@ -56,6 +56,7 @@ from planner.conversation.backends.codex_app_server.model_catalog import (
     probe_codex_model_catalog,
 )
 from planner.conversation.contracts import ConversationBackendKey
+from planner.core.task_settlement import run_on_worker_thread
 
 # How codex and claude are asked what they can be run as. Named as parameters because
 # asking spawns a child: a test describes the answer instead of spawning one.
@@ -344,9 +345,7 @@ class SubprocessBackendProbeEnvironment:
         try:
             return await asyncio.wait_for(operation(), timeout=timeout_seconds)
         except TimeoutError:
-            return CommandOutcome(
-                -1, "", f"{argv[0]} did not answer within {timeout_seconds:g}s"
-            )
+            return CommandOutcome(-1, "", f"{argv[0]} did not answer within {timeout_seconds:g}s")
 
     async def latest_released_version(
         self, package_name: str, *, timeout_seconds: float
@@ -1263,8 +1262,12 @@ class BackendSnapshotService:
         remembered_codex_login_rejection: CodexLoginRejectionMemory | None = None,
         now: Callable[[], datetime] | None = None,
         machine_catalog: bool = False,
+        keep_complete_model_list: Callable[[BackendSnapshot], None] | None = None,
     ) -> None:
         self._machine_catalog = machine_catalog
+        # Where a complete model list goes once read, so that a model check made without
+        # this process, or after a restart, still knows what the backend offers.
+        self._keep_complete_model_list = keep_complete_model_list
         self._probed_at: dict[ConversationBackendKey, datetime] = {}
         self._environment = environment or SubprocessBackendProbeEnvironment()
         self._now = now or (lambda: datetime.now(UTC))
@@ -1404,6 +1407,8 @@ class BackendSnapshotService:
                 )
             self._snapshots[backend_key] = probed
             self._probed_at[backend_key] = reading_at
+            if self._keep_complete_model_list is not None and probed.models_complete:
+                await run_on_worker_thread(self._keep_complete_model_list, probed)
             if backend_key is ConversationBackendKey.codex and codex_login is not None:
                 self._codex_card_was_probed_against = codex_login.everything_a_card_reads(
                     now=reading_at

@@ -9,7 +9,7 @@ from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Request
 
-from planner.conversation.backend_state import require_enabled_model
+from planner.conversation.backend_state import require_usable_model
 from planner.conversation.contracts import ConversationSystem, require_conversation_backend_key
 from planner.conversation.logic.signals import conversation_signal
 from planner.conversation.signals import read_conversation_signals
@@ -23,6 +23,7 @@ from planner.core.config import Config
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.task_settlement import run_on_worker_thread
+from planner.execution_identity import TicketLocale
 from planner.runtime import conversation_start
 from planner.skill_staleness import stale_references
 from planner.tickets.api import (
@@ -112,7 +113,7 @@ def _chief_json(settings: ManagedChiefSettings) -> JsonDict:
 def _resolve_launch_defaults(conn: sqlite3.Connection, raw: dict[str, Any]) -> dict[str, Any]:
     defaults = service.validate_launch_defaults(raw)
     backend_key = require_conversation_backend_key(defaults.employee_backend)
-    require_enabled_model(conn, backend_key, defaults.employee_launch_model)
+    require_usable_model(conn, backend_key, defaults.employee_launch_model, TicketLocale.vps)
     return {
         "employee_backend": backend_key.value,
         "employee_launch_model": defaults.employee_launch_model,

@@ -1191,6 +1191,64 @@ def test_restart_refuses_a_mac_ticket_while_the_mac_is_away(world: _World) -> No
     assert ticket.worker_step_claim_revision == claimed.worker_step_claim_revision
 
 
+def test_a_saved_model_the_machine_no_longer_offers_errors_once_with_its_choices(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Risk: a Ticket saved on a model that was later retired either fails on the backend
+    # with a misleading error or is refused and re-claimed on every poll. The dispatch
+    # refusal must reach the Ticket's own conversation, and the claim must stay errored.
+    from tests.unit.test_admission_model_policy import _model_list
+    from tests.unit.test_conversation_system import _Harness
+
+    from planner.conversation.backend_state import save_machine_model_list
+    from planner.conversation.contracts import ConversationBackendKey
+    from planner.conversation.events import PromptDeliveryRefusedEventPayload
+    from planner.execution_identity import TicketLocale
+
+    ticket_id = world.ready_ticket()
+    with closing(world.connect()) as conn:
+        save_machine_model_list(
+            conn,
+            TicketLocale.vps,
+            _model_list(ConversationBackendKey.codex, "gpt-6-luna", "gpt-6-astra"),
+        )
+        conn.commit()
+    monkeypatch.setattr(
+        "planner.runtime.conversation_start.new_conversation_id", lambda: "retired-model"
+    )
+    harness = _Harness(Path(world.db_path))
+
+    async def start() -> WorkerStepStartResult:
+        return await start_ready_worker_step(
+            ticket_id,
+            connect_database=world.connect,
+            conversation_system=harness.system,
+            worker_type_registry=configured_worker_type_registry(),
+            now=world.clock.now_unix,
+        )
+
+    async def exercise() -> None:
+        try:
+            assert (await start()).delivery_fate == "refused"
+            failed = world.ticket(ticket_id)
+            assert failed.ticket_status is TicketStatus.errored
+            rows = await harness.events("retired-model")
+            refusals = [
+                r.payload for r in rows if isinstance(r.payload, PromptDeliveryRefusedEventPayload)
+            ]
+            assert [r.refusal_detail for r in refusals] == [
+                'Model "gpt-6.1-sol" is not offered by codex on the VPS. '
+                "Choose one of: gpt-6-luna, gpt-6-astra."
+            ]
+            assert not (await start()).started
+            assert world.ticket(ticket_id) == failed
+            assert harness.spawned_conversation_ids == []
+        finally:
+            await harness.system.shutdown()
+
+    asyncio.run(exercise())
+
+
 def test_definite_start_failure_stays_failed_until_one_explicit_retry(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:

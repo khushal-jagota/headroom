@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Final
 from uuid import uuid4
 from weakref import WeakValueDictionary
 
-from planner.conversation.backend_state import require_enabled_model
+from planner.conversation.backend_state import require_usable_model
 from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationMessageContent,
@@ -205,7 +205,7 @@ def worker_resolve(
         ),
     )
     if ticket.employee_launch_model is None or overrides.model is not None:
-        require_enabled_model(conn, values.backend_key, values.model)
+        require_usable_model(conn, values.backend_key, values.model, ticket.locale)
     return values
 
 
@@ -270,7 +270,7 @@ def agent_resolve(
         workspace_folder=chief_home_folder(conn) if workspace_folder is None else workspace_folder,
         shared_workspace_folder=_default_workspace_folder(conn),
     )
-    require_enabled_model(conn, values.backend_key, values.model)
+    require_usable_model(conn, values.backend_key, values.model, TicketLocale.vps)
     return values
 
 

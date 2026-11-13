@@ -492,9 +492,7 @@ class HermesAcpBackendChild:
             composed_content_delivered=not (automatic_compaction or native_command)
         )
 
-    async def _automatic_compaction_content(
-        self, sender_content: MessageContent
-    ) -> MessageContent:
+    async def _automatic_compaction_content(self, sender_content: MessageContent) -> MessageContent:
         """Translate the core's maintenance request through Hermes' live command catalog."""
         if sender_content != text_message_content(PANELS_AUTOMATIC_COMPACTION_PROMPT):
             raise PromptWriteFailed(
@@ -513,9 +511,7 @@ class HermesAcpBackendChild:
         if commands is None or not any(
             command.name == HERMES_COMPACTION_COMMAND_NAME for command in commands
         ):
-            raise PromptWriteFailed(
-                "this Hermes session did not advertise the compress command"
-            )
+            raise PromptWriteFailed("this Hermes session did not advertise the compress command")
         return text_message_content(HERMES_COMPACTION_PROMPT)
 
     async def steer(
@@ -541,22 +537,16 @@ class HermesAcpBackendChild:
             connection, session_id = self._bound_session()
             self._require_a_live_wire()
         except PromptWriteFailed:
-            return BackendSteerRefused(
-                PromptDeliveryRefusalReason.write_to_backend_failed
-            )
+            return BackendSteerRefused(PromptDeliveryRefusalReason.write_to_backend_failed)
         wire_token = _turn_token_wire_value(turn_token)
         try:
             wire_content = (
                 sender_content
                 if native_command
-                else sender_labeled_composed_message_content(
-                    content, sender_content, sender_label
-                )
+                else sender_labeled_composed_message_content(content, sender_content, sender_label)
             )
         except ComposedMessageDoesNotContainSenderContent:
-            return BackendSteerRefused(
-                PromptDeliveryRefusalReason.message_cannot_be_steered
-            )
+            return BackendSteerRefused(PromptDeliveryRefusalReason.message_cannot_be_steered)
         try:
             response = await self._guarded(
                 connection.ext_method(
@@ -565,25 +555,18 @@ class HermesAcpBackendChild:
                         "sessionId": session_id,
                         "turnToken": wire_token,
                         "text": "\n\n".join(
-                            cast(MessageText, piece).text
-                            for piece in wire_content
+                            cast(MessageText, piece).text for piece in wire_content
                         ),
                         "senderLabel": sender_label,
                     },
                 )
             )
         except PromptWriteFailed:
-            return BackendSteerUncertain(
-                composed_content_delivered=not native_command
-            )
+            return BackendSteerUncertain(composed_content_delivered=not native_command)
         if not isinstance(response, dict) or response.get("turnToken") != wire_token:
-            return BackendSteerUncertain(
-                composed_content_delivered=not native_command
-            )
+            return BackendSteerUncertain(composed_content_delivered=not native_command)
         if response.get("accepted") is True:
-            return BackendSteerAccepted(
-                composed_content_delivered=not native_command
-            )
+            return BackendSteerAccepted(composed_content_delivered=not native_command)
         if response.get("accepted") is False:
             return BackendSteerRefused(PromptDeliveryRefusalReason.backend_rejected_steer)
         return BackendSteerUncertain(composed_content_delivered=not native_command)
@@ -978,9 +961,7 @@ class HermesAcpBackendChild:
     def _kept_path(self, stored_file_id: str) -> Path:
         """Return the managed path for an ACP resource link."""
         try:
-            return self._message_files.path_of(
-                self._resolved_start.conversation_id, stored_file_id
-            )
+            return self._message_files.path_of(self._resolved_start.conversation_id, stored_file_id)
         except MessageFileMissing as unreadable:
             raise PromptWriteFailed(f"{stored_file_id} could not be read") from unreadable
 

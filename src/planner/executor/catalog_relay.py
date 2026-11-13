@@ -13,14 +13,15 @@ import logging
 from contextlib import closing
 from dataclasses import replace
 
+from planner.conversation.backend_state import save_machine_model_list
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.snapshot import BackendSnapshot
 from planner.core.db import connect
 from planner.core.task_settlement import run_on_worker_thread
-from planner.execution_identity import ExecutorIdentity
+from planner.execution_identity import ExecutorIdentity, TicketLocale
 from planner.executor.configuration import MODEL_LIST_LIMIT_SECONDS
 from planner.executor.contracts import CommandSettlementReason
-from planner.executor.protocol import ModelListRequest, as_object, type_adapter
+from planner.executor.protocol import ModelListRequest, type_adapter
 from planner.executor.vps_mailbox import SqliteCommandMailbox
 from planner.executor.vps_presence import MacPresenceService
 from planner.executor.vps_runs import MacRuns
@@ -35,13 +36,10 @@ class VpsCatalogRelay:
         runs: MacRuns,
         presence: MacPresenceService,
         mailbox: SqliteCommandMailbox,
-        *,
-        machine_id: str = "macos",
     ) -> None:
         self.runs = runs
         self.presence = presence
         self.mailbox = mailbox
-        self.machine_id = machine_id
         self._tasks: dict[ConversationBackendKey, tuple[bool, asyncio.Task[BackendSnapshot]]] = {}
 
     @property
@@ -56,13 +54,14 @@ class VpsCatalogRelay:
         return self.runs.owns_conversation(conversation_id)
 
     def retained(self, backend_key: ConversationBackendKey) -> BackendSnapshot | None:
-        # Panels currently has one configured Mac. Its process incarnation changes
-        # on restart, whereas this copy belongs to the machine, including offline.
+        # Panels has one Mac, so its copy is kept under the Mac's locale. The process
+        # incarnation changes on restart, whereas this copy belongs to the machine,
+        # including offline, and is what a model check for a Mac Ticket reads.
         with closing(connect(self.runs.db_path)) as conn:
             row = conn.execute(
                 "SELECT snapshot_json FROM machine_backend_snapshots "
                 "WHERE machine_id=? AND backend_key=?",
-                (self.machine_id, backend_key.value),
+                (TicketLocale.macos.value, backend_key.value),
             ).fetchone()
         return None if row is None else type_adapter(BackendSnapshot).validate_json(row[0])
 
@@ -142,13 +141,7 @@ class VpsCatalogRelay:
                 models_complete=True,
             )
         with closing(connect(self.runs.db_path)) as conn:
-            conn.execute(
-                "INSERT INTO machine_backend_snapshots VALUES (?,?,?) "
-                "ON CONFLICT(machine_id,backend_key) DO UPDATE "
-                "SET snapshot_json=excluded.snapshot_json "
-                "WHERE snapshot_json != excluded.snapshot_json",
-                (self.machine_id, backend_key.value, json.dumps(as_object(snapshot))),
-            )
+            save_machine_model_list(conn, TicketLocale.macos, snapshot)
             conn.commit()
         return snapshot
 

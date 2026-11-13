@@ -1504,11 +1504,14 @@ class CodexAppServerBackendChild:
             # earliest sign codex gives that the model is working, and it is passed on.
             await self._sink.report(turn.token, ModelThinkingHappened())
             return
-        if not isinstance(notification.item, (
-            protocol.CommandExecutionThreadItem,
-            protocol.FileChangeThreadItem,
-            protocol.McpToolCallThreadItem,
-        )):
+        if not isinstance(
+            notification.item,
+            (
+                protocol.CommandExecutionThreadItem,
+                protocol.FileChangeThreadItem,
+                protocol.McpToolCallThreadItem,
+            ),
+        ):
             return
         started = _tool_call_started(notification.item)
         if started is None:
@@ -1540,11 +1543,14 @@ class CodexAppServerBackendChild:
             # settled account of itself and reading both would write the row twice.
             await self._sink.report(turn.token, ContextCompacted())
             return
-        if not isinstance(item, (
-            protocol.CommandExecutionThreadItem,
-            protocol.FileChangeThreadItem,
-            protocol.McpToolCallThreadItem,
-        )):
+        if not isinstance(
+            item,
+            (
+                protocol.CommandExecutionThreadItem,
+                protocol.FileChangeThreadItem,
+                protocol.McpToolCallThreadItem,
+            ),
+        ):
             return
         finished = _tool_call_finished(item)
         if finished is None:
@@ -1656,8 +1662,7 @@ class CodexAppServerBackendChild:
                 ending=ConversationTurnEnding.failed,
                 error_summary=self._read_the_login_in(
                     turn,
-                    self._client.end_reason
-                    or "the codex process ended while the turn was running",
+                    self._client.end_reason or "the codex process ended while the turn was running",
                 ),
                 standard_error_tail=self._client.standard_error_tail(),
             ),

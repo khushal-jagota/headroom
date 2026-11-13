@@ -153,9 +153,7 @@ def prefix_message_content_text(
     return (MessageText(text=prefix), *content)
 
 
-def sender_labeled_message_content(
-    content: MessageContent, sender_label: str
-) -> MessageContent:
+def sender_labeled_message_content(content: MessageContent, sender_label: str) -> MessageContent:
     """Put the sender's name at the start of the content delivered to an agent."""
     return prefix_message_content_text(content, f"{sender_label}:", "\n")
 
@@ -179,9 +177,7 @@ def sender_labeled_composed_message_content(
     first_sender_piece = sender_content[0] if sender_content else None
     first_composed_index = len(content) - sender_piece_count
     first_composed_piece = (
-        content[first_composed_index]
-        if sender_piece_count and first_composed_index >= 0
-        else None
+        content[first_composed_index] if sender_piece_count and first_composed_index >= 0 else None
     )
     if (
         isinstance(first_sender_piece, MessageText)

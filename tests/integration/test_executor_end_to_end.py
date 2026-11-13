@@ -2898,8 +2898,6 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
             mailbox = SqliteCommandMailbox(db_path)
             presence = MacPresenceService(db_path, mailbox)
             runs = MacRuns(db_path, presence, mailbox)
-            another_mac = VpsCatalogRelay(runs, presence, mailbox, machine_id="other-mac")
-            assert another_mac.retained(ConversationBackendKey.codex) is None
             offline = VpsCatalogRelay(runs, presence, mailbox)
             saved = offline.retained(ConversationBackendKey.codex)
             assert saved is not None

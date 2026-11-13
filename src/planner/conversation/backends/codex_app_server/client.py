@@ -123,8 +123,13 @@ class CodexRequestRejected(CodexAppServerError):
     """The child answered the request with an error rather than a result."""
 
     def __init__(
-        self, method: str, code: int | None, message: str, data: Any = None,
-        *, request_id: str | None = None,
+        self,
+        method: str,
+        code: int | None,
+        message: str,
+        data: Any = None,
+        *,
+        request_id: str | None = None,
     ) -> None:
         super().__init__(f"{method} was rejected: {message}")
         self.method = method
