@@ -2,6 +2,8 @@
 import { closeSync, readdirSync } from 'node:fs';
 import { parentPort } from 'node:worker_threads';
 import * as files from './file_worker_operations.ts';
+import * as transfers from './transfer_file_operations.ts';
+import { close_retained } from './retained_cleanup.ts';
 import { sync_directory_descriptor, unlink_relative } from './platform.ts';
 import type {
   FileOperationResults,
@@ -21,6 +23,16 @@ function execute(
   message: Exclude<FileWorkerRequest, { operation: 'stop' }>,
 ): FileOperationResults[keyof FileOperationResults] {
   switch (message.operation) {
+    case 'open_transfer':
+      return transfers.open_transfer(...message.arguments);
+    case 'read_transfer':
+      return transfers.read_transfer(...message.arguments);
+    case 'write_transfer':
+      return transfers.write_transfer(...message.arguments);
+    case 'finish_transfer':
+      return transfers.finish_transfer(...message.arguments);
+    case 'close_transfer':
+      return transfers.close_transfer(...message.arguments);
     case 'capture_file': {
       const [source, handle, checked_ns] = message.arguments;
       return files.capture_file(source, descriptor(handle), checked_ns);
@@ -53,8 +65,8 @@ function execute(
     case 'close_directory': {
       const [handle] = message.arguments;
       const fd = descriptor(handle);
-      directories.delete(handle);
       closeSync(fd);
+      directories.delete(handle);
       return;
     }
     case 'copy_verified_at': {
@@ -77,19 +89,19 @@ function error_body(error: unknown): FileWorkerError {
     ...('code' in value ? { code: value.code } : {}),
     ...('errno' in value ? { errno: value.errno } : {}),
     ...('syscall' in value ? { syscall: value.syscall } : {}),
+    ...(value instanceof AggregateError ? { errors: value.errors.map(error_body) } : {}),
+    ...(value.cause instanceof Error ? { cause: error_body(value.cause) } : {}),
   };
 }
 function close_handles(): unknown {
-  let failure: unknown;
-  for (const [handle, fd] of directories) {
-    directories.delete(handle);
-    try {
-      closeSync(fd);
-    } catch (error) {
-      failure ??= error;
-    }
-  }
-  return failure;
+  const transfer_failure = transfers.close_transfers();
+  const directory_failure = close_retained(directories, closeSync);
+  if (transfer_failure !== undefined && directory_failure !== undefined)
+    return new AggregateError(
+      [transfer_failure, directory_failure],
+      'Transfer and directory cleanup failed.',
+    );
+  return transfer_failure ?? directory_failure;
 }
 // Fatal JavaScript errors still release libc descriptors before the thread exits.
 process.once('uncaughtExceptionMonitor', close_handles);
@@ -97,14 +109,27 @@ process.once('exit', close_handles);
 port.on('message', (message: FileWorkerRequest) => {
   if (message.operation === 'stop') {
     const failure = close_handles();
+    if (failure !== undefined) {
+      // Keep the worker and every failed capability alive. The host retains the
+      // failure, and another stop retries without a renewed deadline.
+      port.postMessage({ cleanup_failed: error_body(failure) } satisfies FileWorkerResponse);
+      return;
+    }
     port.close();
-    if (failure !== undefined) throw failure;
     return;
   }
   let response: FileWorkerResponse;
   try {
     response = { id: message.id, value: execute(message) };
   } catch (error) {
+    if (
+      message.operation === 'close_transfer' ||
+      message.operation === 'close_directory' ||
+      (error instanceof AggregateError && message.operation === 'open_transfer')
+    ) {
+      port.postMessage({ cleanup_failed: error_body(error) } satisfies FileWorkerResponse);
+      return;
+    }
     response = { id: message.id, error: error_body(error) };
   }
   port.postMessage(response);
