@@ -78,3 +78,64 @@ export interface ReleaseExecution {
   readonly signal: AbortSignal;
   readonly deadline: number | null;
 }
+
+export type ArchiveUnpackRequest = { readonly spool_root: string } & (
+  | {
+      readonly purpose: 'application';
+      readonly destination: string;
+      readonly archive_sha256: string;
+      readonly expected_sha: string;
+    }
+  | {
+      readonly purpose: 'mac-inspection';
+      readonly archive_sha256: string;
+      readonly archive_size: number;
+    }
+);
+/** These two kinds alone enter the Mac service's deliberate conflict boundary. */
+export class MacArchiveInspectionError extends Error {
+  readonly kind: 'archive' | 'refusal';
+  constructor(kind: 'archive' | 'refusal', message: string) {
+    super(message);
+    this.kind = kind;
+  }
+}
+export class MacArchiveJsonError extends Error {
+  readonly original: Error;
+  constructor(original: Error) {
+    super(original.message);
+    this.original = original;
+  }
+}
+export interface MacArchiveInspection {
+  readonly manifest: unknown;
+  readonly python: boolean;
+}
+export interface MacInspectionExecution {
+  readonly child_processes: OwnedChildProcesses;
+  readonly signal: AbortSignal;
+  readonly deadline: number;
+}
+/** The observer ended while this promise still owns child, descriptor, and work cleanup. */
+export class MacArchiveInspectionUnsettled extends Error {
+  readonly settled: Promise<void>;
+  readonly cause: unknown;
+  constructor(settled: Promise<void>, cause: unknown) {
+    super('Mac archive inspection cleanup is still pending');
+    this.settled = settled;
+    this.cause = cause;
+  }
+}
+export type MacInspectionFailure = { type: 'mac-inspection-error'; message: string } & (
+  | { kind: 'archive' | 'refusal' }
+  | {
+      kind: 'os';
+      name: string;
+      code: string;
+      errno: number;
+      syscall?: string;
+      path?: string;
+      dest?: string;
+    }
+  | { kind: 'json' | 'unexpected'; name: string }
+);
