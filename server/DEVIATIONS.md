@@ -2,6 +2,13 @@
 
 This file records intentional differences that the migration Manager accepted. No new difference enters this file without that acceptance. Close an entry when Python adopts the same behavior.
 
+## Native TypeScript presentation
+
+The owner accepts native diagnostics, CLI human text and help layout, and HTTP JSON number spelling.
+HTTP shapes, names, types, and statuses remain unchanged. CLI commands, options, JSON fields and types, and exit codes remain unchanged.
+Executor wire behavior and exact integers required by the wire or database remain protected.
+Comparisons check fields, values, and exit codes instead of Python presentation bytes.
+
 ## Staging merge 12: decision notes and recap freshness
 
 The Manager accepts that decision routes admit revision `1.0` as `1`, because Fastify’s native JSON parser does not retain numeric token kinds.
@@ -343,14 +350,6 @@ Node fetch sets Host from the URL and ignores a caller-supplied Host, which Pyth
 
 `tests/compare/direct/test_cross_area_http.py` pins same-origin delivery, cross-origin refusal,
 and Python's contrasting header behavior with synthetic loopback servers.
-
-## Python string printability reference
-
-The migration Manager fixed the repr reference to installed Python 3.12.16 and Unicode 15.0.0, also used by CI.
-`core/python_repr_unicode.ts` contains generated ranges assigned in Node's Unicode 17.0.0 but absent from Unicode 15.0.0.
-The shared string repr escapes those code points. The direct repr proof checks the Node Unicode version so that upgrades require regeneration.
-Local Python 3.13 uses Unicode 15.1.0 and prints U+2EBF0. This documented local exception does not change the CI reference.
-Regenerate the ranges with `tests/compare/direct/generate_repr_unicode.py` and the two official UnicodeData files named in its header.
 
 ## Conversation history locale data
 

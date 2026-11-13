@@ -1,46 +1,22 @@
-import { decimal_digit, integer_text } from '../core/python_integer.ts';
-import { python_string_repr } from '../core/python_repr.ts';
-import { close_matches } from './suggestions.ts';
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { CommandDefinition, Parameter } from './contracts.ts';
 import { CliFailure, human_error, command_path, command_shape, usage_error } from './errors.ts';
 
-function python_strip(text: string): string {
-  return text.replace(/^[\p{White_Space}\u001c-\u001f]+|[\p{White_Space}\u001c-\u001f]+$/gu, '');
-}
-/** Mirror uuid.UUID(hex=...) after Click strips the option value. */
+/** Accept ordinary compact, hyphenated, braced, and URN UUID text. */
 function uuid_text(text: string): string | null {
-  const hex = python_strip(text)
-    .replaceAll('urn:', '')
-    .replaceAll('uuid:', '')
-    .replace(/^[{}]+|[{}]+$/g, '')
+  const hex = text
+    .trim()
+    .replace(/^urn:uuid:/i, '')
+    .replace(/^\{(.*)\}$/, '$1')
     .replaceAll('-', '');
-  if ([...hex].length !== 32) return null;
-  // int(hex, 16) also accepts signs, prefixes, underscores and decimal Unicode digits.
-  // Its ASCII whitespace grammar excludes the extra str.strip control separators.
-  const digits = hex
-    .replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '')
-    .replace(/\p{Decimal_Number}/gu, decimal_digit);
-  if (!/^[+]?(?:0[xX]_?)?[0-9a-fA-F](?:_?[0-9a-fA-F])*$/.test(digits)) return null;
-  const value = BigInt(
-    '0x' +
-      digits
-        .replace(/^\+/, '')
-        .replace(/^0[xX]/, '')
-        .replaceAll('_', ''),
-  );
-  if (value >= 1n << 128n) return null;
-  const normalized = value.toString(16).padStart(32, '0');
-  return [
-    normalized.slice(0, 8),
-    normalized.slice(8, 12),
-    normalized.slice(12, 16),
-    normalized.slice(16, 20),
-    normalized.slice(20),
-  ].join('-');
+  if (!/^[0-9a-f]{32}$/i.test(hex)) return null;
+  return hex.toLowerCase().replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
 }
-
+function integer_text(text: string): bigint | null {
+  const digits = text.trim();
+  return /^[+-]?[0-9]+$/.test(digits) ? BigInt(digits) : null;
+}
 /** Resolve existing prefixes too, as os.path.realpath does for a missing final path. */
 function resolved_path(text: string): string {
   try {
@@ -55,16 +31,16 @@ function converted(command: CommandDefinition, p: Parameter, text: string): unkn
   if (p.type === 'uuid') {
     const value = uuid_text(text);
     if (value !== null) return value;
-    message = `${python_string_repr(python_strip(text))} is not a valid UUID.`;
+    message = `${JSON.stringify(text.trim())} is not a valid UUID.`;
   }
   if (p.type === 'choice' && !p.choices?.includes(text))
-    message = `${python_string_repr(text)} is not${p.choices?.length === 1 ? '' : ' one of'} ${(p.choices ?? []).map(python_string_repr).join(', ')}.`;
+    message = `${JSON.stringify(text)} is not${p.choices?.length === 1 ? '' : ' one of'} ${(p.choices ?? []).map((choice) => JSON.stringify(choice)).join(', ')}.`;
   if (p.type === 'integer' || p.type === 'float') {
     const value = p.type === 'integer' ? integer_text(text) : Number(text);
     const valid =
       value !== null && (p.type === 'integer' || (text.trim() !== '' && !Number.isNaN(value)));
     const type_name = p.type + (p.min !== undefined || p.max !== undefined ? ' range' : '');
-    if (!valid) message = `${python_string_repr(text)} is not a valid ${type_name}.`;
+    if (!valid) message = `${JSON.stringify(text)} is not a valid ${type_name}.`;
     else if ((p.min !== undefined && value < p.min) || (p.max !== undefined && value > p.max)) {
       const range =
         p.min !== undefined && p.max !== undefined
@@ -80,23 +56,9 @@ function converted(command: CommandDefinition, p: Parameter, text: string): unkn
     } else return value;
   }
   if (p.type === 'boolean') {
-    if (
-      ['1', 'true', 't', 'yes', 'y', 'on'].includes(
-        text
-          .replace(/^[\p{White_Space}\u001c-\u001f]+|[\p{White_Space}\u001c-\u001f]+$/gu, '')
-          .toLowerCase(),
-      )
-    )
-      return true;
-    if (
-      ['0', 'false', 'f', 'no', 'n', 'off'].includes(
-        text
-          .replace(/^[\p{White_Space}\u001c-\u001f]+|[\p{White_Space}\u001c-\u001f]+$/gu, '')
-          .toLowerCase(),
-      )
-    )
-      return false;
-    message = `${python_string_repr(text)} is not a valid boolean. Recognized values: 0, 1, f, false, n, no, off, on, t, true, y, yes`;
+    if (['1', 'true', 't', 'yes', 'y', 'on'].includes(text.trim().toLowerCase())) return true;
+    if (['0', 'false', 'f', 'no', 'n', 'off'].includes(text.trim().toLowerCase())) return false;
+    message = `${JSON.stringify(text)} is not a valid boolean. Recognized values: 0, 1, f, false, n, no, off, on, t, true, y, yes`;
   }
   if (p.type === 'path') {
     if (p.allow_dash && p.file_okay && text === '-') return text;
@@ -107,13 +69,13 @@ function converted(command: CommandDefinition, p: Parameter, text: string): unkn
     try {
       stat = statSync(value);
     } catch {
-      if (p.exists) message = `${name} ${python_string_repr(text)} does not exist.`;
+      if (p.exists) message = `${name} ${JSON.stringify(text)} does not exist.`;
     }
     if (stat) {
       if (stat.isFile() && p.file_okay === false)
-        message = `${name} ${python_string_repr(text)} is a file.`;
+        message = `${name} ${JSON.stringify(text)} is a file.`;
       if (stat.isDirectory() && p.dir_okay === false)
-        message = `${name} ${python_string_repr(text)} is a directory.`;
+        message = `${name} ${JSON.stringify(text)} is a directory.`;
       for (const [enabled, permission, adjective] of [
         [p.readable, constants.R_OK, 'readable'],
         [p.writable, constants.W_OK, 'writable'],
@@ -123,7 +85,7 @@ function converted(command: CommandDefinition, p: Parameter, text: string): unkn
           try {
             accessSync(value, permission);
           } catch {
-            message = `${name} ${python_string_repr(text)} is not ${adjective}.`;
+            message = `${name} ${JSON.stringify(text)} is not ${adjective}.`;
           }
         }
       }
@@ -132,11 +94,11 @@ function converted(command: CommandDefinition, p: Parameter, text: string): unkn
   }
   if (message) {
     const label = p.argument ? p.metavar : (p.opts ?? []).join(' / ');
-    usage_error(command, `Invalid value for ${python_string_repr(label ?? '')}: ${message}`);
+    usage_error(command, `Invalid value for ${JSON.stringify(label ?? '')}: ${message}`);
   }
   return text;
 }
-/** Choice parameters append their available values to Click's missing-value error. */
+/** Include available choices when a required value is absent. */
 function missing_message(p: Parameter): string {
   const label = p.argument ? p.metavar : p.opts?.[0];
   const base = `Missing ${p.argument ? 'argument' : 'option'} '${label}'.`;
@@ -147,16 +109,16 @@ export interface Parsed {
   values: Record<string, any>;
   help: boolean;
 }
-/** Python's callback-level Ticket fallback also applies where Click declares no envvar. */
+/** Resolve the Ticket from an argument or the Worker environment. */
 export function ticket_argument(
   positional: string | null | undefined,
   environment: NodeJS.ProcessEnv,
 ): string | undefined {
   if (positional !== null && positional !== undefined && positional !== '-') return positional;
-  const value = python_strip(environment.PLAN_TICKET_ID ?? '');
+  const value = (environment.PLAN_TICKET_ID ?? '').trim();
   return value && value !== '-' ? value : undefined;
 }
-/** Resolve only declared envvars. Empty values count as absent, as in Click. */
+/** Resolve declared environment variables, with empty values treated as absent. */
 export function parameter_environment(
   parameter: Parameter,
   environment: NodeJS.ProcessEnv,
@@ -218,7 +180,7 @@ export function parse(
         usage_error(command, 'Calendar planning writes are retired.', {
           recovery: retiredDay ? 'panels day show DATE' : 'panels sprint list',
         });
-      // Click resolves an option-looking unknown command by parsing it again.
+      // Diagnose option-looking command tokens as options.
       if (token.startsWith('-') && token !== '-') {
         if (token === '--help') return { command, values: {}, help: true };
         if (token.startsWith('--help='))
@@ -233,11 +195,7 @@ export function parse(
           c.path.length === command.path.length + 1 &&
           c.path.slice(0, -1).join(' ') === command.path.join(' '),
       );
-      const suggested = close_matches(
-        token,
-        children.map((c) => c.path.at(-1)!),
-      )[0];
-      const suggestedChild = children.find((c) => c.path.at(-1) === suggested);
+      const suggestedChild = children.find((child) => child.path.at(-1)!.startsWith(token));
       usage_error(
         command,
         `"${token}" is not a command under ${command_path(command)}.`,
@@ -248,15 +206,14 @@ export function parse(
             : { no_route: `No replacement panels command can be inferred for "${token}".` },
       );
     }
-    // Click invokes this group callback after child resolution but before child parsing.
+    // Refuse Mac previews before the selected child command runs.
     if (command.path.join(' ') === 'preview' && environment.PLAN_EXECUTOR_ROOT)
       throw new CliFailure(
         human_error(child, 'Application previews are unavailable for Tickets running on the Mac.'),
       );
     command = child;
   }
-  // First collect raw tokens. No conversion or eager callback runs until the
-  // entire leaf line passes option syntax, matching Click's parser boundary.
+  // Collect option syntax before conversions and eager help.
   const raw = new Map<Parameter, unknown>();
   const order: Parameter[] = [];
   const positionals: string[] = [];

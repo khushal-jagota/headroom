@@ -68,7 +68,6 @@ import {
   permission_ask,
   user_input_questions,
   user_input_answer,
-  repr,
 } from './asks.ts';
 
 export interface CodexChildLaunch {
@@ -285,7 +284,7 @@ export class CodexAppServerBackendChild implements B.BackendChild {
       }
       if (cursor !== null && response.thread.id !== cursor)
         throw new B.SessionLoadFailed(
-          `codex was asked to resume thread ${repr(cursor)} and answered with thread ${repr(response.thread.id)}, so this conversation's memory is not what came back`,
+          `codex was asked to resume thread ${JSON.stringify(cursor)} and answered with thread ${JSON.stringify(response.thread.id)}, so this conversation's memory is not what came back`,
         );
       this.thread_id = response.thread.id;
       this.thread_is_ephemeral = response.thread.ephemeral;
@@ -487,7 +486,9 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     } catch (error) {
       turn.parked_asks.set(ask_id, parked);
       if (error instanceof P.CodexProtocolError)
-        throw new B.PermissionAnswerWriteFailed(`${repr(option_id)} is not an answer codex offers`);
+        throw new B.PermissionAnswerWriteFailed(
+          `${JSON.stringify(option_id)} is not an answer codex offers`,
+        );
       throw error;
     }
     try {
@@ -516,7 +517,7 @@ export class CodexAppServerBackendChild implements B.BackendChild {
       turn.parked_user_inputs.set(request_id, parked);
       if (error instanceof P.CodexProtocolError)
         throw new B.UserInputAnswerWriteFailed(
-          `${repr(request_id)} has an answer Codex does not accept`,
+          `${JSON.stringify(request_id)} has an answer Codex does not accept`,
         );
       throw error;
     }
@@ -597,7 +598,9 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     if (token === '/goal') return goal_invocation(first.text);
     const invocation = this.catalog.resolve(token);
     if (invocation === null && (token.startsWith('$') || token.startsWith('@')))
-      throw new B.PromptWriteFailed(`${repr(token)} is not in the current Codex catalogue`);
+      throw new B.PromptWriteFailed(
+        `${JSON.stringify(token)} is not in the current Codex catalogue`,
+      );
     return invocation;
   }
   private turn_input(

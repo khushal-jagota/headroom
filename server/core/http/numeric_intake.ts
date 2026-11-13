@@ -17,12 +17,7 @@ export function stringify_numeric_response(
       for (const child of Object.values(value)) pending.push({ value: child, depth: depth + 1 });
     }
   }
-  return JSON.stringify(payload, (_key, value: unknown) =>
-    typeof value === 'number' &&
-    (Object.is(value, -0) || (Number.isInteger(value) && !Number.isSafeInteger(value)))
-      ? new JsonNumber(Object.is(value, -0) ? '-0.0' : value.toExponential()).toJSON()
-      : value,
-  );
+  return JSON.stringify(payload);
 }
 /** Area-scoped intake retains numeric token kinds before validation and fingerprints. */
 export function install_numeric_json_parser(

@@ -42,7 +42,7 @@ import {
   settle_parked_asks,
   stop_waiting_for_steers,
 } from './turn.ts';
-import { error_text, python_repr, result_error_summary } from './failure_summary.ts';
+import { error_text, result_error_summary } from './failure_summary.ts';
 
 export interface ClaudeAgentSdkChildLaunch {
   claude_executable: string;
@@ -196,14 +196,14 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
   private require_carried_values(options: PromptOptions): void {
     if (options.model_change !== null && options.model_change !== this.session_model)
       throw new B.NeedsRebind(
-        `claude takes its model when the child starts, so ${python_repr(options.model_change)} needs a child started on it`,
+        `claude takes its model when the child starts, so ${JSON.stringify(options.model_change)} needs a child started on it`,
       );
     if (
       (options.reasoning_effort_change !== null || options.reasoning_effort_is_set) &&
       options.reasoning_effort_change !== this.session_reasoning_effort
     )
       throw new B.NeedsRebind(
-        `claude takes its reasoning effort when the child starts, so ${python_repr(options.reasoning_effort_change)} needs a child started on it`,
+        `claude takes its reasoning effort when the child starts, so ${JSON.stringify(options.reasoning_effort_change)} needs a child started on it`,
       );
   }
   private is_catalog_command(content: MessageContent): boolean {
@@ -575,7 +575,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     if (!this.resume_confirmed) {
       this.wire_broken = true;
       await this.fail_running_turn(
-        `claude answered under session ${python_repr(session_id)} instead of the session ${python_repr(this.session_id)} this conversation asked to resume, so its memory of this conversation is not there`,
+        `claude answered under session ${JSON.stringify(session_id)} instead of the session ${JSON.stringify(this.session_id)} this conversation asked to resume, so its memory of this conversation is not there`,
       );
       return;
     }

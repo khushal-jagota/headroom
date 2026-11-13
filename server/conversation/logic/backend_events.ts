@@ -43,10 +43,8 @@ export interface InterpretedBackendEvent {
   readonly failure_notice: boolean;
 }
 export function normalized_failure_summary(detail: string | null): string {
-  // Python str.split includes these controls and excludes the JavaScript BOM whitespace.
-  let text = (detail ?? '').replace(/[\p{White_Space}\u001c-\u001f]+/gu, ' ').replace(/^ | $/g, '');
-  // Python \b uses Unicode letters/numbers. Its IGNORECASE also includes dotted/dotless I.
-  // After str.split-equivalent collapse, Python whitespace is exactly the ASCII space.
+  let text = (detail ?? '').trim().replace(/\s+/gu, ' ');
+  // Keep Unicode credential-name boundaries and redaction for dotted/dotless I.
   const assignment =
     /(["']?(?<![\p{L}\p{N}_])(?:author[iİı]zat[iİı]on|password|ap[iİı][ -]key|(?:[a-z0-9İı]+[_-])*(?:ap[iİı][_-]?key|author[iİı]zat[iİı]on|password|secret|token)(?:[_-][a-z0-9İı]+)*)(?![\p{L}\p{N}_])["']? *[:=] *)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:bearer +)?[^,;}]+)/giu;
   text = text.replace(assignment, '$1[redacted]');

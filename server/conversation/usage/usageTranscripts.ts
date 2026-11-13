@@ -49,11 +49,6 @@ export function finiteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
-/** Python str.strip differs from JS trim for information separators and BOM. */
-export function strip(value: string): string {
-  return value.replace(/^[\p{White_Space}\u001c-\u001f]+|[\p{White_Space}\u001c-\u001f]+$/gu, '');
-}
-
 export function parseTimestampMs(value: unknown): number | null {
   if (typeof value !== 'string') return null;
   try {

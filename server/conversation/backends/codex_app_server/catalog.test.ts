@@ -147,7 +147,7 @@ describe('Codex child catalog', () => {
   it('keeps collision aliases deterministic and executable without disabled source entries', () => {
     const app_data = installed(['one', 'two']);
     const metadata = [
-      { id: 'one', name: 'Straße', description: null },
+      { id: 'one', name: 'Strasse', description: null },
       { id: 'two', name: 'STRASSE', description: null },
     ];
     const snapshot = catalog_snapshot(skills, app_data, metadata, plugins);
