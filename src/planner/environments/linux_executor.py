@@ -110,6 +110,14 @@ def install(
     data = configuration.data.resolve()
     if installation == data or installation in data.parents or data in installation.parents:
         raise ValueError("executor data and installation must be separate folders")
+    if (
+        (data.is_dir() and any(data.iterdir()))
+        or ((installation / "releases").is_dir() and any((installation / "releases").iterdir()))
+        or (unit_directory / "panels-executor.service").exists()
+    ):
+        raise ValueError(
+            "This executor is already installed. Use its update path instead of reinstalling."
+        )
     credential = read_credential(credential_file)
     if credential is None:
         raise ValueError("machine credential file is missing")

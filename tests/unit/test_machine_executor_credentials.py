@@ -26,6 +26,7 @@ from planner.executor.credential_file import read_credential, write_credential
 from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 from planner.machines.executor_credentials import (
     authenticate_executor,
+    executor_platform,
     issue_original_credential,
     register_machine,
     replace_credential,
@@ -162,11 +163,30 @@ def test_registration_and_rotation_do_not_grant_other_machine(tmp_path: Path) ->
         two = register_machine(conn, "Two")
         for claim, secret in ((one.machine_id, two.credential), (two.machine_id, one.credential)):
             with pytest.raises(PlannerError):
-                authenticate_executor(conn, claim, secret, "original")
+                authenticate_executor(
+                    conn, claim, secret, "original", authenticated_platform="linux",
+                )
+        assert executor_platform(conn, one.machine_id) == "darwin"
+        assert executor_platform(conn, two.machine_id) == "darwin"
         with pytest.raises(PlannerError):
             authenticate_executor(conn, "original", two.credential, "original")
         with pytest.raises(PlannerError):
             authenticate_executor(conn, one.machine_id, None, "original")
+        # The joining client supplies its own OS after credential authentication.
+        authenticate_executor(
+            conn, one.machine_id, one.credential, "original", authenticated_platform="linux",
+        )
+        assert executor_platform(conn, one.machine_id) == "linux"
+        before = conn.total_changes
+        authenticate_executor(
+            conn, one.machine_id, one.credential, "original", authenticated_platform="linux",
+        )
+        assert conn.total_changes == before
+        with pytest.raises(PlannerError, match="platform"):
+            authenticate_executor(
+                conn, one.machine_id, one.credential, "original", authenticated_platform="other",
+            )
+        assert executor_platform(conn, one.machine_id) == "linux"
         replace_credential(conn, one.machine_id)
         assert (
             authenticate_executor(conn, two.machine_id, two.credential, "original")

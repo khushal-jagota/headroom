@@ -15,6 +15,7 @@ import json
 import os
 import re
 import ssl
+import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Final, Literal, cast
@@ -37,6 +38,7 @@ from planner.executor.configuration import (
     EXECUTOR_ITEMS_PATH,
     EXECUTOR_LEASE_PATH,
     EXECUTOR_LIVE_PATH,
+    EXECUTOR_PLATFORM_HEADER,
     EXECUTOR_PROTOCOL_HEADER,
     EXECUTOR_READS_PATH,
     EXECUTOR_UPLOAD_PATH,
@@ -209,6 +211,7 @@ class MacHttpClient:
             EXECUTOR_ID_HEADER: executor_id,
             EXECUTOR_INCARNATION_HEADER: identity.executor_incarnation,
             EXECUTOR_PROTOCOL_HEADER: str(identity.protocol_version),
+            EXECUTOR_PLATFORM_HEADER: sys.platform,
             # Bodies are never decompressed (auto_decompress=False), so none may be
             # compressed: the VPS gzips any answer over 1 KB that a client accepts gzipped.
             "Accept-Encoding": "identity",
@@ -217,8 +220,9 @@ class MacHttpClient:
 
     def authentication_headers(self) -> dict[str, str]:
         return {
-            key: value for key, value in self._headers.items()
-            if key in (EXECUTOR_ID_HEADER, EXECUTOR_CREDENTIAL_HEADER)
+            key: value
+            for key, value in self._headers.items()
+            if key in (EXECUTOR_ID_HEADER, EXECUTOR_CREDENTIAL_HEADER, EXECUTOR_PLATFORM_HEADER)
         }
 
     async def ensure_credential(self, path: Path) -> None:

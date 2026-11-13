@@ -15,8 +15,10 @@ The output contains `panels-linux-executor.tar.gz` and `linux-executor-publicati
 On the home, register a destination:
 
 ```sh
-panels machine register "Linux server" --platform linux --json
+panels machine register "Linux server" --json
 ```
+
+The executor reports its platform when it authenticates. No platform choice is required at registration.
 
 Transfer the returned credential privately to the Linux account as a JSON file with a `credential` field. Protect that file with mode `0600`. Keep credentials out of command arguments and shell history.
 
@@ -57,6 +59,8 @@ systemctl --user stop panels-executor.service
 ```
 
 The executor uses shared Worker supervision for process ownership and bounded shutdown. Systemd gives the supervisor time to stop its children. Unproved cleanup retains the existing fences.
+
+Do not reinstall an initialized executor. Use the update path to retain its selected runtime and data.
 
 Updates retain the data folder. The home offers the Linux executor archive for this destination. The executor verifies it, quiesces work, and activates a versioned runtime through its fixed supervisor. Failed readiness restores the previous runtime. A Linux home archive or Mac executor archive cannot replace this executor.
 

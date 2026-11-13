@@ -68,6 +68,8 @@ def test_install_checks_host_in_existing_private_state_before_service_write(
     config = configuration(tmp_path)
     credential = tmp_path / "credential.json"
     write_credential(credential, "a" * 43)
+    config.data.mkdir()
+    (config.installation / "releases").mkdir(parents=True)
     runtime = tmp_path / "admitted-runtime"
     runtime.mkdir()
     units = tmp_path / "units"
@@ -83,7 +85,7 @@ def test_install_checks_host_in_existing_private_state_before_service_write(
 
     def verify_host(self: object, contract: object, *, state: Path) -> None:
         assert state.is_dir()
-        assert not config.data.exists()
+        assert list(config.data.iterdir()) == []
         assert not units.exists()
         checked.append(state)
 
@@ -101,3 +103,36 @@ def test_install_checks_host_in_existing_private_state_before_service_write(
     assert len(checked) == 1 and not checked[0].exists()
     assert unit.read_text() == render_service(config, runtime)
     assert (config.data / "machine-credential.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_reinstall_refuses_before_selected_runtime_or_credentials_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = configuration(tmp_path)
+    selection = config.data / "updates/selection.json"
+    selection.parent.mkdir(parents=True)
+    selection.write_text('{"runtime_path":"selected-newer-runtime"}')
+    old_credential = config.data / "machine-credential.json"
+    old_credential.write_text("private-existing-credential")
+    units = tmp_path / "units"
+    units.mkdir()
+    unit = units / "panels-executor.service"
+    unit.write_text("existing service")
+    monkeypatch.setattr(
+        "planner.environments.linux_executor_runtime.extract_runtime",
+        lambda *a, **kw: pytest.fail("reinstall must refuse before archive extraction"),
+    )
+    with pytest.raises(ValueError, match="already installed.*update path"):
+        install(
+            config,
+            archive=tmp_path / "archive.tar.gz",
+            archive_sha256="a" * 64,
+            archive_size=123,
+            credential_file=tmp_path / "missing-credential",
+            unit_directory=units,
+        )
+    assert selection.read_text() == '{"runtime_path":"selected-newer-runtime"}'
+    assert old_credential.read_text() == "private-existing-credential"
+    assert unit.read_text() == "existing service"
+    assert not config.installation.exists()
