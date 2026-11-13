@@ -14,6 +14,7 @@ import type {
 } from './contracts.ts';
 import { MacChildAdmissionRefused } from './contracts.ts';
 import { same_reference } from './logic/outcomes.ts';
+import { remember_model_catalog_failure } from '../../../conversation/backends/catalog_cleanup.ts';
 interface Entry {
   reference: ChildReference;
   ticket_id: string;
@@ -29,17 +30,14 @@ export class MacNativeChildren implements MacNativeChildrenContract {
   private readonly entries = new Map<string, Entry>();
   private closed = false;
   private cleanup: Promise<void> | undefined;
-  private readonly failures = new Set<unknown>();
+  private readonly logged_failures = new Set<unknown>();
+  private readonly callback_failures = new Set<unknown>();
   private faulted = false;
-  private resolve_actual!: () => void;
-  private reject_actual!: (error: unknown) => void;
-  private readonly actual = new Promise<void>((resolve, reject) => {
-    this.resolve_actual = resolve;
-    this.reject_actual = reject;
-  });
+  private actual = Promise.withResolvers<void>();
+  private actual_failed = false;
   constructor(options: MacNativeChildrenOptions) {
     this.options = options;
-    void this.actual.catch(() => {});
+    void this.actual.promise.catch(() => {});
   }
   get admission_stopped(): boolean {
     return this.closed;
@@ -264,21 +262,32 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     if (!entry.stopped) throw new ServerLifecycleError('Native child has not stopped.');
     this.entries.delete(reference.child_id);
   }
-  private record_failure(error: unknown): void {
-    if (this.failures.has(error)) return;
-    this.failures.add(error);
-    console.warn('Mac native cleanup failed:', error);
-    if (!this.faulted) {
+  private record_failure(error: unknown, notify = true): void {
+    const errors = new Set<unknown>();
+    remember_model_catalog_failure(errors, error);
+    for (const cause of errors)
+      if (!this.logged_failures.has(cause)) {
+        this.logged_failures.add(cause);
+        console.warn('Mac native cleanup failed:', cause);
+      }
+    if (notify && !this.faulted) {
       this.faulted = true;
       this.closed = true;
       try {
         this.options.on_failure(error instanceof Error ? error : new Error(String(error)));
       } catch (callback) {
-        this.failures.add(callback);
+        remember_model_catalog_failure(this.callback_failures, callback);
+        this.record_failure(callback, false);
       }
     }
   }
   stop(options: StopOptions): Promise<void> {
+    if (!this.cleanup && this.actual_failed) {
+      this.actual = Promise.withResolvers<void>();
+      this.actual_failed = false;
+      void this.actual.promise.catch(() => {});
+    }
+    const actual = this.actual;
     this.closed = true;
     const entries = [...this.entries.values()];
     for (const entry of entries) entry.retiring = true;
@@ -303,30 +312,34 @@ export class MacNativeChildren implements MacNativeChildrenContract {
           entries.map((entry) => this.stop_process(entry)),
         );
         for (const result of first_stops)
-          if (result.status === 'rejected') this.record_failure(result.reason);
+          if (result.status === 'rejected') this.record_failure(result.reason, false);
         const skills_actual = this.options.skills.settled();
         void skills_actual.catch(() => {});
         await Promise.allSettled(entries.map((entry) => entry.start));
         const children = await Promise.allSettled(entries.map((entry) => this.stop_process(entry)));
         const skills = await Promise.allSettled([skills_actual]);
         for (const result of skills)
-          if (result.status === 'rejected') this.record_failure(result.reason);
+          if (result.status === 'rejected') this.record_failure(result.reason, false);
         for (const result of children)
-          if (result.status === 'rejected') this.record_failure(result.reason);
-        const unfinished = children.filter((result) => result.status === 'rejected');
-        if (unfinished.length)
+          if (result.status === 'rejected') this.record_failure(result.reason, false);
+        const unfinished = [...children, ...skills].filter(
+          (result) => result.status === 'rejected',
+        );
+        if (unfinished.length || this.callback_failures.size)
           throw new AggregateError(
-            unfinished.map((result) => result.reason),
+            [...unfinished.map((result) => result.reason), ...this.callback_failures],
             'Native children did not stop.',
           );
-        if (this.failures.size)
-          this.reject_actual(new AggregateError(this.failures, 'Native child cleanup failed.'));
-        else this.resolve_actual();
-        await this.actual;
+        actual.resolve();
       });
       this.cleanup = task;
-      void task.catch(() => {
-        if (this.cleanup === task) this.cleanup = undefined;
+      void task.catch((error: unknown) => {
+        if (this.cleanup === task) {
+          this.cleanup = undefined;
+          this.actual_failed = true;
+          actual.reject(error);
+        }
+        this.record_failure(error);
       });
     }
     return observe_shutdown(
@@ -341,6 +354,6 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     );
   }
   settled(): Promise<void> {
-    return this.actual;
+    return this.actual.promise;
   }
 }

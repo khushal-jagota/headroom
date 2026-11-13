@@ -128,6 +128,7 @@ export class MacMaintenance implements MacMaintenanceContract, MacMaintenanceOpe
             this.dependencies.native_children.begin_retirement(child.reference);
             await this.dependencies.native_children.stop_native(child.reference);
             this.dependencies.native_children.retire(child.reference);
+            this.dependencies.retirement.prune(child.reference);
             this.dependencies.state.clear(child.reference);
             this.dependencies.commands().prune(child.reference);
             return true;
@@ -257,6 +258,7 @@ export class MacMaintenance implements MacMaintenanceContract, MacMaintenanceOpe
       await commands.adopt_unjournaled_outcome(command, outcome(command, 'succeeded', {}));
       this.dependencies.state.mark_retired(child.reference);
       this.dependencies.native_children.retire(child.reference);
+      this.dependencies.retirement.prune(child.reference);
       commands.prune(child.reference);
     }
     this.update_commands.delete(request_id);

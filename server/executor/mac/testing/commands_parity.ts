@@ -1,6 +1,7 @@
 /** Real command/source/retirement custody and stores with scripted skills, files and backend. */
 import { readFileSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { fail } from 'node:assert/strict';
 import { join } from 'node:path';
 import { setImmediate as yield_turn } from 'node:timers/promises';
 import { stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
@@ -19,8 +20,9 @@ import type {
 import { same_turn as claude_same_turn } from '../../../conversation/backends/claude_agent_sdk/turn.ts';
 import { same_turn as codex_same_turn } from '../../../conversation/backends/codex_app_server/turn.ts';
 import type { ResolvedConversationStart } from '../../../conversation/contracts.ts';
-import { decode_json, as_object } from '../../protocol.ts';
+import { decode_json, as_object, ValueError } from '../../protocol.ts';
 import { MacCommandService } from '../runner/service.ts';
+import { dispatch_command } from '../runner/commands.ts';
 import { create_mac_output_publication } from '../runner/publication.ts';
 import type { MacCommandDependencies, MacOutputPublication } from '../runner/command_contracts.ts';
 import { MacNativeChildren } from '../runner/start_stop.ts';
@@ -369,6 +371,20 @@ try {
       .filter((command) => command.command_id !== 'synthetic-stop'),
   );
   await run('start');
+  const before_unsafe = calls.length;
+  const unsafe = { ...commands.prompt! };
+  unsafe.arguments = { ...unsafe.arguments, sender_message_count: unsafe.turn!.turn_number };
+  const unsafe_count = await dispatch_command(
+    dependencies(wrap_journal(journal!), wrap_publication(create_mac_output_publication(store!))),
+    unsafe,
+    new Map(),
+    service,
+    fail,
+  ).catch((error: unknown) => error);
+  guards.unsafe_sender_count_refused =
+    unsafe_count instanceof ValueError &&
+    native_children.get('child')!.active_turn === null &&
+    calls.length === before_unsafe;
   for (const raw of input.asks) {
     const ask = decode_json(raw, 'AskReference');
     child_state.install(ask);
