@@ -57,6 +57,7 @@ export async function spool_parity(input: Input): Promise<unknown> {
       now_ns: () => BigInt(input.now_ns),
     },
     options,
+    () => {},
   );
   const captures: unknown[] = [],
     receipts: unknown[] = [],
@@ -142,6 +143,7 @@ export async function spool_burst(parent: string): Promise<unknown> {
       now_ns: () => BigInt(Date.now()) * 1_000_000n,
     },
     options,
+    () => {},
   ).catch((error) => {
     unregister();
     throw error;

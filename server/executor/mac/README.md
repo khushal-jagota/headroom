@@ -24,6 +24,7 @@ An ordinary filesystem error rejects only its operation. Later operations remain
 Stop closes admission before its first wait and queues cleanup after previously admitted work.
 It does not interrupt an active copy. A shutdown deadline failure does not imply that the worker stopped.
 `settled()` waits for the actual worker exit. A stopped service cannot create another worker.
+After exit, a retained fatal transport or worker cleanup failure rejects that actual join. Ordinary file-operation refusals do not.
 Fatal JavaScript errors release retained directory capabilities through the worker's exit hooks.
 A failed message send seals the service and requests the same cleanup. A failed stop send remains retryable.
 
