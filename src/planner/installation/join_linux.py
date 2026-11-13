@@ -1,0 +1,78 @@
+"""Connect the shared join command to the Linux executor's existing installer."""
+
+from __future__ import annotations
+
+import importlib
+import re
+import subprocess
+import tempfile
+from pathlib import Path
+
+from planner.executor.credential_file import write_credential
+
+
+def install_linux_executor(
+    *,
+    archive: Path,
+    archive_sha256: str,
+    archive_size: int,
+    revision: str,
+    home_url: str,
+    machine_id: str,
+    credential: str,
+    root: Path,
+    label: str,
+) -> None:
+    from planner.installation.join import wait_for_lease
+
+    service = "panels-executor.service" if label == "com.panels.executor" else label
+    if re.fullmatch(r"[A-Za-z0-9_-]+\.service", service) is None:
+        raise ValueError("Linux join needs --service NAME.service with letters, digits, - or _")
+    units = Path.home() / ".config/systemd/user"
+    unit = units / service
+    if unit.exists() or unit.is_symlink():
+        raise ValueError(f"The executor service already exists: {unit}")
+    subprocess.run(
+        ["systemctl", "--user", "show-environment"], check=True, capture_output=True, timeout=10
+    )
+    loaded = subprocess.run(
+        ["systemctl", "--user", "show", service, "--property=LoadState", "--value"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if loaded.returncode == 0 and loaded.stdout.strip() != "not-found":
+        raise ValueError(f"The executor service already exists: {service}")
+    # This module arrives with the Linux executor Ticket. It is the sole installer.
+    installer = importlib.import_module("planner.environments.linux_executor")
+    configuration = installer.LinuxExecutorInstallation(
+        installation=root / "installation",
+        data=root / "data",
+        executor_id=machine_id,
+        server_url=home_url,
+        revision=revision,
+        service_name=service,
+    )
+    with tempfile.TemporaryDirectory(prefix="panels-join-credential-") as temporary:
+        grant = Path(temporary) / "credential.json"
+        write_credential(grant, credential)
+        installer.install(
+            configuration,
+            archive=archive,
+            archive_sha256=archive_sha256,
+            archive_size=archive_size,
+            credential_file=grant,
+            unit_directory=units,
+        )
+    subprocess.run(
+        ["systemctl", "--user", "daemon-reload"], check=True, capture_output=True, timeout=15
+    )
+    subprocess.run(
+        ["systemctl", "--user", "enable", "--now", service],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    python = root / "installation/releases" / f"{revision}-{archive_sha256}" / ".venv/bin/python"
+    wait_for_lease(python, root / "data", revision)
+    print("Machine joined. The home accepted its credential and lease.")

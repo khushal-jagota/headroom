@@ -13,9 +13,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from scripts.mac_home_install import install_home
 
 from planner.environments.app import _write_app_entrypoints
+from planner.installation.mac_home import install_home
 from planner.platform_runtime.darwin.adapter import DarwinPlatformAdapter
 from planner.platform_runtime.linux import update_installer as installer
 
@@ -30,7 +30,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             system="darwin", architecture="arm64", role="home"))
 
     monkeypatch.setenv("PATH", "/build/icu/bin:/production/executor/bin:/usr/bin:/bin")
-    monkeypatch.setattr("scripts.mac_home_install.extract_app_archive", extract)
+    monkeypatch.setattr("planner.installation.mac_home.extract_app_archive", extract)
     monkeypatch.setattr("planner.environments.runtime_admission.admit_runtime", lambda *args: None)
     root = tmp_path / "release home"
     install_home(root, tmp_path / "archive", "a" * 64, "a" * 40,
@@ -82,7 +82,9 @@ def test_release_jobs_read_the_current_app_and_keep_provider_guard(
         guards.append(authority)
         return "occupied account skills"
 
-    monkeypatch.setattr("scripts.mac_home_install.account_skill_provisioning_conflict", occupied)
+    monkeypatch.setattr(
+        "planner.installation.mac_home.account_skill_provisioning_conflict", occupied
+    )
     codex = tmp_path / "canonical codex"
     monkeypatch.setenv("CODEX_HOME", str(codex))
     normal = tmp_path / "normal home"

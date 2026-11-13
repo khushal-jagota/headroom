@@ -14,6 +14,33 @@ Code review and this runbook grant no live authority.
 Linux tests establish software behavior, not installed credentials, login behavior, reboot, or pre-unlock operation.
 
 
+## Join a new Mac with one command
+
+This path installs a published runtime into a new private root. It never replaces an existing executor.
+Use macOS 15 or newer on Apple Silicon, Node 22, Xcode command-line tools, and a graphical login session.
+The Mac needs an Apple Development certificate and its private key for the fixed native launcher.
+Use `security find-identity -v -p codesigning` to find the certificate fingerprint.
+A certificate-free or notarized distribution path remains outside this installer.
+The GitHub CLI must be installed and authenticated for access to the release repository.
+Provider login remains a separate step. Tailscale must reach the same home's trusted HTTPS origin.
+
+On that home, use the owner login and run:
+
+```sh
+panels machine join-command "Studio Mac" --home https://HOME-ORIGIN \
+  --revision FULL-PUBLISHED-SHA --signing-identity CERTIFICATE-FINGERPRINT
+```
+
+Use the trusted HTTPS origin of this same home. Check the address before you share the credential.
+The command prints one command for the new Mac and a private credential.
+Run that command on the Mac. Paste the credential at its private prompt.
+The credential never enters command arguments or shell history.
+Keep the credential private. The home stores its verifier and can revoke it through credential replacement.
+The installer checks the archive identity, installs the fixed launcher, writes private data, and starts its own LaunchAgent.
+Success requires a fresh accepted lease through the new installation's private socket, with the expected release revision.
+A failed connection remains a failed join even if the service starts.
+Native permission consent, login, sleep, and reboot behavior need a separate Mac check.
+
 ## Register another destination or replace a credential
 
 The original Mac receives its first machine credential automatically. No operator step belongs to a successful handover.

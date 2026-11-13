@@ -31,7 +31,7 @@ Settings → Machines shows availability, current Worker activity, and Tickets t
 
 ## Credentials and the original Mac
 
-The owner registers an extra destination and gives it its credential through the operator commands. A credential permits executor requests for one destination. Replacing it invalidates the old credential. The home normally stores only a verifier. During the original Mac handover, it also keeps the pending credential until the first authenticated request.
+The owner registers an extra destination and obtains one join command and its private credential. The command installs a new executor and checks an accepted lease. The owner supplies the trusted HTTPS origin of the same home that issues the credential. A credential permits executor requests for one destination. Replacing it invalidates the old credential. The home normally stores only a verifier. During the original Mac handover, it also keeps the pending credential until the first authenticated request.
 
 The original Mac has a one-time transition from its existing authority. The first upgraded runtime requests its credential automatically and saves it privately before its work loops start. Until the first request authenticates with that credential, the original Mac can fetch the same pending credential again. Its old authority permits that fetch. The first authenticated request permanently closes the old authority and removes the pending secret. That closure survives home restarts and migration replay.
 
