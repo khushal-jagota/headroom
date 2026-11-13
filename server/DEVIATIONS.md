@@ -609,3 +609,35 @@ The bounded stop observer uses the shared absolute deadline. Actual settlement r
 Presence commits are silent at the shared write door.
 After commit succeeds, the service publishes its cache before it emits the one presence change signal.
 Synchronous signal subscribers therefore read the committed presence state, with no cache update before a possible rollback.
+
+## VPS file descriptor custody
+
+The accepted executor plan uses Linux procfs descriptors for the VPS file module.
+The module refuses unsupported systems before intake and supplies no path fallback.
+Python's install helper rewalks a target pathname during copy and cleanup.
+TypeScript retains the original source and destination parents through those operations.
+Python hashes an input descriptor, closes it, and later reopens its path for the response.
+TypeScript retains the checked descriptor through its bounded input stream instead.
+The later transport slice must consume that stream and prove its disconnect ownership.
+The input owner also anchors its byte root independently of the existing managed-file lookup.
+A root swap between that lookup's symlink check and resolution cannot redirect input bytes.
+Its standard message root follows the logical DB-path parent, even when the DB filename is a symlink.
+
+Regular-file admission adds NONBLOCK before fstat, so a substituted FIFO cannot hang its open.
+Python's open can block on that FIFO. The same source hazard appears in the Mac file evidence.
+Cleanup failures carry explicit provenance and retain the original failure with the cleanup errors.
+Python can replace the original exception when cleanup also fails.
+
+The upload timeout observer can return retry_later while a JS iterator read remains pending.
+Python's wait_for cancels and awaits that read before it returns its timeout.
+TypeScript requires a cancellable upload source and destroys it before iterator return.
+It closes and removes the incoming file before it joins the source's actual cleanup.
+The routes slice must pass its owned request Readable with that destruction capability.
+Stop seals intake and observes actual work. The supplied media signal supplies the shared grace cutoff.
+The input lookup result must remain inside an independently anchored conversation root.
+The resolved target then passes through the same NOFOLLOW directory walk and regular-file open.
+Contained same-conversation leaf links keep Python behavior. Later substitutions refuse as not found.
+NUL artifact paths retain Python's exact `lstat: embedded null character in path` refusal.
+Ancestor symlink loops produce the clean `artifact path contains symlink` validation refusal, without raw Node errors.
+Python raises a raw `RuntimeError` for the same ancestor loop. The Manager accepts this clean TypeScript refusal.
+The Manager reviews these implementation differences before this slice merges.
