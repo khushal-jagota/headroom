@@ -230,15 +230,10 @@ export class HermesAcpClient {
   get signal(): AbortSignal {
     return this.connection.signal;
   }
-  private wait_for_permission_write<T>(promise: Promise<T>): Promise<T> {
-    let timer: ReturnType<typeof setTimeout>;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error('the permission answer did not reach the wire')),
-        ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS * 1000,
-      );
-    });
-    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  private async wait_for_permission_write<T>(promise: Promise<T>): Promise<T> {
+    const answer = await observe_promise(promise, ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS * 1000);
+    if (!answer.completed) throw new Error('the permission answer did not reach the wire');
+    return answer.value;
   }
   private log(error: unknown): void {
     try {
