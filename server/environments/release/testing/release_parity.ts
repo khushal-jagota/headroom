@@ -175,6 +175,51 @@ export async function unit_boundaries_parity(
   };
 }
 
+import {
+  contract_paths,
+  contract_digest,
+  check as check_ios,
+  REVIEW_PATH,
+} from '../../../ios_compatibility/check.ts';
+import { MINIMUM_SUPPORTED_BUILD } from '../../../ios_compatibility/policy.ts';
+
+async function ios_observations(root: string) {
+  const began = performance.now(),
+    source = join(root, 'ios-source');
+  const fixture = JSON.parse(await readFile(join(root, 'ios-fixture.json'), 'utf8')) as {
+    wire_sources: readonly string[];
+    review: Record<string, unknown>;
+  };
+  const paths = await contract_paths(source),
+    digests: string[] = [];
+  for (const content of fixture.wire_sources) {
+    await writeFile(join(source, 'server/executor/wire.generated.ts'), content);
+    digests.push(await contract_digest(source));
+  }
+  const checks: (string | null)[] = [];
+  for (const review of [
+    fixture.review,
+    { ...fixture.review, contract_sha256: '0'.repeat(64) },
+    { ...fixture.review, oldest_supported_build: MINIMUM_SUPPORTED_BUILD + 1 },
+  ]) {
+    await writeFile(join(source, REVIEW_PATH), JSON.stringify(review));
+    try {
+      await check_ios(source);
+      checks.push(null);
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      checks.push(error.message);
+    }
+  }
+  return {
+    paths,
+    digests,
+    checks,
+    minimum: MINIMUM_SUPPORTED_BUILD,
+    seconds: (performance.now() - began) / 1000,
+  };
+}
+
 /** Source-only Git/build work. No dependencies, native tools, public CLI or provider runs. */
 export async function builder_parity(
   root: string,
@@ -1094,6 +1139,7 @@ async function compare_release(
       })(),
     },
     frontier,
+    ios: await ios_observations(root),
   };
 }
 
