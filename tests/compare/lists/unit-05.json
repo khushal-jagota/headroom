@@ -546,22 +546,22 @@
     {
       "method": "PUT",
       "path": "/api/workers/comparison_worker/launch-defaults",
-      "status": 200,
-      "area": "worker-settings",
+      "status": 400,
+      "area": "unoffered-model-admission",
       "json": {
         "employee_backend": "codex",
-        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_model": "unoffered-model",
         "employee_launch_reasoning_effort": "high"
       }
     },
     {
       "method": "PUT",
       "path": "/api/workers/chief-of-staff/launch-defaults",
-      "status": 200,
-      "area": "worker-settings",
+      "status": 400,
+      "area": "unoffered-model-admission",
       "json": {
         "employee_backend": "codex",
-        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_model": "unoffered-model",
         "employee_launch_reasoning_effort": "high"
       }
     },
@@ -1197,10 +1197,10 @@
       "method": "PUT",
       "path": "/api/workers/comparison_worker/launch-defaults",
       "status": 400,
-      "area": "unoffered-model-admission",
+      "area": "worker-settings",
       "json": {
         "employee_backend": "codex",
-        "employee_launch_model": "unoffered-model",
+        "employee_launch_model": "gpt-6.1-sol",
         "employee_launch_reasoning_effort": "high"
       },
       "headers": {
@@ -1212,10 +1212,10 @@
       "method": "PUT",
       "path": "/api/workers/chief-of-staff/launch-defaults",
       "status": 400,
-      "area": "unoffered-model-admission",
+      "area": "worker-settings",
       "json": {
         "employee_backend": "codex",
-        "employee_launch_model": "unoffered-model",
+        "employee_launch_model": "gpt-6.1-sol",
         "employee_launch_reasoning_effort": "high"
       },
       "headers": {

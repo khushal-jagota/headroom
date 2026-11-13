@@ -346,19 +346,6 @@
     {
       "area": "test_an_unoffered_model_change_records_refusal_without_provider_delivery",
       "method": "POST",
-      "path": "/api/test/model-list",
-      "status": 200,
-      "json": {
-        "machine": "vps",
-        "backend": "codex",
-        "models": [
-          "start-model"
-        ]
-      }
-    },
-    {
-      "area": "test_an_unoffered_model_change_records_refusal_without_provider_delivery",
-      "method": "POST",
       "path": "/api/conversation/conversations/u15-s20/send",
       "status": 200,
       "json": {
@@ -379,17 +366,6 @@
       "status": 200,
       "capture": {
         "models_17": ""
-      }
-    },
-    {
-      "method": "POST",
-      "path": "/api/test/model-list",
-      "status": 200,
-      "json": {
-        "machine": "vps",
-        "backend": "codex",
-        "models": [],
-        "complete": false
       }
     },
     {
@@ -594,6 +570,25 @@
     {
       "source_test": "model-admission",
       "coverage": "The existing refused-change case now installs a complete list before the send. Its HTTP fate and unchanged child observations compare refusal text and no provider delivery."
+    }
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/test/model-list",
+      "status": 200,
+      "json": {
+        "machine": "vps",
+        "backend": "codex",
+        "models": [
+          "first-model",
+          "second-model",
+          "start-model",
+          "next-model",
+          "a-model",
+          "other-model"
+        ]
+      }
     }
   ]
 }

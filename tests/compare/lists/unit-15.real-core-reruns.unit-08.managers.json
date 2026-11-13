@@ -38,16 +38,15 @@
       }
     },
     {
-      "area": "managers",
+      "area": "unoffered-model-admission",
       "method": "PUT",
       "path": "/api/managers/launch-defaults",
-      "status": 200,
+      "status": 400,
       "json": {
         "employee_backend": "codex",
-        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_model": "unoffered-model",
         "employee_launch_reasoning_effort": "high"
-      },
-      "note": "Change the reasoning choice, rather than rewrite the existing defaults unchanged."
+      }
     },
     {
       "area": "navigation",
@@ -546,15 +545,11 @@
       "status": 200
     },
     {
-      "area": "unoffered-model-admission",
+      "area": "managers",
       "method": "PUT",
       "path": "/api/managers/launch-defaults",
       "status": 400,
-      "json": {
-        "employee_backend": "codex",
-        "employee_launch_model": "unoffered-model",
-        "employee_launch_reasoning_effort": "high"
-      },
+      "json": "${defaults}",
       "headers": {
         "X-Plan-Actor": "manager",
         "X-Plan-Manager-ID": "${manager}"
