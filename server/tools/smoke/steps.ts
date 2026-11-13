@@ -143,41 +143,92 @@ export async function smoke_before_restart(
   });
   assert.equal(started.model, options.model);
   step('04 manual conversation through production adapter', { conversation_id });
-  const sent = await api(conversation + '/send', {
-    content: [
-      { piece: 'text', text: 'Production smoke prompt.' },
-      {
-        piece: 'file',
-        file_name: 'smoke.txt',
-        media_type: 'text/plain',
-        data: Buffer.from(attachment).toString('base64'),
-      },
-    ],
-    sender_label: 'Owner',
-    sender_message_id: 'smoke-send',
-  });
-  assert.equal(sent.fate, 'started');
-  const completed = await poll(
-    async () => {
-      const events = await api<{ events: Event[] }>(conversation + '/events');
-      const state = await api(conversation);
-      return { events: events.events, running: state.is_running };
-    },
-    (value) =>
-      value.running === false &&
-      value.events.some(
-        (event) => event.kind === 'agent_message' && event.payload.text === options.reply,
-      ),
-  );
-  const events = completed.events;
-  step('05 combined text/file send records actual reply and settles');
+  const events = await (async () => {
+    const lifetime = new AbortController();
+    const signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(15_000)]);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let live_reply: Promise<void> | undefined;
+    try {
+      const tail = await fetch(new URL(base).origin + conversation + '/tail', {
+        redirect: 'error',
+        signal,
+      });
+      assert.equal(tail.status, 200);
+      assert.ok(tail.headers.get('content-type')?.startsWith('text/event-stream'));
+      assert.ok(tail.body);
+      reader = tail.body.getReader();
+      const owned_reader = reader;
+      live_reply = (async () => {
+        const decoder = new TextDecoder();
+        let pending = '',
+          reply = '';
+        while (true) {
+          const chunk = await owned_reader.read();
+          assert.ok(!chunk.done, 'Live tail ended before the reply');
+          pending += decoder.decode(chunk.value, { stream: true });
+          let boundary: number;
+          while ((boundary = pending.indexOf('\n\n')) >= 0) {
+            const frame = pending.slice(0, boundary);
+            pending = pending.slice(boundary + 2);
+            if (!frame.startsWith('event: conversation-frame\n')) continue;
+            const data = frame.split('\n').find((line) => line.startsWith('data: '));
+            assert.ok(data);
+            const value = JSON.parse(data.slice(6)) as Json;
+            if (value.frame !== 'agent_message_delta') continue;
+            assert.ok(typeof value.text_delta === 'string');
+            reply += value.text_delta;
+            if (reply === options.reply) return;
+          }
+        }
+      })();
+      void live_reply.catch(() => {});
+      const sent = await api(conversation + '/send', {
+        content: [
+          { piece: 'text', text: 'Production smoke prompt.' },
+          {
+            piece: 'file',
+            file_name: 'smoke.txt',
+            media_type: 'text/plain',
+            data: Buffer.from(attachment).toString('base64'),
+          },
+        ],
+        sender_label: 'Owner',
+        sender_message_id: 'smoke-send',
+      });
+      assert.equal(sent.fate, 'started');
+      await live_reply;
+      const completed = await poll(
+        async () => {
+          const events = await api<{ events: Event[] }>(conversation + '/events');
+          const state = await api(conversation);
+          return { events: events.events, running: state.is_running };
+        },
+        (value) =>
+          value.running === false &&
+          value.events.some(
+            (event) =>
+              event.kind === 'turn_ended' &&
+              event.payload.ending === 'completed' &&
+              event.payload.error_summary === null,
+          ),
+      );
+      return completed.events;
+    } finally {
+      lifetime.abort();
+      await Promise.allSettled([reader?.cancel(), live_reply]);
+      reader?.releaseLock();
+    }
+  })();
+  step('05 combined text/file send has live reply and completed recorded turn');
   const uploaded = events.find(
     (event) => event.kind === 'prompt' && event.payload.sender_message_id === 'smoke-send',
   );
   assert.ok(uploaded);
-  const file = (uploaded.payload.content as Json[]).find(
-    (piece) => piece.piece === 'file' && piece.file_name === 'smoke.txt',
+  const pieces = uploaded.payload.content as Json[];
+  assert.ok(
+    pieces.some((piece) => piece.piece === 'text' && piece.text === 'Production smoke prompt.'),
   );
+  const file = pieces.find((piece) => piece.piece === 'file' && piece.file_name === 'smoke.txt');
   assert.ok(file && typeof file.stored_file_id === 'string');
   const stored_file_id = file.stored_file_id;
   await download(base, conversation_id, stored_file_id);
@@ -206,7 +257,7 @@ export async function smoke_after_restart(
   assert.equal(persisted.is_running, false);
   const replay = await api<{ events: Event[] }>(conversation + '/events');
   assert.deepEqual(replay.events.slice(0, state.events.length), state.events);
-  step('08 restart preserves conversation, prompt and actual reply');
+  step('08 restart preserves conversation, prompt and completed turn');
   await download(base, state.conversation_id, state.stored_file_id);
   const goal = await api(`/api/goals/${state.goal_id}`);
   assert.equal(goal.id, state.goal_id);

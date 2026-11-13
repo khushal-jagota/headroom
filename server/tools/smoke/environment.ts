@@ -108,6 +108,7 @@ export async function create_environment(
     join(source, 'tests/support/conversation_codex_scripted_app_server.py'),
   );
   const actions = [
+    { do: 'agent_delta', item_id: 'smoke-answer', text: 'Production smoke reply.' },
     {
       do: 'item_completed',
       item: { type: 'agentMessage', id: 'smoke-answer', text: 'Production smoke reply.' },
