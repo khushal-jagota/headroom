@@ -55,10 +55,24 @@ The same exported schema carries minimal Python annotations for field declaratio
 
 ## VPS command mailbox
 
-`vps_mailbox.ts::SqliteCommandMailbox` takes the application's Database and an optional millisecond clock. The existing synchronous write door owns command admission, run custody and result persistence. Polls read durable rows, judge waiting-command expiry and mark delivery in that same writer. In-memory waits observe committed rows. A canceled put observer leaves the admitted commit and its wake intact.
+`vps_mailbox.ts::SqliteCommandMailbox` takes the application's Database and an optional millisecond clock. The existing synchronous write door owns command admission, run custody and result persistence. Polls capture raw rows, then decode commands and prepare settlement text outside the writer. The final writer checks every selected row against that preparation before any effect, reads current expiry facts and applies changes atomically. A changed selection retries preparation. Stored decoding errors surface only at Python's corresponding row visit and roll the writer back. In-memory waits observe committed rows. A canceled put observer leaves the admitted commit and its wake intact.
 
 Replacement withdraws waiting commands in the lease transaction. Delivered commands settle from the successor's journal cursor. A successful stop result stays delivered until `finish_by_proof` supplies actual child-stop evidence. `publish_settlements` wakes one command's waiters before its listener, then advances to the next command. A listener failure leaves the whole committed batch durable.
 
 Sequence, turn and recovery counters retain exact SQL text reads and bigint bindings. Public values use the shared codec's safe-number or exact-marker rule. Command rows use Pydantic bytes. Outcome rows use validated object conversion followed by sorted standard-library JSON.
 
-`stop({ deadline })` requires the shared absolute monotonic deadline in seconds. It seals new work, wakes polls and cancels result waits immediately. Its bounded observer uses `observe_shutdown`. `settled()` retains the actual work and cleanup join, including unexpected failures pending at the first stop. The mailbox leaves database closure to its caller. Later executor composition registers this owner through the application's producer mechanism.
+`stop({ deadline })` requires the shared absolute monotonic deadline in seconds. It seals new owned work, wakes polls and cancels result waits immediately. Its bounded observer uses `observe_shutdown`. `settled()` retains the actual work and cleanup join, including unexpected failures pending at the first stop. The stateless replacement transaction participant and the single stall source remain usable through their caller's SQL capability after stop. Their caller owns admission and settlement. The mailbox leaves database closure to its caller. Later executor composition registers this owner through the application's producer mechanism.
+
+Callers establish authority before they enter this internal API. Transport callers authenticate executor ingress and admit the configured executor ID, protocol and current incarnation before polls or outcome reports. Incarnation and command arguments are row fences, not credentials. The routes slice owns that admission. Data helpers require a caller-owned SQL capability, and `finish_by_proof` requires an already-authorized matching `child_stopped` inbox item.
+
+Each held poll owns a removable wake registration. Timeout, abort, listener failure and shutdown release it. Abort reasons use a shared typed cancellation or an AbortError with the original reason as its cause. Waits require finite durations within Node's timer range. Finite negative durations return immediately, and a null result-wait timeout remains unbounded.
+
+### Known Python hazards
+
+These behaviors remain for the named follow-up owners.
+
+| Hazard | Current effect and follow-up owner |
+| --- | --- |
+| A window contains 32 expired rows with live work behind it | A held poll can sleep until another put or its timeout before it fetches the live row. A VPS mailbox follow-up owns the wake/selection policy. |
+| A stored command cannot decode | That poll raises ValidationError and rolls back immediately. Repeated polls at the same cursor fail again, with no automatic skip or repair. A VPS mailbox data-repair follow-up owns recovery policy. The routes slice must preserve the failure rather than silently skip work. |
+| The process crashes after commit but before settlement publication | The row remains durable, while the in-memory settlement notice is lost. The runs/core recovery slices (6 and 7) can reread durable results after restart. Durable notification replay requires a separate VPS mailbox follow-up. |

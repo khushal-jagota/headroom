@@ -1,4 +1,8 @@
-/** Scoped synchronous SQL for the durable command mailbox. Never owns a connection. */
+/**
+ * Scoped mailbox SQL assumes an authorized caller and a caller-owned SQL capability.
+ * Poll/result callers require transport ingress, protocol and current-identity admission.
+ * Row fences do not authenticate an executor. These helpers never own a connection.
+ */
 import { randomUUID } from 'node:crypto';
 import type { ReadSql, TransactionSql } from '../../core/database/contracts.ts';
 import { JsonNumber, stringify_python_json } from '../../core/http/numeric_json.ts';
@@ -34,7 +38,6 @@ import {
   ValueError,
 } from '../protocol.ts';
 import { expiry_reason } from '../logic/command_expiry.ts';
-import { read_presence } from '../vps_presence_store.ts';
 import { counter } from '../logic/counters.ts';
 import {
   open_child_assignment,
@@ -235,81 +238,208 @@ export function insert_model_list_request(
     incarnation,
   );
 }
-function settle_replaced_deliveries(
-  tx: TransactionSql,
-  incarnation: string,
-  after: bigint,
-  now: number,
-): MailboxSettlement[] {
-  if (current_incarnation(tx) !== incarnation) return [];
-  const found: MailboxSettlement[] = [];
-  const rows = tx.all<{ sequence: string; command_json: string; outcome_json: string | null }>(
-    'SELECT CAST(c.command_sequence AS TEXT) AS sequence,c.command_json,c.outcome_json FROM executor_commands AS c ' +
-      'JOIN executor_incarnations AS i ON i.executor_incarnation=c.executor_incarnation ' +
-      "WHERE c.state='delivered' AND c.executor_incarnation<>? AND i.replaced_at_ms IS NOT NULL ORDER BY c.command_sequence",
-    [incarnation],
-  );
-  for (const row of rows) {
-    const command = decode_json(row.command_json, 'MailboxCommand');
-    const never_ran = BigInt(row.sequence) > after && row.outcome_json === null;
-    const outcome = settlement_result(
-      command,
-      never_ran ? 'refused' : 'uncertain',
-      'executor_process_replaced',
-    );
-    tx.run(
-      'UPDATE executor_commands SET state=?,outcome_json=?,finished_at_ms=? WHERE command_sequence=?',
-      [never_ran ? 'withdrawn' : 'finished', outcome_json(outcome), now, BigInt(row.sequence)],
-    );
-    found.push([command, outcome]);
-  }
-  return found;
+/** Raw rows only. Protocol parsing and serialization run after the SQL scope ends. */
+interface FetchRow {
+  sequence: string;
+  command_json: string;
+  state: string;
+  conversation_id: string | null;
+  outcome_present: number;
 }
+interface FetchPresence {
+  executor_incarnation: string | null;
+  last_lease_at_ms: number | null;
+  identity_json: string | null;
+  refusal_json: string | null;
+}
+export interface FetchRows {
+  replaced: readonly FetchRow[];
+  candidates: readonly FetchRow[];
+  presence: FetchPresence | null;
+}
+type Preparation<T> = { ok: true; value: T } | { ok: false; error: unknown };
+interface PreparedOutcome {
+  result: WireValue<'CommandResult'>;
+  text: string;
+}
+interface PreparedCommand {
+  json: string;
+  bytes: number;
+  command: Preparation<WireValue<'MailboxCommand'>>;
+  outcomes: ReadonlyMap<string, Preparation<PreparedOutcome>>;
+}
+export interface PreparedFetch {
+  commands: ReadonlyMap<string, PreparedCommand>;
+  presence: FetchPresence | null;
+  presence_parse: Preparation<void>;
+}
+function attempt<T>(work: () => T): Preparation<T> {
+  try {
+    return { ok: true, value: work() };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+function prepared_value<T>(value: Preparation<T>): T {
+  if (!value.ok) throw value.error;
+  return value.value;
+}
+/** Caller supplies an admitted poll. This takes no new authority or owned SQL scope. */
+export function read_fetch_rows(sql: ReadSql, incarnation: string, after: bigint): FetchRows {
+  const presence =
+    sql.get<FetchPresence>(
+      'SELECT executor_incarnation,last_lease_at_ms,identity_json,refusal_json FROM mac_executor_presence WHERE singleton=1',
+    ) ?? null;
+  const replaced =
+    presence?.executor_incarnation === incarnation
+      ? sql.all<FetchRow>(
+          'SELECT CAST(c.command_sequence AS TEXT) AS sequence,c.command_json,c.state,c.conversation_id,c.outcome_json IS NOT NULL AS outcome_present ' +
+            'FROM executor_commands AS c INDEXED BY executor_commands_open ' +
+            'JOIN executor_incarnations AS i ON i.executor_incarnation=c.executor_incarnation ' +
+            "WHERE c.state IN ('waiting','delivered') AND c.state='delivered' AND c.executor_incarnation<>? " +
+            'AND i.replaced_at_ms IS NOT NULL ORDER BY c.command_sequence',
+          [incarnation],
+        )
+      : [];
+  const candidates = sql.all<FetchRow>(
+    'SELECT CAST(command_sequence AS TEXT) AS sequence,command_json,state,conversation_id,0 AS outcome_present ' +
+      'FROM executor_commands INDEXED BY executor_commands_open ' +
+      "WHERE executor_incarnation=? AND command_sequence>? AND state IN ('waiting','delivered') ORDER BY command_sequence LIMIT ?",
+    [incarnation, after, MAX_MAILBOX_POLL_COMMANDS],
+  );
+  return { replaced, candidates, presence };
+}
+/** Never call this while a transaction is open. Errors stay deferred until source visitation. */
+export async function prepare_fetch(rows: FetchRows): Promise<PreparedFetch> {
+  const commands = new Map<string, PreparedCommand>();
+  for (const [replacing, selection] of [
+    [true, rows.replaced],
+    [false, rows.candidates],
+  ] as const) {
+    for (const row of selection) {
+      const command = attempt(() => decode_json(row.command_json, 'MailboxCommand'));
+      const outcomes = new Map<string, Preparation<PreparedOutcome>>();
+      if (command.ok) {
+        const make = (
+          key: string,
+          disposition: 'refused' | 'uncertain',
+          reason: CommandSettlementReason,
+        ) => {
+          outcomes.set(
+            key,
+            attempt(() => {
+              const result = settlement_result(command.value, disposition, reason);
+              return { result, text: outcome_json(result) };
+            }),
+          );
+        };
+        if (replacing) {
+          make('replacement_refused', 'refused', 'executor_process_replaced');
+          make('replacement_uncertain', 'uncertain', 'executor_process_replaced');
+        } else {
+          switch (operation(command.value)) {
+            case 'steer':
+              make('steer_turn_not_running', 'refused', 'steer_turn_not_running');
+              make('steer_delivery_limit_passed', 'refused', 'steer_delivery_limit_passed');
+              break;
+            case 'answer_permission_ask':
+            case 'answer_user_input':
+              make('answered_request_not_open', 'refused', 'answered_request_not_open');
+              break;
+            case 'read_model_list':
+              make('model_list_limit_passed', 'refused', 'model_list_limit_passed');
+              break;
+          }
+        }
+      }
+      commands.set(row.sequence, {
+        json: row.command_json,
+        bytes: Buffer.byteLength(row.command_json) + 1,
+        command,
+        outcomes,
+      });
+      // A command is at most one envelope. Yield between commands without a worker or queue.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  }
+  const presence_parse = attempt(() => {
+    // Stored identities/refusals retain Python's shape errors, outside the writer.
+    if (rows.presence?.identity_json != null)
+      decode_json(rows.presence.identity_json, 'ExecutorIdentity');
+    if (rows.presence?.refusal_json != null)
+      decode_json(rows.presence.refusal_json, 'ExecutorRefusal');
+  });
+  return { commands, presence: rows.presence, presence_parse };
+}
+/**
+ * Caller owns the writer and the poll's ingress/protocol/current-identity admission.
+ * Null requests a fresh preparation and guarantees that this call made no effects.
+ */
 export function fetch(
   tx: TransactionSql,
   incarnation: string,
   after: bigint,
   now: number,
   arrived_at: number,
-): MailboxFetchResult {
-  const settled = settle_replaced_deliveries(tx, incarnation, after, now);
-  if (now - arrived_at > HELD_POLL_EVIDENCE_MS) {
-    const last = read_presence(tx)?.last_lease_at_ms;
+  prepared: PreparedFetch,
+): MailboxFetchResult | null {
+  const rows = read_fetch_rows(tx, incarnation, after);
+  const stale = now - arrived_at > HELD_POLL_EVIDENCE_MS;
+  // Validate every freshly selected row before the first effect, including rows beyond budget.
+  if (
+    [...rows.replaced, ...rows.candidates].some(
+      (row) => prepared.commands.get(row.sequence)?.json !== row.command_json,
+    )
+  )
+    return null;
+  if (
+    stale &&
+    (rows.presence?.identity_json !== prepared.presence?.identity_json ||
+      rows.presence?.refusal_json !== prepared.presence?.refusal_json)
+  )
+    return null;
+  const settled: MailboxSettlement[] = [];
+  for (const row of rows.replaced) {
+    const entry = prepared.commands.get(row.sequence)!;
+    const command = prepared_value(entry.command);
+    const never_ran = BigInt(row.sequence) > after && row.outcome_present === 0;
+    const outcome = prepared_value(
+      entry.outcomes.get(never_ran ? 'replacement_refused' : 'replacement_uncertain')!,
+    );
+    tx.run(
+      'UPDATE executor_commands SET state=?,outcome_json=?,finished_at_ms=? WHERE command_sequence=?',
+      [never_ran ? 'withdrawn' : 'finished', outcome.text, now, BigInt(row.sequence)],
+    );
+    settled.push([command, outcome.result]);
+  }
+  if (stale) {
+    prepared_value(prepared.presence_parse);
+    const last = rows.presence?.last_lease_at_ms;
     if (last == null || now - last > HELD_POLL_EVIDENCE_MS) return { reply: null, settled };
   }
-  const rows = tx.all<{
-    sequence: string;
-    command_json: string;
-    state: string;
-    conversation_id: string | null;
-  }>(
-    'SELECT CAST(command_sequence AS TEXT) AS sequence,command_json,state,conversation_id FROM executor_commands ' +
-      "WHERE executor_incarnation=? AND command_sequence>? AND state IN ('waiting','delivered') ORDER BY command_sequence LIMIT ?",
-    [incarnation, after, MAX_MAILBOX_POLL_COMMANDS],
-  );
   const facts = new Map<string, ReturnType<typeof read_facts>>();
   const answered: WireValue<'MailboxCommand'>[] = [];
-  const notifications: MailboxSettlement[] = [...settled];
   let budget = MAX_MAILBOX_POLL_BYTES - 16;
-  for (const row of rows) {
-    const command = decode_json(row.command_json, 'MailboxCommand');
+  for (const row of rows.candidates) {
+    const entry = prepared.commands.get(row.sequence)!;
+    const command = prepared_value(entry.command);
     if (row.state === 'waiting') {
       if (row.conversation_id !== null && !facts.has(row.conversation_id))
         facts.set(row.conversation_id, read_facts(tx, row.conversation_id));
       const reason = expiry_reason(command, facts.get(row.conversation_id ?? '') ?? [], now);
       if (reason !== null) {
-        const outcome = settlement_result(command, 'refused', reason);
+        const outcome = prepared_value(entry.outcomes.get(reason)!);
         tx.run(
           "UPDATE executor_commands SET state='expired',outcome_json=?,finished_at_ms=? WHERE command_sequence=?",
-          [outcome_json(outcome), now, BigInt(row.sequence)],
+          [outcome.text, now, BigInt(row.sequence)],
         );
-        notifications.push([command, outcome]);
+        settled.push([command, outcome.result]);
         continue;
       }
     }
-    const size = Buffer.byteLength(row.command_json) + 1;
-    if (answered.length && size > budget) break;
-    budget -= size;
+    // The source decodes even the first over-budget candidate before it stops here.
+    if (answered.length && entry.bytes > budget) break;
+    budget -= entry.bytes;
     if (row.state === 'waiting')
       tx.run(
         "UPDATE executor_commands SET state='delivered',delivered_at_ms=? WHERE command_sequence=?",
@@ -317,7 +447,7 @@ export function fetch(
       );
     answered.push(command);
   }
-  return { reply: { commands: answered }, settled: notifications };
+  return { reply: { commands: answered }, settled };
 }
 function result_refusal(
   row: MailboxRow | null,
@@ -338,6 +468,7 @@ function result_refusal(
     ? 'malformed_result'
     : null;
 }
+/** Caller already admitted the reporting identity. Row checks do not replace ingress authority. */
 export function record(
   tx: TransactionSql,
   incarnation: string,
@@ -391,6 +522,7 @@ export function withdraw(
   );
   return [[row.command, outcome]];
 }
+/** The inbox already authorized this child_stopped proof before this participant runs. */
 export function finish_by_proof(
   tx: TransactionSql,
   command_id: string,
@@ -408,6 +540,7 @@ export function finish_by_proof(
   );
   return [[row.command, value]];
 }
+/** Stateless participant in an admitted lease transaction. Publish returned pairs after commit. */
 export function replace_incarnation_in_transaction(
   tx: TransactionSql,
   replaced: string,
@@ -622,6 +755,7 @@ export function tracked_waits(sql: ReadSql, _now: number): readonly TrackedWait[
     });
   return waits;
 }
+/** Stateless reads use the caller's SQL scope and are independent of mailbox admission. */
 export class MailboxStallSource implements StallSource {
   tracked_waits(sql: ReadSql, now: number): readonly TrackedWait[] {
     return tracked_waits(sql, now);

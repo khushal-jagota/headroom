@@ -46,8 +46,11 @@ from planner.executor.vps_mailbox import SqliteCommandMailbox
 from planner.executor.vps_presence_store import accept_lease_in_transaction
 
 ROOT = Path(__file__).resolve().parents[3]
-NOW = 1_000_000
-HIGH = 9007199254740993
+NOW = 1_760_000_000_000
+TURN = 3
+BIG = 9007199254740993
+ARCHIVED = 50_000
+BASE = ARCHIVED + 6
 OLD = "11111111-1111-4111-8111-111111111111"
 NEW = "22222222-2222-4222-8222-222222222222"
 HISTORICAL = "33333333-3333-4333-8333-333333333333"
@@ -67,7 +70,10 @@ CONVERSATIONS = (
 ROWS = (
     "SELECT CAST(command_sequence AS TEXT) AS sequence,command_id,executor_incarnation,operation,"
     "conversation_id,child_id,CAST(turn_number AS TEXT) AS turn,command_json,state,created_at_ms,"
-    "delivered_at_ms,finished_at_ms,outcome_json FROM executor_commands ORDER BY command_sequence"
+    "delivered_at_ms,finished_at_ms,outcome_json,typeof(command_sequence) AS sequence_type,"
+    "typeof(turn_number) AS turn_type,typeof(created_at_ms) AS created_type,"
+    "typeof(delivered_at_ms) AS delivered_type,typeof(finished_at_ms) AS finished_type "
+    "FROM executor_commands WHERE command_id NOT LIKE 'archive-%' ORDER BY command_sequence"
 )
 
 
@@ -126,7 +132,7 @@ def _command(
         "command_id": name,
         "child": _child(conversation),
         "operation": operation,
-        "turn": {"conversation_id": conversation, "turn_number": HIGH},
+        "turn": {"conversation_id": conversation, "turn_number": TURN},
         "arguments": arguments[operation],
         **changes,
     }
@@ -157,23 +163,116 @@ def _observe(path: Path) -> dict[str, Any]:
             "rows": ROWS,
             "runs": (
                 "SELECT conversation_id,executor_incarnation,child_id,"
-                "CAST(turn_number AS TEXT) AS turn,delivery_uncertain,stop_state "
+                "CAST(turn_number AS TEXT) AS turn,delivery_uncertain,stop_state,"
+                "typeof(turn_number) AS turn_type,typeof(delivery_uncertain) AS uncertain_type "
                 "FROM mac_runs ORDER BY conversation_id"
             ),
             "assignments": (
-                "SELECT * FROM executor_child_assignments ORDER BY executor_incarnation,child_id"
+                "SELECT *,typeof(created_at_ms) AS created_type,"
+                "typeof(closed_at_ms) AS closed_type "
+                "FROM executor_child_assignments ORDER BY executor_incarnation,child_id"
             ),
-            "presence": "SELECT executor_incarnation,last_lease_at_ms FROM mac_executor_presence",
+            "presence": (
+                "SELECT *,typeof(singleton) AS singleton_type,"
+                "typeof(last_contact_at_ms) AS contact_type,typeof(last_lease_at_ms) AS lease_type,"
+                "typeof(continuous_since_ms) AS continuous_type,"
+                "typeof(going_to_sleep_at_ms) AS sleep_type FROM mac_executor_presence"
+            ),
+            "incarnations": (
+                "SELECT *,typeof(first_leased_at_ms) AS first_type,"
+                "typeof(replaced_at_ms) AS replaced_type "
+                "FROM executor_incarnations ORDER BY executor_incarnation"
+            ),
+            "events": (
+                "SELECT sequence,typeof(sequence) AS sequence_type,created_at,"
+                "typeof(created_at) AS created_type FROM conversation_events "
+                "WHERE conversation_id='recover' ORDER BY sequence"
+            ),
+            "counts": (
+                "SELECT state,count(*) AS count FROM executor_commands "
+                "GROUP BY state ORDER BY state"
+            ),
+            "total": (
+                "SELECT count(*) AS count,sum(typeof(command_sequence)<>'integer' "
+                "OR typeof(created_at_ms)<>'integer' "
+                "OR typeof(turn_number) NOT IN ('integer','null') "
+                "OR typeof(delivered_at_ms) NOT IN ('integer','null') "
+                "OR typeof(finished_at_ms) NOT IN ('integer','null')) AS bad_types "
+                "FROM executor_commands"
+            ),
         }
-        return {
+        result = {
             name: [dict(row) for row in connection.execute(sql)] for name, sql in queries.items()
         }
+        assert result["total"][0]["bad_types"] == 0
+        assert all(
+            value in ("integer", "null")
+            for rows in result.values()
+            for row in rows
+            for key, value in row.items()
+            if key.endswith("_type")
+        )
+        return result
 
 
 def _fact(identity: str, operation: str, status: str, kind: str = "request") -> LifecycleFact:
     return LifecycleFact(
-        LifecycleKind(kind), identity, HIGH, LifecycleOperation(operation), LifecycleStatus(status)
+        LifecycleKind(kind), identity, TURN, LifecycleOperation(operation), LifecycleStatus(status)
     )
+
+
+def _backup(source: Path, destination: Path) -> None:
+    with (
+        closing(sqlite3.connect(source)) as origin,
+        closing(sqlite3.connect(destination)) as target,
+    ):
+        origin.backup(target)
+
+
+def _exact_command(command: dict[str, Any], sequence: int, at: int, size: int) -> dict[str, Any]:
+    command["arguments"]["content"] = [{"text": ""}]
+
+    def body() -> bytes:
+        return wire.encode_bounded(
+            wire.MailboxCommand(
+                sequence, command["command_id"], at, child_command=_typed("ChildCommand", command)
+            )
+        )
+
+    command["arguments"]["content"][0]["text"] = "x" * (size - len(body()))
+    assert len(body()) == size
+    return command
+
+
+def _big_statements(path: Path) -> list[dict[str, Any]]:
+    with closing(connect(str(path))) as connection:
+        row = connection.execute(
+            "SELECT command_json FROM executor_commands WHERE command_id='withdrawn-recover'"
+        ).fetchone()
+        command = _typed("MailboxCommand", json.loads(row[0]))
+    rewritten = replace(
+        command,
+        child_command=replace(
+            command.child_command,
+            turn=_typed("TurnToken", {"conversation_id": "recover", "turn_number": BIG}),
+        ),
+    )
+    return [
+        _statement("UPDATE sqlite_sequence SET seq=? WHERE name='executor_commands'", BIG),
+        _statement(
+            "UPDATE mac_runs SET turn_number=? WHERE conversation_id IN ('basic','recover')", BIG
+        ),
+        _statement(
+            "UPDATE executor_commands SET turn_number=?,command_json=? "
+            "WHERE command_id='withdrawn-recover'",
+            BIG,
+            wire.encode_bounded(rewritten).decode(),
+        ),
+        _statement(
+            "UPDATE conversation_events SET sequence=sequence+? WHERE conversation_id='recover'",
+            BIG,
+        ),
+    ]
 
 
 def _seed(path: Path) -> None:
@@ -188,13 +287,13 @@ def _seed(path: Path) -> None:
                 "VALUES (?,'codex','fixture','/tmp','full',1)",
                 (conversation,),
             )
-            apply_facts(connection, conversation, (_fact(str(HIGH), "turn", "running", "turn"),))
+            apply_facts(connection, conversation, (_fact(str(TURN), "turn", "running", "turn"),))
         apply_facts(
             connection,
             "expiry",
             (
-                _fact(f"{HIGH}:permission:ask", "permission", "pending"),
-                _fact(f"{HIGH}:user_input:question", "user_input", "answering"),
+                _fact(f"{TURN}:permission:ask", "permission", "pending"),
+                _fact(f"{TURN}:user_input:question", "user_input", "answering"),
             ),
         )
         connection.commit()
@@ -227,7 +326,7 @@ def _seed(path: Path) -> None:
                 executor_incarnation=HISTORICAL,
                 conversation_id=command["child"]["conversation_id"],
                 child_id=command["child"]["child_id"],
-                turn_number=HIGH,
+                turn_number=TURN,
             )
             outcome = None if result is None else _outcome_json(_typed("CommandResult", result))
             connection.execute(
@@ -297,15 +396,36 @@ def _seed(path: Path) -> None:
                 "INSERT INTO conversation_events VALUES (?,?,?,?,?)",
                 (
                     "recover",
-                    HIGH + index,
+                    10 + index,
                     payload.kind.value,
                     conversation_event_payload_to_canonical_json(payload),
-                    1,
+                    NOW // 1000,
                 ),
             )
 
-        connection.execute("DELETE FROM sqlite_sequence WHERE name='executor_commands'")
-        connection.execute("INSERT INTO sqlite_sequence VALUES ('executor_commands',?)", (HIGH,))
+        legacy = wire.MailboxCommand(
+            0, "archive", NOW - 86400000, model_list_request=wire.ModelListRequest("codex", False)
+        )
+        connection.executemany(
+            "INSERT INTO executor_commands(command_sequence,command_id,executor_incarnation,"
+            "operation,command_json,state,created_at_ms,finished_at_ms,outcome_json) "
+            "VALUES (?,?,?,'read_model_list',?,'finished',?,?,?)",
+            (
+                (
+                    index + 7,
+                    name,
+                    HISTORICAL,
+                    wire.encode_bounded(
+                        replace(legacy, command_sequence=index + 7, command_id=name)
+                    ).decode(),
+                    legacy.created_at_vps_ms,
+                    NOW - 1000,
+                    _outcome_json(wire.CommandResult(name, model_list={})),
+                )
+                for index in range(ARCHIVED)
+                for name in (f"archive-{index}",)
+            ),
+        )
         connection.commit()
 
 
@@ -332,6 +452,7 @@ class _Source:
 
     def _owner(self) -> None:
         self.mailbox = SqliteCommandMailbox(str(self.path), clock=lambda: self.now)
+        self.stalls = self.mailbox.stall_source()
         self.mailbox.settled_listener = self._listener
         original_insert = self.mailbox._insert_child_command
 
@@ -350,7 +471,7 @@ class _Source:
                 ).result(timeout=5)
             if abort:
                 assert caller is not None
-                self.loop.call_soon_threadsafe(caller.cancel)
+                self.loop.call_soon_threadsafe(caller.cancel, "mailbox fixture observer")
             return result
 
         self.mailbox._insert_child_command = insert  # type: ignore[method-assign]
@@ -444,6 +565,54 @@ class _Source:
             self._owner()
         elif op == "snapshot":
             return {"trace": self.trace, "signals": self.signals}
+        elif op == "timed_poll":
+            start = time.perf_counter()
+            reply = await self._call("poll", action["args"])
+            polled_at = time.perf_counter()
+            wire_bytes = len(wire.encode_bounded(reply, limit=4 * 1024 * 1024))
+            encoded_at = time.perf_counter()
+            return {
+                "reply": reply,
+                "timing": {
+                    "poll_ms": (polled_at - start) * 1000,
+                    "encode_ms": (encoded_at - polled_at) * 1000,
+                    "full_ms": (encoded_at - start) * 1000,
+                    "wire_bytes": wire_bytes,
+                },
+            }
+        elif op == "poll_boundaries":
+            args = action["args"]
+            for _ in range(5):
+                await self._call("poll", [*args, 0.002])
+                assert not self.mailbox._put_event._waiters
+            cancelled = []
+            for custom in (False, True, "overflow"):
+                self.ready = self.loop.create_future()
+                task = asyncio.create_task(
+                    self._call("poll", [*args, (2**31 / 1000) if custom == "overflow" else 30])
+                )
+                await asyncio.wait_for(self.ready, 5)
+                self.ready = None
+                reason = RuntimeError("fixture abort reason")
+                task.cancel(reason) if custom is True else task.cancel()
+                try:
+                    await task
+                    raise AssertionError("cancelled poll returned")
+                except asyncio.CancelledError as error:
+                    if custom != "overflow":
+                        cancelled.append(
+                            {
+                                "cancelled": True,
+                                "wrapped": isinstance(error, asyncio.CancelledError),
+                                "reason_preserved": not custom or error.args[0] is reason,
+                            }
+                        )
+            return {
+                "cancelled": cancelled,
+                "idle_wakes": len(self.mailbox._put_event._waiters),
+                "abort_subscribers": 0,
+                "overflow": {"accepted_before_cancel": True},
+            }
         elif op == "inspect":
             child = _typed("ChildReference", action["child"])
             with closing(connect(str(self.path))) as connection:
@@ -473,6 +642,17 @@ class _Source:
         elif op == "stop":
             await self.mailbox.close()
             return {"sql_after_seal": "source performs its next fetch before its closed check"}
+        elif op == "poststop":
+            with self.store._transaction() as connection:
+                before = self.stalls.tracked_waits(connection, self.now)
+                settled = self.mailbox.replace_incarnation_in_transaction(
+                    connection,
+                    replaced=action["args"][0],
+                    current=action["args"][1],
+                    now_ms=self.now,
+                )
+                after = self.stalls.tracked_waits(connection, self.now)
+            return {"before": before, "settled": settled, "after": after}
         elif op == "pending_failure":
             self.ready = self.loop.create_future()
             report = asyncio.create_task(_outcome(lambda: self._call("report", action["args"])))
@@ -486,7 +666,12 @@ class _Source:
 async def _outcome(work: Any) -> dict[str, Any]:
     try:
         return {"ok": True, "value": wire.encode_value(await work())}
-    except asyncio.CancelledError:
+    except asyncio.CancelledError as error:
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            if task.cancelling() != 1 or error.args != ("mailbox fixture observer",):
+                raise
+            task.uncancel()
         return {"ok": False, "type": "CancelledError", "message": ""}
     except Exception as error:
         return {"ok": False, "type": type(error).__name__, "message": str(error)}
@@ -497,11 +682,11 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
         started = time.perf_counter()
         seed = tmp_path / "seed.sqlite"
         _seed(seed)
+        seed_seconds = time.perf_counter() - started
         paths = [tmp_path / "python.sqlite", tmp_path / "node.sqlite"]
-        with closing(sqlite3.connect(seed)) as origin:
-            for path in paths:
-                with closing(sqlite3.connect(path)) as destination:
-                    origin.backup(destination)
+        for path in paths:
+            _backup(seed, path)
+        copies = [tmp_path / "python-states.sqlite", tmp_path / "node-states.sqlite"]
         source = _Source(paths[0])
         home = tmp_path / "home"
         home.mkdir()
@@ -527,18 +712,27 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             limit=16 * 1024 * 1024,
         )
         assert process.stdin is not None and process.stdout is not None
+        assert process.stderr is not None
+        stderr = asyncio.create_task(process.stderr.read())
 
         async def node(action: dict[str, Any]) -> dict[str, Any]:
             assert process.stdin is not None and process.stdout is not None
             process.stdin.write((_json(action) + "\n").encode())
             await process.stdin.drain()
             line = await asyncio.wait_for(process.stdout.readline(), 8)
-            assert line, f"Node companion exited: {process.returncode}"
+            if not line:
+                diagnostics = await asyncio.wait_for(asyncio.shield(stderr), 5)
+                raise AssertionError(
+                    f"Node companion exited: {process.returncode}\n{diagnostics.decode()[-6000:]}"
+                )
             result = json.loads(line)
             assert isinstance(result, dict)
             return result
 
         uuids: dict[str, str] = {}
+        admitted: set[str] = set()
+        snapshots: list[dict[str, Any]] = []
+        observed_errors: list[dict[str, Any]] = []
 
         def correlated(snapshot: dict[str, Any]) -> dict[str, Any]:
             for row in snapshot["rows"]:
@@ -563,18 +757,27 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             expected = await _outcome(lambda: source.execute(action))
             actual = await node(action)
             assert actual == expected, (action.get("method", action["op"]), actual, expected)
+            if not expected["ok"]:
+                observed_errors.append(
+                    {"operation": action.get("method", action["op"]), **expected}
+                )
             return expected.get("value")
 
         async def call(method: str, *args: Any) -> Any:
-            return await paired({"op": "call", "method": method, "args": args})
+            value = await paired({"op": "call", "method": method, "args": args})
+            if method == "put" and isinstance(value, dict) and "command_sequence" in value:
+                admitted.add(value["command_id"])
+            return value
 
         async def inspect(child: dict[str, Any], key: str = "none") -> Any:
-            return await paired({"op": "inspect", "child": child, "turn": HIGH, "key": key})
+            return await paired({"op": "inspect", "child": child, "turn": TURN, "key": key})
 
         async def snapshot() -> Any:
             metadata = await paired({"op": "snapshot"})
             expected = correlated(_observe(paths[0]))
             assert _observe(paths[1]) == expected
+            assert expected["total"][0]["count"] == BASE + len(admitted)
+            snapshots.append({"rows": expected["total"][0]["count"], "states": expected["counts"]})
             return {**expected, **metadata}
 
         async def report(*results: Any, identity: Any = IDENTITY) -> Any:
@@ -594,36 +797,36 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             # Persistence, exact native-default replay, first-result custody and recovery.
             prompt = _command("prompt")
             placed = await call("put", prompt)
-            assert placed["command_sequence"] == HIGH + 1
+            assert placed["command_sequence"] == BASE + 1
             assert await call("put", deepcopy(prompt)) == placed
             await call(
                 "put", {**prompt, "arguments": {**prompt["arguments"], "sender_label": "other"}}
             )
             await call(
-                "put", _command("stale", turn={"conversation_id": "basic", "turn_number": HIGH - 1})
+                "put", _command("stale", turn={"conversation_id": "basic", "turn_number": TURN - 1})
             )
-            first = await call("poll", IDENTITY, HIGH, 0)
-            assert first["commands"][0]["command_sequence"] == HIGH + 1
+            first = await call("poll", IDENTITY, BASE, 0)
+            assert first["commands"][0]["command_sequence"] == BASE + 1
             await paired({"op": "clock", "now": NOW + 1})
-            assert await call("poll", IDENTITY, HIGH, 0) == first
-            await report(_result(prompt, kind="accepted", count=HIGH))
+            assert await call("poll", IDENTITY, BASE, 0) == first
+            await report(_result(prompt, kind="accepted", count=TURN))
             await report(_result(prompt, kind="later"), {"command_id": "prompt"})
             assert await call("wait", "prompt", 0) == _typed_result(
-                _result(prompt, kind="accepted", count=HIGH)
+                _result(prompt, kind="accepted", count=TURN)
             )
             await paired({"op": "reopen"})
-            assert (await inspect(_child("basic"), "prompt"))["high"] == HIGH + 1
+            assert (await inspect(_child("basic"), "prompt"))["high"] == BASE + 1
             recovery = await inspect(_child("recover", HISTORICAL, "-old"), "withdrawn-recover")
             assert recovery["withdrawn"] is not None and [
                 entry[1] for entry in recovery["late"]
-            ] == [HIGH, HIGH + 1]
+            ] == [10, 11]
             assert (await inspect(_child("cancelled", HISTORICAL, "-old")))["withdrawn"] is None
             await call("put", _command("recover-start", "start", "recover"))
             await call("put", _command("recover-prompt", conversation="recover"))
             rewritten = (await inspect(_child("recover")))["rewritten"]
             assert next(entry for entry in rewritten if entry[0]["conversation_id"] == "recover")[
                 1:
-            ] == [HIGH, _typed_result_prompt(prompt), True, True]
+            ] == [TURN, _typed_result_prompt(prompt), True, True]
             await snapshot()
             # Admission is read inside the real writer. Oversize encoding rolls custody back.
             await paired(
@@ -654,7 +857,7 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             )
             before = await snapshot()
             oversized = _command(
-                "oversize", turn={"conversation_id": "basic", "turn_number": HIGH + 1}
+                "oversize", turn={"conversation_id": "basic", "turn_number": TURN + 1}
             )
             oversized["arguments"]["content"] = [{"text": "x" * (1024 * 1024)}]
             await call("put", oversized)
@@ -667,7 +870,7 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                     "missing-turn",
                     "steer",
                     "expiry",
-                    turn={"conversation_id": "expiry", "turn_number": HIGH + 1},
+                    turn={"conversation_id": "expiry", "turn_number": TURN + 1},
                 ),
                 _command("permission-open", "answer_permission_ask", "expiry"),
                 _command(
@@ -727,9 +930,99 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             cursor = await call("high")
             for index in range(5):
                 command = _command(f"large-{index}", conversation="budget")
-                command["arguments"]["content"] = [{"text": "é" * (440 * 1024)}]
+                if index < 4:
+                    command = _exact_command(
+                        command,
+                        cursor + index + 1,
+                        source.now,
+                        1024 * 1024 - (20 if index == 3 else 0),
+                    )
                 await call("put", command)
+            timed = {"op": "timed_poll", "args": [IDENTITY, cursor, 0]}
+            expected_poll = await _outcome(lambda: source.execute(timed))
+            native_poll = await node(timed)
+            assert native_poll["value"]["reply"] == expected_poll["value"]["reply"]
+            performance = {
+                "source": expected_poll["value"]["timing"],
+                "candidate": native_poll["value"]["timing"],
+                "old_rows": ARCHIVED,
+            }
+            assert performance["candidate"]["commands"] == 4
+            assert performance["candidate"]["wire_bytes"] == 4 * 1024 * 1024 - 2
+            assert performance["source"]["wire_bytes"] == performance["candidate"]["wire_bytes"]
+            assert (
+                sum(
+                    len(wire.encode_bounded(_typed("MailboxCommand", command))) + 1
+                    for command in native_poll["value"]["reply"]["commands"]
+                )
+                + 16
+                == 4 * 1024 * 1024
+            )
+            for path, copy in zip(paths, copies, strict=True):
+                _backup(path, copy)
+            # Decode errors arise only when the source visits the row, even at its byte cutoff.
+            sixth = await call(
+                "put", _command("after-byte-cutoff", "cancel_running_turn", "budget")
+            )
+            clean = {row["command_id"]: row["command_json"] for row in _observe(paths[0])["rows"]}
+            await paired(
+                {
+                    "op": "sql",
+                    "statements": [
+                        _statement(
+                            "UPDATE executor_commands SET command_json='{' "
+                            "WHERE command_id='after-byte-cutoff'"
+                        )
+                    ],
+                }
+            )
             assert len((await call("poll", IDENTITY, cursor, 0))["commands"]) == 4
+            await paired(
+                {
+                    "op": "sql",
+                    "statements": [
+                        _statement(
+                            "UPDATE executor_commands SET command_json='{' "
+                            "WHERE command_id='large-4'"
+                        ),
+                        _statement(
+                            "UPDATE executor_commands SET state='waiting',delivered_at_ms=NULL "
+                            "WHERE command_id='large-0'"
+                        ),
+                    ],
+                }
+            )
+            before_poison = await snapshot()
+            assert await call("poll", IDENTITY, cursor, 0) is None
+            assert await call("poll", IDENTITY, cursor, 0) is None
+            assert await snapshot() == before_poison
+            await paired(
+                {
+                    "op": "sql",
+                    "statements": [
+                        _statement(
+                            "UPDATE executor_commands SET command_json=? "
+                            "WHERE command_id='after-byte-cutoff'",
+                            clean["after-byte-cutoff"],
+                        )
+                    ],
+                }
+            )
+            assert (await call("poll", IDENTITY, sixth["command_sequence"] - 1, 0))["commands"][0][
+                "command_id"
+            ] == "after-byte-cutoff"
+            await paired(
+                {
+                    "op": "sql",
+                    "statements": [
+                        _statement(
+                            "UPDATE executor_commands SET command_json=? "
+                            "WHERE command_id='large-4'",
+                            clean["large-4"],
+                        )
+                    ],
+                }
+            )
             window = await call("high")
             statements = []
             for index in range(32):
@@ -752,6 +1045,7 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                     )
                 )
             await paired({"op": "sql", "statements": statements})
+            admitted.update(f"window-{index}" for index in range(32))
             live = await call("put", _command("after-window", "cancel_running_turn", "expiry"))
             assert live["command_sequence"] == window + 33
             assert (await call("poll", IDENTITY, window, 0))["commands"] == []
@@ -770,6 +1064,7 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             assert UUID(model_a["command_id"]).version == UUID(model_b["command_id"]).version == 4
             assert model_a["command_id"] != model_b["command_id"]
             uuids[model_a["command_id"]] = model_b["command_id"]
+            admitted.add(model_a["command_id"])
             assert {**model_a, "command_id": model_b["command_id"]} == model_b
             await paired({"op": "clock", "now": source.now + 34999})
             model_poll = {
@@ -797,6 +1092,68 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             node_reply = await node(candidate_report)
             assert source_reply["value"]["recorded"] == [model_a["command_id"]]
             assert node_reply["value"]["recorded"] == [model_b["command_id"]]
+            await paired({"op": "listen", "throw_on": None})
+            await snapshot()
+            # Fresh arrivals do not read stale lease diagnostics; a held poll does.
+            identity_json = _observe(paths[0])["presence"][0]["identity_json"]
+            await paired(
+                {
+                    "op": "sql",
+                    "statements": [
+                        _statement(
+                            "UPDATE mac_executor_presence SET identity_json='{}' WHERE singleton=1"
+                        )
+                    ],
+                }
+            )
+            presence_cursor = await call("high")
+            assert (await call("poll", IDENTITY, presence_cursor, 0))["commands"] == []
+            await begin("bad-presence", "poll", IDENTITY, presence_cursor, 30)
+            await paired(
+                {
+                    "op": "sql",
+                    "statements": [
+                        _statement(
+                            "UPDATE executor_commands SET state='delivered',outcome_json=NULL,"
+                            "finished_at_ms=NULL WHERE command_id='late-open'"
+                        )
+                    ],
+                }
+            )
+            before_presence = await snapshot()
+            await paired({"op": "clock", "now": source.now + 15001})
+            await call("put", _command("bad-presence-wake", "cancel_running_turn", "expiry"))
+            failed_poll = await join("bad-presence")
+            assert not failed_poll["ok"] and failed_poll["type"] == "ValidationError"
+            after_presence = await snapshot()
+            assert [
+                row for row in after_presence["rows"] if row["command_id"] != "bad-presence-wake"
+            ] == before_presence["rows"]
+            assert (await node({"op": "wake_count"}))["value"] == 0
+            await paired(
+                {
+                    "op": "sql",
+                    "statements": [
+                        _statement(
+                            "UPDATE mac_executor_presence SET identity_json=? WHERE singleton=1",
+                            identity_json,
+                        )
+                    ],
+                }
+            )
+            assert (await call("poll", IDENTITY, presence_cursor, 0))["commands"][0][
+                "command_id"
+            ] == "bad-presence-wake"
+            # A listener failure during fetch retains expiry and releases its poll registration.
+            failed_expiry = await call("put", _command("poll-listener", "steer", "expiry"))
+            await paired({"op": "clock", "now": source.now + 10000})
+            await paired({"op": "listen", "throw_on": "poll-listener"})
+            assert await call("poll", IDENTITY, failed_expiry["command_sequence"] - 1, 0) is None
+            assert (await inspect(_child("expiry"), "poll-listener"))["row"]["state"] == "expired"
+            assert (await call("wait", "poll-listener", 0))["child_outcome"]["result"][
+                "reason"
+            ] == "steer_delivery_limit_passed"
+            assert (await node({"op": "wake_count"}))["value"] == 0
             await paired({"op": "listen", "throw_on": None})
             await snapshot()
             # A stale held response marks nothing. A fresh poll is its own evidence.
@@ -863,7 +1220,7 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                             "turn_number=? WHERE conversation_id=?",
                             NEW,
                             conversation + "-new",
-                            HIGH,
+                            TURN,
                             conversation,
                         ),
                         _statement(
@@ -879,7 +1236,7 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                 )
             await paired({"op": "replace", "statements": statements, "args": [OLD, NEW]})
             await call(
-                "poll", IDENTITY, HIGH, 0
+                "poll", IDENTITY, BASE, 0
             )  # An old process cannot settle replaced deliveries.
             await call("poll", SUCCESSOR, delivered["command_sequence"] - 1, 0)
             await snapshot()
@@ -897,12 +1254,14 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             await paired({"op": "arm", "after_abort": True, "after_put": second})
             await call("put", concurrent)
             reentered = await paired({"op": "reentrant"})
+            admitted.update((concurrent["command_id"], second["command_id"]))
             poll = await join("poll")
             assert [command["command_id"] for command in poll["value"]["commands"]] == [
                 concurrent["command_id"],
                 second["command_id"],
             ]
             assert await call("high") == reentered["command_sequence"]
+            await snapshot()
             await report(_result(concurrent), _result(second), identity=SUCCESSOR)
             assert await join("wait-first") == await join("wait-second")
             # Listener failure stops notifications, never the already committed batch.
@@ -920,6 +1279,22 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             assert (await paired({"op": "pending"}))["notify-two"]
             assert await call("wait", "notify-two", 0) == _typed_result(_result(two))
             await snapshot()
+            ahead = await call("high") + 10
+            assert (await call("poll", SUCCESSOR, ahead, 0))["commands"] == []
+            assert await call("high") == ahead - 10
+            boundaries = {"op": "poll_boundaries", "args": [SUCCESSOR, await call("high")]}
+            reference_boundaries = (await _outcome(lambda: source.execute(boundaries)))["value"]
+            native_boundaries = (await node(boundaries))["value"]
+            for key in ("cancelled", "idle_wakes", "abort_subscribers"):
+                assert native_boundaries[key] == reference_boundaries[key]
+            assert reference_boundaries["overflow"] == {"accepted_before_cancel": True}
+            assert (
+                not native_boundaries["overflow"]["ok"]
+                and native_boundaries["overflow"]["type"] == "ValueError"
+            )
+            postseal = {**one, "command_id": "postseal-waiting"}
+            await call("put", postseal)
+            await snapshot()
             await begin("close-poll", "poll", SUCCESSOR, await call("high"), 30)
             source_fetches = source.fetches
             source_stop = await _outcome(lambda: source.execute({"op": "stop"}))
@@ -929,14 +1304,20 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             assert source.fetches - source_fetches == 1
             source_stop["value"]["fetches_after_seal"] = source.fetches - source_fetches
             assert (await join("notify-two"))["type"] == "CancelledError"
+            await snapshot()
             sealed = await node(
-                {"op": "sealed", "args": [SUCCESSOR, HIGH, 0], "command": concurrent}
+                {"op": "sealed", "args": [SUCCESSOR, BASE, 0], "command": concurrent}
             )
             assert sealed["value"]["sql"] == 0
             assert all(
                 not item["ok"] and item["type"] == "ServerLifecycleError"
                 for item in sealed["value"]["refused"]
             )
+            stateless = await paired({"op": "poststop", "args": [NEW, OLD]})
+            assert any(item["wait_key"] == "postseal-waiting" for item in stateless["before"])
+            assert stateless["settled"][0][0]["command_id"] == "postseal-waiting"
+            assert not any(item["wait_key"] == "postseal-waiting" for item in stateless["after"])
+            await snapshot()
             await paired({"op": "reopen"})
             # Stop retains an unexpected publication failure that was pending at its seal.
             pending = _command(
@@ -946,6 +1327,7 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                 child=_child("pending", NEW, "-new"),
             )
             await call("put", pending)
+            await snapshot()
             await begin("pending-wait", "wait", "pending-error", None)
             await paired({"op": "listen", "throw_on": "pending-error"})
             action = {
@@ -972,12 +1354,183 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             }
             assert actual["value"]["waiting"] is False
             await join("pending-wait")
+            final = await snapshot()
+            assert final["total"][0]["count"] == BASE + len(admitted)
+            # Peer readers operate on actual producer snapshots, after primary signal scopes end.
+            source.forget()
+            ids = ["large-4", "accepted-steer", "prompt", "withdrawn-now", "expired-steer"]
+            python_reader = SqliteCommandMailbox(str(copies[0]))
+            expected_rows = [
+                {
+                    "row": python_reader.command_row(name),
+                    "input": python_reader.command_for_input(name),
+                }
+                for name in ids
+            ]
+            assert (await node({"op": "cross_read", "path": str(copies[0]), "ids": ids}))[
+                "value"
+            ] == wire.encode_value(expected_rows)
+            await python_reader.close()
+            foreign = SqliteCommandMailbox(str(copies[1]), clock=lambda: source.now)
+            peer_rows = [foreign.command_row(name) for name in ids]
+            assert [row.state.value for row in peer_rows if row is not None] == [
+                "waiting",
+                "delivered",
+                "finished",
+                "withdrawn",
+                "expired",
+            ]
+            for path in copies:
+                for row in _observe(path)["rows"]:
+                    assert (
+                        wire.encode_bounded(
+                            _typed("MailboxCommand", json.loads(row["command_json"]))
+                        ).decode()
+                        == row["command_json"]
+                    )
+                    if row["outcome_json"] is not None:
+                        assert (
+                            _outcome_json(_typed("CommandResult", json.loads(row["outcome_json"])))
+                            == row["outcome_json"]
+                        )
+            foreign_signals: list[int] = []
+            forget_foreign = change_signal.subscribe(lambda: foreign_signals.append(1))
+            try:
+                assert all(
+                    row is not None and row.command.child_command is not None for row in peer_rows
+                )
+                results = [
+                    _result(wire.as_object(row.command.child_command), reader="python")
+                    for row in peer_rows
+                    if row is not None
+                ]
+                settled = await foreign.record_results(
+                    mac_identity(OLD), _typed("CommandOutcomeReport", {"outcomes": results})
+                )
+                assert list(settled.recorded) == ids[:3]
+                assert [item.reason for item in settled.rejected] == [
+                    "command_withdrawn",
+                    "command_expired",
+                ]
+                assert len(foreign_signals) == 1
+                assert (await node({"op": "cross_read", "path": str(copies[1]), "ids": ids}))[
+                    "value"
+                ] == wire.encode_value(
+                    [
+                        {"row": foreign.command_row(name), "input": foreign.command_for_input(name)}
+                        for name in ids
+                    ]
+                )
+                for row in peer_rows[:2]:
+                    assert row is not None
+                    result = await foreign.wait_result(row.command.command_id, 0)
+                    assert (
+                        result is not None
+                        and result.child_outcome is not None
+                        and result.child_outcome.result == {"reader": "python"}
+                    )
+                first = await foreign.wait_result("prompt", 0)
+                assert (
+                    first is not None
+                    and first.child_outcome is not None
+                    and first.child_outcome.result == {"kind": "accepted", "count": TURN}
+                )
+                big = _command("big-counter", turn={"conversation_id": "basic", "turn_number": BIG})
+                big_report = {"outcomes": [_result(big, count=BIG)]}
+                statements = _big_statements(copies[1])
+                # Reuse the adapters on the producer copies. Their older row states differ.
+                at = source.now
+                source.forget()
+                await source.mailbox.close()
+                await foreign.close()
+                source = _Source(copies[1])
+                source.now = at
+                admitted.clear()
+                assert (await node({"op": "open", "path": str(copies[0]), "now": at}))["ok"]
+                await paired({"op": "sql", "statements": statements})
+                stale = {
+                    "op": "call",
+                    "method": "put",
+                    "args": [
+                        {
+                            **big,
+                            "command_id": "big-stale",
+                            "turn": {"conversation_id": "basic", "turn_number": BIG - 1},
+                        }
+                    ],
+                }
+                expected_stale = await _outcome(lambda: source.execute(stale))
+                actual_stale = await node(stale)
+                assert actual_stale == expected_stale
+                selected: dict[str, Any] = {
+                    "stale": actual_stale,
+                    "placed": await call("put", big),
+                    "reply": await call("poll", IDENTITY, BIG, 0),
+                    "report": await call("report", IDENTITY, big_report),
+                    "high": await call("high"),
+                }
+                read_action = {
+                    "op": "inspect",
+                    "child": _child("basic"),
+                    "turn": BIG,
+                    "key": "big-counter",
+                }
+                expected_read = (await _outcome(lambda: source.execute(read_action)))["value"]
+                actual_read = (await node(read_action))["value"]
+                assert actual_read["row"] == expected_read["row"]
+                assert actual_read["rewritten"] == expected_read["rewritten"]
+                assert actual_read["late"] == expected_read["late"]
+                selected.update(
+                    row=actual_read["row"],
+                    rewritten=actual_read["rewritten"],
+                    late=actual_read["late"],
+                )
+                actual_big: dict[str, Any] = {"ok": True, "value": selected}
+                assert actual_big["value"]["high"] == BIG + 1
+                assert actual_big["value"]["late"][0][1] == BIG + 10
+                assert any(entry[1] == BIG for entry in actual_big["value"]["rewritten"])
+                for path in copies:
+                    observed = _observe(path)
+                    row = next(
+                        row for row in observed["rows"] if row["command_id"] == "big-counter"
+                    )
+                    assert (
+                        row["sequence"] == str(BIG + 1)
+                        and row["sequence_type"] == row["turn_type"] == "integer"
+                    )
+                    fresh = SqliteCommandMailbox(str(path))
+                    read = fresh.command_row("big-counter")
+                    assert (
+                        read is not None
+                        and read.command.child_command is not None
+                        and read.command.child_command.turn is not None
+                    )
+                    assert (
+                        read.command.command_sequence == BIG + 1
+                        and read.command.child_command.turn.turn_number == BIG
+                    )
+                    assert wire.encode_bounded(read.command).decode() == row["command_json"]
+                    await fresh.close()
+                await source.execute({"op": "stop"})
+                assert (await node({"op": "stop", "deadline_ms": 5000}))["ok"]
+            finally:
+                forget_foreign()
+                await foreign.close()
             assert await node({"op": "finish"}) == {"ok": True, "value": None}
             process.stdin.close()
             assert await asyncio.wait_for(process.wait(), 5) == 0
             return {
                 "elapsed_seconds": time.perf_counter() - started,
-                "phases": 7,
+                "seed_seconds": seed_seconds,
+                "snapshots": snapshots,
+                "errors": observed_errors,
+                "snapshot_count": len(snapshots),
+                "final_commands": final["total"][0]["count"],
+                "performance": performance,
+                "poll_boundaries": {"source": reference_boundaries, "candidate": native_boundaries},
+                "foreign_states": [row.state.value for row in peer_rows if row is not None],
+                "foreign_signal_count": len(foreign_signals),
+                "big": actual_big,
                 "model_uuid_pairs": uuids,
                 "lifecycle_source": source_stop,
                 "lifecycle_candidate": node_stop,
@@ -990,6 +1543,7 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                 with suppress(ProcessLookupError):
                     process.kill()
                 await asyncio.wait_for(process.wait(), 5)
+            await asyncio.wait_for(stderr, 5)
 
     result = asyncio.run(asyncio.wait_for(exercise(), 40))
     directory = request.config.getoption("--compare-report-dir")

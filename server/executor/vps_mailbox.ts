@@ -15,8 +15,9 @@ import type {
   WireValue,
 } from './contracts.ts';
 import { now_ms } from './clock.ts';
+import { MAX_MAILBOX_WAIT_MS } from './configuration.ts';
 import * as data from './data/mailbox.ts';
-import { integer_value } from './protocol.ts';
+import { integer_value, ValueError } from './protocol.ts';
 import { normalize_integer } from './integers.ts';
 
 interface Deferred<T> {
@@ -33,6 +34,28 @@ function deferred<T>(): Deferred<T> {
   });
   return { promise, resolve, reject };
 }
+function abort_reason(signal: AbortSignal): unknown {
+  if (is_shutdown_business_cancellation(signal.reason)) return signal.reason;
+  return Object.assign(new DOMException('Mailbox request aborted.', 'AbortError'), {
+    cause: signal.reason,
+  });
+}
+function check_aborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abort_reason(signal);
+}
+function validate_wait(seconds: number | null): void {
+  if (
+    seconds !== null &&
+    (!Number.isFinite(seconds) || Math.max(seconds, 0) * 1000 > MAX_MAILBOX_WAIT_MS)
+  )
+    throw new ValueError(
+      `Mailbox wait must be finite and at most ${MAX_MAILBOX_WAIT_MS} milliseconds.`,
+    );
+}
+/**
+ * Callers authenticate the executor and check its current identity before poll or record_results.
+ * This mailbox checks persisted incarnation fences. Its caller owns the shared database lifetime.
+ */
 export class SqliteCommandMailbox {
   settled_listener: MailboxSettledListener | null = null;
   private readonly waiters = new Map<string, Set<Deferred<WireValue<'CommandResult'>>>>();
@@ -43,7 +66,7 @@ export class SqliteCommandMailbox {
     'Executor mailbox is closed.',
     'AbortError',
   );
-  private put_event = deferred<void>();
+  private readonly poll_waits = new Set<Deferred<void>>();
   private high: bigint | null = null;
   private closed = false;
   private readonly clock: () => number;
@@ -57,7 +80,10 @@ export class SqliteCommandMailbox {
   }
   private admit(signal?: AbortSignal): void {
     if (this.closed) throw new ServerLifecycleError('Executor mailbox is closed.');
-    signal?.throwIfAborted();
+    check_aborted(signal);
+  }
+  private wake_polls(): void {
+    for (const wake of this.poll_waits) wake.resolve(undefined);
   }
   private retain<T>(operation: Promise<T>): Promise<T> {
     this.operations.add(operation);
@@ -104,7 +130,7 @@ export class SqliteCommandMailbox {
         } else if ('error' in outcome) reject(outcome.error);
         else resolve(outcome.value);
       };
-      const abort = () => finish({ error: signal!.reason });
+      const abort = () => finish({ error: abort_reason(signal!) });
       // Both handlers settle the observed promise even when cleanup itself fails.
       void promise.then(
         (value) => finish({ value }),
@@ -116,8 +142,11 @@ export class SqliteCommandMailbox {
           return;
         }
         signal?.addEventListener('abort', abort, { once: true });
-        if (timeout !== null && timeout !== Infinity)
-          timer = setTimeout(() => finish({ value: null }), Math.max(timeout, 0) * 1000);
+        if (timeout !== null)
+          timer = setTimeout(
+            () => finish({ value: null }),
+            Math.floor(Math.max(timeout, 0) * 1000),
+          );
       } catch (error) {
         finish({ error });
       }
@@ -130,7 +159,11 @@ export class SqliteCommandMailbox {
     void result.promise.then(
       () => {},
       (error) => {
-        if (!this.cleanup_failures.has(error) && !is_shutdown_business_cancellation(error))
+        if (
+          !this.cleanup_failures.has(error) &&
+          !is_shutdown_business_cancellation(error) &&
+          !(error instanceof ValueError)
+        )
           console.error('Executor mailbox operation failed.', error);
       },
     );
@@ -164,8 +197,7 @@ export class SqliteCommandMailbox {
           let highest = high!;
           if (this.high !== null && this.high > highest) highest = this.high;
           this.high = highest > sequence ? highest : sequence;
-          this.put_event.resolve(undefined);
-          this.put_event = deferred<void>();
+          this.wake_polls();
         }
         return placed;
       });
@@ -184,6 +216,7 @@ export class SqliteCommandMailbox {
   ): Promise<WireValue<'MailboxCommand'>> {
     return this.put((tx, now) => data.insert_model_list_request(tx, request, now), true, options);
   }
+  /** Requires an authenticated executor whose identity the presence owner accepted as current. */
   async poll(
     identity: WireValue<'ExecutorIdentity'>,
     after: MailboxCounter,
@@ -191,33 +224,53 @@ export class SqliteCommandMailbox {
     options: { signal?: AbortSignal } = {},
   ): Promise<WireValue<'MailboxPollReply'>> {
     this.admit(options.signal);
+    validate_wait(wait_seconds);
     return this.own(async () => {
       const deadline = performance.now() / 1000 + Math.max(wait_seconds, 0);
       const arrived = this.clock();
+      const cursor = integer_value(after);
       while (!this.closed) {
-        options.signal?.throwIfAborted();
-        const wake = this.put_event.promise;
-        const { reply, settled } = this.database.write(
-          (tx) =>
-            data.fetch(
-              tx,
-              identity.executor_incarnation,
-              integer_value(after),
-              this.clock(),
-              arrived,
-            ),
-          { changeSignal: 'silent' },
-        );
-        this.publish_settlements(settled);
-        const remaining = deadline - performance.now() / 1000;
-        if (reply === null) return { commands: [] };
-        if (reply.commands.length || remaining <= 0) return reply;
-        if (this.closed) break;
-        await this.observe(wake, options.signal, remaining);
+        check_aborted(options.signal);
+        const wake = deferred<void>();
+        this.poll_waits.add(wake);
+        try {
+          const rows = this.database.write(
+            (sql) => data.read_fetch_rows(sql, identity.executor_incarnation, cursor),
+            { changeSignal: 'silent' },
+          );
+          if (this.closed) break;
+          check_aborted(options.signal);
+          const prepared = await data.prepare_fetch(rows);
+          if (this.closed) break;
+          check_aborted(options.signal);
+          const result = this.database.write(
+            (tx) =>
+              data.fetch(
+                tx,
+                identity.executor_incarnation,
+                cursor,
+                this.clock(),
+                arrived,
+                prepared,
+              ),
+            { changeSignal: 'silent' },
+          );
+          if (result === null) continue;
+          this.publish_settlements(result.settled);
+          const remaining = deadline - performance.now() / 1000;
+          if (result.reply === null) return { commands: [] };
+          if (result.reply.commands.length || remaining <= 0) return result.reply;
+          if (this.closed) break;
+          await this.observe(wake.promise, options.signal, remaining);
+        } finally {
+          this.poll_waits.delete(wake);
+          wake.resolve(undefined);
+        }
       }
       return { commands: [] };
     });
   }
+  /** Requires the same authenticated, current executor identity as poll. */
   async record_results(
     identity: WireValue<'ExecutorIdentity'>,
     report: WireValue<'CommandOutcomeReport'>,
@@ -243,6 +296,7 @@ export class SqliteCommandMailbox {
     options: { signal?: AbortSignal } = {},
   ): Promise<WireValue<'CommandResult'> | null> {
     this.admit(options.signal);
+    validate_wait(timeout_seconds);
     return this.own(async () => {
       const future = deferred<WireValue<'CommandResult'>>();
       const waiting = this.waiters.get(command_id) ?? new Set();
@@ -258,6 +312,7 @@ export class SqliteCommandMailbox {
       }
     });
   }
+  /** Publish only committed rows, including work admitted by another owner before stop. */
   publish_settlements(settlements: MailboxSettlements): void {
     for (const [command, result] of settlements) {
       for (const future of this.waiters.get(command.command_id) ?? []) future.resolve(result);
@@ -296,11 +351,14 @@ export class SqliteCommandMailbox {
     });
     return this.observe(operation, options.signal);
   }
+  /**
+   * The caller owns this active transaction and publishes returned settlements after commit.
+   * This stateless participant remains usable after mailbox stop.
+   */
   replace_incarnation_in_transaction(
     tx: TransactionSql,
     options: { replaced: string; current: string; now_ms: number },
   ): MailboxSettlements {
-    this.admit();
     return data.replace_incarnation_in_transaction(
       tx,
       options.replaced,
@@ -343,20 +401,16 @@ export class SqliteCommandMailbox {
   command_for_input(command_id: string): WireValue<'ChildCommand'> | null {
     return this.read((sql) => data.command_for_input(sql, command_id));
   }
+  /** Stateless after stop too: the caller supplies a live SQL capability for each read. */
   stall_source(): StallSource {
-    return {
-      tracked_waits: (sql, now) => {
-        this.admit();
-        return data.tracked_waits(sql, now);
-      },
-    };
+    return new data.MailboxStallSource();
   }
   stop(options: StopOptions): Promise<void> {
     if (!this.closed) {
       // Publish the fence and retain every first-stop promise before callbacks can reenter.
       this.closed = true;
       const pending = [...this.operations];
-      this.put_event.resolve(undefined);
+      this.wake_polls();
       for (const waiting of this.waiters.values())
         for (const future of waiting) future.reject(this.closed_waiter_error);
       this.waiters.clear();

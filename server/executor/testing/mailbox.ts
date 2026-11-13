@@ -1,11 +1,15 @@
 /** Fixed controls over one real mailbox and application database, without a host. */
 import { createInterface } from 'node:readline';
+import { getEventListeners } from 'node:events';
 import type { Database, SqlValue } from '../../core/database/contracts.ts';
-import { createDatabase } from '../../core/database/index.ts';
+import { createDatabase, createReadAccess } from '../../core/database/index.ts';
 import { JsonNumber, numeric_value, stringify_python_json } from '../../core/http/numeric_json.ts';
 import { SqliteCommandMailbox } from '../vps_mailbox.ts';
-import { encode_value } from '../protocol.ts';
+import { encode_value, encode_bounded } from '../protocol.ts';
 import { parse_executor_json } from '../protocol_json.ts';
+import { is_shutdown_business_cancellation } from '../../conversation/shutdown.ts';
+import type { StallSource } from '../../stalls/contracts.ts';
+import * as data from '../data/mailbox.ts';
 import type { WireInteger, WireTypes } from '../wire.generated.ts';
 
 type Statement = { sql: string; values: SqlValue[] };
@@ -25,6 +29,7 @@ type Action = {
   turn: WireInteger;
   deadline_ms?: number;
   command: WireTypes['ChildCommand'];
+  ids: string[];
 };
 type Outcome =
   { ok: true; value: unknown } | { ok: false; type: string; message: string; errors?: Outcome[] };
@@ -34,7 +39,9 @@ let database: Database,
   now = 0,
   signals = 0;
 let reads = 0,
-  writes = 0;
+  writes = 0,
+  writer_ms = 0;
+let stalls: StallSource;
 let before_sql: Statement[] | undefined,
   after_abort = false;
 let observer: AbortController | undefined;
@@ -71,7 +78,13 @@ const facade: Database = {
       controller = observer;
     after_put = undefined;
     after_abort = false;
-    const result = database.write(work, options);
+    const began = performance.now();
+    let result;
+    try {
+      result = database.write(work, options);
+    } finally {
+      writer_ms += performance.now() - began;
+    }
     if (nested) reentered = mailbox.put_child_command(nested);
     if (abort) controller!.abort(new DOMException('fixture observer cancelled', 'AbortError'));
     return result;
@@ -82,6 +95,7 @@ const facade: Database = {
 };
 function owner(): void {
   mailbox = new SqliteCommandMailbox(facade, { clock: () => now });
+  stalls = mailbox.stall_source();
   mailbox.settled_listener = (command, result) => {
     trace.push({ id: command.command_id, result: encode_value(result, 'CommandResult') });
     if (command.command_id === throw_on) {
@@ -89,6 +103,91 @@ function owner(): void {
       error.name = 'RuntimeError';
       throw error;
     }
+  };
+}
+function wake_count(): number {
+  return (mailbox as unknown as { poll_waits: Set<unknown> }).poll_waits.size;
+}
+async function timed_poll(args: unknown[]): Promise<unknown> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  let active = true,
+    previous = performance.now(),
+    blocked_ms = 0;
+  let heartbeat: ReturnType<typeof setImmediate>;
+  const beat = () => {
+    const current = performance.now();
+    blocked_ms = Math.max(blocked_ms, current - previous);
+    previous = current;
+    if (active) heartbeat = setImmediate(beat);
+  };
+  heartbeat = setImmediate(beat);
+  const start = performance.now(),
+    writer_start = writer_ms;
+  try {
+    const reply = await mailbox.poll(
+      args[0] as WireTypes['ExecutorIdentity'],
+      args[1] as WireInteger,
+      scalar(args[2]),
+    );
+    const polled_at = performance.now();
+    const wire_bytes = encode_bounded(reply, 'MailboxPollReply', {
+      limit: 4 * 1024 * 1024,
+    }).byteLength;
+    const encoded_at = performance.now();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    return {
+      reply,
+      timing: {
+        poll_ms: polled_at - start,
+        encode_ms: encoded_at - polled_at,
+        full_ms: encoded_at - start,
+        blocked_ms,
+        writer_ms: writer_ms - writer_start,
+        wire_bytes,
+        commands: reply.commands.length,
+      },
+    };
+  } finally {
+    active = false;
+    clearImmediate(heartbeat);
+  }
+}
+async function poll_boundaries(args: unknown[]): Promise<unknown> {
+  const identity = args[0] as WireTypes['ExecutorIdentity'],
+    high = args[1] as WireInteger;
+  const controller = new AbortController();
+  for (let index = 0; index < 5; index++) {
+    await mailbox.poll(identity, high, 0.002, { signal: controller.signal });
+    if (wake_count() || getEventListeners(controller.signal, 'abort').length)
+      throw new Error('An idle poll retained a wake or abort subscription');
+  }
+  const cancelled = [];
+  for (const custom of [false, true]) {
+    const abort = new AbortController(),
+      reason = new Error('fixture abort reason');
+    const poll = mailbox.poll(identity, high, 30, { signal: abort.signal });
+    if (custom) abort.abort(reason);
+    else abort.abort();
+    try {
+      await poll;
+      throw new Error('Aborted poll returned');
+    } catch (error) {
+      if (!is_shutdown_business_cancellation(error)) throw error;
+      cancelled.push({
+        cancelled: true,
+        wrapped: error !== reason,
+        reason_preserved: !custom || (error as Error & { cause?: unknown }).cause === reason,
+      });
+    }
+    if (wake_count() || getEventListeners(abort.signal, 'abort').length)
+      throw new Error('An aborted poll retained a wake or abort subscription');
+  }
+  const overflow = await outcome(() => mailbox.poll(identity, high, 2 ** 31 / 1000));
+  return {
+    cancelled,
+    idle_wakes: wake_count(),
+    abort_subscribers: getEventListeners(controller.signal, 'abort').length,
+    overflow,
   };
 }
 async function outcome(work: () => unknown | Promise<unknown>): Promise<Outcome> {
@@ -129,6 +228,12 @@ async function call(method: string, args: unknown[]): Promise<unknown> {
 async function execute(action: Action): Promise<unknown> {
   switch (action.op) {
     case 'open':
+      // The previous fixture owner already completed its explicit stop controls.
+      database?.close();
+      signals = 0;
+      trace = [];
+      throw_on = null;
+      held.clear();
       now = scalar(action.now);
       database = createDatabase(action.path, { onChange: () => signals++ });
       owner();
@@ -177,6 +282,12 @@ async function execute(action: Action): Promise<unknown> {
       return Object.fromEntries([...held].map(([key, task]) => [key, !task.done]));
     case 'snapshot':
       return { trace, signals };
+    case 'timed_poll':
+      return timed_poll(action.args);
+    case 'poll_boundaries':
+      return poll_boundaries(action.args);
+    case 'wake_count':
+      return wake_count();
     case 'inspect':
       return {
         open: mailbox.open_command_ids_of(action.child),
@@ -215,6 +326,16 @@ async function execute(action: Action): Promise<unknown> {
       await mailbox.settled();
       return { sql_after_seal: reads + writes - before[0]! - before[1]! };
     }
+    case 'poststop':
+      return database.write((tx) => ({
+        before: stalls.tracked_waits(tx, now),
+        settled: mailbox.replace_incarnation_in_transaction(tx, {
+          replaced: action.args[0] as string,
+          current: action.args[1] as string,
+          now_ms: now,
+        }),
+        after: stalls.tracked_waits(tx, now),
+      }));
     case 'sealed': {
       const before = reads + writes;
       const refused = await Promise.all([
@@ -230,6 +351,19 @@ async function execute(action: Action): Promise<unknown> {
       const stop = await outcome(() => mailbox.stop({ deadline: performance.now() / 1000 }));
       const settled = await outcome(() => mailbox.settled());
       return { report: await report, stop, settled, waiting: mailbox.has_waiter(action.key) };
+    }
+    case 'cross_read': {
+      const reader = createReadAccess(action.path);
+      try {
+        return reader.read((sql) =>
+          action.ids.map((id) => ({
+            row: data.command_row(sql, id),
+            input: data.command_for_input(sql, id),
+          })),
+        );
+      } finally {
+        reader.close();
+      }
     }
     case 'finish':
       database.close();
