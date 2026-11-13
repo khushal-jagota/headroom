@@ -60,9 +60,11 @@ systemctl --user stop panels-executor.service
 
 The executor uses shared Worker supervision for process ownership and bounded shutdown. Systemd gives the supervisor time to stop its children. Unproved cleanup retains the existing fences.
 
-Do not reinstall an initialized executor. Use the update path to retain its selected runtime and data.
+Do not reinstall an initialized executor. Use the update path to retain its selected runtime and data. If the first installer call fails, it removes only its own files so that a retry can proceed.
 
 Updates retain the data folder. The home offers the Linux executor archive for this destination. The executor verifies it, quiesces work, and activates a versioned runtime through its fixed supervisor. Failed readiness restores the previous runtime. A Linux home archive or Mac executor archive cannot replace this executor.
+
+After a home restart, Linux update targets can remain unavailable for about 20 seconds. Archive checks run in the background. A failed archive check blocks repeat downloads of that digest until a different release appears or the home restarts.
 
 For credential replacement, use the home's machine credential command. Transfer the new credential privately. Stop this service, then use its installed interpreter and the same data folder:
 
