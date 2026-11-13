@@ -464,3 +464,28 @@ Their caller owns the SQL capability, admission and actual settlement.
 The Manager's mailbox review also requires timer-range admission.
 TypeScript refuses nonfinite waits and waits above Node's maximum timer delay before SQL starts.
 Python's event loop can accept longer durations. Finite negative waits retain immediate behavior.
+
+## VPS file descriptor custody
+
+The accepted executor plan uses Linux procfs descriptors for the VPS file module.
+The module refuses unsupported systems before intake and supplies no path fallback.
+Python's install helper rewalks a target pathname during copy and cleanup.
+TypeScript retains the original source and destination parents through those operations.
+Python hashes an input descriptor, closes it, and later reopens its path for the response.
+TypeScript retains the checked descriptor through its bounded input stream instead.
+The later transport slice must consume that stream and prove its disconnect ownership.
+The input owner also anchors its byte root independently of the existing managed-file lookup.
+A root swap between that lookup's symlink check and resolution cannot redirect input bytes.
+Its standard message root follows the logical DB-path parent, even when the DB filename is a symlink.
+
+Regular-file admission adds NONBLOCK before fstat, so a substituted FIFO cannot hang its open.
+Python's open can block on that FIFO. The same source hazard appears in the Mac file evidence.
+Cleanup failures carry explicit provenance and retain the original failure with the cleanup errors.
+Python can replace the original exception when cleanup also fails.
+
+The upload timeout observer can return retry_later while a JS iterator read remains pending.
+Python's wait_for cancels and awaits that read before it returns its timeout.
+TypeScript retains the read, then calls iterator return and finishes descriptor cleanup serially.
+The routes slice must destroy its owned request stream after the observer returns or fails.
+Stop seals intake and observes actual work. The supplied media signal supplies the shared grace cutoff.
+The Manager reviews these implementation differences before this slice merges.
