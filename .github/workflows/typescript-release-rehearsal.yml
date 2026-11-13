@@ -1,8 +1,8 @@
-name: TypeScript archive release-scale proof
+name: TypeScript archive and supervisor prerequisite proof
 
 on:
   push:
-    branches: [ticket/t_wbvdjey1-native]
+    branches: [ticket/t_wbvdjey1-native, ticket/t_wbvdjey1-supervisor-independent]
   workflow_dispatch:
 
 permissions:
@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
-      - name: Build one private Python payload and compare both archive producers
+      - name: Build one private Python payload and prove archives and supervisor processes
         shell: bash
         env:
           PROOF_SHA: ${{ github.sha }}
@@ -31,7 +31,7 @@ jobs:
           set -euo pipefail
           umask 077
           proof_root=$(mktemp -d "$RUNNER_TEMP/panels-archive.XXXXXX")
-          evidence="$RUNNER_TEMP/typescript-archive-evidence"
+          evidence="$RUNNER_TEMP/typescript-archive-supervisor-evidence"
           mkdir -p "$evidence" "$proof_root"/{home/.codex,home/.claude,home/.hermes,config,cache,data,state,runtime,logs,backups,workspace,files,scratch,tmp}
           trap 'status=$?; set +e; if [ -f "$proof_root/proof.json" ]; then cp "$proof_root/proof.json" "$evidence/proof.json"; else printf "{\"completed\":false,\"phase\":\"before-proof-receipt\",\"exit_code\":%s}\n" "$status" > "$evidence/setup.json"; fi; rm -rf -- "$proof_root"; cleanup=$?; if [ "$cleanup" -ne 0 ]; then status=1; fi; exit "$status"' EXIT
           sudo apt-get update
@@ -69,11 +69,14 @@ jobs:
           python -I -S -B scripts/development_safety/bootstrap.py npm --prefix server ci
           .venv/bin/python tests/compare/direct/unit21_release_hosted.py \
             "$PROOF_ROOT" "$PROOF_ROOT/proof.json" "$PROOF_SHA"
+          # Core process evidence only. Installed units and production composition remain open.
+          scripts/dev pytest tests/compare/direct/test_unit21_supervisor.py \
+            --compare-report-dir "$PROOF_EVIDENCE"
           PROOF
       - name: Preserve JSON proof evidence only
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: typescript-archive-proof-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/typescript-archive-evidence/*.json
+          name: typescript-archive-supervisor-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/typescript-archive-supervisor-evidence/*.json
           if-no-files-found: warn

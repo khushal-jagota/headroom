@@ -328,7 +328,11 @@ async function operator_probe(root: string): Promise<unknown> {
     interrupted_status: await interrupted_status(root),
   };
 }
-export async function command_probe(root: string, calls: readonly Call[]): Promise<unknown> {
+export async function command_probe(
+  root: string,
+  calls: readonly Call[],
+  bindings: readonly { name: string; argv: string[] }[],
+): Promise<unknown> {
   const database = join(root, 'runtime/database.sqlite');
   const host = await create_production_operator_dependencies('cleanup', undefined, process.env);
   const paths = await create_production_operator_dependencies('backup', undefined, process.env);
@@ -458,7 +462,27 @@ export async function command_probe(root: string, calls: readonly Call[]): Promi
     ChildProcesses.prototype.spawn = original_spawn;
   }
   assert(scratch.length > 0 && scratch.every((row) => row.closed));
+  const { run } = await import('../../cli/main.ts');
+  const routing: { name: string; args: unknown }[] = [];
+  assert.deepEqual(
+    new Set(bindings.map((item) => item.name)),
+    new Set(Object.keys(operator_commands)),
+  );
+  for (const { name, argv } of bindings) {
+    const entry = operator_commands[name as keyof typeof operator_commands];
+    const original = entry.handler;
+    Reflect.set(entry, 'handler', async (args: unknown) => {
+      routing.push({ name, args });
+      return { exit_code: 0, stdout: 'selected\n', stderr: '' };
+    });
+    try {
+      assert.deepEqual(await run(argv), { exit_code: 0, stdout: 'selected\n', stderr: '' });
+    } finally {
+      Reflect.set(entry, 'handler', original);
+    }
+  }
   return {
+    routing,
     results: results.map((result) => {
       if (typeof result === 'object' && result !== null && 'failure_message' in result) {
         const failure = result as {
@@ -480,9 +504,6 @@ export async function command_probe(root: string, calls: readonly Call[]): Promi
       actual_children: scratch.length,
       all_closed: scratch.every((row) => row.closed),
     },
-    table: Object.fromEntries(
-      Object.entries(operator_commands).map(([name, entry]) => [name, entry.command]),
-    ),
     operators: await operator_probe(root),
   };
 }
