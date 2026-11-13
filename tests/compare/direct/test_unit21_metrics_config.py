@@ -117,15 +117,21 @@ def test_unit21_metrics_configuration_and_sidecar_paths(
     assert output.returncode == 0, output.stderr
     actual = json.loads(output.stdout)
     proposed_refusal = actual["configurations"].pop()
-    assert actual["paths"] == expected["paths"]
-    for candidate, source in zip(actual["configurations"], expected["configurations"], strict=True):
-        assert set(candidate) == set(source)
-        if "error" in source:
-            assert set(candidate["error"]) == set(source["error"]) == {"name", "message"}
-            assert isinstance(candidate["error"]["name"], str)
-            assert isinstance(candidate["error"]["message"], str) and candidate["error"]["message"]
-        else:
-            assert candidate == source
+    compared = [json.loads(json.dumps(side)) for side in (expected, actual)]
+    for side in compared:
+        for configuration in side["configurations"]:
+            if "error" in configuration:
+                diagnostic = configuration["error"]
+                assert isinstance(diagnostic["message"], str) and diagnostic["message"]
+                diagnostic["message"] = "<native numeric diagnostic>"
+                if diagnostic["name"] == "MetricsValueError":
+                    diagnostic["name"] = "ValueError"
+            else:
+                configuration["value"] = {
+                    key: int(value) if type(value) is float and value.is_integer() else value
+                    for key, value in configuration["value"].items()
+                }
+    assert json.dumps(compared[0], sort_keys=True) == json.dumps(compared[1], sort_keys=True)
     # The Manager accepted this TS admission boundary. Python's different answer
     # remains informational; this refusal assertion is a gating result.
     assert proposed_refusal == {
@@ -145,6 +151,9 @@ def test_unit21_metrics_configuration_and_sidecar_paths(
                     "equal": True,
                     "configurations": len(environments),
                     "canonical_paths": len(paths),
+                    "python": expected,
+                    "typescript": actual,
+                    "comparison_rule": "Keep fields; permit native numbers, text and MetricsValueError.",
                     "proposed_difference": {
                         "accepted": True,
                         "python_accepts_integer": str(python_unsafe),

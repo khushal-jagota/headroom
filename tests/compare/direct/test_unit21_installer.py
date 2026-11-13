@@ -254,11 +254,11 @@ def test_installer_algorithm_and_configured_paths(
                 if record.get("detail") is not None:
                     assert isinstance(record["detail"], str) and record["detail"]
                     record["detail"] = "<diagnostic>"
-                row = {**row, "bytes": record}
+                row = {**row, "bytes": json.dumps(record, sort_keys=True)}
             rows.append(row)
         return {**outcome, "tree": rows}
 
-    # Native diagnostic text can differ. Swap effects and all other record fields stay exact.
+    # Compare failure meaning, while retaining record types and every swap effect.
     assert [comparable(value) for value in actual["canonical"]] == [
         comparable(value) for value in expected
     ]

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import sqlite3
 import time
 from contextlib import closing
@@ -540,6 +541,38 @@ def test_unit12_populated_holder_pages(
         right = request.config.getoption("--compare-right-module") or "tests.compare.ts_launcher"
         report = runner.run_list(list_path, tmp_path / "comparison", right)
         report["calendar_boundary_seconds"] = max(phase_finished) - min(phase_started)
+
+    def same_response(reference: object, candidate: object) -> bool:
+        if (
+            type(reference) is float
+            and isinstance(candidate, (int, float))
+            and not isinstance(candidate, bool)
+        ):
+            return (
+                math.isfinite(reference)
+                and math.isfinite(candidate)
+                and reference == float(candidate)
+            )
+        if type(reference) is not type(candidate):
+            return False
+        if isinstance(reference, dict) and isinstance(candidate, dict):
+            return reference.keys() == candidate.keys() and all(
+                same_response(value, candidate[key]) for key, value in reference.items()
+            )
+        if isinstance(reference, list) and isinstance(candidate, list):
+            return len(reference) == len(candidate) and all(
+                same_response(left, right) for left, right in zip(reference, candidate, strict=True)
+            )
+        return reference == candidate
+
+    # Only reference float fields admit native number spelling. Integer fields and SQL stay exact.
+    accepted = [
+        difference
+        for difference in report["differences"]
+        if "answers" in difference and same_response(*difference["answers"])
+    ]
+    report["native_float_spellings"] = accepted
+    report["differences"] = [item for item in report["differences"] if item not in accepted]
     report["risk"] = (
         "Existing HTTP cannot produce retained datasets before Unit 13. This reuses the existing "
         "paired full hosts with Python canonical seed writers to prove all six public page routes, "
@@ -597,7 +630,8 @@ def test_unit12_populated_holder_pages(
         )
         assert any(value["value"] is not None for value in observed[label]["values"])
     assert observed["retained_dataset"]["returned_rows"] == 4
-    assert observed["large_manual_state"]["observation"]["value"] == 9.007199e20
+    large_value = observed["large_manual_state"]["observation"]["value"]
+    assert type(large_value) in (int, float) and float(large_value) == 9.007199e20
     assert observed["large_manual_state_resource"]["body"] == observed["large_manual_state"]
     assert (
         next(

@@ -170,7 +170,9 @@ def test_unit16_catalog_command_outcomes(tmp_path: Path, request: pytest.Fixture
         "python": expected,
         "typescript": actual,
         "seconds": time.perf_counter() - started,
-        "normalization_rules": [],
+        "normalization_rules": [
+            "Missing-interpreter text differs; path, type, output and exit code stay checked."
+        ],
         "real_children": [
             "Node export evaluator",
             "five synthetic inventory commands per language",
@@ -185,10 +187,23 @@ def test_unit16_catalog_command_outcomes(tmp_path: Path, request: pytest.Fixture
         (directory / "unit16-catalog-command-outcomes.json").write_text(
             json.dumps(report, indent=2) + "\n"
         )
-    # Durations describe cost, while every command fact compares exactly.
-    assert {key: value for key, value in actual.items() if key != "case_seconds"} == {
-        key: value for key, value in expected.items() if key != "case_seconds"
-    }
+
+    def comparable(value: dict[str, Any]) -> dict[str, Any]:
+        outcomes = []
+        for item in value["outcomes"]:
+            outcome = item["outcome"]
+            if item["name"] == "missing":
+                assert isinstance(outcome["standard_error"], str) and outcome["standard_error"]
+                assert spec["launch"]["hermes_python"] in outcome["standard_error"]
+                outcome = {**outcome, "standard_error": "<missing interpreter>"}
+            outcomes.append({**item, "outcome": outcome})
+        return {
+            **{key: item for key, item in value.items() if key != "case_seconds"},
+            "outcomes": outcomes,
+        }
+
+    # The absent interpreter keeps its outcome and path, with native diagnostic text.
+    assert comparable(actual) == comparable(expected)
     outcomes = {item["name"]: item["outcome"] for item in actual["outcomes"]}
     from planner.conversation.snapshot import _parse_hermes_inventory
 
