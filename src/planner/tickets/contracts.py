@@ -183,6 +183,8 @@ class ProposalBody(TypedDict, total=False):  # POST /tickets/{id}/propose
 
 
 class AcceptBody(TypedDict, total=False):  # POST /tickets/{id}/accept/{field}
+    message: str | None
+    decision_id: str | None
     expected_proposal_revision: int | None  # visible proposal identity for approval gestures
     edited_body: str | None  # direct edit applied before resolution
     next_ceiling: str | None  # Stage id or NO_FURTHER; the onward ceiling (§4.4.7)
@@ -194,6 +196,8 @@ class GateCompletionBody(TypedDict, total=False):  # POST /tickets/{id}/complete
 
 
 class RejectionBody(TypedDict, total=False):  # POST /tickets/{id}/reject
+    expected_proposal_revision: int | None
+    decision_id: str | None
     message: str | None  # optional guidance for the executing agent
 
 
