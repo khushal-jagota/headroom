@@ -158,8 +158,8 @@ export class ConversationViewRebuilder {
   #closed = false;
   #task: Promise<void> | undefined;
   #wake: (() => void) | undefined;
-  start(database: Database): void {
-    this.#task = this.#run(database).catch((error) =>
+  start(database: Database, admission_closed: () => boolean = () => false): void {
+    this.#task = this.#run(database, admission_closed).catch((error) =>
       console.error('Conversation view rebuild failed', error),
     );
   }
@@ -184,7 +184,7 @@ export class ConversationViewRebuilder {
       this.#wake = undefined;
     }
   }
-  async #run(database: Database): Promise<void> {
+  async #run(database: Database, admission_closed: () => boolean): Promise<void> {
     let pending = out_of_date_conversation_ids(database);
     let wait = FIRST_RETRY_WAIT_MILLISECONDS;
     for (
@@ -198,7 +198,7 @@ export class ConversationViewRebuilder {
       }
       const failed: string[] = [];
       for (const conversation_id of pending) {
-        if (this.#closed) {
+        if (this.#closed || admission_closed()) {
           return;
         }
         const started = performance.now();

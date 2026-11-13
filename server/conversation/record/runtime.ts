@@ -14,6 +14,7 @@ import type { ConversationStoreOptions } from './contracts.ts';
 export function createConversationRuntime() {
   let runtime: ConversationViewRuntime | undefined;
   let rebuilder: ConversationViewRebuilder | undefined;
+  let sealed = false;
   const getRuntime = (): ConversationViewRuntime => {
     if (runtime === undefined) {
       throw new Error('Conversation record runtime is not initialized');
@@ -35,7 +36,6 @@ export function createConversationRuntime() {
       const live_tail = new ConversationLiveTail({
         view_output_directory: join(dirname(config.db_path), 'conversation-view-output'),
       });
-      live_tail.views.cleanup_stale_epochs();
       runtime = {
         database,
         store,
@@ -47,17 +47,25 @@ export function createConversationRuntime() {
           return { running: retained ? null : false, permissions: [], inputs: [] };
         },
       };
+    },
+    start_rebuild(admission?: { readonly closed: boolean }): void {
+      if (sealed) throw new Error('Conversation record runtime is shut down');
+      if (rebuilder) throw new Error('Conversation record replay already started');
+      const current = getRuntime();
+      current.live_tail.views.cleanup_stale_epochs();
       rebuilder = new ConversationViewRebuilder();
-      rebuilder.start(database);
+      rebuilder.start(current.database, () => admission?.closed ?? false);
     },
     bind_runtime_facts(facts: ConversationViewRuntime['runtime_facts']): void {
       getRuntime().runtime_facts = facts;
     },
     seal(): void {
+      sealed = true;
       rebuilder?.close();
       runtime?.live_tail.close_all_subscriptions();
     },
     async close(): Promise<void> {
+      sealed = true;
       rebuilder?.close();
       runtime?.live_tail.close_all_subscriptions();
       await rebuilder?.finish();

@@ -86,7 +86,8 @@ async function ensure_child(
     event_sink: sink,
     message_files: host.options.message_files,
   });
-  // Retained remote child ownership belongs to the executor unit.
+  // This core does not yet adopt retained executor runs. Unit 22 must compose
+  // that ownership before this explicit incompatibility can be removed.
   if (child.stop_outside_lock)
     throw new BackendSpawnFailed('Backend did not retain its run identity');
   state.preparing_child = child;
@@ -134,7 +135,7 @@ export async function deliver_prompt(
   const requested = first.model_change ?? state.record.model;
   if (
     requested !== null &&
-    host.options.model_is_enabled?.(state.record.backend_key, requested) === false
+    host.options.model_is_enabled(state.record.backend_key, requested) === false
   ) {
     return result({
       refusal_reason: R.model_resolution_failed,

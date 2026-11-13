@@ -14,6 +14,10 @@ import { loadConfig } from '../core/config.ts';
 import { TestClock } from '../core/clock.ts';
 import { acquireLock, acquireRuntimeOwnership } from '../core/locks/index.ts';
 import type { OwnedAreaContext } from '../core/authority/register.ts';
+import { PlannerError } from '../core/contracts.ts';
+import { DeliveryCancelled } from '../conversation/backends/contracts.ts';
+import * as message_delivery from '../message_delivery/service.ts';
+import { notify_chief } from '../tickets/integrity_notice.ts';
 import type { BackgroundServiceFactory } from '../lifecycle/contracts.ts';
 import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import {
@@ -29,6 +33,11 @@ import * as notificationData from '../notifications/data.ts';
 import * as apnsData from '../notifications/apns_data.ts';
 import { startServer } from '../core/start.ts';
 import { SqliteProcessConversationSystem } from '../conversation/system.ts';
+import { model_is_enabled } from '../conversation/backend_state.ts';
+import {
+  canonical_ticket_execution_refusal,
+  conversation_execution_refusal,
+} from '../tickets/execution_admission.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import { PromptDeliveryStarted } from '../conversation/contracts.ts';
 import { WorkerStepReadinessLoop } from '../runtime/worker_step_readiness_loop.ts';
@@ -36,6 +45,15 @@ import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { configure_conversation_start } from '../runtime/conversation_start.ts';
 import * as wakeData from '../manager_wakes/data.ts';
+import { SourceScheduleLoop } from '../measure_sources/schedule_loop.ts';
+import { PreviewService } from '../previews/service.ts';
+import { ScopedDelivery } from '../navigation/delivery/runtime.ts';
+import { ConversationViewRebuilder } from '../conversation/views/data/rebuild.ts';
+import * as recovery from '../conversation/deploy_interruptions/coordinator.ts';
+import { MetricsRuntime } from '../environments/vps_metrics/runtime.ts';
+import { UpdateService } from '../environments/updates/service.ts';
+import * as scratch from '../environments/ticket_scratch/runtime.ts';
+import { create_test_environment_runtime } from '../environments/testing/composition.ts';
 import { HttpRequestScope } from '../core/http/lifetime.ts';
 
 const next_turn = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -141,7 +159,25 @@ function done<T>() {
   return { promise, resolve };
 }
 
-test('one dispatcher owner admits all loops and test mode admits no factories', async () => {
+// A successful host notice does not prove Python's cancellation exception boundary.
+test('startup integrity notice preserves cancellation from the ordinary send door', async () => {
+  const { context, database } = setup();
+  const ticket = create(database);
+  const cancelled = new DeliveryCancelled('Shutdown cancelled the notice');
+  vi.spyOn(message_delivery, 'send_message').mockRejectedValueOnce(cancelled);
+  const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+  await expect(
+    notify_chief(database, context.conversationSystem!, context.clock, [
+      new PlannerError('validation', 'Ticket integrity failure', {
+        ticket_id: ticket.id,
+        reason: 'synthetic saved-record fault',
+      }),
+    ]),
+  ).rejects.toBe(cancelled);
+  expect(logged).not.toHaveBeenCalled();
+});
+
+test('one dispatcher owner admits dispatch loops while the explicit checker is independent', async () => {
   const { context, database, path } = setup();
   const owner = acquireLock(context.config.dispatcher_lock_path);
   const contender = acquireLock(context.config.dispatcher_lock_path);
@@ -159,6 +195,8 @@ test('one dispatcher owner admits all loops and test mode admits no factories', 
     };
   };
   const wakes = vi.spyOn(ManagerWakeLoop.prototype, 'start');
+  const sources = vi.spyOn(SourceScheduleLoop.prototype, 'start');
+  const checker = vi.fn(factory);
   try {
     expect(owner).not.toBeNull();
     expect(contender).toBeNull();
@@ -174,21 +212,24 @@ test('one dispatcher owner admits all loops and test mode admits no factories', 
         {
           dispatcher_owned: owned,
           enable_worker_readiness: true,
-          areaLoops: { managerWakes: true },
+          areaLoops: { managerWakes: true, measureSources: true },
           notificationDelivery: factory,
-          stallChecker: factory,
+          stallChecker: config.test_mode ? undefined : checker,
         },
       );
       await inert.start();
       await inert.close({ deadline: performance.now() / 1000 + 1 });
     }
-    expect(calls).toEqual([]);
+    expect(checker).toHaveBeenCalledTimes(2);
+    expect(calls).toEqual(['construct', 'start', 'close', 'construct', 'start', 'close']);
+    calls.length = 0;
     expect(wakes).not.toHaveBeenCalled();
+    expect(sources).not.toHaveBeenCalled();
     create(database);
     const admitted = compose_background_services(context, {
       dispatcher_owned: true,
       enable_worker_readiness: true,
-      areaLoops: { managerWakes: true },
+      areaLoops: { managerWakes: true, measureSources: true },
       notificationDelivery: factory,
       stallChecker: factory,
     });
@@ -197,6 +238,7 @@ test('one dispatcher owner admits all loops and test mode admits no factories', 
     await admitted.close({ deadline: performance.now() / 1000 + 1 });
     expect(calls).toEqual(['construct', 'start', 'construct', 'start', 'close', 'close']);
     expect(wakes).toHaveBeenCalledTimes(1);
+    expect(sources).toHaveBeenCalledTimes(1);
     expect(database.read((sql) => sql.get('SELECT worker_step_claim FROM tickets'))).toEqual({
       worker_step_claim: 'out',
     });
@@ -378,7 +420,7 @@ test('notification deadline fences late web and native results and bounds adapte
   expect(nativeRecord).not.toHaveBeenCalled();
 });
 
-test('startServer reconciles only its dispatcher before runtime factories and cleans a failed start', async () => {
+test('startServer reconciles before core construction and a route collision starts no producers', async () => {
   const { database, path } = setup();
   database.write((sql) =>
     sql.run("INSERT INTO navigation_meta VALUES(1,'unit21',10,'unit21-epoch',0)"),
@@ -405,8 +447,30 @@ test('startServer reconciles only its dispatcher before runtime factories and cl
   const reconcile = vi.spyOn(notificationData, 'reconcile_attention').mockImplementation(() => {
     trace.push('reconcile');
   });
+  const scratch_start = vi.fn();
+  vi.spyOn(scratch, 'create_ticket_scratch_runtime').mockReturnValue({
+    start: scratch_start,
+    close() {},
+    settled: async () => {},
+  });
+  const producers = [
+    vi.spyOn(PreviewService.prototype, 'start'),
+    vi.spyOn(ScopedDelivery.prototype, 'start'),
+    vi.spyOn(ConversationViewRebuilder.prototype, 'start'),
+    vi.spyOn(recovery, 'run_automatic_recovery'),
+    vi.spyOn(MetricsRuntime.prototype, 'start'),
+    vi.spyOn(UpdateService.prototype, 'start'),
+    scratch_start,
+    vi.spyOn(SqliteProcessConversationSystem.prototype, 'start_idle_child_janitor'),
+  ];
+  const background = vi.fn<BackgroundServiceFactory>(() => ({
+    start() {
+      throw new Error('A producer started before readiness');
+    },
+    close() {},
+    settled: async () => {},
+  }));
   try {
-    const stopped: string[] = [];
     await expect(
       startServer({
         createConversationCore(context) {
@@ -417,45 +481,122 @@ test('startServer reconciles only its dispatcher before runtime factories and cl
           };
           return new SqliteProcessConversationSystem({
             store: context.record.store,
+            model_is_enabled: (backend, model) =>
+              context.database.read((sql) => model_is_enabled(sql, backend, model)),
+            execution_refusal: (id) =>
+              context.database.read((sql) =>
+                conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
+              ),
             message_files: new ConversationMessageFiles(path),
             backend_child_factories: { codex: noProvider, claude: noProvider, hermes: noProvider },
           });
         },
-        notificationDelivery: (context) => ({
-          start() {
-            stopped.push('notification start');
+        createEnvironments: create_test_environment_runtime,
+        notificationDelivery: background,
+        stallChecker: background,
+        testAreas: [
+          {
+            prefix: '',
+            routes: async (app) => {
+              app.get('/api/health', async () => ({ collision: true }));
+            },
           },
-          close() {
-            context.assert_database_owned();
-            expect(acquireLock(configuration.PLAN_DISPATCHER_LOCK_PATH)).toBeNull();
-            stopped.push('notification close');
-          },
-          settled: async () => {},
-        }),
-        stallChecker: () => ({
-          start() {
-            stopped.push('stall start');
-            throw new Error('synthetic service refusal');
-          },
-          close() {
-            stopped.push('stall close');
-          },
-          settled: async () => {},
-        }),
+        ],
       }),
-    ).rejects.toThrow('synthetic service refusal');
-    expect(stopped).toEqual([
-      'notification start',
-      'stall start',
-      'notification close',
-      'stall close',
-    ]);
+    ).rejects.toThrow(/already declared/);
+    for (const producer of producers) expect(producer).not.toHaveBeenCalled();
+    expect(background).not.toHaveBeenCalled();
     expect(reconcile).toHaveBeenCalledTimes(1);
     const owner = acquireRuntimeOwnership(path);
     owner.close();
     const dispatcher = acquireLock(configuration.PLAN_DISPATCHER_LOCK_PATH);
     expect(dispatcher).not.toBeNull();
     dispatcher?.close();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+// A route collision does not prove cleanup after one background service starts.
+test('startServer closes both services after a background start failure while retaining its owners', async () => {
+  const { database, path } = setup();
+  database.write((tx) =>
+    tx.run("INSERT INTO navigation_meta VALUES(1,'unit21',10,'failed-start',0)"),
+  );
+  database.close();
+  const dispatcher_path = path + '.failed-start-dispatcher';
+  try {
+    for (const [key, value] of Object.entries({
+      PLAN_DB_PATH: path,
+      PLAN_CONFIG_PATH: path + '.absent-config',
+      PLAN_PORT: '0',
+      PLAN_TEST_MODE: '0',
+      PLAN_DISPATCH_ENABLED: 'true',
+      PLAN_DISPATCHER_LOCK_PATH: dispatcher_path,
+      PLAN_CREDENTIAL_KEY_PATH: path + '.key',
+    }))
+      vi.stubEnv(key, value);
+    const trace: string[] = [];
+    const reconcile = vi.spyOn(notificationData, 'reconcile_attention');
+    await expect(
+      startServer({
+        createConversationCore(context) {
+          expect(reconcile).toHaveBeenCalledOnce();
+          const no_provider = (): never => {
+            throw new Error('provider outside failed-start proof');
+          };
+          return new SqliteProcessConversationSystem({
+            store: context.record.store,
+            message_files: new ConversationMessageFiles(path),
+            model_is_enabled: (backend, model) =>
+              context.database.read((sql) => model_is_enabled(sql, backend, model)),
+            execution_refusal: (id) =>
+              context.database.read((sql) =>
+                conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
+              ),
+            backend_child_factories: {
+              codex: no_provider,
+              claude: no_provider,
+              hermes: no_provider,
+            },
+          });
+        },
+        notificationDelivery: (context) => ({
+          start() {
+            trace.push('notification start');
+          },
+          close() {
+            context.assert_database_owned();
+            expect(acquireLock(dispatcher_path)).toBeNull();
+            expect(() => acquireRuntimeOwnership(path)).toThrow('ConversationRuntimeAlreadyOwned');
+            trace.push('notification close');
+          },
+          settled: async () => {},
+        }),
+        stallChecker: (context) => ({
+          start() {
+            trace.push('stall start');
+            throw new Error('synthetic service refusal');
+          },
+          close() {
+            context.assert_database_owned();
+            expect(acquireLock(dispatcher_path)).toBeNull();
+            trace.push('stall close');
+          },
+          settled: async () => {},
+        }),
+      }),
+    ).rejects.toThrow('synthetic service refusal');
+    expect(trace).toEqual([
+      'notification start',
+      'stall start',
+      'notification close',
+      'stall close',
+    ]);
+    acquireRuntimeOwnership(path).close();
+    const successor = acquireLock(dispatcher_path);
+    expect(successor).not.toBeNull();
+    successor?.close();
   } finally {
     vi.unstubAllEnvs();
   }

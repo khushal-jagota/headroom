@@ -14,6 +14,11 @@ import { ScriptedChild } from '../conversation/testing/scripted_child.ts';
 import type { ScriptedBehavior } from '../conversation/testing/scripted_protocol.ts';
 import type { ConversationStoreOptions } from '../conversation/record/contracts.ts';
 import type { ConversationCoreOptions } from '../conversation/runtime/contracts.ts';
+import { model_is_enabled } from '../conversation/backend_state.ts';
+import {
+  canonical_ticket_execution_refusal,
+  conversation_execution_refusal,
+} from '../tickets/execution_admission.ts';
 
 const children: ScriptedChild[] = [];
 const directories: string[] = [];
@@ -57,6 +62,12 @@ export function setup(
   };
   const core = new SqliteProcessConversationSystem({
     store,
+    model_is_enabled: (backend, model) =>
+      database.read((sql) => model_is_enabled(sql, backend, model)),
+    execution_refusal: (id) =>
+      database.read((sql) =>
+        conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
+      ),
     backend_child_factories: { codex: factory, claude: factory, hermes: factory },
     message_files: new ConversationMessageFiles(join(directory, 'conversation.sqlite')),
     ...options.core,

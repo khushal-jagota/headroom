@@ -14,6 +14,9 @@ import {
   PromptDeliveryQueued,
   PromptDeliveryStarted,
   PromptDeliveryUncertain,
+  PromptDeliveryRefused,
+  PromptDeliveryRefusalReason,
+  ResolvedConversationStart,
 } from '../conversation/contracts.ts';
 import {
   AgentMessageCompleted,
@@ -171,6 +174,27 @@ test('publication failure after receipt commit does not append or deliver twice'
     },
   });
   await f.start();
+  f.store.create_conversation(
+    new ResolvedConversationStart({
+      ...f.store.read_conversation('core')!.resolved_start(),
+      conversation_id: 'disabled-control',
+      model: 'disabled',
+    }),
+  );
+  f.database.write((sql) =>
+    sql.run('INSERT INTO backend_model_enablement VALUES(?,?,0)', ['codex', 'disabled']),
+  );
+  expect(
+    await f.core.send('disabled-control', text_message_content('refuse disabled'), {
+      sender_label: 'Owner',
+      sender_message_id: 'disabled-model',
+    }),
+  ).toEqual(
+    new PromptDeliveryRefused({
+      refusal_reason: PromptDeliveryRefusalReason.model_resolution_failed,
+    }),
+  );
+  expect(f.children).toHaveLength(0);
   expect(await f.send()).toBeInstanceOf(PromptDeliveryStarted);
   expect(await f.send()).toBeInstanceOf(PromptDeliveryStarted);
   expect(
