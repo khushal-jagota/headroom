@@ -15,3 +15,6 @@ export const MODEL_LIST_LIMIT_SECONDS = 35;
 
 /** Node timers cap delays at a signed 32-bit millisecond value; longer waits need rechecks. */
 export const MAX_MAILBOX_WAIT_MS = 2 ** 31 - 1;
+
+/** Shared Mac update manifest contract version. */
+export const MAC_UPDATE_SCHEMA_VERSION = 1;

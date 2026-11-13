@@ -464,3 +464,21 @@ Their caller owns the SQL capability, admission and actual settlement.
 The Manager's mailbox review also requires timer-range admission.
 TypeScript refuses nonfinite waits and waits above Node's maximum timer delay before SQL starts.
 Python's event loop can accept longer durations. Finite negative waits retain immediate behavior.
+
+## VPS presence shutdown and reply cursor
+
+The Manager accepts these two presence differences for Unit 22a.
+An admitted lease completes its commit, publication, and reply after shutdown seals the service.
+Stop suppresses replacement, returned, and update callbacks that did not start before the seal.
+It joins callbacks that already started. A skipped replacement stays owed, and a skipped update returns `no_update_check`.
+Python does not suppress all callback starts after close.
+
+Every accepted reply reads the canonical SQL mailbox maximum, including after the mailbox seal.
+During a command commit before its announcement, this cursor can lead Python's cached mailbox cursor.
+Mailbox rows never delete. The leading cursor therefore names existing rows that the next poll returns.
+This uses no new flag on the mailbox.
+
+A presence stop before lazy initialization performs no presence SQL read or write.
+Python close can initialize its record before its final flush and logs and swallows OS or SQLite failures.
+TypeScript final flush failures remain visible through actual settlement, as the lifecycle contract requires.
+The bounded stop observer uses the shared absolute deadline. Actual settlement remains separate.

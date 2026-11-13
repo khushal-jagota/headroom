@@ -157,7 +157,10 @@ export function accept_lease_in_transaction(
     replaced_incarnation: new_incarnation ? replaced : null,
   };
 }
-function same_identity(left: ExecutorIdentity | null, right: ExecutorIdentity | null): boolean {
+export function same_identity(
+  left: ExecutorIdentity | null,
+  right: ExecutorIdentity | null,
+): boolean {
   if (left === null || right === null) return left === right;
   return (
     left.application_revision === right.application_revision &&

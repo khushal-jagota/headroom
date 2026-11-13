@@ -39,11 +39,13 @@ from planner.conversation.lifecycle_storage import apply_facts
 from planner.conversation.message_content import text_message_content
 from planner.core import change_signal
 from planner.core.db import connect, create_schema
+from planner.environments.update_attempts import UpdateConflict
 from planner.executor import protocol as wire
 from planner.executor.contracts import CommandSettlementReason
 from planner.executor.store import ExecutorStore
 from planner.executor.vps_mailbox import SqliteCommandMailbox
-from planner.executor.vps_presence_store import accept_lease_in_transaction
+from planner.executor.vps_presence import MacPresenceService, no_update_check
+from planner.executor.vps_presence_store import accept_lease_in_transaction, read_presence
 
 ROOT = Path(__file__).resolve().parents[3]
 NOW = 1_760_000_000_000
@@ -446,6 +448,10 @@ class _Source:
         self.loop = asyncio.get_running_loop()
         self.forget = change_signal.subscribe(self._signal)
         self._owner()
+        self.presence: MacPresenceService | None = None
+        self.presence_mode = ""
+        self.callback_trace: list[Any] = []
+        self.callback_gate = asyncio.Event()
 
     def _signal(self) -> None:
         self.signals += 1
@@ -527,8 +533,143 @@ class _Source:
         result = getattr(self.mailbox, name)(*values)
         return await result if inspect.isawaitable(result) else result
 
+    def _callback_error(self) -> None:
+        kinds = {
+            "os": OSError,
+            "value": ValueError,
+            "conflict": UpdateConflict,
+            "type": TypeError,
+            "sqlite": sqlite3.OperationalError,
+        }
+        if self.presence_mode in kinds:
+            raise kinds[self.presence_mode]("fixture callback")
+
+    def _presence_owner(self) -> None:
+        self.presence = MacPresenceService(
+            str(self.path), self.mailbox, application_revision="fixture", clock=lambda: self.now
+        )
+
+        def update() -> Any:
+            self.callback_trace.append(["update"])
+            if self.presence_mode == "hold_update":
+                asyncio.run_coroutine_threadsafe(self.callback_gate.wait(), self.loop).result(5)
+            if self.presence_mode != "sqlite":
+                self._callback_error()
+            return no_update_check()
+
+        async def replaced(old: str, current: str) -> None:
+            self.callback_trace.append(["replace", old, current])
+            if self.presence_mode == "hold_replace":
+                await self.callback_gate.wait()
+            self._callback_error()
+
+        self.presence.update_check = update
+        self.presence.incarnation_replaced = replaced
+        self.presence.returned = lambda: self.callback_trace.append(["returned"])
+
+    async def _presence_control(self, action: dict[str, Any]) -> Any:
+        method, args = action["method"], action.get("args", [])
+        if method == "open":
+            self._presence_owner()
+            self.callback_trace = []
+            return None
+        p = self.presence
+        assert p is not None
+        if method == "mode":
+            self.presence_mode = action["mode"]
+            self.callback_gate = asyncio.Event()
+            if self.presence_mode == "fail_contact":
+
+                def failed_contact(at: int) -> None:
+                    raise OSError("fixture contact flush")
+
+                p._write_contact = failed_contact  # type: ignore[method-assign,assignment]
+        elif method == "release":
+            self.callback_gate.set()
+        elif method == "lease":
+            return await p.accept_lease(_typed("LeaseRequest", args[0]))
+        elif method == "contact":
+            p.record_contact()
+        elif method == "refuse":
+            await p.refuse_old_websocket()
+        elif method == "fence":
+            return p.require_current(**args[0])
+        elif method == "activity":
+            p.note_conversation_activity(action["key"])
+        elif method == "drain":
+            await p.wait_until_drained(args[0] if args else action["key"])
+        elif method == "callbacks":
+            return self.callback_trace
+        elif method == "cache_only":
+            p.incarnation_replaced = None
+            p.returned = None
+        elif method == "cursor_race":
+            before = self.mailbox.high_sequence()
+            placed = await asyncio.to_thread(
+                self.mailbox._insert_child_command, _typed("ChildCommand", args[1]), self.now
+            )
+            reply = await p.accept_lease(_typed("LeaseRequest", args[0]))
+            return dict(
+                placed=placed, reply=reply, cached=self.mailbox.high_sequence(), before=before
+            )
+        elif method == "mailbox_stop":
+            await self.mailbox.close()
+        elif method == "state":
+            with closing(connect(str(self.path))) as connection:
+                waits = p.stall_source().tracked_waits(connection, self.now)
+            return dict(
+                record=p.record(),
+                health=p.health(),
+                judgement=p.judgement(),
+                identity=p.current_identity(),
+                present=p.is_present(),
+                waits=waits,
+                callbacks=self.callback_trace,
+            )
+        elif method == "cached":
+            # A loaded cache does not consult its store, even after external writes.
+            p.record()
+            p.health()
+            p.judgement()
+            p.current_identity()
+            p.is_present()
+            return 0
+        elif method == "stored":
+            with closing(connect(str(self.path))) as connection:
+                return read_presence(connection)
+        elif method == "reopen":
+            await p.close()
+            self._presence_owner()
+        elif method == "stop":
+            await p.close()
+        elif method == "arm":
+            original = p._write_lease
+
+            def write(request: Any) -> Any:
+                p._write_lease = original  # type: ignore[method-assign]
+                result = original(request)
+                if action.get("mode") == "stop":
+                    asyncio.run_coroutine_threadsafe(p.close(), self.loop).result(5)
+                if action.get("mode") == "clock":
+                    self.now = action["now"]
+                if action.get("nested"):
+                    self.reentered = asyncio.run_coroutine_threadsafe(
+                        p.accept_lease(_typed("LeaseRequest", action["nested"])), self.loop
+                    ).result(5)
+                return result
+
+            p._write_lease = write  # type: ignore[method-assign]
+        return None
+
     async def execute(self, action: dict[str, Any]) -> Any:
         op = action["op"]
+        if op == "presence":
+            return await self._presence_control(action)
+        if op == "presence_begin":
+            task = asyncio.create_task(_outcome(lambda: self._presence_control(action)))
+            self.tasks[action["key"]] = task
+            await asyncio.sleep(0.02)
+            return {"pending": not task.done()}
         if op == "call":
             return await self._call(action["method"], action["args"])
         if op == "begin":
@@ -1516,6 +1657,13 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             finally:
                 forget_foreign()
                 await foreign.close()
+            source.forget()
+            paths = [tmp_path / "presence-python.sqlite", tmp_path / "presence-node.sqlite"]
+            for path in paths:
+                _backup(seed, path)
+            source = _Source(paths[0])
+            assert (await node({"op": "open", "path": str(paths[1]), "now": NOW}))["ok"]
+            presence_evidence = await _presence_phases(source, node, paired, paths)
             assert await node({"op": "finish"}) == {"ok": True, "value": None}
             process.stdin.close()
             assert await asyncio.wait_for(process.wait(), 5) == 0
@@ -1535,9 +1683,17 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                 "lifecycle_source": source_stop,
                 "lifecycle_candidate": node_stop,
                 "pending_failure": actual,
+                "presence": presence_evidence,
             }
         finally:
             source.forget()
+            if source.presence is not None:
+                source.callback_gate.set()
+                await source.presence.close()
+            for task in source.tasks.values():
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*source.tasks.values(), return_exceptions=True)
             await source.mailbox.close()
             if process.returncode is None:
                 with suppress(ProcessLookupError):
@@ -1545,12 +1701,274 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                 await asyncio.wait_for(process.wait(), 5)
             await asyncio.wait_for(stderr, 5)
 
-    result = asyncio.run(asyncio.wait_for(exercise(), 40))
+    result = asyncio.run(asyncio.wait_for(exercise(), 60))
     directory = request.config.getoption("--compare-report-dir")
     if directory:
         report_path = Path(directory) / "unit-22-mailbox.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(result, indent=2) + "\n")
+
+
+async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[Path]) -> Any:
+    """Reuse the mailbox exchange and populated files for the presence-only gaps."""
+    checkpoints = 0
+
+    async def p(method: str, *args: Any, **controls: Any) -> Any:
+        value = await paired(dict(op="presence", method=method, args=args, **controls))
+        if method in ("lease", "fence", "state", "stored") and not controls.get("expect_error"):
+            assert value is not None, (method, args)
+        return value
+
+    async def clock(at: int) -> None:
+        await paired(dict(op="clock", now=at))
+
+    async def state() -> Any:
+        nonlocal checkpoints
+        checkpoints += 1
+        value = await p("state")
+        assert _observe(paths[0]) == _observe(paths[1])
+        return value
+
+    def lease(incarnation: str = OLD, **changes: Any) -> Any:
+        value = wire.encode_value(
+            replace(lease_request(mac_identity(incarnation)), mac_wall_clock_ms=NOW)
+        )
+        assert isinstance(value, dict)
+        return {**value, **changes}
+
+    async def pending(key: str, method: str, *args: Any) -> None:
+        result = await paired(dict(op="presence_begin", method=method, key=key, args=args))
+        assert result == {"pending": True}, (
+            source.tasks[key].result() if source.tasks[key].done() else result
+        )
+
+    await paired(
+        dict(
+            op="sql",
+            statements=[
+                _statement("DELETE FROM mac_executor_presence"),
+                _statement("DELETE FROM executor_incarnations"),
+            ],
+        )
+    )
+    await p("open")
+    assert (await state())["health"]["presence"] == "never"
+    await p("contact")
+    await clock(NOW + 7)
+    await p("contact")
+    before = await paired(dict(op="snapshot"))
+    began = time.perf_counter()
+    await asyncio.sleep(10.05)
+    contact_seconds = time.perf_counter() - began
+    assert (await state())["record"]["last_contact_at_ms"] == NOW + 7
+    assert await paired(dict(op="snapshot")) == before
+    assert await p("cached") == 0
+    # Quiet contact, exact continuity boundaries, sleep retention, and wake.
+    for at, changes in (
+        (NOW + 10, {}),
+        (NOW + 25010, {}),
+        (NOW + 50011, {}),
+        (NOW + 50012, {"going_to_sleep": True}),
+        (NOW + 50013, {"going_to_sleep": True}),
+        (NOW + 50014, {}),
+    ):
+        await clock(at)
+        await p("lease", lease(OLD, **changes))
+        current = await state()
+        assert current["present"] is not changes.get("going_to_sleep", False)
+    assert current["record"]["continuous_since_ms"] == NOW + 50011
+    timer_at = source.now
+    before_timer = await paired(dict(op="snapshot"))
+    await p("arm", mode="clock", now=timer_at + 59980)
+    await p("lease", lease())
+    await asyncio.sleep(0.08)
+    await clock(timer_at + 60001)
+    after_timer = await paired(dict(op="snapshot"))
+    assert after_timer["signals"] == before_timer["signals"] + 1
+    assert (await state())["judgement"]["presence"] == "not_heard_from"
+    # Refusals deduplicate durable evidence; ingress shape failure still records contact.
+    for version in (21, 21, 23):
+        await clock(source.now + 1)
+        assert isinstance(IDENTITY, dict)
+        refused = await p("lease", lease(identity={**IDENTITY, "protocol_version": version}))
+        assert refused["refusal"]["peer_identity"]["protocol_version"] == version
+        await state()
+    await p("refuse")
+    assert (await state())["record"]["refusal"]["peer_identity"] is None
+    assert isinstance(IDENTITY, dict)
+    await p(
+        "lease",
+        lease(identity={**IDENTITY, "executor_incarnation": "not-a-uuid"}),
+        expect_error=True,
+    )
+    await p("lease", lease())
+    for protocol, incarnation in (("21", NEW), ("22", NEW), ("22", OLD)):
+        await p(
+            "fence",
+            dict(protocol_header=protocol, incarnation_header=incarnation),
+            expect_error=protocol != "22" or incarnation != OLD,
+        )
+    # Error families differ by callback, not by message text or a synthetic class name.
+    for kind in ("conflict", "value", "os", "type"):
+        await p("mode", mode=kind)
+        await p("lease", lease(), expect_error=kind == "type")
+    await p("mode", mode="")
+    # A complete fresh lease proves absence; truncated and stale evidence do not.
+    waiting = [{"conversation_id": "basic", "oldest_sequence": BIG}]
+    working = [
+        {
+            "child": _child("basic"),
+            "turn": {"conversation_id": "basic", "turn_number": BIG},
+            "tool_running": False,
+        }
+    ]
+    reply = await p("lease", lease(waiting_conversations=waiting, working_turns=working))
+    assert reply is not None and "accepted_at_vps_ms" in reply
+    await pending("basic-drain", "drain", "basic")
+    first_wait = (await state())["waits"][0]
+    assert first_wait["wait_key"] == f"basic:{BIG}"
+    await clock(source.now + 1)
+    await p("activity", key="basic")
+    await p("lease", lease(waiting_conversations_truncated=True, working_turns=working))
+    assert (await paired(dict(op="pending")))["basic-drain"]
+    assert (await state())["waits"][0]["started_at_ms"] == source.now
+    working[0]["tool_running"] = True
+    await p("lease", lease(working_turns=working))
+    assert (await state())["waits"] == []
+    await paired(dict(op="join", key="basic-drain"))
+    await clock(source.now + 25000)
+    assert await p("drain", key="basic") is None
+    await clock(source.now + 1)
+    await pending("stale-drain", "drain", "basic")
+    await p("lease", lease())
+    await paired(dict(op="join", key="stale-drain"))
+    # Replacement withdraws waiting work in the same commit and retries owed callbacks.
+    for name in ("presence-waiting", "presence-delivered"):
+        await paired(dict(op="call", method="put", args=[_command(name)]))
+    await paired(dict(op="call", method="poll", args=[IDENTITY, BASE, 0]))
+    await paired(dict(op="call", method="put", args=[_command("presence-last")]))
+    race_action = dict(
+        op="presence", method="cursor_race", args=[lease(), _command("presence-race")]
+    )
+    source_race = await _outcome(lambda: source.execute(race_action))
+    candidate_race = await node(race_action)
+    assert source_race["ok"] and candidate_race["ok"]
+    native_reply = candidate_race["value"]["reply"]
+    reference_reply = source_race["value"]["reply"]
+    assert native_reply["mailbox_high_sequence"] == reference_reply["mailbox_high_sequence"] + 1
+    assert native_reply == {
+        **reference_reply,
+        "mailbox_high_sequence": native_reply["mailbox_high_sequence"],
+    }
+    assert (
+        candidate_race["value"]["cached"]
+        == candidate_race["value"]["before"]
+        == reference_reply["mailbox_high_sequence"]
+    )
+    await paired(dict(op="call", method="put", args=[_command("presence-race")]))
+    await p("mode", mode="sqlite")
+    await p("lease", lease(NEW))
+    await state()
+    await p("mode", mode="")
+    await p("lease", lease(NEW))
+    assert ["replace", "", NEW] in (await state())["callbacks"]
+    # Delayed replies preserve both source cache branches, including the OR quirk.
+    await p("cache_only")
+    for initial, successor in (
+        (NEW, NEW),
+        ("55555555-5555-4555-8555-555555555555", "44444444-4444-4444-8444-444444444444"),
+    ):
+        await clock(source.now + 1)
+        await p("arm", mode="clock", now=source.now + 1, nested=lease(successor, queue_depth=9))
+        await p("lease", lease(initial, queue_depth=1))
+        await paired(dict(op="reentrant"))
+        await state()
+    await p("reopen")
+    # Older stored lease shape is diagnostic; malformed authoritative fields still fail.
+    stored = (await state())["record"]
+    for column, text in (("lease_json", "{}"), ("identity_json", "{}"), ("refusal_json", "{}")):
+        original = _observe(paths[0])["presence"][0][column]
+        await paired(
+            dict(
+                op="sql",
+                statements=[_statement(f"UPDATE mac_executor_presence SET {column}=?", text)],
+            )
+        )
+        expected = await _outcome(lambda: source.execute(dict(op="presence", method="stored")))
+        actual = await node(dict(op="presence", method="stored"))
+        if column == "lease_json":
+            assert actual == expected and actual["value"]["lease"] is None
+        else:
+            assert not actual["ok"] and not expected["ok"]
+            assert actual["type"] == expected["type"] == "ValidationError"
+        await paired(
+            dict(
+                op="sql",
+                statements=[_statement(f"UPDATE mac_executor_presence SET {column}=?", original)],
+            )
+        )
+    assert (await p("stored"))["identity"] == stored["identity"]
+    # An accepted reply still finishes with the actual mailbox sealed.
+    await p("mailbox_stop")
+    current_id = (await p("state"))["identity"]["executor_incarnation"]
+    await p("lease", lease(current_id))
+    # Both owners retain admitted work. Only TS suppresses callbacks after its seal.
+    current_id = (await p("state"))["identity"]["executor_incarnation"]
+    await p("mode", mode="")
+    callbacks_before = await p("callbacks")
+    await p("arm", mode="stop")
+    old_id, current_id = current_id, "66666666-6666-4666-8666-666666666666"
+    expected = await _outcome(
+        lambda: source.execute(dict(op="presence", method="lease", args=[lease(current_id)]))
+    )
+    actual = await node(dict(op="presence", method="lease", args=[lease(current_id)]))
+    assert actual == expected
+    callback_source = await _outcome(
+        lambda: source.execute(dict(op="presence", method="callbacks"))
+    )
+    callback_candidate = await node(dict(op="presence", method="callbacks"))
+    assert callback_source["value"] == [
+        *callbacks_before,
+        ["replace", old_id, current_id],
+        ["returned"],
+        ["update"],
+    ]
+    assert callback_candidate["value"] == callbacks_before
+    await p("stop")
+    await p("reopen")
+    await p("mode", mode="hold_update")
+    await pending("held-update", "lease", lease(current_id))
+    await source.execute(dict(op="presence", method="stop"))
+    bounded = await node(dict(op="presence", method="stop", deadline_ms=0))
+    assert not bounded["ok"] and bounded["type"] == "ShutdownDeadlineExceeded"
+    await p("release")
+    await paired(dict(op="join", key="held-update"))
+    await p("stop")
+    # Cold stop never lazily opens presence SQL. A later read also refuses without SQL.
+    cold_path = paths[1].with_name("empty.sqlite")
+    cold_path.touch()
+    cold = await node(dict(op="presence_cold", path=str(cold_path)))
+    assert cold["ok"] and cold["value"]["touched"] == 0, cold
+    assert cold["value"]["read"]["type"] == "ServerLifecycleError"
+    await p("reopen")
+    await p("mode", mode="fail_contact")
+    await clock(source.now + 1)
+    await p("contact")
+    source_flush = await _outcome(lambda: source.execute(dict(op="presence", method="stop")))
+    candidate_flush = await node(dict(op="presence", method="stop"))
+    assert source_flush["ok"] and not candidate_flush["ok"]
+    assert candidate_flush["type"] == "AggregateError"
+    await source.mailbox.close()
+    assert (await node(dict(op="stop")))["ok"]
+    return dict(
+        checkpoints=checkpoints,
+        contact_seconds=contact_seconds,
+        stopped_callbacks={"source": callback_source, "candidate": callback_candidate},
+        cursor_race={"source": source_race, "candidate": candidate_race},
+        held_callback_deadline=bounded,
+        cold_stop=cold,
+        final_flush={"source": source_flush, "candidate": candidate_flush},
+    )
 
 
 def _typed_result(value: Any) -> Any:
