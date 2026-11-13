@@ -3,7 +3,8 @@ import type { CommandResult, Invocation } from '../../cli/contracts.ts';
 import { CliFailure, human_error } from '../../cli/errors.ts';
 import { emit, executor_request, json } from '../../cli/http.ts';
 import { python_text } from '../../cli/python_text.ts';
-import { ValueError, as_object } from '../protocol.ts';
+import { as_object } from '../protocol.ts';
+import { is_value_error } from '../../core/value_error.ts';
 import { local_status, request } from './ipc_client.ts';
 
 export async function run_executor_command(inv: Invocation): Promise<CommandResult> {
@@ -22,11 +23,7 @@ export async function run_executor_command(inv: Invocation): Promise<CommandResu
           stderr: '',
         };
       } catch (error) {
-        if (
-          !(error instanceof ValueError) &&
-          !(error instanceof Error && error.name === 'ValueError')
-        )
-          throw error;
+        if (!is_value_error(error)) throw error;
         throw new CliFailure(human_error(inv.command, error.message));
       }
     }

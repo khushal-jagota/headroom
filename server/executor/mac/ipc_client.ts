@@ -1,11 +1,13 @@
 /** CLI transport to one owner-only Unix socket. A retry only inspects its original write. */
 import { Socket } from 'node:net';
 import { randomUUID } from 'node:crypto';
+import { lstatSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { executor_client_settings } from '../../core/config.ts';
+import { python_text } from '../../cli/python_text.ts';
 import {
   CLI_RESULT_TIMEOUT_SECONDS,
   CLI_TRANSPORT_RESERVE_SECONDS,
-  EXECUTOR_CAPABILITY_ENV,
-  EXECUTOR_CHILD_ID_ENV,
   MAX_ENVELOPE_BYTES,
   executor_paths,
 } from './configuration.ts';
@@ -52,6 +54,7 @@ export async function request(
 ): Promise<IpcResponse> {
   const deadline = monotonic() + limits.result_seconds;
   const request_id = randomUUID();
+  const settings = executor_client_settings(environment);
   let submission_id: string = request_id;
   if (operation === 'write') decode_value(payload, 'IpcWritePayload');
   else if (operation === 'retry')
@@ -61,14 +64,19 @@ export async function request(
     {
       request_id,
       operation,
-      child_id: environment[EXECUTOR_CHILD_ID_ENV] ?? null,
-      capability: environment[EXECUTOR_CAPABILITY_ENV] ?? null,
+      child_id: settings.child_id,
+      capability: settings.capability,
       payload,
       response_deadline: deadline,
     },
     'IpcRequest',
   );
   const socket_path = executor_paths(environment).ipc_socket;
+  if (lstatSync(dirname(socket_path)).isSymbolicLink())
+    throw new ValueError('executor IPC run directory is a symbolic link');
+  const entry = lstatSync(socket_path);
+  if (entry.isSymbolicLink() || !entry.isSocket() || entry.uid !== process.getuid!())
+    throw new ValueError('executor IPC socket must be an owned socket without a symbolic link');
   const transport_deadline = deadline + limits.reserve_seconds;
   let emission_possible = false;
   try {
@@ -140,17 +148,26 @@ export async function request(
         return;
       }
       timer = setTimeout(
-        () => finish(Object.assign(new Error('timed out'), { name: 'TimeoutError' })),
+        () =>
+          finish(
+            Object.assign(new Error('executor IPC response deadline expired'), {
+              name: 'TimeoutError',
+            }),
+          ),
         seconds * 1000,
       );
-      socket.connect(socket_path, () => {
-        if (finished) return;
-        // write can fail after a prefix. Never infer refusal from that failure.
-        emission_possible = true;
-        socket.write(encoded, (error) => {
-          if (error) finish(error);
+      try {
+        socket.connect(socket_path, () => {
+          if (finished) return;
+          // write can fail after a prefix. Never infer refusal from that failure.
+          emission_possible = true;
+          socket.write(encoded, (error) => {
+            if (error) finish(error);
+          });
         });
-      });
+      } catch (error) {
+        finish(error);
+      }
     });
   } catch (error) {
     if (emission_possible && (operation === 'write' || operation === 'retry'))
@@ -174,10 +191,9 @@ export async function local_status(
 ): Promise<MacLocalStatus> {
   const response = await request('health', {}, environment);
   if (response.error !== null || response.result === null) {
-    const { python_repr } = await import('../protocol_errors.ts');
     throw new ValueError(
       response.error && Object.keys(response.error).length
-        ? python_repr(response.error)
+        ? python_text(response.error)
         : 'executor health returned nothing',
     );
   }

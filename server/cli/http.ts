@@ -12,7 +12,8 @@ import { rates_proxy_for } from '../conversation/usage/proxy.ts';
 import { parse_numeric_json, stringify_python_json } from '../core/http/numeric_json.ts';
 import type { CommandResult, Invocation } from './contracts.ts';
 import { CliFailure, human_error } from './errors.ts';
-import { ValueError } from '../core/value_error.ts';
+import { is_value_error } from '../core/value_error.ts';
+import { executor_client_settings } from '../core/config.ts';
 import type { IpcResponse } from '../executor/wire.generated.ts';
 
 export interface TransportLimits {
@@ -435,8 +436,7 @@ export async function executor_request(
   try {
     response = await request(operation, payload, inv.environment);
   } catch (error) {
-    if (error instanceof ValueError || (error instanceof Error && error.name === 'ValueError'))
-      fail_validation(inv, error.message);
+    if (is_value_error(error)) fail_validation(inv, error.message);
     return fail_connection(inv, error);
   }
   return executor_response(inv, response);
@@ -454,7 +454,7 @@ async function executor_send(
   try {
     translated = cli_mutation(method.toUpperCase(), path, options.json_body ?? null);
   } catch (error) {
-    if (error instanceof ValueError) fail_validation(inv, error.message);
+    if (is_value_error(error)) fail_validation(inv, error.message);
     throw error;
   }
   return executor_request(inv, 'write', { operation: translated[0], arguments: translated[1] });
@@ -469,7 +469,8 @@ export async function send(
     transport_limits?: Readonly<TransportLimits>;
   } = {},
 ): Promise<any> {
-  if (inv.environment.PLAN_EXECUTOR_ROOT) return executor_send(inv, method, path, options);
+  if (executor_client_settings(inv.environment).root)
+    return executor_send(inv, method, path, options);
   const { response, text } = await request(inv, method, path, options);
   let data: any = null;
   try {
@@ -486,7 +487,7 @@ export async function send_text(
   path: string,
   options: { params?: Record<string, any>; transport_limits?: Readonly<TransportLimits> } = {},
 ): Promise<string> {
-  if (inv.environment.PLAN_EXECUTOR_ROOT) {
+  if (executor_client_settings(inv.environment).root) {
     const result = await executor_send(inv, method, path, options);
     if (result && typeof result === 'object' && typeof result.text === 'string') return result.text;
     fail_validation(inv, 'executor read did not return text');
