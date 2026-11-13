@@ -71,7 +71,7 @@ Each executor uses the shared Worker supervisor. It records exact process owners
 
 ## Updates and health
 
-The signed Mac launcher and the Linux systemd user service start a fixed supervisor that selects a versioned runtime. The data folder retains journals, outboxes, credentials, files, and logs across updates. Update offers and progress belong to the requesting destination. Registration records each executor’s platform. Update offers select an archive for that platform and the executor role. Content-addressed archives can share storage without sharing update authority.
+The signed Mac launcher and the Linux systemd user service start a fixed supervisor that selects a versioned runtime. The data folder retains journals, outboxes, credentials, files, and logs across updates. Update offers and progress belong to the requesting destination. Each executor reports its platform with authenticated requests. Update offers select an archive for that platform and the executor role. Content-addressed archives can share storage without sharing update authority. Linux archive downloads start only for registered Linux machines. Their failures do not block home or Mac updates. The home retains two Linux archives.
 
 The home and executor use protocol 26. An incompatible executor receives refusal. Before the original credential handover, its existing authority still permits its recovery update. After handover, updates require its credential too. See the [Mac installation runbook](../ops/mac-executor/installation.md) or [Linux installation runbook](../ops/linux-executor/installation.md).
 
@@ -98,4 +98,4 @@ Leases carry one machine's bounded state and update offer. Command polls carry a
 - `src/planner/environments/linux_executor.py`: Linux installation and systemd user service.
 - `scripts/build_linux_executor.py`: Linux executor archive and native startup proof.
 
-_Last verified: 2026-11-13._
+_Last verified: 2026-11-14._
