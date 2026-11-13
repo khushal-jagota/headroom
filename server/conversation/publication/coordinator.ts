@@ -20,6 +20,7 @@ import type {
 } from '../contracts.ts';
 import type { SaveAttempt } from '../runtime/contracts.ts';
 import { save_attempt } from '../runtime/save_attempt.ts';
+import type { RuntimeMutation } from '../runtime/contracts.ts';
 import { read_durable_facts } from './reader.ts';
 import * as persistence from './persistence.ts';
 
@@ -57,7 +58,7 @@ export class SignalPublicationCoordinator implements SignalPublicationSource {
   private attachment: SignalAttachment | null = null;
   private participant: SignalParticipant | null = null;
   private unavailable: ((value: SignalInvalidation) => void) | null = null;
-  private attempt: { id: string; mutated: boolean } | null = null;
+  private attempt: { id: string; mutations: readonly RuntimeMutation[] } | null = null;
   private readonly watchers = new Set<() => void>();
 
   constructor(options: { database: Database; require_runtime_ownership: () => void }) {
@@ -160,7 +161,7 @@ export class SignalPublicationCoordinator implements SignalPublicationSource {
 
   readonly save_attempt: SaveAttempt = (id, work, mutations) => {
     const previous = this.attempt;
-    this.attempt = { id, mutated: mutations.length > 0 };
+    this.attempt = { id, mutations };
     try {
       return save_attempt(id, work, mutations);
     } finally {
@@ -170,7 +171,8 @@ export class SignalPublicationCoordinator implements SignalPublicationSource {
 
   readonly finalize_signal = (tx: TransactionSql): void => {
     if (!this.initialized) return;
-    if (this.attempt?.mutated) persistence.mark_changed(tx, this.attempt.id);
+    if (this.attempt?.mutations.some((mutation) => mutation.active !== false))
+      persistence.mark_changed(tx, this.attempt.id);
     const relevant = tx.get('SELECT 1 FROM signal_publication_dirty LIMIT 1');
     const associated = tx.get('SELECT 1 FROM signal_publication_associations LIMIT 1');
     if (!relevant && !associated) return;
