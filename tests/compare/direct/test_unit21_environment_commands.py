@@ -362,7 +362,7 @@ def test_unit21_environment_command_function_parity(
         assert len(actual["table"]) == 17 and actual["table"] == expected_table
         operators = actual["operators"]
         assert operators["invocation_home"] == str(root)
-        assert operators["unsafe_paths_refused"] == 7
+        assert operators["unsafe_paths_refused"] == 8
         assert operators["interrupted_status"]["ready"]
         assert operators["interrupted_status"]["actual_closed"]
         assert operators["interrupted_status"]["cleanup_failure_retained"]

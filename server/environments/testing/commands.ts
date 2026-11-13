@@ -199,6 +199,16 @@ async function operator_probe(root: string): Promise<unknown> {
     undefined,
   );
   assert('failure_message' in linked && linked.failure_message.includes('OS temp folder'));
+  const linked_home = join(root, 'linked-skill-home');
+  await mkdir(linked_home);
+  await symlink(outside, join(linked_home, 'skills'));
+  const destination = await operator_commands['provision-skills'].handler(
+    { ...provision, hermes_home: linked_home },
+    undefined,
+  );
+  assert(
+    'failure_message' in destination && destination.failure_message.includes('OS temp folder'),
+  );
   const watchdog_args = {
     db: join(root, 'runtime/database.sqlite'),
     state_dir: join(root, 'watchdog'),
@@ -221,7 +231,7 @@ async function operator_probe(root: string): Promise<unknown> {
     watchdog: await operator_commands.watchdog.handler(watchdog_args, {
       run_watchdog: async () => 'recorded watchdog',
     }),
-    unsafe_paths_refused: 7,
+    unsafe_paths_refused: 8,
     invocation_home: paths.expand_path('~'),
     interrupted_status: await interrupted_status(root),
   };

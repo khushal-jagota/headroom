@@ -66,14 +66,13 @@ export function provision_environment_skills(options: {
   codex_home: string;
   claude_home: string;
 }): void {
-  if (backend_io_is_test())
-    for (const path of [
-      options.database_parent,
-      options.hermes_home,
-      options.codex_home,
-      options.claude_home,
-    ])
-      assert_temporary_path(path);
+  if (backend_io_is_test()) {
+    assert_temporary_path(options.database_parent);
+    for (const home of [options.hermes_home, options.codex_home, options.claude_home]) {
+      assert_temporary_path(home);
+      assert_temporary_path(join(home, 'skills'));
+    }
+  }
   const root = managed_skills_home(options.database_parent);
   if (backend_io_is_test()) assert_temporary_path(root);
   let exists = false;
