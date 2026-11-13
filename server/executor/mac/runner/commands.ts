@@ -7,19 +7,16 @@ import {
 } from '../../../conversation/backends/contracts.ts';
 import type { TurnToken as NativeTurn } from '../../../conversation/backends/contracts.ts';
 import { prefix_message_content_text } from '../../../conversation/message_content.ts';
-import type { MessageContent as NativeContent } from '../../../conversation/message_content.ts';
 import { UserInputAnswer } from '../../../conversation/events.ts';
 import { as_object, ValueError } from '../../protocol.ts';
 import { integer_value, normalize_integer } from '../../integers.ts';
-import { class_name } from '../../protocol_errors.ts';
-import { wire_classes } from '../../protocol_classes.ts';
+import { native_message_content as native_content } from '../../backend_events.ts';
 import type {
   AskReference,
   ChildCommand,
   CommandOutcome,
   DurableAnswer,
   JsonObject,
-  MessageContent,
   TurnToken,
 } from '../../wire.generated.ts';
 import { NATIVE_WORKER_CONTEXT } from '../configuration.ts';
@@ -34,15 +31,6 @@ import {
   same_wire,
 } from './logic/outcomes.ts';
 
-function native_content(content: MessageContent): NativeContent {
-  // Shared validation chose each union member. Retain its exact numeric values.
-  return content.map((piece) =>
-    Reflect.construct(
-      wire_classes[class_name(piece) as 'MessageText' | 'MessageFile' | 'MessageImage'],
-      [piece],
-    ),
-  ) as NativeContent;
-}
 function native_turn(child: MacRunningChild, token: TurnToken): NativeTurn {
   // Native adapters retain this accepted token and compare its integer with ===.
   // Reuse that exact marker for a semantically equal steer, without a numeric conversion.
