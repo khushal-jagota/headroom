@@ -7,6 +7,11 @@ This package is the shared server shell for the backend migration. It runs `.ts`
 Accepted migration differences live in [DEVIATIONS.md](DEVIATIONS.md).
 
 `ios_compatibility/check.ts` hashes the accepted production TypeScript inventory, five fixed JSON inputs and two retained Hermes Python sources. It includes raw comments and uses Python Path component order. The checker and HTTP middleware share `ios_compatibility/policy.ts` for the native build floor. A human must supply `ios_compatibility/review.json`; no compatible verdict is copied from Python or written automatically. Missing fixed inputs, including the generated migration graph, fail the check. The main-only publication workflow reads that review from HEAD in a clean tree and records its author. Signed-device evidence remains a separate requirement.
+The source CLI at `server/cli/main.ts` now connects all seventeen operator commands.
+`environment app-build` uses the release builder. `environment run` replaces its process
+with the prepared repository's CLI and retains its reserved listener. `serve` uses the
+foreground supervisor, and `restart` requests replacement through its control socket.
+The installed wrapper and production deployment remain separate cutover work.
 
 From the repository root:
 

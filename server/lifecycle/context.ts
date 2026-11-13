@@ -20,15 +20,20 @@ export async function resolve_unit_lifecycle_context(
   args: ManagedEntrypointArguments,
   environment: NodeJS.ProcessEnv,
   launch_root: string,
+  paths: { readonly admit_path?: (path: string) => string } = {},
 ): Promise<UnitLifecycleContext> {
   const settings = lifecycle_launch_settings(environment);
-  const config_path = settings.config_path ?? join(launch_root, 'config.yaml');
+  const requested_config = settings.config_path ?? join(launch_root, 'config.yaml');
+  const config_path = paths.admit_path?.(requested_config) ?? requested_config;
   // loadConfig consumes the refusal switch. APP must receive the original input.
-  const config = loadConfig(config_path, settings.environment);
+  const config = loadConfig(config_path, settings.environment, {
+    home: environment.HOME,
+    admit_path: paths.admit_path,
+  });
   const explicit = strip(settings.control_socket_path ?? '');
   let control_socket_path: string;
   if (explicit) {
-    const path = expand_path(explicit);
+    const path = expand_path(explicit, environment.HOME);
     control_socket_path = await resolved_path(isAbsolute(path) ? path : launch_root + '/' + path);
   } else
     control_socket_path = resolve_server_lifecycle_lease_path(config.port).replace(

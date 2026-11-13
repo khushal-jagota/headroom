@@ -1,6 +1,8 @@
 /** Replaceable application entry. Signal handling and ordered close stay in startServer. */
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolved_path } from '../environments/paths.ts';
+import { startServer } from '../core/start.ts';
+import { testModeFromEnvironment } from '../core/config.ts';
 import { start_production_server } from './production.ts';
 import { default_production_dependencies } from './production_bindings.ts';
 import type { ApplicationEntrypoint } from './contracts.ts';
@@ -44,7 +46,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     await run_application_process(
       {
         start: (onShutdownComplete) =>
-          start_production_server(default_production_dependencies(), onShutdownComplete),
+          testModeFromEnvironment()
+            ? startServer({ onShutdownComplete })
+            : start_production_server(default_production_dependencies(), onShutdownComplete),
       },
       (code) => process.exit(code),
     );
