@@ -18,6 +18,10 @@ import type { WireRootName, MailboxCommand, CommandResult } from '../../wire.gen
 import type { JournalOutputPolicy } from './journal_contracts.ts';
 import type { JournalProtocol } from './journal_internal_contracts.ts';
 import {
+  MAX_COMMAND_OUTCOMES_PER_REPORT,
+  MAX_COMMAND_OUTCOME_REPORT_BYTES,
+} from '../configuration.ts';
+import {
   JOURNAL_NAME,
   JOURNAL_REFUSAL,
   JOURNAL_SCHEMA,
@@ -35,6 +39,10 @@ export class JournalEngine {
   private readonly protocol: JournalProtocol;
   private readonly policy: JournalOutputPolicy;
   private readonly health: () => void;
+  private readonly held = new Map<string, undefined>();
+  private singleton = false;
+  private report_sequence = 0;
+  private report: { selection: number; command_ids: string[] } | undefined;
   readonly incarnation: string;
   constructor(
     protocol: JournalProtocol,
@@ -261,6 +269,73 @@ export class JournalEngine {
       for (const id of ids)
         tx.run('UPDATE commands SET result_reported=1 WHERE command_id=?', [id]);
     });
+  }
+  select_report(): { selection: number; command_ids: string[]; body: Buffer } | null {
+    if (this.report) throw new Error('a journal report selection is already active');
+    const rows = this.db()
+      .read((sql) =>
+        sql.all<{ result_json: Buffer }>(
+          "SELECT result_json FROM commands WHERE phase='finished' AND result_reported=0 AND outputs_published=1 ORDER BY command_sequence LIMIT ?",
+          [MAX_COMMAND_OUTCOMES_PER_REPORT + this.held.size],
+        ),
+      )
+      .map((row) => this.result(row.result_json));
+    let candidates = rows.filter((row) => !this.held.has(row.command_id));
+    if (!candidates.length) {
+      const by_id = new Map(rows.map((row) => [row.command_id, row]));
+      candidates = [...this.held.keys()].flatMap((id) => (by_id.has(id) ? [by_id.get(id)!] : []));
+    }
+    const chosen: CommandResult[] = [];
+    let size = Buffer.byteLength('{"outcomes":[]}');
+    for (const row of candidates.slice(0, MAX_COMMAND_OUTCOMES_PER_REPORT)) {
+      size += this.encode(row, 'CommandResult').length + 1;
+      if (chosen.length && (size > MAX_COMMAND_OUTCOME_REPORT_BYTES || this.singleton)) break;
+      chosen.push(row);
+    }
+    if (!chosen.length) {
+      this.held.clear();
+      return null;
+    }
+    const body = this.encode({ outcomes: chosen }, 'CommandOutcomeReport');
+    this.report = {
+      selection: ++this.report_sequence,
+      command_ids: chosen.map((row) => row.command_id),
+    };
+    return { ...this.report, body };
+  }
+  report_feedback(selection: number, settled_ids: readonly string[] | null): boolean {
+    const report = this.report;
+    if (!report || report.selection !== selection)
+      throw new Error('journal report selection is closed');
+    const failed = () => {
+      this.singleton = true;
+      if (report.command_ids.length === 1) {
+        const id = report.command_ids[0]!;
+        this.held.delete(id);
+        this.held.set(id, undefined);
+      }
+    };
+    try {
+      if (settled_ids === null) {
+        failed();
+        return false;
+      }
+      const settled = new Set(settled_ids);
+      const accepted = report.command_ids.filter((id) => settled.has(id));
+      this.mark_reported(accepted);
+      if (!accepted.length) {
+        failed();
+        return false;
+      }
+      this.singleton = false;
+      for (const id of report.command_ids) this.held.delete(id);
+      return true;
+    } catch (error) {
+      failed();
+      throw error;
+    } finally {
+      this.report = undefined;
+    }
   }
   shrink_to_tombstones(): void {
     this.write((tx) => {

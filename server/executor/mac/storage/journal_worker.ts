@@ -160,6 +160,19 @@ async function execute(action: JournalAction): Promise<unknown> {
     case 'mark_reported':
       engine!.mark_reported(action.command_ids);
       return;
+    case 'select_report': {
+      if (readers.size >= JOURNAL_READERS) throw new Error('journal reader capacity reached');
+      const selected = engine!.select_report();
+      return selected === null
+        ? null
+        : {
+            selection: selected.selection,
+            command_ids: selected.command_ids,
+            body: reader(selected.body),
+          };
+    }
+    case 'report_feedback':
+      return engine!.report_feedback(action.selection, action.settled_ids);
     case 'shrink_to_tombstones':
       engine!.shrink_to_tombstones();
       return;
