@@ -107,6 +107,8 @@ The intent guard refuses accidental bare signals without a compiled wrapper, pla
 Prior intent replaces signal-sender identity. It does not authenticate the signal sender itself.
 Neither design protects a broad kill of the application child or same-user SIGKILL.
 
+TypeScript keeps the configured control socket address. It requires an owned real parent directory at mode 0700 and creates the socket at mode 0600 without a wider-permission window. Python's default directory is private, but an explicit socket parent and socket mode follow existing permissions and the process umask. The Manager accepted this stricter socket permission policy during the supervisor source review. Restart remains a same-user operation without capability authentication.
+
 APP uses a 30-second shared grace, a 45-second hard trigger, and an owned-force attempt bounded by original stop plus 55 seconds.
 Packaged policy uses a separate supervisor APP fallback at 60 seconds, stop client at 80 seconds, and outer unit phase at 90 seconds.
 Supervisor/client changes remain in the unmerged release draft. The actual unit renderer and packaged hosted proofs remain open.
