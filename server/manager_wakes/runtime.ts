@@ -22,7 +22,7 @@ import {
   observe_conversation_operation,
 } from '../runtime/abort.ts';
 import { observe_shutdown } from '../lifecycle/deadline.ts';
-import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
+import type { StopOptions } from '../lifecycle/contracts.ts';
 import { read_manager } from '../managers/data.ts';
 import { manager_lifecycle_lock } from '../managers/service.ts';
 import { read_ticket } from '../tickets/data/index.ts';
@@ -508,7 +508,7 @@ export class ManagerWakeLoop {
       ]).then(() => {})
     );
   }
-  stop(options: { deadline?: number } = {}): Promise<void> {
+  stop(options: StopOptions): Promise<void> {
     if (this.closing) return this.closing;
     this.stopped = true;
     if (this.timer !== undefined) clearTimeout(this.timer);
@@ -523,7 +523,7 @@ export class ManagerWakeLoop {
       );
       if (failure?.status === 'rejected') throw failure.reason;
     });
-    const deadline = options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
+    const deadline = options.deadline;
     this.closing = observe_shutdown(this.shutdown_settlement, { deadline }, 'manager wakes');
     // Cancellation records uncertainty while this invocation still owns the DB.
     for (const observer of this.observers.values()) observer.cancel();

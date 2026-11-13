@@ -195,7 +195,7 @@ export class UsageService implements RecordedUsageService {
     while (this.operations.size !== 0) await Promise.allSettled([...this.operations]);
     if (this.closed) await this.resourceJoin;
   }
-  finish_operations(options: Partial<StopOptions> = {}): Promise<void> {
+  finish_operations(options: StopOptions): Promise<void> {
     return observe_shutdown(
       this.finish_current_operations(),
       options,

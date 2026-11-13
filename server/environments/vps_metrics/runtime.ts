@@ -9,7 +9,7 @@ import { MetricsReaders } from './readers/pool.ts';
 import type { MetricsRead } from './readers/contracts.ts';
 import type { CollectorFactory, SamplerReply } from './sampler/contracts.ts';
 import { observe_shutdown } from '../../lifecycle/deadline.ts';
-import { SHUTDOWN_GRACE_SECONDS } from '../../core/config.ts';
+import { ShutdownDeadlineExceeded, type StopOptions } from '../../lifecycle/contracts.ts';
 
 export interface MetricsRuntimeOptions {
   path: string;
@@ -34,6 +34,8 @@ export class MetricsRuntime {
   private shutdown_settlement?: Promise<void>;
   private readers_closing?: Promise<void>;
   private exited?: Promise<void>;
+  private worker_exited = false;
+  private terminating?: Promise<void>;
   private activities = new Map<
     string,
     { resolve(value: MetricNumber): void; reject(error: unknown): void }
@@ -59,6 +61,7 @@ export class MetricsRuntime {
     this.worker = worker;
     this.exited = new Promise<void>((resolve) =>
       worker.once('exit', () => {
+        this.worker_exited = true;
         this.owns_collection = false;
         this.ready = false;
         for (const entry of this.activities.values())
@@ -125,8 +128,23 @@ export class MetricsRuntime {
   private close_readers(): Promise<void> {
     return (this.readers_closing ??= this.reads.close());
   }
+  private terminate_worker(): void {
+    if (!this.worker || this.worker_exited || this.terminating) return;
+    let resolve!: () => void, reject!: (error: unknown) => void;
+    // Publish the actual result before Worker.terminate can synchronously fail.
+    this.terminating = new Promise<void>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    void this.terminating.catch(() => {});
+    try {
+      void this.worker.terminate().then(() => resolve(), reject);
+    } catch (error) {
+      reject(error);
+    }
+  }
   /** Deadline uses the server's monotonic seconds convention. */
-  stop(options: { deadline?: number } = {}): Promise<void> {
+  stop(options: StopOptions): Promise<void> {
     if (this.stopping) return this.stopping;
     this.stopped = true;
     this.ready = false;
@@ -140,6 +158,9 @@ export class MetricsRuntime {
         this.starting?.catch(() => {}),
         this.exited,
       ]);
+      // A deadline can reserve termination after the first snapshot. Its real
+      // result is joined only after the exact worker's exit, never in place of it.
+      results.push(...(await Promise.allSettled([this.terminating])));
       const failures = results.filter((result) => result.status === 'rejected');
       if (failures.length)
         throw new AggregateError(
@@ -147,12 +168,11 @@ export class MetricsRuntime {
           'VPS metrics shutdown failed',
         );
     });
-    this.stopping = observe_shutdown(
-      this.shutdown_settlement,
-      {
-        deadline: options.deadline ?? performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS,
+    this.stopping = observe_shutdown(this.shutdown_settlement, options, 'VPS metrics').catch(
+      (error) => {
+        if (error instanceof ShutdownDeadlineExceeded) this.terminate_worker();
+        throw error;
       },
-      'VPS metrics',
     );
     try {
       this.worker?.postMessage({ type: 'stop' });
