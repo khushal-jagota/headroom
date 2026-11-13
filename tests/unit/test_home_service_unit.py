@@ -1,5 +1,6 @@
 """Check the generated user unit with systemd's real directive parser."""
 
+import os
 import shutil
 import subprocess
 import time
@@ -25,12 +26,15 @@ def test_generated_home_unit_passes_systemd_verify(
     options = HomeInstall(root, "panels-ticket-unit-proof", 18767, Path("/usr/bin/python3"), True)
     unit = tmp_path / "panels-ticket-unit-proof.service"
     unit.write_text(linux_unit(options))
+    runtime = tmp_path / "run"
+    runtime.mkdir(mode=0o700)
     started = time.perf_counter()
     result = subprocess.run(
         [analyzer, "--user", "verify", str(unit)],
         capture_output=True,
         text=True,
         timeout=15,
+        env={**os.environ, "XDG_RUNTIME_DIR": str(runtime)},
     )
     print(f"systemd-analyze verify seconds={time.perf_counter() - started:.6f}")
     assert result.returncode == 0, result.stderr
