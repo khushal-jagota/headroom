@@ -145,7 +145,7 @@ Missing symbols or failed calls must refuse the operation. A path-based fallback
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `openat(int,const char*,int,...)`                                  | Variadic mode passed as explicit promoted `int`, created-file mode 0600, directory/no-follow and Darwin close-on-exec flags, FIFO refusal, and ancestor-swap containment |
 | `mkdirat(int,const char*,uint16_t)`                                | Darwin 16-bit `mode_t`, 0700 creation, existing-directory behavior, and parent-relative placement                                                                        |
-| `unlinkat(int,const char*,int)`                                    | Correct zero flags, retained-parent cleanup, and missing-entry/error behavior                                                                                            |
+| `unlinkat(int,const char*,int)`                                    | Correct zero flags for files and Darwin `AT_REMOVEDIR=0x80` for empty directories, retained-parent cleanup, nonempty-directory refusal, and missing-entry/error behavior |
 | `renameat(int,const char*,int,const char*)`                        | Retained source/target parents, atomic publication, and failure cleanup                                                                                                  |
 | `fsync(int)`                                                       | Directory flushes, error propagation, and successful commits on the selected native filesystem                                                                           |
 | `fcntl(int,int,...)` with `F_FULLFSYNC=51` and explicit `int` zero | Variadic Darwin ABI and defined third slot, strict full-flush success, and refusal without a weaker fallback                                                             |
@@ -162,6 +162,33 @@ Missing symbols or failed calls must refuse the operation. A path-based fallback
 Physical power-loss durability and permission persistence remain native evidence limits.
 Synthetic Linux checks prove neither Darwin ABI nor native disk behavior.
 
+## Canonical skills in the native session
+
+Run these steps with synthetic snapshots, a private TypeScript state root, and a private provider home before any real provider starts.
+The later package must supply the exact launcher for `MacSkillsPublisher` from `server/executor/mac/skills/index.ts`.
+
+1. Publish a snapshot with non-ASCII text and CRLF bytes. Compare its generation digest, `SKILL.md` bytes, and account links with Python.
+2. Publish the same snapshot again, then replace one source. Check generation reuse, owned retired links, stale generation links, and preserved unrelated entries.
+3. Corrupt one existing generation. Check that the Mac preserves it under `.invalid-*` and rebuilds the authoritative bytes. Python refuses this case. Check other snapshot validation diagnostics against Python.
+4. Hold the private `.install.lock` from another owner. Stop the publisher with one absolute deadline. Check its actual worker exit and lock cleanup separately.
+5. Exercise empty-directory cleanup through `unlinkat` with Darwin `AT_REMOVEDIR=0x80`. Check refusal for a nonempty directory and for a substituted symlink.
+
+Linux covers the synthetic publication flow and a failed descriptor close with successful retry. It does not prove Darwin flags or native filesystem behavior.
+The shared server publisher retains its API. Its workspace `openat` now uses a variadic declaration and an explicit promoted `int` argument.
+The Mac publisher imports the neutral account module and uses native operations only through the Mac platform module.
+The Mac requires an absolute, existing provider home and an existing real `skills` directory before it writes any state.
+The trusted adapter host supplies that configured home separately from the command snapshot. A different resolved path refuses.
+The Mac never converts a legacy `skills` symlink. Refuse linked homes, linked `skills` entries, and linked state-root ancestors before the session.
+Native `/tmp` and `/var` are aliases. Use their reviewed canonical paths or a private path under the real account home.
+Add negative checks for real files/directories at managed names, foreign links, case-only collisions, and link loops.
+Compare every provider entry before and after each refusal. Include bytes and raw targets of dangling user links.
+Generation files and directories flush before rename. The successor host/storage maintenance slice owns unreferenced generations and abandoned stages.
+Only recognizable owned temporary account links receive a sweep here. No provider directory receives recursive deletion.
+The held directory and immediate leaf rechecks prevent a swapped folder from redirecting deletion into its replacement.
+They do not coordinate same-user programs that change entries concurrently. There is no atomic ownership comparison in rename.
+The root-local lock does not serialize a second installation's writes into the same account home.
+The owner must choose that policy before concurrent real use. Never snapshot or restore provider credentials or databases.
+
 ## Measure the main-thread database budget
 
 The export-only `spool_burst(parent)` helper in `server/executor/mac/storage/testing/parity.ts` writes 256 near-1 MiB items.
@@ -172,3 +199,18 @@ Do not run this measurement in the live state root or on a memory-backed tempora
 The owner repeats it on the actual Mac filesystem before native admission.
 If maximum timer delay exceeds 50 ms on the real Mac, move database work to an owned worker before admission.
 Record a Linux result above 50 ms as a finding. Do not hide it behind the later Mac check or call it a pass.
+
+
+### Directory operations for the native skills check
+
+The platform module opens `.` relative to the retained directory with close-on-exec, then copies each `readdir` name before the next call.
+It clears `errno` before `readdir`, distinguishes EOF from failure, and retains failed-close capabilities for retry.
+Check the descriptor-relative stream open, `fdopendir`, `readdir`, `closedir`, `readlinkat`, and `symlinkat` on the actual arm64 package.
+Check repeated enumeration, dangling links, loop refusal, retained-folder replacement, atomic link replacement, and cleanup after a failed close.
+Linux uses the 64-bit `dirent` name offset 19. Darwin inode64 uses offset 21, with `d_namlen` at offset 18.
+Record lengths above 1048 bytes on Darwin or 280 bytes on Linux refuse before name decoding. Unusual filesystems with larger Linux records are unsupported here.
+The native code follows Apple's [inode64 layout](https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/bsd/sys/dirent.h),
+[Libc declarations](https://raw.githubusercontent.com/apple-oss-distributions/Libc/main/include/dirent.h), and
+[ABI aliases](https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/bsd/sys/cdefs.h).
+Darwin arm64 uses the unsuffixed symbols. Darwin x86_64 selects the inode64 aliases.
+These are source-based ABI choices. No Darwin call or native durability check ran on this Linux VPS.
