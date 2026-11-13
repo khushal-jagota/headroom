@@ -13,6 +13,10 @@ test('failure summaries normalize whitespace without weakening Unicode credentia
     ['authorızatıon: Bearer abc', 'authorızatıon: [redacted]'],
     ['password\ufeff=secret', 'password =[redacted]'],
     ['Bearer secret\ufefftail', 'Bearer [redacted] tail'],
+    [
+      'password\u0085=\u001fsynthetic; api\u0085key=synthetic; Bearer\u001csynthetic',
+      'password\u0085=\u001f[redacted]; api\u0085key=[redacted]; Bearer [redacted]',
+    ],
   ];
   for (const [input, expected] of cases) {
     expect(normalized_failure_summary(input)).toBe(expected);
