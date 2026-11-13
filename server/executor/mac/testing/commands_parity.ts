@@ -1,6 +1,7 @@
 /** Real command/source/retirement custody and stores with scripted skills, files and backend. */
 import { readFileSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { fail } from 'node:assert/strict';
 import { join } from 'node:path';
 import { setImmediate as yield_turn } from 'node:timers/promises';
 import { stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
@@ -21,6 +22,8 @@ import { same_turn as codex_same_turn } from '../../../conversation/backends/cod
 import type { ResolvedConversationStart } from '../../../conversation/contracts.ts';
 import { decode_json, as_object } from '../../protocol.ts';
 import { MacCommandService } from '../runner/service.ts';
+import { dispatch_command } from '../runner/commands.ts';
+import { MacChildAdmissionRefused } from '../runner/contracts.ts';
 import { create_mac_output_publication } from '../runner/publication.ts';
 import type { MacCommandDependencies, MacOutputPublication } from '../runner/command_contracts.ts';
 import { MacNativeChildren } from '../runner/start_stop.ts';
@@ -59,6 +62,7 @@ const calls: unknown[] = [],
   outcomes: unknown[] = [],
   states: unknown[] = [];
 const facts: Record<string, boolean> = {};
+const stop_count = () => calls.filter((call) => JSON.stringify(call) === '["stop"]').length;
 const guards: Record<string, boolean> = {};
 const signal = new AbortController().signal;
 const options = { deadline: performance.now() / 1000 + 25 };
@@ -266,9 +270,11 @@ const dependencies = (
   now_ms: () => now,
 });
 await open();
-let service = new MacCommandService(
-  dependencies(wrap_journal(journal!), wrap_publication(create_mac_output_publication(store!))),
+const command_dependencies = dependencies(
+  wrap_journal(journal!),
+  wrap_publication(create_mac_output_publication(store!)),
 );
+let service = new MacCommandService(command_dependencies);
 const original_service = service;
 const make_maintenance = (stop_owner = retirement) =>
   new MacMaintenance({
@@ -369,6 +375,20 @@ try {
       .filter((command) => command.command_id !== 'synthetic-stop'),
   );
   await run('start');
+  const before_unsafe = calls.length;
+  const unsafe = { ...commands.prompt! };
+  unsafe.arguments = { ...unsafe.arguments, sender_message_count: unsafe.turn!.turn_number };
+  const unsafe_count = await dispatch_command(
+    command_dependencies,
+    unsafe,
+    new Map(),
+    service,
+    fail,
+  ).catch((error: unknown) => error);
+  guards.unsafe_sender_count_refused =
+    unsafe_count instanceof MacChildAdmissionRefused &&
+    native_children.get('child')!.active_turn === null &&
+    calls.length === before_unsafe;
   for (const raw of input.asks) {
     const ask = decode_json(raw, 'AskReference');
     child_state.install(ask);
@@ -429,13 +449,13 @@ try {
   const idle_child = native_children.get('child')!,
     active_turn = idle_child.active_turn;
   idle_child.active_turn = null;
-  const native_stops = calls.filter((call) => JSON.stringify(call) === '["stop"]').length;
+  const native_stops = stop_count();
   const unsettled = await maintenance.quiesce(signal);
   guards.zero_output_fate_blocks_idle_stop =
     !record.settled &&
     record.task === null &&
     integer_value(unsettled.uncertain_operation_count) !== 0n &&
-    calls.filter((call) => JSON.stringify(call) === '["stop"]').length === native_stops;
+    stop_count() === native_stops;
   const empty_children = make_native_children();
   const stop_probe = new MacRetirement({
     native_children: empty_children,
@@ -502,7 +522,7 @@ try {
   await run('prewithdraw');
   await run('missing');
   const source = sources.source_work(commands.stop!.child, () => source_release.promise);
-  const stop_calls = calls.filter((call) => JSON.stringify(call) === '["stop"]').length;
+  const stop_calls = stop_count();
   const stopping = run('stop');
   while (!child_state.is_retiring('child')) await yield_turn();
   const refused_source = await sources
@@ -516,7 +536,7 @@ try {
     refused_source instanceof Error &&
     refused_source.name === 'PermissionError' &&
     sources.count(commands.stop!.child) === 1 &&
-    calls.filter((call) => JSON.stringify(call) === '["stop"]').length === stop_calls &&
+    stop_count() === stop_calls &&
     stop_result === null;
   await stop_result?.close();
   source_release.resolve();
@@ -585,7 +605,7 @@ try {
   const updating_prompt = run('maintenance-prompt');
   void updating_prompt.catch(() => {});
   await maintenance_entered.promise;
-  const stops = calls.filter((call) => JSON.stringify(call) === '["stop"]').length;
+  const stops = stop_count();
   const rejected_update = await maintenance.prepare_update('now', 'planned-update', signal).then(
     () => null,
     (error: unknown) => error,
@@ -597,9 +617,7 @@ try {
     update_ids === 1;
   await updating_prompt;
   facts.update_stops_before_join =
-    updated &&
-    native_children.get('maintenance-child') === null &&
-    calls.filter((call) => JSON.stringify(call) === '["stop"]').length === stops + 1;
+    updated && native_children.get('maintenance-child') === null && stop_count() === stops + 1;
   const update_result = await journal!.result_of('update_stop_' + update_id);
   if (update_result !== null) {
     await update_result.close();
@@ -617,7 +635,7 @@ try {
     .catch((error: unknown) => {
       if (error !== source_failure) throw error;
     });
-  const previous_stops = calls.filter((call) => JSON.stringify(call) === '["stop"]').length;
+  const previous_stops = stop_count();
   await run('failed-source-stop');
   const failed_outcome = service
     .records(failed_reference)
@@ -626,7 +644,7 @@ try {
     sources.failed(failed_reference) &&
     sources.errors().includes(source_failure) &&
     failed_outcome?.disposition === 'uncertain' &&
-    calls.filter((call) => JSON.stringify(call) === '["stop"]').length === previous_stops + 1 &&
+    stop_count() === previous_stops + 1 &&
     store!.lookup('stopped_' + digest('failed-source-stop')) === null;
   source_failure_seconds = (performance.now() - source_failure_started) / 1000;
   await run('replay-start');

@@ -10,7 +10,7 @@ import { prefix_message_content_text } from '../../../conversation/message_conte
 import type { MessageContent as NativeContent } from '../../../conversation/message_content.ts';
 import { UserInputAnswer } from '../../../conversation/events.ts';
 import { as_object, ValueError } from '../../protocol.ts';
-import { normalize_integer } from '../../integers.ts';
+import { integer_value, normalize_integer } from '../../integers.ts';
 import { class_name } from '../../protocol_errors.ts';
 import { wire_classes } from '../../protocol_classes.ts';
 import type {
@@ -97,6 +97,14 @@ async function invoke(
     case 'write_prompt': {
       if (dependencies.state.admission_stopped)
         throw new MacChildAdmissionRefused('executor is quiescing');
+      const sender_message_count = integer_value(args.sender_message_count ?? 1);
+      if (
+        sender_message_count < BigInt(Number.MIN_SAFE_INTEGER) ||
+        sender_message_count > BigInt(Number.MAX_SAFE_INTEGER)
+      )
+        throw new MacChildAdmissionRefused(
+          'sender message count exceeds the native safe-integer range',
+        );
       const model = args.model_change == null ? child.model : args.model_change;
       const effort =
         args.reasoning_effort_change == null && !args.reasoning_effort_is_set
@@ -113,7 +121,7 @@ async function invoke(
           {
             sender_label: args.sender_label,
             sender_content: native_content(args.sender_content),
-            sender_message_count: args.sender_message_count as number,
+            sender_message_count: Number(sender_message_count),
             mode: args.mode,
             model_change: args.model_change ?? null,
             reasoning_effort_change: args.reasoning_effort_change ?? null,
