@@ -656,7 +656,7 @@ def test_work_labels_do_not_scan_outside_an_offer_or_wait(
     assert not scans
 
 
-def test_worker_actions_and_status_share_the_update_owner_loop(
+def test_update_reads_leave_the_loop_and_mutations_keep_the_owner(
     harness: Harness, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Cancel must not reopen admission concurrently with the preparation transition."""
@@ -669,17 +669,27 @@ def test_worker_actions_and_status_share_the_update_owner_loop(
         cancel = harness.system.cancel_update
         observations = []
 
-        def owner_labels() -> tuple[str, ...]:
-            assert asyncio.get_running_loop() is owner
+        def worker_labels() -> tuple[str, ...]:
+            with pytest.raises(RuntimeError, match="no running event loop"):
+                asyncio.get_running_loop()
             observations.append("status")
             return labels()
+
+        activity = harness.system.workspace_activity
+
+        def worker_activity():
+            with pytest.raises(RuntimeError, match="no running event loop"):
+                asyncio.get_running_loop()
+            observations.append("activity")
+            return activity()
 
         def owner_cancel() -> bool:
             assert asyncio.get_running_loop() is owner
             observations.append("cancel")
             return cancel()
 
-        monkeypatch.setattr(harness.system, "update_waiting_work", owner_labels)
+        monkeypatch.setattr(harness.system, "update_waiting_work", worker_labels)
+        monkeypatch.setattr(harness.system, "workspace_activity", worker_activity)
         monkeypatch.setattr(harness.system, "cancel_update", owner_cancel)
         attempt = await asyncio.to_thread(
             harness.service.install, SHA_B, "idle", confirm_activity=False,
@@ -687,7 +697,7 @@ def test_worker_actions_and_status_share_the_update_owner_loop(
         await asyncio.to_thread(harness.service.status)
         await asyncio.to_thread(harness.service.cancel, attempt.attempt_id)
         await asyncio.gather(*(asyncio.wrap_future(task) for task in tuple(harness.service._tasks)))
-        assert "status" in observations and "cancel" in observations
+        assert {"status", "activity", "cancel"} <= set(observations)
         assert harness.store.read() is None and not harness.launched
         assert not harness.system.workspace_admission.closed
         harness.service.stop()

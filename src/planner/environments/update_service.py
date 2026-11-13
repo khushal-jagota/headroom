@@ -238,7 +238,15 @@ class UpdateService:
             return self.attempts.read()
 
     def status(self) -> UpdateStatus:
-        return self._on_owner(lambda: self._status())
+        """Run from a worker: actor decisions precede independent SQLite reads."""
+        result = self._on_owner(lambda: self._status())
+        system = self.conversation()
+        if system is None:
+            return result
+        activity = system.workspace_activity()
+        affected_work = (system.update_waiting_work()
+                         if result.state in {"available", "waiting"} else ())
+        return replace(result, activity=activity, affected_work=affected_work)
 
     def _status(self) -> UpdateStatus:
         if self._unavailable_reason is not None:
@@ -249,8 +257,6 @@ class UpdateService:
         self.refresh_available()
         attempt = self._settled()
         self._reopen_after_unstarted(attempt)
-        system = self.conversation()
-        activity = system.workspace_activity() if system is not None else "unknown"
         available = self.ready_release()
         release = attempt.release if attempt is not None else None
         state, actions, detail, deadline_at = resolve(
@@ -263,11 +269,9 @@ class UpdateService:
             mac_report_seconds=MAC_UPDATE_REPORT_SECONDS,
             now=datetime.fromtimestamp(self._now(), UTC),
         )
-        affected_work = (system.update_waiting_work()
-                         if system is not None and state in {"available", "waiting"} else ())
         return UpdateStatus(
-            state, actions, activity, available, attempt, self.current_app_sha, detail,
-            deadline_at, affected_work,
+            state, actions, "unknown", available, attempt, self.current_app_sha, detail,
+            deadline_at, (),
         )
 
     def _mac_report_time(self, attempt: UpdateAttempt | None) -> datetime | None:
@@ -317,18 +321,24 @@ class UpdateService:
     # --- owner actions -------------------------------------------------------------
 
     def install(self, app_sha: str, mode: UpdateMode, *, confirm_activity: bool) -> UpdateAttempt:
+        system = self.conversation()
+        activity = (system.workspace_activity()
+                    if system is not None and mode == "now" and not confirm_activity
+                    else "unknown")
         return self._on_owner(
-            lambda: self._install(app_sha, mode, confirm_activity=confirm_activity)
+            lambda: self._install(
+                app_sha, mode, confirm_activity=confirm_activity, activity=activity
+            )
         )
 
-    def _install(self, app_sha: str, mode: UpdateMode, *, confirm_activity: bool) -> UpdateAttempt:
+    def _install(
+        self, app_sha: str, mode: UpdateMode, *, confirm_activity: bool, activity: str,
+    ) -> UpdateAttempt:
         if self._unavailable_reason is not None:
             raise UpdateConflict(self._unavailable_reason)
         release = self.ready_release()
         if release is None or release.manifest.app_sha != app_sha:
             raise UpdateConflict("This update is no longer ready. Refresh and try again.")
-        system = self.conversation()
-        activity = system.workspace_activity() if system is not None else "unknown"
         if mode == "now" and activity != "idle" and not confirm_activity:
             raise UpdateConflict("Active or unknown work requires explicit confirmation.")
         now = utc_now()
@@ -407,7 +417,9 @@ class UpdateService:
         attempt = self.attempts.read()
         if attempt is None or attempt.attempt_id != attempt_id or attempt.state != "failed":
             raise UpdateConflict("The update changed or already moved on.")
-        return self.install(attempt.to_sha, "now", confirm_activity=True)
+        return self._install(
+            attempt.to_sha, "now", confirm_activity=True, activity="unknown"
+        )
 
     def retry_mac(self, attempt_id: str) -> UpdateAttempt:
         return self._on_owner(lambda: self._retry_mac(attempt_id))
@@ -551,14 +563,21 @@ class UpdateService:
                                  lambda current: replace(current, detail=WAIT_DETAIL))
             return
         if (attempt.mode == "now" and not attempt.confirm_activity
-                and self._paused_attempt_id is None and system.workspace_activity() != "idle"):
-            self._fail(attempt_id, frozenset({"waiting"}), ACTIVITY_CHANGED_DETAIL)
-            return
+                and self._paused_attempt_id is None):
+            activity = await asyncio.to_thread(system.workspace_activity)
+            if self.attempts.read() != attempt:
+                self.schedule_advance()
+                return
+            if activity != "idle":
+                self._fail(attempt_id, frozenset({"waiting"}), ACTIVITY_CHANGED_DETAIL)
+                return
         self._paused_attempt_id = attempt_id
         self._wait_for_work(True)
         try:
             safe = await asyncio.wait_for(
-                system.prepare_update(attempt.mode), self._remaining_drain(attempt)
+                system.prepare_update(
+                    "idle" if not attempt.confirm_activity else attempt.mode
+                ), self._remaining_drain(attempt)
             )
         except TimeoutError:
             self.attempts.change(attempt_id, frozenset({"waiting"}),

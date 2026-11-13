@@ -565,7 +565,27 @@ def test_update_now_keeps_final_stop_callback_before_snapshot(
         try:
             await _start(harness, "c")
             await harness.system.send("c", text_message_content("work"), sender_label="owner")
-            assert await harness.system.prepare_update("now")
+            read_started = threading.Event()
+            read_release = threading.Event()
+            original_read = harness.store.read_live_background_task_ids
+
+            def blocked_read() -> dict[str, tuple[str, ...]]:
+                with pytest.raises(RuntimeError, match="no running event loop"):
+                    asyncio.get_running_loop()
+                read_started.set()
+                if not read_release.wait(2):
+                    raise RuntimeError("The event loop did not run during the SQLite read")
+                return original_read()
+
+            monkeypatch.setattr(harness.store, "read_live_background_task_ids", blocked_read)
+            update = asyncio.create_task(harness.system.prepare_update("now"))
+            try:
+                assert await asyncio.to_thread(read_started.wait, 1)
+                # This coroutine runs while the actual store read remains blocked.
+                read_release.set()
+                assert await update
+            finally:
+                read_release.set()
             events = await harness.events("c")
             assert any("final stop result" in str(event.payload) for event in events)
             assert harness.backend("c").live_children == 0

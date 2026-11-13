@@ -3,13 +3,15 @@ disconnects for errors. A page from another app version must refresh before it w
 
 from __future__ import annotations
 
-from contextlib import ExitStack
-
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from planner.conversation.contracts import ConversationSystem
+from planner.conversation.workspace_admission import (
+    RequestAdmissionLease,
+    current_write_admission,
+)
 from planner.core.config import Config
 from planner.core.errors import ErrorCode, PlannerError
 
@@ -60,8 +62,10 @@ class UpdateAdmissionMiddleware:
             # a result or an item is not owner work, and must not hold an update back.
             and not path.startswith(("/api/updates", "/api/executor/"))
         ):
-            with ExitStack() as lease:
-                if not lease.enter_context(system.workspace_admission.operation()):
+            lease = RequestAdmissionLease(system.workspace_admission)
+            token = current_write_admission.set(lease)
+            try:
+                if not lease.resume():
                     await JSONResponse(
                         status_code=503, content={"detail": "Owner update in progress."}
                     )(scope, receive, send)
@@ -74,8 +78,10 @@ class UpdateAdmissionMiddleware:
                         lease.close()
                     await send(message)
 
-                # ExitStack releases once, also on failure or cancellation before headers.
                 await self.app(scope, receive, release_at_response_start)
+            finally:
+                lease.close()
+                current_write_admission.reset(token)
             return
 
         await self.app(scope, receive, send)

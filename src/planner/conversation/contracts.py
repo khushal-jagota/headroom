@@ -708,7 +708,7 @@ class ConversationSystem(Protocol):
         ...
 
     def workspace_activity(self) -> Literal["idle", "busy", "unknown"]:
-        """Return complete workspace activity without admitting new work."""
+        """Read complete activity from a worker thread without admitting new work."""
         ...
 
     async def prepare_update(self, mode: Literal["idle", "now"]) -> bool:

@@ -750,35 +750,50 @@ class SqliteProcessConversationSystem:
         )
 
     def update_waiting_work(self) -> tuple[str, ...]:
+        """Read update labels from a worker thread, without a lock around SQLite."""
+        background = self._store.read_live_background_task_ids()
         with self._update_lock:
-            background = self._store.read_live_background_task_ids()
             active = tuple(
                 (identity, state) for identity, state in tuple(self._conversations.items())
                 if self._state_has_update_work(state) or identity in background
             )
-            metadata = self._update_metadata
-            if not self._update_admission_owned or metadata is None:
-                metadata = self._store.update_work_metadata(
-                    tuple(identity for identity, _ in active)
-                )
-            return tuple(dict.fromkeys(
-                metadata.get(
-                    identity, (f"{state.record.backend_key} conversation", HOME_MACHINE_ID)
-                )[0]
-                for identity, state in active
-            ))
+            metadata = self._update_metadata if self._update_admission_owned else None
+        if metadata is None:
+            metadata = self._store.update_work_metadata(
+                tuple(identity for identity, _ in active)
+            )
+        return tuple(dict.fromkeys(
+            metadata.get(
+                identity, (f"{state.record.backend_key} conversation", HOME_MACHINE_ID)
+            )[0]
+            for identity, state in active
+        ))
 
     async def prepare_update(self, mode: Literal["idle", "now"]) -> bool:
         with self._update_lock:
-            if not self._update_admission_owned:
+            initialize = not self._update_admission_owned
+            if initialize:
                 if not self.workspace_admission.claim(
                     lambda: None, idle=lambda: True, require_idle=False
                 ):
                     raise RuntimeError("Another operation owns workspace admission.")
                 self._update_admission_owned = True
-                self._update_metadata = self._store.update_work_metadata()
-            if self._update_metadata is None:
+                self._update_metadata = {}
+            preparation = self._update_metadata
+
+        def read_facts() -> tuple[dict[str, tuple[str, str]] | None, dict[str, tuple[str, ...]]]:
+            metadata = self._store.update_work_metadata() if initialize else preparation
+            return metadata, self._store.read_live_background_task_ids()
+
+        metadata, background = await asyncio.to_thread(read_facts)
+        with self._update_lock:
+            # Cancel or a replacement update can run while SQLite releases the loop.
+            # Only this preparation can install its snapshot or authorize retirement.
+            if self._update_metadata is not preparation or not self._update_admission_owned:
+                return False
+            if metadata is None:
                 raise RuntimeError("Update metadata is unavailable.")
+            self._update_metadata = metadata
             if self._update_stop_failed:
                 if any(state.backend_event_failed for state in self._conversations.values()):
                     raise RuntimeError(
@@ -795,7 +810,6 @@ class SqliteProcessConversationSystem:
                 and state.retained_child_reference is None
                 and not child_stops_outside_lock(state.child)
             )
-            background = self._store.read_live_background_task_ids()
             if self._update_retirement is None:
                 # A start admitted before closure can still publish its state. Freeze
                 # the local snapshot only after all those admission operations finish.
