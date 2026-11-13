@@ -18,6 +18,7 @@ from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 from uuid import UUID
 
 import pytest
@@ -452,9 +453,24 @@ class _Source:
         self.presence_mode = ""
         self.callback_trace: list[Any] = []
         self.callback_gate = asyncio.Event()
+        self.change_reads: list[Any] = []
 
     def _signal(self) -> None:
         self.signals += 1
+        if self.presence is not None:
+            with closing(connect(str(self.path))) as connection:
+                self.change_reads.append(
+                    wire.encode_value(
+                        dict(
+                            health=self.presence.health(),
+                            present=self.presence.is_present(),
+                            record=self.presence.record(),
+                            sql=dict(
+                                connection.execute("SELECT * FROM mac_executor_presence").fetchone()
+                            ),
+                        )
+                    )
+                )
 
     def _owner(self) -> None:
         self.mailbox = SqliteCommandMailbox(str(self.path), clock=lambda: self.now)
@@ -534,6 +550,10 @@ class _Source:
         return await result if inspect.isawaitable(result) else result
 
     def _callback_error(self) -> None:
+        if self.presence_mode == "syntax":
+            json.loads("{")
+        if self.presence_mode == "validation":
+            _typed("MacUpdateCheck", {})
         kinds = {
             "os": OSError,
             "value": ValueError,
@@ -551,8 +571,6 @@ class _Source:
 
         def update() -> Any:
             self.callback_trace.append(["update"])
-            if self.presence_mode == "hold_update":
-                asyncio.run_coroutine_threadsafe(self.callback_gate.wait(), self.loop).result(5)
             if self.presence_mode != "sqlite":
                 self._callback_error()
             return no_update_check()
@@ -566,6 +584,15 @@ class _Source:
         self.presence.update_check = update
         self.presence.incarnation_replaced = replaced
         self.presence.returned = lambda: self.callback_trace.append(["returned"])
+        original_contact = self.presence._write_contact
+
+        def write_contact(at_ms: int) -> None:
+            if self.presence_mode == "fail_contact":
+                self.callback_trace.append(["contact_failure"])
+                raise OSError("fixture contact flush")
+            original_contact(at_ms)
+
+        self.presence._write_contact = write_contact  # type: ignore[method-assign]
 
     async def _presence_control(self, action: dict[str, Any]) -> Any:
         method, args = action["method"], action.get("args", [])
@@ -578,12 +605,6 @@ class _Source:
         if method == "mode":
             self.presence_mode = action["mode"]
             self.callback_gate = asyncio.Event()
-            if self.presence_mode == "fail_contact":
-
-                def failed_contact(at: int) -> None:
-                    raise OSError("fixture contact flush")
-
-                p._write_contact = failed_contact  # type: ignore[method-assign,assignment]
         elif method == "release":
             self.callback_gate.set()
         elif method == "lease":
@@ -600,6 +621,10 @@ class _Source:
             await p.wait_until_drained(args[0] if args else action["key"])
         elif method == "callbacks":
             return self.callback_trace
+        elif method == "timed_lease":
+            began = time.perf_counter()
+            reply = await p.accept_lease(_typed("LeaseRequest", args[0]))
+            return dict(reply=reply, elapsed_ms=(time.perf_counter() - began) * 1000)
         elif method == "cache_only":
             p.incarnation_replaced = None
             p.returned = None
@@ -627,13 +652,13 @@ class _Source:
                 callbacks=self.callback_trace,
             )
         elif method == "cached":
-            # A loaded cache does not consult its store, even after external writes.
-            p.record()
-            p.health()
-            p.judgement()
-            p.current_identity()
-            p.is_present()
-            return 0
+            with patch("planner.executor.vps_presence.connect", wraps=connect) as opens:
+                p.record()
+                p.health()
+                p.judgement()
+                p.current_identity()
+                p.is_present()
+                return opens.call_count
         elif method == "stored":
             with closing(connect(str(self.path))) as connection:
                 return read_presence(connection)
@@ -1729,6 +1754,13 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
         assert _observe(paths[0]) == _observe(paths[1])
         return value
 
+    async def signal_read() -> Any:
+        captured = (await node(dict(op="presence", method="changes")))["value"][-1]
+        current = await state()
+        assert captured["record"] == captured["sql"] == current["record"]
+        assert captured["health"] == current["health"] and captured["present"] == current["present"]
+        return captured
+
     def lease(incarnation: str = OLD, **changes: Any) -> Any:
         value = wire.encode_value(
             replace(lease_request(mac_identity(incarnation)), mac_wall_clock_ms=NOW)
@@ -1777,6 +1809,7 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
         current = await state()
         assert current["present"] is not changes.get("going_to_sleep", False)
     assert current["record"]["continuous_since_ms"] == NOW + 50011
+    lease_signal = await signal_read()
     timer_at = source.now
     before_timer = await paired(dict(op="snapshot"))
     await p("arm", mode="clock", now=timer_at + 59980)
@@ -1795,6 +1828,7 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
         await state()
     await p("refuse")
     assert (await state())["record"]["refusal"]["peer_identity"] is None
+    refusal_signal = await signal_read()
     assert isinstance(IDENTITY, dict)
     await p(
         "lease",
@@ -1809,7 +1843,7 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
             expect_error=protocol != "22" or incarnation != OLD,
         )
     # Error families differ by callback, not by message text or a synthetic class name.
-    for kind in ("conflict", "value", "os", "type"):
+    for kind in ("conflict", "value", "os", "syntax", "validation", "type"):
         await p("mode", mode=kind)
         await p("lease", lease(), expect_error=kind == "type")
     await p("mode", mode="")
@@ -1867,8 +1901,44 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
     )
     await paired(dict(op="call", method="put", args=[_command("presence-race")]))
     await p("mode", mode="sqlite")
-    await p("lease", lease(NEW))
+    await paired(
+        dict(
+            op="sql",
+            statements=[
+                _statement(
+                    "UPDATE executor_commands SET executor_incarnation=?,state='waiting',"
+                    "finished_at_ms=NULL,outcome_json=NULL "
+                    "WHERE command_sequence BETWEEN 7 AND 3006",
+                    OLD,
+                )
+            ],
+        )
+    )
+    measured = dict(op="presence", method="timed_lease", args=[lease(NEW)])
+    reference_cost = await _outcome(lambda: source.execute(measured))
+    candidate_cost = await node(measured)
+    assert reference_cost["ok"] and candidate_cost["ok"]
+    assert reference_cost["value"]["reply"] == candidate_cost["value"]["reply"]
+    compared = []
+    for path in paths:
+        with closing(sqlite3.connect(path)) as connection:
+            compared.append(
+                connection.execute(
+                    "SELECT command_sequence,command_id,state,outcome_json,finished_at_ms,"
+                    "length(CAST(command_json AS BLOB)) FROM executor_commands "
+                    "WHERE command_sequence BETWEEN 7 AND 3006 ORDER BY command_sequence"
+                ).fetchall()
+            )
+    assert compared[0] == compared[1] and len(compared[0]) == 3000
+    assert all(row[2] == "withdrawn" for row in compared[0])
+    replacement_cost = dict(
+        source=reference_cost["value"],
+        candidate=candidate_cost["value"],
+        rows=3000,
+        command_bytes=sum(row[-1] for row in compared[0]),
+    )
     await state()
+    assert (await p("lease", lease(OLD)))["error"]["code"] == "executor_incarnation_not_current"
     await p("mode", mode="")
     await p("lease", lease(NEW))
     assert ["replace", "", NEW] in (await state())["callbacks"]
@@ -1936,20 +2006,38 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
     assert callback_candidate["value"] == callbacks_before
     await p("stop")
     await p("reopen")
-    await p("mode", mode="hold_update")
-    await pending("held-update", "lease", lease(current_id))
+    await p("mode", mode="hold_replace")
+    current_id = "77777777-7777-4777-8777-777777777777"
+    await pending("held-replacement", "lease", lease(current_id))
     await source.execute(dict(op="presence", method="stop"))
     bounded = await node(dict(op="presence", method="stop", deadline_ms=0))
     assert not bounded["ok"] and bounded["type"] == "ShutdownDeadlineExceeded"
     await p("release")
-    await paired(dict(op="join", key="held-update"))
+    await paired(dict(op="join", key="held-replacement"))
     await p("stop")
-    # Cold stop never lazily opens presence SQL. A later read also refuses without SQL.
+    sealed_lease = await node(dict(op="presence", method="lease", args=[lease(current_id)]))
+    assert not sealed_lease["ok"] and sealed_lease["type"] == "ServerLifecycleError"
+    # Cold readers and memory-only contact remain usable after stop, without SQL.
     cold_path = paths[1].with_name("empty.sqlite")
     cold_path.touch()
     cold = await node(dict(op="presence_cold", path=str(cold_path)))
     assert cold["ok"] and cold["value"]["touched"] == 0, cold
-    assert cold["value"]["read"]["type"] == "ServerLifecycleError"
+    assert (
+        cold["value"]["read"]["presence"] == "never"
+        and cold["value"]["record"]["last_contact_at_ms"] is not None
+    )
+    assert not cold["value"]["present"]
+    await p("reopen")
+    await p("mode", mode="fail_contact")
+    await clock(source.now + 1)
+    await p("contact")
+    await asyncio.sleep(10.05)
+    assert source.presence is not None and source.presence._contact_flush is not None
+    assert isinstance(source.presence._contact_flush.exception(), OSError)
+    candidate_attempts = await node(dict(op="presence", method="callbacks"))
+    assert candidate_attempts["value"][-1] == ["contact_failure"]
+    await p("mode", mode="")
+    await p("stop")
     await p("reopen")
     await p("mode", mode="fail_contact")
     await clock(source.now + 1)
@@ -1962,6 +2050,8 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
     assert (await node(dict(op="stop")))["ok"]
     return dict(
         checkpoints=checkpoints,
+        signal_reads=dict(lease=lease_signal, refusal=refusal_signal, source=source.change_reads),
+        replacement_cost=replacement_cost,
         contact_seconds=contact_seconds,
         stopped_callbacks={"source": callback_source, "candidate": callback_candidate},
         cursor_race={"source": source_race, "candidate": candidate_race},

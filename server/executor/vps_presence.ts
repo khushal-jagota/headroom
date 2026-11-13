@@ -1,5 +1,5 @@
 /** The committed lease cache, incarnation fence, contact flush and memory-only stalls. */
-import type { Database, WriteOptions } from '../core/database/contracts.ts';
+import type { Database } from '../core/database/contracts.ts';
 import { is_sqlite_error } from '../core/database/index.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { is_os_error } from '../core/system_errors.ts';
@@ -115,7 +115,7 @@ export class MacPresenceService {
     if (this.closed) throw new ServerLifecycleError('Executor presence is closed.');
   }
   private get_record(): PresenceRecord | null {
-    if (!this.record_loaded) {
+    if (!this.record_loaded && !this.closed) {
       this.loaded_record = this.database.read(read_presence);
       this.record_loaded = true;
       this.flushed_contact_ms = this.loaded_record?.last_contact_at_ms ?? null;
@@ -206,9 +206,9 @@ export class MacPresenceService {
         update: null,
       };
     }
-    // The write and publication remain owned even when stop seals during the commit signal.
+    // Publication remains owned if stop seals after the commit or during its announcement.
     await Promise.resolve();
-    const { accepted, settled, now } = written;
+    const { accepted, settled, now, announce } = written;
     const returned =
       accepted.new_incarnation || judge_presence(accepted.previous, now).presence !== 'present';
     const kept = this.get_record();
@@ -223,6 +223,7 @@ export class MacPresenceService {
       this.observe_lease(request, accepted, now);
       this.schedule_presence_change();
     }
+    if (announce) this.options.changes.emit();
     this.mailbox.publish_settlements(settled);
     this.wake_drains();
     if (accepted.replaced_incarnation !== null) this.drains_owed = true;
@@ -247,27 +248,26 @@ export class MacPresenceService {
     };
   }
   private write_lease(request: WireValue<'LeaseRequest'>) {
-    const options: WriteOptions = { changeSignal: 'silent' };
-    return this.database.write((tx) => {
-      const now = this.clock();
-      const accepted = accept_lease_in_transaction(tx, request, now);
-      const settled =
-        accepted.replaced_incarnation === null
-          ? []
-          : this.mailbox.replace_incarnation_in_transaction(tx, {
-              replaced: accepted.replaced_incarnation,
-              current: request.identity.executor_incarnation,
-              now_ms: now,
-            });
-      if (
-        lease_changes_presence_signal(accepted.previous, accepted.current, {
+    return this.database.write(
+      (tx) => {
+        const now = this.clock();
+        const accepted = accept_lease_in_transaction(tx, request, now);
+        const settled =
+          accepted.replaced_incarnation === null
+            ? []
+            : this.mailbox.replace_incarnation_in_transaction(tx, {
+                replaced: accepted.replaced_incarnation,
+                current: request.identity.executor_incarnation,
+                now_ms: now,
+              });
+        const announce = lease_changes_presence_signal(accepted.previous, accepted.current, {
           new_incarnation: accepted.new_incarnation,
           now_ms: now,
-        })
-      )
-        options.changeSignal = 'emit';
-      return { accepted, settled, now };
-    }, options);
+        });
+        return { accepted, settled, now, announce };
+      },
+      { changeSignal: 'silent' },
+    );
   }
   private async check_update(): Promise<WireValue<'MacUpdateCheck'>> {
     if (this.closed) return no_update_check();
@@ -277,6 +277,7 @@ export class MacPresenceService {
       if (
         !(error instanceof UpdateConflict) &&
         !(error instanceof ValueError) &&
+        !(error instanceof SyntaxError) &&
         !is_os_error(error)
       )
         throw error;
@@ -319,10 +320,9 @@ export class MacPresenceService {
       this.contact();
       return;
     }
-    const options: WriteOptions = { changeSignal: 'silent' };
-    this.database.write((tx) => {
-      if (record_refusal(tx, refusal)) options.changeSignal = 'emit';
-    }, options);
+    const announce = this.database.write((tx) => record_refusal(tx, refusal), {
+      changeSignal: 'silent',
+    });
     await Promise.resolve();
     const base = this.get_record() ?? empty_record();
     const contact = Math.max(
@@ -332,9 +332,9 @@ export class MacPresenceService {
     this.set_record({ ...base, refusal, last_contact_at_ms: contact });
     this.flushed_contact_ms = contact;
     this.schedule_presence_change();
+    if (announce) this.options.changes.emit();
   }
   record_contact(): void {
-    this.admit();
     this.contact();
   }
   private contact(): void {
@@ -346,9 +346,12 @@ export class MacPresenceService {
     if (this.closed || this.contact_flush !== undefined) return;
     this.contact_flush = setTimeout(() => {
       this.contact_flush = undefined;
-      void this.own(() => this.flush_contact()).catch((error) => {
-        this.failures.add(error);
-        console.warn("The Mac's contact time was not saved:", error);
+      void this.own(() => {
+        try {
+          this.flush_contact();
+        } catch (error) {
+          console.warn("The Mac's contact time was not saved:", error);
+        }
       });
     }, CONTACT_FLUSH_INTERVAL_SECONDS * 1000);
   }
@@ -369,7 +372,6 @@ export class MacPresenceService {
     incarnation_header: string | null;
     protocol_header: string | null;
   }): ExecutorIdentity {
-    this.admit();
     this.contact();
     if (protocol_header !== String(PROTOCOL_VERSION))
       throw new PlannerError(
@@ -388,23 +390,19 @@ export class MacPresenceService {
     return record.identity;
   }
   record(): PresenceRecord | null {
-    this.admit();
     return this.get_record();
   }
   judgement() {
-    this.admit();
     return judge_presence(this.get_record(), this.clock());
   }
   is_present(): boolean {
     return this.judgement().presence === 'present';
   }
   current_identity(): ExecutorIdentity | null {
-    this.admit();
     const record = this.get_record();
     return record?.executor_incarnation == null ? null : record.identity;
   }
   health(): ExecutorHealthRead {
-    this.admit();
     const record = this.get_record();
     const judgement = judge_presence(record, this.clock());
     return {
@@ -452,7 +450,6 @@ export class MacPresenceService {
       if (this.drained(entry.conversation_id)) entry.resolve();
   }
   note_conversation_activity(conversation_id: string): void {
-    this.admit();
     this.activity_ms.set(conversation_id, this.clock());
   }
   private observe_lease(

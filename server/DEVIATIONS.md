@@ -542,7 +542,18 @@ During a command commit before its announcement, this cursor can lead Python's c
 Mailbox rows never delete. The leading cursor therefore names existing rows that the next poll returns.
 This uses no new flag on the mailbox.
 
+The presence seal rejects new leases, WebSocket refusals, and drain waits.
+Cached reads, header fences, contact observations, and memory-only activity observations continue after stop.
+A cold read returns the empty cached state without lazy SQL.
+Contact observations update only memory after stop and start no timer.
+
 A presence stop before lazy initialization performs no presence SQL read or write.
 Python close can initialize its record before its final flush and logs and swallows OS or SQLite failures.
 TypeScript final flush failures remain visible through actual settlement, as the lifecycle contract requires.
+Normal-running contact flush failures log and remain retryable, as in Python.
+They do not become shutdown failures when a later flush succeeds.
 The bounded stop observer uses the shared absolute deadline. Actual settlement remains separate.
+
+Presence commits are silent at the shared write door.
+After commit succeeds, the service publishes its cache before it emits the one presence change signal.
+Synchronous signal subscribers therefore read the committed presence state, with no cache update before a possible rollback.
