@@ -34,7 +34,7 @@ All thirteen executor endpoints require trusted Tailscale login, the configured 
 | POST | `/api/executor/update` | Strict typed update report with current health |
 | WebSocket | `/api/executor/connect` | Refuse the obsolete transport before upgrade |
 
-The update route and `bind_updates` seams are implemented. The real `ComposedEnvironmentRuntime.mac_updates` supplier handoff remains open. It must expose one actual per-store Mac update service and bind that same instance to the endpoint, presence checks, and update routes. Updates return unavailable until that service is bound. The default production backend/environment dependency table also remains a supplier-owned gate.
+`ComposedEnvironmentRuntime.mac_updates` exposes the environment's one Mac update service. Startup binds that same instance to the executor, presence checks, and update routes. Update reports pass strict generated decoding before the current health snapshot and synchronous service call. The default production backend/environment dependency table remains a supplier-owned gate.
 
 ## Stop and recovery ownership
 

@@ -19,6 +19,9 @@ import {
 } from '../conversation/snapshot/composition.ts';
 import { write_ticket_conversation_start } from '../tickets/data/index.ts';
 import { create_production_conversation_core } from '../lifecycle/production.ts';
+import { create_test_environment_runtime } from '../environments/testing/composition.ts';
+import { MacUpdateService } from '../environments/updates/mac/service.ts';
+import type { MacUpdateServiceContract } from '../environments/updates/mac/contracts.ts';
 
 const incarnation = '11111111-1111-4111-8111-111111111111';
 test('configured restart adopts before reconciliation and Mac locality never selects a local child', async () => {
@@ -116,6 +119,7 @@ test('configured restart adopts before reconciliation and Mac locality never sel
   let core!: SqliteProcessConversationSystem, endpoint!: VpsExecutor;
   let context!: ConversationCompositionContext,
     bound!: ReturnType<typeof compose_production_backends>;
+  let mac_updates!: MacUpdateServiceContract;
   let server: StartedServer | undefined;
   try {
     server = await startServer({
@@ -146,12 +150,26 @@ test('configured restart adopts before reconciliation and Mac locality never sel
         return core;
       },
       createBackendServices: () => bound.http,
+      async createEnvironments(current) {
+        const runtime = await create_test_environment_runtime(current);
+        mac_updates = runtime.mac_updates;
+        return runtime;
+      },
     });
     expect(core.runtime_turn('kept')?.token.turn_number).toBe(1);
     expect(core.conversation_state('kept')?.child).toBeInstanceOf(MacRemoteChild);
     expect(endpoint.presence.is_present()).toBe(false);
     expect(bound.http.machine_catalog()).toBe(endpoint.catalog);
     expect(bound.stall_sources()).toHaveLength(3);
+    expect(mac_updates).toBeInstanceOf(MacUpdateService);
+    expect(endpoint.updates).toBe(mac_updates);
+    const check = vi.spyOn(mac_updates, 'check');
+    expect(endpoint.presence.update_check?.()).toEqual({
+      schema_version: 1,
+      target: null,
+      prefetch: null,
+    });
+    expect(check).toHaveBeenCalledTimes(1);
     const away_ticket = create(context.database, { locale: 'macos' });
     const away = new ResolvedConversationStart({
       ...start,
