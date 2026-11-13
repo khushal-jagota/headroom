@@ -514,7 +514,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
           : [error];
     if (
       !retained ||
-      expected.length !== 2 ||
+      expected.length !== 3 ||
       errors.length < 3 ||
       ![...errors, ...expected].every((error) => {
         const causes = leaves(error);
