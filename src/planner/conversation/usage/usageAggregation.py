@@ -97,6 +97,7 @@ class UsageAggregator:
             record["totals"],
             record["reportedCostUsd"],
             self.options.get("priceOverrides"),
+            cacheCreation1hTokens=record.get("cacheCreation1hTokens", 0),
         )
         bucket["totals"] = addTotals(bucket["totals"], record["totals"])
         bucket["costUsd"] += priced["costUsd"]

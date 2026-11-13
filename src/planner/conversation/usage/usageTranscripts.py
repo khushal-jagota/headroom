@@ -95,7 +95,17 @@ def parseClaudeLine(line: str) -> UsageRecord | None:
         None if messageId is None and requestId is None else f"{messageId or ''}:{requestId or ''}"
     )
     cost = record.get("costUSD")
+    cacheCreation = usage.get("cache_creation")
+    cacheCreation1hTokens = (
+        min(
+            positiveInt(usage.get("cache_creation_input_tokens")),
+            positiveInt(cacheCreation.get("ephemeral_1h_input_tokens")),
+        )
+        if isinstance(cacheCreation, dict)
+        else 0
+    )
     return dict(
+        **({"cacheCreation1hTokens": cacheCreation1hTokens} if cacheCreation1hTokens else {}),
         provider="claude",
         timestampMs=timestampMs,
         model=model,

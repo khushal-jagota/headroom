@@ -11,7 +11,7 @@ from typing import Any
 from .usageTranscriptReader import GUARD_LENGTH
 from .usageTranscripts import finiteNumber
 
-USAGE_SCAN_CACHE_VERSION = 3
+USAGE_SCAN_CACHE_VERSION = 4
 ScanCache = dict[str, dict[str, Any]]
 CachedFile = dict[str, Any]
 INVALID = object()
@@ -44,6 +44,7 @@ def encodeScanCache(cache: ScanCache) -> dict[str, Any]:
             totals["reasoningTokens"],
             record["dedupeKey"],
             record["reportedCostUsd"],
+            record.get("cacheCreation1hTokens", 0),
         ]
 
     files: dict[str, Any] = {}
@@ -126,7 +127,7 @@ def decodeScanCache(document: Any) -> ScanCache:
     def decodeRecords(rows: list[Any], provider: str) -> list[dict[str, Any]] | None:
         records = []
         for row in rows:
-            if not isinstance(row, list) or len(row) < 10:
+            if not isinstance(row, list) or len(row) < 11:
                 return None
             (
                 timestampMs,
@@ -139,19 +140,28 @@ def decodeScanCache(document: Any) -> ScanCache:
                 reasoning,
                 dedupeKey,
                 reportedCostUsd,
-            ) = row[:10]
+                cacheCreation1hTokens,
+            ) = row[:11]
             model = tableValue(models, modelIndex)
             if (
-                not finiteNumber(timestampMs)
+                not safeInteger(cacheCreation1hTokens)
+                or cacheCreation1hTokens < 0
+                or not finiteNumber(timestampMs)
                 or model is None
                 or not all(
                     finiteNumber(value)
                     for value in (uncached, cached, cacheCreation, output, reasoning)
                 )
+                or cacheCreation1hTokens > cacheCreation
             ):
                 return None
             records.append(
                 dict(
+                    **(
+                        {"cacheCreation1hTokens": cacheCreation1hTokens}
+                        if cacheCreation1hTokens
+                        else {}
+                    ),
                     provider=provider,
                     timestampMs=timestampMs,
                     model=model,

@@ -58,7 +58,14 @@ def test_restores_records_unchanged() -> None:
     """restores records unchanged"""
     original = cacheWith(
         [
-            ("/a.jsonl", 100, [record(), record(dedupeKey="msg_2:", model="claude-opus-5")]),
+            (
+                "/a.jsonl",
+                100,
+                [
+                    record(),
+                    record(dedupeKey="msg_2:", model="claude-opus-5", cacheCreation1hTokens=7),
+                ],
+            ),
             ("/b.jsonl", 200, [record(sessionId="session-b", reportedCostUsd=1.5)]),
         ]
     )
@@ -110,7 +117,7 @@ def test_drops_an_entry_whose_guard_length_is_outside_the_supported_range() -> N
 def test_rejects_a_document_from_the_previous_cache_version() -> None:
     """rejects a document from the previous cache version"""
     encoded = encodeScanCache(cacheWith([("/a.jsonl", 100, [record()])]))
-    encoded["version"] = 2
+    encoded["version"] = 3
     assert len(decodeScanCache(roundtrip(encoded))) == 0
 
 
