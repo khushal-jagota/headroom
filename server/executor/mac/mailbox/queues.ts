@@ -8,6 +8,8 @@ import { OUTBOX_RETRY_INITIAL_SECONDS, OUTBOX_RETRY_MAX_SECONDS } from '../confi
 import { mailbox_failure as failure_name } from './diagnostics.ts';
 import type { CanonicalCatalogResult, QueueDependencies } from './contracts.ts';
 import { MailboxLifetime, MailboxCleanupFailure } from './lifetime.ts';
+import { is_shutdown_business_cancellation } from '../../../conversation/shutdown.ts';
+import { MailboxRunCancelled } from './contracts.ts';
 function storage_error(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
   return (
@@ -17,6 +19,7 @@ function storage_error(error: unknown): boolean {
 export class MacCommandQueues {
   private readonly dependencies: QueueDependencies;
   private readonly lifetime: MailboxLifetime;
+  private readonly invocation = new AbortController();
   private readonly queues = new Map<string, MailboxCommand[]>();
   private replaying: Promise<void> | undefined;
   private replay_pending = false;
@@ -132,10 +135,11 @@ export class MacCommandQueues {
     let delay = OUTBOX_RETRY_INITIAL_SECONDS;
     while (this.lifetime.alive) {
       try {
-        await this.dependencies.runner.run(command.child_command!);
+        await this.dependencies.runner.run(command.child_command!, this.invocation.signal);
         this.dependencies.result_finished();
         return;
       } catch (error) {
+        if (this.invocation.signal.aborted && is_shutdown_business_cancellation(error)) return;
         if (!this.lifetime.alive) throw error;
         this.dependencies.journal.assert_healthy();
         console.warn(
@@ -209,6 +213,8 @@ export class MacCommandQueues {
   stop(options: StopOptions): Promise<void> {
     this.queues.clear();
     this.replay_pending = false;
+    this.lifetime.seal();
+    this.invocation.abort(new MailboxRunCancelled(options));
     return this.lifetime.stop(options);
   }
   settled(): Promise<void> {

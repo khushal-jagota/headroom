@@ -101,13 +101,12 @@ export class MacMailbox {
         return Promise.allSettled([bounded]).then((results) => results[0]!);
       };
       const observations = [
+        observe(() => this.queues.stop(options)),
         observe(() => this.poll.stop(options)),
         observe(() => this.reporter.stop(options)),
       ];
       void (async () => {
         const first = await Promise.allSettled([this.startup, this.poll.settled()]);
-        // A committed poll handoff can still admit its queued commands until here.
-        observations.push(observe(() => this.queues.stop(options)));
         const last = await Promise.allSettled([this.queues.settled(), this.reporter.settled()]);
         const errors = new Set(
           [...first, ...last].flatMap((result) =>

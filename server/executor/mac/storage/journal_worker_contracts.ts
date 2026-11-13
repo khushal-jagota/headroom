@@ -11,12 +11,18 @@ export type JournalAction =
   | { operation: 'open' | 'poll_cursor' | 'unpublished' | 'shrink_to_tombstones' | 'select_report' }
   | { operation: 'report_feedback'; selection: number; settled_ids: readonly string[] | null }
   | { operation: 'lower_poll_cursor'; high: bigint; cursor_at_lease: bigint }
-  | { operation: 'record_poll_reply'; input: number; incarnation: string; after: bigint }
+  | {
+      operation: 'record_poll_reply';
+      input: number;
+      incarnation: string;
+      after: bigint;
+      decoded?: true;
+    }
   | { operation: 'result_of' | 'mark_outputs_published'; command_id: string }
   | { operation: 'finish'; command_id: string; input: number; owed: boolean }
   | { operation: 'unreported'; limit: number }
   | { operation: 'mark_reported'; command_ids: readonly string[] }
-  | { operation: 'input_start'; text: boolean }
+  | { operation: 'input_start'; text: boolean; limit: number }
   | { operation: 'input_push'; input: number; chunk: ArrayBuffer | string }
   | { operation: 'input_end' | 'input_drop'; input: number }
   | { operation: 'cursor_next' | 'cursor_close'; cursor: number }
@@ -27,7 +33,7 @@ type Diagnostic =
   | { tag: 'object'; entries: [string, Diagnostic][] }
   | { tag: 'bytes'; value: Uint8Array; buffer: boolean }
   | { tag: 'scalar'; value: unknown };
-function pack(value: unknown): Diagnostic {
+export function pack(value: unknown): Diagnostic {
   if (value instanceof JsonNumber)
     return { tag: 'numeric', kind: value.kind, integer: value.integer, value: value.value };
   if (value instanceof Uint8Array)
@@ -40,7 +46,7 @@ function pack(value: unknown): Diagnostic {
     };
   return { tag: 'scalar', value };
 }
-function unpack(value: Diagnostic): unknown {
+export function unpack(value: Diagnostic): unknown {
   switch (value.tag) {
     case 'numeric':
       return Object.freeze(
@@ -80,6 +86,7 @@ export interface CursorRowDescriptor {
   command_id: string;
   command?: ReaderDescriptor;
   result?: ReaderDescriptor;
+  decoded?: ReturnType<typeof pack>;
 }
 export type JournalWorkerMessage =
   | { kind: 'ready' }

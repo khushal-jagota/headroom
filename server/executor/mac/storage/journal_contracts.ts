@@ -41,6 +41,10 @@ export interface FreshCommandCursor extends JournalCursor<FreshJournalCommand> {
   /** Original reply command count, including duplicates. */
   readonly command_count: number;
 }
+/** Worker-decoded commands. Closing after stop leaves undispatched records for recovery. */
+export interface DecodedCommandCursor extends JournalCursor<MailboxCommand> {
+  readonly command_count: number;
+}
 export interface UnpublishedJournalCommand extends FreshJournalCommand {
   result: CanonicalReader;
 }
@@ -63,6 +67,11 @@ export interface AsyncCommandJournal extends OutboxCleanup {
     incarnation: string,
     polled_after: bigint,
   ): Promise<FreshCommandCursor>;
+  record_decoded_poll_reply(
+    bytes: Uint8Array | string,
+    incarnation: string,
+    polled_after: bigint,
+  ): Promise<DecodedCommandCursor>;
   result_of(command_id: string): Promise<CanonicalReader | null>;
   finish(command_id: string, result: Uint8Array | string, outputs_owed: boolean): Promise<void>;
   /** The reader has a separate owner; this journal's readers share its ordered operation chain. */
