@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import gzip
+import hashlib
 import json
 import os
 import shutil
@@ -21,6 +22,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from scripts import check_ios_compatibility as ios_checks
 from tests.compare.direct import unit21_schema_seed
 from tests.support.synthetic_homes import create_synthetic_homes
 from tests.support.update_apps import build_app, rewrite_artifact_digest
@@ -44,10 +46,177 @@ from planner.environments.update_artifacts import (
     hash_archive,
 )
 from planner.environments.update_install import require_exact_schema_frontier, schema_change_pending
+from planner.ios_compatibility.policy import MINIMUM_SUPPORTED_BUILD
 
 ROOT = Path(__file__).resolve().parents[3]
 SHA = "a" * 40
 FIXTURE_TIME_NS = 1_700_000_000_125_000_000
+
+
+def _unit_boundaries(
+    root: Path,
+    observed: dict[str, Any],
+    node: str,
+    environment: dict[str, str],
+    literal: str,
+) -> dict[str, Any]:
+    """Inert layout markers prove routing only, never interpreter/CLI/runtime success."""
+    began = time.perf_counter()
+    layout = root / "unit-layout"
+    for name in (
+        "bin/panels",
+        "bin/panels-launcher",
+        ".venv/bin/python",
+    ):
+        path = layout / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# inert structural marker, never executed\n")
+        path.chmod(0o700)
+    (layout / "runtime").mkdir()
+    routes = []
+    # Other classifier routes already belong to the prerequisite Vitest case.
+    for contract, payload, missing, expected in (
+        ({"version": 3}, {"version": 3}, False, "unsupported runtime contract version"),
+        ({"version": 1}, {"version": 1}, True, ".venv/bin/python"),
+    ):
+        (layout / "manifest.json").write_text(
+            json.dumps(
+                dict(
+                    format="panels-app-v1",
+                    app_sha=SHA,
+                    source_digest="b" * 64,
+                    artifact_digest="c" * 64,
+                    runtime_contract=contract,
+                )
+            )
+        )
+        (layout / "runtime/contract.json").write_text(json.dumps(payload))
+        if missing:
+            (layout / ".venv/bin/python").unlink()
+        result = subprocess.run(
+            [
+                node,
+                "--input-type=module",
+                "-e",
+                observed["classifier_source"],
+                str(layout),
+                "",
+            ],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        assert result.returncode == 1 and result.stdout == ""
+        assert result.stderr.startswith("Panels runtime classification failed: ")
+        assert expected in result.stderr
+        routes.append(dict(expected=expected, exit_code=result.returncode))
+    assert all(observed["context"].values()), observed["context"]
+    refusal = subprocess.run(
+        [
+            node,
+            str(ROOT / "server/stalls/watchdog_main.ts"),
+            str(root / "unit-empty.sqlite"),
+            str(root / "unit-watchdog"),
+        ],
+        env={
+            **environment,
+            "PLAN_CONFIG_PATH": str(root / "unit-config.yaml"),
+            "PLAN_TEST_MODE": "1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    assert (refusal.returncode, refusal.stdout, refusal.stderr) == (
+        1,
+        "",
+        "watchdog provider command is unavailable in test mode\n",
+    )
+    managed = observed["managed"]
+    assert "WorkingDirectory=" not in managed and "TimeoutStopSec=90\n" in managed
+    assert "RuntimeDirectory=panels-proof\nRuntimeDirectoryMode=0700\n" in managed
+    assert managed.count("unset NODE_OPTIONS NODE_PATH") == 2
+    assert managed.count("in LD_*)") == 2
+    assert managed.count('"%t/panels-proof"') == 2
+    assert "$$runtime" in managed and "$$1" in managed and "unit $$%% " in managed
+    actions = [
+        line.partition("=")[2]
+        for line in managed.splitlines()
+        if line.startswith(("ExecStart=", "ExecStop="))
+    ]
+    assert len(actions) == 2
+    start, stop = actions
+    assert "classify_installed_runtime" in start and "--input-type=module -e" in start
+    assert "classify_installed_runtime" not in stop
+    assert all(
+        marker in stop
+        for marker in (
+            "stop-capability.json",
+            "MAINPID",
+            "supervisor_pid",
+            "/proc/",
+            "/cwd/server/lifecycle/stop_main.ts",
+        )
+    )
+    assert "unit $$%% " not in stop
+    escaped = (
+        literal.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("$", "\\$")
+        .replace("`", "\\`")
+    )
+    for output, environment_file in (
+        (managed, observed["managed_environment"]),
+        (observed["watchdog"]["service"], observed["watchdog"]["environment_file"]),
+    ):
+        assert 'EnvironmentFile="' + environment_file["path"] + '"\n' in output
+        assert 'UNIT_LITERAL="' + escaped + '"\n' in environment_file["contents"]
+        assert (
+            'PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS="1"\n' in environment_file["contents"]
+        )
+        assert (
+            f'PLAN_CONFIG_PATH="{root / "unit-config.yaml"}"\n'
+            in environment_file["contents"]
+        )
+    for variable, name in (
+        ("PLAN_SERVER_CONTROL_SOCKET", "control.sock"),
+        ("PLAN_SERVER_LIFECYCLE_LEASE_PATH", "unit.lock"),
+    ):
+        assert (
+            f'{variable}="/nonexistent/panels-unit-proof-{root.name}/{name}"\n'
+            in observed["managed_environment"]["contents"]
+        )
+    watchdog = observed["watchdog"]
+    assert "TimeoutStartSec=300\n" in watchdog["service"]
+    assert "server/stalls/watchdog_main.ts" in watchdog["service"]
+    for directive in (
+        "OnBootSec=60s",
+        "OnUnitActiveSec=30s",
+        "AccuracySec=5s",
+        "Unit=panels-typescript-stall-watchdog.service",
+    ):
+        assert directive + "\n" in watchdog["timer"]
+    return dict(
+        routes=routes,
+        context=observed["context"],
+        watchdog_refusal=refusal.stderr,
+        rendered_sha256={
+            name: hashlib.sha256(text.encode()).hexdigest()
+            for name, text in {
+                "managed": managed,
+                "managed_environment": observed["managed_environment"]["contents"],
+                "service": watchdog["service"],
+                "timer": watchdog["timer"],
+                "watchdog_environment": watchdog["environment_file"]["contents"],
+            }.items()
+        },
+        producer_milliseconds=observed["milliseconds"],
+        seconds=time.perf_counter() - began,
+        scope="structural/local only",
+    )
 
 
 def _admission_group_proof(root: Path, environment: dict[str, str], node: str) -> dict[str, Any]:
@@ -582,6 +751,111 @@ def _python_archive_result(archive: Path, destination: Path, expected_sha: str) 
                         path.chmod(0o700)
 
 
+def _ios_fixture(root: Path) -> dict[str, Any]:
+    began = time.perf_counter()
+    source = root / "ios-source"
+    included = sorted(
+        Path(name)
+        for name in (
+            "server/package.json",
+            "server/package-lock.json",
+            "server/core/database/application_schema.json",
+            "server/skills/cli_commands.json",
+            "server/environments/release/migration_graph.json",
+            "src/planner/conversation/backends/hermes_acp_extension.py",
+            "src/planner/conversation/backends/hermes_model_catalog.py",
+            "server/ios_compatibility/check.ts",
+            "server/ios_compatibility/policy.ts",
+            "server/skills/example.ts",
+            "server/executor/wire.generated.ts",
+            "server/a/x.ts",
+            "server/a-z.ts",
+            "server/\ue000.ts",
+            "server/\U00010000.ts",
+        )
+    )
+    excluded = (
+        "server/nested/node_modules/ignored.ts",
+        "server/nested/tests/ignored.ts",
+        "server/nested/testing/ignored.ts",
+        "server/example.test.ts",
+        "server/test_host.ts",
+        "server/vitest.config.ts",
+        "server/executor/tools/ignored.ts",
+    )
+    for name in [*included, *(Path(name) for name in excluded)]:
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"{}\n" if path.suffix == ".json" else b"# inert hash fixture\n")
+    policy = source / "src/planner/ios_compatibility/policy.py"
+    policy.parent.mkdir(parents=True)
+    policy.write_text(f"MINIMUM_SUPPORTED_BUILD = {MINIMUM_SUPPORTED_BUILD}\n")
+    python_contract = source / "src/planner/core/contract.py"
+    python_contract.parent.mkdir(parents=True)
+    wire = source / "server/executor/wire.generated.ts"
+    wire_sources = [
+        "export interface Wire { body: string }\n",
+        "export interface Wire { body: string; kind: string }\n",
+        "export interface Wire { body: string; kind: string }\n// comment only\n",
+    ]
+    digests, python_digests = [], []
+    for index, content in enumerate(wire_sources):
+        wire.write_text(content)
+        python_contract.write_text(
+            "FIELDS = ('body',)\n"
+            if index == 0
+            else "FIELDS = ('body', 'kind')\n" + ("# comment only\n" if index == 2 else "")
+        )
+        digest = hashlib.sha256()
+        for path in included:
+            digest.update(path.as_posix().encode() + b"\0" + (source / path).read_bytes() + b"\0")
+        digests.append(digest.hexdigest())
+        python_digests.append(ios_checks.contract_digest(source))
+    assert len(set(digests)) == len(set(python_digests)) == 3
+    minimum = ios_checks.minimum_build(source)
+    review = dict(
+        contract_sha256=digests[-1],
+        oldest_supported_build=minimum,
+        decision="compatible",
+        evidence="Synthetic private checker fixture; no device or publication approval.",
+    )
+    (root / "ios-fixture.json").write_text(
+        json.dumps(dict(wire_sources=wire_sources, review=review))
+    )
+    review_file = source / ios_checks.REVIEW
+    review_file.parent.mkdir()
+    outcomes: list[str | None] = []
+    for digest_value, floor in (
+        (python_digests[-1], minimum),
+        ("0" * 64, minimum),
+        (python_digests[-1], minimum + 1),
+    ):
+        review_file.write_text(
+            json.dumps(
+                {
+                    **review,
+                    "contract_sha256": digest_value,
+                    "oldest_supported_build": floor,
+                }
+            )
+        )
+        try:
+            ios_checks.check(source)
+        except ValueError as error:
+            outcomes.append(str(error))
+        else:
+            outcomes.append(None)
+    wire.write_text(wire_sources[0])
+    return dict(
+        paths=[path.as_posix() for path in included],
+        digests=digests,
+        python_digests=python_digests,
+        checks=outcomes,
+        minimum=minimum,
+        seconds=time.perf_counter() - began,
+    )
+
+
 def test_unit21_release_identity_archive_and_frontier(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
@@ -679,6 +953,7 @@ def test_unit21_release_identity_archive_and_frontier(
         "server/lifecycle/managed_main.ts",
         "server/lifecycle/application.ts",
         "server/lifecycle/stop_main.ts",
+        "server/stalls/watchdog_main.ts",
         "server/conversation/usage/usageWorker.ts",
         "src/planner/conversation/backends/hermes_acp_extension.py",
         "src/planner/conversation/backends/hermes_model_catalog.py",
@@ -729,6 +1004,7 @@ def test_unit21_release_identity_archive_and_frontier(
     else:
         raise AssertionError("the combined invalid contract/tree must refuse")
     assert invalid_order.startswith("invalid runtime contract:")
+    ios_expected = _ios_fixture(tmp_path)
     native_sentinel = tmp_path / "native-outside-sentinel"
     native_sentinel.write_bytes(b"outside native write sentinel\n")
     native_root = tmp_path / "native-link-provider"
@@ -742,13 +1018,15 @@ def test_unit21_release_identity_archive_and_frontier(
     launcher = tmp_path / "probe.mjs"
     launcher.write_text(
         "const{release_parity,native_loader_parity,admission_rules_parity,builder_parity,"
-        "hostile_native_parity}="
+        "unit_boundaries_parity,hostile_native_parity}="
         "await import(process.argv[2]);"
         "const result=await release_parity(process.argv[3],JSON.parse(process.argv[4]));"
         "result.native_loader=await native_loader_parity(JSON.parse(process.argv[5]));"
         "result.admission=await admission_rules_parity("
         "process.argv[3],JSON.parse(process.argv[6]));"
         "result.builder=await builder_parity(process.argv[3],JSON.parse(process.argv[7]));"
+        "result.units=await unit_boundaries_parity(process.argv[3],{...process.env},"
+        "JSON.parse(process.argv[8]));"
         "result.hostile_native=await hostile_native_parity(process.argv[3]);"
         "console.log(JSON.stringify(result));"
     )
@@ -775,6 +1053,9 @@ def test_unit21_release_identity_archive_and_frontier(
         "PLAN_SERVER_LIFECYCLE_LEASE_PATH": "lifecycle.lock",
     }.items():
         env[key] = str(tmp_path / relative_path)
+    # loadConfig requires these configured directory roots to exist before resolution.
+    for key in ("PLAN_WORKSPACE_ROOT", "PLAN_TICKET_SCRATCH_ROOT"):
+        Path(env[key]).mkdir()
     cli_relative = "server/cli/main.ts"
     # These real bytes prove layout only; this deliberately small source cannot execute the CLI.
     with patch.dict(os.environ, env, clear=True):
@@ -834,6 +1115,7 @@ def test_unit21_release_identity_archive_and_frontier(
         == 0o750
     )
     builder_spec = dict(sha=build_sha, cli=cli_relative, source_paths=source_paths)
+    unit_literal = "space ' \" \\ $HOME %t\nlast"
     node_started = time.perf_counter()
     process = subprocess.Popen(
         [
@@ -845,6 +1127,7 @@ def test_unit21_release_identity_archive_and_frontier(
             json.dumps(loader_input),
             json.dumps(admission_spec),
             json.dumps(builder_spec),
+            json.dumps(unit_literal),
         ],
         cwd=ROOT,
         env=env,
@@ -871,6 +1154,21 @@ def test_unit21_release_identity_archive_and_frontier(
     node_seconds = time.perf_counter() - node_started
     assert process.returncode == 0, stderr
     actual: dict[str, Any] = json.loads(stdout)
+    ios_actual = actual["ios"]
+    assert ios_actual["paths"] == ios_expected["paths"]
+    assert ios_actual["digests"] == ios_expected["digests"]
+    assert ios_actual["minimum"] == ios_expected["minimum"]
+    assert (
+        ios_actual["checks"]
+        == ios_expected["checks"]
+        == [
+            None,
+            "Native-facing contracts changed. Review iOS compatibility "
+            "and refresh the source-bound review.",
+            "Review must name the policy's oldest supported build.",
+        ]
+    )
+    actual["units"] = _unit_boundaries(tmp_path, actual["units"], node, env, unit_literal)
     assert actual["native_tree_admission"] == "app contains a symlink outside its root"
     assert native_sentinel.read_bytes() == b"outside native write sentinel\n"
     assert (
@@ -1077,6 +1375,12 @@ def test_unit21_release_identity_archive_and_frontier(
                     "producer_trees": actual["producer_trees"],
                     "node_v2_protocol": actual["node_protocol"],
                     "frontier": actual["frontier"],
+                    "ios_compatibility": {
+                        **ios_actual,
+                        "python_seconds": ios_expected["seconds"],
+                        "python_scoped_digests": ios_expected["python_digests"],
+                        "review_fixture_only": True,
+                    },
                     "native_static": {
                         "loader_equal": True,
                         "outside_target": actual["native_tree_admission"],
@@ -1085,6 +1389,7 @@ def test_unit21_release_identity_archive_and_frontier(
                     "admission_rules": actual["admission"],
                     "admission_group": group_proof,
                     "source_only_builder": built,
+                    "unit_boundaries": actual["units"],
                     "public_cli_executed": False,
                     "hostile_native": hostile_native,
                     "accepted_restrictions": [

@@ -123,6 +123,7 @@ export async function extract_app_archive(
   expected_sha: string,
   child_processes: OwnedChildProcesses,
   read_free_space: (path: string) => Promise<bigint> = filesystem_free_bytes,
+  execution?: ReleaseExecution,
 ): Promise<AppManifest> {
   return (await extract_archive(
     archive,
@@ -130,6 +131,7 @@ export async function extract_app_archive(
     { purpose: 'application', archive_sha256, expected_sha },
     child_processes,
     read_free_space,
+    execution,
   )) as AppManifest;
 }
 export async function extract_git_export(

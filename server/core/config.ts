@@ -103,6 +103,21 @@ export function parseConfigBoolean(
 export function testModeFromEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
   return parseConfigBoolean(env.PLAN_TEST_MODE ?? '0', 'test_mode');
 }
+/** Lifecycle consumers share raw inputs and a copy that does not forward the listener. */
+export function lifecycle_launch_settings(env: Readonly<NodeJS.ProcessEnv>) {
+  const environment = Object.fromEntries(
+    Object.entries(env).filter((pair): pair is [string, string] => pair[1] !== undefined),
+  );
+  const listener_fd = env.PLAN_SERVER_LISTENER_FD;
+  delete environment.PLAN_SERVER_LISTENER_FD;
+  return {
+    environment,
+    config_path: env.PLAN_CONFIG_PATH,
+    control_socket_path: env.PLAN_SERVER_CONTROL_SOCKET,
+    lease_path: env.PLAN_SERVER_LIFECYCLE_LEASE_PATH,
+    listener_fd,
+  };
+}
 /** Account launch inputs are environment-only, shared by native hosts and discovery. */
 export function provider_launch_settings(env: Readonly<NodeJS.ProcessEnv> = process.env) {
   return {
