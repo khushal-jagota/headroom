@@ -362,3 +362,10 @@ Runtime imports resolve their files from the pinned package entrypoint. Relative
 `node_modules` imports supply those same official types without a duplicate protocol
 interface. Pin checks cover the consumed internal symbols. Any SDK upgrade requires
 a new review of `conversation/backends/hermes_acp/client.ts` before approval.
+
+`executor/vps_presence.ts` supplies the lease cache and work-route incarnation fence.
+Its constructor receives the invocation database, mailbox, and change signal.
+It owns its contact flush, presence timer, drain waits, and started callbacks.
+Composition supplies the update, replacement, and returned callbacks before requests start.
+Stop seals new work and observes the shared absolute deadline. `settled()` joins actual work and cleanup.
+The service does not close its supplied database or mailbox.
