@@ -45,6 +45,7 @@ export function registerReadFunction(
 
 const BUSY_TIMEOUT_MS = 5000;
 const AUXILIARY_BUSY_TIMEOUT_MS = 500;
+let nextSavepoint = 0;
 const maintenance = new WeakMap<Database, (mode: 'PASSIVE' | 'TRUNCATE') => CheckpointResult>();
 function integer(
   value: number,
@@ -140,6 +141,36 @@ function scope<T, Sql extends ReadSql = TransactionSql>(
         ...reader,
         run: (sql: string, parameters?: SqlParameters) =>
           invoke<BetterSqlite3.RunResult>(prepare(sql), 'run', parameters),
+        savepoint<T>(nested: (tx: TransactionSql) => T): T {
+          if (!active) throw new TypeError('database SQL scope is no longer active');
+          if (!connection.inTransaction)
+            throw new TypeError('savepoint requires a write transaction');
+          const name = `panels_scope_${++nextSavepoint}`;
+          connection.exec(`SAVEPOINT ${name}`);
+          try {
+            const result = scope<T, TransactionSql>(
+              connection,
+              true,
+              nested,
+              auxiliary,
+              safeIntegers,
+            );
+            connection.exec(`RELEASE SAVEPOINT ${name}`);
+            return result;
+          } catch (error) {
+            const errors: unknown[] = [error];
+            for (const command of [`ROLLBACK TO SAVEPOINT ${name}`, `RELEASE SAVEPOINT ${name}`]) {
+              try {
+                connection.exec(command);
+              } catch (cleanup) {
+                errors.push(cleanup);
+              }
+            }
+            if (errors.length > 1)
+              throw new AggregateError(errors, 'Savepoint rollback or release failed');
+            throw error;
+          }
+        },
         ...(auxiliary
           ? {
               incrementalVacuum(pages: number): void {

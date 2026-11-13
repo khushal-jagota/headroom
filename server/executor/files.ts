@@ -1,6 +1,6 @@
-/** Linux procfs capabilities: byte and namespace work is asynchronous; metadata reads are bounded. */
-import { constants, lstatSync } from 'node:fs';
-import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
+/** Linux procfs capabilities: async byte work, retained parents and bounded publication. */
+import { constants, lstatSync, renameSync } from 'node:fs';
+import { link, lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -394,7 +394,7 @@ export async function verified_version(
     throw error;
   }
 }
-/** Synchronous metadata only. Byte work and potentially slow namespace changes stay outside writers. */
+/** Synchronous metadata only. Byte work stays outside writers. */
 export function file_version_at(parent: DirectoryHandle, leaf: string): FileVersion | null {
   try {
     const status = lstatSync(at(parent, leaf), { bigint: true });
@@ -411,6 +411,23 @@ export async function rename_at(
   target_leaf: string,
 ): Promise<void> {
   await rename(at(from, source_leaf), at(to, target_leaf));
+}
+/** Publication only: caller retains parents and pins overwritten inodes before its writer. */
+export function rename_at_sync(
+  from: DirectoryHandle,
+  source_leaf: string,
+  to: DirectoryHandle,
+  target_leaf: string,
+): void {
+  renameSync(at(from, source_leaf), at(to, target_leaf));
+}
+/** link() refuses an occupied hold name. No target bytes are copied or opened. */
+export async function link_at(
+  parent: DirectoryHandle,
+  source_leaf: string,
+  hold_leaf: string,
+): Promise<void> {
+  await link(at(parent, source_leaf), at(parent, hold_leaf));
 }
 export async function unlink_at(
   parent: DirectoryHandle,

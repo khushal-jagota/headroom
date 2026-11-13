@@ -1111,10 +1111,8 @@ export class ConversationStore
   ): AcceptedRecordEvent<T> {
     return this.#write((tx) => {
       let written: readonly StoredConversationEvent[] = [];
-      let taken = false;
       const take = (): T => {
         const accepted = synchronously(() => writer(tx));
-        taken = true;
         written = accepted.written;
         return accepted.result;
       };
@@ -1122,11 +1120,8 @@ export class ConversationStore
         in_commit === null
           ? { result: take(), taken: true, written }
           : synchronously(() => in_commit(tx, take));
-      if (taken && !outcome.taken) {
-        // Unit 22 must settle its savepoint acceptance route against the write door.
-        // Until then a refusal cannot commit an event that take already wrote.
-        throw new Error('commit participant refused after taking the conversation event');
-      }
+      // The executor participant rolls back its domain savepoint before it records
+      // a refusal receipt. A take can therefore run without a committed event.
       const result = { ...outcome, written: outcome.taken ? written : [] };
       return {
         value: result,
