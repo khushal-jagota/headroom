@@ -243,6 +243,8 @@ def test_unit22_mac_http(tmp_path: Path, record_property: Any) -> None:
         release_poll = asyncio.Event()
 
         async def handle(request: web.Request) -> web.Response:
+            if request.path == "/early-response":
+                return web.Response(text="early")
             if request.path == "/hold-poll":
                 await release_poll.wait()
                 return web.Response(text="poll complete")

@@ -142,6 +142,9 @@ export class HttpSessions {
       total: ReturnType<typeof setTimeout> | undefined,
       stall: ReturnType<typeof setTimeout> | undefined;
     const fail = (error: Error) => {
+      // An early response can already resolve result while its producer waits.
+      // Reject the public waiter independently of that inner response promise.
+      reject(error);
       request.destroy(error);
       response?.destroy(error);
     };
@@ -189,6 +192,7 @@ export class HttpSessions {
         socket.once('timeout', read_timeout);
       }
     });
+    request.once('error', reject);
     const result = new Promise<T>((resolve, reject) => {
       request.once('error', reject);
       request.once('response', (incoming) => {
