@@ -1,4 +1,4 @@
-# Mac executor file foundation
+# TypeScript Mac executor
 
 `host/service.ts` composes the standalone Mac invocation, including its shared child owners,
 runner, mailbox, gateway, HTTP, lease, live sender, durable sender, skills, catalog, and storage.
@@ -37,7 +37,7 @@ The fresh Python comparison checks bytes, exits, and cleanup. Actual macOS conse
 
 The Mac executor uses `FilesService` for byte copies, hashes, directory creation, and durable flushes.
 Each caller owns its service instance and must pass the shared absolute shutdown deadline to `stop()`.
-The later host can retain separate instances for independent conversation transfers. This slice adds no worker pool.
+The host retains separate file services for conversation transfers and runtime updates.
 
 The public methods return promises:
 
@@ -107,7 +107,7 @@ Directory creation retains Python's stricter parent-flush sequence.
 Normal failure cleanup removes each private `.tmp-` entry through its retained directory.
 This file helper does not perform a startup sweep after process death.
 Python's outbox startup calls `_sweep_blobs` at `mac_outbox.py:183-191` and defines it at `mac_outbox.py:542-560`.
-The later storage slice must preserve that sweep for spool blobs.
+`OutboxStore` sweeps its spool blobs at startup and after durable acknowledgements.
 That sweep does not cover temporary files under other artifact or update directories.
 No blanket crash-cleanup claim applies to those directories.
 
@@ -129,11 +129,12 @@ The separate native session must check each native boundary below with synthetic
 | Native flags                                     | Check Darwin values, including `O_NONBLOCK`, `O_DIRECTORY`, `O_NOFOLLOW`, and `O_CLOEXEC`.                                                                                |
 | Packaged Koffi                                   | Verify that the package contains and loads its arm64 Darwin addon, with no external native library beyond the OS library.                                                 |
 
-The existing `server/skills/sources.ts` declaration remains outside this new platform module.
-Its older fixed `openat` declaration does not create regular files here. This slice does not claim to repair that separate publisher.
-The later skill-publication slice must retain or address its own native requirements explicitly.
+The shared `server/skills/sources.ts` publisher remains outside this platform module.
+Its `openat` declaration is variadic and passes an explicit promoted `int` mode argument.
 
 The TypeScript default state directory is `~/Library/Application Support/Panels/executor-typescript`.
 The Python directory remains `~/Library/Application Support/Panels/executor`.
 The Manager requested this default-root difference. Explicit configuration refuses the Python root and its descendants, including symlink aliases.
-The new app, LaunchAgent, package, provider homes, and real-Mac installation remain later slices.
+`packaging/build.ts` produces the runtime archive and unsigned app and LaunchAgent assets.
+The [installation document](../../../ops/mac-executor/typescript-installation.md) records the exact paths and later owner procedure.
+Real-Mac installation, consent, and provider checks remain unproved.

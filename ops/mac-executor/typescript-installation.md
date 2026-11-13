@@ -324,7 +324,7 @@ The Mac never converts a legacy `skills` symlink. Refuse linked homes, linked `s
 Native `/tmp` and `/var` are aliases. Use their reviewed canonical paths or a private path under the real account home.
 Add negative checks for real files/directories at managed names, foreign links, case-only collisions, and link loops.
 Compare every provider entry before and after each refusal. Include bytes and raw targets of dangling user links.
-Generation files and directories flush before rename. The successor host/storage maintenance slice owns unreferenced generations and abandoned stages.
+Generation files and directories flush before rename. This host does not collect unreferenced generations or abandoned stages.
 Only recognizable owned temporary account links receive a sweep here. No provider directory receives recursive deletion.
 The held directory and immediate leaf rechecks prevent a swapped folder from redirecting deletion into its replacement.
 They do not coordinate same-user programs that change entries concurrently. There is no atomic ownership comparison in rename.
@@ -412,7 +412,7 @@ The host supplies its real deadline for later cleanup. An observer timeout never
 ## Local event composition
 
 `MacRunner` in `server/executor/mac/runner/index.ts` connects command, native, source, event, maintenance, and lifetime owners before admission opens.
-Its live port carries text deltas, thinking, and tool progress. The later host supplies the lossy sender.
+Its live port carries text deltas, thinking, and tool progress through the host's lossy HTTP sender.
 Live payloads validate before send. Retired children do not send; a failed sender drops the notification and logs once.
 Other native events enter durable source custody. Completed messages, finished tools, and ended turns capture Ticket artifacts through the outbox.
 Exact stop joins admitted sources and final native events before it publishes the stop certificate.
