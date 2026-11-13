@@ -185,7 +185,8 @@ def test_actual_caller_timeout_keeps_owner_and_original_snapshot_for_retry(
                     CliRunner().invoke, main, ["worker", "recap", "--json"], input="original"
                 )
                 monkeypatch.setattr(ipc_client, "socket", socket)
-                assert entered.is_set()
+                # The client timeout does not guarantee that the pool thread ran yet.
+                assert await asyncio.to_thread(entered.wait, 5)
                 assert result.exit_code == 3, result.output
                 outcome = json.loads(result.stdout)
                 identity = outcome["submission_id"]
@@ -400,6 +401,10 @@ def test_post_commit_cleanup_error_keeps_identity_and_retry_observes_original(
             assert response.error is None and response.unconfirmed is not None
             assert response.unconfirmed.submission_id == "original"
             original = executor.outbox.pending()[0]
+            # A committed row can precede the thread's fault and publication cleanup.
+            # Retry reports preparing until that task settles, regardless of its deadline.
+            publications = tuple(task for _, task in executor.gateway._publishing.values())
+            await asyncio.gather(*publications, return_exceptions=True)
             retried = await executor.gateway.handle(
                 replace(retry_request(child, "original"), response_deadline=time.monotonic() + 5)
             )
