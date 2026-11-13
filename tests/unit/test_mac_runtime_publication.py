@@ -274,17 +274,49 @@ def test_private_icu_environment_replaces_host_inputs_and_requests_private_insta
     monkeypatch.setattr(
         build_mac_runtime, "MAC_ICU_SOURCE_SHA256", hashlib.sha256(payload).hexdigest()
     )
-    monkeypatch.setattr(
-        urllib.request, "urlopen", lambda *args, **kwargs: io.BytesIO(payload)
-    )
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: io.BytesIO(payload))
     calls: list[tuple[list[str], dict[str, str]]] = []
+    rpaths: dict[Path, list[str]] = {}
+    install_names: dict[Path, str] = {}
 
     def record(command: list[str], *, cwd: Path, environment: dict[str, str]) -> str:
         calls.append((command, environment))
+        libdir = builder / "icu-prefix/lib"
+        if command == ["/usr/bin/make", "install"]:
+            libdir.mkdir(parents=True)
+            for name, paths in (
+                ("libicuuc.79.1.dylib", [str(libdir), "@loader_path"]),
+                ("libicudata.79.1.dylib", ["@loader_path"]),
+            ):
+                library = libdir / name
+                library.touch()
+                rpaths[library] = paths
+                install_names[library] = str(library)
+            (libdir / "libicuuc.dylib").symlink_to("libicuuc.79.1.dylib")
+        if command[:2] == ["/usr/bin/otool", "-l"]:
+            library = Path(command[2])
+            return f"cmd LC_ID_DYLIB\nname {install_names[library]} (offset 24)\n" + "".join(
+                f"cmd LC_RPATH\ncmdsize 32\npath {path} (offset 12)\n" for path in rpaths[library]
+            )
+        if command[0] == "/usr/bin/install_name_tool":
+            assert command[1:3] == ["-delete_rpath", str(libdir)]
+            rpaths[Path(command[3])].remove(command[2])
         return "/toolchain/compiler-or-sdk"
 
+    def audit(
+        root: Path, environment: dict[str, str], *, python_relative: str
+    ) -> list[dict[str, object]]:
+        calls.append((["audit"], environment))
+        assert root == builder / "icu-prefix"
+        assert rpaths == {
+            root / "lib/libicuuc.79.1.dylib": ["@loader_path"],
+            root / "lib/libicudata.79.1.dylib": ["@loader_path"],
+        }
+        assert all(name == str(library) for library, name in install_names.items())
+        return []
+
     monkeypatch.setattr(build_mac_runtime, "run", record)
-    monkeypatch.setattr(build_mac_runtime, "audit_native_dependencies", lambda *args, **kwargs: [])
+    monkeypatch.setattr(build_mac_runtime, "audit_native_dependencies", audit)
     builder = tmp_path / "builder"
     builder.mkdir()
     prefix = build_mac_runtime.build_private_icu(builder, {"PATH": "/usr/bin:/bin"})
@@ -293,6 +325,19 @@ def test_private_icu_environment_replaces_host_inputs_and_requests_private_insta
     assert f"--prefix={prefix}" in command
     assert prefix == builder / "icu-prefix"
     assert environment["PKG_CONFIG_LIBDIR"] == str(prefix / "lib/pkgconfig")
+    mutations = [command for command, _ in calls if command[0] == "/usr/bin/install_name_tool"]
+    assert mutations == [
+        [
+            "/usr/bin/install_name_tool",
+            "-delete_rpath",
+            str(prefix / "lib"),
+            str(prefix / "lib/libicuuc.79.1.dylib"),
+        ]
+    ]
+    inspected = [Path(command[2]) for command, _ in calls if command[0] == "/usr/bin/otool"]
+    assert set(inspected) == set(rpaths)
+    assert all(not library.is_symlink() for library in inspected)
+    assert calls[-1][0] == ["audit"]
 
 
 @pytest.mark.parametrize(

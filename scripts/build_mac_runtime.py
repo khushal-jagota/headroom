@@ -196,6 +196,20 @@ def build_private_icu(builder: Path, environment: dict[str, str]) -> Path:
     )
     run(["/usr/bin/make", f"-j{MAC_ICU_BUILD_JOBS}"], cwd=build, environment=configured)
     run(["/usr/bin/make", "install"], cwd=build, environment=configured)
+    # Keep absolute install names for delocate to discover private dependencies.
+    # A build-prefix rpath is unnecessary for those names and cannot ship.
+    for library in sorted((prefix / "lib").glob("*.dylib")):
+        if library.is_symlink():
+            continue
+        commands = run(
+            ["/usr/bin/otool", "-l", str(library)], cwd=build, environment=configured
+        )
+        if str(prefix / "lib") in _rpaths(commands):
+            run(
+                ["/usr/bin/install_name_tool", "-delete_rpath", str(prefix / "lib"), str(library)],
+                cwd=build,
+                environment=configured,
+            )
     audit_native_dependencies(prefix, configured, python_relative="lib/libicuuc.dylib")
     return prefix
 
