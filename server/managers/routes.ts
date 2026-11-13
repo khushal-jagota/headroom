@@ -216,16 +216,18 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
   );
   app.get<{ Params: { item_id: string } }>('/managers/:item_id/workspace', async (request) => {
     const id = request.params.item_id;
-    const result = database.read((sql) => ({
+    const workspace = database.read((sql) => ({
       ...views.manager_detail(sql, id),
       ...views.manager_workspace_document(sql, id, calendar_now(clock)),
       tickets: views.manager_tickets(sql, id),
     }));
-    const conversation_history = conversation_start.read_manager_conversation_history(database, id);
+    const result = {
+      ...workspace,
+      conversation_history: conversation_start.read_manager_conversation_history(database, id),
+    };
     await add_work_attention(database, services.conversationSystem, result.tickets, [result]);
     return {
       ...result,
-      conversation_history,
       artifacts: await list_artifact_entries(services.config.db_path, id),
     };
   });
