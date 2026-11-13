@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyListenOptions } from 'fastify';
 import { createAreasRuntime } from '../areas.ts';
 import type { AreaLoopOptions } from '../areas.ts';
 import { createApp } from '../app.ts';
+import type { VpsExecutor } from '../executor/vps_transport.ts';
 import { loadConfig, SHUTDOWN_GRACE_SECONDS } from './config.ts';
 import { buildClock } from './clock.ts';
 import type { Clock } from './clock.ts';
@@ -71,6 +72,15 @@ export type {
   ComposedBackgroundService,
 } from '../lifecycle/contracts.ts';
 
+export interface ExecutorCompositionContext {
+  readonly database: Database;
+  readonly config: Config;
+  readonly clock: Clock;
+  readonly changes: ChangeSignal;
+  readonly media_signal: AbortSignal;
+  readonly one_shot_children: OwnedOneShotChildren;
+  readonly child_processes: OwnedChildProcesses;
+}
 /** One reconciled record is shared by the core, ordinary areas, and view readers. */
 export interface ConversationCompositionContext extends Omit<
   BackgroundCompositionContext,
@@ -82,6 +92,7 @@ export interface ConversationCompositionContext extends Omit<
   revoke_signal(): void;
   one_shot_children: OwnedOneShotChildren;
   child_processes: OwnedChildProcesses;
+  executor?: VpsExecutor | null;
 }
 export interface TestCompositionContext extends ConversationCompositionContext {
   /** Existing original stop only. Test close hooks must never create another budget. */
@@ -94,6 +105,7 @@ export interface TestCompositionContext extends ConversationCompositionContext {
 export interface ServerOptions {
   /** Actual process entries supply this. Embedded servers never terminate their host. */
   onShutdownComplete?: ShutdownCompletion;
+  createExecutor?: (context: ExecutorCompositionContext) => VpsExecutor | null;
   createUsageService?: (context: ConversationCompositionContext) => RecordedUsageService;
   createBackendServices?: (context: ConversationCompositionContext) => BackendHttpRuntime;
   /** Off until Unit 21 explicitly composes the production lifecycle. */
@@ -141,6 +153,8 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   let stopped_background: ComposedBackgroundService | undefined;
   let publication: SignalPublicationCoordinator | undefined;
   let core: SqliteProcessConversationSystem | undefined;
+  let executor: VpsExecutor | null = null;
+  let stopped_executor: VpsExecutor | null = null;
   let backendServices: BackendHttpRuntime | undefined;
   let stopped_core: SqliteProcessConversationSystem | undefined;
   let stopped_backend: BackendHttpRuntime | undefined;
@@ -312,6 +326,14 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         },
         () => stopped_backend?.settled() ?? Promise.resolve(),
       );
+      producer(
+        'executor services',
+        () => {
+          stopped_executor = executor;
+          return executor?.stop(stop);
+        },
+        () => stopped_executor?.settled() ?? Promise.resolve(),
+      );
       // Core cancellation/detach begins before any HTTP/raw-provider wait.
       producer(
         'conversation core',
@@ -440,7 +462,8 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     if (
       background !== stopped_background ||
       video_uploads !== stopped_video ||
-      credential_requests !== stopped_credentials
+      credential_requests !== stopped_credentials ||
+      executor !== stopped_executor
     ) {
       setup_cleanup_failed = true;
       setup_cleanup_failure = new Error(
@@ -571,11 +594,28 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     if (!config.test_mode && config.dispatch_enabled) {
       dispatcher = acquireLock(config.dispatcher_lock_path);
     }
-    areas.initialize(database, config, clock, () => {
-      if (dispatcher_admitted(config, dispatcher !== null)) {
-        reconcile_background_attention({ database: database! });
-      }
-    });
+    executor =
+      options.createExecutor?.({
+        database,
+        config,
+        clock,
+        changes,
+        media_signal: media_lifetime.signal,
+        one_shot_children,
+        child_processes,
+      }) ?? null;
+    const open_runs = executor?.open_runs() ?? new Map();
+    areas.initialize(
+      database,
+      config,
+      clock,
+      () => {
+        if (dispatcher_admitted(config, dispatcher !== null)) {
+          reconcile_background_attention({ database: database! });
+        }
+      },
+      open_runs,
+    );
     const context: ConversationCompositionContext = {
       database,
       config,
@@ -587,6 +627,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       revoke_signal: revokeSignal,
       one_shot_children,
       child_processes,
+      executor,
     };
     core = options.createConversationCore?.(context);
     if (isClosing()) return abort_late_setup();
@@ -655,6 +696,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     environments = await options.createEnvironments?.(testContext);
     if (isClosing()) return abort_late_setup();
     assert_startup_open();
+    if (environments?.mac_updates) executor?.bind_updates(environments.mac_updates);
     const testAreas =
       typeof options.testAreas === 'function'
         ? options.testAreas(testContext)
@@ -739,9 +781,17 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       signalAuthority: publication,
       conversationSystem,
       workspaceAdmission: conversationSystem?.workspace_admission,
+      executor,
     });
     if (isClosing()) return abort_late_setup();
+    if (executor) {
+      if (!core) throw new Error('Configured executor requires the invocation conversation core.');
+      executor.configure(core, app);
+    }
     await app.ready();
+    if (isClosing()) return abort_late_setup();
+    assert_startup_open();
+    await executor?.start();
     if (isClosing()) return abort_late_setup();
     assert_startup_open();
     areas.startRecordReplay(core?.workspace_admission);

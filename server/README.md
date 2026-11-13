@@ -2,7 +2,7 @@
 
 This package is the shared server shell for the backend migration. It runs `.ts` files directly on Node 22.18+ and Node 24. Python still creates and upgrades its database. The migration branch remains separate from staging and main.
 
-`server/main.ts` selects the required production entry in normal mode. Until 4b supplies its real backend/environment composition, it fails clearly before startup. The existing test-mode switch preserves the bare fixture entry in that same file. It adds no provider, host, or flag. Packaging and publication cannot claim production composition from a test-mode entry.
+`server/main.ts` selects the required production entry in normal mode. Normal startup requires real backend and environment bindings; the default dependency table still fails clearly while that supplier-owned composition remains incomplete. The existing test-mode switch preserves the bare fixture entry in the same file. A test-mode entry does not establish production composition.
 
 Accepted migration differences live in [DEVIATIONS.md](DEVIATIONS.md).
 
@@ -49,8 +49,9 @@ The default peer resolver refuses before constructing its proc context or doing 
 when `VITEST=true`, `PYTEST_CURRENT_TEST` is present, or `PLAN_TEST_MODE` is a truthy
 test-mode value. Tests can supply an explicit private `PeerLookupContext` to exercise
 the resolver. The current raw WebSocket preview upgrade requires Tailscale-owner
-ingress. There is no general application WebSocket route: the exported close-1008
-decision is source-compared, with transport wiring reserved for Unit 22.
+ingress. `executor/app_transport.ts` handles the obsolete executor connect upgrade
+through trusted executor ingress and refuses it before acceptance.
+There is no general application WebSocket route.
 
 One direct comparison reuses Python's synthetic proc fixtures and Fastify injection, without a listener or database.
 It covers peer evidence, bypasses, refusal values, config consumption and the default test I/O guard. Its body takes 0.51 seconds, with zero skill-tree guard receipts.
@@ -60,7 +61,7 @@ TypeScript, Ruff and mypy pass. Added helpers total 423 lines against 426 produc
 
 Navigation `createRoutes()` returns `{routes,start}`. Previews use `createPreviewRoutes()` instead of a global routes export. `areas.initialize()` prepares the record without starting replay or stale-epoch cleanup. Explicit route services and replay start after application readiness. Production composition starts one idle-child janitor in normal mode, even without dispatcher admission. Test mode skips that janitor, unlike Python. The explicit checker can run in test mode, but only writes findings/heartbeat and cannot notify.
 
-Environment composition preserves the actual executor object's members. It does not spread away prototype methods. A genuine `executor:null` remains absence. Remote retained children with `stop_outside_lock:true` remain unsupported: delivery throws `BackendSpawnFailed('Backend did not retain its run identity')` before local child publication. Executor integration must resolve that existing boundary explicitly. These contracts do not authorize a production provider, release, or service operation in tests.
+Environment composition preserves the actual executor object's members. It does not spread away prototype methods. A genuine `executor:null` remains absence. The invocation-owned `VpsExecutor` supplies remote factories, retained runs, recovery, catalog, health, and stalls. Its open-run map reaches the single record reconciliation before core adoption. Retained Mac children keep exact retirement custody, and shutdown observes the original deadline separately from raw settlement. The [executor guide](executor/README.md) describes its routes and the still-open real Mac update-service supplier handoff.
 
 Create `server/<area>/contracts.ts`, `logic/`, `data/`, and `routes.ts` as needed. Keep pure rules in `logic/`. Import the existing generated frontend contracts with `import type` until cutover.
 
@@ -185,7 +186,7 @@ The record participants also use the Manager wake area's canonical Ticket failur
 
 The `createConversationCore(context)` factory receives the shared publication coordinator.
 Core adapters pass `context.publication.save_attempt`, a `current_read` callback, and `context.revoke_signal` through the corresponding core options.
-Core construction requires both `model_is_enabled` and `execution_refusal`. Bind the first to `conversation/backend_state.ts::model_is_enabled` through the actual owned `context.database`. Bind the second to `tickets/execution_admission.ts::conversation_execution_refusal` with an explicit policy. Shared-core tests use `canonical_ticket_execution_refusal`. Temporary production composition uses the local-only policy until the real executor router lands. Neither callback defaults to permission, and neither reads a closed fixture database.
+Core construction requires both `model_is_enabled` and `execution_refusal`. Bind the first to `conversation/backend_state.ts::model_is_enabled` through the actual owned `context.database`. Bind the second to `tickets/execution_admission.ts::conversation_execution_refusal` with an explicit policy. Production uses the canonical Ticket policy with an invocation-owned executor and wraps local/remote factories through `LocaleBackendChildFactory`. Without an executor it keeps the local-only policy, so persisted Mac presence cannot select a local child. Neither callback defaults to permission, and neither reads a closed fixture database.
 Core factories must also bind `on_held_model_change` to `write_held_ticket_configuration` from `runtime/conversation_start.ts`, with the same database and clock. The test host supplies this binding. After an accepted held model/effort change, it calls the existing guarded Ticket writer for the active conversation; it does not change the backend or repeat the prompt. A secondary Ticket-write error propagates after the accepted receipt settles. Future provider factories need this same binding.
 Without a core factory, the server supplies record reads and real publication from durable facts, with no local turn or substitute provider.
 An explicitly selected in-memory instrument remains separate. The idle authority helpers remain for their isolated tests.

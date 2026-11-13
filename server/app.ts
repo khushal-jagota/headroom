@@ -15,6 +15,10 @@ import { installCompatibility } from './core/http/compatibility.ts';
 import { registerCoreRoutes } from './core/routes.ts';
 import type { Changes } from './core/routes.ts';
 import { registerArea } from './core/authority/register.ts';
+import { stringify_python_json } from './core/http/numeric_json.ts';
+import { integer_value, normalize_integer } from './executor/integers.ts';
+import { create_executor_routes } from './executor/app_transport.ts';
+import type { VpsExecutor } from './executor/vps_transport.ts';
 import type { Area } from './core/authority/register.ts';
 import type { ConversationSystem } from './conversation/contracts.ts';
 import type { SignalNavigationAuthority } from './conversation/publication/authority.ts';
@@ -29,6 +33,7 @@ export interface AppServices {
   changes?: Changes;
   areas?: readonly Area[];
   workspaceAdmission?: WorkspaceAdmission;
+  executor?: VpsExecutor | null;
 }
 export async function createApp(config: Config, services: AppServices): Promise<FastifyInstance> {
   const app = Fastify({
@@ -54,6 +59,44 @@ export async function createApp(config: Config, services: AppServices): Promise<
       )
     : fileURLToPath(new URL('../', import.meta.url));
   await registerCoreRoutes(app, config, clock, changes, root, services.database);
+  app.register(
+    create_executor_routes({
+      config,
+      endpoint: services.executor ?? null,
+      updates: () => services.executor?.updates ?? null,
+    }),
+  );
+  app.get('/api/executor/health', async (_request, reply) => {
+    if (!services.executor) return { mode: 'local', connection_state: 'disconnected' };
+    const health = services.executor.health_payload();
+    const present = health.presence === 'present';
+    const identity = services.executor.health().identity;
+    return reply
+      .type('application/json')
+      .send(
+        stringify_python_json(
+          {
+            ...health,
+            mode: 'remote',
+            identity:
+              identity === null
+                ? null
+                : {
+                    ...identity,
+                    connection_generation: normalize_integer(
+                      integer_value(identity.connection_generation) > (present ? 1n : 0n)
+                        ? integer_value(identity.connection_generation)
+                        : present
+                          ? 1n
+                          : 0n,
+                    ),
+                  },
+            connection_state: present ? 'ready' : 'disconnected',
+          },
+          { compact: true },
+        ),
+      );
+  });
   for (const area of services.areas ?? [])
     registerArea(app, area, {
       database: services.database,

@@ -675,3 +675,8 @@ The Manager requires that TypeScript withdraw a waiting model-list command after
 ## Retained turn numbers
 
 Python accepts unbounded turn numbers. TypeScript refuses retained turns outside the safe integer range at core adoption. Wire and mailbox integers remain exact.
+
+## Canonical Mac Worker identity
+
+The Manager accepts refusal before child creation when canonical Mac ownership disagrees with absent or different Worker identity hints.
+Python selects a local child in that case. TypeScript refuses so a Mac Ticket never selects a local child.

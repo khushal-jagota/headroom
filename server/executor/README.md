@@ -1,8 +1,50 @@
-# Executor wire
+# VPS executor
 
-Hard-link holds defer overwritten-inode cleanup until after the publication writer.
-A same-user destination swap after the check inside the writer and before rename is undetected. It can release large data on the event loop.
-Hard crashes can leave `.hold-*`, `.incoming-*`, and `.tmp-*` files. No startup sweeper removes them.
+`vps_transport.ts::VpsExecutor` owns one invocation's mailbox, presence, inbox, file transfers, retained Mac runs, and catalog relay. Its constructor receives the application's database, clock, change signal, and media cutoff. It does not create another database owner. `app_transport.ts::create_executor_routes` supplies the HTTP and obsolete-WebSocket boundary.
+
+Production creates the endpoint only when an executor ID is configured. `LocaleBackendChildFactory` selects remote children for Mac Tickets and preserves local factories for VPS work. A canonical Mac Ticket with absent or conflicting Worker identity hints refuses before child creation. Persisted presence alone cannot enable remote execution. Without an endpoint, the existing local-only admission policy still refuses Mac work.
+
+## Startup and retained state
+
+Before record initialization, `core/start.ts` asks the endpoint for `open_runs()`. The single reconciliation therefore preserves retained turns before the core adopts them. Adoption restores asks, saved answers, provider identities, memory-notice maintenance state, and exact child references. A stale or stopping child remains quarantined until its corresponding retirement proof arrives.
+
+`configure` binds the actual core to the inbox and run owner. `start` loads durable presence/mailbox state and resumes replacement drains, late-steer watches, and never-ran prompt delivery. A fresh child registered before a VPS crash receives its owed prompt on the original turn. Interruption closure and exact claim restoration follow the committed prompt. Production reads the endpoint's health and stall sources, and its `machine_catalog` uses the same catalog relay.
+
+Durable items enter through `MacInbox`. Ordered receipts, replay, assignment authority, canonical writes, answer application, and file publication share the existing write door. A refused domain effect can roll back its savepoint while the outer refusal receipt commits. Runtime predictions are restored before the global publication finalizer, so rolled-back events do not escape through the live tail or Signal.
+
+Live batches carry only message deltas, thinking notices, and tool progress. They use the current exact child's event sink and create no durable item receipt. Completed backend prose uses the item route for journal and receipt custody. The core does not turn it into an addressed notebook message. Lifecycle changes and other durable events also use that route. Live reads enter the existing application routes under the child's assigned principal; they do not grant arbitrary owner access.
+
+## Routes and authority
+
+All thirteen executor endpoints require trusted Tailscale login, the configured executor ID, no browser Origin, and no duplicate security headers. There is no executor bearer token. Work routes also require the supported protocol and current incarnation. Incarnation fences rows; it is not a credential. Writers repeat the relevant current-incarnation and assignment checks inside their transaction. Updates remain reachable before work-version admission.
+
+| Method | Path | Boundary |
+| --- | --- | --- |
+| POST | `/api/executor/lease` | Admit identity and versions, update presence, settle replacement custody |
+| GET | `/api/executor/commands` | Current executor's bounded mailbox poll |
+| POST | `/api/executor/commands/outcomes` | Current executor's typed command outcomes; stop success still needs exact proof |
+| POST | `/api/executor/conversations/:conversation_id/items` | Ordered durable intake and item receipts |
+| PUT | `/api/executor/uploads/:sha256` | Authorized child's digest-named raw upload into private staging |
+| GET | `/api/executor/commands/:command_id/files/:stored_file_id` | Authorized input of a waiting or delivered command |
+| POST | `/api/executor/reads` | Allowlisted application read as the assigned principal |
+| POST | `/api/executor/conversations/:conversation_id/live` | Transient events for the exact current child |
+| GET | `/api/executor/update` | Real update service's current check |
+| GET | `/api/executor/update/:request_id/archive` | Real update service's selected archive |
+| GET | `/api/executor/update/prefetch/:archive_sha256` | Real update service's digest-selected prefetch |
+| POST | `/api/executor/update` | Strict typed update report with current health |
+| WebSocket | `/api/executor/connect` | Refuse the obsolete transport before upgrade |
+
+The update route and `bind_updates` seams are implemented. The real `ComposedEnvironmentRuntime.mac_updates` supplier handoff remains open. It must expose one actual per-store Mac update service and bind that same instance to the endpoint, presence checks, and update routes. Updates return unavailable until that service is bound. The default production backend/environment dependency table also remains a supplier-owned gate.
+
+## Stop and recovery ownership
+
+An ordinary owner kill waits without a deadline for exact Mac stop proof, as Python does; only that conversation waits. A successful stop result alone does not prove termination. The matching accepted `child_stopped` item or proven process replacement closes exact custody. Rebind waits for that retirement outside the conversation lock before a fresh child takes the same reserved prompt. A safe initial-delivery withdrawal can finish the kill before remote retirement completes.
+
+The invocation registers the endpoint through the existing producer lifecycle. Every stop observer receives the original absolute monotonic shutdown deadline. `settled()` retains raw completion after an observer expires. VPS shutdown detaches an active retained Mac child without starting a stop command; an already-running stop remains owned. Failed actual stop attempts remain retryable.
+
+Catalog cancellation withdraws its waiting command and completes that cleanup before the mailbox seals. A caller's cancelled observation does not cancel the shared catalog read. Endpoint shutdown seals new work and joins admitted saves, file cleanup, catalog withdrawal, and run/presence work before database closure. During shutdown, the catalog's short cleanup signal is capped by the original deadline.
+
+## Shared wire
 
 Both executor halves import their wire types from `wire.generated.ts`. Python remains the contract author until cutover. Protocol 22 uses HTTPS JSON. The spool format is 5 and the command journal format is 1.
 
@@ -21,17 +63,17 @@ The Python exporter resolves this checkout's `src/` and imports the current prot
 
 The generated schema retains validation limits. TypeScript types express JSON structure only. Runtime codecs must preserve each call's validation mode, byte limits, identity checks and schema constraints. HTTP work decoding uses Python's lax mode. Local IPC uses strict mode, with nested argument decoding as Python defines it. A required nullable field remains required and must carry `null` when absent. A field with a Python default can be omitted. Python accepts unknown object properties on many dataclasses and ignores them. The types list declared fields, rather than promise that unknown properties survive decoding.
 
-The generated open JSON objects do not describe operation-specific bodies. Hand-written families in `protocol_payloads.ts` document known consumer shapes, but types do not validate runtime values. Generic envelope decoding keeps these dictionaries open until the original consumer invokes its decoder. The following ledger names each source family and the remaining consumer work. No executor route or native runner is supplied by this codec package.
+The generated open JSON objects do not describe operation-specific bodies. Hand-written families in `protocol_payloads.ts` document known consumer shapes, but types do not validate runtime values. Generic envelope decoding keeps dictionaries open until the selected consumer interprets them, with Python's field and unknown-property rules.
 
-| Open source family | Current runtime behavior | Remaining closure |
+| Open source family | Runtime consumer | Boundary |
 | --- | --- | --- |
-| `QueuedEnvelope.payload`, selected by `kind` | `decode_envelope_payload` selects and decodes BackendEvent, CliWrite, CommandOutcome or AnswerApplication. Generic batches remain opaque. | Slice 5 must prove per-item receipt admission and refusal without whole-batch rejection. |
-| `BackendEvent.arguments`, selected by `method` | `decode_event_arguments` decodes the selected root and constructs an existing event class. Types alone do not close the envelope/consumer path. | Slice 5 inbox and slice 6 remote runs must compare malformed selected arguments at their actual consumer boundary. |
-| `CommandOutcome.result` | The generic codec retains the open dictionary. Known variants are documentary types. | Slice 6 remote child/run consumers must compare prompt, steer, answer, error and settlement results. The Mac-half runner owns their producer proof. |
-| `AcceptanceReceipt.result` | The generic codec retains the open dictionary. Known variants are documentary types. | Slice 5 canonical agent writes/receipts must compare delivery, Ticket, blocker and error results. The Mac-half CLI owns result consumption. |
-| `CliWrite.arguments` | The generic codec retains the open dictionary. Known operation bodies are documentary types. | Slice 5 must close operation-selected CLI bodies through canonical writers. |
+| `QueuedEnvelope.payload`, selected by `kind` | `MacInbox` and `decode_envelope_payload` | Decode selected items individually, then join their writer and receipt |
+| `BackendEvent.arguments`, selected by `method` | `decode_event_arguments` and the conversation core | Construct existing event classes before their selected core operation |
+| `CommandOutcome.result` | `MacRemoteChild`, `MacRuns`, and mailbox settlement | Interpret prompt, steer, answer, error, and stop outcomes |
+| `AcceptanceReceipt.result` | Canonical agent writes and inbox replay | Preserve the original result and delivery fate with its receipt |
+| `CliWrite.arguments` | `vps_agent_writes.ts` | Select the existing canonical writer and its source argument contract |
 
-The additional `CommandResult.model_list` dictionary also remains open. BackendSnapshot is an available root, and slice 6 catalog relay must apply its decoder and requested-backend check. The codec does not automatically validate that consumer-specific result.
+`CommandResult.model_list` also remains an open dictionary in the generic codec. `VpsCatalogRelay` decodes its BackendSnapshot and checks the requested backend before it publishes the snapshot.
 
 ## Executor JSON intake
 
@@ -45,9 +87,9 @@ The lexical parser retains numeric token kinds until structural interpretation. 
 
 Both halves import runtime operations from `protocol.ts`. The bounded and frame APIs take value/bytes first and the generated root name second. `decode_json` accepts bytes or text for journal reads without the bounded-body wrapper. HTTP decoding is lenient by default. Strict outer JSON and lenient Python-value paths remain distinct, including ChildCommand’s nested lenient arguments and the outer diagnostic origin. The value entry point accepts already-decoded JSON wire dictionaries and supported event classes. Required nullable fields stay required, defaults appear on decode, unknown fields follow Python’s policy, and the existing command/mailbox checks retain their order.
 
-All structured integer fields use the generated `WireInteger = number | JsonNumber`. Safe integers decode to plain numbers. Integers outside the safe range retain the shared JsonNumber integer marker without rounding or a new unsafe-integer refusal. Structured float fields decode to plain numbers. Opaque JsonValue retains a marker only for an unsafe integer or an integral float whose token kind a plain number erases. The public `integer_value(value)` helper returns the exact bigint for arithmetic, comparisons and SQL bindings. Both peers use this same rule. Do not compare an unsafe integer marker through JavaScript object identity or cast it to number.
+All structured integer fields use the generated `WireInteger = number | JsonNumber`. Safe integers decode to plain numbers. Integers outside the safe range retain the shared JsonNumber integer marker without rounding in the wire or mailbox. The core adoption boundary explicitly refuses retained turn numbers outside the safe integer range. Structured float fields decode to plain numbers. Opaque JsonValue retains a marker only for an unsafe integer or an integral float whose token kind a plain number erases. The public `integer_value(value)` helper returns the exact bigint for arithmetic, comparisons and SQL bindings. Both peers use this same rule. Do not compare an unsafe integer marker through JavaScript object identity or cast it to number.
 
-Backend event conversion returns the existing classes with exact markers retained where native projection loses precision. The reverse registry matches exact constructors. The VPS/core integration must retain the wider integer view at its own boundary.
+Backend event conversion returns the existing classes with exact markers retained where native projection loses precision. The reverse registry matches exact constructors. Retained turn contracts keep the wider integer view until the explicit core-adoption check.
 
 Encoding takes the generated type for its mandatory root and validates before output. It requires nullable fields without defaults, writes source defaults and applies the command/mailbox semantic checks. This is the Manager's required peer-admission policy. It does not claim Python's unchecked serialization of arbitrary malformed dataclasses. Value conversion preserves lone-surrogate strings; byte serialization refuses them. Nonfinite floats become null in JSON-mode output. Typed byte output uses the shared `core/http/numeric_json.ts::stringify_pydantic_json` helper before size admission. The executor has no second numeric formatter. Its lone-surrogate check precedes that helper so that the source serialization error survives.
 
@@ -63,35 +105,35 @@ The same exported schema carries minimal Python annotations for field declaratio
 
 A directory capability is an owned Node FileHandle. The walk starts at `/`, opens each component with DIRECTORY and NOFOLLOW, and retains the acquired inode through each operation. Peer paths reject absolute paths, dot segments, backslashes, NUL and encoded escape forms. Symlink loops produce the clean 'artifact path contains symlink' refusal. Regular-file opens use NOFOLLOW, NONBLOCK and fstat. Exclusive mode-0600 creation, copy, rename, metadata, cleanup and flush use the same retained parents. A pathname never replaces a retained capability for byte I/O.
 
-Hashing and copying use asynchronous file operations with 256 KiB blocks and exact bigint counts. `descriptor_hash` reads positionally from zero without advancing the descriptor's implicit offset. `file_digest`, `verified_version` and input-file admission share it. Short writes complete before a buffer is reused. Cleanup errors retain the original failure in AggregateError. Only `file_version_at` supplies synchronous metadata reads. `rename_at` and `unlink_at` are asynchronous and must finish before their retained parent capabilities close. Hashes, copies, parent creation, install, cleanup and directory flushes stay outside the writer. The inbox slice owns its separate transaction publication step.
+Hashing and copying use asynchronous file operations with 256 KiB blocks and exact bigint counts. `descriptor_hash` reads positionally from zero without advancing the descriptor's implicit offset. `file_digest`, `verified_version` and input-file admission share it. Short writes complete before a buffer is reused. Cleanup errors retain the original failure in AggregateError. `file_version_at` supplies synchronous metadata reads. Ordinary `rename_at` and `unlink_at` are asynchronous and finish before their retained parents close. Hashes, copies, parent creation, staging installation, cleanup and directory flushes stay outside the writer.
 
-FileStaging is constructed before the inbox. An upload's held source parent and checked leaf pass through the inbox's second authorization into staging installation. The parent remains owned through cleanup, even if its former pathname changes. Only a later authorized inbox item publishes staged bytes into the served tree and records a receipt. The inbox slice owns bounded publication groups and final receipt visibility checks.
+FileStaging is constructed before the inbox. An upload's held source parent and checked leaf pass through the inbox's second authorization into staging installation. The parent remains owned through cleanup, even if its former pathname changes. A later authorized inbox item publishes staged bytes through bounded synchronous rename groups inside the writer, after authority and version rechecks. Every source and destination parent opens before that writer. Exclusive hold links are created in retained destination parents before publication, then removed asynchronously with directory flushes after success or partial failure. Destination parents remain held through the receipt's unchanged-version check.
 
-InputFile retains its checked descriptor through a single-consumer stream. It starts at offset zero, emits exactly the hashed count, refuses premature EOF, and never emits an appended suffix. Yielded chunks remain stable across later reads. Python instead hashes a descriptor, returns a path, and later reopens that path in its response. The retained-descriptor contract deliberately closes that substitution race. The routes slice must consume chunks, close on disconnect, and prove the behavior through the real response.
+Hard-link holds defer overwritten-inode cleanup until after the publication writer.
+A same-user destination swap after the check inside the writer and before rename is undetected. It can release large data on the event loop.
+Hard crashes can leave `.hold-*`, `.incoming-*`, and `.tmp-*` files. No startup sweeper removes them.
+
+InputFile retains its checked descriptor through a single-consumer stream. It starts at offset zero, emits exactly the hashed count, refuses premature EOF, and never emits an appended suffix. Yielded chunks remain stable across later reads. Python instead hashes a descriptor, returns a path, and later reopens that path in its response. The retained-descriptor contract deliberately closes that substitution race. The input response consumes held chunks and closes the capability on completion or disconnect.
 
 Input bytes stay below the standard message store beside the logical database-path parent. The existing message-file lookup admits the ID and resolves contained symlinks. Its result must stay inside the independently anchored conversation root before a NOFOLLOW descriptor walk opens it. A lookup-root swap therefore cannot redefine byte authority. Contained same-conversation leaf links keep Python behavior. Escapes, loops and later symlink substitutions return the existing not-found answer.
 
 The transfer owner seals new intake at stop and joins admitted transfers through the shared grace period. The supplied request/media signal controls physical stream cancellation at the existing cutoff. Stop adds no grace timer and does not close an unconsumed input immediately.
 
-Uploads require an `UploadSource` with a real `destroy` capability, such as Node Readable. On stall or cancellation, the owner destroys that source before it calls iterator return. It closes and unlinks the incoming file before it joins the real source cleanup. Actual settlement retains every admitted syscall, stream and unexpected cleanup failure. The routes slice must supply its owned request stream, not an arbitrary async generator.
+Uploads require an `UploadSource` with a real `destroy` capability. The HTTP route supplies its owned request Readable. On stall or cancellation, the owner destroys that source before it calls iterator return. It closes and unlinks the incoming file before it joins the real source cleanup. Actual settlement retains every admitted syscall, stream and unexpected cleanup failure.
 
 ## VPS command mailbox
 
-An ordinary owner kill waits without a deadline for exact Mac stop proof, as Python does; only that conversation waits.
-
 `vps_mailbox.ts::SqliteCommandMailbox` takes the application's Database and an optional millisecond clock. The existing synchronous write door owns command admission, run custody and result persistence. Polls capture raw rows, then decode commands and prepare settlement text outside the writer. The final writer checks every selected row against that preparation before any effect, reads current expiry facts and applies changes atomically. A changed selection retries preparation. Stored decoding errors surface only at Python's corresponding row visit and roll the writer back. In-memory waits observe committed rows. A canceled put observer leaves the admitted commit and its wake intact.
 
-With 50,000 old rows and a poll at the 4 MiB byte bound, the measured largest event-loop gap is 72.6 ms. The Manager accepts that cost for a poll every few seconds. Gate 3 must compare this baseline with the real table size on a copy of live data.
-
-The fixture reactivates 3,000 of its 50,000 history rows as waiting commands (504,801 encoded bytes), leaving 47,000 closed history rows. Their replacement takes 338.5 ms inside the actual transaction and 365.3 ms through reply encoding. The largest measured event-loop gap is 377.2 ms. Python completes the corresponding lease in 110.2 ms. This replacement costs about three times Python's lease time. The Manager accepts that rare restart cost for this unusually large waiting backlog. Gate 3 must compare the real replacement backlog on a copy of live data. If it shows larger numbers, consider decoding outside the writer, as the poll does.
+Accepted poll and large-replacement latency measurements remain in DEVIATIONS. Gate 3 must compare them with the real table and backlog sizes on a copy of live data before further performance machinery is considered.
 
 Replacement withdraws waiting commands in the lease transaction. Delivered commands settle from the successor's journal cursor. A successful stop result stays delivered until `finish_by_proof` supplies actual child-stop evidence. `publish_settlements` wakes one command's waiters before its listener, then advances to the next command. A listener failure leaves the whole committed batch durable.
 
 Sequence, turn and recovery counters retain exact SQL text reads and bigint bindings. Public values use the shared codec's safe-number or exact-marker rule. Command rows use Pydantic bytes. Outcome rows use validated object conversion followed by sorted standard-library JSON.
 
-`stop({ deadline })` requires the shared absolute monotonic deadline in seconds. It seals new owned work, wakes polls and cancels result waits immediately. Its bounded observer uses `observe_shutdown`. `settled()` retains the actual work and cleanup join, including unexpected failures pending at the first stop. The stateless replacement transaction participant and the single stall source remain usable through their caller's SQL capability after stop. Their caller owns admission and settlement. The mailbox leaves database closure to its caller. Later executor composition registers this owner through the application's producer mechanism.
+`stop({ deadline })` requires the shared absolute monotonic deadline in seconds. It seals new owned work, wakes polls and cancels result waits immediately. Its bounded observer uses `observe_shutdown`. `settled()` retains the actual work and cleanup join, including unexpected failures pending at the first stop. The stateless replacement transaction participant and the single stall source remain usable through their caller's SQL capability after stop. Their caller owns admission and settlement. The mailbox leaves database closure to the invocation owner.
 
-Callers establish authority before they enter this internal API. Transport callers authenticate executor ingress and admit the configured executor ID, protocol and current incarnation before polls or outcome reports. Incarnation and command arguments are row fences, not credentials. The routes slice owns that admission. Data helpers require a caller-owned SQL capability, and `finish_by_proof` requires an already-authorized matching `child_stopped` inbox item.
+Callers establish authority before they enter this internal API. The transport admits executor ingress, configured ID, protocol, and current incarnation before polls or outcome reports. Incarnation and command arguments are row fences, not credentials. Data helpers require a caller-owned SQL capability, and `finish_by_proof` requires an already-authorized matching `child_stopped` inbox item.
 
 Each held poll owns a removable wake registration. Timeout, abort, listener failure and shutdown release it. Abort reasons use a shared typed cancellation or an AbortError with the original reason as its cause. Waits require finite durations within Node's timer range. Finite negative durations return immediately, and a null result-wait timeout remains unbounded.
 
