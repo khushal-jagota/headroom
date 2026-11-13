@@ -33,6 +33,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from tests.support.executor_catalog import SingleMachineCatalog
 from tests.support.executor_https import HttpsProxy, serve_executor_app
 from tests.support.executor_inbox import lookup_receipt
 
@@ -635,9 +636,7 @@ def make_core(endpoint: VpsExecutor) -> SqliteProcessConversationSystem:
         message_files=ConversationMessageFiles(endpoint.db_path),
     )
     # All transport fixtures are native. Local discovery is never called here.
-    system.configure_machine_catalog(cast(Any, SimpleNamespace(
-        catalog_for=lambda machine_id: endpoint.catalog,
-    )))
+    system.configure_machine_catalog(SingleMachineCatalog(endpoint.catalog))
     system.start_admission.configure_destinations(
         lambda destination: destination == "home" or endpoint.presence.is_present()
     )

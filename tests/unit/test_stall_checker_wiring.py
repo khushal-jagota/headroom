@@ -22,6 +22,7 @@ from planner.core.db import connect
 from planner.core.server import create_app
 from planner.executor.clock import now_ms
 from planner.executor.contracts import StallSource
+from planner.executor.registry import _MachineStallSource
 from planner.executor.vps_presence import PresenceStallSource
 from planner.executor.vps_transport import VpsExecutor
 from planner.stalls.contracts import WaitRegistry
@@ -82,7 +83,8 @@ def test_the_server_runs_one_stall_checker_over_the_executor_sources(tmp_path: P
         assert checker.registry is WAITS
         endpoint = app.state.executor_endpoint
         assert isinstance(endpoint, VpsExecutor)
-        sources = tuple(source.source for source in checker.sources())
+        sources = tuple(source.source for source in checker.sources()
+                        if isinstance(source, _MachineStallSource))
         assert [type(source) for source in sources] == [
             type(source) for source in endpoint.stall_sources()
         ]

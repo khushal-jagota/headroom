@@ -20,6 +20,7 @@ from tests.support.conversation_scripted_acp_agent import (
     ScriptedAcpAgentControl,
     scripted_acp_agent_launch,
 )
+from tests.support.executor_catalog import SingleMachineCatalog
 from tests.support.executor_turns import MacRemoteChildFactory
 
 from planner.conversation.backends.claude_agent_sdk import (
@@ -201,7 +202,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
         )
         endpoint = VpsExecutor(db_path, RealClock())
         endpoint.runs.children[reference.child_id] = remote.recover(reference)
-        system.configure_machine_catalog(endpoint.catalog)
+        system.configure_machine_catalog(SingleMachineCatalog(endpoint.catalog))
         recipient = Principal(PrincipalKind.ticket, ticket.id)
 
         async def deliver(text: str, **options: Any) -> Any:

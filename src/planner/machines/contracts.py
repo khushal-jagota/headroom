@@ -27,3 +27,12 @@ class MachineView(TypedDict):
     available: bool
     running_workers: int | None
     waiting_tickets: int
+
+
+@dataclass(frozen=True, slots=True)
+class MachineCredentialGrant:
+    """A secret returned only at registration, replacement, or original handover."""
+
+    machine_id: str
+    credential: str
+    issued_at_ms: int

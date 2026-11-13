@@ -331,6 +331,10 @@ def paths(executor_transport_home: Path) -> Iterator[ExecutorPaths]:
 
 
 def service(paths: ExecutorPaths, origin: str, client_tls: ssl.SSLContext) -> MacService:
+    from planner.executor.credential_file import credential_path, write_credential
+
+    # This scripted HTTP home qualifies the loops, not credential issuance.
+    write_credential(credential_path(paths.root), "a" * 43)
     return MacService(
         paths=paths,
         revision="a" * 40,

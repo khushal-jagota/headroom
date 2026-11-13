@@ -1,10 +1,9 @@
-"""The executor routes (protocol 22): one HTTPS request per piece of work.
+"""Machine-authenticated executor routes, with protocol 26 work admission.
 
-Every route passes the executor ingress (Tailscale login, no Origin, the configured
-executor ID). Work routes are also fenced by the current process's incarnation and the
-protocol header, from memory; the binding check runs inside each write. The update
-routes stay as they were, so a Mac of any version can update itself, and the old
-WebSocket is refused so an old Mac's refusal is recorded.
+Each request binds its credential to a named destination before it selects an owner.
+The original configured executor keeps its prior authority only before first issuance.
+Work requests also require that machine's current incarnation. Update requests retain
+protocol-independent recovery, but never bypass permanent credential handover.
 """
 
 from __future__ import annotations
@@ -14,8 +13,8 @@ import base64
 import binascii
 import os
 import re
-from dataclasses import replace
-from typing import Any
+from dataclasses import asdict, replace
+from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket
 from fastapi.responses import JSONResponse
@@ -25,7 +24,9 @@ from starlette.responses import FileResponse
 from starlette.types import Receive, Scope, Send
 
 from planner.core.contracts import ErrorCode, PlannerError
+from planner.core.db import connect as database_connect
 from planner.core.response_compression import answers_uncompressed
+from planner.core.task_settlement import run_on_worker_thread
 from planner.environments.mac_updates import MacUpdateService
 from planner.environments.update_attempts import UpdateConflict
 from planner.execution_identity import ExecutorIdentity, ProtocolRefused, parse_identity
@@ -33,6 +34,8 @@ from planner.executor.configuration import (
     EXECUTOR_COMMAND_FILE_PATH,
     EXECUTOR_COMMAND_OUTCOMES_PATH,
     EXECUTOR_COMMANDS_PATH,
+    EXECUTOR_CREDENTIAL_HEADER,
+    EXECUTOR_CREDENTIAL_PATH,
     EXECUTOR_FILE_SHA256_HEADER,
     EXECUTOR_FILE_UPLOAD_HEADER,
     EXECUTOR_INCARNATION_HEADER,
@@ -72,6 +75,7 @@ from planner.executor.update_configuration import MAX_MAC_UPDATE_RESPONSE_BYTES
 from planner.executor.update_contracts import MacUpdateCheck, MacUpdateReport
 from planner.executor.vps_files import InputFile
 from planner.executor.vps_transport import VpsExecutor
+from planner.machines import executor_credentials
 
 _STATUS: dict[ErrorCode, int] = {
     ErrorCode.executor_version_refused: 409,
@@ -162,53 +166,105 @@ def _lease_refusal(refusal: LeaseRefused) -> Response:
 
 
 def build_executor_router() -> APIRouter:
-    from planner.core.trusted_ingress import require_executor_ingress
+    from planner.core.trusted_ingress import executor_ingress_claim, require_executor_ingress
 
     router = APIRouter()
 
-    def require_ingress(connection: HTTPConnection) -> None:
-        """The update channel's ingress check, answered as it always was."""
-        try:
-            require_executor_ingress(connection.scope, connection.app.state.executor_id)
-        except ValueError as error:
-            raise HTTPException(403, str(error)) from error
+    def database_path(connection: HTTPConnection) -> str:
+        registry = getattr(connection.app.state, "executor_registry", None)
+        endpoint = getattr(connection.app.state, "executor_endpoint", None)
+        owner = registry if registry is not None else endpoint
+        if owner is not None:
+            return str(owner.db_path)
+        config = getattr(connection.app.state, "config", None)
+        if config is not None:
+            return str(config.db_path)
+        raise PlannerError(ErrorCode.retry_later, "executor endpoint unavailable")
 
-    def endpoint_for(connection: HTTPConnection) -> VpsExecutor:
-        """A work route's ingress check and endpoint, refused as a PlannerError."""
+    def authenticate(connection: HTTPConnection, claimed_id: str) -> str:
+        with database_connect(database_path(connection)) as conn:
+            return executor_credentials.authenticate_executor(
+                conn, claimed_id, connection.headers.get(EXECUTOR_CREDENTIAL_HEADER),
+                connection.app.state.executor_id,
+            )
+
+    async def authenticated_machine(connection: HTTPConnection) -> str:
         try:
-            require_executor_ingress(connection.scope, connection.app.state.executor_id)
+            claimed_id = executor_ingress_claim(connection.scope)
         except ValueError as error:
             raise PlannerError(ErrorCode.agent_forbidden, str(error)) from error
+        return await run_on_worker_thread(authenticate, connection, claimed_id)
+
+    async def endpoint_for(connection: HTTPConnection) -> VpsExecutor:
+        """Authenticate the destination before selecting any runtime owner."""
+        machine_id = await authenticated_machine(connection)
+        registry = getattr(connection.app.state, "executor_registry", None)
+        if registry is not None:
+            return cast(VpsExecutor, await registry.ensure(machine_id))
         endpoint = getattr(connection.app.state, "executor_endpoint", None)
-        if not isinstance(endpoint, VpsExecutor):
+        if not isinstance(endpoint, VpsExecutor) or machine_id != endpoint.machine_id:
             raise PlannerError(ErrorCode.retry_later, "executor endpoint unavailable")
         return endpoint
 
-    def current_for(connection: HTTPConnection) -> tuple[VpsExecutor, ExecutorIdentity]:
-        endpoint = endpoint_for(connection)
+    async def current_for(connection: HTTPConnection) -> tuple[VpsExecutor, ExecutorIdentity]:
+        endpoint = await endpoint_for(connection)
         identity = endpoint.require_current(
             incarnation_header=connection.headers.get(EXECUTOR_INCARNATION_HEADER),
             protocol_header=connection.headers.get(EXECUTOR_PROTOCOL_HEADER),
         )
         return endpoint, identity
 
-    def updates_for(request: Request) -> MacUpdateService:
-        # Recovery must remain available before work-protocol admission.
-        require_ingress(request)
-        endpoint = getattr(request.app.state, "executor_endpoint", None)
+    async def updates_for(request: Request) -> tuple[MacUpdateService, VpsExecutor | None]:
+        # Recovery remains available before protocol admission, with machine authority.
+        try:
+            machine_id = await authenticated_machine(request)
+        except PlannerError as error:
+            raise HTTPException(403, error.message) from error
+        registry = getattr(request.app.state, "executor_registry", None)
+        endpoint = (
+            await registry.ensure(machine_id) if registry is not None
+            else getattr(request.app.state, "executor_endpoint", None)
+        )
         if isinstance(endpoint, VpsExecutor):
             endpoint.record_contact()
         service = getattr(request.app.state, "mac_updates", None)
         if not isinstance(service, MacUpdateService):
             raise HTTPException(503, "Mac update service unavailable")
-        return service
+        return service.for_machine(machine_id), endpoint
+
+    @router.post(EXECUTOR_CREDENTIAL_PATH)
+    async def original_credential(request: Request) -> Response:
+        try:
+            require_executor_ingress(request.scope, request.app.state.executor_id)
+            if request.headers.get(EXECUTOR_CREDENTIAL_HEADER) is not None:
+                raise PlannerError(
+                    ErrorCode.agent_forbidden, "Credential handover is already closed"
+                )
+            raw = _decode(await _body(request, MAX_ENVELOPE_BYTES), dict, MAX_ENVELOPE_BYTES)
+            identity = parse_identity(raw)
+
+            def issue() -> dict[str, object]:
+                conn = database_connect(database_path(request))
+                try:
+                    return asdict(executor_credentials.issue_original_credential(
+                        conn, identity.executor_incarnation,
+                    ))
+                finally:
+                    conn.close()
+
+            grant = await run_on_worker_thread(issue)
+            return JSONResponse(grant)
+        except (ValueError, ProtocolRefused) as error:
+            return _error(PlannerError(ErrorCode.agent_forbidden, str(error)))
+        except PlannerError as error:
+            return _error(error)
 
     # --- 1-8: the work and presence routes ------------------------------------------------
 
     @router.post(EXECUTOR_LEASE_PATH)
     async def lease(request: Request) -> Response:
         try:
-            endpoint = endpoint_for(request)
+            endpoint = await endpoint_for(request)
             # Any lease attempt past ingress is contact, whatever fails next, so a
             # failing lease cannot look like a sleeping Mac (mac_lease_failing).
             endpoint.record_contact()
@@ -234,7 +290,7 @@ def build_executor_router() -> APIRouter:
     @router.post(EXECUTOR_WORKSPACE_STATES_PATH)
     async def workspace_states(request: Request) -> Response:
         try:
-            endpoint, identity = current_for(request)
+            endpoint, identity = await current_for(request)
             query = _decode(
                 await _body(request, MAX_WORKSPACE_STATES_BYTES),
                 WorkspaceStatesRequest,
@@ -249,7 +305,7 @@ def build_executor_router() -> APIRouter:
     @router.post(EXECUTOR_WORKSPACE_REGISTRATION_PATH)
     async def register_workspace(request: Request) -> Response:
         try:
-            endpoint, identity = current_for(request)
+            endpoint, identity = await current_for(request)
             registration = _decode(
                 await _body(request, MAX_ENVELOPE_BYTES),
                 WorkspaceRegistrationRequest,
@@ -263,7 +319,7 @@ def build_executor_router() -> APIRouter:
     @router.post(EXECUTOR_WORKSPACE_RETIREMENT_PATH)
     async def retire_workspace(request: Request) -> Response:
         try:
-            endpoint, identity = current_for(request)
+            endpoint, identity = await current_for(request)
             retirement = _decode(
                 await _body(request, MAX_ENVELOPE_BYTES),
                 WorkspaceRetirementRequest,
@@ -279,7 +335,7 @@ def build_executor_router() -> APIRouter:
     @router.get(EXECUTOR_COMMANDS_PATH)
     async def poll_commands(request: Request) -> Response:
         try:
-            endpoint, identity = current_for(request)
+            endpoint, identity = await current_for(request)
             try:
                 after = int(request.query_params.get("after", ""))
                 wait = float(request.query_params.get("wait", "0"))
@@ -293,7 +349,7 @@ def build_executor_router() -> APIRouter:
     @router.post(EXECUTOR_COMMAND_OUTCOMES_PATH)
     async def report_outcomes(request: Request) -> Response:
         try:
-            endpoint, identity = current_for(request)
+            endpoint, identity = await current_for(request)
             report = _decode(
                 await _body(request, MAX_COMMAND_OUTCOME_REPORT_BYTES),
                 CommandOutcomeReport,
@@ -307,7 +363,7 @@ def build_executor_router() -> APIRouter:
     @router.post(EXECUTOR_ITEMS_PATH)
     async def post_items(request: Request, conversation_id: str) -> Response:
         try:
-            endpoint, identity = current_for(request)
+            endpoint, identity = await current_for(request)
             batch = _decode(
                 await _body(request, MAX_ITEM_BATCH_BYTES), ItemBatch, MAX_ITEM_BATCH_BYTES
             )
@@ -320,7 +376,7 @@ def build_executor_router() -> APIRouter:
     @router.put(EXECUTOR_UPLOAD_PATH)
     async def upload(request: Request, sha256: str) -> Response:
         try:
-            endpoint, identity = current_for(request)
+            endpoint, identity = await current_for(request)
             if request.headers.get("Content-Encoding") or not re.fullmatch(r"[0-9a-f]{64}", sha256):
                 raise PlannerError(ErrorCode.validation, "an upload is raw bytes named by digest")
             try:
@@ -347,7 +403,7 @@ def build_executor_router() -> APIRouter:
     @answers_uncompressed
     async def command_file(request: Request, command_id: str, stored_file_id: str) -> Response:
         try:
-            endpoint, identity = current_for(request)
+            endpoint, identity = await current_for(request)
             input_file = await endpoint.input_file(identity, command_id, stored_file_id)
         except PlannerError as error:
             return _error(error)
@@ -356,7 +412,7 @@ def build_executor_router() -> APIRouter:
     @router.post(EXECUTOR_READS_PATH)
     async def read(request: Request) -> Response:
         try:
-            endpoint, identity = current_for(request)
+            endpoint, identity = await current_for(request)
             read_request = _decode(
                 await _body(request, MAX_ENVELOPE_BYTES), LiveReadRequest, MAX_ENVELOPE_BYTES
             )
@@ -368,7 +424,7 @@ def build_executor_router() -> APIRouter:
     @router.post(EXECUTOR_LIVE_PATH)
     async def live(request: Request, conversation_id: str) -> Response:
         try:
-            endpoint, identity = current_for(request)
+            endpoint, identity = await current_for(request)
             batch = _decode(
                 await _body(request, MAX_ENVELOPE_BYTES), LiveEventBatch, MAX_ENVELOPE_BYTES
             )
@@ -385,7 +441,8 @@ def build_executor_router() -> APIRouter:
     @answers_uncompressed
     async def update_target(request: Request) -> MacUpdateCheck:
         try:
-            return await asyncio.to_thread(updates_for(request).check)
+            service, _ = await updates_for(request)
+            return await asyncio.to_thread(service.check)
         except (UpdateConflict, OSError, ValueError) as error:
             raise HTTPException(409, str(error)) from error
 
@@ -393,7 +450,8 @@ def build_executor_router() -> APIRouter:
     @answers_uncompressed
     async def update_archive(request: Request, request_id: str) -> FileResponse:
         try:
-            path = await asyncio.to_thread(updates_for(request).archive, request_id)
+            service, _ = await updates_for(request)
+            path = await asyncio.to_thread(service.archive, request_id)
         except (UpdateConflict, OSError, ValueError) as error:
             raise HTTPException(409, str(error)) from error
         return FileResponse(path, media_type="application/gzip")
@@ -402,7 +460,8 @@ def build_executor_router() -> APIRouter:
     @answers_uncompressed
     async def update_prefetch_archive(request: Request, archive_sha256: str) -> FileResponse:
         try:
-            path = await asyncio.to_thread(updates_for(request).prefetch_archive, archive_sha256)
+            service, _ = await updates_for(request)
+            path = await asyncio.to_thread(service.prefetch_archive, archive_sha256)
         except (UpdateConflict, OSError, ValueError) as error:
             raise HTTPException(409, str(error)) from error
         return FileResponse(path, media_type="application/gzip")
@@ -410,7 +469,7 @@ def build_executor_router() -> APIRouter:
     @router.post("/api/executor/update")
     @answers_uncompressed
     async def update_report(request: Request) -> dict[str, bool]:
-        service = updates_for(request)
+        service, endpoint = await updates_for(request)
         body = bytearray()
         async for chunk in request.stream():
             body.extend(chunk)
@@ -418,7 +477,6 @@ def build_executor_router() -> APIRouter:
                 raise HTTPException(413, "Mac update report exceeds its size limit")
         try:
             report = TypeAdapter(MacUpdateReport).validate_json(bytes(body), strict=True)
-            endpoint = getattr(request.app.state, "executor_endpoint", None)
             # Do not yield between the presence snapshot and its receipt.
             service.report(report, endpoint.health() if isinstance(endpoint, VpsExecutor) else None)
         except (ValidationError, UpdateConflict, OSError, ValueError) as error:
@@ -432,7 +490,7 @@ def build_executor_router() -> APIRouter:
         """An old Mac's session. Closing before accept answers 403; the refusal is kept,
         so the Mac page and readiness say the Mac needs an update."""
         try:
-            endpoint = endpoint_for(socket)
+            endpoint = await endpoint_for(socket)
         except PlannerError:
             await socket.close(code=1008)
             return

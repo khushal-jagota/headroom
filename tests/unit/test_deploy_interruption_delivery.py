@@ -1157,7 +1157,10 @@ def test_admission_exempts_only_the_current_mac_processs_run(tmp_path: Path) -> 
         with connect(path) as conn:
             conn.execute("DELETE FROM mac_runs")
             conn.execute(
-                "INSERT INTO mac_runs VALUES ('c',?,'child','ticket','t',1,0,'open')",
+                "INSERT INTO "
+                "mac_runs(conversation_id,executor_incarnation,child_id,principal_kind,"
+                "principal_id,turn_number,delivery_uncertain,stop_state) VALUES ('c',?,"
+                "'child','ticket','t',1,0,'open')",
                 (incarnation,),
             )
             conn.commit()

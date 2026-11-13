@@ -18,8 +18,9 @@ import tempfile
 import threading
 import zipfile
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path, PurePosixPath
+from uuid import UUID
 
 from planner.core import change_signal
 from planner.environments.update_attempts import (
@@ -54,6 +55,7 @@ from planner.executor.update_contracts import (
     MacUpdateTarget,
     mac_prefetch_archive_path,
 )
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 
 # From these states on the VPS has stopped its own work for the attempt, so the Mac may too.
 _MAC_TARGET_STATES: frozenset[UpdateAttemptState] = frozenset({"preparing", "installing", "done"})
@@ -69,13 +71,47 @@ class MacUpdateService:
         provider: UpdateProvider | None,
         current_app_sha: str | None,
         ready_release: Callable[[], PublishedUpdate | None],
+        *,
+        machine_id: str = ORIGINAL_MAC_MACHINE_ID,
+        archive_root: Path | None = None,
     ) -> None:
         self.root, self.attempts, self.provider = root, attempts, provider
+        self.machine_id = machine_id
+        self.archive_root = root if archive_root is None else archive_root
+        self._machines: dict[str, MacUpdateService] = {}
         self.current_app_sha = current_app_sha
         self.ready_release = ready_release
         self._applied_path = root / "applied.json"
         self._lock = threading.RLock()
-        self._retain_applied(self.attempts.read())
+        self._retain_applied(self._attempt())
+
+    def _attempt(self) -> UpdateAttempt | None:
+        attempt = self.attempts.read()
+        if (
+            attempt is None or self.machine_id == ORIGINAL_MAC_MACHINE_ID
+            or attempt.mac_attempt_id is None
+        ):
+            return attempt
+        return replace(attempt, mac_attempt_id=f"{attempt.mac_attempt_id}.{self.machine_id}")
+
+    def for_machine(self, machine_id: str) -> MacUpdateService:
+        """Reports and targets belong to one machine. Archive bytes remain shared."""
+        if machine_id == self.machine_id:
+            return self
+        UUID(machine_id)
+        with self._lock:
+            kept = self._machines.get(machine_id)
+            if kept is None:
+                kept = MacUpdateService(
+                    self.root / "machines" / machine_id, self.attempts, self.provider,
+                    self.current_app_sha, self.ready_release, machine_id=machine_id,
+                    archive_root=self.archive_root,
+                )
+                self._machines[machine_id] = kept
+            return kept
+
+    def check_for(self, machine_id: str) -> MacUpdateCheck:
+        return self.for_machine(machine_id).check()
 
     def _archive_path(self, release: PublishedUpdate) -> Path:
         mac = release.mac
@@ -90,7 +126,7 @@ class MacUpdateService:
             or re.fullmatch(r"[0-9a-f]{40}", release.manifest.app_sha) is None
         ):
             raise UpdateConflict("The Mac publication identity is invalid.")
-        return self.root / "archives" / (mac.archive_sha256 + ".tar.gz")
+        return self.archive_root / "archives" / (mac.archive_sha256 + ".tar.gz")
 
     @staticmethod
     def _validate_archive(path: Path, release: PublishedUpdate) -> None:
@@ -172,7 +208,7 @@ class MacUpdateService:
     def _prepare(self, release: PublishedUpdate) -> None:
         with self._lock:
             # Preserve the last success before a new attempt replaces the record.
-            self._retain_applied(self.attempts.read())
+            self._retain_applied(self._attempt())
             if release.mac is None:
                 return
             destination = self._archive_path(release)
@@ -214,7 +250,7 @@ class MacUpdateService:
                     os.close(directory)
 
     def _selected_attempt(self) -> UpdateAttempt | None:
-        attempt = self.attempts.read()
+        attempt = self._attempt()
         self._retain_applied(attempt)
         if (
             attempt is not None
@@ -285,7 +321,7 @@ class MacUpdateService:
 
     def status(self) -> MacUpdateStatus | None:
         with self._lock:
-            current = self.attempts.read()
+            current = self._attempt()
             if (
                 current is not None
                 and current.state in _MAC_TARGET_STATES

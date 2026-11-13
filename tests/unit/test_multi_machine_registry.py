@@ -7,8 +7,10 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+import pytest
 from fastapi.testclient import TestClient
 
+from planner.conversation.backends.contracts import RetainedBackendRun
 from planner.conversation.start_admission import AutomaticStartAdmission
 from planner.conversation.start_admission.contracts import StartRequest
 from planner.core.clock import build_clock
@@ -45,7 +47,7 @@ def test_machine_capacity_and_pacing_do_not_block_other_destinations() -> None:
 
 def test_server_loads_both_retained_owners_before_adoption_and_dispatches_cleanup(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Reuse the existing TestClient lifespan host: no browser, backend, or network calls.
 
@@ -90,10 +92,10 @@ def test_server_loads_both_retained_owners_before_adoption_and_dispatches_cleanu
                     machine,
                 ),
             )
-    seen = []
+    seen: list[set[str]] = []
     retained = VpsExecutorRegistry.retained_runs
 
-    def inventory(registry):
+    def inventory(registry: VpsExecutorRegistry) -> tuple[RetainedBackendRun, ...]:
         runs = retained(registry)
         seen.append({run.reference.conversation_id for run in runs})
         return runs

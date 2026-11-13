@@ -62,6 +62,7 @@ from typing import Any, cast
 import aiohttp
 from fastapi import FastAPI
 from starlette.types import ASGIApp, Receive, Scope, Send
+from tests.support.executor_catalog import SingleMachineCatalog
 
 from planner.conversation.backends.contracts import (
     AgentMessageCompleted,
@@ -854,7 +855,7 @@ def _make_core(endpoint: VpsExecutor) -> SqliteProcessConversationSystem:
         backend_child_factories={key: endpoint.runs for key in ConversationBackendKey},
         message_files=ConversationMessageFiles(endpoint.db_path),
     )
-    system.configure_machine_catalog(endpoint.catalog)
+    system.configure_machine_catalog(SingleMachineCatalog(endpoint.catalog))
     system.start_admission.configure_destinations(
         lambda destination: destination == "home" or endpoint.presence.is_present()
     )
