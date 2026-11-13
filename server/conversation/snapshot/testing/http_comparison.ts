@@ -3,7 +3,8 @@ import { createApp } from '../../../app.ts';
 import { loadConfig } from '../../../core/config.ts';
 import { TestClock } from '../../../core/clock.ts';
 import { createDatabase } from '../../../core/database/index.ts';
-import { BackendStateStore } from '../../backend_state.ts';
+import { BackendStateStore, model_refusal, offered_model_ids, save_machine_model_list } from '../../backend_state.ts';
+import type { Database } from '../../../core/database/contracts.ts';
 import { BackendUsageService } from '../../backend_usage/service.ts';
 import type { BackendUsageResult } from '../../backend_usage/contracts.ts';
 import type { ConversationBackendKey } from '../../contracts.ts';
@@ -38,6 +39,28 @@ interface Spec {
     json?: unknown;
     headers?: Record<string, string>;
   }[];
+}
+function model_admission_evidence(database: Database, cards: readonly BackendSnapshot[]) {
+  return database.write((tx) => {
+    const initial = Object.fromEntries(['hermes', 'codex', 'claude'].map((key) =>
+      [key, offered_model_ids(tx, 'vps', key as ConversationBackendKey)]));
+    for (const model of ['retired-model', 'mac-only'])
+      tx.run("INSERT INTO backend_model_enablement VALUES ('codex',?,0)", [model]);
+    const codex = cards.find((value) => value.backend_key === 'codex')!;
+    const mac = { ...codex, available_models: [{ ...codex.available_models[0], model_id: 'mac-only' }], models_complete: false };
+    save_machine_model_list(tx, 'macos', mac);
+    save_machine_model_list(tx, 'vps', codex);
+    const rows = () => tx.all<{model_id: string}>(
+      "SELECT model_id FROM backend_model_enablement WHERE model_id IN ('retired-model','mac-only') ORDER BY model_id"
+    ).map((row) => row.model_id);
+    const before = rows();
+    save_machine_model_list(tx, 'macos', { ...mac, models_complete: true });
+    const after = rows();
+    const aliases = Object.fromEntries(['opus', 'opus[1m]', 'claude-opus-5[1m]', 'sonnet'].map((model) =>
+      [model, model_refusal(tx, 'claude', model, 'vps')]));
+    return { initial, before, after, aliases,
+      mac_refusal: model_refusal(tx, 'codex', 'gpt-6.1-sol', 'macos') };
+  });
 }
 export async function run(spec: Spec) {
   const database = createDatabase(spec.db_path);
@@ -82,6 +105,7 @@ export async function run(spec: Spec) {
   };
   const snapshots = new BackendSnapshotService({
     environment,
+    keep_complete_model_list: (snapshot) => new BackendStateStore(database).keep_vps_model_list(snapshot),
     now: () => new Date(spec.now),
     read_codex_login_standing: () => null,
     probe: async (key) => {
@@ -146,6 +170,7 @@ export async function run(spec: Spec) {
       });
       answers.push({ status: response.statusCode, body: response.json() as unknown });
     }
+    const admission = model_admission_evidence(database, spec.cards);
     const tables = database.read((sql) =>
       Object.fromEntries(
         ['backend_model_enablement', 'backend_usage_snapshots', 'backend_usage_windows'].map(
@@ -153,7 +178,7 @@ export async function run(spec: Spec) {
         ),
       ),
     );
-    return { answers, tables, commands: environment.commands, sign_in_calls: calls };
+    return { admission, answers, tables, commands: environment.commands, sign_in_calls: calls };
   } finally {
     writes.seal();
     await writes.drain();
