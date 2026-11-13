@@ -6,7 +6,7 @@ It reads a planned handoff before the journal and HTTP identity, then fences com
 Each producer receives the original absolute stop deadline. Actual joins precede file workers, journal, and the spool lock.
 `inputs.ts` downloads verified prompt files and removes temporary entries through a retained directory capability.
 `host/entry.ts` supplies the production update, provider, catalog, and Darwin process bindings plus signal ownership.
-The packaged `entrypoint.ts` reuses the ordinary CLI. Its runtime supervisor routing remains the next step.
+The packaged `entrypoint.ts` reuses the ordinary CLI. `run.ts` binds parent mode to the fixed runtime supervisor and child mode to the host.
 
 `AgentProcesses` records descendant identities in `run/agent-processes.json` and retains reparented tools.
 The Darwin host supplies its existing files and one-shot child owners. Native `ps`, priority and individual-PID signals stay in `platform.ts`.
@@ -30,7 +30,7 @@ One absolute timeout covers connect, write, and response, including the transpor
 The client joins socket closure before it returns. It never retries a write.
 After possible emission, a transport or response-validation failure means unknown
 acceptance for write/retry. A valid reply retains its original submission identity.
-The existing CLI owns output and exit codes. `run` remains an open supervisor binding.
+The existing CLI owns output and exit codes. `run` retains the parent interrupt exit code and joins its child and file owners.
 `permissions` previews lexical workspace/output scopes and touches them only with `--check`.
 Its explicit check reads one directory entry and writes, reads, closes, and removes one temporary output file.
 The fresh Python comparison checks bytes, exits, and cleanup. Actual macOS consent remains a later Mac check.
