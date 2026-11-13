@@ -41,6 +41,10 @@ export interface FreshCommandCursor extends JournalCursor<FreshJournalCommand> {
   /** Original reply command count, including duplicates. */
   readonly command_count: number;
 }
+/** Worker-decoded commands. Closing after stop leaves undispatched records for recovery. */
+export interface DecodedCommandCursor extends JournalCursor<MailboxCommand> {
+  readonly command_count: number;
+}
 export interface UnpublishedJournalCommand extends FreshJournalCommand {
   result: CanonicalReader;
 }
@@ -48,7 +52,16 @@ export interface UnreportedJournalResult {
   command_id: string;
   result: CanonicalReader;
 }
+export interface SelectedJournalReport {
+  readonly selection: number;
+  readonly command_ids: readonly string[];
+  readonly body: CanonicalReader;
+}
+/** Private selection custody: cancellation releases without charging failure fairness. */
+export type JournalReportFeedback = readonly string[] | null | 'cancelled';
 export interface AsyncCommandJournal extends OutboxCleanup {
+  assert_healthy(): void;
+  delivery_failure(message: string, cause?: unknown): Error;
   poll_cursor(): Promise<bigint>;
   lower_poll_cursor(high: bigint, cursor_at_lease: bigint): Promise<boolean>;
   record_poll_reply(
@@ -56,8 +69,17 @@ export interface AsyncCommandJournal extends OutboxCleanup {
     incarnation: string,
     polled_after: bigint,
   ): Promise<FreshCommandCursor>;
+  record_decoded_poll_reply(
+    bytes: Uint8Array | string,
+    incarnation: string,
+    polled_after: bigint,
+  ): Promise<DecodedCommandCursor>;
   result_of(command_id: string): Promise<CanonicalReader | null>;
   finish(command_id: string, result: Uint8Array | string, outputs_owed: boolean): Promise<void>;
+  /** The reader has a separate owner; this journal's readers share its ordered operation chain. */
+  finish_stream(command_id: string, body: CanonicalReader, outputs_owed: boolean): Promise<void>;
+  select_report(): Promise<SelectedJournalReport | null>;
+  report_feedback(selection: number, settled_ids: JournalReportFeedback): Promise<boolean>;
   mark_outputs_published(command_id: string): Promise<void>;
   unpublished(): Promise<JournalCursor<UnpublishedJournalCommand>>;
   unreported(limit: number): Promise<JournalCursor<UnreportedJournalResult>>;
