@@ -297,7 +297,7 @@ try {
   const failed_operation = observed_error(runner.quiesce(signal));
   const expired = await observed_error(queues.stop({ deadline: performance.now() / 1000 - 1 }));
   try {
-    assert.equal(await failed_operation, operation_error);
+    assert((await failed_operation) instanceof ShutdownDeadlineExceeded);
   } finally {
     store.pending_count = pending_count;
   }
