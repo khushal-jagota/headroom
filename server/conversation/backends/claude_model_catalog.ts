@@ -1,13 +1,14 @@
 /** Model choices come from the selected CLI's startup handshake, without a prompt. */
-import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
+import type { OwnedOneShotChildren, StopOptions } from '../../lifecycle/contracts.ts';
 import { OneShotChildren, stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { load_claude_sdk, CLAUDE_AGENT_SDK_VERSION } from './claude_sdk.ts';
 import type { Query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { ensure_cli_compatible } from './cli_compatibility.ts';
 import { ModelCatalogCleanupFailed } from './catalog_cleanup.ts';
-import { OwnedCodexProcess, within } from './codex_app_server/process.ts';
+import { OwnedCodexProcess } from './codex_app_server/process.ts';
 import { CHILD_KILL_WAIT_SECONDS } from './codex_app_server/configuration.ts';
+import { observe_shutdown } from '../shutdown.ts';
 
 export const MODEL_CATALOG_TIMEOUT_SECONDS = 30;
 export class ClaudeModelCatalogUnavailable extends Error {}
@@ -109,13 +110,26 @@ export function claude_model_catalog_from_init(info: unknown): ClaudeModelCatalo
 export async function probe_claude_model_catalog(
   claude_executable: string,
   children: OwnedOneShotChildren = new OneShotChildren(),
+  options: {
+    signal?: AbortSignal;
+    stop_options?: () => StopOptions | undefined;
+    environment?: Readonly<NodeJS.ProcessEnv>;
+  } = {},
 ): Promise<ClaudeModelCatalog> {
+  const signal = options.signal
+    ? AbortSignal.any([children.signal, options.signal])
+    : children.signal;
+  signal.throwIfAborted();
+  const environment: Record<string, string> = {};
+  for (const [name, value] of Object.entries(options.environment ?? process.env))
+    if (value !== undefined) environment[name] = value;
   const state: {
     owned: OwnedCodexProcess | null;
     cli: Query | null;
     expired: boolean;
     child_error: Error | null;
-  } = { owned: null, cli: null, expired: false, child_error: null };
+    child_exited: boolean;
+  } = { owned: null, cli: null, expired: false, child_error: null, child_exited: false };
   let release_input: () => void = () => {};
   const input_closed = new Promise<void>((resolve) => {
     release_input = resolve;
@@ -129,6 +143,15 @@ export async function probe_claude_model_catalog(
   let failed = false;
   let actual: Promise<unknown> | undefined;
   let primary: unknown;
+  let cleanup_deadline: number | undefined;
+  let reject_cancelled!: (error: unknown) => void;
+  const cancelled = new Promise<never>((_, reject) => {
+    reject_cancelled = reject;
+  });
+  const cancellation_observed = cancelled.catch(() => {});
+  const abort = () => reject_cancelled(signal.reason);
+  signal.addEventListener('abort', abort, { once: true });
+  if (signal.aborted) abort();
   const close_query = () => {
     if (state.cli === null) return;
     state.cli.close();
@@ -145,8 +168,24 @@ export async function probe_claude_model_catalog(
     try {
       if (state.owned) {
         stop_one_shot_child(state.owned.child);
-        if (!(await within(state.owned.exited, CHILD_KILL_WAIT_SECONDS)))
-          throw new Error('the Claude catalog process did not exit after SIGKILL');
+        cleanup_deadline ??= performance.now() / 1000 + CHILD_KILL_WAIT_SECONDS;
+        if (!state.child_exited) {
+          await observe_shutdown(
+            Promise.race([state.owned.exited, cancellation_observed]),
+            {
+              deadline: Math.min(cleanup_deadline, options.stop_options?.()?.deadline ?? Infinity),
+            },
+            'the Claude catalog process did not exit after SIGKILL',
+          );
+        }
+        if (!state.child_exited)
+          await observe_shutdown(
+            state.owned.exited,
+            {
+              deadline: Math.min(cleanup_deadline, options.stop_options?.()?.deadline ?? Infinity),
+            },
+            'the Claude catalog process did not exit after SIGKILL',
+          );
         // The leader is reaped. The shared owner now closes pipes without another signal.
         await state.owned.stop();
       }
@@ -156,23 +195,28 @@ export async function probe_claude_model_catalog(
     // A rejected probe retains this closure, its native owner, and the SDK operation.
     if (errors.length) throw new ModelCatalogCleanupFailed(primary, errors, cleanup);
     await actual?.catch(() => {});
+    signal.removeEventListener('abort', abort);
   };
   try {
     const operation = async () => {
-      await ensure_cli_compatible('claude', claude_executable, { children });
-      children.signal.throwIfAborted();
+      await ensure_cli_compatible('claude', claude_executable, {
+        children,
+        ...(options.signal ? { signal } : {}),
+        ...(options.environment ? { environment } : {}),
+      });
+      signal.throwIfAborted();
       if (state.expired)
         throw new ClaudeModelCatalogUnavailable(
           'claude did not finish its startup handshake in time',
         );
       const child_environment: NodeJS.ProcessEnv = {
-        ...process.env,
+        ...environment,
         CLAUDE_CODE_ENTRYPOINT: 'sdk-ts',
         CLAUDE_AGENT_SDK_VERSION,
       };
       delete child_environment.CLAUDECODE;
       const { query } = await load_claude_sdk();
-      children.signal.throwIfAborted();
+      signal.throwIfAborted();
       if (state.expired)
         throw new ClaudeModelCatalogUnavailable(
           'claude did not finish its startup handshake in time',
@@ -191,6 +235,9 @@ export async function probe_claude_model_catalog(
               stdio: ['pipe', 'pipe', 'pipe'],
             });
             state.owned = new OwnedCodexProcess(started as ChildProcessWithoutNullStreams);
+            void state.owned.exited.then(() => {
+              state.child_exited = true;
+            });
             started.once('error', (error) => {
               state.child_error = error;
             });
@@ -211,7 +258,7 @@ export async function probe_claude_model_catalog(
       }, MODEL_CATALOG_TIMEOUT_SECONDS * 1000);
     });
     actual = operation();
-    info = await Promise.race([actual, timeout]);
+    info = await Promise.race([actual, timeout, cancelled]);
   } catch (cause) {
     primary = cause;
     failed = true;

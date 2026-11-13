@@ -190,21 +190,10 @@ export class HermesModelCatalogOwner {
       throw error;
     } finally {
       clearTimeout(timer);
-      try {
-        await this.stop_probe(probe);
-      } catch (error) {
-        if (error instanceof ModelCatalogCleanupFailed)
-          throw new ModelCatalogCleanupFailed(
-            primary,
-            error.cleanup_errors,
-            () => this.stop_probe(probe),
-            error.message,
-          );
-        throw error;
-      }
+      await this.stop_probe(probe, primary);
     }
   }
-  private async stop_probe(probe: Probe): Promise<void> {
+  private async stop_probe(probe: Probe, primary?: unknown): Promise<void> {
     if (probe.cleaned) return;
     if (probe.stopping) return probe.stopping;
     const stopping = (async () => {
@@ -215,9 +204,9 @@ export class HermesModelCatalogOwner {
         if (probe.finished) this.active.delete(probe);
       } catch (cause) {
         const error = new ModelCatalogCleanupFailed(
-          undefined,
+          primary,
           [cause],
-          () => this.stop_probe(probe),
+          () => this.stop_probe(probe, primary),
           'the Hermes catalog process did not stop',
         );
         probe.cleanup_error = error;

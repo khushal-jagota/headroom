@@ -1,4 +1,3 @@
-/** Cleanup faults must not become optional model-list unavailability. */
 import { afterEach, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
@@ -14,9 +13,10 @@ import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../../lifecyc
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import { RecordingBackendProbeEnvironment } from '../../../conversation/snapshot/recording_environment.ts';
 import { create_mac_catalog } from '../catalog/production.ts';
-import type { MacAdapterHost } from '../adapters.ts';
+import { create_mac_adapter_host } from '../adapters.ts';
 import { MacCommandQueues } from '../mailbox/queues.ts';
 import { MacCatalog } from '../catalog/index.ts';
+import { gate } from './runner_fixture.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { QueueDependencies } from '../mailbox/contracts.ts';
 import * as probe_environment from '../../../conversation/snapshot/environment.ts';
@@ -54,8 +54,12 @@ it('retains catalog reads before reentrant stop and refuses sources after immedi
       on_failure: failure,
     });
     const reading = catalog.read_result('reentry', { backend_key: 'codex', refresh: true });
-    if (reentrant) await (await reading).close();
-    else {
+    if (reentrant) {
+      const result = await reading,
+        closing = result.close();
+      expect(result.close()).toBe(closing);
+      await closing;
+    } else {
       stopping = catalog.stop(options);
       await expect(reading).rejects.toBeInstanceOf(ServerLifecycleError);
     }
@@ -66,19 +70,54 @@ it('retains catalog reads before reentrant stop and refuses sources after immedi
   }
 });
 
-it('retains server catalog failures when the first shutdown retries both native closes successfully', async () => {
+it('joins failing siblings once and retains all history across a failed native cleanup retry', async () => {
   vi.spyOn(probe_environment, 'backend_io_is_test').mockReturnValue(false);
+  const sibling = gate();
   const environment = Object.assign(new RecordingBackendProbeEnvironment(), {
-    shutdown: async () => {},
+    shutdown: vi.fn(async () => {
+      await sibling.promise;
+      throw errors[4];
+    }),
+  });
+  const provider_environment = Object.assign(new RecordingBackendProbeEnvironment(), {
+    shutdown: vi.fn(async () => {}),
   });
   vi.spyOn(probe_environment, 'SubprocessBackendProbeEnvironment').mockImplementation(function () {
-    return environment as never;
+    return provider_environment as never;
   });
-  const errors = ['Codex probe', 'Codex close', 'Claude probe', 'Claude close'].map(
-    (value) => new Error(value),
-  );
+  const errors = [
+    'Codex probe',
+    'Codex close',
+    'Claude probe',
+    'Claude close',
+    'Environment stop',
+    'Retry close',
+  ].map((value) => new Error(value));
+  const invocation = invocation_children();
+  const stop = vi
+    .fn()
+    .mockRejectedValueOnce(errors[1])
+    .mockRejectedValueOnce(errors[5])
+    .mockResolvedValue(undefined);
+  const failure = await probe_codex_model_catalog('/synthetic/codex', {
+    child_processes: invocation,
+    client_factory: (options) => {
+      expect(options.child_processes).toBe(invocation);
+      return {
+        start: async () => {
+          throw errors[0];
+        },
+        stop,
+        request: vi.fn(),
+        notify: vi.fn(),
+      } as never;
+    },
+  }).catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(ModelCatalogCleanupFailed);
+  expect((failure as ModelCatalogCleanupFailed).primary).toBe(errors[0]);
+  expect((failure as ModelCatalogCleanupFailed).cleanup_errors).toContain(errors[1]);
+  expect(stop).toHaveBeenCalledOnce();
   const retry = vi.fn(async () => {});
-  const failure = new ModelCatalogCleanupFailed(errors[0], [errors[1]], retry);
   const claude_failure = new ModelCatalogCleanupFailed(
     errors[2],
     [new AggregateError([errors[3]])],
@@ -89,7 +128,7 @@ it('retains server catalog failures when the first shutdown retries both native 
   const context = {
     database: {},
     now: () => new Date(),
-    child_processes: invocation_children(),
+    child_processes: invocation,
     one_shot_children: { seal() {}, settled: async () => {} },
     read_codex_snapshot: async () => ({ executable_path: '/synthetic/codex' }),
   } as unknown as CodexProviderContext;
@@ -103,12 +142,23 @@ it('retains server catalog failures when the first shutdown retries both native 
   await expect(providers.codex!('/synthetic/codex')).rejects.toBe(failure);
   await expect(providers.claude!('/synthetic/claude')).rejects.toBe(claude_failure);
   const options = { deadline: performance.now() / 1000 + 1 };
+  const first = runtime.shutdown!(options);
+  const finished = vi.fn();
+  void first.then(finished, finished);
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(finished).not.toHaveBeenCalled();
+  sibling.resolve();
+  await expect(first).rejects.toBeInstanceOf(AggregateError);
   await expect(runtime.shutdown!(options)).rejects.toBeInstanceOf(AggregateError);
   const actual = await runtime.settled().catch((error: unknown) => error);
   const leaves = (error: unknown): unknown[] =>
     error instanceof AggregateError ? error.errors.flatMap(leaves) : [error];
   expect(leaves(actual)).toEqual(expect.arrayContaining(errors));
-  expect(retry).toHaveBeenCalledTimes(2);
+  expect(stop).toHaveBeenCalledTimes(3);
+  expect(retry).toHaveBeenCalledOnce();
+  expect(invocation.spawn).not.toHaveBeenCalled();
+  expect(environment.shutdown).toHaveBeenCalledOnce();
+  expect(provider_environment.shutdown).toHaveBeenCalledOnce();
   await expect(runtime.shutdown!(options)).rejects.toBe(actual);
   await expect(providers.codex!('/synthetic/codex')).rejects.toThrow('shut down');
   await expect(providers.claude!('/synthetic/claude')).rejects.toThrow('shut down');
@@ -137,8 +187,7 @@ it('distinguishes an unavailable handshake from failed query cleanup and retains
     },
     close: () => {},
   } as never);
-  const unavailable = await probe_claude_model_catalog('/synthetic/claude').then(
-    () => null,
+  const unavailable = await probe_claude_model_catalog('/synthetic/claude').catch(
     (error: unknown) => error,
   );
   expect(unavailable).toBeInstanceOf(ClaudeModelCatalogUnavailable);
@@ -167,25 +216,47 @@ it('distinguishes an unavailable handshake from failed query cleanup and retains
     one_shot_children,
     environment,
     on_failure: notify,
-    host: {
-      hermes_paths: {
-        python: '/synthetic/python',
-        home: '/synthetic/hermes',
-        source_root: '/synthetic/source',
-      },
-    } as MacAdapterHost,
+    host: create_mac_adapter_host({
+      panels_server_url: 'http://127.0.0.1:9',
+      child_processes,
+      one_shot_children,
+      environment: { HOME: '/synthetic', CODEX_HOME: '/synthetic/codex' },
+      executable_path: () => '/synthetic/claude',
+    }),
   });
   const failed = await catalog
     .read_result('cleanup', { backend_key: 'claude', refresh: true })
-    .then(
-      () => null,
-      (error: unknown) => error,
-    );
+    .catch((error: unknown) => error);
   expect(failed).toBeInstanceOf(ServerLifecycleError);
   const retained = (failed as Error).cause;
   expect(retained).toBeInstanceOf(ModelCatalogCleanupFailed);
   expect((retained as ModelCatalogCleanupFailed).primary).toBe(primary);
   expect((retained as ModelCatalogCleanupFailed).cleanup_errors).toContain(cleanup);
+  const finish = vi.fn(),
+    healthy = vi.fn(),
+    queue_failure = vi.fn();
+  const queues = new MacCommandQueues({
+    runner: { admission_stopped: false },
+    catalog,
+    journal: { finish, finish_stream: finish, assert_healthy: healthy },
+    result_finished: vi.fn(),
+    on_failure: queue_failure,
+  } as unknown as QueueDependencies);
+  queues.submit({
+    command_sequence: 1,
+    command_id: 'catalog',
+    created_at_vps_ms: 1,
+    child_command: null,
+    model_list_request: { backend_key: 'claude', refresh: true },
+  });
+  await expect(queues.settled()).rejects.toBeInstanceOf(AggregateError);
+  expect(queue_failure).toHaveBeenCalledExactlyOnceWith(failed);
+  expect(finish).not.toHaveBeenCalled();
+  expect(healthy).not.toHaveBeenCalled();
+  expect(query).toHaveBeenCalledTimes(2);
+  await expect(queues.stop({ deadline: performance.now() / 1000 + 1 })).rejects.toBeInstanceOf(
+    AggregateError,
+  );
   await expect(catalog.stop({ deadline: performance.now() / 1000 + 1 })).rejects.toBeInstanceOf(
     AggregateError,
   );
@@ -197,39 +268,12 @@ it('distinguishes an unavailable handshake from failed query cleanup and retains
   await one_shot_children.settled();
 });
 
-it('retains the Codex probe failure when its exact client cleanup also fails', async () => {
-  const primary = new Error('scripted Codex startup failure'),
-    cleanup = new Error('scripted Codex stop failure');
-  const invocation = invocation_children();
-  const stop = vi.fn().mockRejectedValueOnce(cleanup).mockResolvedValue(undefined);
-  const failed = await probe_codex_model_catalog('/synthetic/codex', {
-    child_processes: invocation,
-    client_factory: (options) => {
-      expect(options.child_processes).toBe(invocation);
-      return {
-        start: async () => {
-          throw primary;
-        },
-        stop,
-        request: vi.fn(),
-        notify: vi.fn(),
-      } as never;
-    },
-  }).then(
-    () => null,
-    (error: unknown) => error,
-  );
-  expect(failed).toBeInstanceOf(ModelCatalogCleanupFailed);
-  expect((failed as ModelCatalogCleanupFailed).primary).toBe(primary);
-  expect((failed as ModelCatalogCleanupFailed).cleanup_errors).toContain(cleanup);
-  expect(stop).toHaveBeenCalledOnce();
-  await (failed as ModelCatalogCleanupFailed).retry_cleanup();
-  expect(stop).toHaveBeenCalledTimes(2);
-  expect(invocation.spawn).not.toHaveBeenCalled();
-});
-
 it('joins Claude direct exit without waiting for a child close event or signaling its reaped group', async () => {
   vi.mocked(ensure_cli_compatible).mockResolvedValue(undefined);
+  const cancellation = new AbortController(),
+    reason = new Error('scripted catalog stop');
+  const stop_options = { deadline: performance.now() / 1000 + 1 };
+  let reject_start!: (error: unknown) => void;
   const signal = vi.spyOn(process, 'kill').mockReturnValue(true);
   const child = Object.assign(new EventEmitter(), {
     pid: 424242,
@@ -255,67 +299,25 @@ it('joins Claude direct exit without waiting for a child close event or signalin
       env: {},
     } as never);
     return {
-      initializationResult: async () => {
+      initializationResult: () =>
+        new Promise((_resolve, reject) => {
+          reject_start = reject;
+          cancellation.abort(reason);
+        }),
+      close: () => {
         child.exitCode = 0;
         child.emit('exit', 0, null);
-        return {
-          models: [
-            { value: 'haiku', resolvedModel: 'claude-haiku-4-5', supportedEffortLevels: ['low'] },
-          ],
-        };
+        reject_start(reason);
       },
-      close: () => {},
     } as never;
   });
-  const result = await probe_claude_model_catalog('/synthetic/claude', children);
-  expect(result.models[0]?.model_id).toBe('claude-haiku-4-5');
+  await expect(
+    probe_claude_model_catalog('/synthetic/claude', children, {
+      signal: cancellation.signal,
+      stop_options: () => stop_options,
+    }),
+  ).rejects.toMatchObject({ cause: reason });
   expect(close_event).not.toHaveBeenCalled();
   expect(signal).not.toHaveBeenCalled();
   expect(child.stdout.destroyed && child.stderr.destroyed && child.stdin.destroyed).toBe(true);
-});
-
-it('fails queue ownership without a null result when the catalog reports a lifecycle fault', async () => {
-  const finish = vi.fn(),
-    notify = vi.fn(),
-    healthy = vi.fn();
-  const catalog_notify = vi.fn(),
-    snapshot = vi.fn();
-  const catalog = new MacCatalog({
-    snapshots: { snapshot, retained: () => null },
-    stop_sources: async () => {},
-    on_failure: catalog_notify,
-  });
-  const primary = new Error('handshake failure'),
-    cleanup = new Error('query close failure');
-  const failure = catalog.resource_failure(
-    new ModelCatalogCleanupFailed(primary, [cleanup], async () => {}),
-  );
-  expect(failure).toBeInstanceOf(ServerLifecycleError);
-  const queues = new MacCommandQueues({
-    runner: { admission_stopped: false },
-    catalog,
-    journal: { finish, finish_stream: finish, assert_healthy: healthy },
-    result_finished: vi.fn(),
-    on_failure: notify,
-  } as unknown as QueueDependencies);
-  queues.submit({
-    command_sequence: 1,
-    command_id: 'catalog',
-    created_at_vps_ms: 1,
-    child_command: null,
-    model_list_request: { backend_key: 'claude', refresh: true },
-  });
-  await expect(queues.settled()).rejects.toBeInstanceOf(AggregateError);
-  expect(notify).toHaveBeenCalledExactlyOnceWith(failure);
-  expect(finish).not.toHaveBeenCalled();
-  expect(healthy).not.toHaveBeenCalled();
-  expect(snapshot).not.toHaveBeenCalled();
-  expect(catalog_notify).toHaveBeenCalledExactlyOnceWith(failure);
-  await expect(queues.stop({ deadline: performance.now() / 1000 + 1 })).rejects.toBeInstanceOf(
-    AggregateError,
-  );
-  await expect(catalog.stop({ deadline: performance.now() / 1000 + 1 })).rejects.toBeInstanceOf(
-    AggregateError,
-  );
-  await expect(catalog.settled()).rejects.toBeInstanceOf(AggregateError);
 });
