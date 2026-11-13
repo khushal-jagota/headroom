@@ -64,10 +64,20 @@ export async function hosted_archive(request: HostedRequest): Promise<void> {
     if (request.operation === 'schema') {
       if (!schema_case || !candidate_root || !candidate_python_version)
         throw new Error('Schema observation was not published before spawn');
-      const expected = ['-I', '-B', '-c', PYTHON_SCHEMA_STATUS_PROBE,
-        candidate_root, candidate_python_version, schema_case.database];
-      if (command !== join(candidate_root, '.venv/bin/python') ||
-          args.length !== expected.length || args.some((value, index) => value !== expected[index]))
+      const expected = [
+        '-I',
+        '-B',
+        '-c',
+        PYTHON_SCHEMA_STATUS_PROBE,
+        candidate_root,
+        candidate_python_version,
+        schema_case.database,
+      ];
+      if (
+        command !== join(candidate_root, '.venv/bin/python') ||
+        args.length !== expected.length ||
+        args.some((value, index) => value !== expected[index])
+      )
         throw new Error('Hosted proof refused an unexpected candidate command');
       const state = options.env?.HOME;
       if (typeof state !== 'string' || options.cwd !== state || options.env?.TMPDIR !== state)
@@ -97,12 +107,17 @@ export async function hosted_archive(request: HostedRequest): Promise<void> {
     if (request.operation === 'schema') {
       candidate_root = await realpath(request.app);
       const manifest = await validate_app_manifest(join(candidate_root, 'manifest.json'), {
-        expected_sha: request.sha, require_runtime: true, verify_artifact_digest: false,
+        expected_sha: request.sha,
+        require_runtime: true,
+        verify_artifact_digest: false,
       });
       if (manifest.runtime_contract?.version !== 1 || request.cases.length !== 3)
-        throw new Error('Hosted schema proof requires a genuine v1 candidate and three observations');
+        throw new Error(
+          'Hosted schema proof requires a genuine v1 candidate and three observations',
+        );
       candidate_python_version = manifest.runtime_contract.python_version;
-      const migration = create_migration_status(owner), rows = [];
+      const migration = create_migration_status(owner),
+        rows = [];
       for (const item of request.cases) {
         if (stopping) throw new Error('Hosted schema proof stopped');
         schema_case = item;
@@ -110,28 +125,57 @@ export async function hosted_archive(request: HostedRequest): Promise<void> {
         probe_argv = undefined;
         const before = await hash_archive(item.database);
         const entries = (await readdir(dirname(request.report))).sort();
-        const count = spawned, started = performance.now();
+        const count = spawned,
+          started = performance.now();
         let outcome: boolean | string;
         try {
           outcome = await migration.schema_change_pending(item.database, candidate_root);
         } catch (error) {
-          if (!(error instanceof AppValidationError) || typeof item.expected !== 'string' ||
-              error.message !== item.expected) throw error;
+          if (
+            !(error instanceof AppValidationError) ||
+            typeof item.expected !== 'string' ||
+            error.message !== item.expected
+          )
+            throw error;
           outcome = error.message;
         }
         const seconds = (performance.now() - started) / 1000;
         const after = await hash_archive(item.database);
-        if (outcome !== item.expected || before !== after || spawned !== count + 1 || closed !== spawned ||
-            !probe_state || existsSync(probe_state) ||
-            JSON.stringify(entries) !== JSON.stringify((await readdir(dirname(request.report))).sort()))
-          throw new Error('Candidate schema observation lost its result, readonly bytes, actual close or private-state cleanup');
-        rows.push({ database: item.database, outcome, hash_before: before, hash_after: after,
-          argv: probe_argv, spawned: 1, closed: 1, state_removed: true, seconds,
-          probe_timeout_seconds: RUNTIME_PROBE_TIMEOUT_SECONDS });
+        if (
+          outcome !== item.expected ||
+          before !== after ||
+          spawned !== count + 1 ||
+          closed !== spawned ||
+          !probe_state ||
+          existsSync(probe_state) ||
+          JSON.stringify(entries) !==
+            JSON.stringify((await readdir(dirname(request.report))).sort())
+        )
+          throw new Error(
+            'Candidate schema observation lost its result, readonly bytes, actual close or private-state cleanup',
+          );
+        rows.push({
+          database: item.database,
+          outcome,
+          hash_before: before,
+          hash_after: after,
+          argv: probe_argv,
+          spawned: 1,
+          closed: 1,
+          state_removed: true,
+          seconds,
+          probe_timeout_seconds: RUNTIME_PROBE_TIMEOUT_SECONDS,
+        });
       }
-      Object.assign(evidence, { candidate: candidate_root, python_version: candidate_python_version,
-        rows, spawned, closed,
-        boundary: 'Genuine built candidate wrapper with its unchanged origin assertions. No full staging ABI or runtime admission claim.' });
+      Object.assign(evidence, {
+        candidate: candidate_root,
+        python_version: candidate_python_version,
+        rows,
+        spawned,
+        closed,
+        boundary:
+          'Genuine built candidate wrapper with its unchanged origin assertions. No full staging ABI or runtime admission claim.',
+      });
     } else if (request.operation === 'pack')
       evidence.checksum = await create_app_archive(request.app, request.archive);
     else {
@@ -177,7 +221,9 @@ export async function hosted_archive(request: HostedRequest): Promise<void> {
     try {
       try {
         if (spawned !== closed) owner.force_kill(performance.now() / 1000 + 5);
-      } finally { await owner.settled(); }
+      } finally {
+        await owner.settled();
+      }
     } finally {
       process.off('SIGTERM', terminate);
       process.off('SIGINT', terminate);

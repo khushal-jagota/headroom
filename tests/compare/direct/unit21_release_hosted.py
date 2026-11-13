@@ -56,18 +56,25 @@ def command(
     deadline = started + timeout_seconds
     timed_out = False
     with log.open("xb") as output:
-        previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+        previous = signal.pthread_sigmask(
+            signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT}
+        )
         try:
             if stopping:
                 raise RuntimeError("hosted proof stopped before command admission")
             if time.monotonic() >= deadline:
                 phases[-1]["owned_command"] = dict(
-                    timeout_seconds=timeout_seconds, deadline_monotonic=deadline,
-                    timed_out=True, spawned=False,
+                    timeout_seconds=timeout_seconds,
+                    deadline_monotonic=deadline,
+                    timed_out=True,
+                    spawned=False,
                 )
                 raise TimeoutError("hosted command deadline expired before admission")
             child = subprocess.Popen(
-                arguments, stdout=output, stderr=subprocess.STDOUT, start_new_session=True
+                arguments,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
             )
             active = child
             active_graceful, force_at = graceful, None
@@ -75,7 +82,9 @@ def command(
             signal.pthread_sigmask(signal.SIG_SETMASK, previous)
         try:
             while True:
-                previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+                previous = signal.pthread_sigmask(
+                    signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT}
+                )
                 try:
                     now = time.monotonic()
                     if not timed_out and now >= deadline:
@@ -94,7 +103,9 @@ def command(
                         except ProcessLookupError:
                             pass
                         force_at = None
-                    observed = os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
+                    observed = os.waitid(
+                        os.P_PID, child.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG
+                    )
                     if observed is not None:
                         # Retain the zombie leader's identity until its group is
                         # forced, including on a nominally successful command.
@@ -113,7 +124,9 @@ def command(
                 time.sleep(0.05)
         finally:
             if active is child:
-                previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+                previous = signal.pthread_sigmask(
+                    signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT}
+                )
                 try:
                     try:
                         os.killpg(child.pid, signal.SIGKILL)
@@ -237,7 +250,9 @@ def compare(left: Path, right: Path, record: dict[str, Any]) -> dict[str, Any]:
     )
     record["tree"] = result
     if total:
-        raise AssertionError(f"{total} trees differ in bytes/mode/link/mtime: {mismatches}")
+        raise AssertionError(
+            f"{total} trees differ in bytes/mode/link/mtime: {mismatches}"
+        )
     return result
 
 
@@ -262,7 +277,11 @@ def describe(archive: Path) -> dict[str, Any]:
                 kind = member.type.hex()
                 counts[kind] = counts.get(kind, 0) + 1
                 maximum = max(maximum, member.size)
-                depth = max(depth, len(Path(member.name).parts), len(Path(member.linkname).parts))
+                depth = max(
+                    depth,
+                    len(Path(member.name).parts),
+                    len(Path(member.linkname).parts),
+                )
                 pax.update(member.pax_headers)
         while counted.read(CHUNK):
             pass
@@ -314,7 +333,10 @@ def main(root: Path, report: Path, sha: str) -> None:
             "Node TERM lets its owner join detached unpack. Hard outer-group fallback "
             "cannot confirm a separately detached child; any fallback remains a failed proof."
         ),
-        tools={name: shutil.which(name) for name in ("python3", "node", "patchelf", "readelf")},
+        tools={
+            name: shutil.which(name)
+            for name in ("python3", "node", "patchelf", "readelf")
+        },
         open=[
             "Node v2 release",
             "sealed Node package licenses",
@@ -357,7 +379,9 @@ def main(root: Path, report: Path, sha: str) -> None:
             for name in ("@anthropic-ai/claude-code", "@openai/codex")
         ]
         receipt["agent_packages"] = {
-            json.loads(path.read_text())["name"]: json.loads(path.read_text())["version"]
+            json.loads(path.read_text())["name"]: json.loads(path.read_text())[
+                "version"
+            ]
             for path in versions
         }
         launcher = root / "archive.mjs"
@@ -367,7 +391,11 @@ def main(root: Path, report: Path, sha: str) -> None:
         )
 
         def node(
-            operation: str, producer: str, archive: Path, node_tree: Path, record: dict[str, Any]
+            operation: str,
+            producer: str,
+            archive: Path,
+            node_tree: Path,
+            record: dict[str, Any],
         ) -> dict[str, Any]:
             output = root / f"{producer}-{operation}.json"
             request = dict(
@@ -383,7 +411,9 @@ def main(root: Path, report: Path, sha: str) -> None:
                 [
                     shutil.which("node") or "node",
                     str(launcher),
-                    (SOURCE / "server/environments/release/testing/hosted_archive.ts").as_uri(),
+                    (
+                        SOURCE / "server/environments/release/testing/hosted_archive.ts"
+                    ).as_uri(),
                     json.dumps(request),
                 ],
                 root / f"{producer}-{operation}.log",
@@ -397,21 +427,30 @@ def main(root: Path, report: Path, sha: str) -> None:
         from planner.environments.update_install import migration_graph
 
         graph = migration_graph(app)
-        heads = set(graph) - {parent for parents in graph.values() for parent in parents}
+        heads = set(graph) - {
+            parent for parents in graph.values() for parent in parents
+        }
         nonheads = sorted(set(graph) - heads)
         if not heads or not nonheads:
-            raise RuntimeError("the real candidate needs heads and a known non-head revision")
+            raise RuntimeError(
+                "the real candidate needs heads and a known non-head revision"
+            )
         schema_cases: list[dict[str, Any]] = []
         for name, revisions, expected in (
             ("heads", sorted(heads), False),
             ("nonhead", [nonheads[0]], True),
-            ("unknown", ["hosted-unknown-revision"], "This release does not know the database's schema revision."),
+            (
+                "unknown",
+                ["hosted-unknown-revision"],
+                "This release does not know the database's schema revision.",
+            ),
         ):
             database = root / f"schema-{name}.sqlite"
             with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute("CREATE TABLE alembic_version(version_num TEXT)")
                 connection.executemany(
-                    "INSERT INTO alembic_version VALUES(?)", [(value,) for value in revisions]
+                    "INSERT INTO alembic_version VALUES(?)",
+                    [(value,) for value in revisions],
                 )
             schema_cases.append(dict(database=str(database), expected=expected))
         schema_report = root / "v1-schema.json"
@@ -421,9 +460,18 @@ def main(root: Path, report: Path, sha: str) -> None:
             [
                 shutil.which("node") or "node",
                 str(launcher),
-                (SOURCE / "server/environments/release/testing/hosted_archive.ts").as_uri(),
-                json.dumps(dict(operation="schema", app=str(app), sha=sha,
-                                report=str(schema_report), cases=schema_cases)),
+                (
+                    SOURCE / "server/environments/release/testing/hosted_archive.ts"
+                ).as_uri(),
+                json.dumps(
+                    dict(
+                        operation="schema",
+                        app=str(app),
+                        sha=sha,
+                        report=str(schema_report),
+                        cases=schema_cases,
+                    )
+                ),
             ],
             root / "v1-schema.log",
             timeout_seconds=145,
@@ -439,18 +487,34 @@ def main(root: Path, report: Path, sha: str) -> None:
             receipt["producers"].append(record)
 
             if producer == "python":
-                record["checksum"] = phase(producer + "-pack", create_app_archive, app, archive)
+                record["checksum"] = phase(
+                    producer + "-pack", create_app_archive, app, archive
+                )
             else:
                 record["checksum"] = phase(
-                    producer + "-pack", node, "pack", producer, archive, node_tree, record
+                    producer + "-pack",
+                    node,
+                    "pack",
+                    producer,
+                    archive,
+                    node_tree,
+                    record,
                 )["checksum"]
             record["archive_bytes"] = archive.stat().st_size
             record["corpus"] = phase(producer + "-scan", describe, archive)
             record["node"] = phase(
-                producer + "-node-unpack", node, "unpack", producer, archive, node_tree, record
+                producer + "-node-unpack",
+                node,
+                "unpack",
+                producer,
+                archive,
+                node_tree,
+                record,
             )
             if record["node"]["expanded_bytes"] != record["corpus"]["expanded_bytes"]:
-                raise AssertionError("validated spool and public gzip byte counts differ")
+                raise AssertionError(
+                    "validated spool and public gzip byte counts differ"
+                )
             phase(
                 producer + "-python-unpack",
                 extract_app_archive,
@@ -459,7 +523,9 @@ def main(root: Path, report: Path, sha: str) -> None:
                 record["checksum"],
                 sha,
             )
-            record["tree"] = phase(producer + "-compare", compare, node_tree, oracle, record)
+            record["tree"] = phase(
+                producer + "-compare", compare, node_tree, oracle, record
+            )
             if (
                 hash_archive(archive) != record["checksum"]
                 or digest_app_artifact(app) != manifest.artifact_digest
@@ -477,7 +543,9 @@ def main(root: Path, report: Path, sha: str) -> None:
         try:
             phase("final-cleanup", remove, corpus)
         except BaseException as error:
-            receipt.update(completed=False, failure="final cleanup: " + str(error)[:4000])
+            receipt.update(
+                completed=False, failure="final cleanup: " + str(error)[:4000]
+            )
             raise
         finally:
             report.write_text(json.dumps(receipt, indent=2) + "\n")
