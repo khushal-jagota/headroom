@@ -290,26 +290,36 @@ def test_unit21_owned_supervisor_control_and_stop_protocol(
         fallback_host_started = time.monotonic()
         with _supervisor(root, env, node, managed=False) as (process, ready):
             row = ready(1)  # Pins the actual APP before it blocks its own event loop.
-            (root / "block").write_text("block\n")
-            _wait(
-                lambda: any(
-                    event["kind"] == "blocked" and event["pid"] == row["pid"]
-                    for event in _events(root)
-                ),
-                "APP did not enter its synchronous block",
-            )
-            fallback_stop_started = time.monotonic()
-            process.send_signal(signal.SIGTERM)
-            remaining = min(75.0, fallback_host_started + 90.0 - time.monotonic())
-            assert remaining > 0, "fallback host exhausted its original budget"
-            assert process.wait(timeout=remaining) == 1
-            fallback_elapsed = time.monotonic() - fallback_stop_started
-            assert fallback_elapsed >= 60.0
-            fallback_log = (root / "output.log").read_text()
-            assert (
-                "Panels application exceeded the 60-second supervisor stop bound; "
-                "forcing its owned group."
-            ) in fallback_log
+            descriptor = _owned_pidfd(row["pid"], process.pid)
+            assert descriptor is not None
+            try:
+                (root / "block").write_text("block\n")
+                _wait(
+                    lambda: any(
+                        event["kind"] == "blocked" and event["pid"] == row["pid"]
+                        for event in _events(root)
+                    ),
+                    "APP did not enter its synchronous block",
+                )
+                fallback_stop_started = time.monotonic()
+                process.send_signal(signal.SIGTERM)
+                remaining = min(75.0, fallback_host_started + 90.0 - time.monotonic())
+                assert remaining > 0, "fallback host exhausted its original budget"
+                assert process.wait(timeout=remaining) == 1
+                fallback_elapsed = time.monotonic() - fallback_stop_started
+                assert fallback_elapsed >= 60.0
+                fallback_log = (root / "output.log").read_text()
+                assert (
+                    "Panels application exceeded the 60-second supervisor stop bound; "
+                    "forcing its owned group."
+                ) in fallback_log
+                remaining = min(10.0, fallback_host_started + 90.0 - time.monotonic())
+                assert remaining > 0, "APP exit observation exhausted the original host budget"
+                # Observe exit before the context manager can force the fixture's APP.
+                fallback_app_exited = bool(select.select([descriptor], [], [], remaining)[0])
+                assert fallback_app_exited, "supervisor fallback did not stop its actual APP"
+            finally:
+                os.close(descriptor)
         fallback_host_seconds = time.monotonic() - fallback_host_started
         root = base / "foreground"
         with _supervisor(root, env, node, managed=False) as (process, ready):
@@ -568,6 +578,7 @@ def test_unit21_owned_supervisor_control_and_stop_protocol(
                         "host_seconds": fallback_host_seconds,
                         "exit_code": 1,
                         "app_blocked": True,
+                        "app_exit_observed": fallback_app_exited,
                         "log": fallback_log,
                         "additional_invocations": 1,
                         "additional_node_processes": 3,
