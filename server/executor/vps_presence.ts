@@ -429,7 +429,10 @@ export class MacPresenceService {
       )
     );
   }
-  wait_until_drained(conversation_id: string): Promise<void> {
+  wait_until_drained(
+    conversation_id: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<void> {
     this.admit();
     return this.own(async () => {
       if (this.drained(conversation_id)) return;
@@ -438,9 +441,16 @@ export class MacPresenceService {
         entry = { conversation_id, resolve, reject };
       });
       this.drain_waiters.add(entry);
+      const abort = () =>
+        entry.reject(
+          options.signal?.reason ?? new DOMException('Presence drain aborted.', 'AbortError'),
+        );
       try {
+        options.signal?.addEventListener('abort', abort, { once: true });
+        if (options.signal?.aborted) abort();
         await waiting;
       } finally {
+        options.signal?.removeEventListener('abort', abort);
         this.drain_waiters.delete(entry);
       }
     });
