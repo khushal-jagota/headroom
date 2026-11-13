@@ -805,7 +805,6 @@ async def read_scoped_backends(
     """Read the models of the Ticket's machine, including its last offline copy."""
     from planner.core.errors import ErrorCode, PlannerError
     from planner.tickets import data as ticket_data
-    from planner.tickets.contracts import TicketLocale
 
     if (
         set(raw) != {"ticket_id"}
@@ -818,8 +817,10 @@ async def read_scoped_backends(
     from planner.conversation.model_resolution.contracts import RemoteCatalogSource
 
     source: RemoteCatalogSource | BackendSnapshotService | None = runtime.backend_snapshots
-    if ticket.locale is TicketLocale.macos:
-        source = runtime.system.machine_catalog
+    from planner.machines.contracts import HOME_MACHINE_ID
+    if ticket.machine_id != HOME_MACHINE_ID:
+        resolver = runtime.system.machine_catalog
+        source = None if resolver is None else resolver.catalog_for(ticket.machine_id)
     if source is None:
         raise PlannerError(ErrorCode.validation, "The selected machine is unavailable", {})
     snapshots = await asyncio.gather(

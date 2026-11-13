@@ -18,13 +18,14 @@ from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.task_settlement import run_on_worker_thread
 from planner.executor.clock import now_ms
+from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
+from planner.machines.data import read_machine
 from planner.runtime import conversation_start, worker_step_readiness
 from planner.tickets import data as tickets_data
 from planner.tickets import locale_configuration, revision_feedback
 from planner.tickets.contracts import (
     StageOwnershipMode,
     Ticket,
-    TicketLocale,
     WorkerStepClaim,
 )
 from planner.tickets.logic import machine
@@ -52,14 +53,18 @@ def require_restartable(
             "only a Worker-owned Stage has a worker step to restart",
             {"ticket_id": ticket_id, "stage": ticket.stage},
         )
-    if ticket.locale is TicketLocale.macos and not locale_configuration.mac_is_present(
-        conn, now_ms()
+    if ticket.machine_id != HOME_MACHINE_ID and not locale_configuration.mac_is_present(
+        conn, now_ms(), ticket.machine_id
     ):
         # A stop cannot reach a Mac that is away, so its old Worker could outlive the
         # restart. The readiness loop would not start the fresh step either.
+        destination = read_machine(conn, ticket.machine_id)
+        waiting = (locale_configuration.WAITING_FOR_THE_MAC
+                   if ticket.machine_id == ORIGINAL_MAC_MACHINE_ID and destination.name == "Mac"
+                   else f"Waiting for {destination.name}")
         raise PlannerError(
             ErrorCode.validation,
-            f"{locale_configuration.WAITING_FOR_THE_MAC}: restart this Ticket once it is back",
+            f"{waiting}: restart this Ticket once it is back",
             {"ticket_id": ticket_id},
         )
     return ticket

@@ -52,16 +52,11 @@ def resolve_destination(
         machine_id if machine_id is not None else legacy_machine_id(legacy or TicketLocale.vps)
     )
     read_machine(conn, selected)
-    aliases = {HOME_MACHINE_ID: TicketLocale.vps, ORIGINAL_MAC_MACHINE_ID: TicketLocale.macos}
-    if selected not in aliases:
-        raise PlannerError(
-            ErrorCode.validation, "This machine has no execution route", {"machine_id": selected}
-        )
     if legacy is not None and selected != legacy_machine_id(legacy):
         raise PlannerError(
-            ErrorCode.validation, "machine_id and locale name different destinations"
+            ErrorCode.validation, "machine_id and locale name different destinations",
         )
-    return selected, aliases[selected]
+    return selected, TicketLocale.vps if selected == HOME_MACHINE_ID else TicketLocale.macos
 
 
 def edit_machine(conn: sqlite3.Connection, machine_id: str, body: dict[str, object]) -> Machine:

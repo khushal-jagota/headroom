@@ -82,7 +82,7 @@ def test_the_server_runs_one_stall_checker_over_the_executor_sources(tmp_path: P
         assert checker.registry is WAITS
         endpoint = app.state.executor_endpoint
         assert isinstance(endpoint, VpsExecutor)
-        sources = checker.sources()
+        sources = tuple(source.source for source in checker.sources())
         assert [type(source) for source in sources] == [
             type(source) for source in endpoint.stall_sources()
         ]

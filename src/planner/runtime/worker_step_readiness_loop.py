@@ -22,6 +22,7 @@ import concurrent.futures
 import logging
 import sqlite3
 import threading
+from collections import deque
 from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -530,6 +531,10 @@ class WorkerStepReadinessLoop:
         self._thread: threading.Thread | None = None
         self._in_flight_lock = threading.Lock()
         self._in_flight: dict[concurrent.futures.Future[Any], str] = {}
+        self._in_flight_destinations: dict[concurrent.futures.Future[Any], str] = {}
+        self._in_flight_counts: dict[str, int] = {}
+        self._ticket_destinations: dict[str, str] = {}
+        self._last_destination: str | None = None
 
     def wake(self) -> None:
         """Ask the loop to poll now; the periodic timer remains the backstop."""
@@ -539,6 +544,7 @@ class WorkerStepReadinessLoop:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
             rows = conn.execute(_CANDIDATE_SQL).fetchall()
+            self._ticket_destinations = {}
             ready_ticket_ids: list[str] = []
             ready_start_ids: set[str] = set()
             for row in rows:
@@ -559,6 +565,7 @@ class WorkerStepReadinessLoop:
                 ):
                     continue
                 ready_ticket_ids.append(ticket.id)
+                self._ticket_destinations[ticket.id] = ticket.machine_id
                 ready_start_ids.add(f"worker-preparation:{ticket.id}")
             starts = getattr(self._conversation_system, "start_admission", None)
             if starts is not None:
@@ -569,6 +576,21 @@ class WorkerStepReadinessLoop:
                 ready_ticket_ids.sort(
                     key=lambda ticket_id: starts.priority((f"worker-preparation:{ticket_id}",))[1]
                 )
+            # Rotate destination queues without disturbing order within a conversation/machine.
+            groups: dict[str, deque[str]] = {}
+            for ticket_id in ready_ticket_ids:
+                groups.setdefault(self._ticket_destinations[ticket_id], deque()).append(ticket_id)
+            destinations = list(groups)
+            if self._last_destination in destinations:
+                offset = destinations.index(self._last_destination) + 1
+                destinations = destinations[offset:] + destinations[:offset]
+            ready_ticket_ids = []
+            rotation = deque(destinations)
+            while rotation:
+                destination = rotation.popleft()
+                ready_ticket_ids.append(groups[destination].popleft())
+                if groups[destination]:
+                    rotation.append(destination)
             return ready_ticket_ids
         finally:
             conn.close()
@@ -596,11 +618,23 @@ class WorkerStepReadinessLoop:
         return [ticket_id for ticket_id in ticket_ids if self._schedule_memory_notice(ticket_id)]
 
     def _schedule_memory_notice(self, ticket_id: str) -> bool:
+        destination = self._ticket_destinations.get(ticket_id)
+        if destination is None:
+            conn = connect(self._db_path, self._busy_timeout_ms)
+            try:
+                row = conn.execute(
+                    "SELECT machine_id FROM tickets WHERE id=?", (ticket_id,),
+                ).fetchone()
+                if row is None:
+                    return False
+                destination = str(row[0])
+            finally:
+                conn.close()
         with self._in_flight_lock:
             if self._stop.is_set():
                 return False
             starts = getattr(self._conversation_system, "start_admission", None)
-            if starts is not None and len(self._in_flight) >= starts.limit:
+            if starts is not None and self._in_flight_counts.get(destination, 0) >= starts.limit:
                 return False
             if ticket_id in self._in_flight.values():
                 # The previous pass is still sending this Ticket's notice. Two would
@@ -618,17 +652,32 @@ class WorkerStepReadinessLoop:
         )
         with self._in_flight_lock:
             self._in_flight[future] = ticket_id
+            self._in_flight_destinations[future] = destination
+            self._in_flight_counts[destination] = self._in_flight_counts.get(destination, 0) + 1
+            self._last_destination = destination
         future.add_done_callback(self._step_ended)
         return True
 
     def _schedule(self, ticket_id: str) -> bool:
+        destination = self._ticket_destinations.get(ticket_id)
+        if destination is None:
+            conn = connect(self._db_path, self._busy_timeout_ms)
+            try:
+                row = conn.execute(
+                    "SELECT machine_id FROM tickets WHERE id=?", (ticket_id,),
+                ).fetchone()
+                if row is None:
+                    return False
+                destination = str(row[0])
+            finally:
+                conn.close()
         with self._in_flight_lock:
             if self._stop.is_set():
                 return False
             if ticket_id in self._in_flight.values():
                 return False
             starts = getattr(self._conversation_system, "start_admission", None)
-            if starts is not None and len(self._in_flight) >= starts.limit:
+            if starts is not None and self._in_flight_counts.get(destination, 0) >= starts.limit:
                 return False
         future = asyncio.run_coroutine_threadsafe(
             start_ready_worker_step(
@@ -642,6 +691,9 @@ class WorkerStepReadinessLoop:
         )
         with self._in_flight_lock:
             self._in_flight[future] = ticket_id
+            self._in_flight_destinations[future] = destination
+            self._in_flight_counts[destination] = self._in_flight_counts.get(destination, 0) + 1
+            self._last_destination = destination
         future.add_done_callback(self._step_ended)
         return True
 
@@ -655,6 +707,13 @@ class WorkerStepReadinessLoop:
         """
         with self._in_flight_lock:
             ticket_id = self._in_flight.pop(future, None)
+            destination = self._in_flight_destinations.pop(future, None)
+            if destination is not None:
+                count = self._in_flight_counts[destination] - 1
+                if count:
+                    self._in_flight_counts[destination] = count
+                else:
+                    self._in_flight_counts.pop(destination)
         if future.cancelled():
             # Stopping cancels what it could not wait out. That is a decision, not a fault.
             return

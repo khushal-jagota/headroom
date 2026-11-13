@@ -11,6 +11,7 @@ from planner.execution_identity import supports_executor_versions
 from planner.executor.logic.presence import judge_presence
 from planner.executor.protocol import ExecutorRefusal
 from planner.executor.vps_presence_store import read_presence
+from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
 from planner.tickets.contracts import TicketLocale
 
 CURRENT_EXECUTION_LOCALE = TicketLocale.vps
@@ -38,9 +39,11 @@ def can_execute_locale(conn: sqlite3.Connection, locale: TicketLocale) -> bool:
     )
 
 
-def mac_is_present(conn: sqlite3.Connection, now_ms: int) -> bool:
+def mac_is_present(
+    conn: sqlite3.Connection, now_ms: int, machine_id: str = ORIGINAL_MAC_MACHINE_ID
+) -> bool:
     """Whether the Mac's lease is fresh by the VPS clock."""
-    return judge_presence(read_presence(conn), now_ms).presence == "present"
+    return judge_presence(read_presence(conn, machine_id), now_ms).presence == "present"
 
 
 def _render_refusal(refusal: ExecutorRefusal) -> str:
@@ -74,12 +77,19 @@ def execution_unavailable_reason(conn: sqlite3.Connection, locale: TicketLocale)
 
 
 def can_execute_machine(conn: sqlite3.Connection, machine_id: str) -> bool:
-    """Only the home and the explicitly bound original executor have a route."""
-    from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
-
+    """A compatible incarnation admits work only to its named destination."""
     if machine_id == HOME_MACHINE_ID:
         return True
-    return machine_id == ORIGINAL_MAC_MACHINE_ID and can_execute_locale(conn, TicketLocale.macos)
+    record = read_presence(conn, machine_id)
+    return (
+        record is not None
+        and record.executor_incarnation is not None
+        and record.identity is not None
+        and record.refusal is None
+        and supports_executor_versions(
+            record.identity.protocol_version, record.identity.spool_format_version
+        )
+    )
 
 
 def machine_unavailable_reason(conn: sqlite3.Connection, machine_id: str) -> str:

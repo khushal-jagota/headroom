@@ -1179,7 +1179,7 @@ def test_ineligible_admission_heads_do_not_hold_the_next_ready_worker(world: _Wo
     ]
     now = [0.0]
     starts = AutomaticStartAdmission(clock=lambda: now[0])
-    starts.configure_destinations(lambda destination: True)
+    starts.configure_destinations(lambda destination: destination == HOME_MACHINE_ID)
     world.conversations = _AdmissionConversations(starts)
     assert starts.try_start(StartRequest("initial", "supervisor", HOME_MACHINE_ID))
     for ticket_id in (deleted, backlogged, blocked, not_empty, away, busy, survivor):
@@ -1339,7 +1339,8 @@ def test_restart_refuses_a_mac_ticket_while_the_mac_is_away(world: _World) -> No
     world.start_conversation("conv-mac-away")
     assert world.start_step(ticket_id).started is True
     with world.connect() as conn:
-        conn.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket_id,))
+        conn.execute("UPDATE tickets SET locale='macos',machine_id=? WHERE id=?",
+                     (ORIGINAL_MAC_MACHINE_ID, ticket_id))
         conn.commit()
     claimed = world.ticket(ticket_id)
 

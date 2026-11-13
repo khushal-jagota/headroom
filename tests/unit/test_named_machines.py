@@ -193,7 +193,20 @@ def test_populated_legacy_move_preserves_executor_authority(
             "macos": ORIGINAL_MAC_MACHINE_ID,
         }
         for table, rows in before.items():
-            assert [tuple(row) for row in conn.execute(f"SELECT * FROM {table}")] == rows
+            columns = [str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")]
+            if table == "mac_executor_presence":
+                migrated = [tuple(row)[1:] for row in conn.execute(f"SELECT * FROM {table}")]
+                assert migrated == [row[1:] for row in rows]
+                assert (
+                    conn.execute(f"SELECT machine_id FROM {table}").fetchone()[0]
+                    == ORIGINAL_MAC_MACHINE_ID
+                )
+            else:
+                original_columns = [column for column in columns if column != "machine_id"]
+                assert [
+                    tuple(row)
+                    for row in conn.execute(f"SELECT {','.join(original_columns)} FROM {table}")
+                ] == rows
         assert dict(conn.execute("SELECT identity,destination FROM automatic_start_bindings")) == {
             "claim": ORIGINAL_MAC_MACHINE_ID,
             "supervisor": HOME_MACHINE_ID,
