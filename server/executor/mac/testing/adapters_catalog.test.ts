@@ -103,13 +103,13 @@ it('retains server catalog failures when the first shutdown retries both native 
   await expect(providers.codex!('/synthetic/codex')).rejects.toBe(failure);
   await expect(providers.claude!('/synthetic/claude')).rejects.toBe(claude_failure);
   const options = { deadline: performance.now() / 1000 + 1 };
-  await expect(runtime.shutdown(options)).rejects.toBeInstanceOf(AggregateError);
+  await expect(runtime.shutdown!(options)).rejects.toBeInstanceOf(AggregateError);
   const actual = await runtime.settled().catch((error: unknown) => error);
   const leaves = (error: unknown): unknown[] =>
     error instanceof AggregateError ? error.errors.flatMap(leaves) : [error];
   expect(leaves(actual)).toEqual(expect.arrayContaining(errors));
   expect(retry).toHaveBeenCalledTimes(2);
-  await expect(runtime.shutdown(options)).rejects.toBe(actual);
+  await expect(runtime.shutdown!(options)).rejects.toBe(actual);
   await expect(providers.codex!('/synthetic/codex')).rejects.toThrow('shut down');
   await expect(providers.claude!('/synthetic/claude')).rejects.toThrow('shut down');
 });
