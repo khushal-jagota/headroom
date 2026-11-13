@@ -47,7 +47,9 @@ export function assert_temporary_path(path: string): string {
   }
   function checked(candidate: string, links = 0): string {
     if (links > 40) refuse();
-    const index = [...roots, ...canonicalRoots].findIndex((root) => path_is_within(root, candidate));
+    const index = [...roots, ...canonicalRoots].findIndex((root) =>
+      path_is_within(root, candidate),
+    );
     if (index < 0) refuse();
     const root = [...roots, ...canonicalRoots][index];
     let current = canonicalRoots[index % roots.length];

@@ -47,7 +47,10 @@ function stat(path: string) {
 export function require_synthetic_destination(home: string, destination: string): void {
   const canonical = realpathSync(home),
     absolute = resolve(destination);
-  if (!path_is_within(resolve(home), absolute) || !path_is_within(canonical, realExisting(absolute)))
+  if (
+    !path_is_within(resolve(home), absolute) ||
+    !path_is_within(canonical, realExisting(absolute))
+  )
     throw new Error(`synthetic destination escapes owned home: ${destination}`);
 }
 function publish_server_skills(
@@ -171,7 +174,10 @@ export function prepare_native_skill_publication(
     throw new Error(`native skill publication refuses entry: ${name}`);
   };
   const owned = (target: string) =>
-    path_is_within(state, resolve_mac_path(isAbsolute(target) ? target : home + '/skills/' + target));
+    path_is_within(
+      state,
+      resolve_mac_path(isAbsolute(target) ? target : home + '/skills/' + target),
+    );
   const scan = () => {
     directory.assert_current();
     const entries = directory
