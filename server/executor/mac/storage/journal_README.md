@@ -1,18 +1,18 @@
 # Command journal worker
 
 Open through `open_command_journal(outbox, incarnation, dependencies, shared_cleanup_options)`.
-The outbox reserves the complete opening and registers its unstarted journal before module loading or Worker creation.
+The outbox reserves the complete opening and registers its unstarted journal before Worker creation or asynchronous storage startup.
 The journal creates only `commands.sqlite3` beneath that owner's root. It takes no independent lock.
 
-The required dependencies are trusted file-module URLs for the shared protocol and pure output policy, `now_ms(): bigint`, and `on_failure(error): void`.
-The protocol exports `decode_json` and `encode_value` with the shared root names.
+The required dependencies are a trusted pure output-policy module URL, `now_ms(): bigint`, and `on_failure(error): void`.
+The public constructor statically binds the shared `protocol.ts` codec and the fixed journal worker entry. The caller cannot select either URL.
+The worker uses the shared `decode_json` and `encode_value` functions with generated root names and types.
 The pure module exports `command_owes_outputs`. It must import no provider or account composition.
 The host must schedule owned shutdown from `on_failure`. Each journal fault invokes it once.
 The spool also requires a fourth `OutboxStore.open` callback for file-worker faults. A shared host shutdown action must be idempotent.
-The final production codec binding awaits the shared protocol module. The current required port does not prove that binding.
-The final binding must use shared `integer_value` for generated `WireInteger` values. The current private conversion awaits that handoff.
-Trusted module injection serves finite comparisons. No environment lookup, decoder fallback, optional codec, or production test import exists.
-Main imports the protocol only for shared error prototypes. Codec and policy calls run inside the journal worker.
+Generated integer fields keep the shared `WireInteger` representation. SQL bindings use the shared `integer_value` helper without a Mac conversion.
+Trusted codec injection exists only in `testing/journal_factory.ts` for focused fault cases. Production imports no testing module or decoder fallback.
+Main retains canonical shared error constructors. Codec and policy calls run inside the journal worker.
 
 All APIs are asynchronous. Command/result inputs use canonical bytes or text, without a wire body cap for journal results.
 Journal reads remain lax. Canonical writes use shared `encode_value` and the shared Pydantic formatter.
@@ -68,4 +68,5 @@ This narrows an observed cross-thread failure window. It does not atomically fen
 The main-owned lock still excludes replacement writers until all registered databases and workers actually settle.
 
 Queue, runner, HTTP, provider, and catalog composition remain later slices.
-The finite fixture modules prove focused behavior, not arbitrary runtime wire validation or production provider exchange.
+Finite fixture modules isolate fault cases. Actual shared-codec journal comparisons own canonical-byte and wire-validation evidence.
+Provider exchange and native Mac verification remain later work.

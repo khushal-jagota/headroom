@@ -11,15 +11,12 @@ import type {
   DurableSidecarOpenFailure,
   TransactionSql,
 } from '../../../core/database/contracts.ts';
-import { JsonNumber, stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
-import type { NumericJSON } from '../../../core/http/numeric_json.ts';
-import type {
-  WireRootName,
-  WireTypes,
-  MailboxCommand,
-  CommandResult,
-} from '../../wire.generated.ts';
-import type { RequiredJournalProtocol, JournalOutputPolicy } from './journal_contracts.ts';
+import { stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
+import { integer_value } from '../../integers.ts';
+import type { WireInput } from '../../protocol.ts';
+import type { WireRootName, MailboxCommand, CommandResult } from '../../wire.generated.ts';
+import type { JournalOutputPolicy } from './journal_contracts.ts';
+import type { JournalProtocol } from './journal_internal_contracts.ts';
 import {
   JOURNAL_NAME,
   JOURNAL_REFUSAL,
@@ -32,21 +29,15 @@ export interface EncodedJournalRow {
   command?: Buffer;
   result?: Buffer;
 }
-export function journal_integer(value: number | bigint | JsonNumber): bigint {
-  if (typeof value === 'bigint') return value;
-  if (value instanceof JsonNumber && value.integer !== null) return value.integer;
-  if (typeof value === 'number' && Number.isSafeInteger(value)) return BigInt(value);
-  throw new TypeError('journal integer must retain its exact value');
-}
 export class JournalEngine {
   private database: Database | undefined;
   private failed_cleanup: DatabaseCloseHandle | undefined;
-  private readonly protocol: RequiredJournalProtocol;
+  private readonly protocol: JournalProtocol;
   private readonly policy: JournalOutputPolicy;
   private readonly health: () => void;
   readonly incarnation: string;
   constructor(
-    protocol: RequiredJournalProtocol,
+    protocol: JournalProtocol,
     policy: JournalOutputPolicy,
     incarnation: string,
     health: () => void,
@@ -97,13 +88,13 @@ export class JournalEngine {
       return value;
     });
   }
-  private encode<R extends WireRootName>(value: NumericJSON<WireTypes[R]>, root: R): Buffer {
+  private encode<R extends WireRootName>(value: WireInput<R>, root: R): Buffer {
     return Buffer.from(stringify_pydantic_json(this.protocol.encode_value(value, root)));
   }
-  private command(raw: Uint8Array | string): NumericJSON<MailboxCommand> {
+  private command(raw: Uint8Array | string): MailboxCommand {
     return this.protocol.decode_json(raw, 'MailboxCommand');
   }
-  private result(raw: Uint8Array | string): NumericJSON<CommandResult> {
+  private result(raw: Uint8Array | string): CommandResult {
     return this.protocol.decode_json(raw, 'CommandResult');
   }
   recover(): void {
@@ -118,7 +109,7 @@ export class JournalEngine {
       for (const row of rows) {
         const command = this.command(row.mailbox_command_json),
           child = command.child_command;
-        const result: NumericJSON<CommandResult> = {
+        const result: CommandResult = {
           command_id: command.command_id,
           child_outcome:
             child == null
@@ -184,7 +175,7 @@ export class JournalEngine {
             "INSERT INTO commands(command_id,command_sequence,executor_incarnation,mailbox_command_json,phase,recorded_at_ms) VALUES(?,?,?,?,'recorded',?)",
             [
               command.command_id,
-              journal_integer(command.command_sequence),
+              integer_value(command.command_sequence),
               incarnation,
               encoded,
               recorded_at,
@@ -194,7 +185,7 @@ export class JournalEngine {
           continue;
         }
         tx.run('UPDATE commands SET command_sequence=MAX(command_sequence,?) WHERE command_id=?', [
-          journal_integer(command.command_sequence),
+          integer_value(command.command_sequence),
           command.command_id,
         ]);
         if (row.phase === 'finished') {
@@ -278,7 +269,7 @@ export class JournalEngine {
       );
       for (const row of rows) {
         const result = this.result(row.result_json);
-        const kept: NumericJSON<CommandResult> = {
+        const kept: CommandResult = {
           command_id: result.command_id,
           child_outcome: result.child_outcome ?? null,
           model_list: null,

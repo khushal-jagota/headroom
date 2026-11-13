@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { afterEach, expect, test, vi } from 'vitest';
-import { parse_numeric_json, stringify_python_json } from '../../../core/http/numeric_json.ts';
+import { ValidationError, ValueError } from '../../protocol.ts';
 import { createReadAccess } from '../../../core/database/index.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
@@ -20,9 +20,10 @@ import { FilesService } from '../files.ts';
 import { FILE_CHUNK_BYTES } from '../configuration.ts';
 import { acquire_process_lock } from '../platform.ts';
 import { OutboxStore } from './outbox.ts';
-import { open_command_journal } from './journal.ts';
+import { open_test_command_journal } from './testing/journal_factory.ts';
+import type { TestJournalDependencies } from './testing/journal_factory.ts';
 import { JOURNAL_NAME } from './journal_schema.ts';
-import type { CanonicalReader, JournalDependencies } from './journal_contracts.ts';
+import type { CanonicalReader } from './journal_contracts.ts';
 import type { OutboxCleanup } from './resources.ts';
 
 const deadline = () => ({ deadline: performance.now() / 1000 + 5 });
@@ -120,9 +121,6 @@ async function fixture(gated = false) {
       ].map(([root, text]) => ({
         root,
         hex: Buffer.from(text!).toString('hex'),
-        aliases: [
-          stringify_python_json(parse_numeric_json(text!), { sort_keys: true, compact: true }),
-        ],
       })),
       owed: [[3, 2, false]],
     }),
@@ -130,7 +128,7 @@ async function fixture(gated = false) {
   const wrapper = join(root, 'dependency.mjs');
   writeFileSync(
     wrapper,
-    `export * from ${JSON.stringify(source.href)};
+    `export * from ${JSON.stringify(new URL('../../protocol.ts', import.meta.url).href)};
 import {command_owes_outputs as original_owed} from ${JSON.stringify(source.href)};
 import {isMainThread, parentPort} from 'node:worker_threads';
 let pause_policy;
@@ -173,7 +171,7 @@ if (!isMainThread) {
 `,
   );
   const url = pathToFileURL(wrapper);
-  const dependencies: JournalDependencies = {
+  const dependencies: TestJournalDependencies = {
     protocol_module: url,
     outputs_module: url,
     now_ms: () => 1n,
@@ -232,7 +230,7 @@ afterEach(async () => {
 
 test('stop during module load owns the unstarted journal and never opens its database', async () => {
   const f = await fixture(true);
-  const opening = open_command_journal(f.owner, 'inc', f.dependencies, deadline()).then(
+  const opening = open_test_command_journal(f.owner, 'inc', f.dependencies, deadline()).then(
     () => null,
     (error) => error as Error,
   );
@@ -256,7 +254,7 @@ test('failed startup flush retains a live cleanup continuation while journal clo
   vi.spyOn(FilesService.prototype, 'fsync_directory').mockRejectedValueOnce(
     new Error('startup flush failed'),
   );
-  const failure = await open_command_journal(f.owner, 'inc', f.dependencies, deadline()).then(
+  const failure = await open_test_command_journal(f.owner, 'inc', f.dependencies, deadline()).then(
     () => null,
     (error) => error as Error & { cleanup?: OutboxCleanup },
   );
@@ -274,7 +272,15 @@ test('failed startup flush retains a live cleanup continuation while journal clo
 
 test('shutdown drains one admitted multi-chunk finish and retains the lock across a failed native close', async () => {
   const f = await fixture();
-  const journal = await open_command_journal(f.owner, 'inc', f.dependencies, deadline());
+  const journal = await open_test_command_journal(f.owner, 'inc', f.dependencies, deadline());
+  const malformed = await journal
+    .record_poll_reply(Buffer.from('{"commands":null}'), 'inc', 0n)
+    .then(
+      () => null,
+      (error) => error,
+    );
+  expect(malformed).toBeInstanceOf(ValidationError);
+  expect(malformed).toBeInstanceOf(ValueError);
   const fresh = await journal.record_poll_reply(Buffer.from(reply), 'inc', 0n);
   const item = await fresh[Symbol.asyncIterator]().next();
   const delivery = item.value!.command[Symbol.asyncIterator]();
@@ -322,7 +328,7 @@ test('shutdown drains one admitted multi-chunk finish and retains the lock acros
 
 test('an observed resource fault rolls back a blocked journal transaction before actual worker exit releases native resources', async () => {
   const f = await fixture(),
-    journal = await open_command_journal(f.owner, 'inc', f.dependencies, deadline());
+    journal = await open_test_command_journal(f.owner, 'inc', f.dependencies, deadline());
   const cursor = await journal.record_poll_reply(Buffer.from(reply), 'inc', 0n);
   const iterator = cursor[Symbol.asyncIterator](),
     item = await iterator.next();
@@ -405,7 +411,7 @@ test('an observed resource fault rolls back a blocked journal transaction before
 
 test('truncated committed fresh delivery faults the host and joins actual cleanup', async () => {
   const f = await fixture();
-  const journal = await open_command_journal(f.owner, 'inc', f.dependencies, deadline());
+  const journal = await open_test_command_journal(f.owner, 'inc', f.dependencies, deadline());
   const cursor = await journal.record_poll_reply(Buffer.from(reply), 'inc', 0n);
   const item = await cursor[Symbol.asyncIterator]().next();
   expect(item.done).toBe(false);

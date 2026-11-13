@@ -1,4 +1,4 @@
-/** Export-only real-worker comparison driver, with Python supplying canonical bytes. */
+/** Public journal/real-codec comparison. Python supplies inputs and only the output-policy oracle. */
 import { createHash } from 'node:crypto';
 import { OutboxStore } from '../outbox.ts';
 import { open_command_journal } from '../journal.ts';
@@ -134,7 +134,6 @@ export async function journal_parity(input: Input): Promise<unknown> {
       store,
       input.incarnation,
       {
-        protocol_module: fixture,
         outputs_module: fixture,
         now_ms: () => BigInt(input.now_ms),
         on_failure,

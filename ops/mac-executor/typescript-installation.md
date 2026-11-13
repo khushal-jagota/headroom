@@ -2,8 +2,7 @@
 
 This document starts the native handoff for the TypeScript executor. Packaging and the complete installation procedure remain pending.
 No command in this document ran on the owner's Mac during this Ticket.
-The shared codec currently reads `server/executor/wire.schema.json` at import.
-The Mac package must include that file beside the codec unless its owner replaces it with a TypeScript module.
+The shared codec embeds its schema as `WIRE_SCHEMA` in `server/executor/wire.generated.ts`. It does not read `wire.schema.json` at runtime.
 Use a separate app, supervisor, job, and state root. Keep the Python installation idle for rollback after cutover.
 
 The TypeScript default state root is `~/Library/Application Support/Panels/executor-typescript`.

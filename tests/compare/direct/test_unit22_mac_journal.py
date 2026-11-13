@@ -532,8 +532,9 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
                     stats=oracle.stats,
                     fixture_entries=len(oracle.entries),
                     codec_evidence=(
-                        "Finite Python oracle: SQL, column types and number formatting. "
-                        "Actual shared-codec output pending."
+                        "Public fixed shared codec decode/encode "
+                        "with exact Python SQLite BLOB equality. "
+                        "Finite output-policy oracle only."
                     ),
                     measurement_scope="Journal open/ops/close; outbox opening excluded",
                 ),

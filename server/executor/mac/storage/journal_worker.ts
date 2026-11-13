@@ -20,7 +20,7 @@ import type {
   CursorRowDescriptor,
   ReaderDescriptor,
 } from './journal_worker_contracts.ts';
-import type { RequiredJournalProtocol, JournalOutputPolicy } from './journal_contracts.ts';
+import type { JournalOutputPolicy } from './journal_contracts.ts';
 const port = parentPort!,
   data = workerData as JournalWorkerData;
 let engine: JournalEngine | undefined,
@@ -93,15 +93,10 @@ const ready = (async () => {
     typeof policy.command_owes_outputs !== 'function'
   )
     throw new TypeError('journal requires the shared codec and pure outputs policy');
-  engine = new JournalEngine(
-    protocol as RequiredJournalProtocol,
-    policy as JournalOutputPolicy,
-    data.incarnation,
-    () => {
-      if (Atomics.load(new Int32Array(data.health_fence), 0))
-        throw new ServerLifecycleError('Spool resource failure seals journal mutations.');
-    },
-  );
+  engine = new JournalEngine(protocol, policy as JournalOutputPolicy, data.incarnation, () => {
+    if (Atomics.load(new Int32Array(data.health_fence), 0))
+      throw new ServerLifecycleError('Spool resource failure seals journal mutations.');
+  });
   port.postMessage({ kind: 'ready' } satisfies JournalWorkerMessage);
 })();
 void ready.catch((error) =>
