@@ -107,6 +107,7 @@ def install(
     """Verify bytes and host before any credential or service file changes."""
     from planner.environments.app import validate_app_manifest
     from planner.environments.linux_executor_runtime import extract_runtime
+    from planner.platform_runtime.linux.runtime import LinuxRuntime
 
     installation = configuration.installation.resolve()
     data = configuration.data.resolve()
@@ -132,6 +133,7 @@ def install(
     )
     if manifest.runtime_contract is None:
         raise ValueError("Linux executor requires its runtime contract")
+    LinuxRuntime().verify_host(manifest.runtime_contract, state=installation / "checks")
     data.mkdir(parents=True, exist_ok=True, mode=0o700)
     data.chmod(0o700)
     write_credential(credential_path(data), credential)
