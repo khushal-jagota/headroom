@@ -191,8 +191,9 @@ test('real bindings share owners and durable memory while Hermes cleanup retains
       'Production backend I/O is unavailable in tests. Inject recording adapters.',
     );
     const failure = new Error('Retained Hermes cleanup failed');
+    const prior_failure = new Error('Initial catalog cleanup failed');
     const retry_cleanup = vi.fn(async () => {});
-    const retry_failure = new ModelCatalogCleanupFailed(undefined, [failure], retry_cleanup);
+    const retry_failure = new ModelCatalogCleanupFailed(undefined, [prior_failure], retry_cleanup);
     base_stop.mockImplementationOnce(async () => {
       throw retry_failure;
     });
@@ -238,7 +239,7 @@ test('real bindings share owners and durable memory while Hermes cleanup retains
     expect(() => acquireRuntimeOwnership(path)).toThrow('ConversationRuntimeAlreadyOwned');
     expect(context.database.read((sql) => sql.get('SELECT 1 AS alive'))).toEqual({ alive: 1 });
     release(failure);
-    await expect(owned_http.settled()).rejects.toMatchObject({ errors: [failure] });
+    await expect(owned_http.settled()).rejects.toMatchObject({ errors: [prior_failure, failure] });
     await expect(closing).rejects.toThrow('Shutdown failed after settlement');
     expect(catalog_stop).toHaveBeenCalledTimes(1);
     expect(base_stop).toHaveBeenCalledExactlyOnceWith(stop);

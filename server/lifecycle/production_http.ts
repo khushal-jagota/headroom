@@ -73,7 +73,8 @@ function own_hermes_catalog(
           // Failed native cleanup leaves the original raw barrier pending until a retry.
           const base_join = await Promise.allSettled([invoke(() => base.settled())]);
           for (const result of base_join)
-            if (result.status === 'rejected') remember_model_catalog_failure(history, result.reason);
+            if (result.status === 'rejected')
+              remember_model_catalog_failure(history, result.reason);
           finished = true;
           if (history.size)
             reject(new AggregateError([...history], 'Production backend shutdown failed'));
