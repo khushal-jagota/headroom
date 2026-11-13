@@ -52,6 +52,66 @@ function validate_wait(seconds: number | null): void {
       `Mailbox wait must be finite and at most ${MAX_MAILBOX_WAIT_MS} milliseconds.`,
     );
 }
+export function observe_executor_wait<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T>;
+export function observe_executor_wait<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+  timeout: number | null,
+  on_cleanup_failure?: (error: unknown) => void,
+): Promise<T | null>;
+export function observe_executor_wait<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+  timeout: number | null = null,
+  on_cleanup_failure?: (error: unknown) => void,
+): Promise<T | null> {
+  const observed = new Promise<T | null>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let finished = false;
+    const finish = (outcome: { value: T | null } | { error: unknown }) => {
+      if (finished) return;
+      finished = true;
+      const failures: unknown[] = [];
+      try {
+        clearTimeout(timer);
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        signal?.removeEventListener('abort', abort);
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length) {
+        if ('error' in outcome) failures.push(outcome.error);
+        const failure = new AggregateError(failures, 'Executor mailbox wait cleanup failed.');
+        on_cleanup_failure?.(failure);
+        console.error('Executor mailbox wait cleanup failed.', failure);
+        reject(failure);
+      } else if ('error' in outcome) reject(outcome.error);
+      else resolve(outcome.value);
+    };
+    const abort = () => finish({ error: abort_reason(signal!) });
+    // Both handlers settle the observed promise even when cleanup itself fails.
+    void promise.then(
+      (value) => finish({ value }),
+      (error) => finish({ error }),
+    );
+    try {
+      if (signal?.aborted) {
+        abort();
+        return;
+      }
+      signal?.addEventListener('abort', abort, { once: true });
+      if (timeout !== null)
+        timer = setTimeout(() => finish({ value: null }), Math.floor(Math.max(timeout, 0) * 1000));
+    } catch (error) {
+      finish({ error });
+    }
+  });
+  return observed;
+}
+
 /**
  * Callers authenticate the executor and check its current identity before poll or record_results.
  * This mailbox checks persisted incarnation fences. Its caller owns the shared database lifetime.
@@ -104,54 +164,9 @@ export class SqliteCommandMailbox {
     signal?: AbortSignal,
     timeout: number | null = null,
   ): Promise<T | null> {
-    const observed = new Promise<T | null>((resolve, reject) => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      let finished = false;
-      const finish = (outcome: { value: T | null } | { error: unknown }) => {
-        if (finished) return;
-        finished = true;
-        const failures: unknown[] = [];
-        try {
-          clearTimeout(timer);
-        } catch (error) {
-          failures.push(error);
-        }
-        try {
-          signal?.removeEventListener('abort', abort);
-        } catch (error) {
-          failures.push(error);
-        }
-        if (failures.length) {
-          if ('error' in outcome) failures.push(outcome.error);
-          const failure = new AggregateError(failures, 'Executor mailbox wait cleanup failed.');
-          this.cleanup_failures.add(failure);
-          console.error('Executor mailbox wait cleanup failed.', failure);
-          reject(failure);
-        } else if ('error' in outcome) reject(outcome.error);
-        else resolve(outcome.value);
-      };
-      const abort = () => finish({ error: abort_reason(signal!) });
-      // Both handlers settle the observed promise even when cleanup itself fails.
-      void promise.then(
-        (value) => finish({ value }),
-        (error) => finish({ error }),
-      );
-      try {
-        if (signal?.aborted) {
-          abort();
-          return;
-        }
-        signal?.addEventListener('abort', abort, { once: true });
-        if (timeout !== null)
-          timer = setTimeout(
-            () => finish({ value: null }),
-            Math.floor(Math.max(timeout, 0) * 1000),
-          );
-      } catch (error) {
-        finish({ error });
-      }
-    });
-    return this.retain(observed);
+    return this.retain(
+      observe_executor_wait(promise, signal, timeout, (error) => this.cleanup_failures.add(error)),
+    );
   }
   private own<T>(work: () => T | Promise<T>): Promise<T> {
     const result = deferred<T>();

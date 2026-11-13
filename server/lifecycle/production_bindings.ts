@@ -1,4 +1,4 @@
-/** The only adapter-selection point. Real bindings arrive together after Manager admission. */
+/** The only adapter-selection point, with explicit environment composition still required. */
 import type { ConversationCompositionContext } from '../core/start.ts';
 import type {
   BackendChildFactory,
@@ -14,6 +14,13 @@ import {
 import { configure_conversation_start } from '../runtime/conversation_start.ts';
 import type { StallSource } from '../stalls/contracts.ts';
 import type { ProductionServerDependencies } from './production.ts';
+import { create_claude_backend_child_factory } from '../conversation/backends/claude_agent_sdk/adapter.ts';
+import { create_codex_backend_child_factory } from '../conversation/backends/codex_app_server/adapter.ts';
+import { create_hermes_backend_child_factory } from '../conversation/backends/hermes_acp/adapter.ts';
+import { production_backend_launches } from './production_launches.ts';
+import { create_production_backend_http } from './production_http.ts';
+import { applicationRootFromEnvironment, HOST } from '../core/config.ts';
+import { create_production_environment_operations } from '../environments/production.ts';
 
 export const BACKEND_KEYS = ['claude', 'codex', 'hermes'] as const;
 export type ProductionBackendChildFactory = BackendChildFactory &
@@ -117,8 +124,58 @@ export function compose_production_backends(
   };
 }
 export function default_production_dependencies(): ProductionServerDependencies {
-  // 4a intentionally has no adapter substitutes. 4b replaces this table and binds
-  // the required environment/executor dependencies in this one file after approval.
-  require_backend_bindings({});
-  throw new Error('Production environment and executor bindings are not installed');
+  return {
+    backends: create_production_backend_bindings(),
+    environments: {
+      factory: create_production_environment_operations,
+      dependencies: {
+        executor: null,
+        application_root: applicationRootFromEnvironment(),
+        node_executable: process.execPath,
+        admitted_legacy_null_sha: null,
+      },
+    },
+  };
+}
+
+export function create_production_backend_bindings(): ProductionBackendBindings {
+  let owner: ProductionBindingContext['database'] | undefined;
+  let launches: ReturnType<typeof production_backend_launches> | undefined;
+  let http: BackendHttpRuntime | undefined;
+  const current = (context: ProductionBindingContext) => {
+    if (context.config.executor_id !== null)
+      throw new Error('Configured production executor router is not installed');
+    if (owner !== undefined && owner !== context.database)
+      throw new Error('Production backend bindings belong to another server invocation');
+    if (launches === undefined) {
+      owner = context.database;
+      launches = production_backend_launches(`http://${HOST}:${context.config.port}`);
+    }
+    return launches;
+  };
+  return {
+    claude: (context) =>
+      create_claude_backend_child_factory(current(context).claude, {
+        child_processes: context.child_processes,
+        one_shot_children: context.one_shot_children,
+      }),
+    codex: (context) =>
+      create_codex_backend_child_factory(current(context).codex, {
+        child_processes: context.child_processes,
+        remembered_login_rejection: context.codex_login_rejection,
+      }),
+    hermes: (context) =>
+      create_hermes_backend_child_factory(current(context).hermes, {
+        child_processes: context.child_processes,
+      }),
+    http: (context) => {
+      const selected = current(context);
+      http ??= create_production_backend_http(context, selected);
+      return http;
+    },
+    stall_sources: (context) => {
+      current(context);
+      return [];
+    },
+  };
 }

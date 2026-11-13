@@ -13,6 +13,49 @@ export const SSE_HEARTBEAT_MS = 15000;
 export const DB_BUSY_TIMEOUT_MS = 5000;
 export { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 export const MAX_CONVERSATION_SEND_REQUEST_BYTES = 20 * 1024 * 1024;
+/** Only these explicit host inputs cross the installed application launcher boundary. */
+export const EXTERNAL_RUNTIME_ENVIRONMENT_KEYS: ReadonlySet<string> = new Set([
+  'HOME',
+  'LOGNAME',
+  'PATH',
+  'SHELL',
+  'LANG',
+  'TERM',
+  'TMPDIR',
+  'USER',
+  'XDG_RUNTIME_DIR',
+  'DBUS_SESSION_BUS_ADDRESS',
+  'PLAN_CONFIG_PATH',
+  'PLAN_DB_PATH',
+  'PLAN_PORT',
+  'PLAN_BOUNDARY_HOUR',
+  'PLAN_TICK_SECONDS',
+  'PLAN_DISPATCH_ENABLED',
+  'PLAN_DISPATCHER_LOCK_PATH',
+  'PLAN_LOGS_DIR',
+  'PLAN_BACKUP_DIR',
+  'PLAN_TRUSTED_INGRESS_PROVIDER',
+  'PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN',
+  'PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN',
+  'PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS',
+  'PLAN_GROQ_API_KEY',
+  'PLAN_APNS_KEY_PATH',
+  'PLAN_APNS_KEY_ID',
+  'PLAN_APNS_TEAM_ID',
+  'PLAN_APNS_BUNDLE_IDS',
+  'PLAN_HERMES_HOME',
+  'PLAN_HERMES_PYTHON',
+  'PLAN_CLAUDE_EXECUTABLE',
+  'PLAN_SERVER_CONTROL_SOCKET',
+  'PLAN_UPDATE_REPOSITORY',
+  'PLAN_UPDATE_TOKEN_FILE',
+  'ANTHROPIC_API_KEY',
+  'OPENAI_API_KEY',
+  'GOOGLE_API_KEY',
+  // TS's explicit lifecycle address must survive the first launcher boundary.
+  'PLAN_SERVER_LIFECYCLE_LEASE_PATH',
+  'PLAN_SERVER_LISTENER_FD',
+]);
 export interface Config {
   apns?: APNsConfig | null;
   db_path: string;
@@ -60,6 +103,101 @@ export function parseConfigBoolean(
 export function testModeFromEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
   return parseConfigBoolean(env.PLAN_TEST_MODE ?? '0', 'test_mode');
 }
+/** Update discovery uses the invocation snapshot, without another Config load. */
+export function update_repository_configuration(
+  environment: Readonly<NodeJS.ProcessEnv>,
+): { readonly repository: string; readonly token_file: string } | null {
+  const repository = environment.PLAN_UPDATE_REPOSITORY;
+  const token_file = environment.PLAN_UPDATE_TOKEN_FILE;
+  return repository && token_file ? { repository, token_file } : null;
+}
+
+/** Account launch inputs are environment-only, shared by native hosts and discovery. */
+export function provider_launch_settings(env: Readonly<NodeJS.ProcessEnv> = process.env) {
+  return {
+    environment: { ...env },
+    hermes_python: env.PLAN_HERMES_PYTHON || '~/.hermes/hermes-agent/venv/bin/python',
+    hermes_home: env.PLAN_HERMES_HOME || '~/.hermes',
+    claude_executable: env.PLAN_CLAUDE_EXECUTABLE,
+    claude_home: env.CLAUDE_CONFIG_DIR || '~/.claude',
+    codex_home: env.CODEX_HOME || '~/.codex',
+    app_root: env.PLAN_APP_ROOT,
+  };
+}
+const installer_unit_environment_names = new Set([
+  'HOME',
+  'CODEX_HOME',
+  'CLAUDE_CONFIG_DIR',
+  'HERMES_HOME',
+  'PLAN_HERMES_HOME',
+  'PATH',
+  'LANG',
+  'LANGUAGE',
+  'TERM',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'USER',
+  'LOGNAME',
+  'XDG_RUNTIME_DIR',
+  'DBUS_SESSION_BUS_ADDRESS',
+  'PLAN_CONFIG_PATH',
+  'PLAN_DB_PATH',
+  'PLAN_APP_ROOT',
+  'PLAN_LOGS_DIR',
+  'PLAN_BACKUP_DIR',
+  'PLAN_WORKSPACE_ROOT',
+  'PLAN_TICKET_SCRATCH_ROOT',
+  'PLAN_TICKET_SCRATCH_DATABASE',
+  'PLAN_CREDENTIAL_KEY_PATH',
+  'PLAN_DISPATCHER_LOCK_PATH',
+  'PLAN_SERVER_CONTROL_SOCKET',
+  'PLAN_SERVER_LIFECYCLE_LEASE_PATH',
+  'PLAN_SERVER_URL',
+  'PLAN_TEST_MODE',
+]);
+const installer_unit_path_names = new Set([
+  'HOME',
+  'CODEX_HOME',
+  'CLAUDE_CONFIG_DIR',
+  'HERMES_HOME',
+  'PLAN_HERMES_HOME',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'XDG_RUNTIME_DIR',
+  'PLAN_CONFIG_PATH',
+  'PLAN_DB_PATH',
+  'PLAN_APP_ROOT',
+  'PLAN_LOGS_DIR',
+  'PLAN_BACKUP_DIR',
+  'PLAN_WORKSPACE_ROOT',
+  'PLAN_TICKET_SCRATCH_ROOT',
+  'PLAN_TICKET_SCRATCH_DATABASE',
+  'PLAN_CREDENTIAL_KEY_PATH',
+  'PLAN_DISPATCHER_LOCK_PATH',
+  'PLAN_SERVER_CONTROL_SOCKET',
+  'PLAN_SERVER_LIFECYCLE_LEASE_PATH',
+]);
+/** Select explicit production-unit inputs without forwarding test-runner markers. */
+export function installer_unit_environment(env: Readonly<NodeJS.ProcessEnv>): {
+  environment: NodeJS.ProcessEnv;
+  paths: readonly string[];
+} {
+  const environment: NodeJS.ProcessEnv = {},
+    paths: string[] = [];
+  for (const [name, value] of Object.entries(env)) {
+    if (
+      (!installer_unit_environment_names.has(name) && !/^LC_[A-Z_]+$/.test(name)) ||
+      value === undefined
+    )
+      continue;
+    environment[name] = value;
+    if (installer_unit_path_names.has(name) && value) paths.push(value);
+  }
+  return { environment, paths };
+}
+
 /** Application evidence has the same environment-only selector as Python. */
 export function applicationRootFromEnvironment(env: NodeJS.ProcessEnv = process.env): string {
   return env.PLAN_APP_ROOT ?? fileURLToPath(new URL('../../', import.meta.url));

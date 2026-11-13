@@ -5,6 +5,7 @@ import { CodexAppServerClient, CodexAppServerError } from './client.ts';
 import { CodexModelCatalogUnavailable } from '../../snapshot/provider_contracts.ts';
 import type { CodexModelCatalog, CodexModel } from '../../snapshot/provider_contracts.ts';
 import { child_environment } from './environment.ts';
+import { ModelCatalogCleanupFailed } from '../catalog_cleanup.ts';
 import * as P from './protocol.ts';
 import {
   CLIENT_NAME,
@@ -16,6 +17,7 @@ export { CodexModelCatalogUnavailable } from '../../snapshot/provider_contracts.
 export const MODEL_CATALOG_TIMEOUT_SECONDS = 30;
 type CatalogClient = Pick<CodexAppServerClient, 'start' | 'stop' | 'request' | 'notify'>;
 export interface ModelCatalogOptions {
+  readonly environment?: Readonly<NodeJS.ProcessEnv>;
   child_processes: OwnedChildProcesses;
   signal?: AbortSignal;
   client_factory?: (
@@ -41,6 +43,7 @@ export async function probe_codex_model_catalog(
   options.signal?.addEventListener('abort', abort, { once: true });
   if (options.signal?.aborted) abort();
   let timed_out = false;
+  let primary: unknown;
   const timeout = setTimeout(() => {
     timed_out = true;
     cancel.abort(
@@ -60,8 +63,12 @@ export async function probe_codex_model_catalog(
     cancel.signal.throwIfAborted();
     await client.start({
       argv: [executable, 'app-server'],
-      environment: child_environment(),
-      working_directory: homedir(),
+      environment: child_environment({
+        overrides: Object.entries(options.environment ?? {}).filter(
+          (entry): entry is [string, string] => entry[1] !== undefined,
+        ),
+      }),
+      working_directory: options.environment?.HOME ?? homedir(),
     });
     cancel.signal.throwIfAborted();
     await client.request(
@@ -107,6 +114,7 @@ export async function probe_codex_model_catalog(
   try {
     return await Promise.race([operation, canceled]);
   } catch (error) {
+    primary = error;
     if (timed_out)
       throw new CodexModelCatalogUnavailable(
         `codex did not answer within ${MODEL_CATALOG_TIMEOUT_SECONDS}s`,
@@ -117,10 +125,14 @@ export async function probe_codex_model_catalog(
   } finally {
     clearTimeout(timeout);
     options.signal?.removeEventListener('abort', abort);
-    try {
+    const cleanup = async (): Promise<void> => {
       await client.stop();
-    } finally {
       await operation.catch(() => {});
+    };
+    try {
+      await cleanup();
+    } catch (error) {
+      throw new ModelCatalogCleanupFailed(primary, [error], cleanup);
     }
   }
 }

@@ -109,7 +109,11 @@ export interface UpdateExperienceOptions {
 }
 export interface UpdateProvider {
   available(): Promise<PublishedUpdate | null>;
-  download_artifact(artifact_id: NumericJSON<number>, destination: string): Promise<void>;
+  download_artifact(
+    artifact_id: NumericJSON<number>,
+    destination: string,
+    signal?: AbortSignal,
+  ): Promise<void>;
 }
 /** Required adapters; callers cannot silently replace an unavailable operation. */
 export interface ReleaseStaging {
@@ -117,7 +121,7 @@ export interface ReleaseStaging {
 }
 export interface InstallerOperations {
   require_exact_schema_frontier(database: string, staged_app: string): void | Promise<void>;
-  schema_change_pending(database: string, staged_app: string): boolean;
+  schema_change_pending(database: string, staged_app: string): boolean | Promise<boolean>;
   create_backup(
     database: string,
     backup_directory: string,
@@ -125,6 +129,7 @@ export interface InstallerOperations {
   ): Promise<string>;
   prepare(options: {
     current_root: string;
+    database: string;
     data_directory: string;
     attempt_id: string;
     service_unit: string;

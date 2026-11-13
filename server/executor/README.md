@@ -77,6 +77,8 @@ Uploads require an `UploadSource` with a real `destroy` capability, such as Node
 
 ## VPS command mailbox
 
+An ordinary owner kill waits without a deadline for exact Mac stop proof, as Python does; only that conversation waits.
+
 `vps_mailbox.ts::SqliteCommandMailbox` takes the application's Database and an optional millisecond clock. The existing synchronous write door owns command admission, run custody and result persistence. Polls capture raw rows, then decode commands and prepare settlement text outside the writer. The final writer checks every selected row against that preparation before any effect, reads current expiry facts and applies changes atomically. A changed selection retries preparation. Stored decoding errors surface only at Python's corresponding row visit and roll the writer back. In-memory waits observe committed rows. A canceled put observer leaves the admitted commit and its wake intact.
 
 With 50,000 old rows and a poll at the 4 MiB byte bound, the measured largest event-loop gap is 72.6 ms. The Manager accepts that cost for a poll every few seconds. Gate 3 must compare this baseline with the real table size on a copy of live data.

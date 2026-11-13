@@ -16,7 +16,10 @@ export const HELD_POLL_EVIDENCE_MS = LEASE_INTERVAL_SECONDS * 1500;
 export const MAX_MAILBOX_POLL_COMMANDS = 32;
 export const MAX_MAILBOX_POLL_BYTES = 4 * 1024 * 1024;
 export const STEER_DELIVERY_LIMIT_SECONDS = 10;
+export const DRAIN_RETRY_INITIAL_SECONDS = 1;
+export const DRAIN_RETRY_MAX_SECONDS = 60;
 export const MODEL_LIST_LIMIT_SECONDS = 35;
+export const CATALOG_CLEANUP_SECONDS = 2;
 
 /** Node timers cap delays at a signed 32-bit millisecond value; longer waits need rechecks. */
 export const MAX_MAILBOX_WAIT_MS = 2 ** 31 - 1;

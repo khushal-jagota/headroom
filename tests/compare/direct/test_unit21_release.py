@@ -21,15 +21,17 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from tests.compare.direct import unit21_schema_seed
 from tests.support.synthetic_homes import create_synthetic_homes
 from tests.support.update_apps import build_app, rewrite_artifact_digest
-from tests.unit.test_app import _legacy_cached_app
+from tests.unit.test_app import _git_source, _legacy_cached_app
 from tests.unit.test_runtime_admission import DEPENDENCIES as admission_dependencies
 from tests.unit.test_runtime_admission import node_report
 
 from planner.environments import runtime_admission as admission
 from planner.environments.app import (
     AppValidationError,
+    build_exported_app,
     digest_app_artifact,
     digest_app_source,
     validate_app_manifest,
@@ -634,6 +636,11 @@ def test_unit21_release_identity_archive_and_frontier(
         (versions / (revision + ".py")).write_text(
             f"revision = {revision!r}\ndown_revision = {parent!r}\n"
         )
+    with patch.object(unit21_schema_seed, "ROOT", tmp_path / "graph-app"):
+        expected_graph = unit21_schema_seed.build_migration_graph()
+    graph_path = tmp_path / "graph-app/server/environments/release/migration_graph.json"
+    graph_path.parent.mkdir(parents=True)
+    graph_path.write_text(json.dumps(expected_graph))
     python_frontier: list[dict[str, Any]] = []
     for name, database_revision in (
         ("current", "data_only"),
@@ -677,6 +684,8 @@ def test_unit21_release_identity_archive_and_frontier(
         "src/planner/conversation/backends/hermes_model_catalog.py",
         "server/environments/release/launcher_main.ts",
         "server/environments/release/archive_unpack_main.ts",
+        "server/environments/updates/interruption_capture_main.ts",
+        "server/environments/updates/restore_main.ts",
         "server/package.json",
         "server/package-lock.json",
         "server/node_modules/fastify/package.json",
@@ -730,12 +739,14 @@ def test_unit21_release_identity_archive_and_frontier(
     loader_input, expected_loader = _native_loader_fixture(tmp_path / "loader")
     launcher = tmp_path / "probe.mjs"
     launcher.write_text(
-        "const{release_parity,native_loader_parity,admission_rules_parity,hostile_native_parity}="
+        "const{release_parity,native_loader_parity,admission_rules_parity,builder_parity,"
+        "hostile_native_parity}="
         "await import(process.argv[2]);"
         "const result=await release_parity(process.argv[3],JSON.parse(process.argv[4]));"
         "result.native_loader=await native_loader_parity(JSON.parse(process.argv[5]));"
         "result.admission=await admission_rules_parity("
         "process.argv[3],JSON.parse(process.argv[6]));"
+        "result.builder=await builder_parity(process.argv[3],JSON.parse(process.argv[7]));"
         "result.hostile_native=await hostile_native_parity(process.argv[3]);"
         "console.log(JSON.stringify(result));"
     )
@@ -762,6 +773,65 @@ def test_unit21_release_identity_archive_and_frontier(
         "PLAN_SERVER_LIFECYCLE_LEASE_PATH": "lifecycle.lock",
     }.items():
         env[key] = str(tmp_path / relative_path)
+    cli_relative = "server/cli/main.ts"
+    # These real bytes prove layout only; this deliberately small source cannot execute the CLI.
+    with patch.dict(os.environ, env, clear=True):
+        source, _ = _git_source(tmp_path)
+        cli = source / cli_relative
+        cli.parent.mkdir(parents=True)
+        cli.write_bytes((ROOT / cli_relative).read_bytes())
+        cli.chmod(0o755)
+        (source / "ignored.txt").write_text("not exported\n")
+        (source / ".gitattributes").write_text("ignored.txt export-ignore\n")
+        (source / "readme-link").symlink_to("README.md")
+        subprocess.run(["git", "-C", str(source), "add", "."], check=True, env=env)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-qm",
+                "official CLI bytes, no execution",
+            ],
+            check=True,
+            env=env,
+        )
+        build_sha = subprocess.check_output(
+            ["git", "-C", str(source), "rev-parse", "HEAD"], text=True, env=env
+        ).strip()
+        caller_umask = os.umask(0o027)
+        try:
+            python_build = build_exported_app(
+                source,
+                requested_sha=build_sha,
+                candidate_app=tmp_path / "built-python",
+                install_dependencies=False,
+            )
+        finally:
+            os.umask(caller_umask)
+    source_paths = [
+        ".gitattributes",
+        "README.md",
+        "readme-link",
+        "server",
+        "server/cli",
+        cli_relative,
+    ]
+    expected_source_metadata = [
+        {key: row[key] for key in ("path", "kind", "mode", "target") if key in row}
+        for row in _tree(tmp_path / "built-python")
+        if row["path"] in source_paths
+    ]
+    assert (
+        next(row for row in expected_source_metadata if row["path"] == "server/cli")["mode"]
+        == 0o750
+    )
+    builder_spec = dict(sha=build_sha, cli=cli_relative, source_paths=source_paths)
     node_started = time.perf_counter()
     process = subprocess.Popen(
         [
@@ -772,6 +842,7 @@ def test_unit21_release_identity_archive_and_frontier(
             json.dumps(vectors),
             json.dumps(loader_input),
             json.dumps(admission_spec),
+            json.dumps(builder_spec),
         ],
         cwd=ROOT,
         env=env,
@@ -806,6 +877,33 @@ def test_unit21_release_identity_archive_and_frontier(
     )
     assert actual["native_loader"] == expected_loader
     assert actual["admission"] == expected_admission
+    built = actual["builder"]
+    assert built["manifest"]["app_sha"] == python_build.app_sha == build_sha
+    assert built["manifest"]["source_digest"] == python_build.source_digest
+    assert built["manifest"]["runtime_contract"] is None and built["reused"]
+    assert built["readme"] == "source\n" and built["ignored_absent"]
+    assert built["cli_bytes"] == cli.read_bytes().hex() and built["cli_executable"]
+    assert built["source_metadata"] == expected_source_metadata
+    assert cli_relative in built["wrappers"][0]
+    assert "server/environments/release/launcher_main.ts" in built["wrappers"][1]
+    assert all(
+        "unset NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH" in wrapper
+        for wrapper in built["wrappers"]
+    )
+    assert built["mismatch"] == "checkout HEAD does not match requested SHA"
+    assert built["failed"] and built["failed_absent"] and built["cleanup"]
+    assert built["graph"] == expected_graph and built["graph_drift_refused"]
+    assert built["source_abort"] == dict(
+        validated=True, actual_child_closed=True, destination_absent=True, unrelated_live=True
+    )
+    assert built["children"]["spawned"] == built["children"]["closed"] > 0
+    assert built["launch_environment"] == dict(
+        HTTP_PROXY="http://synthetic.invalid",
+        http_proxy="",
+        REQUEST_METHOD="GET",
+        PLAN_APP_ROOT=str(v2),
+        PLAN_APP_SHA=SHA,
+    )
     hostile_native = actual["hostile_native"]
     if hostile_native["executed"]:
         assert hostile_native["refused"] is True
@@ -984,6 +1082,8 @@ def test_unit21_release_identity_archive_and_frontier(
                     },
                     "admission_rules": actual["admission"],
                     "admission_group": group_proof,
+                    "source_only_builder": built,
+                    "public_cli_executed": False,
                     "hostile_native": hostile_native,
                     "accepted_restrictions": [
                         "GNU sparse",

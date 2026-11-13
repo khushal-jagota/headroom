@@ -1,5 +1,12 @@
 /** Immutable evidence of turns interrupted by a deployment or process restart. */
 export const CAPTURE_VERSION = 1;
+/** The file contract's value refusals remain distinct from IO and unexpected failures. */
+export class CaptureValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ValueError';
+  }
+}
 export type CaptureState = 'captured' | 'unavailable';
 export type RecoveryState =
   'awaiting_action' | 'resumed' | 'unable_to_resume' | 'closed' | 'historical';
@@ -14,7 +21,8 @@ export interface CapturedTurn {
   readonly owner_kind: OwnerKind;
   readonly owner_id: string | null;
   readonly claim_revision: number | null;
-  readonly claim: 'none' | 'out' | 'errored' | null;
+  /** Raw persisted evidence. Manifest publication validates its allowed values. */
+  readonly claim: string | null;
 }
 export interface CaptureManifest {
   readonly deployment_id: string;

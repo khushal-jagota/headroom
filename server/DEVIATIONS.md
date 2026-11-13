@@ -396,6 +396,20 @@ A FIFO therefore refuses instead of blocking the event loop before that check, a
 Large copy, hash, and strict flush operations run in an owned worker with the shared shutdown deadline.
 The file formats, hashes, and successful publication behavior retain the Python contract.
 
+### Command settlement and update stop proof identity
+
+The Manager requires withdrawal before invocation to preserve the active turn.
+Python changes that turn before its withdrawal check. TypeScript changes it only after invocation admission succeeds.
+
+The Manager requires completed journal and output settlement before idle or a successful stop certificate.
+Python checks only for derived output that remains unpublished, so a failed journal write for a command without output can escape that check.
+TypeScript also blocks on the retained command's unsettled state.
+
+The Manager requires one stop proof for each update request and exact child across retries.
+TypeScript retains that proof's command identity until its required output settles.
+Python allocates a fresh `update_stop_` identity on each preparation attempt.
+The caller supplies the real update request ID. A retry cannot publish a second `child_stopped` entry for the same request and child.
+
 ## Mac canonical skill publication ownership and durability
 
 The Manager accepted these Mac-only safety differences during PR 817 source review on November 13, 2026.
@@ -530,7 +544,9 @@ Python routes those calls through its executor transport. Help and offline decla
 This is a temporary implementation gap owned by Unit 22, with CLI binding in Unit 20.
 The migration Manager accepted this temporary refusal. It remains until the executor unit supplies the socket route.
 
-## Executor messages validate before encoding
+## Executor message and core admission
+
+### Encoding validation
 
 The Manager required this admission rule in the shared codec review of PR 806.
 TypeScript validates each root-specific encoder input through the wire decoder before serialization.
@@ -538,6 +554,14 @@ It rejects missing required fields and invalid command semantics, and it supplie
 Python's serializer can write a dataclass whose state did not pass that validation.
 The TypeScript sender must produce a message that the Python peer can read.
 Root-specific encoder inputs use the generated contracts. Nullable fields without defaults require an explicit null.
+
+### Retained turn numbers
+
+Python accepts unbounded integers. TypeScript refuses remote turn numbers, sender message counts and late-steer sequences outside the safe integer range at their conversation-core boundary. Wire and mailbox integers remain exact.
+
+### Replaced-process retry logging
+
+Python logs every failed retirement or close attempt. The Manager accepted TypeScript logging only the first failure of each retry loop, including its cause. Both retry indefinitely with delays rising from one to sixty seconds; TypeScript shutdown cancels the retry and retains its actual settlement.
 
 ## Release archive sparse members — accepted
 
@@ -634,7 +658,9 @@ The typed `server-event-loop-tasks` callback returns exit 1 and empty stdout.
 Human stderr is exactly `error: The TypeScript runtime cannot enumerate Promise await chains.\nThis diagnostic is unavailable in the TypeScript server.\n`.
 JSON stderr is the existing error envelope with code `unsupported`, the first sentence as its message, empty detail, and a newline.
 Await-chain inspection remains deferred. Resource counts do not replace this diagnostic.
-The public CLI binding remains open. Node's built-in diagnostic report is the operator alternative.
+The public CLI prints that callback's literal result. Node's built-in diagnostic report is the operator alternative.
+
+Unexpected operator failures, including cleanup AggregateErrors, print the error text at exit 1 instead of Python's traceback, as accepted by the Manager.
 
 ## VPS file descriptor custody
 
@@ -667,3 +693,62 @@ NUL artifact paths retain Python's exact `lstat: embedded null character in path
 Ancestor symlink loops produce the clean `artifact path contains symlink` validation refusal, without raw Node errors.
 Python raises a raw `RuntimeError` for the same ancestor loop. The Manager accepts this clean TypeScript refusal.
 The Manager reviews these implementation differences before this slice merges.
+
+## Catalog cancellation withdraws waiting commands
+
+The Manager requires that TypeScript withdraw a waiting model-list command after an internal read cancellation, reconnection, or stop. Python cancellation leaves that row waiting. A caller that cancels its own observation does not cancel or withdraw the shared read. TypeScript uses its own short cleanup signal, capped by the original shared shutdown deadline, and joins withdrawal before catalog settlement. The invocation keeps the mailbox open until that cleanup settles.
+
+## Mac archive inspection policies and JSON diagnostics — accepted conditionally
+
+The Manager accepted these four groups on November 13, 2026:
+
+- Refuse global PAX size overrides and NUL text in names or PAX values.
+- Refuse UTF16/32 and non-scalar UTF8 manifest encodings.
+- Preserve malformed JSON refusal, with Node `SyntaxError` diagnostics instead of Python `JSONDecodeError` diagnostics.
+- Apply the bounded TAR reader and its closed numeric, PAX, and end-framing rules to Mac inspection.
+
+The fourth group includes GNU sparse entries and metadata, unknown PAX keys, unsupported header layouts or path encodings, and invalid UTF8 text.
+Header numbers must fit safe integers and use the supported octal or base-256 forms. PAX lengths, sizes, and terminators retain their closed grammar.
+These physical limits match the accepted application reader:
+
+| Resource | Limit |
+| --- | --- |
+| Physical expanded TAR | 8 GiB |
+| Headers | 250,000 |
+| One extension metadata body | 1 MiB |
+| Cumulative metadata, path, and link bytes | 64 MiB |
+| Trailing zero padding | 1–20 KiB, in whole 512-byte blocks |
+
+The existing Mac limits stay at 2 GiB compressed, 4 GiB logical member bytes, and 16 KiB for the manifest.
+Inspection still permits the source's unrelated duplicate names, link targets, and special modes. Extraction-only graph and mode restrictions do not apply.
+
+The direct case measures global PAX size, a NUL PAX comment, a UTF16 manifest, one oversized metadata declaration, and malformed JSON diagnostics.
+Python accepts the first three archives. The metadata fixture is also truncated, so both implementations refuse it.
+The four archive refusals return `UpdateConflict` with `The Mac runtime archive is invalid.`
+Other accepted limits and framing rules have source review here, without a measured boundary claim.
+Both implementations refuse malformed JSON, with different parser error types and text. This adds no accepted malformed input or claim of equal error bytes.
+
+The direct proof is `tests/compare/direct/test_unit21_mac_updates.py::test_unit21_mac_updates_retained_archive_and_leased_report_sequence`.
+Its `unit21-mac-updates.json` report retains both outcomes and marks the accepted observations explicitly.
+Acceptance requires that the unchanged real Mac producer passes the hosted gate in `.github/workflows/typescript-lifecycle-native.yml`.
+The [first real producer proof](https://github.com/khushal-jagota/headroom/actions/runs/43466927540/job/132028428389) passed on the PR merge tree for head `37333bd6e`.
+Its 597,087,278-byte archive passed unchanged, with both direct children closed. Build plus inspection took 276.07 seconds.
+Every final head must repeat this gate after source changes. Evidence stays under `mac-producer-compatibility` in the existing native ABI artifact.
+If that producer fails any accepted policy, stop and ask the Manager before further work.
+
+## Installer database and attempt paths — accepted
+
+The Manager accepted this correction to Python's copied installer on November 12, 2026.
+Python accepts configured paths at update admission but its copied installer hardcodes
+`current_root/data/planner.db` and `current_root/data/update-attempt.json`.
+TypeScript passes the admitted database to capture and rollback restore. It uses the
+admitted data directory for the attempt record and its lock. Neither path derives from
+the application root.
+
+`tests/compare/direct/test_unit21_installer.py::test_installer_algorithm_and_configured_paths`
+compares four canonical-path scenarios against fresh Python. Its configured-path lifetime
+proves actual capture/restore command arguments, record and lock placement, no canonical
+data directory, and cancellation only after the owned restore witness closes.
+The configured helpers are disclosed Node witnesses, not a real installer rehearsal.
+`test_unit21_interruption_capture.py` separately exercises the actual stopped capture and
+restore entries. Hosted service, copy, health and rollback proofs remain later gates.

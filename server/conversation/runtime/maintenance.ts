@@ -4,6 +4,7 @@ import type { Message, ReservedTurn } from './contracts.ts';
 import type { ConversationState } from './state.ts';
 import { own_settlement } from './state.ts';
 import { PromptDeliveryMode, PromptQueueReason } from '../contracts.ts';
+import { ShutdownDeadlineExceeded } from '../../lifecycle/contracts.ts';
 import { text_message_content } from '../message_content.ts';
 import {
   AUTOMATIC_COMPACTION_AFTER_SECONDS,
@@ -179,6 +180,7 @@ export async function detach_children(
     child: import('../backends/contracts.ts').BackendChild;
     state: ConversationState;
   }[] = [],
+  options?: import('../../lifecycle/contracts.ts').StopOptions,
 ): Promise<void> {
   const candidates = new Map(additional.map(({ child, state }) => [child, state]));
   for (const state of states) if (state.child !== null) candidates.set(state.child, state);
@@ -186,7 +188,14 @@ export async function detach_children(
     if (state.running_turn !== null) state.running_turn.callbacks_revoked = true;
     state.child_event_sink = null;
     try {
-      await child.detach();
+      try {
+        await child.detach(options);
+      } catch (error) {
+        // The core's deadline observer can finish while exact stop proof remains owned.
+        if (!(error instanceof ShutdownDeadlineExceeded) || child.settled === undefined)
+          throw error;
+      }
+      await child.settled?.();
       if (state.child === child) state.child = null;
     } catch (error) {
       if (state.child === null) state.child = child;

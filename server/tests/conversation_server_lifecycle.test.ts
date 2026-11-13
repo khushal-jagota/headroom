@@ -20,6 +20,7 @@ import { write_manifest } from '../conversation/deploy_interruptions/files.ts';
 import { RECOVERY_PROMPT } from '../conversation/deploy_interruptions/coordinator.ts';
 import { WAITS } from '../stalls/registry.ts';
 import { MetricsRuntime } from '../environments/vps_metrics/runtime.ts';
+import { create_mac_update_composition } from '../environments/updates/mac/composition.ts';
 import type { ApplicationSchemaSeed, ReadSql } from '../core/database/contracts.ts';
 import { afterEach, expect, test, vi } from 'vitest';
 import { create, fixture } from './ticket_fixture.ts';
@@ -437,6 +438,7 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
         executor: null,
         application_root: dirname(f.path),
         node_executable: process.execPath,
+        admitted_legacy_null_sha: null,
       },
       factory: async (value) => {
         context = value;
@@ -453,13 +455,16 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
             prepare: unavailable,
             launch: async () => unavailable(),
           },
-          mac: {
-            prepare: async () => unavailable(),
-            phase: () => null,
-            reported_at: () => null,
-            configured: () => false,
-          },
-          mac_reads: { health_payload: () => null, status: async () => null },
+          create_mac: (mac_context) => ({
+            service: create_mac_update_composition(mac_context, null).service,
+            operations: {
+              prepare: async () => unavailable(),
+              phase: () => null,
+              reported_at: () => null,
+              configured: () => false,
+            },
+            reads: { health_payload: () => null, status: async () => null },
+          }),
           collect_status: async () => unavailable(),
         };
       },

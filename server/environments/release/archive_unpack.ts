@@ -2,14 +2,20 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { constants } from 'node:fs';
-import { chmod, link, mkdir, open, symlink } from 'node:fs/promises';
+import { chmod, lchmod, link, mkdir, open, symlink } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
-import { AppValidationError } from './contracts.ts';
+import { AppValidationError, MacArchiveInspectionError, MacArchiveJsonError } from './contracts.ts';
+import type {
+  ArchiveUnpackRequest,
+  ArchiveUnpackResult,
+  MacInspectionFailure,
+} from './contracts.ts';
+import { MAX_MAC_RUNTIME_ARCHIVE_BYTES } from '../updates/mac/configuration.ts';
 import { validate_app_manifest } from './identity.ts';
 import { ArchiveMembers } from './logic/archive_members.ts';
 import { set_archive_times } from './archive_times.ts';
@@ -21,11 +27,40 @@ import {
   ARCHIVE_MAX_MESSAGE_BYTES,
 } from './configuration.ts';
 
-export interface UnpackRequest {
-  spool_root: string;
-  destination: string;
-  archive_sha256: string;
-  expected_sha: string;
+export type UnpackRequest = ArchiveUnpackRequest;
+export function mac_inspection_failure(error: unknown): MacInspectionFailure {
+  if (error instanceof MacArchiveInspectionError)
+    return { type: 'mac-inspection-error', kind: error.kind, message: error.message };
+  if (error instanceof AppValidationError)
+    return { type: 'mac-inspection-error', kind: 'archive', message: error.message };
+  const actual = error instanceof MacArchiveJsonError ? error.original : error;
+  const message = actual instanceof Error ? actual.message : String(actual);
+  const name = actual instanceof Error ? actual.name : 'Error';
+  if (error instanceof MacArchiveJsonError)
+    return { type: 'mac-inspection-error', kind: 'json', name, message };
+  if (
+    actual instanceof Error &&
+    'errno' in actual &&
+    typeof actual.errno === 'number' &&
+    'code' in actual &&
+    typeof actual.code === 'string'
+  ) {
+    const fields: { syscall?: string; path?: string; dest?: string } = {};
+    for (const key of ['syscall', 'path', 'dest'] as const) {
+      const value: unknown = Reflect.get(actual, key);
+      if (typeof value === 'string') fields[key] = value;
+    }
+    return {
+      type: 'mac-inspection-error',
+      kind: 'os',
+      name,
+      message,
+      errno: actual.errno,
+      code: actual.code,
+      ...fields,
+    };
+  }
+  return { type: 'mac-inspection-error', kind: 'unexpected', name, message };
 }
 export async function* read_archive_messages(
   stream: Readable,
@@ -72,6 +107,7 @@ async function extract_members(
   destination: string,
   reader: ArchiveMembers,
   fence: () => void,
+  source_umask: number | null,
 ): Promise<void> {
   const buffer = Buffer.alloc(ARCHIVE_STREAM_CHUNK_BYTES);
   const directories = new Set<string>([destination]);
@@ -116,20 +152,34 @@ async function extract_members(
     await directory(dirname(path));
     fence();
     if (member.type === '1') await link(join(destination, member.linkpath), path);
-    else await symlink(member.linkpath, path);
+    else {
+      await symlink(member.linkpath, path);
+      if (source_umask !== null && process.platform === 'darwin') {
+        // Python source extraction keeps the caller's symlink creation mode on Darwin.
+        fence();
+        await lchmod(path, 0o777 & ~source_umask);
+      }
+    }
   }
   const ordinary = reader.members.filter((member) => member.path && member.type !== '2');
   for (const member of ordinary.filter((member) => member.type !== '5')) {
     fence();
+    let mode = member.mode;
+    if (source_umask !== null) {
+      // Python tarfile's data_filter: owner RW, no go-w, owner-X gates all X.
+      mode &= 0o755;
+      if (!(mode & 0o100)) mode &= ~0o111;
+      mode |= 0o600;
+    }
     // A preceding hard-link member can already have removed read access on this inode.
-    await chmod(join(destination, member.path), member.mode | 0o400);
+    await chmod(join(destination, member.path), mode | 0o400);
     const file = await open(
       join(destination, member.path),
       constants.O_RDONLY | constants.O_NOFOLLOW,
     );
     try {
       set_archive_times(file.fd, member.mtime, fence);
-      await file.chmod(member.mode);
+      await file.chmod(mode);
       await file.sync();
     } finally {
       await file.close();
@@ -146,7 +196,13 @@ async function extract_members(
     try {
       const member = declared.get(path);
       if (member) set_archive_times(file.fd, member.mtime, fence);
-      await file.chmod(path === destination ? 0o700 : (member?.mode ?? 0o700));
+      await file.chmod(
+        path === destination
+          ? 0o700
+          : source_umask === null
+            ? (member?.mode ?? 0o700)
+            : 0o777 & ~source_umask,
+      );
       await file.sync();
     } finally {
       await file.close();
@@ -157,6 +213,7 @@ export async function unpack_archive_child(
   request: UnpackRequest,
   input: Readable,
   output: Writable,
+  inherited_umask: number,
 ): Promise<void> {
   const controller = new AbortController();
   const lost = (): void =>
@@ -189,93 +246,184 @@ export async function unpack_archive_child(
     pending_reply = reserve_reply();
     fence();
   };
+  const inspection = request.purpose === 'mac-inspection';
+  const source_export = request.purpose === 'source-export';
   let spool: FileHandle | undefined;
   try {
-    spool = await open(join(request.spool_root, 'expanded.tar'), 'wx+', 0o600);
-    const digest = createHash('sha256');
-    let bytes = 0;
-    for await (const chunk of createReadStream('', {
-      fd: 3,
-      start: 0,
-      autoClose: false,
-      highWaterMark: ARCHIVE_STREAM_CHUNK_BYTES,
-      signal: controller.signal,
-    })) {
+    if (!inspection) spool = await open(join(request.spool_root, 'expanded.tar'), 'wx+', 0o600);
+    const compressed_limit = inspection
+      ? MAX_MAC_RUNTIME_ARCHIVE_BYTES
+      : ARCHIVE_MAX_COMPRESSED_BYTES;
+    let checked_sha256: string | undefined;
+    if (!source_export) {
+      const receipt = createHash('sha256');
+      let bytes = 0;
+      for await (const chunk of createReadStream('', {
+        fd: 3,
+        start: 0,
+        autoClose: false,
+        highWaterMark: ARCHIVE_STREAM_CHUNK_BYTES,
+        signal: controller.signal,
+      })) {
+        fence();
+        bytes += chunk.length;
+        if (bytes > compressed_limit)
+          throw new AppValidationError('app archive exceeds compressed size limit');
+        receipt.update(chunk);
+      }
       fence();
-      bytes += chunk.length;
-      if (bytes > ARCHIVE_MAX_COMPRESSED_BYTES)
-        throw new AppValidationError('app archive exceeds compressed size limit');
-      digest.update(chunk);
+      if (request.purpose === 'mac-inspection' && bytes !== request.archive_size)
+        throw new MacArchiveInspectionError(
+          'refusal',
+          'The Mac runtime archive size differs from its publication.',
+        );
+      checked_sha256 = receipt.digest('hex');
+      if (checked_sha256 !== request.archive_sha256) {
+        if (request.purpose === 'mac-inspection')
+          throw new MacArchiveInspectionError(
+            'refusal',
+            'The Mac runtime archive differs from its publication.',
+          );
+        throw new AppValidationError('app archive hash differs from publication receipt');
+      }
     }
-    fence();
-    if (digest.digest('hex') !== request.archive_sha256)
-      throw new AppValidationError('app archive hash differs from publication receipt');
-    const reader = new ArchiveMembers();
+    const reader = new ArchiveMembers(inspection ? 'mac-inspection' : 'extraction');
+    const second_digest = createHash('sha256');
     let compressed = 0,
       expanded = 0,
       credit = 0,
       magic = Buffer.alloc(0);
-    const compressed_input = new Transform({
+    const hashing = new Transform({
       transform(chunk: Buffer, _encoding, callback) {
         try {
           compressed += chunk.length;
-          if (compressed > ARCHIVE_MAX_COMPRESSED_BYTES)
+          if (compressed > compressed_limit)
             throw new AppValidationError('app archive exceeds compressed size limit');
           if (magic.length < 2) {
             magic = Buffer.concat([magic, chunk.subarray(0, 2 - magic.length)]);
-            if (magic.length === 2 && (magic[0] !== 0x1f || magic[1] !== 0x8b))
+            if (!source_export && magic.length === 2 && (magic[0] !== 0x1f || magic[1] !== 0x8b))
               throw new AppValidationError('app archive is not gzip data');
           }
+          second_digest.update(chunk);
           callback(null, chunk);
         } catch (error) {
           callback(error instanceof Error ? error : new Error(String(error)));
         }
       },
     });
-    const gunzip = createGunzip({ chunkSize: ARCHIVE_STREAM_CHUNK_BYTES });
-    await pipeline(
-      createReadStream('', {
-        fd: 3,
-        start: 0,
-        autoClose: false,
-        highWaterMark: ARCHIVE_STREAM_CHUNK_BYTES,
-      }),
-      compressed_input,
-      gunzip,
-      async (source) => {
-        for await (const value of source) {
-          const bytes = Buffer.from(value);
-          if (expanded + bytes.length > ARCHIVE_MAX_EXPANDED_BYTES)
-            throw new AppValidationError('app archive exceeds expanded size limit');
-          reader.feed(bytes);
-          let start = 0;
-          while (start < bytes.length) {
-            if (!credit) {
-              await acknowledge({ type: 'space', bytes: ARCHIVE_SPOOL_BATCH_BYTES });
-              credit = ARCHIVE_SPOOL_BATCH_BYTES;
-            }
-            const count = Math.min(credit, bytes.length - start);
-            await write_all(spool!, bytes.subarray(start, start + count), expanded);
-            expanded += count;
-            credit -= count;
-            start += count;
-          }
-        }
-      },
-      { signal: controller.signal },
-    );
-    reader.finish();
-    await spool.sync();
-    await acknowledge({ type: 'validated', expanded_bytes: expanded });
-    await extract_members(spool, request.destination, reader, fence);
-    fence();
-    const manifest = await validate_app_manifest(join(request.destination, 'manifest.json'), {
-      expected_sha: request.expected_sha,
-      require_runtime: true,
-      verify_artifact_digest: false,
+    const decoding = source_export
+      ? new Transform({
+          transform(chunk, _encoding, callback) {
+            callback(null, chunk);
+          },
+        })
+      : createGunzip({ chunkSize: ARCHIVE_STREAM_CHUNK_BYTES });
+    const input_file = createReadStream('', {
+      fd: 3,
+      start: 0,
+      autoClose: false,
+      highWaterMark: ARCHIVE_STREAM_CHUNK_BYTES,
     });
+    let origin: { source: 'input' | 'decoding' | 'processing'; error: unknown } | undefined;
+    input_file.once('error', (error) => {
+      origin ??= { source: 'input', error };
+    });
+    decoding.once('error', (error) => {
+      origin ??= { source: 'decoding', error };
+    });
+    try {
+      await pipeline(
+        input_file,
+        hashing,
+        decoding,
+        async (source) => {
+          for await (const value of source) {
+            try {
+              const bytes = Buffer.from(value);
+              if (expanded + bytes.length > ARCHIVE_MAX_EXPANDED_BYTES)
+                throw new AppValidationError('app archive exceeds expanded size limit');
+              reader.feed(bytes);
+              if (inspection) {
+                expanded += bytes.length;
+                continue;
+              }
+              let start = 0;
+              while (start < bytes.length) {
+                if (!credit) {
+                  await acknowledge({ type: 'space', bytes: ARCHIVE_SPOOL_BATCH_BYTES });
+                  credit = ARCHIVE_SPOOL_BATCH_BYTES;
+                }
+                const count = Math.min(credit, bytes.length - start);
+                await write_all(spool!, bytes.subarray(start, start + count), expanded);
+                expanded += count;
+                credit -= count;
+                start += count;
+              }
+            } catch (error) {
+              origin ??= { source: 'processing', error };
+              throw error;
+            }
+          }
+        },
+        { signal: controller.signal },
+      );
+    } catch (error) {
+      // Retain the first origin before pipeline propagates the same error through its peers.
+      const failure = inspection && !controller.signal.aborted && origin ? origin.error : error;
+      if (
+        inspection &&
+        origin?.source === 'decoding' &&
+        origin.error === failure &&
+        !controller.signal.aborted
+      )
+        throw new MacArchiveInspectionError(
+          'archive',
+          failure instanceof Error ? failure.message : String(failure),
+        );
+      throw failure;
+    }
+    const parsed_sha256 = second_digest.digest('hex');
+    if (checked_sha256 !== undefined && parsed_sha256 !== checked_sha256) {
+      if (inspection)
+        throw new MacArchiveInspectionError(
+          'refusal',
+          'The Mac runtime archive changed during inspection.',
+        );
+      throw new AppValidationError('app archive changed during extraction');
+    }
+    reader.finish();
+    if (request.purpose === 'mac-inspection') {
+      await write_archive_message(output, {
+        type: 'mac-inspection-result',
+        manifest_bytes: reader.manifest_bytes?.toString('base64') ?? null,
+        python: reader.python,
+      });
+      fence();
+      return;
+    }
+    await spool!.sync();
+    await acknowledge({ type: 'validated', expanded_bytes: expanded });
+    await extract_members(
+      spool!,
+      request.destination,
+      reader,
+      fence,
+      source_export ? inherited_umask : null,
+    );
     fence();
-    await write_archive_message(output, { type: 'result', manifest });
+    let result: ArchiveUnpackResult;
+    if (request.purpose === 'application') {
+      const manifest = await validate_app_manifest(join(request.destination, 'manifest.json'), {
+        expected_sha: request.expected_sha,
+        require_runtime: true,
+        verify_artifact_digest: false,
+      });
+      fence();
+      result = { type: 'result', manifest };
+    } else {
+      result = { type: 'source-export-result', source_sha256: parsed_sha256 };
+    }
+    await write_archive_message(output, result);
     fence();
   } finally {
     if (watching) {

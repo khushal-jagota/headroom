@@ -1,5 +1,6 @@
 /** Provider units implement these Python-shaped local service boundaries. */
 import type { CodexLoginStanding, CommandOutcome } from './contracts.ts';
+import type { StopOptions } from '../../lifecycle/contracts.ts';
 export interface CodexModel {
   readonly model_id: string;
   readonly display_name: string;
@@ -74,7 +75,7 @@ export interface CodexSignInService {
   read(): CodexSignIn | null;
   start(): Promise<CodexSignIn>;
   cancel(session_id: string): Promise<CodexSignIn>;
-  shutdown(): Promise<void>;
+  shutdown(options?: StopOptions): Promise<void>;
 }
 export class CodexSignInUnavailable extends Error {}
 export class UnknownSignInSession extends Error {}

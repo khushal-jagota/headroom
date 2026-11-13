@@ -16,6 +16,8 @@ import type {
 } from '../events.ts';
 import type { MessageContent } from '../message_content.ts';
 import type { ConversationMessageFiles } from '../message_files.ts';
+import type { StopOptions } from '../../lifecycle/contracts.ts';
+import type { TurnToken as WireTurnToken } from '../../executor/wire.generated.ts';
 export interface TurnToken {
   readonly conversation_id: string;
   readonly turn_number: number;
@@ -102,14 +104,14 @@ export class BackendUserInputRequest {
 }
 export class RetainedBackendRun {
   readonly reference: ChildReference;
-  readonly turn: TurnToken;
+  readonly turn: WireTurnToken;
   readonly delivery_uncertain: boolean;
   readonly retirement_confirmed: boolean;
   readonly stop_requested: boolean;
   readonly incarnation_current: boolean;
   constructor(values: {
     reference: ChildReference;
-    turn: TurnToken;
+    turn: WireTurnToken;
     delivery_uncertain: boolean;
     retirement_confirmed: boolean;
     stop_requested?: boolean;
@@ -308,7 +310,9 @@ export interface BackendEventSink {
 export interface BackendChild {
   readonly stop_outside_lock: boolean;
   withdraw_delivery(): Promise<boolean>;
-  detach(): Promise<void>;
+  detach(options?: StopOptions): Promise<void>;
+  /** Actual already-started stop work, without an observer deadline. */
+  settled?(): Promise<void>;
   start(
     resolved_start: ResolvedConversationStart,
     options: { vendor_session_cursor: string | null },
@@ -343,7 +347,7 @@ export interface BackendChild {
     answers: readonly UserInputAnswer[],
     options?: { answer_id?: string | null; turn_token?: TurnToken | null },
   ): Promise<AnswerFate>;
-  stop(): Promise<void>;
+  stop(options?: StopOptions): Promise<void>;
 }
 export interface BackendChildFactory {
   (options: {
