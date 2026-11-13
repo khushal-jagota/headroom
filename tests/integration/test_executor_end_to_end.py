@@ -2145,10 +2145,11 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
 def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Gap: a protocol-21 Mac dials the old WebSocket. It must be refused and shown as
-    "Mac needs update", its update route must still answer it with only the ID header,
-    and the current Mac's work must go on: nothing it saved changes, and its next lease
-    shows it present again."""
+    """After handover, missing credentials cannot change presence or read updates.
+
+    An authenticated old transport still receives the version refusal and recovery
+    update. The current executor retains its work and its next lease clears refusal.
+    """
     import aiohttp
 
     from planner.environments.mac_updates import MacUpdateService
@@ -2171,6 +2172,7 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(
             )
             origin = harness.proxy.origin
             only_id = {"X-Panels-Executor-ID": EXECUTOR_ID}
+            authenticated = harness.mac.client.authentication_headers()
 
             def positions() -> list[tuple[Any, ...]]:
                 with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
@@ -2190,12 +2192,28 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(
                         raise AssertionError("the old WebSocket was accepted")
                 except aiohttp.WSServerHandshakeError as refused:
                     assert refused.status == 403
+                # Issuance permanently closed the original ID-only authority. A
+                # refused unauthenticated peer cannot mark the real machine refused.
+                health = harness.endpoint.health()
+                assert health.presence == "present" and health.refusal is None
+                assert health.identity == harness.mac.identity
+                async with session.get(origin + "/api/executor/update", headers=only_id) as answer:
+                    assert answer.status == 403
+                try:
+                    async with session.ws_connect(
+                        "wss" + origin[5:] + "/api/executor/connect", headers=authenticated
+                    ):
+                        raise AssertionError("the authenticated old WebSocket was accepted")
+                except aiohttp.WSServerHandshakeError as refused:
+                    assert refused.status == 403
                 health = harness.endpoint.health()
                 assert health.presence == "refused"
                 assert health.refusal is not None
                 assert health.refusal.reason == MAC_NEEDS_UPDATE
                 assert health.refusal.peer_identity is None
-                async with session.get(origin + "/api/executor/update", headers=only_id) as answer:
+                async with session.get(
+                    origin + "/api/executor/update", headers=authenticated
+                ) as answer:
                     assert answer.status == 200
                     check = decode_bounded(await answer.read(), MacUpdateCheck)
                 assert check.target is None
@@ -2920,7 +2938,9 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
             runs = MacRuns(db_path, presence, mailbox)
             another_mac = VpsCatalogRelay(runs, presence, mailbox, machine_id="other-mac")
             assert another_mac.retained(ConversationBackendKey.codex) is None
-            offline = VpsCatalogRelay(runs, presence, mailbox)
+            offline = VpsCatalogRelay(
+                runs, presence, mailbox, machine_id=harness.endpoint.machine_id
+            )
             saved = offline.retained(ConversationBackendKey.codex)
             assert saved is not None
             assert saved.available_models == first.available_models
