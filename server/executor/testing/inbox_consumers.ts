@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createDatabase } from '../../core/database/index.ts';
 import { TestClock } from '../../core/clock.ts';
 import { PlannerError } from '../../core/contracts.ts';
+import { parse_identity } from '../../execution_identity.ts';
 import type { Principal } from '../../core/contracts.ts';
 import type {
   ConversationSystem,
@@ -110,7 +111,7 @@ async function outcome(promise: Promise<unknown>): Promise<unknown> {
   }
 }
 const typed = (value: WireTypes['QueuedEnvelope']) => decode_value(value, 'QueuedEnvelope');
-const identity = decode_value(spec.identity, 'ExecutorIdentity');
+const identity = parse_identity(spec.identity);
 try {
   const output: Record<string, unknown> = {};
   for (const [index, value] of spec.edits.entries()) {
