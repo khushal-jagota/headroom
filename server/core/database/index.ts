@@ -22,6 +22,12 @@ import type {
   DatabaseCloseHandle,
 } from './contracts.ts';
 export type * from './contracts.ts';
+
+/** Keep native SQLite error identity behind the database boundary. */
+export function is_sqlite_error(error: unknown): boolean {
+  return error instanceof BetterSqlite3.SqliteError;
+}
+
 const functionScopes = new WeakMap<
   ReadSql,
   (name: string, callback: (...values: SqlValue[]) => SqlValue) => void

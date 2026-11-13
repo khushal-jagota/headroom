@@ -39,6 +39,7 @@ import {
 } from '../protocol.ts';
 import { expiry_reason } from '../logic/command_expiry.ts';
 import { counter } from '../logic/counters.ts';
+import { current_incarnation } from '../vps_presence_store.ts';
 import {
   open_child_assignment,
   prepare_command_in_transaction,
@@ -60,13 +61,6 @@ function outcome_json(value: WireValue<'CommandResult'>): string {
 }
 function result(text: string | null): WireValue<'CommandResult'> | null {
   return text === null ? null : decode_json(text, 'CommandResult');
-}
-export function current_incarnation(sql: ReadSql): string | null {
-  return (
-    sql.get<{ executor_incarnation: string | null }>(
-      'SELECT executor_incarnation FROM mac_executor_presence WHERE singleton=1',
-    )?.executor_incarnation ?? null
-  );
 }
 /** Python typed equality compares numeric values, not JS object identity or token spelling. */
 function equivalent(left: unknown, right: unknown): boolean {

@@ -396,6 +396,30 @@ A FIFO therefore refuses instead of blocking the event loop before that check, a
 Large copy, hash, and strict flush operations run in an owned worker with the shared shutdown deadline.
 The file formats, hashes, and successful publication behavior retain the Python contract.
 
+## Mac canonical skill publication ownership and durability
+
+The Manager accepted these Mac-only safety differences during PR 817 source review on November 13, 2026.
+The shared server publisher keeps Python behavior, including legacy `skills` symlink conversion and replacement of existing entries.
+The Mac uses an explicit owned-link policy in that same shared module. It never recursively removes provider entries.
+Before any publication or derived-state write, the Mac requires an absolute existing provider home and an existing real `skills` directory.
+The trusted adapter host supplies that home separately from the snapshot. Its real path must equal its configured normalized path.
+The Mac refuses linked homes or skills directories, managed-name collisions with files/directories/foreign links, case-only collisions, and link loops.
+It preserves unrelated entries and dangling user links. Only links that resolve inside its own executor state root belong to it.
+The Mac retains the provider directory and uses descriptor-relative unlink, symlink, and rename operations.
+New links first use recognizable private temporary names. Replacement is atomic, after an immediate ownership recheck.
+A later publication removes only recognized temporary links that still point into that executor's own root.
+
+The held directory and rechecks prevent a swapped folder from redirecting deletion into a replacement folder.
+They do not coordinate same-user programs that write that folder at the same time. Rename is not an atomic ownership comparison.
+The root-local installation lock does not serialize another executor installation. The two-executor publication policy remains an owner decision.
+The Mac also refuses linked ancestors of its state root, including native `/tmp` and `/var` aliases. Use reviewed canonical native paths.
+
+New generation files receive strict full flushes, and their directories receive flushes before atomic generation publication.
+A damaged derived generation is preserved under a private `.invalid-*` name and rebuilt from the authoritative snapshot.
+Python instead refuses that existing generation. No source or provider user data is discarded by the rebuild.
+The successor host/storage maintenance work owns eventual removal of unreferenced generations and abandoned stages.
+This slice adds no generation sweeper. Native durability, Darwin directory ABI, and filesystem failure behavior remain later Mac checks.
+
 ## Mac outbox cleanup after commit
 
 The Manager required this correction during the Mac slice 2 review on November 12, 2026.
@@ -515,6 +539,34 @@ Python's serializer can write a dataclass whose state did not pass that validati
 The TypeScript sender must produce a message that the Python peer can read.
 Root-specific encoder inputs use the generated contracts. Nullable fields without defaults require an explicit null.
 
+## Release archive sparse members — accepted
+
+The Manager accepted explicit refusal of old GNU type `S` and every `GNU.sparse.*` PAX record.
+Python supports these sparse formats. Neither actual release producer emits them.
+The TypeScript reader returns `AppValidationError` before the destination exists.
+The existing release comparison records this accepted difference instead of Python equality.
+
+## Release archive metadata, names and writer timestamps — accepted
+
+The Manager accepted these five differences on November 13, 2026:
+
+- Unknown inert PAX keys are refused under the closed metadata-key policy.
+- An empty effective PAX file path is a typed refusal. This Python fault is not reproduced.
+- Bodies on directory or link members are refused under the closed member policy.
+- Release names must be valid UTF-8. A non-UTF-8 name is a typed refusal.
+- The TS release writer can lose the fractional part of an mtime because node-tar writes whole seconds in an ordinary header. A fractional time that it writes in a PAX header stays intact. The reader keeps Python's nanoseconds exactly for either archive. This applies to release application archives only.
+
+The four reader refusals use `AppValidationError` before output creation. Python accepts three forms and fails after destination creation for an empty path.
+The existing release comparison pins these intentional differences and retains Python's observations without claiming equality.
+
+## Release archive members behind links — accepted
+
+The Manager accepted refusal of any member whose parent is another archive link member.
+This includes symbolic links and hard links, even when the link appears later.
+Python can extract through safe internal links. Neither actual release producer requires that behavior.
+TypeScript validates the complete member graph before it creates the output directory.
+The existing release comparison records this accepted difference instead of Python equality.
+
 ## VPS mailbox shutdown admission
 
 The Manager's VPS executor Brief requires that shutdown seal new work immediately.
@@ -528,3 +580,32 @@ Their caller owns the SQL capability, admission and actual settlement.
 The Manager's mailbox review also requires timer-range admission.
 TypeScript refuses nonfinite waits and waits above Node's maximum timer delay before SQL starts.
 Python's event loop can accept longer durations. Finite negative waits retain immediate behavior.
+
+## VPS presence shutdown and reply cursor
+
+The Manager accepts these two presence differences for Unit 22a.
+An admitted lease completes its commit, publication, and reply after shutdown seals the service.
+Stop suppresses replacement, returned, and update callbacks that did not start before the seal.
+It joins callbacks that already started. A skipped replacement stays owed, and a skipped update returns `no_update_check`.
+Python does not suppress all callback starts after close.
+
+Every accepted reply reads the canonical SQL mailbox maximum, including after the mailbox seal.
+During a command commit before its announcement, this cursor can lead Python's cached mailbox cursor.
+Mailbox rows never delete. The leading cursor therefore names existing rows that the next poll returns.
+This uses no new flag on the mailbox.
+
+The presence seal rejects new leases, WebSocket refusals, and drain waits.
+Cached reads, header fences, contact observations, and memory-only activity observations continue after stop.
+A cold read returns the empty cached state without lazy SQL.
+Contact observations update only memory after stop and start no timer.
+
+A presence stop before lazy initialization performs no presence SQL read or write.
+Python close can initialize its record before its final flush and logs and swallows OS or SQLite failures.
+TypeScript final flush failures remain visible through actual settlement, as the lifecycle contract requires.
+Normal-running contact flush failures log and remain retryable, as in Python.
+They do not become shutdown failures when a later flush succeeds.
+The bounded stop observer uses the shared absolute deadline. Actual settlement remains separate.
+
+Presence commits are silent at the shared write door.
+After commit succeeds, the service publishes its cache before it emits the one presence change signal.
+Synchronous signal subscribers therefore read the committed presence state, with no cache update before a possible rollback.
