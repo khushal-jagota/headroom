@@ -10,7 +10,6 @@ import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import { run_release_command } from './process.ts';
 import { extract_git_export } from './archive.ts';
 import { build_exported_app } from './build.ts';
-import { validate_app_manifest } from './identity.ts';
 import type { AppManifest } from './contracts.ts';
 
 const cleanup = vi.hoisted(() => ({ after: undefined as ((path: unknown) => void) | undefined }));
@@ -145,7 +144,7 @@ test('source export retains its original deadline through spool cleanup and remo
 }, 15_000);
 
 // Reuse the real source-only builder, owner, and mocked cleanup boundary in this host.
-test('builder retains its deadline through final cleanup and preserves the published candidate', async () => {
+test('builder retains its deadline through final cleanup before candidate publication', async () => {
   const root = await mkdtemp(join(tmpdir(), 'panels-build-cleanup-'));
   const owner = new ChildProcesses();
   const execution = {
@@ -205,10 +204,7 @@ test('builder retains its deadline through final cleanup and preserves the publi
       execution,
     );
     await expect(pending).rejects.toThrow('release operation exceeded its time budget');
-    expect(
-      (await validate_app_manifest(join(candidate, 'manifest.json'), { expected_sha: sha }))
-        .app_sha,
-    ).toBe(sha);
+    await expect(stat(candidate)).rejects.toMatchObject({ code: 'ENOENT' });
   } finally {
     cleanup.after = undefined;
     restore_clock?.();
