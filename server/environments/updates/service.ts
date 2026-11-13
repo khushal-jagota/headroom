@@ -508,6 +508,7 @@ export class UpdateService {
     this.options.runtime.assert_database_owned();
     const command = this.options.installer.prepare({
       current_root: this.options.current_root,
+      database: this.options.database,
       data_directory: dirname(this.options.database),
       attempt_id,
       service_unit: this.options.service_unit,
