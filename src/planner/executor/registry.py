@@ -117,13 +117,15 @@ class VpsExecutorRegistry:
             return owner
 
     def configure(
-        self, system: SqliteProcessConversationSystem, app: FastAPI, *, update_check: Callable[[str], MacUpdateCheck]
+        self,
+        system: SqliteProcessConversationSystem,
+        app: FastAPI,
+        *,
+        update_check: Callable[[str], MacUpdateCheck],
     ) -> None:
         self._configuration = system, app, update_check
         for machine_id, owner in self._owners.items():
-            owner.configure(
-                system, app, update_check=partial(update_check, machine_id)
-            )
+            owner.configure(system, app, update_check=partial(update_check, machine_id))
             owner.mailbox.start_admission = system.start_admission
         system.configure_worker_cleanup_recheck(self.recheck_cleanup)
 
