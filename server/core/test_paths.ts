@@ -23,6 +23,11 @@ export function register_test_root(root: string): () => void {
 /** Return the exact permitted path to open, without following outside symlinks. */
 export function assert_test_database_path(path: string): string {
   if (process.env.VITEST !== 'true' && !testModeFromEnvironment()) return path;
+  return assert_temporary_path(path);
+}
+
+/** The same physical constraint, even when only an explicit invocation is in test mode. */
+export function assert_temporary_path(path: string): string {
   const roots = [resolve(tmpdir()), ...testRoots];
   const canonicalRoots = roots.map((root) => realpathSync(root));
   const refuse = (): never => {
