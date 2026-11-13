@@ -9,6 +9,7 @@ import type {
   ResolvedEnvironmentInstance,
   EnvironmentPortPolicy,
   ResolveEnvironmentRequest,
+  PathAdmission,
 } from './contracts.ts';
 
 export const DEFAULT_ENVIRONMENT_DEFAULTS = Object.freeze({
@@ -42,9 +43,12 @@ export function validate_instance_id(kind: EnvironmentKind, id: string | null = 
     throw new EnvironmentValidationError(`${kind} instance id must be '${kind}'`);
   return kind;
 }
-export async function validate_absolute_environment_root(root: string): Promise<string> {
+export async function validate_absolute_environment_root(
+  root: string,
+  admit_path?: PathAdmission,
+): Promise<string> {
   if (!isAbsolute(root)) throw new EnvironmentValidationError('environment root must be absolute');
-  return canonical_path(root);
+  return canonical_path(admit_path?.(root) ?? root);
 }
 export function fixed_port(port: number, label = 'fixed environment port'): EnvironmentPortPolicy {
   if (port < 1 || port > 65535)

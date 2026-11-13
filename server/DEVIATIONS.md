@@ -610,6 +610,32 @@ Presence commits are silent at the shared write door.
 After commit succeeds, the service publishes its cache before it emits the one presence change signal.
 Synchronous signal subscribers therefore read the committed presence state, with no cache update before a possible rollback.
 
+## Operator composition unavailable leaves — accepted, temporary
+
+The Manager authorized slice A while the release-side prerequisites remain unmerged.
+`environment app-build`, `environment run`, `serve`, and `restart` retain their
+canonical help but return exit 1 with `The NAME command is not yet available in this build.`
+No dependency, file, process, or network action precedes that refusal. The release-side
+Ticket owns native admission, builder, supervisor, and unit files. Slice B restores
+these four handlers after those prerequisites merge.
+
+## Operator manifest path consistency
+
+The Manager requires one admitted path for backup-current's manifest read and validation.
+Python reads the literal Click path, but its validator independently expands a leading `~`.
+If the current directory contains a directory named `~`, Python can validate a different file.
+TypeScript uses one absolute literal path for both operations and retains the literal error filename.
+App-identity retains Python's explicit validator expansion of `~`.
+
+## Server event-loop task inspection — accepted, deferred
+
+The Manager accepted explicit refusal because the TypeScript runtime cannot enumerate Promise await chains.
+The typed `server-event-loop-tasks` callback returns exit 1 and empty stdout.
+Human stderr is exactly `error: The TypeScript runtime cannot enumerate Promise await chains.\nThis diagnostic is unavailable in the TypeScript server.\n`.
+JSON stderr is the existing error envelope with code `unsupported`, the first sentence as its message, empty detail, and a newline.
+Await-chain inspection remains deferred. Resource counts do not replace this diagnostic.
+The public CLI binding remains open. Node's built-in diagnostic report is the operator alternative.
+
 ## VPS file descriptor custody
 
 The accepted executor plan uses Linux procfs descriptors for the VPS file module.

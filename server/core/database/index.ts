@@ -32,6 +32,15 @@ const functionScopes = new WeakMap<
   ReadSql,
   (name: string, callback: (...values: SqlValue[]) => SqlValue) => void
 >();
+interface SavepointWitness {
+  rolled_back: boolean;
+}
+const savepointScopes = new WeakMap<BetterSqlite3.Database, SavepointWitness[]>();
+const rollbackProofs = new WeakMap<ReadSql, () => () => boolean>();
+/** Capture actual enclosing savepoints, never infer rollback from the current rows. */
+export function capture_savepoint_rollback(sql: ReadSql): () => boolean {
+  return rollbackProofs.get(sql)?.() ?? (() => false);
+}
 /** Register a pure SQLite function for this read scope only, without a raw connection. */
 export function registerReadFunction(
   sql: ReadSql,
@@ -45,6 +54,7 @@ export function registerReadFunction(
 
 const BUSY_TIMEOUT_MS = 5000;
 const AUXILIARY_BUSY_TIMEOUT_MS = 500;
+let nextSavepoint = 0;
 const maintenance = new WeakMap<Database, (mode: 'PASSIVE' | 'TRUNCATE') => CheckpointResult>();
 function integer(
   value: number,
@@ -140,6 +150,53 @@ function scope<T, Sql extends ReadSql = TransactionSql>(
         ...reader,
         run: (sql: string, parameters?: SqlParameters) =>
           invoke<BetterSqlite3.RunResult>(prepare(sql), 'run', parameters),
+        savepoint<T>(nested: (tx: TransactionSql) => T): T {
+          if (!active) throw new TypeError('database SQL scope is no longer active');
+          if (!connection.inTransaction)
+            throw new TypeError('savepoint requires a write transaction');
+          const name = `panels_scope_${++nextSavepoint}`;
+          connection.exec(`SAVEPOINT ${name}`);
+          const witness: SavepointWitness = { rolled_back: false };
+          const scopes = savepointScopes.get(connection) ?? [];
+          savepointScopes.set(connection, scopes);
+          scopes.push(witness);
+          try {
+            const result = scope<T, TransactionSql>(
+              connection,
+              true,
+              nested,
+              auxiliary,
+              safeIntegers,
+            );
+            connection.exec(`RELEASE SAVEPOINT ${name}`);
+            return result;
+          } catch (error) {
+            const errors: unknown[] = [error];
+            for (const command of [`ROLLBACK TO SAVEPOINT ${name}`, `RELEASE SAVEPOINT ${name}`]) {
+              try {
+                connection.exec(command);
+                if (command.startsWith('ROLLBACK TO')) witness.rolled_back = true;
+              } catch (cleanup) {
+                errors.push(cleanup);
+              }
+            }
+            if (errors.length > 1 && is_sqlite_error(error)) {
+              const previous =
+                (error as Error & { savepoint_cleanup_errors?: unknown[] })
+                  .savepoint_cleanup_errors ?? [];
+              Object.assign(error as Error, {
+                savepoint_cleanup_errors: [...previous, ...errors.slice(1)],
+              });
+              throw error;
+            }
+            if (errors.length > 1)
+              throw new AggregateError(errors, 'Savepoint rollback or release failed');
+            throw error;
+          } finally {
+            scopes.pop();
+            if (scopes.length === 0) savepointScopes.delete(connection);
+          }
+        },
         ...(auxiliary
           ? {
               incrementalVacuum(pages: number): void {
@@ -155,6 +212,12 @@ function scope<T, Sql extends ReadSql = TransactionSql>(
           : {}),
       })
     : reader;
+  rollbackProofs.set(capability, () => {
+    if (!active || !writable || !connection.inTransaction) return () => false;
+    const witnesses = [...(savepointScopes.get(connection) ?? [])];
+    return () =>
+      active && connection.inTransaction && witnesses.some((witness) => witness.rolled_back);
+  });
   functionScopes.set(capability, (name, callback) => {
     if (!active) throw new TypeError('database SQL scope is no longer active');
     let current: typeof callback | undefined = callback;
@@ -171,6 +234,7 @@ function scope<T, Sql extends ReadSql = TransactionSql>(
     return assertSynchronous(work(capability as unknown as Sql));
   } finally {
     functionScopes.delete(capability);
+    rollbackProofs.delete(capability);
     active = false;
     for (const clear of clearFunctions) clear();
   }
