@@ -13,6 +13,7 @@ export interface Manager {
   title: string;
   goal: string;
   recap: string;
+  recap_updated_at: number | null;
   project_id: string;
   project_name: string;
   manager_launch_configuration: ManagerLaunchConfiguration;

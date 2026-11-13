@@ -2,8 +2,8 @@
 export const WIRE_VERSION = 2;
 export const VIEW_WIRE_VERSION = 3;
 export const VIEW_PROJECTION_VERSION = 7;
-export const SCHEMA_VERSION = 10;
-export const SUPPORTED_SEMANTICS = "attention-knowledge-v10-ticket-workflows";
+export const SCHEMA_VERSION = 11;
+export const SUPPORTED_SEMANTICS = "attention-knowledge-v11-recap-freshness";
 export type RecordKind = "ticket" | "manager" | "chief" | "goal" | "conversation" | "address" | "totals" | "project";
 
 export interface RecordKey {
@@ -20,6 +20,8 @@ export interface TicketValue {
   title: string;
   recap: string;
   recap_preview: string;
+  recap_updated_at: number | null;
+  recap_stage_changed: boolean;
   worker_type: string | null;
   stage_label: string;
   workflow_label: string;
@@ -54,6 +56,8 @@ export interface BrokenTicketValue {
   title: string;
   recap: string;
   recap_preview: string;
+  recap_updated_at: number | null;
+  recap_stage_changed: boolean;
   worker_type: string | null;
   stage: string;
   ticket_status: "errored";
@@ -74,6 +78,7 @@ export interface ManagerValue {
   title: string;
   recap: string;
   recap_preview: string;
+  recap_updated_at: number | null;
   created_at: number;
   project_id: string;
   settled: boolean;
@@ -228,7 +233,7 @@ export type NavigationRecord = TicketRecord | ManagerRecord | ChiefRecord | Goal
 export interface Continuity {
   scope: string;
   schema_version: number;
-  semantics: "attention-knowledge-v10-ticket-workflows";
+  semantics: "attention-knowledge-v11-recap-freshness";
   epoch: string;
   revision: string;
 }
@@ -236,7 +241,7 @@ export interface Continuity {
 export interface Snapshot {
   scope: string;
   schema_version: number;
-  semantics: "attention-knowledge-v10-ticket-workflows";
+  semantics: "attention-knowledge-v11-recap-freshness";
   epoch: string;
   revision: string;
   records: Array<NavigationRecord>;
@@ -245,7 +250,7 @@ export interface Snapshot {
 export interface RevisionBatch {
   scope: string;
   schema_version: number;
-  semantics: "attention-knowledge-v10-ticket-workflows";
+  semantics: "attention-knowledge-v11-recap-freshness";
   epoch: string;
   base_revision: string;
   revision: string;
@@ -256,7 +261,7 @@ export interface RevisionBatch {
 export interface JournalPage {
   scope: string;
   schema_version: number;
-  semantics: "attention-knowledge-v10-ticket-workflows";
+  semantics: "attention-knowledge-v11-recap-freshness";
   epoch: string;
   revision: string;
   batches: Array<RevisionBatch>;
@@ -268,7 +273,7 @@ export type ResetReason = "invalid_cursor" | "incompatible_continuity" | "expire
 export interface Cursor {
   scope: string;
   schema_version: number;
-  semantics: "attention-knowledge-v10-ticket-workflows";
+  semantics: "attention-knowledge-v11-recap-freshness";
   epoch: string;
   revision: string;
   wire_version: 2;
@@ -371,6 +376,8 @@ export interface ViewTicketValue {
   title: string;
   recap: string;
   recap_preview: string;
+  recap_updated_at: number | null;
+  recap_stage_changed: boolean;
   worker_type: string | null;
   stage_label: string;
   workflow_label: string;
@@ -402,6 +409,8 @@ export interface ViewBrokenTicketValue {
   title: string;
   recap: string;
   recap_preview: string;
+  recap_updated_at: number | null;
+  recap_stage_changed: boolean;
   worker_type: string | null;
   stage: string;
   ticket_status: "errored";
@@ -423,6 +432,7 @@ export interface ViewManagerValue {
   title: string;
   recap: string;
   recap_preview: string;
+  recap_updated_at: number | null;
   created_at: number;
   project_id: string;
   settled: boolean;

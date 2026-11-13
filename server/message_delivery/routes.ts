@@ -3,7 +3,6 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices } from '../core/authority/register.ts';
 import type { Principal } from '../core/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
-import { requireOwner } from '../core/authority/identity.ts';
 import { dictionaryBody } from '../list_reads/http.ts';
 import { delivery_fate_json } from '../conversation/http.ts';
 import type { PromptDeliveryMode } from '../conversation/contracts.ts';
@@ -82,7 +81,6 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
   app.post('/recap-requests', async (request, reply) => {
     if (!dictionaryBody(request.body, reply)) return;
     const context = services.identity(request);
-    requireOwner(context);
     const recipient = principal(request.body.target);
     if (!services.conversationSystem) throw new Error('conversation system is unavailable');
     return result_json(

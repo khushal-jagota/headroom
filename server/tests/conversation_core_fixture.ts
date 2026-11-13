@@ -33,9 +33,10 @@ export function setup(
     behavior?: ScriptedBehavior;
     record?: ConversationStoreOptions;
     core?: Partial<ConversationCoreOptions>;
+    database?: Parameters<typeof fixture>[0];
   } = {},
 ) {
-  const database = fixture();
+  const database = fixture(options.database);
   const database_path = fixture_path(database);
   const directory = mkdtempSync(join(tmpdir(), 'conversation-core-'));
   directories.push(directory);

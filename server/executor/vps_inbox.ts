@@ -33,6 +33,7 @@ import type { PublishedFiles } from './data/inbox.ts';
 import { open_child_assignment } from './data/child_custody.ts';
 import { AgentWrites } from './vps_agent_writes.ts';
 import { now_ms } from './clock.ts';
+import { answer_by } from './item_budget.ts';
 import { is_json_object } from './protocol_json.ts';
 import { MAC_ITEM_RETRY_LATER_SECONDS, MAX_ITEM_BATCH_ITEMS } from './configuration.ts';
 
@@ -81,41 +82,24 @@ function retry(message: string): PlannerError {
 function value_error(error: unknown): error is Error {
   return error instanceof ValueError || error instanceof KeyError || error instanceof TypeError;
 }
-/** Retry budgets observe owned work without cancelling a committed or native effect. */
-async function answer_by<T>(
-  promise: Promise<T>,
-  deadline: number,
-): Promise<{ done: true; value: T } | { done: false }> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise.then((value) => ({ done: true as const, value })),
-      new Promise<{ done: false }>((resolve) => {
-        timer = setTimeout(
-          () => resolve({ done: false }),
-          Math.max(deadline * 1000 - performance.now(), 0),
-        );
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
 async function lock_by(
   lock: FifoLock,
   deadline: number,
   message: string,
   after_release?: () => void,
 ): Promise<() => void> {
-  const acquired = lock.acquire().then((release) => () => {
+  let release: () => void;
+  try {
+    release = await lock.acquire(deadline);
+  } catch (error) {
+    after_release?.();
+    if (error instanceof PlannerError && error.code === 'retry_later') throw retry(message);
+    throw error;
+  }
+  return () => {
     release();
     after_release?.();
-  });
-  const answer = await answer_by(acquired, deadline);
-  if (answer.done) return answer.value;
-  // A timed-out FIFO waiter still owns its eventual slot and must release it.
-  void acquired.then((release) => release());
-  throw retry(message);
+  };
 }
 export class MacInbox {
   readonly store: InboxStore;

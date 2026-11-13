@@ -10,6 +10,9 @@
     "memory_notice_turns_are_maintenance": [
       "retire_executor_websocket_tables"
     ],
+    "recap_freshness": [
+      "ticket_decision_messages"
+    ],
     "retire_executor_websocket_tables": [
       "stall_alarm_preference"
     ],
@@ -18,8 +21,11 @@
     ],
     "stall_alarm_preference": [
       "executor_mailboxes"
+    ],
+    "ticket_decision_messages": [
+      "memory_notice_turns_are_maintenance"
     ]
   },
-  "source_digest": "3db3258036e842381d37cf83d622bba5c8e3e41381d776ee2dc56f6fa49d78d7",
+  "source_digest": "4ccfa7d8551d96ad1ee5388cdf16c85a227d5bf4952c3dd19236baba0c3ddf06",
   "version": 1
 }

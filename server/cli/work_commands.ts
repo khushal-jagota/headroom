@@ -7,6 +7,8 @@ import type { RecordParts } from './record_projection.ts';
 import { JsonNumber, numeric_value, parse_numeric_json } from '../core/http/numeric_json.ts';
 import { python_text as scalar } from './python_text.ts';
 import { ticket_argument } from './parser.ts';
+import { recap_preview } from '../tickets/logic/recap.ts';
+import { strip } from '../core/whitespace.ts';
 
 type Body = Record<string, any>;
 const python_sort = (left: string, right: string): number => {
@@ -29,6 +31,28 @@ const drop_none = (body: Body): Body =>
 const lines = (rows: any[], format: (row: any) => string): string =>
   rows.length ? rows.map(format).join('\n') : '(none)';
 const raw = (stdout: string): CommandResult => ({ exit_code: 0, stdout, stderr: '' });
+function format_recap(item: Body): string {
+  const recap = scalar(item.recap);
+  if (!strip(recap)) return 'no recap';
+  let freshness = 'recap age unknown';
+  if (item.recap_updated_at != null) {
+    const age = Math.max(
+      0,
+      Math.trunc(Date.now() / 1000) - Math.trunc(numeric_value(item.recap_updated_at)!),
+    );
+    const elapsed =
+      age < 60
+        ? `${age}s`
+        : age < 3600
+          ? `${Math.floor(age / 60)}m`
+          : age < 86400
+            ? `${Math.floor(age / 3600)}h`
+            : `${Math.floor(age / 86400)}d`;
+    freshness = `recap ${elapsed} old`;
+  }
+  if (item.recap_stage_changed) freshness += ', stage changed since';
+  return `${recap_preview(recap)} (${freshness})`;
+}
 const ticket_id = (inv: Invocation, positional: string | null | undefined): string => {
   const value = ticket_argument(positional, inv.environment);
   if (value !== undefined) return value;
@@ -267,8 +291,15 @@ async function proposal(inv: Invocation): Promise<CommandResult> {
   tid = ticket_id(inv, tid);
   if (action === 'revise') {
     const text = await read_source(inv, '-');
+    const detail = await send(inv, 'GET', '/api/tickets', { params: { detail: 'full', id: tid } });
+    if (!detail.pending_proposal) fail_validation(inv, 'ticket has no pending proposal');
+    const revision = detail.pending_proposal.revision;
     const data = await send(inv, 'POST', `/api/tickets/${tid}/reject`, {
-      json_body: { message: text },
+      json_body: {
+        message: text,
+        expected_proposal_revision: revision,
+        decision_id: `${tid}:${scalar(revision)}:reject`,
+      },
     });
     return emit(data, v.as_json, `${scalar(tid)} proposal rejected`);
   }
@@ -291,6 +322,8 @@ async function proposal(inv: Invocation): Promise<CommandResult> {
     await send(inv, 'PATCH', `/api/tickets/${tid}`, { json_body: { title: v.kickoff_title } });
   }
   const payload: Body = {
+    expected_proposal_revision: detail.pending_proposal.revision,
+    decision_id: `${tid}:${scalar(detail.pending_proposal.revision)}:accept`,
     next_ceiling: v.ceiling,
     next_holder: v.holder != null ? holder(inv, v.holder) : caller_principal(inv),
   };
@@ -373,14 +406,15 @@ async function manager_workspace(inv: Invocation): Promise<CommandResult> {
   } else
     visible = `Visible page: this Manager's own document.\nRead: panels page show --manager ${scalar(id)}\nSchema: panels page schema\nEdit: panels page edit --manager ${scalar(id)}`;
   const human =
-    `${scalar(data.title)} (${scalar(id)})\nPurpose: ${scalar(data.goal)}\nRecap: ${scalar(data.recap)}\n\n${scalar(visible)}\nOwn page revision: ${scalar(data.page_revision)}\nEdits replace the complete document. Artifacts are supporting files.\n\nHeld goals:\n` +
+    `${scalar(data.title)} (${scalar(id)})\nPurpose: ${scalar(data.goal)}\nRecap: ${format_recap(data)}\n\n${scalar(visible)}\nOwn page revision: ${scalar(data.page_revision)}\nEdits replace the complete document. Artifacts are supporting files.\n\nHeld goals:\n` +
     lines(goals, (goal) => `${scalar(goal.id)} ${scalar(goal.title)}`) +
     '\n\nArtifacts:\n' +
     lines(data.artifacts, (artifact) => scalar(artifact.opens)) +
     '\n\nTickets:\n' +
     lines(
       data.tickets,
-      (ticket) => `${scalar(ticket.id)} ${scalar(ticket.title)} [${scalar(ticket.stage)}]`,
+      (ticket) =>
+        `${scalar(ticket.id)} ${scalar(ticket.title)} [${scalar(ticket.stage)}]\n  ${format_recap(ticket)}`,
     );
   return emit(data, inv.values.as_json, human);
 }
@@ -614,7 +648,7 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
           `${scalar(ticket.id)} ${scalar(ticket.stage)} ${scalar(ticket.ticket_status)} ${scalar(ticket.title)}` +
           (ticket.is_backlogged ? ' | backlogged' : '') +
           (ticket.project ? ` | ${scalar(ticket.project)}` : '') +
-          (ticket.recap_preview ? `\n  ${scalar(ticket.recap_preview)}` : ''),
+          `\n  ${format_recap(ticket)}`,
       );
       return emit(data, as_json, bounded(rows, data.page));
     }
@@ -770,7 +804,7 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
           lines(
             data.managers,
             (row) =>
-              `${scalar(row.id)} ${scalar(row.title)} [${scalar(row.settled ? 'settled' : 'active')}]`,
+              `${scalar(row.id)} ${scalar(row.title)} [${scalar(row.settled ? 'settled' : 'active')}]\n  ${format_recap(row)}`,
           ),
           data.page,
         ),
@@ -810,6 +844,15 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
     }
     case 'manager workspace':
       return manager_workspace(inv);
+    case 'ticket request-recap':
+    case 'manager request-recap': {
+      const kind = path.split(' ')[0];
+      const identity = kind === 'ticket' ? v.ticket_id : v.item_id;
+      data = await send(inv, 'POST', '/api/recap-requests', {
+        json_body: { target: { kind, id: identity } },
+      });
+      return emit(data, as_json, `Recap requested from ${scalar(identity)}.`);
+    }
     case 'manager settle':
       data = await send(inv, 'PATCH', `/api/managers/${v.item_id}/settled`, {
         json_body: { settled: !v.active },

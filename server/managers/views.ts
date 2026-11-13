@@ -21,6 +21,7 @@ export function manager_json(item: Manager): Record<string, unknown> {
     settled: item.settled,
     goal: item.goal,
     recap: item.recap,
+    recap_updated_at: item.recap_updated_at,
     page_revision: item.page_revision,
     page_character_count: item.page === null ? 0 : Array.from(python_json(item.page)).length,
     project_id: item.project_id,
@@ -93,6 +94,9 @@ export function list_manager_summaries(
         project: item.project_name,
         created_at: item.created_at,
         updated_at: item.updated_at,
+        recap: item.recap,
+        recap_preview: recap_preview(item.recap),
+        recap_updated_at: item.recap_updated_at,
       };
     });
   return { managers: rows, page: pageFacts(count, rows.length, page) };
@@ -109,6 +113,8 @@ export function manager_tickets(sql: ReadSql, id: string): Record<string, unknow
         title: ticket.title,
         recap: ticket.recap,
         recap_preview: recap_preview(ticket.recap),
+        recap_updated_at: ticket.recap_updated_at,
+        recap_stage_changed: ticket.recap_stage_changed,
         project_id: ticket.project_id,
         manager_id: ticket.manager_id,
         stage: ticket.stage,

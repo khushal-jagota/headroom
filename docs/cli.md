@@ -23,6 +23,10 @@ Manager commands accept `panels manager` and `--manager`. The old Sprint Item an
 
 A `show` returns a short header and a list of parts, and the caller names the parts to expand. Lists come in pages and say what they left out. Backlog and resume need no record fingerprint. `ticket delete` needs no confirmation flag, but a running Ticket still needs `--force`. `ticket create --input-json FILE` sends one object to the same create route as the browser, which validates the whole Ticket before one write. A new Ticket starts from a preset or custom stages. Custom stages carry their result fields, ownership, and instructions together.
 
+Ticket and Manager lists include each recap and its age. Missing recaps and unknown ages are explicit. Ticket overviews also flag a stage change since the recap. JSON carries the recap timestamp, so agents can calculate its age.
+
+`ticket request-recap ID` and `manager request-recap ID` ask for a fresh recap within the caller's supervision scope. See [conversations](conversations.md).
+
 A Manager workspace read identifies the document that the browser displays and gives its edit command. It keeps the purpose, recap, held goals, artifacts, and Tickets distinct. `page show` and `page edit` select a Manager or Chief. `page schema` describes their shared document format. A sole held goal remains a goal edit through `goal`. A page edit replaces the complete document, so an agent preserves unrelated content.
 
 ## What the CLI feeds
@@ -41,4 +45,4 @@ A Worker's proposal feeds the [proposal resolver](tickets.md#how-a-stage-advance
 - `src/planner/server_lifecycle/control.py`: the control socket and its messages. `event_loop_tasks.py`: the event loop tasks and the creation times it reads.
 - Each domain's `cli.py` holds its own group, such as `src/planner/credentials/cli.py` and `src/planner/goals/cli.py`. The routes they call are in each domain's `api.py`.
 
-_Last verified: 2026-11-11._
+_Last verified: 2026-11-13._

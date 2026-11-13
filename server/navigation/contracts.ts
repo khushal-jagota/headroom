@@ -1,4 +1,6 @@
 import type { TransactionSql } from '../core/database/contracts.ts';
+export const SCHEMA_VERSION = 11;
+export const SUPPORTED_SEMANTICS = 'attention-knowledge-v11-recap-freshness' as const;
 import type {
   NavigationRecord,
   RecordKey,
