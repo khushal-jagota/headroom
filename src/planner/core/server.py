@@ -301,7 +301,6 @@ def create_app(
             executor_endpoint = VpsExecutor(
                 config.db_path,
                 clock,
-                machine_id=config.executor_id,
                 application_revision=config.app_sha or "unknown",
             )
             backend_factories = {

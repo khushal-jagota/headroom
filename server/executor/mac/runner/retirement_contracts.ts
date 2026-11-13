@@ -29,6 +29,8 @@ export interface MacRetirementContract {
   observe_work<T>(actual: Promise<T>): Promise<T>;
   /** Actual exact-stop work, independently of deadline observers. */
   settled(): Promise<void>;
+  /** Release only this retired child's retained command-join errors. */
+  prune(reference: ChildReference): void;
   stop_exact(
     command: ChildCommand,
     work: MacCommandWork,
