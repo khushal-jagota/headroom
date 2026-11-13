@@ -2,11 +2,12 @@ import * as configuration from '../configuration.ts';
 import { finding_key, PAUSED_WHILE_MAC_AWAY } from '../contracts.ts';
 import type { StallFinding, TrackedWait } from '../contracts.ts';
 import type { StallPresenceRecord } from '../../executor/contracts.ts';
+import { integer_value } from '../../executor/protocol.ts';
 
 export const MAC_LEASE_FAILING_WAIT_KEY = 'mac';
 const MAC_LEASE_FAILING_FINDING_KEY = 'mac_lease_failing:mac';
 export interface ItemProgress {
-  oldest_sequence: number;
+  oldest_sequence: bigint;
   first_seen_at_ms: number;
 }
 export interface PresenceObservation {
@@ -29,7 +30,7 @@ export function empty_observation(): PresenceObservation {
     open_findings: new Map(),
   };
 }
-export function items_wait_key(conversation_id: string, oldest_sequence: number): string {
+export function items_wait_key(conversation_id: string, oldest_sequence: bigint): string {
   return `${conversation_id}:${oldest_sequence}`;
 }
 export function observation_from_open_findings(
@@ -45,7 +46,7 @@ export function observation_from_open_findings(
       const sequence = finding.finding_key.split(':').at(-1)!;
       if (/^\d+$/.test(sequence))
         items.set(finding.conversation_id, {
-          oldest_sequence: Number(sequence),
+          oldest_sequence: BigInt(sequence),
           first_seen_at_ms: finding.stalled_since_ms,
         });
     } else if (finding.kind === 'mac_lease_failing') contact_since_ms = finding.stalled_since_ms;
@@ -111,11 +112,12 @@ function observe_items(
   const observed = new Map<string, ItemProgress>();
   for (const waiting of record.lease.waiting_conversations) {
     const kept = previous.get(waiting.conversation_id);
+    const oldest_sequence = integer_value(waiting.oldest_sequence);
     observed.set(
       waiting.conversation_id,
-      kept && kept.oldest_sequence === waiting.oldest_sequence
+      kept && kept.oldest_sequence === oldest_sequence
         ? kept
-        : { oldest_sequence: waiting.oldest_sequence, first_seen_at_ms: record.last_lease_at_ms },
+        : { oldest_sequence, first_seen_at_ms: record.last_lease_at_ms },
     );
   }
   return observed;
